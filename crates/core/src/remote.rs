@@ -853,6 +853,11 @@ impl Inner {
         self.listen.is_some() || (self.sight == Sight::Screen && self.mirror.as_ref().is_some_and(Mirrored::playing)) || (self.hosts_along() && self.relay_time)
     }
 
+    /// A jam is hosted here or being started: it plays on this device only.
+    fn jams(&self) -> bool {
+        self.hosted.is_some() || self.opening.is_some()
+    }
+
     /// This device hosts a jam whose guests may listen along.
     fn hosts_along(&self) -> bool {
         self.hosted.as_ref().is_some_and(|h| h.along)
@@ -1127,6 +1132,9 @@ impl Remote {
     pub fn pick(self: Arc<Self>, device: Option<String>) {
         let (active, idle, plays, leads) = {
             let i = self.inner.lock();
+            if device.is_some() && i.jams() {
+                return;
+            }
             let m = i.mirror.as_ref();
             let (plays, leads) = device.as_deref().map_or((false, false), |d| (i.plays(d), i.leads(d)));
             (m.map(|m| m.id.clone()), m.and_then(|m| m.shown.as_ref()).is_some_and(|s| s.index.is_none()), plays, leads)
@@ -1284,6 +1292,8 @@ impl Remote {
             i.opening = Some(i.next_id);
             i.next_id
         };
+        // A jam plays here: what plays on another device comes back first.
+        self.clone().pick(None);
         self.shown.changed();
         let url = self.relay_url("noriRemote.open", &[("dev", self.id.clone()), ("name", self.me.name.clone())]);
         let opened = async {
@@ -2208,7 +2218,7 @@ impl Remote {
     fn set_active(self: &Arc<Self>, to: Option<String>) {
         {
             let mut i = self.inner.lock();
-            if i.mirror.as_ref().map(|m| &m.id) == to.as_ref() {
+            if i.mirror.as_ref().map(|m| &m.id) == to.as_ref() || (to.is_some() && i.jams()) {
                 return;
             }
             i.mirror = to.map(Mirrored::new);
@@ -2434,6 +2444,9 @@ impl Remote {
     /// Hands the queue, its play order, shuffle, repeat and the position to device `to`, then pauses here
     /// and follows `to`, the active device now.
     fn transfer(self: &Arc<Self>, via: &Via, from: &str, to: String) {
+        if to != self.id && self.inner.lock().jams() {
+            return;
+        }
         let session = &self.client.core.session;
         // A weighted shuffle's list is already in play order: shown shuffled, it goes as that order.
         let (ids, index, order, shuffle, repeat) = session.playlist(|p| (p.ids().to_vec(), p.current(), p.lit().then(|| p.play_order().map(|i| i as u32).collect()), p.lit(), p.repeat()));
