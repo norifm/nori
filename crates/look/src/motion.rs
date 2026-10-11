@@ -7,6 +7,7 @@ const EASE_S: f32 = 0.14;
 const SETTLED_PX: f32 = 2.0;
 /// Below this gap the bar does not move (absorbs position jitter).
 const STILL_PX: f32 = 0.5;
+const DRAW_PX: f32 = 0.25;
 /// Wait bounds between draws while keeping up: one frame to one second.
 const MIN_WAIT_MS: i32 = 16;
 const MAX_WAIT_MS: i32 = 1000;
@@ -48,7 +49,7 @@ fn ease(t: f32) -> f32 {
 }
 
 /// Seek bar position and time labels. During normal playback the bar tracks the song exactly, redrawn
-/// once per pixel or label second. A jump glides the bar over [`GLIDE_S`] (chasing the moving target)
+/// once per quarter pixel or label second. A jump glides the bar over [`GLIDE_S`] (chasing the moving target)
 /// and cross-fades the labels. Call [`SeekPace::sync`] when a page reappears so it does not glide from a
 /// stale position.
 #[derive(Debug, Clone, PartialEq)]
@@ -153,7 +154,7 @@ impl SeekPace {
                 self.bar = from + (target - from) * ease(t);
                 return 0;
             }
-        } else if gap_px.abs() >= STILL_PX {
+        } else if gap_px.abs() >= DRAW_PX / 2.0 {
             self.bar = target;
         }
         if self.fade_from.is_some() {
@@ -162,10 +163,10 @@ impl SeekPace {
         if rate <= 0.0 {
             return -1;
         }
-        // Next draw at the next pixel or label second, whichever comes first.
-        let ahead_px = ((target - self.bar) * width).clamp(0.0, 1.0);
+        // Quarter-pixel steps keep the rounded edge moving without ticking every frame.
+        let ahead_px = ((target - self.bar) * width).clamp(0.0, DRAW_PX);
         let px_ms = if duration_ms > 0 { duration_ms as f32 / (width * rate) } else { MAX_WAIT_MS as f32 };
-        let pixel = (1.0 - ahead_px) * px_ms;
+        let pixel = (DRAW_PX - ahead_px) * px_ms;
         let second = (1000 - position_ms.rem_euclid(1000)) as f32 / rate;
         (pixel.min(second) as i32).clamp(MIN_WAIT_MS, MAX_WAIT_MS)
     }
@@ -254,6 +255,23 @@ mod tests {
     }
 
     #[test]
+    fn playback_moves_between_pixels() {
+        let mut p = SeekPace::new();
+        p.sync(60_000, 360_000);
+        let mut at = 60_000;
+        let mut dt = 0.0;
+        for _ in 0..20 {
+            let wait = p.step(at, 360_000, dt, 400.0, 1.0);
+            assert!((16..=225).contains(&wait), "visible playback waited {wait}ms");
+            assert!(((fraction(at, 360_000) - p.bar()) * 400.0).abs() <= 0.26);
+            at += wait as i64;
+            dt = wait as f32 / 1000.0;
+        }
+        assert!(p.bar() > fraction(60_000, 360_000));
+        assert_eq!(p.step(at, 360_000, dt, 400.0, 0.0), -1);
+    }
+
+    #[test]
     fn playback_and_labels() {
         let mut p = SeekPace::new();
         p.sync(100_000, 200_000);
@@ -273,8 +291,8 @@ mod tests {
         // Wait ends at next label second.
         let mut p = SeekPace::new();
         p.sync(10_000, 3_600_000);
-        // An hour over 1000 px is 3.6 s per pixel; the labels still tick each second.
-        assert_eq!(p.step(10_250, 3_600_000, 0.25, 1000.0, 1.0), 750);
+        // An hour over 100 px is 36 s per pixel; the labels still tick each second.
+        assert_eq!(p.step(10_250, 3_600_000, 0.25, 100.0, 1.0), 750);
     }
 
     #[test]
