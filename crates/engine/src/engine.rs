@@ -1415,7 +1415,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if let Some(st) = f.starting {
             if let Some((index, ms, _)) = st.jump.filter(|j| now_us >= j.2 - 500) {
                 f.starting = Some(follow::Starting { jump: None, ..st });
-                self.prime(index, ms);
+                self.prime(index, now, ms);
                 return;
             }
             if st.jump.is_some() || now_us < st.at_us - 500 {
@@ -1502,7 +1502,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                     // Down first: the music stops without a click.
                     self.ramp(None, 0.0, START_FADE_MS);
                 } else {
-                    self.prime(index, ms);
+                    self.prime(index, now, ms);
                 }
             }
         }
@@ -1518,13 +1518,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     }
 
     /// Song `index` made ready from `ms` while the output waits.
-    fn prime(&mut self, index: usize, ms: f64) {
+    fn prime(&mut self, index: usize, now: i64, ms: f64) {
         (self.dip, self.pause_at, self.parked) = (None, None, None);
         self.p.pause();
         self.leave_offload();
         self.p.priming = true;
         self.p.jump(index, ms.max(0.0).round() as i64);
         self.ramp(Some(0.0), 0.0, 0);
+        // This turn has read already; a song opened ready (from disk) wakes nothing.
+        self.p.turn(now);
     }
 
     /// Until a start's next moment, or the next look at the place heard, ms.
