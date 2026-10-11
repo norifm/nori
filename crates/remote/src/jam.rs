@@ -39,13 +39,19 @@ pub struct Jam {
     roles: HashMap<String, Role>,
     waiting: Vec<Waiting>,
     next_request: u64,
+    remote_songs: bool,
     /// Who asked for each song that went in, by song id, for "added by".
     added: HashMap<String, String>,
 }
 
 impl Jam {
     pub fn new(room: String, invite: String, host_id: String, host_name: String) -> Jam {
-        Jam { room, invite, host: JamMember { id: host_id, name: host_name, role: Role::Host }, members: Vec::new(), roles: HashMap::new(), waiting: Vec::new(), next_request: 1, added: HashMap::new() }
+        Jam { room, invite, host: JamMember { id: host_id, name: host_name, role: Role::Host }, members: Vec::new(), roles: HashMap::new(), waiting: Vec::new(), next_request: 1, remote_songs: false, added: HashMap::new() }
+    }
+
+    /// Allows members to request songs from external providers in this room.
+    pub fn remote_songs(&mut self, on: bool) {
+        self.remote_songs = on;
     }
 
     /// Takes the members the relay lists in the jam's room now; true when that changed who is in.
@@ -79,6 +85,9 @@ impl Jam {
     /// Applies a jam op; the song to add to the queue when one goes in.
     pub fn apply(&mut self, by: By, op: Op) -> Result<Option<Song>, Refusal> {
         let role = self.role(by).ok_or(Refusal::NotAllowed)?;
+        if matches!(by, By::Member(_)) && matches!(&op, Op::Request { song } if is_provider_id(&song.id)) && !self.remote_songs {
+            return Err(Refusal::NotAllowed);
+        }
         let decides = matches!(role, Role::Host | Role::Admin);
         match op {
             Op::Request { song } if decides => {
@@ -143,6 +152,7 @@ impl Jam {
                 .map(|w| Pending { request: w.request, from: w.from.clone(), from_name: w.from_name.clone(), song: Entry::of(0, 0, &w.song, None), provider: is_provider_id(&w.song.id) })
                 .collect(),
             along: None,
+            remote_songs: self.remote_songs,
         }
     }
 }
@@ -215,8 +225,34 @@ mod tests {
     }
 
     #[test]
+    fn provider_requests_need_room_permission() {
+        for admin in [false, true] {
+            let mut j = jam();
+            if admin {
+                j.apply(By::Host, Op::Promote { member: "ann".into(), admin: true }).unwrap();
+            }
+            assert_eq!(request(&mut j, By::Member("ann"), "ext-deezer-song-9"), Err(Refusal::NotAllowed));
+            assert!(j.state().pending.is_empty());
+            assert_eq!(request(&mut j, By::Host, "ext-deezer-song-9"), Ok(Some(song("ext-deezer-song-9"))));
+        }
+    }
+
+    #[test]
+    fn room_permission_changes_apply_to_members() {
+        let mut j = jam();
+        j.remote_songs(true);
+        request(&mut j, By::Member("ann"), "ext-deezer-song-9").unwrap();
+        assert!(j.state().remote_songs);
+        j.remote_songs(false);
+        assert_eq!(request(&mut j, By::Member("bob"), "ext-deezer-song-10"), Err(Refusal::NotAllowed));
+        assert_eq!(j.state().pending.len(), 1);
+        assert!(!Jam::new("other".into(), "invite".into(), "host".into(), "Host".into()).state().remote_songs);
+    }
+
+    #[test]
     fn provider_requests_are_marked() {
         let mut j = jam();
+        j.remote_songs(true);
         request(&mut j, By::Member("ann"), "ext-deezer-song-9").unwrap();
         request(&mut j, By::Member("ann"), "s1").unwrap();
         let provider: Vec<bool> = j.state().pending.iter().map(|p| p.provider).collect();

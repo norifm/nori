@@ -348,6 +348,18 @@ pub fn jam_asked(from: &str) -> String {
     format!(" · asked by {from}")
 }
 
+pub const JAM_SETTINGS: &str = "Jam settings";
+pub const JAM_SETTINGS_KEY: &str = "s  Jam settings";
+pub const JAM_SETTINGS_BACK: &str = "Esc  Back to invite";
+
+pub fn room_settings(along: bool, remote_songs: bool) -> [String; 2] {
+    let state = |on| if on { "on" } else { "off" };
+    [
+        format!("l  Let guests listen along: {}", state(along)),
+        format!("r  Allow remote songs: {}", state(remote_songs)),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

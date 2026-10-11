@@ -875,7 +875,7 @@ internal fun OutputButton(
     // With remote control or jams on, the button opens nori's own devices first (RemoteScreens); this
     // phone's outputs are one row of it.
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val devices = prefs.remoteControl || prefs.jam
+    val devices = prefs.remoteControl
     val openDevices = LocalDevices.current
     val tell = LocalMessages.current
     IconButton({ if (devices) openDevices() else openOutputPicker(context, output, tell) }) {

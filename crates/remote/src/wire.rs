@@ -350,6 +350,8 @@ pub struct Pending {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 #[serde(default, rename_all = "camelCase")]
 pub struct JamState {
+    /// Members may request songs from external providers.
+    pub remote_songs: bool,
     pub members: Vec<JamMember>,
     pub pending: Vec<Pending>,
     /// What guests play along by, while the host lets them.

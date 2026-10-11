@@ -596,6 +596,11 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
             r.listen(on);
         }
     });
+    on!(jam.on_set_remote_songs, h, |a, on| {
+        if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
+            r.jam_remote_songs(on);
+        }
+    });
     on!(jam.on_set_along, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
             r.jam_along(on);
@@ -1698,7 +1703,7 @@ impl App {
         let ui = self.ui();
         let g = ui.global::<crate::Jam>();
         let guest = self.guest();
-        let jams = guest || crate::session::app().settings.prefs(|p| p.jam);
+        let jams = guest || crate::session::app().settings.prefs(|p| p.remote_control);
         let remote = self.session.as_ref().and_then(|s| s.remote()).filter(|_| jams);
         let unsupported = remote.as_ref().is_some_and(|r| r.relay() == nori_core::remote::RelaySupport::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());
@@ -1707,6 +1712,7 @@ impl App {
         g.set_note(if unsupported && !guest { words::JAM_UNSUPPORTED.into() } else { "".into() });
         g.set_hosting(view.as_ref().is_some_and(|v| v.hosting));
         g.set_along(view.as_ref().is_some_and(|v| v.along));
+        g.set_remote_songs(view.as_ref().is_some_and(|v| v.remote_songs));
         let listening = view.as_ref().filter(|_| guest).map_or(nori_core::remote::Listening::Watching, |v| v.listening);
         g.set_here(listening != nori_core::remote::Listening::Watching);
         g.set_along_note(words::jam_along(listening).into());
