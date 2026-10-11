@@ -92,6 +92,7 @@ mod tests {
         };
         let v = JamView {
             hosting: true,
+            remote_songs: false,
             link: Some("nori://jam?s=x&k=y".into()),
             you: "me".into(),
             members: vec![member("me", "Desk", Role::Host), member("gus", "gus", Role::Guest), member("dee", "Dee", Role::Admin)],
@@ -124,6 +125,7 @@ mod tests {
         let queue = DeviceState { index: Some(4), entries: vec![entry(3, 0, "a", None), entry(4, 1, "b", None), entry(0, 2, "c", Some("Gus")), entry(1, 3, "d", None)], ..Default::default() };
         let v = JamView {
             hosting: false,
+            remote_songs: false,
             link: None,
             you: "gus".into(),
             members: vec![member("desk", "Desk", Role::Host), member("gus", "Gus", Role::Guest), member("dee", "Dee", Role::Guest)],

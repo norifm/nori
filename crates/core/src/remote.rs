@@ -223,6 +223,7 @@ pub struct MirrorRow {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct JamView {
     pub hosting: bool,
+    pub remote_songs: bool,
     /// The invite link (and QR code) while hosting.
     pub link: Option<String>,
     /// This device's member id.
@@ -1406,8 +1407,7 @@ impl Remote {
             i.opening = None;
             i.relay = RelaySupport::Supported;
             remember_hosted(&self.client.core.session.settings, &opened.invite);
-            let along = self.client.core.session.settings.current().is_some_and(|p| p.jam_along);
-            i.hosted = Some(Hosted { jam: Jam::new(opened.room, opened.invite, self.id.clone(), self.me.name.clone()), link: link.clone(), along });
+            i.hosted = Some(Hosted { jam: Jam::new(opened.room, opened.invite, self.id.clone(), self.me.name.clone()), link: link.clone(), along: true });
             i.published = None;
             // A poll held from before listens to the account's room only: polled again, now with the jam's.
             i.end_relay_poll();
@@ -1428,6 +1428,16 @@ impl Remote {
         }
         self.retime();
         self.hear_plans();
+        self.publish();
+    }
+
+    /// Allows members to request external provider songs in the hosted room.
+    pub fn jam_remote_songs(self: Arc<Self>, on: bool) {
+        {
+            let mut i = self.inner.lock();
+            let Some(h) = i.hosted.as_mut() else { return };
+            h.jam.remote_songs(on);
+        }
         self.publish();
     }
 
@@ -1502,13 +1512,14 @@ impl Remote {
             let st = h.jam.state();
             let queue = i.published.as_ref().map(|(s, _)| DeviceState { jam: None, ..s.clone() });
             let age_ms = i.published.as_ref().map_or(0, |(_, at)| at.elapsed().as_millis() as i64);
-            return Some(JamView { hosting: true, link: Some(h.link.clone()), you: self.id.clone(), members: st.members, pending: st.pending, queue, age_ms, refused: None, along: h.along, listening: Listening::Watching });
+            return Some(JamView { hosting: true, remote_songs: st.remote_songs, link: Some(h.link.clone()), you: self.id.clone(), members: st.members, pending: st.pending, queue, age_ms, refused: None, along: h.along, listening: Listening::Watching });
         }
         let (_, host) = i.joined()?;
         let state = host.and_then(|h| h.state.clone());
         let jam = state.as_ref().and_then(|s| s.jam.clone()).unwrap_or_default();
         Some(JamView {
             along: jam.along.is_some(),
+            remote_songs: jam.remote_songs,
             listening: i.listening(),
             hosting: false,
             link: None,
@@ -1524,7 +1535,7 @@ impl Remote {
     /// Where starting a jam here stands, as every screen that offers it shows it.
     pub fn jam_start(&self) -> JamStart {
         let i = self.inner.lock();
-        let on = self.client.core.session.settings.current().is_some_and(|p| p.jam);
+        let on = self.client.core.session.settings.current().is_some_and(|p| p.remote_control);
         if i.hosted.is_some() {
             JamStart::Hosting
         } else if i.opening.is_some() {

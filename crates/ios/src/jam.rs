@@ -160,6 +160,7 @@ mod tests {
         let ask = |request, from: &str, id: &str| Pending { request, from: from.into(), from_name: from.into(), song: Entry { id: id.into(), title: id.to_uppercase(), artist: "Band".into(), cover_art: Some(format!("al-{id}")), ..Default::default() }, provider: false };
         let v = JamView {
             hosting: false,
+            remote_songs: false,
             link: None,
             you: "pod".into(),
             members: vec![member("desk", "Desk", Role::Host), member("pod", "iPod", Role::Guest), member("dee", "Dee", Role::Admin)],

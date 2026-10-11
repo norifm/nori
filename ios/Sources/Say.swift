@@ -162,7 +162,7 @@ enum Say {
             ("favouriteNotice", "Confirm favorites"),
         ]),
         ("Remote control", [
-            ("remoteControl", "Control from other devices"),
+            ("remoteControl", "Remote control and jams"),
         ]),
         ("Server", [
             ("scrobble", "Scrobble plays"),

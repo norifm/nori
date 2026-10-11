@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -299,14 +300,8 @@ private fun Request(p: Pending, coverUrl: String?, decides: Boolean, ink: ColorP
     }
 }
 
-/** The invite: a large QR code, the link, Copy and Share. */
 @Composable
-private fun InviteSheet(link: String?, onDismiss: () -> Unit) {
-    NoriSheet(link, onDismiss) { l -> InviteBody(l) }
-}
-
-@Composable
-private fun InviteBody(link: String) {
+internal fun InviteBody(link: String) {
     val vm: RemoteViewModel = viewModel()
     val qr by produceState<dev.nori.music.ffi.remote.QrCode?>(null, link) { value = vm.qr(link) }
     val context = LocalContext.current
@@ -376,22 +371,14 @@ private fun roleName(role: Role): String = words(
  * the host, in [PeopleSheet] for a guest.
  */
 @Composable
-internal fun JamControls(j: JamView) {
+internal fun JamControls(j: JamView, onInvite: () -> Unit = {}, onSettings: () -> Unit = {}) {
     val vm: RemoteViewModel = viewModel()
-    var inviting by remember { mutableStateOf(false) }
     val guests = j.members.filter { it.role != Role.HOST }
     Column {
         if (j.hosting) {
-            PillButton(
-                words(R.string.jam_invite_button), Icons.Filled.PersonAdd, { inviting = true },
-                Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp), prominent = true,
-            )
-            Row(Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                    Text(words(R.string.jam_let_listen), style = MaterialTheme.typography.bodyLarge)
-                    Text(words(R.string.jam_let_listen_line), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                NoriSwitch(j.along, { vm.jamAlong(it) })
+            Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                PillButton(words(R.string.jam_invite_button), Icons.Filled.PersonAdd, onInvite, Modifier.weight(1f), prominent = true)
+                IconButton(onSettings) { Icon(Icons.Filled.Settings, words(R.string.settings)) }
             }
         }
         SectionTitle(words(R.string.jam_people))
@@ -416,7 +403,26 @@ internal fun JamControls(j: JamView) {
             )
         }
     }
-    InviteSheet(j.link.takeIf { inviting }) { inviting = false }
+}
+
+@Composable
+internal fun JamSettings(j: JamView) {
+    val vm: RemoteViewModel = viewModel()
+    SectionHeader(words(R.string.settings))
+    Row(Modifier.fillMaxWidth().clickable { vm.jamAlong(!j.along) }.padding(horizontal = Space.gutter, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(words(R.string.jam_let_listen), style = MaterialTheme.typography.bodyLarge)
+            Text(words(R.string.jam_let_listen_line), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        NoriSwitch(j.along, { vm.jamAlong(it) })
+    }
+    Row(Modifier.fillMaxWidth().clickable { vm.jamRemoteSongs(!j.remoteSongs) }.padding(horizontal = Space.gutter, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(words(R.string.jam_remote_songs), style = MaterialTheme.typography.bodyLarge)
+            Text(words(R.string.jam_remote_songs_line), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        NoriSwitch(j.remoteSongs, { vm.jamRemoteSongs(it) })
+    }
 }
 
 /** Who is in the jam, for a guest. */

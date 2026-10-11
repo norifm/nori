@@ -630,7 +630,7 @@ impl Device {
     fn kept(relay: &Arc<Relay>, dir: &nori_testdir::TempDir, kind: DeviceKind, name: &str) -> Device {
         let settings = nori_core::settings_store::Settings::new();
         let mut prefs = settings.open(&dir.path().join("app.db").to_string_lossy()).unwrap();
-        prefs.jam = true;
+        prefs.remote_control = true;
         settings.put(prefs);
         Device::with(relay, ann(), kind, name, None, Arc::new(nori_queue::Session::new(settings)))
     }
@@ -880,6 +880,10 @@ fn a_jam_takes_requests_through_its_host() {
     // The host makes Dee an admin.
     host.remote.clone().jam_act(Op::Promote { member: dee_id, admin: true });
     dee.until("Dee's role", |r| r.jam_view().filter(|v| v.members.iter().any(|m| m.name == "Dee" && m.role == Role::Admin)));
+
+    assert!(!view.remote_songs);
+    host.remote.clone().jam_remote_songs(true);
+    gus.until("provider permission", |r| r.jam_view().filter(|v| v.remote_songs));
 
     // A guest's provider song waits, untouched, until an admin accepts it.
     let wish = Song { id: "ext-deezer-song-9".into(), title: "Wish".into(), is_external: true, ..Default::default() };

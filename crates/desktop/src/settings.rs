@@ -445,21 +445,11 @@ impl Build<'_> {
             "Look things up online",
             "Missing lyrics (sends the artist, song and album name) and the AutoEQ headphone list, each with its own switch. Off, nothing is asked.",
         )];
-        let mut devices = vec![
-            self.toggle(
-                "remoteControl",
-                "Control from other devices",
-                "Your other devices with nori see and control what plays here, and this Mac controls them: on the same network directly, elsewhere through octo-fiesta. Off, nothing listens or asks.",
-            ),
-            self.toggle(
-                "jam",
-                "Jams",
-                "Start a jam from the devices button or a song's menu: others join with a link or QR code and ask for songs, and this Mac plays them. Needs octo-fiesta.",
-            ),
-        ];
-        if self.p.jam {
-            devices.push(self.toggle("jamAlong", "Let guests listen along", "A jam's guests can play its music on their own phones, in step with this Mac. Each jam can change it."));
-        }
+        let devices = vec![self.toggle(
+            "remoteControl",
+            "Remote control and jams",
+            "Control playback on your other devices, or invite guests to a jam. Uses your network directly or the octo-fiesta relay.",
+        )];
         vec![("Search", search), ("Listening history", history), ("Online", online), ("Other devices", devices)]
     }
 

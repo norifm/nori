@@ -178,6 +178,8 @@ pub enum Cmd {
     LeaveJam,
     /// A jam guest listens along (plays the host's music here, in step), or only watches.
     Listen(bool),
+    JamAlong(bool),
+    JamRemoteSongs(bool),
     Quit,
 }
 
@@ -213,6 +215,8 @@ impl Cmd {
             Cmd::JamDecide(r, yes) => format!("jam request {r} accepted={yes}"),
             Cmd::JoinJam(_) => "join a jam".into(),
             Cmd::LeaveJam => "leave the jam".into(),
+            Cmd::JamAlong(on) => format!("room listening along {on}"),
+            Cmd::JamRemoteSongs(on) => format!("room remote songs {on}"),
             Cmd::Listen(on) => format!("listen along {on}"),
             Cmd::Quit => "quit".into(),
             _ => "an edit".into(),
@@ -639,6 +643,7 @@ pub enum Overlay {
     Input { title: String, text: String, secret: bool, name: String },
     /// The jam's invite: its link and QR code.
     Invite { link: String },
+    JamSettings,
     /// An invite link pasted to join someone's jam, and why joining failed.
     Join { text: String, error: Option<String>, busy: bool },
 }
@@ -1576,7 +1581,19 @@ impl App {
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') => self.overlay = None,
                 _ => {}
             },
+            Overlay::Invite { .. } if k.code == KeyCode::Char('s') => self.overlay = Some(Overlay::JamSettings),
             Overlay::Invite { .. } => self.overlay = None,
+            Overlay::JamSettings => match k.code {
+                KeyCode::Char('l') => {
+                    if let Some(j) = &self.devices.jam { self.cmds.push(Cmd::JamAlong(!j.along)); }
+                }
+                KeyCode::Char('r') => {
+                    if let Some(j) = &self.devices.jam { self.cmds.push(Cmd::JamRemoteSongs(!j.remote_songs)); }
+                }
+                KeyCode::Esc | KeyCode::Char('h') => self.invite(),
+                KeyCode::Char('q') => self.overlay = None,
+                _ => {}
+            },
             Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
             Overlay::Join { text, error, busy } => match k.code {
                 KeyCode::Enter if nori_core::remote::is_invite(text) => {

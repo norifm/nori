@@ -200,6 +200,8 @@ export global Jam {
     // The jam's guests may listen along.
     in property <bool> along;
     callback set-along(bool);
+    in property <bool> remote-songs;
+    callback set-remote-songs(bool);
     // A guest plays the jam here, in step with the host; why it cannot when it asked to.
     in property <bool> here;
     // What the player offers a guest by its role (an admin's reach the host, a guest's play and pause its own
@@ -1644,7 +1646,7 @@ component DevicesView inherits Rectangle {
             if root.devices.length <= 1: HorizontalLayout {
                 padding: 6px;
                 Text {
-                    text: "No other devices yet. Turn on “Control from other devices” in nori on them.";
+                    text: "No other devices yet. Turn on “Remote control and jams” in nori on them.";
                     color: Theme.dim;
                     font-size: 12px;
                     wrap: word-wrap;
@@ -1973,6 +1975,10 @@ component JamHeader inherits VerticalLayout {
                 clicked => { invite.show(); }
             }
         }
+        if !Jam.guest: Button {
+            text: "Settings";
+            clicked => { people.show(); }
+        }
     }
     if Jam.along-note != "": Text {
         text: Jam.along-note;
@@ -2194,7 +2200,7 @@ component JamHeader inherits VerticalLayout {
             VerticalLayout {
                 padding: 8px;
                 spacing: 0;
-                HorizontalLayout {
+                if !Jam.guest: HorizontalLayout {
                     padding-left: 8px;
                     padding-right: 6px;
                     padding-bottom: 6px;
@@ -2208,7 +2214,7 @@ component JamHeader inherits VerticalLayout {
                             font-size: 13px;
                         }
                         Text {
-                            text: "They hear the music on their own phones, in step with this Mac.";
+                            text: "They hear the music on their own phones, in step with this computer.";
                             color: Theme.dim;
                             font-size: 11px;
                             wrap: word-wrap;
@@ -2219,6 +2225,16 @@ component JamHeader inherits VerticalLayout {
                         on: Jam.along;
                         toggled(v) => { Jam.set-along(v); }
                     }
+                }
+                if !Jam.guest: HorizontalLayout {
+                    padding: 8px;
+                    spacing: 10px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        Text { text: "Allow Remote Songs"; color: Theme.text; font-size: 13px; }
+                        Text { text: "Guests can request songs from external providers."; color: Theme.dim; font-size: 11px; wrap: word-wrap; }
+                    }
+                    Toggle { on: Jam.remote-songs; toggled(v) => { Jam.set-remote-songs(v); } }
                 }
                 Text {
                     text: "People";

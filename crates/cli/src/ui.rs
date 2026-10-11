@@ -1832,7 +1832,7 @@ fn qr_lines(code: &nori_core::remote::QrCode) -> Vec<Line<'static>> {
 }
 
 fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    let App { overlay, hits, .. } = app;
+    let App { overlay, hits, devices, .. } = app;
     let Some(o) = overlay else { return };
     match o {
         Overlay::Help { scroll } => {
@@ -1861,6 +1861,14 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let opts = options.clone();
             list(f, inner, sel, opts.len(), ListRef::Picker, hits, t, true, &|i, w| Line::from(fit(&format!(" {}", opts[i].0), w).into_owned()));
         }
+        Overlay::JamSettings => {
+            let r = centred(area, 64, 8);
+            let inner = popup(f, r, Span::raw(crate::text::JAM_SETTINGS), t);
+            let mut lines: Vec<Line> = devices.jam.as_ref().map_or_else(Vec::new, |j| crate::text::room_settings(j.along, j.remote_songs).into_iter().map(Line::from).collect());
+            lines.push(Line::from(""));
+            lines.push(Line::from(crate::text::JAM_SETTINGS_BACK));
+            put(f, Paragraph::new(lines), inner);
+        }
         Overlay::Invite { link } => {
             let code = nori_core::remote::qr_code(link.clone());
             let qr = code.as_ref().map(qr_lines).unwrap_or_default();
@@ -1876,6 +1884,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 lines.push(Line::from(Span::styled(crate::text::INVITE_ROOM, dim(t))));
             }
             lines.push(Line::from(Span::styled(crate::text::INVITE_HOW, dim(t))));
+            lines.push(Line::from(crate::text::JAM_SETTINGS_KEY));
             lines.extend(link_lines.into_iter().map(|l| Line::from(Span::styled(l, Style::default().fg(t.accent)))));
             let r = centred(area, w, lines.len() as u16 + 4);
             let inner = popup(f, r, Span::styled(crate::text::INVITE_TITLE, Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), t);

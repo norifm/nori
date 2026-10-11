@@ -225,7 +225,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
     /** Whether the profile in use asks for a remote at all. */
     private fun wanted(): Boolean {
         val p = nori.settings.value
-        return p.server != null && (p.remoteControl || p.jam || isGuest())
+        return p.server != null && (p.remoteControl || isGuest())
     }
 
     private fun drop() {
@@ -317,6 +317,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
 
     /** Lets this jam's guests listen along, or not. */
     fun jamAlong(on: Boolean) = work { current()?.jamAlong(on) }
+    fun jamRemoteSongs(on: Boolean) = work { current()?.jamRemoteSongs(on) }
 
     /** Moves the playback to [device], or to this phone (null). */
     fun pick(device: String?) = work { current()?.pick(device) }

@@ -548,17 +548,9 @@ pub struct StoredPrefs {
     /// Beta releases (GitHub prereleases) are offered too, as well as the stable ones.
     #[setting("updateBeta", FLAG, default = false, show = K::Switch)]
     pub update_beta: bool,
-    /// This device can be controlled from the account's other devices, and controls them (nori-remote):
-    /// through octo-fiesta's relay, or directly on the same network.
-    #[setting("remoteControl", FLAG, default = false, show = K::Switch)]
+    /// Remote playback control and hosting jams, through the relay or the local network.
+    #[setting("remoteControl", FLAG, default = true, show = K::Switch)]
     pub remote_control: bool,
-    /// Hosting jams: others join through a link and ask for songs (nori-remote jam.rs). Needs octo-fiesta.
-    #[setting("jam", FLAG, default = false, show = K::Switch)]
-    pub jam: bool,
-    /// A jam's guests may play its music on their own devices, in step with this one (each jam can
-    /// change it).
-    #[setting("jamAlong", FLAG, default = true, show = K::Switch)]
-    pub jam_along: bool,
     /// The home page's rows, in order; unlisted rows are hidden.
     #[setting("homeRows", Picks, default = HomeRow::ALL.to_vec(), hidden)]
     pub home_rows: Vec<HomeRow>,
@@ -1092,6 +1084,10 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
     let mut p = StoredPrefs::default();
     for row in ROWS {
         (row.load)(&mut p, &r);
+    }
+    if let Some(PrefValue::Flag { v: jam }) = raw.get("jam") {
+        let remote = matches!(raw.get("remoteControl"), Some(PrefValue::Flag { v: true }));
+        p.remote_control = remote || *jam;
     }
     if !raw.contains_key(EQ_MODE_KEY) && parametric_set_up(&p) {
         p.eq_mode = EqMode::Parametric;
@@ -1938,6 +1934,17 @@ mod tests {
         keys.dedup();
         names.dedup();
         assert_eq!((keys.len(), names.len()), (k, n), "each key and name once");
+    }
+
+    #[test]
+    fn legacy_remote_switches_merge() {
+        for (remote, jam) in [(false, false), (false, true), (true, false), (true, true)] {
+            let prefs = load(&raw(&[("remoteControl", PrefValue::Flag { v: remote }), ("jam", PrefValue::Flag { v: jam })]));
+            assert_eq!(prefs.remote_control, remote || jam, "remote={remote}, jam={jam}");
+            let mut saved = save(&prefs);
+            saved.insert("remoteControl".into(), PrefValue::Flag { v: false });
+            assert!(!load(&saved).remote_control, "the merged switch can be turned off after migration");
+        }
     }
 
     #[test]

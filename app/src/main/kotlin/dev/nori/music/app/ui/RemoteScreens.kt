@@ -1,5 +1,6 @@
 package dev.nori.music.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Groups
@@ -26,6 +28,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,6 +80,8 @@ private fun DeviceState.current(): Entry? = entries.firstOrNull { it.index == in
  * picker), and the jam: "Start a Jam", or "Your Jam" with End while one is on. Up only while remote control
  * or jams are on.
  */
+private enum class RoomPage { MAIN, INVITE, SETTINGS }
+
 @Composable
 fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jams: Boolean) {
     val vm: RemoteViewModel = viewModel()
@@ -89,55 +95,58 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val mirror by vm.mirror.collectAsStateWithLifecycle()
         val unsupported = relay == dev.nori.music.ffi.RelaySupport.UNSUPPORTED
         val pick = { device: String? -> vm.pick(device); onDismiss() }
+        val hosted = jam?.takeIf { it.hosting }
+        var page by remember(hosted?.link) { mutableStateOf(RoomPage.MAIN) }
+        BackHandler(page != RoomPage.MAIN) { page = RoomPage.MAIN }
         Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
-            SectionHeader(words(R.string.devices_title))
-            DeviceRow(words(R.string.devices_this), Icons.Filled.PhoneAndroid, null, mirror == null) { pick(null) }
-            val hosted = jam?.takeIf { it.hosting }
-            // A jam plays on this phone only: the other devices come back once it is ended.
-            if (hosted != null) Text(
-                words(R.string.devices_jam_on), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            ) else {
-                devices.forEachIndexed { k, d ->
-                    val now = d.state?.current()
-                    DeviceRow(
-                        names.getOrNull(k) ?: d.name, kindIcon(d.kind),
-                        now?.let { "${it.title} · ${it.artist}" } ?: words(R.string.devices_idle),
-                        mirror?.id == d.id, if (d.nearby) words(R.string.devices_nearby) else null,
-                    ) { pick(d.id) }
+            if (hosted != null && page != RoomPage.MAIN) {
+                ActionRow(words(R.string.back), Icons.AutoMirrored.Filled.ArrowBack, { page = RoomPage.MAIN }, divider = false)
+                if (page == RoomPage.INVITE) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
+            } else {
+                SectionHeader(words(R.string.devices_title))
+                DeviceRow(words(R.string.devices_this), Icons.Filled.PhoneAndroid, null, mirror == null) { pick(null) }
+                if (hosted == null) {
+                    devices.forEachIndexed { k, d ->
+                        val now = d.state?.current()
+                        DeviceRow(
+                            names.getOrNull(k) ?: d.name, kindIcon(d.kind),
+                            now?.let { "${it.title} · ${it.artist}" } ?: words(R.string.devices_idle),
+                            mirror?.id == d.id, if (d.nearby) words(R.string.devices_nearby) else null,
+                        ) { pick(d.id) }
+                    }
+                    mirror?.refused?.let { Text(refusal(it), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+                    if (devices.isEmpty() || unsupported) Text(
+                        words(if (unsupported) R.string.devices_nearby_only else R.string.devices_none), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                mirror?.refused?.let { Text(refusal(it), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-                if (devices.isEmpty() || unsupported) Text(
-                    words(if (unsupported) R.string.devices_nearby_only else R.string.devices_none), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // The phone's own speaker, headphones or Bluetooth: Android's picker, a quiet row of its own.
-            Row(
-                Modifier.fillMaxWidth().clickable(onClick = onOutput).padding(horizontal = Space.gutter, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Filled.Speaker, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(words(R.string.devices_output), Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Hairline(startIndent = Space.gutter)
-            val start by vm.jamStarting.collectAsStateWithLifecycle()
-            when {
-                !jams -> {}
-                hosted != null -> {
-                    YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
-                    JamControls(hosted)
+                // The phone's own speaker, headphones or Bluetooth: Android's picker, a quiet row of its own.
+                Row(
+                    Modifier.fillMaxWidth().clickable(onClick = onOutput).padding(horizontal = Space.gutter, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Filled.Speaker, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(words(R.string.devices_output), Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                unsupported -> Text(
-                    words(R.string.jam_unsupported), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                start == dev.nori.music.ffi.JamStart.STARTING -> Text(
-                    words(R.string.jam_starting), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                start == dev.nori.music.ffi.JamStart.OFFERED ->
-                    ActionRow(words(R.string.jam_start), Icons.Filled.Groups, { onDismiss(); vm.jamStart(); nav.player(Panel.QUEUE) }, divider = false)
+                Hairline(startIndent = Space.gutter)
+                val start by vm.jamStarting.collectAsStateWithLifecycle()
+                when {
+                    !jams -> {}
+                    hosted != null -> {
+                        YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
+                        JamControls(hosted, { page = RoomPage.INVITE }, { page = RoomPage.SETTINGS })
+                    }
+                    unsupported -> Text(
+                        words(R.string.jam_unsupported), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    start == dev.nori.music.ffi.JamStart.STARTING -> Text(
+                        words(R.string.jam_starting), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    start == dev.nori.music.ffi.JamStart.OFFERED ->
+                        ActionRow(words(R.string.jam_start), Icons.Filled.Groups, { onDismiss(); vm.jamStart(); nav.player(Panel.QUEUE) }, divider = false)
+                }
             }
         }
     }
@@ -151,7 +160,7 @@ fun DevicesHost(open: Boolean, onDismiss: () -> Unit) {
     val output by settings.currentOutput.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val tell = LocalMessages.current
-    if (prefs.remoteControl || prefs.jam) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.jam)
+    if (prefs.remoteControl) DevicesSheet(open, onDismiss, { onDismiss(); openOutputPicker(context, output, tell) }, prefs.remoteControl)
 }
 
 /** The jam this phone hosts, as the devices list it: a tap opens its queue, End ends it. */

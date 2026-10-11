@@ -7,7 +7,7 @@ sidebar:
 
 Applies to nori 0.6 on Android, the desktop, the terminal and the iPod touch.
 
-With **Control from other devices** on (Settings, Library, Other devices; off by default), your devices
+With **Remote control and jams** on (Settings, Library, Other devices; on by default), your devices
 with nori, signed in to the same server account, see each other. One plays at a time; the others control it.
 
 - **Moving the music.** The output button lists this device, your other devices and this device's own
@@ -19,6 +19,9 @@ with nori, signed in to the same server account, see each other. One plays at a 
 
 On Android 11 and newer, the system media output picker also lists your nori devices while you
 control remote playback. Choose **This phone** there to bring playback back without opening nori.
+
+Existing installs keep the feature enabled if either remote control or jams was enabled before
+the switches were merged. Turning the merged switch off ends hosted rooms and disables discovery.
 
 ## How devices reach each other
 

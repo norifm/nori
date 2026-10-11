@@ -927,6 +927,7 @@ fn jam() -> nori_core::remote::JamView {
     let ask = |request, from: &str, title: &str, provider| Pending { request, from: from.to_lowercase(), from_name: from.into(), song: Entry { title: title.into(), ..Default::default() }, provider };
     nori_core::remote::JamView {
         hosting: true,
+        remote_songs: false,
         link: Some("http://octo:5274/nori/jam#s=http%3A%2F%2Focto%3A5274&k=c1a952e53165572a6349ca04fa2e3b8a".into()),
         you: "me".into(),
         members: vec![member("me", "Mac", Role::Host), member("gus", "gus", Role::Guest), member("dee", "Dee", Role::Admin)],
@@ -937,6 +938,22 @@ fn jam() -> nori_core::remote::JamView {
         along: true,
         listening: nori_core::remote::Listening::Watching,
     }
+}
+
+#[test]
+fn room_settings_replace_the_invite() {
+    let mut a = app();
+    a.devices.jam = Some(jam());
+    a.overlay = Some(Overlay::Invite { link: a.devices.jam.as_ref().unwrap().link.clone().unwrap() });
+    key(&mut a, KeyCode::Char('s'));
+    let screen = draw(&mut a, 100, 30);
+    assert!(screen.contains("Allow remote songs: off"));
+    key(&mut a, KeyCode::Char('l'));
+    assert!(matches!(a.cmds.last(), Some(Cmd::JamAlong(false))));
+    key(&mut a, KeyCode::Char('r'));
+    assert!(matches!(a.cmds.last(), Some(Cmd::JamRemoteSongs(true))));
+    key(&mut a, KeyCode::Esc);
+    assert!(matches!(a.overlay, Some(Overlay::Invite { .. })));
 }
 
 #[test]
@@ -1155,6 +1172,7 @@ fn guest_jam() -> nori_core::remote::JamView {
     let ask = |request, from: &str, id: &str, title: &str| Pending { request, from: from.to_lowercase(), from_name: from.into(), song: Entry { id: id.into(), title: title.into(), ..Default::default() }, provider: true };
     nori_core::remote::JamView {
         hosting: false,
+        remote_songs: false,
         link: None,
         you: "gus".into(),
         members: vec![member("desk", "Desk", Role::Host), member("gus", "Gus", Role::Guest), member("dee", "Dee", Role::Guest)],

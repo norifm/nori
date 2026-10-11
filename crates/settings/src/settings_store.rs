@@ -107,7 +107,7 @@ impl SettingsStore {
         if !raw.is_empty() && !chosen && profiles_parametric(&c) {
             prefs.eq_mode = crate::settings::EqMode::Parametric;
         }
-        if raw.is_empty() || !chosen {
+        if raw.is_empty() || !chosen || raw.contains_key("jam") || raw.contains_key("jamAlong") {
             write(&mut c, &prefs)?;
         }
         Ok(SettingsStore { db: Arc::new(Mutex::new(c)), prefs, writes: Arc::new(AtomicU64::new(0)) })
@@ -437,6 +437,23 @@ mod tests {
         assert_eq!(s.edit_level(EqLevel::Balance, -0.6), Some((SOUND, -0.6)));
         assert_eq!(s.edit_level(EqLevel::ReplayGainPreamp, 20.0), Some((APPLY_GAIN, 6.0)));
         assert_eq!(s.prefs.preamp_db, 6.0);
+    }
+
+    #[test]
+    fn remote_migration_is_saved_once() {
+        let dir = nori_testdir::TempDir::new("remote-migration");
+        let path = dir.join("nori.db").display().to_string();
+        {
+            let mut c = db::open_app(&path).unwrap();
+            write(&mut c, &StoredPrefs { remote_control: false, ..Default::default() }).unwrap();
+            c.execute("INSERT INTO settings VALUES ('jam', ?1)", [to_json(&PrefValue::Flag { v: true })]).unwrap();
+        }
+        let mut migrated = SettingsStore::open(&path).unwrap();
+        assert!(migrated.prefs.remote_control);
+        assert!(!read(&migrated.db.lock()).unwrap().contains_key("jam"));
+        migrated.prefs.remote_control = false;
+        write(&mut migrated.db.lock(), &migrated.prefs).unwrap();
+        assert!(!SettingsStore::open(&path).unwrap().prefs.remote_control);
     }
 
     /// An install from before the graphic equalizer: the mode is chosen from its settings and sound
