@@ -205,29 +205,33 @@ fn page_changes_once_per_song() {
 
 #[test]
 fn shuffle_keeps_the_audible_mix() {
-    let make = |deep| {
+    let make = |deep, seed, shuffling| {
         let mut p = Player::with_prefs(vec![song("a", 120.0), song("b", 123.0), song("c", 118.0), song("d", 121.0)], automix());
         p.sink.deep = deep;
         for (id, bpm) in [("a", 120.0), ("b", 123.0), ("c", 118.0), ("d", 121.0)] {
             p.app.analyses.insert(id.into(), measured(id, bpm));
         }
         p.play_from(0);
+        p.queue.live.set_shuffle(shuffling, seed);
+        p.queue_changed();
+        p.replan_ending();
         assert!(p.run_until(40_000, |p| p.mixing()), "the first mix is audible");
         p.run_for(500);
         p
     };
     for deep in [false, true] {
-        for seed in 0..8 {
-            let mut reference = make(deep);
-            let mut shuffled = make(deep);
-            shuffled.queue.live.set_shuffle(true, seed);
+        for (seed, delay_ms, shuffling) in (0..8).flat_map(|seed| [false, true].into_iter().flat_map(move |on| [0, 50, 500].map(move |delay| (seed, delay, on)))) {
+            let mut reference = make(deep, seed, shuffling);
+            let mut shuffled = make(deep, seed, shuffling);
+            shuffled.queue.live.set_shuffle(!shuffling, seed);
+            shuffled.run_for(delay_ms);
             shuffled.queue_changed();
             shuffled.replan_ending();
             assert!(reference.run_until(32_000, |p| !p.mixing()), "the original mix finishes");
             let elapsed = reference.now_ms - shuffled.now_ms;
             shuffled.run_for(elapsed);
-            assert_eq!(shuffled.current_id(), reference.current_id(), "the incoming song survives shuffle: deep={deep}, seed={seed}");
-            assert!(shuffled.sink.heard_samples() == reference.sink.heard_samples(), "shuffle preserves the audible mix: deep={deep}, seed={seed}");
+            assert_eq!(shuffled.current_id(), reference.current_id(), "the incoming song survives shuffle: deep={deep}, seed={seed}, delay={delay_ms}, initially shuffled={shuffling}");
+            assert!(shuffled.sink.heard_samples() == reference.sink.heard_samples(), "shuffle preserves the audible mix: deep={deep}, seed={seed}, delay={delay_ms}, initially shuffled={shuffling}");
             assert!(shuffled.sink.gaps.is_empty());
             assert_eq!(shuffled.sink.timestamp_jumps, 0);
         }
