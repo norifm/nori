@@ -1,4 +1,11 @@
-# Testing
+---
+title: Testing
+description: The test tiers, from cargo test to the device checks, and the local server they run against.
+sidebar:
+  order: 4
+---
+
+Applies to the nori repository at 0.6.
 
 Three tiers, from fastest to slowest. What decides how music plays, the queue, the library, lyrics and
 settings is Rust and is tested by `cargo test`, on a virtual clock where time matters. The device checks
@@ -7,14 +14,14 @@ notification, audio focus, routing, JNI, the service and a force stop.
 
 | Tier | What | Time | Who runs it |
 | --- | --- | --- | --- |
-| `cargo test -j4 --workspace` | every Rust test | 56 s (build warm, M4 Pro; [measurements](build-times.md)) | every agent, every change |
+| `cargo test -j4 --workspace` | every Rust test | 56 s (build warm, M4 Pro; [measurements](building.md#development-build-and-test-times)) | every agent, every change |
 | `tools/smoke.sh` | launch, login, play, pause, seek, next, a queue edit, one AutoMix transition, the equalizer tuned in place, offload on and off, the notification's pause and play, a download played offline, no crash or ANR | 56 s on the hardware-rendered arm64 emulator against the local server; 34 checks passed | every agent that touched Android, on its emulator turn |
 | `tools/audio-e2e.sh --only …`, `tools/feature-e2e.sh --only …` | the sections of the area a change touched | a section is 10-90 s | the agent that touched it |
 | `tools/audio-e2e.sh` in full | every audio device check | 95 s on the arm64 emulator against the local server; 33 checks passed | the coordinator, once per batch, before a perf APK build |
-| `tools/feature-e2e.sh` in full | every feature device check | 216 s, 123 passing checks, hardware graphics and isolated local fixtures ([details](build-times.md)) | the coordinator, once per batch, before a perf APK build |
+| `tools/feature-e2e.sh` in full | every feature device check | 216 s, 123 passing checks, hardware graphics and isolated local fixtures ([details](building.md#development-build-and-test-times)) | the coordinator, once per batch, before a perf APK build |
 
 Never `-j` above 4: the machine runs out of memory. For queued host checks, nextest,
-Bazel player targets and a pool of hardware-rendered emulators, see [development.md](development.md).
+Bazel player targets and a pool of hardware-rendered emulators, see [Building](building.md#faster-development-checks).
 
 ## Desktop UI controls
 
@@ -126,7 +133,7 @@ calls off (the count hanging now falls as the songs are skipped), which only the
 ## What moved to Rust and what stays on the device
 
 Every check the two device suites had on 2026-09-25 (110 call sites: 41 in audio-e2e, 69 in
-feature-e2e). **(a)** is behaviour Rust owns, removed from the device once a Rust test covers it; **(b)**
+feature-e2e). **(a)** is behavior Rust owns, removed from the device once a Rust test covers it; **(b)**
 is Android glue and stays on the device. 50 moved, 60 stay.
 
 ### tools/audio-e2e.sh (21 moved, 20 kept)
@@ -191,7 +198,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | the batch reports a speed; an ETA (2) | a | transfers.rs |
 | a new playlist reaches the server; the song went in; the check cleans up (3) | a | client.rs |
 | adding to the queue grows it; play next grows it (2) | a | queue, controls.rs; smoke `queue` keeps one on the device |
-| the favourites tile opens; lists what the server starred; starring adds; unstarring removes; tapping a row plays it; with the mix around it; the mix has songs (7) | b | feature-e2e `foryou` (the screen) |
+| the favorites tile opens; lists what the server starred; starring adds; unstarring removes; tapping a row plays it; with the mix around it; the mix has songs (7) | b | feature-e2e `foryou` (the screen) |
 | a mix stays the same when opened again | a | board.rs |
 | a transition is planned at a track boundary (real album) | a | crossfade.rs, automix.rs, engine.rs; smoke `automix` hears one |
 | the songs coming up are measured before they are played | b | audio-e2e `automix` (it was checked twice) |
@@ -266,11 +273,11 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 `cargo test -j4 --workspace` passed 1,129 tests in 72–79 s once built on 2026-10-10;
 the first warm measurement reported 54.87 s in test binaries. The older 2026-09-26
 baseline was about 1,120 tests in 30 s; its per-binary figures below are historical,
-not the current baseline. See [build-times.md](build-times.md) for current timings.
+not the current baseline. See [build and test times](building.md#development-build-and-test-times) for current timings.
 `[profile.test.package.…]` in Cargo.toml
 builds nori-player, nori-engine and every dependency at opt-level 2 for `cargo test` only; debug
 assertions and overflow checks stay on. The workspace's own crates that are not listed there (nori-core,
-the android crate) are unoptimised, so their tests keep their data small.
+the android crate) are unoptimized, so their tests keep their data small.
 
 Test binaries run one after another and the tests inside a binary side by side, so a binary takes as long
 as its slowest test or its total over the cores, whichever is more. The binaries that matter:
@@ -279,7 +286,7 @@ as its slowest test or its total over the cores, whichever is more. The binaries
 | --- | --- | --- | --- |
 | crates/engine `--test engine` (engine.rs, paths.rs, radio.rs, tempo.rs, stretch.rs, estimated.rs, hung.rs, silent.rs, transcode.rs) | 144 | 10 s | offload tests of a few ffmpeg songs, 4-7 s each, and next pressed fast through four queues, 6 s |
 | crates/player `--test pipeline` | 67 | 4.6 s | levels.rs, 3-4 s each: every kind of transition through two 60 s songs |
-| crates/player lib | 262 | 3.6 s | automix/tests.rs, the synthetic songs analysed side by side |
+| crates/player lib | 262 | 3.6 s | automix/tests.rs, the synthetic songs analyzed side by side |
 | crates/android lib | 40 | 8 s | track.rs's two tests of the real engine thread on the wall clock, the rapid skips over a phone-like track 6 s |
 | crates/engine `--test one_fetch`, `--test core` | 1 each | 1-2 s | one core and one queue per process, so a binary each |
 | everything else | about 600 | under 1.3 s a binary | |
@@ -326,14 +333,14 @@ battery and deep idle of a real phone stay the owner's `tools/bench.sh`.
 | core | the FFI surface over the real SQLite: the index and search, smart playlists, mixes, history, lyrics' race, covers, AutoEQ and device profiles, the Subsonic client against a fake transport (offline writes and their replay, the address in use, login), stream addresses, transfers, the car's tree, the Kotlin twins (tests/twins.rs), a listen kept by its profile (tests/scrobble.rs), whole flows against a Subsonic server kept in memory: log in, index, search, offline changes replayed in order, a radio (tests/scenario.rs); remote control and jams against a relay kept in memory (tests/remote.rs) |
 | lyrics | every lyrics format, the services' answers, trust and fitting, the race between services, synced times checked against synthetic sung songs (sync.rs) |
 | covers | decoders against Pillow's references, the scaler, the disk and memory caches, the loader's workers |
-| look | colours from a cover (the AndroidX palette port), Compose's colour maths, the lyrics and motion layout |
+| look | colors from a cover (the AndroidX palette port), Compose's color math, the lyrics and motion layout |
 | library, queue, settings, transfers, devices, perf | pages, menus, the queue's rules, settings and their store (tests/stored_format.rs: the stored keys and encodings against a golden copy), the download table, AutoEQ, the perf log's report |
 | cli, android, mpris, net, http, db | each client's own glue: the terminal's drawing, the AudioTrack model (track.rs), every JNI door's signature against its Kotlin `external fun` (lib.rs), media controls, requests |
 | testdir | the tests' temp directories, and tests/registered.rs: every file under a crate's `tests/` is in a test binary |
 
 The Kotlin unit tests (`./gradlew :core:testDebugUnitTest :app:testDebugUnitTest`, a minute, no device)
 cover what the Kotlin keeps: formatting, the media3 error reading, the frame fades, the queue panel's keys, drag and undo (QueueEditsTest), the player's cover across
-fast skips (CoverTurnTest, CoverFetchTest: loads answered out of order, cancelled, failed and asked again), and InitOrderTest, which
+fast skips (CoverTurnTest, CoverFetchTest: loads answered out of order, canceled, failed and asked again), and InitOrderTest, which
 reads Nori.kt and Downloads.kt and fails when a field a constructor's thread reaches is declared after the
 line that starts the thread (the start-up NPE of 2026-09-25).
 
