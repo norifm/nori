@@ -1288,8 +1288,6 @@ component PlayerControls inherits Rectangle {
     in property <bool> now-starred;
     in property <string> now-art;
     in property <bool> playing;
-    in property <bool> mixing;
-    in property <string> mixing-label;
     in property <int> position-ms;
     in property <int> duration-ms;
     in property <bool> shuffle;
@@ -1423,12 +1421,6 @@ component PlayerControls inherits Rectangle {
                             text: root.clock(song-box.dragged >= 0 ? song-box.dragged : root.position-ms) + "  /  " + root.clock(root.duration-ms);
                             color: Theme.dim;
                             overflow: elide;
-                        }
-                        if root.mixing && !seek.hot: Text {
-                            text: root.mixing-label;
-                            color: Theme.accent;
-                            font-size: 11px;
-                            font-weight: 600;
                         }
                         if !line.elsewhere && !seek.hot: HorizontalLayout {
                             horizontal-stretch: 1;
@@ -4649,8 +4641,6 @@ export component AppWindow inherits Window {
                         now-album-id: root.now-album-id;
                         now-art: root.now-art;
                         playing: root.playing;
-                        mixing: root.mixing;
-                        mixing-label: root.mixing-label;
                         position-ms: root.display-position-ms;
                         duration-ms: root.duration-ms;
                         shuffle: root.shuffle;
@@ -4991,13 +4981,6 @@ export component AppWindow inherits Window {
                                 font-weight: 600;
                                 overflow: elide;
                             }
-                            if root.mixing: Text {
-                                text: root.mixing-label;
-                                color: white;
-                                font-size: 12px;
-                                font-weight: 600;
-                                vertical-alignment: center;
-                            }
                         }
                         HorizontalLayout {
                             ArtistLine {
@@ -5090,6 +5073,16 @@ export component AppWindow inherits Window {
                         text: root.clock(root.display-position-ms);
                         color: #ffffff8c;
                         font-size: 10px;
+                    }
+                    Text {
+                        text: root.mixing-label;
+                        color: #ffffff8c;
+                        font-size: 10px;
+                        font-weight: 600;
+                        letter-spacing: 1.4px;
+                        horizontal-alignment: center;
+                        opacity: root.mixing ? 1 : 0;
+                        animate opacity { duration: 360ms; }
                     }
                     Text {
                         text: "-" + root.clock(root.duration-ms - root.display-position-ms);
@@ -5391,8 +5384,6 @@ export component PlayerBar inherits Window {
     in property <string> now-album-id;
     in property <string> now-art;
     in property <bool> playing;
-    in property <bool> mixing;
-    in property <string> mixing-label;
     in property <int> position-ms;
     in property <int> duration-ms;
     in property <bool> shuffle;
@@ -5437,8 +5428,6 @@ export component PlayerBar inherits Window {
         now-album-id: root.now-album-id;
         now-art: root.now-art;
         playing: root.playing;
-        mixing: root.mixing;
-        mixing-label: root.mixing-label;
         position-ms: root.position-ms;
         duration-ms: root.duration-ms;
         shuffle: root.shuffle;
