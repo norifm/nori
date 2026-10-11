@@ -545,6 +545,7 @@ PY
     resolved=$(python3 "$here/mdns-door.py" "$data/nori.db") || { check "the CLI peer announces its door" false; return 1; }
     name=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
     door=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["door"])')
+    peer_id=$(printf '%s' "$door" | python3 -c 'import sys; print(dict(p.split("=",1) for p in sys.stdin.read().split("|",2)[2].split(";"))["id"])')
     echo "     the peer's door: $door"
     "$app" set remoteControl true >/dev/null
     "$app" play "album:$(mix_album)" >/dev/null; sounds 20
@@ -553,7 +554,7 @@ PY
     "$app" remote found "$door" >/dev/null
     check "the peer is listed" wait_until 15 bash -c "'$app' remote devices | grep -Fq '$name'" || return 1
     "$app" remote watch off >/dev/null
-    "$app" remote pick "$name" >/dev/null
+    "$app" remote pick "$peer_id" >/dev/null
     check "the player shows the peer playing" wait_for playingOn "$name" 15 || return 1
     remote_session() { adb shell dumpsys media_session | grep -q "volumeType=REMOTE"; }
     check "the media session is the peer's (a remote volume)" wait_until 10 remote_session
@@ -593,7 +594,7 @@ PY
     check "\"This phone\" brings it back" wait_for playingOn "" 15
     check "and it sounds here" sounds 15
     check "the peer paused" wait_until 10 bash -c "tmux capture-pane -p -t $peer | grep -q '▶'"
-    "$app" remote pick "$name" >/dev/null
+    "$app" remote pick "$peer_id" >/dev/null
     check "the phone can hand playback back to the peer" wait_for playingOn "$name" 10
     check "the phone releases its output again" silent 10
     check "the peer is playing before it closes" wait_until 10 bash -c "'$app' remote devices | grep -Fq '$name (nearby): playing'"
