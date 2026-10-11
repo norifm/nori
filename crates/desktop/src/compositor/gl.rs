@@ -70,7 +70,7 @@ impl Gpu {
         }
     }
     pub(super) fn renderer(&self) -> Renderer {
-        SkiaRenderer::default_opengl(&self.shared)
+        SkiaRenderer::retained_opengl(&self.shared)
     }
 
     pub(super) fn picture(&self, pixels: &[u8], width: u32, height: u32) -> slint::Image {
@@ -617,7 +617,7 @@ impl Draw {
                     context.reset(None);
                     layer
                         .renderer
-                        .render_to_surface(texture.surface.as_mut().unwrap(), context)
+                        .render_to_surface(texture.surface.as_mut().unwrap(), context, !fresh)
                         .map_err(|e| e.to_string())?;
                 }
             }
@@ -1038,7 +1038,9 @@ mod tests {
             export component TestWindow inherits Window {
                 in property <color> colour;
                 in property <image> picture;
+                in property <color> accent;
                 Rectangle { background: root.colour; Image { width: parent.width; height: parent.height; source: root.picture; image-fit: fill; } }
+                Rectangle { x: 4px; y: 4px; width: 8px; height: 8px; background: root.accent; }
             }
         }
         let ui = TestWindow::new().unwrap();
@@ -1090,7 +1092,7 @@ mod tests {
                     context.reset(None);
                     layer
                         .renderer
-                        .render_to_surface(texture.surface.as_mut().unwrap(), context)
+                        .render_to_surface(texture.surface.as_mut().unwrap(), context, false)
                         .unwrap();
                     let u = uniforms(
                         [0.0, 0.0, width as f32, height as f32],
@@ -1132,6 +1134,57 @@ mod tests {
                 })
                 .unwrap();
         }
+        ui.set_picture(slint::Image::default());
+        ui.set_colour(slint::Color::from_rgb_u8(18, 52, 86));
+        ui.set_accent(slint::Color::from_rgb_u8(255, 0, 0));
+        native
+            .surface
+            .with_context(&mut |context| {
+                let mut texture = Texture::new(native.clone(), context, layer.size.get()).unwrap();
+                layer
+                    .renderer
+                    .render_to_surface(texture.surface.as_mut().unwrap(), context, false)
+                    .unwrap();
+                ui.set_accent(slint::Color::from_rgb_u8(0, 0, 255));
+                let damage = layer
+                    .renderer
+                    .render_to_surface(texture.surface.as_mut().unwrap(), context, true)
+                    .unwrap();
+                let area = damage
+                    .expect("retained layers track repaint regions")
+                    .iter()
+                    .map(|rect| rect.area())
+                    .sum::<f32>();
+                assert!(
+                    area < 72.0 * 64.0 / 4.0,
+                    "changing an 8x8 control repainted {area} pixels"
+                );
+                let info = skia_safe::ImageInfo::new(
+                    (72, 64),
+                    skia_safe::ColorType::RGBA8888,
+                    skia_safe::AlphaType::Unpremul,
+                    None,
+                );
+                let mut pixels = vec![0; 72 * 64 * 4];
+                assert!(texture.surface.as_mut().unwrap().read_pixels(
+                    &info,
+                    &mut pixels,
+                    72 * 4,
+                    (0, 0)
+                ));
+                for y in 0..64 {
+                    for x in 0..72 {
+                        let expected = if (4..12).contains(&x) && (4..12).contains(&y) {
+                            [0, 0, 255, 255]
+                        } else {
+                            [18, 52, 86, 255]
+                        };
+                        assert_eq!(&pixels[(y * 72 + x) * 4..(y * 72 + x + 1) * 4], &expected);
+                    }
+                }
+            })
+            .unwrap();
+        ui.set_accent(slint::Color::from_argb_u8(0, 0, 0, 0));
         let colours = [
             [255, 0, 0, 255],
             [0, 255, 0, 255],
@@ -1188,7 +1241,7 @@ mod tests {
                 context.reset(None);
                 layer
                     .renderer
-                    .render_to_surface(texture.surface.as_mut().unwrap(), context)
+                    .render_to_surface(texture.surface.as_mut().unwrap(), context, false)
                     .unwrap();
                 let u = uniforms(
                     [0.0, 0.0, 72.0, 64.0],
@@ -1278,7 +1331,7 @@ mod tests {
                     context.reset(None);
                     layer
                         .renderer
-                        .render_to_surface(texture.surface.as_mut().unwrap(), context)
+                        .render_to_surface(texture.surface.as_mut().unwrap(), context, false)
                         .unwrap();
                     let mut draw = draw.borrow_mut();
                     draw.resize(size.width, size.height);
