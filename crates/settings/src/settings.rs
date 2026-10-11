@@ -487,6 +487,8 @@ pub struct StoredPrefs {
     #[setting("animateAnyway", FLAG, default = true, name = "ignoreSystemMotion", show = K::Switch)]
     pub ignore_system_motion: bool,
     // Lyrics.
+    #[setting("lyricsPrefetch", FLAG, default = true, show = K::Switch)]
+    pub lyrics_prefetch: bool,
     #[setting("lyricsSweep", FLAG, default = true, show = K::Switch)]
     pub lyrics_sweep: bool,
     #[setting("lyricsSize", within(0, 2), default = 1, show = K::Choice(&["0", "1", "2"]))]

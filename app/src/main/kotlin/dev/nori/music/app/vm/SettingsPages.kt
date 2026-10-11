@@ -237,6 +237,7 @@ private val INDEX: List<Triple<String, Int, Int>> = listOf(
     Triple("look", R.string.settings_keep_awake, R.string.settings_hint_keep_awake),
     Triple("look", R.string.settings_controls_side, R.string.settings_hint_controls_side),
     Triple("look", R.string.settings_animate_anyway, R.string.settings_hint_animate_anyway),
+    Triple("lyrics", R.string.settings_lyrics_prefetch, R.string.settings_hint_lyrics_prefetch),
     Triple("lyrics", R.string.settings_lyrics_sweep, R.string.settings_hint_lyrics_sweep),
     Triple("lyrics", R.string.settings_lyrics_size, 0),
     Triple("lyrics", R.string.settings_lyrics_translation, R.string.settings_hint_lyrics_translation),
@@ -743,6 +744,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
 
     fun lyrics(): List<SettingsSection> {
         val display = listOf(
+            toggle("lyricsPrefetch", R.string.settings_lyrics_prefetch, R.string.settings_lyrics_prefetch_detail),
             toggle("lyricsSweep", R.string.settings_lyrics_sweep, R.string.settings_lyrics_sweep_detail),
             choice("lyricsSize", R.string.settings_lyrics_size) { v ->
                 when (v) {

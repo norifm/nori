@@ -10,6 +10,9 @@ use nori_core::remote::wire::{DeviceKind, Refusal, Role};
 use nori_core::remote::{KindWords, Listening, RemoteDevice};
 use nori_core::{AlbumDetail, PlaylistDetail, PresetKind, Song};
 
+pub const LYRICS_PREFETCH: &str = "Prepare next song’s lyrics";
+pub const LYRICS_PREFETCH_DETAIL: &str = "Fetch lyrics for one upcoming library song while the current song plays";
+
 /// A playback position or length in ms: "3:07".
 pub fn clock(ms: i64) -> String {
     numbers::clock(ms / 1000, false)

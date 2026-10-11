@@ -68,11 +68,11 @@ fun <S : Any, T> Flow<S?>.followSong(
     distinctUntilChanged { a, b -> a?.let(id) == b?.let(id) }.flatMapLatest { song ->
         if (song == null) return@flatMapLatest flowOf(ForSong(null, none()))
         val songId = id(song)
+        // What is on screen for this song, and whether anything is.
+        var shown: T = loading
+        var showing = false
         flow {
             val had = answers?.get(songId)
-            // What is on screen for this song, and whether anything is.
-            var shown: T = loading
-            var showing = false
             if (had != null) { shown = had.value; showing = true; emit(had.value) } else emit(loading)
             if (had?.done == true) return@flow
             fetch(song).collect { v ->
@@ -84,7 +84,7 @@ fun <S : Any, T> Flow<S?>.followSong(
                 if (keep(v)) answers?.put(songId, shown, done = false)
             }
             if (showing && keep(shown)) answers?.put(songId, shown, done = true)
-        }.catch { emit(failed(it)) }.map { ForSong(songId, it) }
+        }.catch { if (!showing || !keep(shown)) emit(failed(it)) }.map { ForSong(songId, it) }
     }
 
 /**

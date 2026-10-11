@@ -28,6 +28,34 @@ impl LyricsCache for Core {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Prefetch {
+    entry: Option<u64>,
+    cancel: Option<futures_util::future::AbortHandle>,
+}
+
+// A cancelled caller releases its entry so a later visit can warm it again.
+struct PrefetchRun<'a> {
+    work: &'a parking_lot::Mutex<Prefetch>,
+    entry: u64,
+}
+
+impl PrefetchRun<'_> {
+    fn finish(self) {
+        let mut work = self.work.lock();
+        if work.entry == Some(self.entry) { work.cancel = None; }
+    }
+}
+
+impl Drop for PrefetchRun<'_> {
+    fn drop(&mut self) {
+        let mut work = self.work.lock();
+        if work.entry == Some(self.entry) && work.cancel.take().is_some() {
+            work.entry = None;
+        }
+    }
+}
+
 /// Passes on only picks that replace the last one shown ([`lyrics_replaces`]).
 struct Screen {
     to: Arc<dyn LyricsShown>,
@@ -47,6 +75,33 @@ impl LyricsShown for Screen {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
+    /// Warms the next queue entry's lyrics without publishing them to a screen.
+    pub async fn lyrics_prefetch(&self) {
+        use futures_util::future::{AbortHandle, Abortable};
+        let next = self.core.session.lyrics_ahead();
+        let (old, registration) = {
+            let mut work = self.prefetch.lock();
+            let entry = next.as_ref().map(|(entry, _)| *entry);
+            if work.entry == entry { return; }
+            work.entry = entry;
+            let old = work.cancel.take();
+            let registration = next.as_ref().map(|_| {
+                let (cancel, registration) = AbortHandle::new_pair();
+                work.cancel = Some(cancel);
+                registration
+            });
+            (old, registration)
+        };
+        if let Some(old) = old { old.abort(); }
+        if let (Some((entry, id)), Some(registration)) = (next, registration) {
+            let run = PrefetchRun { work: &self.prefetch, entry };
+            if matches!(Abortable::new(self.lyrics_for(id.clone(), Arc::new(Unseen)), registration).await, Ok(Ok(()))) {
+                crate::alog::info(&format!("lyrics: prefetched {id}"));
+                run.finish();
+            }
+        }
+    }
+
     /// Streams song `id`'s lyrics to `shown`: the server's (cached, then changed), then the services'
     /// when those are not timed, and an empty server answer last if nobody had any. No pick is shown
     /// twice. Dropping the future cancels its requests.
@@ -63,7 +118,8 @@ impl Client {
         let screen = Arc::new(Screen { to: shown, last: parking_lot::Mutex::new(None) });
         let read = || Read::LyricsBySong { song_id: id.clone() };
         let show_server = |v: &crate::Lyrics| {
-            if !v.lines.is_empty() {
+            let timed = screen.last.lock().as_ref().is_some_and(|pick| pick.lyrics.synced);
+            if !v.lines.is_empty() && (!timed || v.synced) {
                 screen.show(LyricsPick { lyrics: v.clone(), origin: nori_settings::lyrics_sources::LyricsOrigin::Server });
             }
         };
@@ -75,6 +131,14 @@ impl Client {
         };
         if let Some(v) = &server {
             show_server(v);
+        }
+        let song = self.stored_song_of(&id);
+        if let Some(song) = &song {
+            if let Some(pick) = cached_pick(&*self.core, song,
+                server.as_ref().is_some_and(|v| !v.lines.is_empty()),
+                server.as_ref().is_some_and(|v| v.synced), asked) {
+                screen.show(pick);
+            }
         }
         // A downloaded song's lyrics were looked up at download: serve them from the cache without
         // requests; the server is re-asked only after a week, after showing them.
@@ -90,7 +154,7 @@ impl Client {
         }
         let has_lines = server.as_ref().is_some_and(|l| !l.lines.is_empty());
         let synced = server.as_ref().is_some_and(|l| l.synced);
-        let song = self.song_of(id.clone()).await?;
+        let song = match song { Some(song) => song, None => self.song_of(id.clone()).await? };
         if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics).await {
             nori_perf::perf_log::note_core("lyrics", line.trim_start_matches("lyrics: "));
         }
@@ -196,6 +260,108 @@ pub(crate) mod tests {
     const NONE: &str = r#"{"subsonic-response":{"status":"ok","lyricsList":{}}}"#;
 
     #[test]
+    fn prefetch_warms_only_the_next_library_song() {
+        for (on, next) in [(true, "ahead"), (false, "ahead"), (true, "ext-ahead")] {
+            let (c, fake) = setup();
+            let ahead = Song { id: next.into(), ..song() };
+            c.core.session.register(vec![Song { id: "current".into(), ..song() }, ahead]);
+            c.core.session.set(vec!["current".into(), next.into(), "later".into()], Some(0), false, None);
+            c.settings().open("").unwrap();
+            c.settings().edit_by_name("lyricsPrefetch", &on.to_string()).unwrap();
+            fake.answer(SYNCED);
+            block(c.lyrics_prefetch());
+            if on && next == "ahead" {
+                let stored = c.read_stored(crate::cache_policy::Read::LyricsBySong { song_id: next.into() }).unwrap();
+                assert!(matches!(stored.page, Some(crate::cache_policy::Page::LyricsPage { v }) if !v.lines.is_empty()), "prefetch must store the next song's words before it is played");
+                let shown = Arc::new(Screen::default());
+                block(c.lyrics_for(next.into(), shown.clone())).unwrap();
+                assert_eq!(shown.0.lock()[0].lyrics.lines[0].text, "timed");
+                assert_eq!(fake.asked().len(), 1, "opening the prefetched song needs no request");
+                assert!(fake.asked()[0].contains("id=ahead"));
+                assert!(c.core.cache_get("getLyricsBySongId&id=later&enhanced=true".into()).unwrap().is_none());
+            } else {
+                assert!(fake.asked().is_empty(), "disabled or provider: no prefetch requests");
+            }
+        }
+    }
+
+    #[test]
+    fn a_new_prefetch_cancels_the_obsolete_request() {
+        use crate::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
+        use std::future::Future;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{Context, Waker};
+
+        struct Pending(Arc<AtomicUsize>);
+        impl Drop for Pending {
+            fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); }
+        }
+        struct Gate { fake: Arc<Fake>, active: Arc<AtomicUsize> }
+        #[async_trait::async_trait]
+        impl Transport for Gate {
+            async fn get(&self, url: String, timeout: u32) -> Result<TransportResponse, TransportError> {
+                if url.contains("id=first") {
+                    self.active.fetch_add(1, Ordering::SeqCst);
+                    let _pending = Pending(self.active.clone());
+                    std::future::pending().await
+                } else { self.fake.get(url, timeout).await }
+            }
+            async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> { self.fake.send(request).await }
+            fn address_changed(&self) {}
+            fn network(&self) -> Network { Network::Unmetered }
+        }
+        let (original, fake) = setup();
+        let active = Arc::new(AtomicUsize::new(0));
+        let c = Client::new(original.core.clone(), Arc::new(Gate { fake: fake.clone(), active: active.clone() }), Default::default());
+        c.set_profile(NetProfile { url: "h".into(), ..Default::default() });
+        c.core.session.register(vec![Song { id: "first".into(), ..song() }, Song { id: "second".into(), ..song() }]);
+        c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
+        let mut first = Box::pin(c.lyrics_prefetch());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        // Asking again for the same entry starts no second request.
+        block(c.lyrics_prefetch());
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        c.core.session.set(vec!["now".into(), "second".into()], Some(0), false, None);
+        fake.answer(SYNCED);
+        block(c.lyrics_prefetch());
+        assert!(first.as_mut().poll(&mut cx).is_ready());
+        assert_eq!(active.load(Ordering::SeqCst), 0, "the obsolete network future was dropped");
+        let shown = Arc::new(Screen::default());
+        block(c.lyrics_for("second".into(), shown.clone())).unwrap();
+        assert_eq!(shown.0.lock()[0].lyrics.lines[0].text, "timed");
+        assert_eq!(fake.asked().len(), 1);
+        c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
+        let mut cancelled = Box::pin(c.lyrics_prefetch());
+        assert!(cancelled.as_mut().poll(&mut cx).is_pending());
+        drop(cancelled);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        let mut retry = Box::pin(c.lyrics_prefetch());
+        assert!(retry.as_mut().poll(&mut cx).is_pending(), "cancelling a caller allows this entry to be warmed again");
+        assert_eq!(active.load(Ordering::SeqCst), 1);
+        drop(retry);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        let mut removed = Box::pin(c.lyrics_prefetch());
+        assert!(removed.as_mut().poll(&mut cx).is_pending());
+        c.core.session.set(vec!["now".into()], Some(0), false, None);
+        assert!(c.core.session.lyrics_prefetch_ready(), "queue edits reconcile a removed next entry");
+        block(c.lyrics_prefetch());
+        assert!(removed.as_mut().poll(&mut cx).is_ready());
+        assert_eq!(active.load(Ordering::SeqCst), 0, "removing the upcoming entry cancels its request");
+        c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
+        let mut disabled = Box::pin(c.lyrics_prefetch());
+        assert!(disabled.as_mut().poll(&mut cx).is_pending());
+        c.settings().open("").unwrap();
+        c.settings().edit_by_name("lyricsPrefetch", "false").unwrap();
+        assert!(!c.core.session.lyrics_prefetch_ready());
+        block(c.lyrics_prefetch());
+        assert!(disabled.as_mut().poll(&mut cx).is_ready());
+        assert_eq!(active.load(Ordering::SeqCst), 0, "turning prefetch off cancels its request");
+        assert_eq!(fake.asked().len(), 1);
+    }
+
+    #[test]
     fn server_and_services() {
         let (c, fake) = setup();
         // Unique titles: a failing service rests per song across tests.
@@ -243,6 +409,30 @@ pub(crate) mod tests {
         assert!(none[0].lyrics.lines.is_empty() && none[0].origin == LyricsOrigin::Server);
         run(&c, &s, false, false, &lrclib());
         assert_eq!(fake.asked().len(), 2, "miss cached: {:?}", fake.asked());
+    }
+
+    #[test]
+    fn cached_service_words_arrive_before_the_server_refresh() {
+        struct Immediate { fake: Arc<Fake>, shown: Mutex<Vec<(LyricsPick, usize)>> }
+        impl LyricsShown for Immediate {
+            fn show(&self, pick: LyricsPick) { self.shown.lock().push((pick, self.fake.asked().len())); }
+        }
+        let (c, fake) = setup();
+        let s = Song { id: "cached-before-refresh".into(), title: "Before the Rain".into(), ..song() };
+        c.core.session.register(vec![s.clone()]);
+        fake.answer(r#"{"statusCode":404}"#);
+        fake.answer(r#"[{"duration":1022,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
+        let found = run(&c, &s, false, false, &lrclib());
+        assert_eq!(found[0].origin, LyricsOrigin::Lrclib);
+        c.core.cache_put(format!("getLyricsBySongId&id={}&enhanced=true", s.id), NONE.as_bytes().to_vec()).unwrap();
+        c.core.db.lock().execute("UPDATE cache SET ts = 0 WHERE key LIKE 'getLyricsBySongId%'", []).unwrap();
+        let before = fake.asked().len();
+        fake.fail(FailureKind::Timeout);
+        let screen = Arc::new(Immediate { fake: fake.clone(), shown: Mutex::new(Vec::new()) });
+        block(c.lyrics_for_with(s.id, &lrclib(), screen.clone())).unwrap();
+        let shown = screen.shown.lock();
+        assert_eq!(shown[0].0.origin, LyricsOrigin::Lrclib);
+        assert_eq!(shown[0].1, before, "cached words must arrive before attempting the slow server request");
     }
 
     #[test]
