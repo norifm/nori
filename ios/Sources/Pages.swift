@@ -520,7 +520,7 @@ final class PageHeader: UIView {
 
     init(head: [String: Any]) {
         let kind = head["k"] as? String ?? ""
-        artistId = kind == "album" ? head["artistId"] as? String ?? "" : ""
+        artistId = (kind == "album" || kind == "downloadedAlbum") ? head["artistId"] as? String ?? "" : ""
         item = Item(head)
         super.init(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 10))
         let side: CGFloat = 220
@@ -698,7 +698,7 @@ class PageController: UITableViewController {
     enum Layout { case list, shelf, grid }
 
     /// Pages drawn under a header with their cover and name.
-    private static let headed: Set<Int32> = [NORI_PAGE_ALBUM, NORI_PAGE_ARTIST, NORI_PAGE_PLAYLIST, NORI_PAGE_MIX, NORI_PAGE_SMART]
+    private static let headed: Set<Int32> = [NORI_PAGE_ALBUM, NORI_PAGE_DOWNLOADED_ALBUM, NORI_PAGE_ARTIST, NORI_PAGE_PLAYLIST, NORI_PAGE_MIX, NORI_PAGE_SMART]
 
     init(kind: Int32, arg: String = "", title: String) {
         self.kind = kind
@@ -1008,7 +1008,7 @@ class PageController: UITableViewController {
             guard rows.indices.contains(path.section), rows[path.section].layout == .list,
                   let cell = tableView.cellForRow(at: path) as? ItemCell else { continue }
             let item = rows[path.section].section.items[path.row]
-            cell.show(item, numbered: kind == NORI_PAGE_ALBUM, current: isCurrent(item))
+            cell.show(item, numbered: kind == NORI_PAGE_ALBUM || kind == NORI_PAGE_DOWNLOADED_ALBUM, current: isCurrent(item))
         }
     }
 
@@ -1083,7 +1083,7 @@ class PageController: UITableViewController {
         case .list:
             let cell = tableView.dequeueReusableCell(withIdentifier: ItemCell.id, for: indexPath) as! ItemCell
             let item = r.section.items[indexPath.row]
-            cell.show(item, numbered: kind == NORI_PAGE_ALBUM, current: isCurrent(item))
+            cell.show(item, numbered: kind == NORI_PAGE_ALBUM || kind == NORI_PAGE_DOWNLOADED_ALBUM, current: isCurrent(item))
             return cell
         }
     }
@@ -1106,6 +1106,8 @@ class PageController: UITableViewController {
             if nori_ios_tap_song(token, Int32(item.index)) == 1 {
                 (view.window?.rootViewController as? ShellController)?.openPlayer()
             }
+        case "downloadedAlbum":
+            navigationController?.pushViewController(PageController(kind: NORI_PAGE_DOWNLOADED_ALBUM, arg: item.id, title: item.title), animated: true)
         case "album":
             navigationController?.pushViewController(PageController(kind: NORI_PAGE_ALBUM, arg: item.id, title: item.title), animated: true)
         case "artist":
@@ -1187,6 +1189,7 @@ class PageController: UITableViewController {
     func menu(for item: Item) {
         let kind: Int32
         switch item.kind {
+        case "downloadedAlbum": kind = NORI_PAGE_DOWNLOADED_ALBUM
         case "album": kind = NORI_PAGE_ALBUM
         case "artist": kind = NORI_PAGE_ARTIST
         case "playlist": kind = NORI_PAGE_PLAYLIST

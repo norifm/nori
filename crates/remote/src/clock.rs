@@ -96,7 +96,9 @@ impl ClockSync {
 
     pub fn add(&mut self, e: Exchange) {
         let s = Sample { at: (e.t1 + e.t4) / 2, offset: e.offset(), round_trip: e.round_trip().max(0) };
-        if self.offset_at(s.at).is_some_and(|o| (s.offset - o).abs() > s.round_trip + JUMP_US) {
+        // A faster exchange can correct the delay in the old estimate without a clock restart.
+        let previous_trip = self.samples.iter().map(|s| s.round_trip).min().unwrap_or(0);
+        if self.offset_at(s.at).is_some_and(|o| (s.offset - o).abs() > previous_trip + s.round_trip + JUMP_US) {
             self.samples.clear();
         }
         if self.samples.len() == KEPT {
@@ -202,6 +204,16 @@ mod tests {
         let mean = moves.iter().sum::<i64>() / moves.len() as i64;
         let most = moves.iter().max().unwrap();
         assert!(mean <= 2_000 && *most <= 15_000, "moved {mean} µs on average, {most} µs at most");
+    }
+
+    #[test]
+    fn a_faster_exchange_keeps_the_startup_burst() {
+        for first in [(500_000, 1_000), (1_000, 500_000)] {
+            let (sync, _) = exchanges(5_000_000, 0.0, sent(0, BURST), |k| {
+                if k == 0 { first } else { (1_000, 1_000) }
+            });
+            assert_eq!(sync.settled_offset_at(2_000_000), Some(5_000_000));
+        }
     }
 
     #[test]

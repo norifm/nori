@@ -85,6 +85,15 @@ once after a qualifying listen. An early skip and pause leave the count unchange
 and paused-time accounting are Rust tests; the callbacks and Android write queue require the app.
 This opt-in check uses fixture songs and restores the scrobbling settings.
 
+`NORI_E2E_SERVER=local tools/feature-e2e.sh --only download-albums` checks the Compose
+download cards and Android Auto's media browser against a partially downloaded fixture album. It
+opens the saved tracks, taps one offline, checks Favorites through the browser, and removes the
+album. Grouping, disc order, partial albums, and songs without an album are Rust tests; media3
+browser callbacks, Compose navigation, and offline AudioTrack playback require Android.
+
+The `jam` section also checks that media3 receives the guest timeline without issuing a seek to
+zero after Rust has aligned playback with the host. This queue handoff belongs to the Android service.
+
 ```sh
 tools/smoke.sh                                  # the real server in ~/.music.pass
 NORI_E2E_SERVER=local tools/smoke.sh            # tools/dev-server.sh's Navidrome, through tools/lying-proxy.py

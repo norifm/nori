@@ -8,6 +8,22 @@ pub use nori_transfers::transfers::*;
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
+    /// Finished albums and unfiled songs, in newest-download order.
+    pub fn downloaded_library(&self) -> crate::Result<crate::library::DownloadedLibrary> {
+        Ok(crate::library::downloaded_library(self.downloads(true)?))
+    }
+
+    /// The downloaded tracks of one album, in disc and track order.
+    pub fn downloaded_album(&self, id: String) -> crate::Result<Option<crate::AlbumDetail>> {
+        let songs = {
+            let c = self.db.lock();
+            let mut st = c.prepare_cached("SELECT json FROM downloads WHERE server=sid() AND done=1 AND json_extract(json, '$.albumId')=?1 ORDER BY ts DESC")?;
+            let rows = st.query_map([id], |r| r.get::<_, String>(0))?;
+            rows.filter_map(|j| serde_json::from_str(&j.ok()?).ok()).collect()
+        };
+        Ok(crate::library::downloaded_album(songs))
+    }
+
     /// Queues `songs` for download; see [`DownloadQueued`].
     pub fn download_queue(&self, songs: Vec<crate::Song>) -> crate::Result<DownloadQueued> {
         self.downloads.with(|t| {
@@ -264,6 +280,21 @@ mod tests {
 
     fn core() -> std::sync::Arc<Core> {
         Core::new(String::new(), "t".into(), Default::default()).unwrap()
+    }
+
+    #[test]
+    fn downloaded_album_contains_only_finished_tracks() {
+        let c = core();
+        let songs = ["one", "pending", "other"].map(|id| Song {
+            id: id.into(), album_id: Some(if id == "other" { "b" } else { "a" }.into()),
+            ..Default::default()
+        }).to_vec();
+        c.download_queue(songs).unwrap();
+        c.download_settle(vec!["one".into(), "other".into()], vec![true, true]).unwrap();
+        let album = c.downloaded_album("a".into()).unwrap().unwrap();
+        assert_eq!(album.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["one"]);
+        assert_eq!(album.album.song_count, 1);
+        assert!(c.downloaded_album("missing".into()).unwrap().is_none());
     }
 
     #[test]

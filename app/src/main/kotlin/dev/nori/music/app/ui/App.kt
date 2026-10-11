@@ -100,6 +100,10 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet) {
         if (hint != null) albums[id] = hint
         go("album/${Uri.encode(id)}")
     }
+    fun downloadedAlbum(id: String, hint: dev.nori.music.ffi.model.Album) {
+        albums[id] = hint
+        go("downloaded/${Uri.encode(id)}")
+    }
     fun artist(id: String, hint: dev.nori.music.ffi.model.Artist? = null) {
         if (hint != null) artists[id] = hint
         go("artist/${Uri.encode(id)}")
@@ -443,6 +447,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     page("equalizer") { EqualizerScreen(settings) }
                     page("autoeq") { AutoEqScreen(settings) }
                     page("album/{id}", inset = false) { AlbumScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("downloaded/{id}", inset = false) {
+                        AlbumScreen(it.arguments!!.getString("id")!!, actions, viewModel<dev.nori.music.app.vm.DownloadedAlbumViewModel>())
+                    }
                     page("artist/{id}", inset = false) { ArtistScreen(it.arguments!!.getString("id")!!, actions) }
                     page("playlist/{id}", inset = false) { PlaylistScreen(it.arguments!!.getString("id")!!, actions) }
                     page("mix/{id}", inset = false) { MixScreen(it.arguments!!.getString("id")!!, actions) }

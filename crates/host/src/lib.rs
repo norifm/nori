@@ -159,6 +159,7 @@ pub fn derive(image: &Image) -> CoverColours {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fetch {
     Album(String),
+    DownloadedAlbum(String),
     Playlist(String),
     Artist(String),
     /// One of the core's mixes (or the favourites), as its page lists it.
@@ -170,6 +171,7 @@ impl Fetch {
     pub fn origin(&self) -> PageOrigin {
         match self {
             Fetch::Album(id) => PageOrigin::new(OriginKind::Album, id.as_str()),
+            Fetch::DownloadedAlbum(id) => PageOrigin::new(OriginKind::Downloads, id.as_str()),
             Fetch::Playlist(id) => PageOrigin::new(OriginKind::Playlist, id.as_str()),
             Fetch::Artist(id) => PageOrigin::new(OriginKind::Artist, id.as_str()),
             Fetch::Mix(id) => PageOrigin::new(OriginKind::Mix, id.as_str()),
@@ -180,6 +182,7 @@ impl Fetch {
     pub fn songs(self, client: &Client) -> Result<Vec<Song>, NetError> {
         let now = |r: Read| block_on(client.read_now(r));
         Ok(match self {
+            Fetch::DownloadedAlbum(id) => client.core().downloaded_album(id)?.map(|a| a.songs).unwrap_or_default(),
             Fetch::Album(id) => match now(Read::AlbumSongs { id })? {
                 Page::Songs { v } => v,
                 Page::AlbumPage { v } => v.songs,

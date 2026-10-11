@@ -57,6 +57,32 @@ fn chars(a: &mut App, s: &str) {
     }
 }
 
+#[test]
+fn downloads_open_saved_album_tracks() {
+    let mut a = app();
+    a.view = View::Downloads;
+    a.focus = Focus::Main;
+    let tracks = ["Saved one", "Saved two"].map(|title| Song {
+        id: title.into(), title: title.into(), album_id: Some("saved-album".into()),
+        album: "Saved album".into(), ..Default::default()
+    }).to_vec();
+    let stored = nori_core::library::downloaded_library(tracks.clone());
+    a.handle(Msg::Data(Req::Downloads, Ok(Data::Downloads(Box::new(crate::backend::Downloads { stored, ..Default::default() })))));
+    let screen = draw(&mut a, 120, 30);
+    assert!(screen.contains("Saved album") && !screen.contains("Saved one"), "{screen}");
+    a.downloads_sel.at = a.download_rows().iter().position(|r| matches!(r, crate::app::DownloadRow::Album(_))).unwrap();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::DownloadedAlbum("saved-album".into()))));
+    let detail = nori_core::library::downloaded_album(tracks).unwrap();
+    a.handle(Msg::Data(Req::DownloadedAlbum("saved-album".into()), Ok(Data::Album(Box::new(detail)))));
+    let screen = draw(&mut a, 120, 30);
+    assert!(screen.contains("Saved one") && screen.contains("Saved two"), "{screen}");
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Play { songs, from: Some(origin), .. }) if songs.len() == 2 && origin.kind == nori_core::OriginKind::Downloads));
+    key(&mut a, KeyCode::Esc);
+    assert!(a.page().is_none());
+}
+
 fn click(a: &mut App, x: u16, y: u16) {
     let m = |kind| MouseEvent { kind, column: x, row: y, modifiers: KeyModifiers::NONE };
     a.handle(Msg::Mouse(m(MouseEventKind::Down(MouseButton::Left))));

@@ -31,6 +31,7 @@ pub mod remote;
 pub mod model_download;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::{Mutex, RwLock};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -375,6 +376,7 @@ pub struct Core {
     board: Mutex<mixes::board::Board>,
     /// This session's star changes, overlaid on the server's favourites.
     stars: Mutex<stars::StarMarks>,
+    cache_revision: AtomicU64,
     /// The queue this core saves and restores and its clients fill.
     pub session: Arc<nori_queue::Session>,
     /// The user and the Subsonic secret (password or API key) the LAN's remote control proves the account
@@ -445,6 +447,7 @@ impl Core {
             server: RwLock::new(api::Server::default()),
             board: Mutex::new(mixes::board::Board::default()),
             stars: Mutex::new(stars::StarMarks::default()),
+            cache_revision: AtomicU64::new(0),
             session,
             account: RwLock::new(None),
             rules: RwLock::new(browse::profile_rules(false)),
@@ -654,7 +657,14 @@ impl Core {
     }
 
     pub fn cache_put(&self, key: String, body: Vec<u8>) -> Result<()> {
+        self.cache_put_checked(key, body, None)
+    }
+
+    fn cache_put_checked(&self, key: String, body: Vec<u8>, revision: Option<u64>) -> Result<()> {
         let c = self.db.lock();
+        if revision.is_some_and(|r| r != self.cache_revision.load(Ordering::Relaxed)) {
+            return Ok(());
+        }
         c.prepare_cached("INSERT OR REPLACE INTO cache(server, key, body, ts) VALUES(sid(), ?1, ?2, ?3)")?.execute(params![key, body, db::now_ms()])?;
         Ok(())
     }
@@ -663,6 +673,7 @@ impl Core {
     pub(crate) fn cache_evict(&self, prefix: String) -> Result<()> {
         let c = self.db.lock();
         c.execute("DELETE FROM cache WHERE server=sid() AND key >= ?1 AND key < ?1 || x'ff'", [prefix])?;
+        self.cache_revision.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 

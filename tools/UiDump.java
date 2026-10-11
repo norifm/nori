@@ -8,10 +8,24 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import java.lang.reflect.Constructor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import org.xmlpull.v1.XmlSerializer;
 
 /** Accessibility snapshot without uiautomator's idle wait on an updating player. */
 public final class UiDump {
+    private static AccessibilityNodeInfo find(AccessibilityNodeInfo n, String attribute, String value, int[] remaining) {
+        CharSequence label = attribute.equals("text") ? n.getText() : n.getContentDescription();
+        if (n.isVisibleToUser() && label != null && value.contentEquals(label) && --remaining[0] == 0) return n;
+        for (int i = 0; i < n.getChildCount(); i++) {
+            AccessibilityNodeInfo child = n.getChild(i);
+            if (child == null || !child.isVisibleToUser()) continue;
+            AccessibilityNodeInfo found = find(child, attribute, value, remaining);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     private static void node(XmlSerializer xml, AccessibilityNodeInfo n, int index) throws Exception {
         xml.startTag(null, "node");
         xml.attribute(null, "index", Integer.toString(index));
@@ -58,6 +72,17 @@ public final class UiDump {
                     System.err.println("no active accessibility window");
                     System.exit(1);
                 }
+            }
+            if (args.length == 4 && args[0].equals("click")) {
+                String value = new String(Base64.getDecoder().decode(args[2]), StandardCharsets.UTF_8);
+                AccessibilityNodeInfo target = find(root, args[1], value, new int[] {Integer.parseInt(args[3])});
+                while (target != null && !target.isClickable()) target = target.getParent();
+                if (target == null || !target.isEnabled() || !target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    System.err.println("no enabled click action for " + value);
+                    System.exit(1);
+                }
+                System.out.println("clicked");
+                return;
             }
             XmlSerializer xml = Xml.newSerializer();
             xml.setOutput(System.out, "UTF-8");

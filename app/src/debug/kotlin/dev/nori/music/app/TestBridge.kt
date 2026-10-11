@@ -57,11 +57,13 @@ class TestBridge : BroadcastReceiver() {
         val cmd = intent.getStringExtra("cmd") ?: return
         val arg = intent.getStringExtra("arg").orEmpty()
         val value = intent.getStringExtra("value").orEmpty()
+        val request = intent.getStringExtra("request")
+        fun answer(reply: String) { Log.i("noritest", request?.let { "$it $reply" } ?: reply) }
         // What the core's covers cost: seconds of work, so on a thread of its own, answering with one line
         // when done.
         if (cmd == "coverbench") {
             val app = context.applicationContext
-            Thread({ Log.i("noritest", runCatching { Bench.covers(app, arg.toIntOrNull() ?: 40) }.getOrElse { "coverbench failed: $it" }) }, "coverbench").start()
+            Thread({ answer(runCatching { Bench.covers(app, arg.toIntOrNull() ?: 40) }.getOrElse { "coverbench failed: $it" }) }, "coverbench").start()
             return
         }
         // Remote control and jams, as the device checks drive them: "watch on|off", "devices", "jam" (opens
@@ -69,7 +71,7 @@ class TestBridge : BroadcastReceiver() {
         // the main thread, so this does too.
         if (cmd == "remote") {
             val nori = dev.nori.music.Nori.get(context)
-            Thread({ Log.i("noritest", runCatching { remoteCheck(nori, arg, value) }.getOrElse { "remote failed: $it" }) }, "remotecheck").start()
+            Thread({ answer(runCatching { remoteCheck(nori, arg, value) }.getOrElse { "remote failed: $it" }) }, "remotecheck").start()
             return
         }
         Handler(Looper.getMainLooper()).post {
@@ -99,7 +101,7 @@ class TestBridge : BroadcastReceiver() {
                 "bench" -> Bench.calls()
                 else -> "unknown command $cmd"
             }
-            Log.i("noritest", reply)
+            answer(reply)
         }
     }
 }

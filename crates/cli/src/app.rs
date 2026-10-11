@@ -299,6 +299,7 @@ impl<T> Load<T> {
 /// A page opened over the view.
 pub enum Page {
     Album { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
+    DownloadedAlbum { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
     Artist { id: String, detail: Load<Box<ArtistDetail>>, sel: Sel },
     Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel },
 }
@@ -307,6 +308,7 @@ impl Page {
     pub fn req(&self) -> Req {
         match self {
             Page::Album { id, .. } => Req::Album(id.clone()),
+            Page::DownloadedAlbum { id, .. } => Req::DownloadedAlbum(id.clone()),
             Page::Artist { id, .. } => Req::Artist(id.clone()),
             Page::Playlist { id, .. } => Req::Playlist(id.clone()),
         }
@@ -314,13 +316,13 @@ impl Page {
 
     fn sel(&mut self) -> &mut Sel {
         match self {
-            Page::Album { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } => sel,
+            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } => sel,
         }
     }
 
     fn len(&self) -> usize {
         match self {
-            Page::Album { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
+            Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Artist { detail, .. } => detail.ready().map_or(0, |d| d.albums.len()),
             Page::Playlist { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
         }
@@ -329,7 +331,7 @@ impl Page {
     /// The page's songs, for album and playlist pages.
     pub fn songs(&self) -> Option<&[Song]> {
         match self {
-            Page::Album { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
+            Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Playlist { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Artist { .. } => None,
         }
@@ -341,6 +343,7 @@ impl Page {
 pub enum Item {
     Song(Vec<Song>, usize),
     Album(Album),
+    DownloadedAlbum(Album),
     Artist(Artist),
     Playlist(Playlist),
 }
@@ -1304,7 +1307,7 @@ impl App {
                         continue;
                     }
                     match (page, r) {
-                        (Page::Album { detail, .. }, Ok(Data::Album(d))) => {
+                        (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Ok(Data::Album(d))) => {
                             if let Some(art) = d.album.cover_art.clone() {
                                 self.cmds.push(Cmd::Cover { art, colours: false });
                             }
@@ -1312,7 +1315,7 @@ impl App {
                         }
                         (Page::Artist { detail, .. }, Ok(Data::Artist(d))) => *detail = Load::Ready(d),
                         (Page::Playlist { detail, .. }, Ok(Data::Playlist(d))) => *detail = Load::Ready(d),
-                        (Page::Album { detail, .. }, Err(e)) => *detail = Load::Failed(e),
+                        (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Artist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Playlist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         _ => {}
@@ -1977,7 +1980,7 @@ impl App {
         }
         if let Some(p) = self.page() {
             return match p {
-                Page::Album { sel, .. } | Page::Playlist { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
+                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { detail, sel, .. } => detail.ready().and_then(|d| d.albums.get(sel.at).cloned()).map(Item::Album),
             };
         }
@@ -1996,8 +1999,11 @@ impl App {
             },
             View::Downloads => {
                 let rows = self.download_rows();
-                let (songs, i) = rows.get(self.downloads_sel.at).and_then(|r| r.1)?;
-                Some(Item::Song(songs.to_vec(), i))
+                match rows.get(self.downloads_sel.at)? {
+                    DownloadRow::Album(a) => Some(Item::DownloadedAlbum((*a).clone())),
+                    DownloadRow::Song(songs, i) => Some(Item::Song(songs.to_vec(), *i)),
+                    DownloadRow::Header(_) => None,
+                }
             }
             _ => None,
         }
@@ -2058,6 +2064,7 @@ impl App {
         match (a, item) {
             (Action::Open, Item::Song(songs, i)) => self.tap(songs, i),
             (Action::Open, Item::Album(al)) => self.open_album(al.id),
+            (Action::Open, Item::DownloadedAlbum(a)) => self.open_page(Page::DownloadedAlbum { id: a.id, detail: Load::Loading, sel: Sel::default() }),
             (Action::Open, Item::Artist(ar)) => self.open_artist(ar.id),
             (Action::Open, Item::Playlist(p)) => self.open_playlist(p.id),
             (Action::Enqueue | Action::PlayNext, item) => {
@@ -2065,6 +2072,7 @@ impl App {
                 match item {
                     Item::Song(songs, i) => self.cmds.push(Cmd::Enqueue(vec![songs[i].clone()], next)),
                     Item::Album(al) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Album(al.id), next)),
+                    Item::DownloadedAlbum(a) => self.cmds.push(Cmd::EnqueueFetch(Fetch::DownloadedAlbum(a.id), next)),
                     Item::Artist(ar) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Artist(ar.id), next)),
                     Item::Playlist(p) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Playlist(p.id), next)),
                 }
@@ -2074,6 +2082,7 @@ impl App {
             (Action::Download, item) => match item {
                 Item::Song(songs, i) => self.cmds.push(Cmd::Download(vec![songs[i].clone()])),
                 Item::Album(al) => self.cmds.push(Cmd::DownloadFetch(Fetch::Album(al.id))),
+                Item::DownloadedAlbum(_) => {},
                 Item::Artist(ar) => self.cmds.push(Cmd::DownloadFetch(Fetch::Artist(ar.id))),
                 Item::Playlist(p) => self.cmds.push(Cmd::DownloadFetch(Fetch::Playlist(p.id))),
             },
@@ -2081,6 +2090,7 @@ impl App {
                 let (kind, id, listed) = match item {
                     Item::Song(songs, i) => (Starrable::Song, songs[i].id.clone(), songs[i].starred),
                     Item::Album(al) => (Starrable::Album, al.id, al.starred),
+                    Item::DownloadedAlbum(a) => (Starrable::Album, a.id, a.starred),
                     Item::Artist(ar) => (Starrable::Artist, ar.id, ar.starred),
                     Item::Playlist(_) => return,
                 };
@@ -2111,6 +2121,7 @@ impl App {
         if let Some(page) = self.page() {
             return Some(match page {
                 Page::Album { id, .. } => PageOrigin::new(OriginKind::Album, id.as_str()),
+                Page::DownloadedAlbum { id, .. } => PageOrigin::new(OriginKind::Downloads, id.as_str()),
                 Page::Artist { id, .. } => PageOrigin::new(OriginKind::Artist, id.as_str()),
                 Page::Playlist { id, .. } => PageOrigin::new(OriginKind::Playlist, id.as_str()),
             });
@@ -2139,6 +2150,7 @@ impl App {
         }
         match self.selected() {
             Some(Item::Album(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Album(a.id), shuffle)),
+            Some(Item::DownloadedAlbum(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), shuffle)),
             Some(Item::Artist(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(a.id), shuffle)),
             Some(Item::Playlist(p)) => self.cmds.push(Cmd::PlayFetch(Fetch::Playlist(p.id), shuffle)),
             Some(Item::Song(songs, _)) => {
@@ -2174,7 +2186,7 @@ impl App {
     /// Flips the star on the page's album or artist.
     fn star_page(&mut self) {
         let (kind, id, listed) = match self.page() {
-            Some(Page::Album { detail: Load::Ready(d), .. }) => (Starrable::Album, d.album.id.clone(), d.album.starred),
+            Some(Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. }) => (Starrable::Album, d.album.id.clone(), d.album.starred),
             Some(Page::Artist { detail: Load::Ready(d), .. }) => (Starrable::Artist, d.artist.id.clone(), d.artist.starred),
             _ => return,
         };
@@ -2328,6 +2340,7 @@ impl App {
         let play = match item {
             Some(Item::Song(songs, i)) => Some(Cmd::Play { songs, start: i, shuffle: false, from: self.origin_here() }),
             Some(Item::Album(a)) => Some(Cmd::PlayFetch(Fetch::Album(a.id), false)),
+            Some(Item::DownloadedAlbum(a)) => Some(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), false)),
             Some(Item::Artist(a)) => Some(Cmd::PlayFetch(Fetch::Artist(a.id), false)),
             Some(Item::Playlist(p)) => Some(Cmd::PlayFetch(Fetch::Playlist(p.id), false)),
             None => None,
@@ -2344,14 +2357,18 @@ impl App {
     pub fn download_rows(&self) -> Vec<DownloadRow<'_>> {
         let Some(d) = self.downloads.ready() else { return Vec::new() };
         let mut out = Vec::new();
-        for (title, list) in [("Downloading", &d.active), ("Waiting", &d.queued), ("Failed", &d.failed), ("On this computer", &d.stored)] {
+        for (title, list) in [("Downloading", &d.active), ("Waiting", &d.queued), ("Failed", &d.failed), ("Songs", &d.stored.songs)] {
             if list.is_empty() {
                 continue;
             }
-            out.push((format!("{title} ({})", list.len()), None));
+            out.push(DownloadRow::Header(format!("{title} ({})", list.len())));
             for i in 0..list.len() {
-                out.push((String::new(), Some((list.as_slice(), i))));
+                out.push(DownloadRow::Song(list.as_slice(), i));
             }
+        }
+        if !d.stored.albums.is_empty() {
+            out.push(DownloadRow::Header(format!("Albums ({})", d.stored.albums.len())));
+            out.extend(d.stored.albums.iter().map(DownloadRow::Album));
         }
         out
     }
@@ -2634,6 +2651,7 @@ impl App {
             Button::Star => self.star_page(),
             Button::Download => {
                 let what = match self.page() {
+                    Some(Page::DownloadedAlbum { .. }) => return,
                     Some(Page::Album { id, .. }) => Fetch::Album(id.clone()),
                     Some(Page::Artist { id, .. }) => Fetch::Artist(id.clone()),
                     Some(Page::Playlist { id, .. }) => Fetch::Playlist(id.clone()),
@@ -2727,8 +2745,12 @@ fn share(r: Rect, col: u16) -> f32 {
     (col.saturating_sub(r.x) as f32 / r.width.saturating_sub(1).max(1) as f32).clamp(0.0, 1.0)
 }
 
-/// A downloads page row: a heading, or a song as (its list, index).
-pub type DownloadRow<'a> = (String, Option<(&'a [Song], usize)>);
+/// A downloads page row: a heading, album, or song in its list.
+pub enum DownloadRow<'a> {
+    Header(String),
+    Album(&'a Album),
+    Song(&'a [Song], usize),
+}
 
 /// How long a status note shows.
 pub const NOTE_FOR: Duration = Duration::from_secs(4);

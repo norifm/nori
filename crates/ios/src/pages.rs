@@ -2,7 +2,7 @@
 //! server's after it when it differs. Lists of songs a page showed are kept by the request's token so a
 //! tap plays from them without sending songs back across.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_char, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -51,6 +51,7 @@ pub const PAGE_MIX: i32 = 15;
 pub const PAGE_SMARTS: i32 = 16;
 /// One smart playlist by id: its songs.
 pub const PAGE_SMART: i32 = 17;
+pub const PAGE_DOWNLOADED_ALBUM: i32 = 18;
 
 /// The home shelves, in order: their keys are the client's to word.
 const SHELVES: [&str; 6] = ["mixes", "random", "recent", "newest", "starred", "playlists"];
@@ -165,19 +166,18 @@ fn album_json(a: &Album) -> Value {
     })
 }
 
-/// One card per album of `songs`, in the order its first song comes (the latest download first).
-fn albums_of(songs: &[Song]) -> Vec<Value> {
-    let mut seen = HashSet::new();
-    songs
-        .iter()
-        .filter_map(|s| {
-            let id = s.album_id.as_ref().filter(|id| seen.insert(id.as_str()))?;
-            Some(json!({
-                "k": "album", "id": id, "t": s.album, "s": s.artist, "c": cover(&s.cover_art),
-                "artistId": s.artist_id.as_deref().unwrap_or(""),
-            }))
-        })
-        .collect()
+
+fn album_page(v: &nori_core::AlbumDetail) -> Value {
+    let a = &v.album;
+    json!({
+        "head": {
+            "k": "album", "id": a.id, "t": a.name, "s": a.artist,
+            "artistId": a.artist_id.as_deref().unwrap_or(""), "c": cover(&a.cover_art),
+            "y": a.year, "g": a.genre.as_deref().unwrap_or(""), "sec": v.seconds,
+            "n": v.songs.len(), "st": a.starred,
+        },
+        "sections": [songs_section("songs", &v.songs, 0)],
+    })
 }
 
 fn artist_json(a: &Artist) -> Value {
@@ -573,14 +573,19 @@ fn read(token: u64, kind: i32, arg: String) {
             }
         }
         PAGE_DOWNLOADS => {
-            let stored = core.downloads(true).unwrap_or_default();
+            let library = core.downloaded_library().unwrap_or_default();
+            let stored = library.songs;
             let (active, queued, failed) = match core.download_sections() {
                 Ok(s) => (s.active, s.queued, s.failed),
                 Err(_) => Default::default(),
             };
             let mut all = Vec::new();
             // What is kept, by album, above the lists.
-            let albums = albums_of(&stored);
+            let albums: Vec<Value> = library.albums.iter().map(|g| {
+                let mut card = album_json(g);
+                card["k"] = json!("downloadedAlbum");
+                card
+            }).collect();
             let mut out = if albums.is_empty() { Vec::new() } else { vec![section("albums", true, albums)] };
             for (key, songs) in [
                 ("active", &active),
@@ -598,19 +603,20 @@ fn read(token: u64, kind: i32, arg: String) {
             keep_list(token, all, None);
             send(token, &json!({ "running": !active.is_empty(), "sections": out }));
         }
+        PAGE_DOWNLOADED_ALBUM => match core.downloaded_album(arg.clone()) {
+            Ok(Some(v)) => {
+                keep_list(token, v.songs.clone(), Some(v.queue.origin()));
+                let mut value = album_page(&v);
+                value["head"]["k"] = json!("downloadedAlbum");
+                send(token, &value);
+            }
+            Ok(None) => send(token, &json!({ "sections": [] })),
+            Err(e) => send_error(token, &e.into()),
+        },
         PAGE_ALBUM => pages(&client, token, Read::AlbumById { id: arg.clone() }, &|p| match p {
             Page::AlbumPage { v } => {
                 keep_list(token, v.songs.clone(), Some(Fetch::Album(v.album.id.clone()).origin()));
-                let a = &v.album;
-                Some(json!({
-                    "head": {
-                        "k": "album", "id": a.id, "t": a.name, "s": a.artist,
-                        "artistId": a.artist_id.as_deref().unwrap_or(""), "c": cover(&a.cover_art),
-                        "y": a.year, "g": a.genre.as_deref().unwrap_or(""), "sec": v.seconds,
-                        "n": v.songs.len(), "st": a.starred,
-                    },
-                    "sections": [songs_section("songs", &v.songs, 0)],
-                }))
+                Some(album_page(&v))
             }
             _ => None,
         }),
@@ -952,9 +958,10 @@ fn act_on(s: &nori_host::session::Session, songs: Vec<Song>, act: i32) -> i32 {
 
 /// The songs of album, playlist or artist `id` (`kind` as in [`nori_ios_read`]): the stored copy, then
 /// the server's; offline the stored one alone.
-fn collection_songs(client: &nori_core::client::Client, kind: i32, id: String) -> Vec<Song> {
+fn collection_songs(core: &nori_core::Core, client: &nori_core::client::Client, kind: i32, id: String) -> Vec<Song> {
     let mut songs = Vec::new();
     match kind {
+        PAGE_DOWNLOADED_ALBUM => return core.downloaded_album(id).ok().flatten().map(|a| a.songs).unwrap_or_default(),
         PAGE_ARTIST => return nori_core::transport::block_on(client.artist_songs_of(id)).unwrap_or_default(),
         PAGE_ALBUM => {
             let _ = read_pages(client, Read::AlbumById { id }, |p| {
@@ -996,7 +1003,7 @@ pub extern "C" fn nori_ios_download_act(token: u64, act: i32) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_collection_download_entries(kind: i32, id: *const c_char) -> *mut c_char {
     let id = c_text(id);
-    with_session(|s| owned(&entries_of(s, &collection_songs(&s.client, kind, id)))).unwrap_or(std::ptr::null_mut())
+    with_session(|s| owned(&entries_of(s, &collection_songs(&s.core, &s.client, kind, id)))).unwrap_or(std::ptr::null_mut())
 }
 
 /// [`nori_ios_download_act`] for an album, playlist or artist by id. Blocks.
@@ -1006,11 +1013,12 @@ pub unsafe extern "C" fn nori_ios_collection_download_entries(kind: i32, id: *co
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_collection_download_act(kind: i32, id: *const c_char, act: i32) -> i32 {
     let id = c_text(id);
-    with_session(|s| act_on(s, collection_songs(&s.client, kind, id), act)).unwrap_or(0)
+    with_session(|s| act_on(s, collection_songs(&s.core, &s.client, kind, id), act)).unwrap_or(0)
 }
 
 fn fetch(kind: i32, id: String) -> Option<Fetch> {
     match kind {
+        PAGE_DOWNLOADED_ALBUM => Some(Fetch::DownloadedAlbum(id)),
         PAGE_ALBUM => Some(Fetch::Album(id)),
         PAGE_ARTIST => Some(Fetch::Artist(id)),
         PAGE_PLAYLIST => Some(Fetch::Playlist(id)),
@@ -1110,6 +1118,7 @@ fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Arc<nori_covers
 /// The queue origin a headed page's Play and Shuffle start: its kind (as in [`nori_ios_read`]) and id.
 fn page_origin(kind: i32, id: &str) -> Option<PageOrigin> {
     let kind = match kind {
+        PAGE_DOWNLOADED_ALBUM => OriginKind::Downloads,
         PAGE_ALBUM => OriginKind::Album,
         PAGE_ARTIST => OriginKind::Artist,
         PAGE_PLAYLIST => OriginKind::Playlist,
@@ -1439,12 +1448,6 @@ mod tests {
         assert_eq!(tiles_again(&drawn, drawn.clone(), false), Some(drawn), "no shelf answered: the row alone");
     }
 
-    #[test]
-    fn downloads_shelve_each_album_once_latest_first() {
-        let song = |id: &str, album: Option<&str>| Song { id: id.into(), album_id: album.map(Into::into), album: album.unwrap_or("").into(), ..Default::default() };
-        let cards = albums_of(&[song("b2", Some("B")), song("a1", Some("A")), song("loose", None), song("b1", Some("B"))]);
-        assert_eq!(cards.iter().map(|c| c["id"].as_str().unwrap()).collect::<Vec<_>>(), ["B", "A"]);
-    }
 
     /// Tests that empty and fill the process-wide `LISTS` take turns.
     static LISTS_IN_USE: Mutex<()> = Mutex::new(());
@@ -1488,6 +1491,9 @@ mod tests {
         assert_eq!(play_press(away), nori_core::pages::HeroPress::Start as i32);
         assert!(!pausing(hero(Some(&album), &album, false, false, false)), "paused: Play again");
         assert!(pausing(hero(Some(&album), &album, false, false, true)), "waiting for bytes still pauses");
+        let downloaded = page_origin(PAGE_DOWNLOADED_ALBUM, "a").unwrap();
+        assert!(pausing(hero(Some(&downloaded), &downloaded, false, true, false)));
+        assert!(!pausing(hero(Some(&album), &downloaded, false, true, false)));
         assert_eq!(page_origin(PAGE_GENRE, "g"), None);
     }
 

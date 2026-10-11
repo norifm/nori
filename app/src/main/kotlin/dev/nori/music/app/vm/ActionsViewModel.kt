@@ -275,14 +275,9 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     /** How many of [downloadSections]' songs are on their way and how many failed, without the songs. */
     val downloadQueueCounts: StateFlow<DownloadQueueCounts?> = readOnDownloadChange { nori.core.downloadQueueCounts() }
 
-    /**
-     * Every downloaded song, newest first, for the library's downloads page: read again when the table
-     * changes, and only while the page is watching. Null until the first answer.
-     */
-    val downloadedSongs: StateFlow<List<Song>?> =
-        nori.downloads.state.map { it.done }
-            .flowOn(kotlinx.coroutines.Dispatchers.IO)
-            .stateIn<List<Song>?>(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    /** Finished albums and unfiled songs, read only while the downloads page is watching. */
+    val downloadedLibrary: StateFlow<dev.nori.music.ffi.library.DownloadedLibrary?> =
+        readOnDownloadChange { nori.core.downloadedLibrary() }
 
     fun retryDownloads(songs: List<Song>) = nori.downloads.retry(songs)
     fun cancelDownloads(songs: List<Song>) = nori.downloads.cancel(songs.map { it.id })

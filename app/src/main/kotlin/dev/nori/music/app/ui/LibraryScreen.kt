@@ -378,9 +378,8 @@ internal val DOWNLOADED_SONGS = dev.nori.music.ffi.model.PageOrigin(dev.nori.mus
 @Composable
 private fun Downloads(actions: ActionsViewModel) {
     val d by actions.downloads.collectAsState()
-    val done by actions.downloadedSongs.collectAsStateWithLifecycle()
+    val done by actions.downloadedLibrary.collectAsStateWithLifecycle()
     val menu = LocalSongMenu.current
-    val vm: StarredViewModel = viewModel()
     val counts by actions.downloadQueueCounts.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
@@ -396,8 +395,16 @@ private fun Downloads(actions: ActionsViewModel) {
             )
         }
         // Until the songs are read there is nothing to say, not "nothing downloaded" for a frame.
-        val songs = done
-        if (songs?.isEmpty() == true) item { EmptyNote(Note.NOTHING_DOWNLOADED) }
-        songRows(songs.orEmpty(), actions, null, d.doneIds, emptySet(), menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = DOWNLOADED_SONGS)
+        val library = done
+        if (library != null && library.albums.isEmpty() && library.songs.isEmpty()) item { EmptyNote(Note.NOTHING_DOWNLOADED) }
+        items(library?.albums.orEmpty().chunked(2), key = { it.first().id }, contentType = { "albums" }) { row ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEach { album ->
+                    AlbumCard(album, actions.cover(album.coverArt, CoverSize.CARD), 132.dp, { nav.downloadedAlbum(album.id, album) }, Modifier.weight(1f), fill = true)
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+        songRows(library?.songs.orEmpty(), actions, null, d.doneIds, emptySet(), menu, cover = { actions.cover(it.coverArt, CoverSize.ROW) }, from = DOWNLOADED_SONGS)
     }
 }

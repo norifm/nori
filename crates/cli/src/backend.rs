@@ -101,6 +101,7 @@ pub enum Req {
     Playlists,
     Songs { offset: u32 },
     Album(String),
+    DownloadedAlbum(String),
     Artist(String),
     Playlist(String),
     Downloads,
@@ -127,7 +128,7 @@ pub struct Downloads {
     pub active: Vec<Song>,
     pub queued: Vec<Song>,
     pub failed: Vec<Song>,
-    pub stored: Vec<Song>,
+    pub stored: nori_core::library::DownloadedLibrary,
 }
 
 /// Home shelves: title and Subsonic album list type.
@@ -301,13 +302,14 @@ impl Session {
                 }
                 Req::Artists => pages(Read::ArtistIndex, &|p| if let Page::Artists { v } = p { Some(Data::Artists(v)) } else { None }),
                 Req::Playlists => pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(Data::Playlists(v)) } else { None }),
+                Req::DownloadedAlbum(id) => send(core.downloaded_album(id.clone()).map_err(|e| e.to_string()).and_then(|a| a.map(|a| Data::Album(Box::new(a))).ok_or_else(|| "Album is no longer downloaded".into()))),
                 Req::Album(id) => pages(Read::AlbumById { id: id.clone() }, &|p| if let Page::AlbumPage { v } = p { Some(Data::Album(Box::new(v))) } else { None }),
                 Req::Artist(id) => pages(Read::ArtistById { id: id.clone() }, &|p| if let Page::ArtistPage { v } = p { Some(Data::Artist(Box::new(v))) } else { None }),
                 Req::Playlist(id) => pages(Read::PlaylistById { id: id.clone() }, &|p| if let Page::PlaylistPage { v } = p { Some(Data::Playlist(Box::new(v))) } else { None }),
                 Req::Songs { offset } => send(block_on(client.songs_listed("title".into(), false, 0, 0, *offset)).map(|p| Data::Songs(p.songs, p.exhausted)).map_err(|e| unreachable(&e))),
                 Req::Downloads => {
-                    let stored = core.downloads(true).unwrap_or_default();
-                    send(core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { active: s.active, queued: s.queued, failed: s.failed, stored }))).map_err(|e| e.to_string()));
+                    let stored = core.downloaded_library();
+                    send(stored.and_then(|stored| core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { active: s.active, queued: s.queued, failed: s.failed, stored })))).map_err(|e| e.to_string()));
                 }
                 Req::Facts => send(Ok(Data::Facts(Box::new(facts(&core, &client, &store, &db, covers_bytes, offline))))),
             }
