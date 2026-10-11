@@ -265,7 +265,7 @@ impl Default for Config {
 
 enum Command {
     PlayAt(usize, i64),
-    GoTo(usize, i64),
+    GoTo(usize, i64, Switch),
     PauseAtEnd(bool),
     Play,
     /// With this fade (`None`: the settings').
@@ -425,7 +425,12 @@ impl Engine {
     /// Goes to queue index `index` at `ms`, playing or paused as before; paused, nothing is fetched
     /// until play.
     pub fn go_to(&self, index: usize, ms: i64) -> u64 {
-        self.jump(Command::GoTo(index, ms))
+        self.jump(Command::GoTo(index, ms, Switch::ToSong))
+    }
+
+    /// A next or previous command with the target index already chosen by the controller.
+    pub fn skip_to(&self, index: usize, ms: i64) -> u64 {
+        self.jump(Command::GoTo(index, ms, Switch::Skip))
     }
 
     /// Pauses at the end of the current song, on the next one at its start (the sleep timer); nothing
@@ -1318,9 +1323,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.parked.take_if(|p| p.shown.is_some());
                 self.switch(Switched::To(i, ms), Switch::ToSong, now)
             }
-            Command::GoTo(i, ms) => {
+            Command::GoTo(i, ms, kind) => {
                 self.jumps += 1;
-                self.go(Switched::To(i, ms), Switch::ToSong, now)
+                self.go(Switched::To(i, ms), kind, now)
             }
             Command::Next | Command::Previous => {
                 self.jumps += 1;

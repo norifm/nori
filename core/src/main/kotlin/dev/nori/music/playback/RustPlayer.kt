@@ -45,7 +45,7 @@ internal object RustPlayerJni {
     @JvmStatic external fun create(bridge: RustBridge, current: Long, analyses: Long, sdk: Int, float: Boolean, memoryMb: Int): Long
     @JvmStatic external fun destroy(h: Long)
     /** Answers the jump's number, which the song events it leads to carry ([eventJumps]). */
-    @JvmStatic @CriticalNative external fun goTo(h: Long, index: Int, ms: Long): Long
+    @JvmStatic @CriticalNative external fun goTo(h: Long, index: Int, ms: Long, skip: Boolean): Long
     @JvmStatic @CriticalNative external fun pauseAtEnd(h: Long, on: Boolean)
     @JvmStatic @CriticalNative external fun play(h: Long)
     @JvmStatic @CriticalNative external fun pause(h: Long)
@@ -478,10 +478,10 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     }
 
     /** The engine goes to [index] at [ms], playing or paused as it is: paused, it holds the place until play. */
-    private fun goTo(index: Int, ms: Long) {
+    private fun goTo(index: Int, ms: Long, skip: Boolean = false) {
         if (index != current) expecting = index
         current = index
-        jumped(RustPlayerJni.goTo(h, index, ms))
+        jumped(RustPlayerJni.goTo(h, index, ms, skip))
     }
 
     /** The engine was sent jump [n] (0: nothing was sent). */
@@ -591,7 +591,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         // Playing, the new list plays at once, as ExoPlayer's does; paused, the engine holds its start.
         expecting = at
         current = at
-        jumped(RustPlayerJni.goTo(h, at, if (startPositionMs == C.TIME_UNSET) 0 else startPositionMs))
+        jumped(RustPlayerJni.goTo(h, at, if (startPositionMs == C.TIME_UNSET) 0 else startPositionMs, false))
         if (audible()) start()
         return done()
     }
@@ -639,7 +639,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         } else if (gone) {
             // The song playing went: the one after it plays (or waits, paused), as media3 moves on.
             expecting = current
-            jumped(RustPlayerJni.goTo(h, current, 0))
+            jumped(RustPlayerJni.goTo(h, current, 0, false))
         }
         return done()
     }
@@ -667,7 +667,12 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
         if (items.isEmpty()) return done()
         val target = if (mediaItemIndex == C.INDEX_UNSET) current else mediaItemIndex.coerceIn(0, items.size - 1)
-        goTo(target, if (positionMs == C.TIME_UNSET) 0 else positionMs.coerceAtLeast(0))
+        val skip = when (seekCommand) {
+            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> true
+            else -> false
+        }
+        goTo(target, if (positionMs == C.TIME_UNSET) 0 else positionMs.coerceAtLeast(0), skip)
         return done()
     }
 

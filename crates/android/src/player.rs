@@ -38,7 +38,7 @@ pub(crate) static CLASS: Class = Class {
     methods: &[
         native!(c"create", c"(Ldev/nori/music/playback/RustBridge;JJIZI)J", create),
         native!(c"destroy", c"(J)V", destroy),
-        native!(c"goTo", c"(JIJ)J", go_to),
+        native!(c"goTo", c"(JIJZ)J", go_to),
         native!(c"pauseAtEnd", c"(JZ)V", pause_at_end),
         native!(c"play", c"(J)V", play),
         native!(c"pause", c"(J)V", pause),
@@ -1431,11 +1431,12 @@ extern "system" fn destroy(_: JNIEnv, _: JClass, h: jlong) {
 
 /// A seek, skip or tap (`Engine::go_to`). Returns the jump number song events carry ([`event_jumps`]);
 /// 0 when nothing was sent.
-extern "system" fn go_to(h: jlong, index: jint, ms: jlong) -> jlong {
+extern "system" fn go_to(h: jlong, index: jint, ms: jlong, skip: jboolean) -> jlong {
     let (Some(p), Ok(i)) = (player(h), usize::try_from(index)) else { return 0 };
     log(&format!("to song {i} at {} ms, playing or not as it was", ms.max(0)));
     *p.jumped.lock() = Some((ms.max(0), Instant::now()));
-    p.engine.go_to(i, ms.max(0)) as jlong
+    let jump = if skip != 0 { p.engine.skip_to(i, ms.max(0)) } else { p.engine.go_to(i, ms.max(0)) };
+    jump as jlong
 }
 
 /// Sleep timer's "end of song".
