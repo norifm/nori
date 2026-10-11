@@ -222,3 +222,50 @@ Timeout does not rebuild the surface. This reduced abandoned draws to 50 and inc
 frames to 277 in the same instrumented drag workload. A second X11 resize-sync trial still had a
 long first-drag pause and was discarded. This improves recovery during movement without claiming
 60 fps resizing.
+
+## Shared OpenGL renderer and resize layout
+
+Linux now renders all three Slint layers through one Skia OpenGL context. The same WGSL glass
+and lyrics-focus shaders are compiled to desktop GLSL and GLSL ES at build time. The sidebar and
+player retain their live blur. Other platforms keep the wgpu renderer.
+
+Skia owns uploaded cover textures, and Top Picks mosaics are composed on the GPU before the next
+frame. A single context shares fonts and its 16 MiB resource budget across layers. There are no
+borrowed Vulkan cover handles. The native X11 visual is selected from EGL's compatible opaque
+configurations. Custom presentation uses the compositor's retained layer textures rather than
+querying unused native buffer history. Uniform uploads rename their storage to avoid waiting for
+a previous pass. Linux coalesces pending draws at the monitor refresh interval, including display
+paths where swap interval does not provide pacing; idle windows have no frame timer.
+
+Resize changes update page width, panel position and fullscreen artwork immediately. Animations
+are attached to the panel's opening width and the artwork's selected position, so opening or
+closing still animates without animating every window-size change. The software regression fails
+on the old layout with 288,456 differing pixels between the immediate and settled snapshots.
+
+A physical X11 comparison against `d9b68a2d` used the same copied database, already-requested
+music cache, private audio sink, optimized build profile and sixty skips. Each run restored the
+private database and queue position before starting. These are ordinary glibc measurements,
+without heap profiling enabled.
+
+| Measurement | Previous renderer | Shared OpenGL renderer |
+|---|---:|---:|
+| RSS before skipping | 218.5 MiB | 201.4 MiB |
+| RSS after 60 skips | 299.6 MiB | 241.0 MiB |
+| Anonymous resident memory after 60 skips | 178.9 MiB | 126.2 MiB |
+
+The updated measurements after 50 and 60 skips were 239.7 and 241.0 MiB RSS. This checks this
+workload, rather than establishing a universal memory bound. Shared libraries and audio analysis
+still contribute to the process's memory.
+
+The OpenGL trace's median swap time was about 0.06 ms. Fast 60 Hz corner/right-border input
+still produced variable drawing times, including frames over 16.7 ms, and active CPU measurements
+varied substantially between runs. A renderer-owned X11 child surface did not improve them and
+was discarded. This change fixes layout animation during resize and reduces cover retention;
+it does not establish Chrome-like 60 fps resizing. Issue #33 remains open for that remaining work.
+
+GPU pixel regressions passed on physical X11 and on a 1920×1080 Xvfb display using OpenGL ES,
+covering resized buffers, GPU cover ownership, opaque mosaic seams, and blur smoothness and
+orientation. The macOS wgpu handoff regression also passed. A private Xvfb control check exercised
+panels, fullscreen, twenty play/pause actions, thirty next/previous actions and advancing audio.
+The control check used a 960×600 window to keep software rendering cheap; hardware resize
+measurements used the physical display.

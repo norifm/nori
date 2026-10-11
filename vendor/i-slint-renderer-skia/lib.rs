@@ -634,6 +634,18 @@ impl SkiaRenderer {
         self.internal_render_with_post_callback(0., (0., 0.), size, None)
     }
 
+    /// NORI: Render an offscreen layer using the compositor's shared Skia context.
+    pub fn render_to_surface(
+        &self,
+        surface: &mut skia_safe::Surface,
+        context: &mut skia_safe::gpu::DirectContext,
+    ) -> Result<(), PlatformError> {
+        let adapter = self.window_adapter()?;
+        self.render_to_canvas(surface.canvas(), 0., (0., 0.), Some(context), 0, None, adapter.window(), None);
+        context.flush_and_submit_surface(surface, None);
+        Ok(())
+    }
+
     fn invoke_rendering_notifier_setup(
         &self,
         surface: &dyn Surface,

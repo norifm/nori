@@ -1,5 +1,5 @@
-//! A custom Slint platform on winit + wgpu. Each Slint window (page, sidebar, player) is a layer Skia
-//! renders offscreen; glass.wgsl composites them, drawing the sidebar and player as blurred glass over
+//! A custom Slint platform on winit with OpenGL on Linux and wgpu elsewhere. Skia renders the page,
+//! sidebar and player into separate layers; glass.wgsl composites them, drawing the sidebar and player as blurred glass over
 //! the page. Pointer events go to the layer under the pointer (or the one pressed in), keys to the page.
 //! Frames are drawn only when a layer is dirty or animating.
 
@@ -8,9 +8,20 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(not(target_os = "linux"))]
 use slint::platform::skia_renderer::SkiaWGPU30Renderer;
 use slint::platform::{Key, PointerEventButton, WindowAdapter, WindowEvent};
+#[cfg(not(target_os = "linux"))]
 use slint::wgpu_30::wgpu;
+
+#[cfg(target_os = "linux")]
+mod gl;
+#[cfg(target_os = "linux")]
+use gl::{Draw, Gpu, LayerTexture, Renderer};
+#[cfg(not(target_os = "linux"))]
+type Renderer = SkiaWGPU30Renderer;
+#[cfg(not(target_os = "linux"))]
+type LayerTexture = (wgpu::Texture, wgpu::TextureView);
 use slint::{LogicalPosition, LogicalSize, PhysicalSize, PlatformError, SharedString};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
@@ -27,6 +38,7 @@ const PLAYER_MAX_W: f32 = 720.0;
 const PLAYER_BOTTOM: f32 = 12.0;
 
 /// Format of every layer and the surface; Skia renders it on Metal and Vulkan.
+#[cfg(not(target_os = "linux"))]
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
 enum Wake {
@@ -34,6 +46,7 @@ enum Wake {
     Quit,
 }
 
+#[cfg(not(target_os = "linux"))]
 struct Gpu {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -44,10 +57,10 @@ struct Gpu {
 /// A Slint window rendered into its own texture.
 struct Layer {
     window: slint::Window,
-    renderer: SkiaWGPU30Renderer,
+    renderer: Renderer,
     size: Cell<PhysicalSize>,
     dirty: Cell<bool>,
-    texture: RefCell<Option<(wgpu::Texture, wgpu::TextureView)>>,
+    texture: RefCell<Option<LayerTexture>>,
     /// Weak: `Shared` owns the layers.
     shared: Weak<Shared>,
 }
@@ -87,10 +100,12 @@ type Layers = RefCell<Vec<(Rc<Layer>, Cell<Option<Role>>)>>;
 const PYRAMID_LEVELS: u32 = 6;
 
 /// Format of the blur pyramid: half floats, so a long smooth blur does not band.
+#[cfg(not(target_os = "linux"))]
 const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// The page blurred at every halving: the texture, a view of each mip to draw into, and one of them all
 /// to read.
+#[cfg(not(target_os = "linux"))]
 struct Pyramid {
     texture: wgpu::Texture,
     mips: Vec<wgpu::TextureView>,
@@ -172,7 +187,11 @@ struct Platform {
 impl slint::platform::Platform for Platform {
     fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
         let g = &self.shared.gpu;
+        #[cfg(target_os = "linux")]
+        let renderer = g.renderer();
+        #[cfg(not(target_os = "linux"))]
         let renderer = SkiaWGPU30Renderer::new(g.instance.clone(), g.adapter.clone(), g.device.clone(), g.queue.clone())?;
+        #[cfg(not(target_os = "linux"))]
         renderer.set_resource_cache_limit(16 * 1024 * 1024);
         let layer = Rc::new_cyclic(|me: &Weak<Layer>| Layer {
             window: slint::Window::new(me.clone() as Weak<dyn WindowAdapter>),
@@ -227,16 +246,22 @@ impl slint::platform::EventLoopProxy for Proxy {
 /// Installs the platform. Must run before any Slint window is created.
 pub fn install() -> Result<Compositor, String> {
     let event_loop = EventLoop::<Wake>::with_user_event().build().map_err(|e| format!("the event loop: {e}"))?;
-    let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-    // Every draw uses a fixed vertex range; indirect-command pipelines are unused.
-    instance_descriptor.flags.remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
-    let instance = wgpu::Instance::new(instance_descriptor);
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::LowPower, ..Default::default() }))
-        .map_err(|e| format!("no GPU: {e}"))?;
-    let descriptor = wgpu::DeviceDescriptor { memory_hints: wgpu::MemoryHints::MemoryUsage, ..Default::default() };
-    let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| format!("the GPU: {e}"))?;
+    #[cfg(target_os = "linux")]
+    let gpu = Gpu::new();
+    #[cfg(not(target_os = "linux"))]
+    let gpu = {
+        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        // Every draw uses a fixed vertex range; indirect-command pipelines are unused.
+        instance_descriptor.flags.remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
+        let instance = wgpu::Instance::new(instance_descriptor);
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::LowPower, ..Default::default() }))
+            .map_err(|e| format!("no GPU: {e}"))?;
+        let descriptor = wgpu::DeviceDescriptor { memory_hints: wgpu::MemoryHints::MemoryUsage, ..Default::default() };
+        let (device, queue) = pollster::block_on(adapter.request_device(&descriptor)).map_err(|e| format!("the GPU: {e}"))?;
+        Gpu { instance, adapter, device, queue }
+    };
     let shared = Rc::new(Shared {
-        gpu: Rc::new(Gpu { instance, adapter, device, queue }),
+        gpu: Rc::new(gpu),
         layers: RefCell::new(Vec::new()),
         window: RefCell::new(None),
         size: Cell::new(PhysicalSize::new(1280, 820)),
@@ -254,18 +279,19 @@ pub fn install() -> Result<Compositor, String> {
 }
 
 impl Compositor {
-    /// Vulkan's borrowed Skia images cannot own imported wgpu texture lifetimes.
+    /// Skia owns each uploaded cover texture on the shared OpenGL context.
     #[cfg(target_os = "linux")]
     pub fn picture(&self, pixels: &[u8], width: u32, height: u32) -> slint::Image {
-        let info = skia_safe::ImageInfo::new((width as i32, height as i32), skia_safe::ColorType::RGBA8888, skia_safe::AlphaType::Unpremul, skia_safe::ColorSpace::new_srgb());
-        let image = skia_safe::images::raster_from_data(&info, skia_safe::Data::new_copy(pixels), width as usize * 4).expect("decoded cover pixels");
-        i_slint_renderer_skia::image_from_skia(image)
+        self.0.gpu.picture(pixels, width, height)
     }
 
     #[cfg(target_os = "linux")]
     pub fn mosaic(&self, images: &[slint::Image]) -> Option<slint::Image> {
-        crate::app::mosaic(images)
+        self.0.gpu.mosaic(images)
     }
+
+    #[cfg(target_os = "linux")]
+    pub fn on_mosaics_ready(&self, callback: impl Fn() + 'static) { self.0.gpu.on_mosaics_ready(callback); }
 
     /// Uploads decoded pixels once; Slint keeps the texture instead of CPU raster copies.
     #[cfg(not(target_os = "linux"))]
@@ -541,6 +567,11 @@ impl ApplicationHandler<Wake> for Runner {
             return;
         }
         let attrs = WindowAttributes::default().with_title("nori").with_inner_size(winit::dpi::LogicalSize::new(1280.0, 820.0)).with_min_inner_size(winit::dpi::LogicalSize::new(860.0, 560.0));
+        #[cfg(target_os = "linux")]
+        let attrs = match gl::window_attributes(el, attrs) {
+            Ok(attrs) => attrs,
+            Err(e) => { eprintln!("nori: no window visual: {e}"); el.exit(); return; }
+        };
         #[cfg(target_os = "macos")]
         let attrs = {
             use winit::platform::macos::WindowAttributesExtMacOS;
@@ -565,8 +596,8 @@ impl ApplicationHandler<Wake> for Runner {
         #[cfg(target_os = "macos")]
         unified_toolbar(&window);
         #[cfg(target_os = "linux")]
-        if self.draw.as_ref().is_some_and(|d| d.config.present_mode == wgpu::PresentMode::Immediate) {
-            let refresh = window.current_monitor().and_then(|m| m.refresh_rate_millihertz()).unwrap_or(60_000).max(1);
+        {
+            let refresh = window.current_monitor().and_then(|m| m.refresh_rate_millihertz()).filter(|rate| *rate > 0).unwrap_or(60_000);
             self.shared.frames.borrow_mut().interval = Duration::from_secs_f64(1000.0 / refresh as f64);
         }
         let size = window.inner_size();
@@ -654,13 +685,16 @@ impl ApplicationHandler<Wake> for Runner {
                 }
                 let size = self.shared.size.get();
                 if let Some(d) = &mut self.draw {
-                    if d.config.width != size.width.max(1) || d.config.height != size.height.max(1) {
+                    if d.size() != PhysicalSize::new(size.width.max(1), size.height.max(1)) {
                         d.resize(size.width, size.height);
                         layout_layers(&self.shared);
                     }
                 }
                 let win = self.logical_window();
                 if let (Some(d), Some(win)) = (&mut self.draw, win) {
+                    #[cfg(target_os = "linux")]
+                    if let Err(e) = d.frame(&self.shared, win) { eprintln!("nori: the window was not drawn: {e}"); }
+                    #[cfg(not(target_os = "linux"))]
                     d.frame(&self.shared, win);
                 }
             }
@@ -686,6 +720,7 @@ impl ApplicationHandler<Wake> for Runner {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 struct Draw {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
@@ -705,6 +740,7 @@ struct Draw {
     stale: bool,
 }
 
+#[cfg(not(target_os = "linux"))]
 struct Group {
     buffer: wgpu::Buffer,
     a: wgpu::TextureView,
@@ -712,7 +748,10 @@ struct Group {
     binding: wgpu::BindGroup,
 }
 
+#[cfg(not(target_os = "linux"))]
 impl Draw {
+    fn size(&self) -> PhysicalSize { PhysicalSize::new(self.config.width, self.config.height) }
+
     fn new(gpu: &Gpu, window: Arc<WinitWindow>) -> Result<Draw, String> {
         let d = &gpu.device;
         let size = window.inner_size();
@@ -1000,6 +1039,7 @@ impl Draw {
 }
 
 /// Skia writes outside wgpu's tracker; initialize first and restore its expected attachment state.
+#[cfg(not(target_os = "linux"))]
 fn prepare_layer(gpu: &Gpu, texture: &wgpu::Texture, fresh: bool) {
     let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Slint layer attachment") });
     if fresh {
@@ -1019,6 +1059,7 @@ fn prepare_layer(gpu: &Gpu, texture: &wgpu::Texture, fresh: bool) {
 }
 
 /// A pyramid `w` x `h` at its largest, halving [`PYRAMID_LEVELS`] times or until a side is one pixel.
+#[cfg(not(target_os = "linux"))]
 fn pyramid(d: &wgpu::Device, w: u32, h: u32) -> Pyramid {
     let levels = PYRAMID_LEVELS.min(32 - w.max(h).leading_zeros());
     let texture = d.create_texture(&wgpu::TextureDescriptor {
@@ -1036,6 +1077,7 @@ fn pyramid(d: &wgpu::Device, w: u32, h: u32) -> Pyramid {
     Pyramid { texture, mips, all }
 }
 
+#[cfg(not(target_os = "linux"))]
 fn texture(d: &wgpu::Device, w: u32, h: u32, label: &str) -> wgpu::Texture {
     d.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
@@ -1049,6 +1091,7 @@ fn texture(d: &wgpu::Device, w: u32, h: u32, label: &str) -> wgpu::Texture {
     })
 }
 
+#[cfg(not(target_os = "linux"))]
 fn pass(enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, pipeline: &wgpu::RenderPipeline, group: &wgpu::BindGroup, clear: bool) {
     let mut p = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: None,
@@ -1077,7 +1120,8 @@ struct Glass {
 }
 
 /// Uniforms as glass.wgsl lays them out (six vec4s).
-fn uniforms(rect: [f32; 4], view: [f32; 4], shape: [f32; 4], face: [f32; 4], light: [f32; 4], gather: [f32; 4]) -> [u8; 96] {
+fn uniforms(rect: [f32; 4], view: [f32; 4], shape: [f32; 4], face: [f32; 4], light: [f32; 4], mut gather: [f32; 4]) -> [u8; 96] {
+    gather[2] = PYRAMID_LEVELS as f32;
     let mut bytes = [0; 96];
     for (out, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip([rect, view, shape, face, light, gather].iter().flatten()) {
         out.copy_from_slice(&value.to_ne_bytes());
@@ -1152,6 +1196,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires a GPU; run with --ignored"]
+    #[cfg(not(target_os = "linux"))]
     fn layer_pixels_survive_first_sampling_and_redraw() {
         slint::slint! {
             export component TestWindow inherits Window {

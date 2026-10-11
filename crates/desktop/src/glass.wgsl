@@ -17,7 +17,7 @@ struct U {
     shape: vec4<f32>,     // corner radius, bevel band, refraction, dispersion (pixels, pixels, pixels, ratio)
     face: vec4<f32>,      // glass: black's lift, the brightest it lets through (luma), saturation, blur level
     light: vec4<f32>,     // glass: rim, spill, its reach (pixels), glow level; focus: band top, height, pixels per blur step, scale
-    gather: vec4<f32>,    // glass: how far past the edge it gathers light (pixels), how much colour it keeps
+    gather: vec4<f32>,    // glass: reach (pixels), saturation, pyramid levels, unused
 };
 
 @group(0) @binding(0) var<uniform> u: U;
@@ -43,6 +43,13 @@ fn vs(@builtin(vertex_index) i: u32) -> V {
 @fragment
 fn fs_copy(v: V) -> @location(0) vec4<f32> {
     return textureSampleLevel(src, smp, v.uv, 0.0);
+}
+
+// The native window is opaque; layer copies keep their own alpha for blending.
+@fragment
+fn fs_opaque(v: V) -> @location(0) vec4<f32> {
+    let c = textureSampleLevel(src, smp, v.uv, 0.0);
+    return vec4<f32>(c.rgb, 1.0);
 }
 
 // One pyramid level from the one above it: thirteen taps (Jimenez), every source texel counted.
@@ -89,7 +96,7 @@ fn smooth_mip(at: vec2<f32>, lod: i32) -> vec4<f32> {
 
 // The page at `at` (0..1) blurred to `level`: 0 sharp, each level about twice the blur of the one before.
 fn blurred(at: vec2<f32>, level: f32) -> vec4<f32> {
-    let top = f32(textureNumLevels(pyramid));
+    let top = u.gather.z;
     let l = clamp(level, 0.0, top);
     if (l < 1.0) {
         return mix(textureSampleLevel(src, smp, at, 0.0), smooth_mip(at, 0), l);
@@ -194,8 +201,7 @@ fn fs_glass(v: V) -> @location(0) vec4<f32> {
 // Focus: the lyrics beside the artwork in Now Playing. Within `rect`, the page sharp in a band around the line
 // sung (`light.x` its top, `light.y` its height, pixels), each line further off blurred a step more (`light.z`
 // pixels a step, as a line and its gap), up to five points' blur, as Music draws the lines not sung.
-@fragment
-fn fs_focus(v: V) -> @location(0) vec4<f32> {
+fn focused(v: V) -> vec4<f32> {
     let p = u.rect.xy + v.uv * u.rect.zw;
     let away = max(max(u.light.x - p.y, p.y - (u.light.x + u.light.y)), 0.0);
     // Points of blur: a point at the band's edge, ramping in over its first 16, then one more a line.
@@ -205,4 +211,15 @@ fn fs_focus(v: V) -> @location(0) vec4<f32> {
     let level = select(0.0, log2(max(sigma, 0.6) / 0.6), sigma > 0.0);
     let c = blurred(p / u.view.xy, level);
     return vec4<f32>(c.rgb + dither(p), c.a);
+}
+
+@fragment
+fn fs_focus(v: V) -> @location(0) vec4<f32> {
+    return focused(v);
+}
+
+@fragment
+fn fs_focus_opaque(v: V) -> @location(0) vec4<f32> {
+    let c = focused(v);
+    return vec4<f32>(c.rgb, 1.0);
 }

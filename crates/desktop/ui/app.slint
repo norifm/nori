@@ -3548,6 +3548,8 @@ export component AppWindow inherits Window {
     // The inspector on the right: 0 shut, 1 Playing Next, 2 lyrics, 3 the other devices. It keeps showing
     // the last one while it slides away.
     in-out property <int> inspector;
+    property <length> panel-width: self.inspector != 0 ? Theme.panel-w : 0px;
+    animate panel-width { duration: 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
     // Remote control is on: the devices button, and the places the music can play.
     in property <bool> devices-on;
     in property <[DeviceRow]> devices;
@@ -3857,8 +3859,7 @@ export component AppWindow inherits Window {
             // The page, right of the sidebar; it runs up under the titlebar and under the player.
             Rectangle {
                 x: Theme.side-w;
-                width: parent.width - self.x - (root.inspector != 0 ? Theme.panel-w : 0);
-                animate width { duration: 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                width: parent.width - self.x - root.panel-width;
                 // Under the system's glass, an artist's picture runs on under the sidebar.
                 clip: !root.native-sidebar;
 
@@ -4661,8 +4662,8 @@ export component AppWindow inherits Window {
             // The panel on the right, docked to the window's edge as Music's is: the lyrics, sung line by line,
             // or what plays next.
             Rectangle {
-                x: root.inspector != 0 ? parent.width - Theme.panel-w : parent.width;
-                animate x { duration: 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                x: parent.width - root.panel-width;
+                visible: root.panel-width > 0;
                 width: Theme.panel-w;
                 height: parent.height;
                 background: Theme.panel;
@@ -4927,11 +4928,13 @@ export component AppWindow inherits Window {
             // The artwork and the controls: centred in the window with nothing beside them, in the left half
             // with the lyrics or the queue.
             property <length> side: min(460px, root.height - 330px, (root.full-panel != 0 ? root.width / 2 : root.width) - 120px);
+            property <float> art-centre: root.full-panel != 0 ? 0.25 : 0.5;
+            animate art-centre { duration: 380ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+            property <length> art-rise: root.full-player ? 0px : 30px;
+            animate art-rise { duration: 420ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
             full-art := VerticalLayout {
-                x: (root.full-panel != 0 ? root.width / 2 : root.width) / 2 - parent.side / 2;
-                animate x { duration: 380ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
-                y: (root.height - self.preferred-height) / 2 + (root.full-player ? 0 : 30px);
-                animate y { duration: 420ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                x: root.width * parent.art-centre - parent.side / 2;
+                y: (root.height - self.preferred-height) / 2 + parent.art-rise;
                 width: parent.side;
                 height: self.preferred-height;
                 spacing: 0;

@@ -438,6 +438,13 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         ui.set_lyric_pieces_side(ModelRc::from(a.pieces[0].clone()));
         ui.set_lyric_pieces_full(ModelRc::from(a.pieces[1].clone()));
         a.compositor.roles(ui.window(), a.sidebar.as_ref().map(|s| s.window()), a.player.as_ref().map(|p| p.window()));
+        #[cfg(target_os = "linux")]
+        {
+            let weak = ui.as_weak();
+            a.compositor.on_mosaics_ready(move || {
+                if let Some(ui) = weak.upgrade() { ui.set_covers_rev(ui.get_covers_rev().wrapping_add(1)); }
+            });
+        }
         menu_actions(ui, &a.compositor);
         // Now Playing's lyrics: the active line sharp, the rest blurred by the compositor.
         let weak = ui.as_weak();
@@ -1427,7 +1434,8 @@ impl App {
         let id = key.id.clone();
         let large = key.size != CoverSize::Card;
         self.tickets.retain(|(k, _)| *k != key);
-        self.art.borrow_mut().insert(key, self.compositor.picture(&image.pixels, image.width, image.height), colours, Instant::now());
+        let picture = self.compositor.picture(&image.pixels, image.width, image.height);
+        self.art.borrow_mut().insert(key, picture, colours, Instant::now());
         let ui = self.ui();
         ui.set_covers_rev(ui.get_covers_rev().wrapping_add(1));
         if let Some(p) = &self.player {
@@ -2173,6 +2181,60 @@ mod tests {
             let p = after.as_slice()[offset];
             assert_eq!((p.r, p.g, p.b, p.a), (expected.0, expected.1, expected.2, 255));
             assert_eq!(before.as_slice()[offset] != p, i == 0);
+        }
+    }
+
+    #[test]
+    fn resizing_does_not_animate_layout() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        for (view, full, panel) in [(HOME, false, 0), (ALBUMS, false, 1), (HOME, true, 0), (HOME, true, 2)] {
+            let ui = AppWindow::new().unwrap();
+            ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+            ui.set_view(view);
+            ui.set_full_player(full);
+            ui.set_inspector(panel);
+            ui.set_full_panel(panel);
+            ui.set_picks_loaded(true);
+            let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(16, 16);
+            pixels.make_mut_slice().fill(Rgba8Pixel { r: 120, g: 180, b: 240, a: 255 });
+            let image = Image::from_rgba8(pixels);
+            let pick_image = image.clone();
+            ui.on_art(move |_, _, _| image.clone());
+            ui.on_pick_art(move |_, _| pick_image.clone());
+            let cards = ModelRc::new(VecModel::from((0..50).map(|i| crate::Card {
+                id: i.to_string().into(), art: "cover".into(), title: format!("Album {i}").into(), ..Default::default()
+            }).collect::<Vec<_>>()));
+            ui.set_albums(cards.clone());
+            ui.set_shelves(ModelRc::new(VecModel::from(vec![crate::Shelf { loaded: true, cards, title: "Recently played".into() }])));
+            ui.set_picks(ModelRc::new(VecModel::from(vec![crate::Pick { title: "Favorites".into(), covers: ModelRc::new(VecModel::from(vec!["cover".into(); 4])), ..Default::default() }; 8])));
+            ui.set_now_art("cover".into());
+            ui.set_now_title("Playing track".into());
+            ui.show().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+            for (width, height) in [(1600, 900), (960, 600), (1440, 820)] {
+                ui.window().set_size(slint::PhysicalSize::new(width, height));
+                let immediate = ui.window().take_snapshot().unwrap();
+                i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+                slint::platform::update_timers_and_animations();
+                let settled = ui.window().take_snapshot().unwrap();
+                let changed = immediate.as_slice().iter().zip(settled.as_slice()).filter(|(a, b)| a != b).count();
+                assert_eq!(changed, 0, "resize {width}x{height}, view {view}, full {full}, panel {panel} must be laid out immediately");
+            }
+            if full { ui.set_full_panel(if panel == 0 { 1 } else { 0 }); }
+            else { ui.set_inspector(if panel == 0 { 1 } else { 0 }); }
+            let start = ui.window().take_snapshot().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(100));
+            slint::platform::update_timers_and_animations();
+            let middle = ui.window().take_snapshot().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let end = ui.window().take_snapshot().unwrap();
+            assert!(start.as_slice() != middle.as_slice(), "opening or closing a panel still animates");
+            assert!(middle.as_slice() != end.as_slice(), "the panel passes through an intermediate layout");
         }
     }
 
