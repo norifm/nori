@@ -1,3 +1,63 @@
+# Current Arch continuation status — October 11, 2026
+
+This section supersedes the historical Mac checkpoint below. Continue the owner's
+assigned issues; commit and push verified work. Keep the remaining issue limitations.
+
+## Completed and verified on Arch
+
+- PR #57 merged as 140850dd; documentation-only removal of the pending iPod note.
+- Removed old target/debug and target/release caches, freeing about 60 GB.
+  There is now 117 GB free. Keep host builds compact with CARGO_PROFILE_DEV_DEBUG=0,
+  CARGO_PROFILE_TEST_DEBUG=0 and CARGO_INCREMENTAL=0; Cargo jobs never exceed four.
+- Active-mix jam resume regression now passes all streamed/downloaded and deep-buffer
+  cases without weakening its audible-phase assertions. Resume corrects the following
+  clock, and engine commands use their current time. Simulator unbuffered resume
+  schedules its actual immediate callback rather than introducing artificial jitter.
+- One remote-control/jam switch defaults on, migrates old keys once, and is wired
+  through every client. Along defaults on per room; guest provider songs default off.
+  Android Invite and Settings replace drawer contents with Back. CLI and desktop
+  hosting controls use the same Rust permissions.
+- Android native media output exposes nori devices and This phone, supports transfer
+  and volume. Native return-to-phone and volume checks pass (#49).
+- Fixed a native use-after-free when a suspended generated async JNI call outlived
+  its Client during profile switching. Async calls retain owned handles; the actual
+  generated-entry regression fails before the fix and passes after it.
+- Debug command request correlation and quoting pass concurrent fake/real checks.
+  Linux mDNS works with Python Zeroconf; Docker relay resolves the host on Linux.
+  Device UI checks wait for input transactions and sheet dismissal.
+- #54 download grouping verified on Android/Android Auto and shared Rust client
+  tests, including partial albums, offline playback, loose songs and Favorites.
+
+## Final checks
+
+- Full Rust workspace: passed, RUST_TEST_THREADS=4 (linux-final-workspace-jni.log).
+- Android unit tests: 29 passed, one existing ignored; workspace/Android clippy
+  pass with baseline warnings only. Android APK builds and installs.
+- Full feature suite: 154/154; smoke 34/34; full audio 33/33; final downloads and
+  scrobbling 31/31. Logs: build/linux-{full-feature,final-smoke,final-audio}-jni.log
+  and build/linux-final-downloads-scrobble-jni.log.
+- Bazel player pilot: both targets passed. Python app/mdns checks and Bash syntax pass.
+- Emulator: nori-e2e, emulator-5554, Android 14 x86_64.
+  ANDROID_HOME=/home/pilif/Android/Sdk. Local Navidrome 4533 and jam relay 5274.
+- Release desktop builds. Private 1920x1080 Xvfb uses Mesa softpipe, so actual GPU
+  performance remains unverified. Settled idle CPU 0%, RSS about 190 MB; paused after
+  playback/resizing about 199 MB. Rapid scripted resize retained correct final layout
+  and did not increase RSS, but is not sufficient to close #33. Own display/app/private
+  audio sink were stopped. Artifacts: build/linux-desktop-perf/.
+
+## Remaining
+
+Refresh assigned issue bodies/comments before new changes. #53 wrong Home covers
+remain unreproduced despite verified Favorites/download fixes. #43 now has an audible
+mix shuffle regression that passes the baseline; its notification bug remains open.
+Investigate #50 lockscreen skip latency and #40 real handoff delay (earlier 283 ms
+measurement did not reproduce it). #33 needs real-GPU cadence/live-resize and sustained
+memory measurements; preserve blur. #29 awaits the owner's physical iPod check.
+Lyrics timing still needs targeted audible-position verification through corrections
+and mix pause/resume. Do not close these based on the current partial evidence.
+
+# Historical Mac checkpoint (superseded)
+
 # WIP handoff for continuation on Arch Linux
 
 Updated October 11, 2026. The owner explicitly requested this new handoff and a WIP
