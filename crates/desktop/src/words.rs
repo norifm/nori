@@ -6,6 +6,7 @@ use nori_core::transport::{FailureKind, NetError};
 use nori_core::Song;
 
 pub const SHOW_ALL: &str = "Show all";
+pub const MIXING: &str = "Mixing";
 
 /// What to say about a device's AutoEQ curve, and the button's word.
 pub fn curve_notice(n: &CurveNotice) -> (String, &'static str) {

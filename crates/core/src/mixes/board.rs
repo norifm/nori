@@ -10,6 +10,12 @@ impl Core {
     fn board<R>(&self, f: impl FnOnce(&mut Board) -> R) -> R {
         f(&mut self.board.lock())
     }
+
+    fn favourites(&self) -> Option<Vec<Song>> {
+        let marks = self.stars.lock().clone();
+        self.board(|b| b.favourites.as_ref().map(|songs| songs.iter()
+            .filter(|s| marks.kept(crate::client::Starrable::Song, &s.id)).cloned().collect()))
+    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -27,11 +33,10 @@ impl Core {
         out
     }
 
-    /// Sets the favourites mix from the starred songs, with session marks applied and provider songs
-    /// dropped. True when it changed.
+    /// Stores the favourites mix without provider songs. Session marks are applied when read.
+    /// True when the stored songs changed.
     pub fn mix_favourites(&self, starred_songs: Vec<Song>) -> bool {
-        let marks = self.stars.lock().clone();
-        let kept = distinct(starred_songs.into_iter().filter(|s| !s.is_provider() && marks.kept(crate::client::Starrable::Song, &s.id)), |s| &s.id);
+        let kept = distinct(starred_songs.into_iter().filter(|s| !s.is_provider()), |s| &s.id);
         self.board(|b| {
             let changed = b.favourites.as_ref() != Some(&kept);
             b.favourites = Some(kept);
@@ -42,8 +47,8 @@ impl Core {
     /// The row's tiles with drawn covers: favourites, then the mixes when `taste`.
     pub fn mix_cards(&self, taste: bool) -> Vec<MixTile> {
         let mut tiles = mix_tiles(taste);
+        tiles[0].covers = cover_ids(self.favourites().as_deref().unwrap_or_default());
         self.board(|b| {
-            tiles[0].covers = cover_ids(b.favourites.as_deref().unwrap_or_default());
             for (tile, spec) in tiles.iter_mut().skip(1).zip(&MIXES) {
                 tile.covers = b.drawn.get(spec.id).map(|d| cover_ids(&d.songs)).unwrap_or_default();
             }
@@ -54,12 +59,12 @@ impl Core {
     /// One mix's page.
     pub fn mix_page(&self, id: String) -> MixLookup {
         if id == FAVOURITES_MIX {
-            return self.board(|b| match &b.favourites {
+            return match self.favourites() {
                 Some(songs) => MixLookup::Ready {
-                    sheet: MixSheet { id: id.clone(), name: MixName::Favourites, covers: cover_ids(songs), seconds: total_seconds(songs), songs: songs.clone(), refreshable: false, favourites: true },
+                    sheet: MixSheet { id, name: MixName::Favourites, covers: cover_ids(&songs), seconds: total_seconds(&songs), songs, refreshable: false, favourites: true },
                 },
                 None => MixLookup::NotDrawn,
-            });
+            };
         }
         let Some(spec) = spec_of(&id) else { return MixLookup::Unknown };
         self.board(|b| match b.drawn.get(spec.id) {
@@ -180,11 +185,14 @@ pub(crate) mod tests {
         assert!(!core.mix_favourites(starred.clone()));
         assert_eq!(ids(&sheet(&core, FAVOURITES_MIX).songs), ["1", "2"]);
         core.stars.lock().mark(crate::client::Starrable::Song, "1".into(), false);
-        assert!(core.mix_favourites(starred.clone()));
+        // A mark changes the page and tile before another favourites read.
         let fav = sheet(&core, FAVOURITES_MIX);
         assert_eq!(ids(&fav.songs), ["2"]);
         assert!(fav.favourites && !fav.refreshable);
         assert_eq!(core.mix_cards(false)[0].covers, ["cv-2"]);
+        core.stars.lock().restore(crate::client::Starrable::Song, "1".into(), false, None);
+        assert_eq!(ids(&sheet(&core, FAVOURITES_MIX).songs), ["1", "2"], "a refused unstar restores the row without refetching");
+        assert_eq!(core.mix_cards(false)[0].covers, ["cv-1", "cv-2"]);
         assert_eq!(other.mix_page(FAVOURITES_MIX.into()), MixLookup::NotDrawn);
         // Marks are per core too.
         other.mix_favourites(starred);
