@@ -60,6 +60,19 @@ assigned issues; commit and push verified work. Keep the remaining issue limitat
 
 ## Remaining
 
+October 11 follow-up: #40 remote device suite now starts an album, advances the
+terminal peer through three songs, and checks native handoff preserves the latest
+song and resumes phone audio. All 29 checks pass (remote-several-tracks.log).
+This is a terminal peer, not the owner's desktop reproduction; keep #40 open.
+#33 native NVIDIA EGL pixel/resize/blur regression passes with its test window
+offscreen. VirtualGL's equivalent test fails on expansion, so do not patch the
+renderer from that failure. GPU track-change and repeated resize measurements
+are recorded in docs/performance/raw/linux-desktop-gpu-2026-10-11.md; memory
+settles after 100 distinct titles and repeated Home resizing. VirtualGL overhead
+prevents a native CPU conclusion. Own app, Xvfb and audio sink are stopped.
+Follow-up full workspace tests pass (assigned-bugs-followup-workspace.log).
+Release desktop and Android debug builds pass; disk has about 115 GB free.
+
 Refresh assigned issue bodies/comments before new changes. #53 wrong Home covers
 remain unreproduced despite verified Favorites/download fixes. #43 now has an audible
 mix shuffle regression that passes the baseline; its notification bug remains open.
