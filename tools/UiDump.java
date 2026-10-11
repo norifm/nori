@@ -64,6 +64,10 @@ public final class UiDump {
             info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
             info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
             automation.setServiceInfo(info);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                // Read the active window after Android finishes its window transitions.
+                UiAutomation.class.getMethod("syncInputTransactions").invoke(automation);
+            }
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             AccessibilityNodeInfo root;
             while ((root = automation.getRootInActiveWindow()) == null) {

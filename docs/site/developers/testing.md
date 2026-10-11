@@ -111,6 +111,11 @@ where a condition can be awaited. The two that stay are real durations being mea
 the background (the system has to treat the app as idle), and the ten-second burst cycle
 (`bursts_continue` waits for the next top-up, up to 15 s).
 
+Debug bridge commands carry a unique request ID. `tools/app.sh` reads only that
+request's reply, so concurrent state and remote-view reads cannot consume each
+other's answers. `python3 tools/test-app.py` checks correlation and device-shell
+quoting without a device.
+
 ### The local server
 
 `NORI_E2E_SERVER=local` runs everything against `tools/dev-server.sh`: a Navidrome on port 4533 (Docker or
@@ -123,6 +128,10 @@ Podman; one already answering on 4533 is used as it is), its music and database 
 - `Nori Bench 1000`: a playlist of a thousand songs (the server's own, over again if it has fewer), for
   opening and scrolling a long page: `tools/open-bench.sh <package> "Nori Bench 1000" 10 3` from Library >
   Playlists, on a perf or release build, prints the frames and janky frames of each open and of the flings.
+
+The LAN remote-control check resolves the terminal peer's live mDNS announcement. On macOS it uses
+dns-sd; on Linux it uses Python's zeroconf package (python-zeroconf on Arch), without an Avahi daemon.
+Run python3 tools/test-mdns.py to check discovery and rejection of stale closed ports.
 
 Each emulator logs in with its own `nori-e2e-SERIAL` fixture account. The app talks to
 the server through `tools/lying-proxy.py` on port 4534 (`http://10.0.2.2:4534` from the
@@ -252,19 +261,21 @@ is Android glue and stays on the device. 50 moved, 60 stay.
   device is Android's: NsdManager announcing and finding doors, the system volume a command sets, an invite (the
   relay's `/nori/jam` page in the browser, or a `nori://jam` link) opening the app as a guest, and the media
   session handed to another device (RemoteDevicePlayer: the notification, the volume keys as a remote volume, the phone's own engine let go), which only media3 and the
-  system can show. `tools/feature-e2e.sh --only remote` checks that with the terminal client on this Mac as the
-  other device (local server only): the emulator cannot hear the Mac's mDNS, so the door is handed to the app
-  (`app.sh remote "found" "<host>|<port>|<txt>"`, read with `dns-sd`), then `remote pick`, `remote mirror`.
+  system can show. `tools/feature-e2e.sh --only remote` checks that with the terminal client on this computer as the
+  other device (local server only): the emulator cannot hear the host's mDNS, so the door is handed to the app
+  (`app.sh remote "found" "<host>|<port>|<txt>"`, read with `dns-sd` on macOS or Python Zeroconf on Linux), then `remote pick`, `remote mirror`.
+  The section also opens Android's native media output picker and transfers playback to This phone;
+  route publication and System UI's transfer callbacks require Android's MediaRouter2 service.
   It also force-stops and reopens Android while the peer plays: the foreground lifecycle must rediscover
   playback and rebuild its remote media session without playing the saved queue locally. It then closes
   the peer and checks that returning here releases Android controls and permits local playback.
   `--only jam` hosts a jam on the emulator against octo-fiesta's real relay (the local one on 5274,
-  `NORI_E2E_JAM`) with two guests on this Mac (`tools/jam-guest.py`, the relay's frames in Python): what only
+  `NORI_E2E_JAM`) with two guests on this computer (`tools/jam-guest.py`, the relay's frames in Python): what only
   the device shows is the jam in the player, its queue and the devices sheet, requests arriving live and
   decided by tapping (the accessibility tree's Accept and Refuse), and the accepted song playing; once ended,
   its own old invite opened through the system's intent saying the jam ended and changing nothing, and a new
   one starting at once (which invites are its own and what an ended one does are tests/remote.rs'). Then the
-  emulator is a guest of a jam on the relay's server hosted on this Mac (`tools/jam-host.py`) while its own
+  emulator is a guest of a jam on the relay's server hosted on this computer (`tools/jam-host.py`) while its own
   profile is the home server's: the invite opening the guest's player, a tap asking, Leave returning home.
   Listening along there is the playback service's own (media3's foreground service and notification, the
   AudioTrack's deep buffer with the screen off, the session's state): the notification saying whose jam it
