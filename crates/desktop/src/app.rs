@@ -320,6 +320,7 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
     let bar = PlayerBar::new().map_err(|e| eprintln!("nori: no player window: {e}")).ok()?;
     ui.set_native_player(true);
     bar.set_font(ui.get_font());
+    bar.set_mixing_label(words::MIXING.into());
     bar.on_art(move |id, size, _rev| art(id, size));
     bar.on_toggle(to_main(ui, |m| m.invoke_toggle()));
     bar.on_star(to_main(ui, |m| m.invoke_star()));
@@ -368,6 +369,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
     ui.set_shelves(ModelRc::from(shelves.clone()));
     ui.set_greeting("Home".into());
     ui.set_show_all_text(words::SHOW_ALL.into());
+    ui.set_mixing_label(words::MIXING.into());
     let (tx, inbox) = Tx::new(ui.as_weak());
     let art = Rc::new(RefCell::new(Art::default()));
     let app = Rc::new_cyclic(|me: &Weak<RefCell<App>>| {
@@ -1375,6 +1377,15 @@ impl App {
                 self.on_session(|s| s.mpris_changed());
                 self.follow();
                 self.mark_playing();
+                if let Some(s) = &self.session {
+                    let core = s.core.clone();
+                    let taste = crate::session::app().settings.prefs(|p| p.taste_model);
+                    let id = nori_core::mixes::board::FAVOURITES_MIX;
+                    if let nori_core::mixes::board::MixLookup::Ready { sheet } = core.mix_page(id.into()) {
+                        self.data(Req::Mix(id.into()), Ok(Data::Mix(Box::new(sheet))));
+                    }
+                    self.data(Req::Home, Ok(Data::Picks(core.mix_cards(taste))));
+                }
             }
             Msg::Volume(v) if self.elsewhere.is_none() => self.ui().set_volume(v),
             Msg::Volume(_) => {}
@@ -1469,6 +1480,7 @@ impl App {
             p.set_now_starred(ui.get_now_starred());
             p.set_now_art(ui.get_now_art());
             p.set_playing(ui.get_playing());
+            p.set_mixing(ui.get_mixing());
             p.set_position_ms(ui.get_position_ms());
             p.set_duration_ms(ui.get_duration_ms());
             p.set_shuffle(ui.get_shuffle());
@@ -1894,6 +1906,7 @@ impl App {
             (None, None) => s.engine.status_with(|st| (st.id.clone(), st.state == State::Playing)),
         };
         ui.set_playing(playing);
+        ui.set_mixing(self.elsewhere.is_none() && s.engine.status_with(|st| st.mixing));
         ui.set_position_ms(self.position_now() as i32);
         if id != self.heard {
             self.song_shown(id);
@@ -2239,6 +2252,42 @@ mod tests {
     }
 
     #[test]
+    fn mixing_is_visible_in_both_players() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = AppWindow::new().unwrap();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_mixing_label(words::MIXING.into());
+        ui.set_has_song(true);
+        ui.set_playing(true);
+        ui.set_now_title("Track".into());
+        ui.show().unwrap();
+        for full in [false, true] {
+            ui.set_full_player(full);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let before = ui.window().take_snapshot().unwrap();
+            ui.set_mixing(true);
+            let during = ui.window().take_snapshot().unwrap();
+            assert!(before.as_slice() != during.as_slice(), "mixing must be visible, fullscreen={full}");
+            ui.set_mixing(false);
+            let after = ui.window().take_snapshot().unwrap();
+            assert!(before.as_slice() == after.as_slice(), "the indicator disappears when the transition finishes");
+        }
+        let bar = crate::PlayerBar::new().unwrap();
+        bar.window().set_size(slint::PhysicalSize::new(720, 76));
+        bar.set_mixing_label(words::MIXING.into());
+        bar.set_has_song(true);
+        bar.set_playing(true);
+        bar.set_now_title("Track".into());
+        bar.show().unwrap();
+        let before = bar.window().take_snapshot().unwrap();
+        bar.set_mixing(true);
+        assert!(before.as_slice() != bar.window().take_snapshot().unwrap().as_slice());
+    }
+
+    #[test]
     fn fullscreen_does_not_draw_the_hidden_page() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
@@ -2321,6 +2370,7 @@ mod tests {
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
             ui.set_picks_loaded(true);
             ui.set_show_all_text(words::SHOW_ALL.into());
+    ui.set_mixing_label(words::MIXING.into());
             ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf {
                 title: "Recently played".into(), loaded: true,
                 cards: cards((0..100).map(|i| Card { id: i.to_string().into(), art: i.to_string().into(), ..Default::default() })),
