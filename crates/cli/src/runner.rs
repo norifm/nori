@@ -362,7 +362,7 @@ impl Runner {
         let Some(s) = &self.session else { return };
         let remote = s.remote();
         let guest = s.guest;
-        let jams = guest || crate::backend::app().settings.prefs(|p| p.jam);
+        let jams = guest || crate::backend::app().settings.prefs(|p| p.remote_control);
         let unsupported = remote.as_ref().is_some_and(|r| r.relay() == RelaySupport::Unsupported);
         let d = &mut app.devices;
         // A guest's music is the jam's: it moves to no other device.
@@ -625,6 +625,12 @@ impl Runner {
                 }
             }
             Cmd::LeaveJam => s.jam_leave(),
+            Cmd::JamAlong(on) => {
+                if let Some(r) = s.remote() { r.jam_along(on); }
+            }
+            Cmd::JamRemoteSongs(on) => {
+                if let Some(r) = s.remote() { r.jam_remote_songs(on); }
+            }
             Cmd::Listen(on) => {
                 if let Some(r) = s.remote() {
                     r.listen(on);

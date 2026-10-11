@@ -525,7 +525,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             SongMenu(menuSong, actions, onDismiss = { menuSong = null }, player = player.takeIf { menuFromPlayer })
             DevicesHost(devicesOpen) { devicesOpen = false }
             // A jam that would not start says so, whichever menu started it.
-            if (prefs.jam) JamFailures(actions)
+            if (prefs.remoteControl) JamFailures(actions)
         }
         }
     }

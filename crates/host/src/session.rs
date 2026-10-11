@@ -465,7 +465,7 @@ impl Session {
     /// Makes or drops the remote as the settings say, and serves while remote control is on.
     fn follow_remote(&self) {
         let prefs = self.core.session.settings.current().unwrap_or_default();
-        if self.offline || !(prefs.remote_control || prefs.jam || self.guest) {
+        if self.offline || !(prefs.remote_control || self.guest) {
             return self.remotes.set(None);
         }
         let remote = self.remotes.get().unwrap_or_else(|| {
@@ -497,10 +497,6 @@ impl Session {
         remote.clone().serve(prefs.remote_control && !self.guest);
         if self.guest {
             remote.clone().watch(true);
-        }
-        if !prefs.jam {
-            // Jams switched off while remote control stays on: the one hosted ends.
-            remote.jam_close();
         }
         self.remotes.played(&self.engine);
     }

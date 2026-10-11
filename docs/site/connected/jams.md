@@ -7,8 +7,8 @@ sidebar:
 
 Applies to nori 0.6 on Android, the desktop, the terminal and the iPod touch. Jams need octo-fiesta.
 
-A jam is a session others join without an account. Turn on **Jams** (Settings, Library, Other devices; off by default),
-then start one from the devices button, or from a song's, album's or playlist's menu.
+A jam is a session others join without an account. **Remote control and jams** is enabled by default (Settings, Library, Other devices).
+Start a jam from the devices button, or from a song's, album's or playlist's menu.
 
 ## Inviting
 
@@ -25,11 +25,13 @@ network, and a public address in the server settings lets guests join from elsew
 | Guest | ask for songs; each guest may have five requests waiting at once |
 
 A song a guest asks for waits under **Asked for** until the host or an admin accepts it. Provider songs
-asked for are not fetched until they are accepted.
+asked for are not fetched until they are accepted. **Allow remote songs** is off for each new room;
+the host must enable it before guests or admins can request songs from external providers.
 
 ## Listening along
 
 With **Let guests listen along** on (the default), guests can play the jam's music on their own devices,
-in step with the host, its speed, skipped silence and transitions included. Each jam can change it.
+in step with the host, its speed, skipped silence and transitions included. Change it in the room settings next to **Invite**. These settings apply only to the current room.
+In the terminal, press s in the invite to open room settings.
 
 In the terminal, `i` starts a jam around the selected item and `o` joins one from its link.
