@@ -461,7 +461,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     fun play(songs: List<Song>, startIndex: Int = 0, shuffle: Boolean = false, from: PageOrigin? = null) = with { c ->
         if (songs.isEmpty()) return@with
         mirror?.let { m ->
-            remote(Op.Replace(songs, startIndex.coerceIn(0, songs.lastIndex).toUInt(), 0, true, null, shuffle, m.repeat))
+            remote(Op.Replace(songs, startIndex.coerceIn(0, songs.lastIndex).toUInt(), 0, true, null, shuffle, m.repeat, null))
             return@with
         }
         // Shuffle lit when this start asked for shuffle; cleared on a plain Play, so the album
@@ -496,7 +496,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     fun playShuffledOrder(songs: List<Song>, order: List<UInt>, from: PageOrigin? = null) = with { c ->
         if (songs.isEmpty() || order.isEmpty()) return@with
         mirror?.let { m ->
-            remote(Op.Replace(songs, order.first(), 0, true, order, true, m.repeat))
+            remote(Op.Replace(songs, order.first(), 0, true, order, true, m.repeat, null))
             return@with
         }
         nori.session.playlistShowShuffle(true)

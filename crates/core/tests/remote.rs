@@ -660,6 +660,63 @@ impl Device {
 }
 
 #[test]
+fn returning_here_does_not_wait_for_a_dead_device() {
+    for action in ["wait", "play", "edit"] {
+        let relay = Relay::new();
+        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+        phone.playing(&["s1", "s2"], 0);
+        phone.remote.clone().serve(true);
+        let ghost = phone.until("the phone published", |_| relay.hub.lock().rooms.values().flat_map(|r| &r.members).find(|m| m.id == phone.remote.id() && m.state.as_ref().is_some_and(|s| s.playing)).cloned());
+        phone.remote.clone().stop();
+        relay.hub.lock().rooms.entry("u:ann".into()).or_default().members.push(ghost);
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        desk.queued(&["local"]);
+        desk.remote.clone().serve(true);
+        desk.remote.clone().watch(true);
+        desk.until("the stale relay entry", |r| r.devices().into_iter().find(|d| d.id == phone.remote.id()));
+        desk.remote.clone().watch(false);
+        desk.remote.clone().pick(Some(phone.remote.id()));
+        assert!(desk.remote.active().is_some());
+        desk.remote.clone().pick(None);
+        assert!(desk.remote.active().is_none(), "choosing this computer releases remote controls immediately");
+        assert_eq!(desk.core.session.playlist(|p| p.ids().to_vec()), ["local"], "the stored local queue remains usable");
+        let request = || relay.hub.lock().rooms["u:ann"].events.iter().find_map(|(_, from, _, body)| match body {
+            Body::Command { id, op } if from == &desk.remote.id() && matches!(op.as_ref(), Op::Transfer { to } if to == &desk.remote.id()) => Some(*id),
+            _ => None,
+        });
+        eventually("the queue request", || request().is_some());
+        let transfer = request();
+        match action {
+            "play" => desk.playing(&["local"], 0),
+            "edit" => desk.queued(&["edited"]),
+            _ => {},
+        }
+        // A delayed response from the previous app instance must respect what happened here.
+        let outgoing = Outgoing {
+            to: Some(desk.remote.id()),
+            body: Some(Body::Command { id: 999, op: Box::new(Op::Replace {
+                songs: vec![Song::only_id("remote".into())], index: 0, position_ms: 5_000,
+                play: true, order: None, shuffle: false, repeat: 0, transfer,
+            }) }),
+            ..Default::default()
+        };
+        block_on(relay.send(Exchange {
+            url: format!("{SERVER}/rest/noriRemote.send?u=ann&dev={}", phone.remote.id()),
+            json: Some(serde_json::to_string(&outgoing).unwrap()), ..Default::default()
+        })).unwrap();
+        if action == "wait" {
+            assert!(matches!(desk.told(), Op::Replace { songs, .. } if songs[0].id == "remote"));
+        } else {
+            eventually("the late queue refused", || relay.hub.lock().rooms["u:ann"].events.iter().any(|(_, from, _, body)| {
+                from == &desk.remote.id() && matches!(body, Body::Ack { id: 999, refusal: Some(Refusal::Stale) })
+            }));
+            assert!(desk.ops.try_recv().is_err(), "a late handoff cannot replace local playback or edits");
+        }
+        relay.close();
+    }
+}
+
+#[test]
 fn active_discovery_follows_the_playing_device() {
     let relay = Relay::new();
     let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");

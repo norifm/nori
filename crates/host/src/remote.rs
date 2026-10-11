@@ -131,7 +131,7 @@ impl RemotePlayer for HostPlayer {
             Op::Move { from, to, .. } => h.move_song(from as usize, to as usize),
             Op::Restore { song, index } => h.put_back(song, index as usize),
             Op::Add { songs, next } => h.enqueue(songs, next),
-            Op::Replace { songs, index, position_ms, play, order, shuffle, repeat } => h.replace(songs, index as usize, position_ms, play, order, shuffle, repeat),
+            Op::Replace { songs, index, position_ms, play, order, shuffle, repeat, .. } => h.replace(songs, index as usize, position_ms, play, order, shuffle, repeat),
             Op::Shuffle { on } => h.shuffle(on),
             Op::Repeat { mode } => h.repeat(mode),
             Op::Volume { percent } => return h.volume_from_afar(percent as f32 / 100.0),
@@ -286,7 +286,7 @@ impl Elsewhere {
 
     /// `songs` from `start` (or shuffled) as the device's queue, playing, its repeat kept.
     fn replace(&self, songs: Vec<Song>, start: usize, shuffle: bool) -> Op {
-        Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat: self.mirror.repeat }
+        Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat: self.mirror.repeat, transfer: None }
     }
 
     pub(crate) fn play(&self, songs: Vec<Song>, start: usize, shuffle: bool) {
