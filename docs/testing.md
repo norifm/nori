@@ -233,6 +233,8 @@ is Android glue and stays on the device. 50 moved, 60 stay.
   system can show. `tools/feature-e2e.sh --only remote` checks that with the terminal client on this Mac as the
   other device (local server only): the emulator cannot hear the Mac's mDNS, so the door is handed to the app
   (`app.sh remote "found" "<host>|<port>|<txt>"`, read with `dns-sd`), then `remote pick`, `remote mirror`.
+  It also force-stops and reopens Android while the peer plays: the foreground lifecycle must rediscover
+  playback and rebuild its remote media session without playing the saved queue locally.
   `--only jam` hosts a jam on the emulator against octo-fiesta's real relay (the local one on 5274,
   `NORI_E2E_JAM`) with two guests on this Mac (`tools/jam-guest.py`, the relay's frames in Python): what only
   the device shows is the jam in the player, its queue and the devices sheet, requests arriving live and

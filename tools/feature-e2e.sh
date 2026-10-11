@@ -462,6 +462,19 @@ PY
     remote_session() { adb shell dumpsys media_session | grep -q "volumeType=REMOTE"; }
     check "the media session is the Mac's (a remote volume)" wait_until 10 remote_session
     check "this phone's output is let go" silent 10
+    check "the Mac's engine is playing before the phone closes" wait_until 10 bash -c "'$app' remote devices | grep -Fq '$name (nearby): playing'" || return 1
+    adb shell am force-stop "$pkg"
+    "$app" launch >/dev/null
+    "$app" open player >/dev/null
+    remote_started() {
+      local listed; listed=$("$app" remote devices) || return 1
+      [[ "$listed" == none || "$listed" == *": playing "* || "$listed" == *": paused "* ]]
+    }
+    check "the foreground starts its remote controller" wait_until 10 remote_started || return 1
+    "$app" remote found "$door" >/dev/null
+    check "reopening follows the Mac without the device picker" wait_for playingOn "$name" 15 || return 1
+    check "the remote media session returns after reopening" wait_until 10 remote_session
+    check "reopening does not play the saved queue on this phone" silent 10
     peer_volume() { screen | grep -oE '[0-9]+%' | tail -1 | tr -d '%'; }
     before=$(peer_volume)
     adb shell input keyevent KEYCODE_VOLUME_UP; adb shell input keyevent KEYCODE_VOLUME_UP
