@@ -312,7 +312,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
                     Hairline(startIndent = Space.gutter + 36.dp)
                 }
             }
-            // Only the perf build has a recorder, and with it this page (docs/perf-build.md).
+            // Only the perf build has a recorder, and with it this page (docs/site/developers/building.md).
             if (dev.nori.music.app.PerfHooks.recorder != null) item(key = "perf") {
                 Column(Modifier.clickable { nav.go("perf") }) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {

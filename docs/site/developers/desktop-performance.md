@@ -1,4 +1,11 @@
-# Desktop profiling
+---
+title: Desktop profiling
+description: "Measuring the desktop client: CPU, memory and GPU, and what was found."
+sidebar:
+  order: 6
+---
+
+Applies to the desktop client (`crates/desktop`) at 0.6.
 
 Measure an optimized binary with symbols. Debug builds and Xvfb presentation timings do not represent
 the owner's desktop. Keep automated clicks on Xvfb with a private audio sink unless the owner
@@ -120,7 +127,7 @@ This demonstrates a plateau for that workload, not proof that every path is leak
 ## Mouse scrolling and border dragging
 
 The custom backend now forwards wheel phases as Slint's native winit backend does. The public
-`PointerScrolled` event marks wheels as cancelled, which makes Flickable jump immediately instead
+`PointerScrolled` event marks wheels as canceled, which makes Flickable jump immediately instead
 of using its wheel deceleration. A virtual-clock regression failed before the phase correction;
 it checks motion between notches and the final accumulated distance. Precise touchpad phases
 remain intact. Shelves support mouse dragging, Shift+wheel and arrows.
