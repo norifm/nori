@@ -587,6 +587,10 @@ impl Session {
     pub fn setting(&self, name: &str, value: &str) -> Option<SettingChange> {
         let change = self.core.session.settings.edit_by_name(name, value)?;
         self.apply(change.effect, &change.prefs);
+        if name == "lyricsPrefetch" {
+            let client = self.client.clone();
+            spawn("nori-lyrics-ahead", move || block_on(client.lyrics_prefetch()));
+        }
         if matches!(name, "remoteControl" | "jam") {
             self.follow_remote();
         }
@@ -812,6 +816,10 @@ impl Session {
     fn arrived(&self) {
         let steps = self.core.session.song_arrived();
         self.keeper.later(steps.save_after_ms);
+        if steps.lyrics_ahead {
+            let client = self.client.clone();
+            spawn("nori-lyrics-ahead", move || block_on(client.lyrics_prefetch()));
+        }
         if steps.fill {
             self.refill();
         }
@@ -1003,6 +1011,10 @@ impl Handle {
     fn edited(&self) {
         self.engine.queue_changed();
         self.keeper.later(queue_keep(QueueMoment::Edited).save_after_ms);
+        if self.queue.lyrics_prefetch_ready() {
+            let client = self.client.clone();
+            spawn("nori-lyrics-ahead", move || block_on(client.lyrics_prefetch()));
+        }
         self.remotes.played(&self.engine);
     }
 

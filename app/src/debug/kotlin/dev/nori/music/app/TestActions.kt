@@ -26,7 +26,7 @@ import kotlinx.coroutines.withContext
  */
 object TestActions {
     /** The last lyrics `do lyrics` asked for, so the state dump can report what arrived. */
-    @Volatile var lastLyrics: FoundLyrics? = null
+    @Volatile var lastLyrics: dev.nori.music.data.ForSong<FoundLyrics>? = null
         private set
 
     /**
@@ -106,6 +106,7 @@ object TestActions {
         val nori = Nori.get(context)
         val verb = what.substringBefore(' ')
         val ref = what.substringAfter(' ', "")
+        if (verb == "lyrics") lastLyrics = null
         when (verb) {
             // "beats yes|no[,remember]": the answer to the question Download asks while the beat model is on.
             "beats" -> { actions.answerBeats(ref.startsWith("yes"), ref.endsWith(",remember")); return@attempt }
@@ -150,7 +151,9 @@ object TestActions {
             }
         }
         val r = testRef(ref)
-        val songs = songsOf(nori, r)
+        val songs = if (verb == "lyrics" && r is TestRef.Song) {
+            player.state.value.queue.firstOrNull { it.id == r.id }?.let { listOf(it) } ?: songsOf(nori, r)
+        } else songsOf(nori, r)
         when (verb) {
             // Lyrics load only while the lyrics panel is watching them, which a headless check is not:
             // this asks for them the same way the panel does and parks the answer for the state dump.
@@ -158,7 +161,7 @@ object TestActions {
                 val song = songs.firstOrNull() ?: nori.player.state.value.current ?: return@attempt
                 // The flow emits the server's answer first and the LRCLIB fallback second; the last one
                 // is the one the screen would end up showing.
-                lastLyrics = nori.library.lyricsFor(song).last()
+                lastLyrics = dev.nori.music.data.ForSong(song.id, nori.library.lyricsFor(song).last())
             }
             "seek" -> nori.player.seekTo(ref.toLongOrNull() ?: 0L)
             // "tracelyrics on|off": the lyrics panel logs each reading it takes and the moment it shows (tag norilyrics).

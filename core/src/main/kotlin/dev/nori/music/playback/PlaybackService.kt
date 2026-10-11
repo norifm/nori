@@ -223,7 +223,14 @@ class PlaybackService : MediaLibraryService() {
         // Loudness compensation follows the volume: while it is on, the volume is watched and told.
         volume = VolumeWatch(this, { nori.outputs.current.value }) { index, max, db -> player.setVolume(index, max, db) }
         scope.launch {
-            nori.settings.prefs.collect { p -> volume?.set(p.loudness) }
+            var prefetch = nori.settings.value.lyricsPrefetch
+            nori.settings.prefs.collect { p ->
+                volume?.set(p.loudness)
+                if (prefetch != p.lyricsPrefetch) {
+                    prefetch = p.lyricsPrefetch
+                    scope.launch(Dispatchers.IO) { runCatching { nori.client.lyricsPrefetch() } }
+                }
+            }
         }
         applyAudio(nori.settings.value)
         scope.launch {
@@ -367,6 +374,7 @@ class PlaybackService : MediaLibraryService() {
             // sleep timer's count.
             val steps = nori.session.songArrived()
             scheduleSave(steps.saveAfterMs)
+            if (steps.lyricsAhead) scope.launch(Dispatchers.IO) { runCatching { nori.client.lyricsPrefetch() } }
             if (steps.fill) fetchFill()
             offlineBridge?.onSong(steps.bridge)
             announce()
@@ -411,7 +419,7 @@ class PlaybackService : MediaLibraryService() {
             if (!playWhenReady) keepQueue(dev.nori.music.ffi.queue.QueueMoment.PAUSED)
         }
 
-        override fun onShuffleModeEnabledChanged(on: Boolean) { refreshButtons(); remoteState() }
+        override fun onShuffleModeEnabledChanged(on: Boolean) { refreshButtons(); remoteState(); prefetchLyrics() }
 
         override fun onRepeatModeChanged(repeatMode: Int) { refreshButtons(); remoteState() }
 
@@ -419,6 +427,7 @@ class PlaybackService : MediaLibraryService() {
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
                 keepQueue(dev.nori.music.ffi.queue.QueueMoment.EDITED)
                 remoteState()
+                prefetchLyrics()
                 // The queue was edited: what comes next may not be what it was. A song queued to play next
                 // is fetched and measured now, while there is time to plan its mix, not when its turn comes:
                 // without it AutoMix had nothing to mix it by. The engine fetches it (and the songs after it)
@@ -741,6 +750,10 @@ class PlaybackService : MediaLibraryService() {
      */
     /** The account's: a jam guest plays its host's transitions. */
     private fun analyseAhead() { if (nori.rules.account) analyser.update() }
+
+    private fun prefetchLyrics() {
+        if (nori.session.lyricsPrefetchReady()) scope.launch(Dispatchers.IO) { runCatching { nori.client.lyricsPrefetch() } }
+    }
 
     /**
      * Keeps the music going past the end of the queue. When to fetch (the end in sight, two songs left

@@ -67,6 +67,20 @@ if [ ! -f "$d/.done" ]; then
   touch "$d/.done"; seeded=1
 fi
 
+# Timed, original words for deterministic lyrics checks, including an upcoming song.
+for track in 05 06; do
+  lyrics="$music/Nori E2E/Long Album/$track - Long Track $track.lrc"
+  if [ ! -f "$lyrics" ]; then
+    cat > "$lyrics" <<EOF
+[00:01.00]Nori fixture $track line one
+[00:05.00]Nori fixture $track line two
+[00:10.00]Nori fixture $track line three
+[00:15.00]Nori fixture $track line four
+EOF
+    seeded=1
+  fi
+done
+
 if curl -sf -m 2 localhost:4533/ping >/dev/null; then
   echo "navidrome: already running on 4533"
 else

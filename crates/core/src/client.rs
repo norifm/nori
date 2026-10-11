@@ -25,6 +25,7 @@ pub struct Client {
     pub(crate) second: AtomicBool,
     /// State shared between lyrics lookups (failing services, YouTube matches).
     pub(crate) lyrics: nori_lyrics::services::LyricsMemory,
+    pub(crate) prefetch: parking_lot::Mutex<crate::race::Prefetch>,
     /// Motion cover token and cached videos (motion.rs).
     pub(crate) motion: parking_lot::Mutex<crate::motion::Motion>,
     /// A replay of the queued writes is running; a second one would send them twice. Queuing a write and
@@ -154,7 +155,7 @@ impl Client {
 impl Client {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(core: Arc<Core>, transport: Arc<dyn Transport>, covers: Arc<crate::covers::CoverNet>) -> Arc<Self> {
-        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), motion: Default::default(), replaying: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false) })
+        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false) })
     }
 
     /// Sets the profile's addresses, folder and bitrate cap.

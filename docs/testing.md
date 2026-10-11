@@ -101,8 +101,11 @@ the server through `tools/lying-proxy.py` on port 4534 (`http://10.0.2.2:4534` f
 emulator; port 5556 uses proxy 4536): a transcoded stream is stated a quarter longer than its bytes, the connection closes short, and
 a range past the real end is answered 416, as a server answering `estimateContentLength=true` does when
 the transcode comes out smaller than estimated. audio-e2e's `transcode` section plays such a song past its
-real end. The generated songs have no lyrics anywhere, so the `lyrics` section only runs against the real
-server. Other songs come through the proxy at about 4 MB/s, so a download can be seen running beside
+real end. Long Tracks 05 and 06 have original timed LRC sidecars, so the `lyrics` section also runs locally.
+It checks lyrics crossing the Android binding, the next song being cached before playback or download,
+and its cached lyrics arriving after an offline skip. Rust tests cover cache ordering and cancellation;
+`ForSongTest` covers keeping words visible after a refresh failure. Navidrome reads sidecars with the
+same base filename ([lyrics configuration](https://www.navidrome.org/docs/usage/configuration-options/)). Other songs come through the proxy at about 4 MB/s, so a download can be seen running beside
 another. Navidrome itself states the estimate only on a transcode it has not cached yet (a cached one comes with
 its exact length), and nori no longer asks for it (Navidrome cuts a transcode larger than its estimate), so
 the proxy makes every transcode overstated, every time. The real server stays the default; never play or stream an `ext-` item on it.

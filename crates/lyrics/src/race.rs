@@ -392,6 +392,16 @@ fn chosen_before(cache: &dyn LyricsCache, song: &Song, services: &[LyricsService
     plausible(&k.lyrics, song).then(|| (rank, k.lyrics, k.named, k.score.unwrap_or(0.0)))
 }
 
+/// The last chosen service lyrics, without making requests. Timed server lyrics take precedence.
+pub fn cached_pick(cache: &dyn LyricsCache, song: &Song, server_has_lines: bool, server_synced: bool, lookup: &LyricsLookup) -> Option<LyricsPick> {
+    if lookup.services.is_empty() || song.is_provider() || (server_has_lines && server_synced) { return None; }
+    let (rank, mut lyrics, _, _) = chosen_before(cache, song, &lookup.services)?;
+    let server_timing = if server_has_lines { Timing::Untimed } else { Timing::Empty };
+    if timing(&lyrics) <= server_timing { return None; }
+    lyrics.offset_ms = cache.voice(song).and_then(|voice| sync::check(&lyrics, &voice)).map_or(0, |check| check.applied_ms());
+    Some(LyricsPick { lyrics, origin: lookup.services[rank].origin() })
+}
+
 /// Services that failed lately: for which song (cache key) and when, and each one's failures in a row.
 #[derive(Default)]
 pub(crate) struct Failures {
