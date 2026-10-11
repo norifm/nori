@@ -216,6 +216,30 @@ impl super::Surface for OpenGLSurface {
 }
 
 impl OpenGLSurface {
+    /// NORI: Owned cover uploads and layers share the native Skia context.
+    pub fn with_context(&self, callback: &mut dyn FnMut(&mut skia_safe::gpu::DirectContext)) -> Result<(), PlatformError> {
+        self.ensure_context_current()?;
+        callback(&mut self.gr_context.borrow_mut());
+        Ok(())
+    }
+
+    /// NORI: Present custom GL composition without querying unused native buffer history.
+    pub fn present(&self, callback: &mut dyn FnMut(&mut skia_safe::gpu::DirectContext) -> Result<(), PlatformError>) -> Result<(), PlatformError> {
+        self.ensure_context_current()?;
+        callback(&mut self.gr_context.borrow_mut())?;
+        self.glutin_surface.swap_buffers(&self.glutin_context)
+            .map_err(|e| format!("Skia OpenGL Renderer: swapping buffers: {e}").into())
+    }
+
+    /// NORI: The desktop compositor controls pacing when an X11 compositor supplies vsync.
+    pub fn set_swap_interval(&self, wait: bool) -> Result<(), PlatformError> {
+        self.glutin_surface.set_swap_interval(
+            &self.glutin_context,
+            if wait { glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()) }
+            else { glutin::surface::SwapInterval::DontWait },
+        ).map_err(|e| format!("Skia OpenGL Renderer: setting swap interval: {e}").into())
+    }
+
     pub fn new_with_config(
         window_handle: Arc<dyn raw_window_handle::HasWindowHandle>,
         display_handle: Arc<dyn raw_window_handle::HasDisplayHandle>,

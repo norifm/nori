@@ -58,6 +58,11 @@ The desktop GPU regression reads rendered pixels before and after a redraw, chec
 does not clear Skia's first frame. It needs a real GPU backend, so it runs explicitly rather than
 on headless CI: `cargo test -j4 -p nori-desktop layer_pixels_survive_first_sampling_and_redraw -- --ignored`.
 This checks the renderer handoff and texture layouts, which the playback virtual clock cannot exercise.
+On Linux, run `DISPLAY=:0 cargo test -j4 -p nori-desktop layers_resize_without_losing_pixels_or_blur -- --ignored`.
+It checks every pixel after live surface resizing, GPU cover ownership after releasing source bytes,
+mosaic quadrants and seam opacity, and the blur pyramid’s smoothness and vertical orientation.
+The software regression `resizing_does_not_animate_layout` verifies immediate layout at several
+window sizes while retaining the animations triggered by opening and closing panels.
 
 ## Running the device checks
 
