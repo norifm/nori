@@ -3106,8 +3106,12 @@ fn analyses_mid_hold_still_mix() {
 #[test]
 fn shuffle_near_mix_keeps_audio() {
     let songs = [("a", 200.0), ("b", 900.0), ("c", 1400.0)];
-    for (when_ms, hold_ms, seed) in [(-100, 0, 1), (-100, 2_000, 7), (1_500, 0, 1), (1_500, 2_000, 7)] {
-        let what = format!("shuffle {when_ms} ms from the mix, holding {hold_ms} ms, seed {seed}");
+    for (when_ms, hold_ms, seed, delay_ms) in [-100, 1_500].into_iter().flat_map(|when| {
+        [0, 2_000, 10_000].into_iter().flat_map(move |hold| {
+            [1, 7].into_iter().flat_map(move |seed| [0, 150].map(move |delay| (when, hold, seed, delay)))
+        })
+    }) {
+        let what = format!("shuffle {when_ms} ms from the mix, holding {hold_ms} ms, seed {seed}, notification delayed {delay_ms} ms");
         let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, keep_albums: false, ..prefs_off() });
         for (id, _) in songs {
             live.0.lock().analyses.insert(id.into(), gridless(id, 40_000, if id == "a" { 30_000 } else { 0 }, 0));
@@ -3122,6 +3126,7 @@ fn shuffle_near_mix_keeps_audio() {
         let heard_ms = |ms: i64| (ms * RATE as i64 / 1000) as usize * 2;
         assert!(rig.wait_for(60, |r| r.heard.lock().len() >= heard_ms(start - 15_000 + when_ms)), "{what}");
         rig.queue.lock().set_shuffle(true, seed);
+        rig.run(delay_ms);
         rig.engine.queue_changed();
         assert!(rig.wait_for(60, |r| r.heard.lock().len() >= heard_ms(start - 15_000 + dur + 2_000)), "{what}");
         let heard = rig.heard.lock().clone();
