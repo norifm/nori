@@ -320,7 +320,6 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
     let bar = PlayerBar::new().map_err(|e| eprintln!("nori: no player window: {e}")).ok()?;
     ui.set_native_player(true);
     bar.set_font(ui.get_font());
-    bar.set_mixing_label(words::MIXING.into());
     bar.on_art(move |id, size, _rev| art(id, size));
     bar.on_toggle(to_main(ui, |m| m.invoke_toggle()));
     bar.on_star(to_main(ui, |m| m.invoke_star()));
@@ -1482,7 +1481,6 @@ impl App {
             p.set_now_starred(ui.get_now_starred());
             p.set_now_art(ui.get_now_art());
             p.set_playing(ui.get_playing());
-            p.set_mixing(ui.get_mixing());
             p.set_position_ms(ui.get_position_ms());
             p.set_duration_ms(ui.get_duration_ms());
             p.set_shuffle(ui.get_shuffle());
@@ -2312,7 +2310,7 @@ mod tests {
     }
 
     #[test]
-    fn mixing_is_visible_in_both_players() {
+    fn mixing_is_only_visible_in_fullscreen() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
@@ -2329,22 +2327,16 @@ mod tests {
             slint::platform::update_timers_and_animations();
             let before = ui.window().take_snapshot().unwrap();
             ui.set_mixing(true);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
             let during = ui.window().take_snapshot().unwrap();
-            assert!(before.as_slice() != during.as_slice(), "mixing must be visible, fullscreen={full}");
+            assert_eq!(before.as_slice() != during.as_slice(), full, "mixing is shown below the fullscreen seek bar");
             ui.set_mixing(false);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
             let after = ui.window().take_snapshot().unwrap();
             assert!(before.as_slice() == after.as_slice(), "the indicator disappears when the transition finishes");
         }
-        let bar = crate::PlayerBar::new().unwrap();
-        bar.window().set_size(slint::PhysicalSize::new(720, 76));
-        bar.set_mixing_label(words::MIXING.into());
-        bar.set_has_song(true);
-        bar.set_playing(true);
-        bar.set_now_title("Track".into());
-        bar.show().unwrap();
-        let before = bar.window().take_snapshot().unwrap();
-        bar.set_mixing(true);
-        assert!(before.as_slice() != bar.window().take_snapshot().unwrap().as_slice());
     }
 
     #[test]
