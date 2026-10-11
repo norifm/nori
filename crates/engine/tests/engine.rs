@@ -523,6 +523,19 @@ fn crossfade(secs: i32) -> TransitionPrefs {
 }
 
 #[test]
+fn indexed_skip_is_prompt() {
+    let (a, b) = (music(20.0, 91), music(20.0, 92));
+    let rig = Rig::new(&[("a", &a), ("b", &b)], prefs_off(), Settings::default());
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2));
+    let from = rig.heard.lock().len();
+    rig.engine.skip_to(1, 0);
+    assert!(rig.time.until(Duration::from_millis(80), || {
+        rig.heard.lock()[from..].windows(128).any(|samples| samples == &b[..128])
+    }), "the next song is audible within 80 ms with fades off");
+}
+
+#[test]
 fn paused_jump_fetches_nothing() {
     let (a, b, c) = (music(20.0, 91), music(20.0, 92), music(20.0, 93));
     let rig = Rig::new(&[("a", &a), ("b", &b), ("c", &c)], prefs_off(), Settings::default());
