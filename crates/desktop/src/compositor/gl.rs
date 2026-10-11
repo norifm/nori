@@ -1019,7 +1019,7 @@ mod tests {
                         &event_loop,
                         WindowAttributes::default()
                             .with_override_redirect(true)
-                            .with_position(winit::dpi::PhysicalPosition::new(40, 40))
+                            .with_position(winit::dpi::PhysicalPosition::new(-4096, -4096))
                             .with_inner_size(winit::dpi::PhysicalSize::new(64, 64)),
                     )
                     .unwrap(),
@@ -1124,7 +1124,7 @@ mod tests {
                         assert_eq!(
                             *pixel,
                             [colour[0], colour[1], colour[2], 255],
-                            "every resized pixel must contain the current layer"
+                            "every pixel of the {width}x{height} resized layer must be current"
                         );
                     }
                     assert_eq!(unsafe { native.gl.get_error() }, glow::NO_ERROR);

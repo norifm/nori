@@ -68,6 +68,9 @@ This checks the renderer handoff and texture layouts, which the playback virtual
 On Linux, run `DISPLAY=:0 cargo test -j4 -p nori-desktop layers_resize_without_losing_pixels_or_blur -- --ignored`.
 It checks every pixel after live surface resizing, GPU cover ownership after releasing source bytes,
 mosaic quadrants and seam opacity, and the blur pyramid’s smoothness and vertical orientation.
+Its override-redirect window stays offscreen and does not take focus. Run it directly on the
+native driver: VirtualGL can leave newly enlarged framebuffer regions empty even when the
+same test passes on native NVIDIA EGL.
 The software regression `resizing_does_not_animate_layout` verifies immediate layout at several
 window sizes while retaining the animations triggered by opening and closing panels.
 The desktop regression `volume_and_seek_animate_between_updates` checks intermediate rendered
