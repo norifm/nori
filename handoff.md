@@ -45,12 +45,25 @@ assigned issues; commit and push verified work. Keep the remaining issue limitat
   and did not increase RSS, but is not sufficient to close #33. Own display/app/private
   audio sink were stopped. Artifacts: build/linux-desktop-perf/.
 
+## Notification follow-up
+
+- #50: Android next/previous now use the existing Rust skip policy with their explicit
+  target index, removing the forced 120 ms song-jump fade. Actual-audio regression
+  failed before and passes after. Workspace, build, smoke 34/34, notification 6/6,
+  audio 33/33 and clippy pass. Warm engine-side latency 4–57 ms versus 122–141 ms;
+  Android dispatch latency still varies. Raw measurements are in
+  docs/performance/raw/android-notification-skips-2026-10-11.md.
+- #43: expanded the audible AutoMix test to eight seeds, shallow/deep output,
+  engine replanning, and the complete mix. Added engine recorded-audio checks
+  100 ms before and 1.5 s into a MixRamp fade, with zero/two-second buffering.
+  All pass on the current code; do not close #43 without reproducing its bug.
+
 ## Remaining
 
 Refresh assigned issue bodies/comments before new changes. #53 wrong Home covers
 remain unreproduced despite verified Favorites/download fixes. #43 now has an audible
 mix shuffle regression that passes the baseline; its notification bug remains open.
-Investigate #50 lockscreen skip latency and #40 real handoff delay (earlier 283 ms
+Investigate #40 real handoff delay (earlier 283 ms
 measurement did not reproduce it). #33 needs real-GPU cadence/live-resize and sustained
 memory measurements; preserve blur. #29 awaits the owner's physical iPod check.
 Lyrics timing still needs targeted audible-position verification through corrections

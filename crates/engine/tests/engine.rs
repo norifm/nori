@@ -3103,6 +3103,35 @@ fn analyses_mid_hold_still_mix() {
     }
 }
 
+#[test]
+fn shuffle_near_mix_keeps_audio() {
+    let songs = [("a", 200.0), ("b", 900.0), ("c", 1400.0)];
+    for (when_ms, hold_ms, seed) in [(-100, 0, 1), (-100, 2_000, 7), (1_500, 0, 1), (1_500, 2_000, 7)] {
+        let what = format!("shuffle {when_ms} ms from the mix, holding {hold_ms} ms, seed {seed}");
+        let live = Live::new(TransitionPrefs { auto_mix: true, auto_mix_max_s: 12, echo_out: false, keep_albums: false, ..prefs_off() });
+        for (id, _) in songs {
+            live.0.lock().analyses.insert(id.into(), gridless(id, 40_000, if id == "a" { 30_000 } else { 0 }, 0));
+        }
+        let files = songs.iter().map(|(id, hz)| (id.to_string(), wav(&common::sine(RATE, *hz, 40.0, 6_000.0)), 40_000)).collect();
+        let rig = Rig::build(files, live.clone(), Settings { auto_mix: true, ..Settings::default() }, Extra { pace: Some(5.0), hold_ms: Some(hold_ms), ..Extra::default() });
+        rig.engine.play_at(0, 15_000);
+        assert!(rig.wait_for(30, |_| live.0.lock().log.iter().any(|l| l.contains("transition a -> b"))), "{what}");
+        let plan = live.0.lock().log.iter().find(|l| l.contains("transition a -> b")).cloned().expect("planned");
+        let num = |after: &str| plan.split(after).nth(1).and_then(|s| s.split([' ', ',']).next()).and_then(|n| n.parse::<i64>().ok()).expect("a number");
+        let (dur, start) = (num("MixRampFade "), num(" ms at "));
+        let heard_ms = |ms: i64| (ms * RATE as i64 / 1000) as usize * 2;
+        assert!(rig.wait_for(60, |r| r.heard.lock().len() >= heard_ms(start - 15_000 + when_ms)), "{what}");
+        rig.queue.lock().set_shuffle(true, seed);
+        rig.engine.queue_changed();
+        assert!(rig.wait_for(60, |r| r.heard.lock().len() >= heard_ms(start - 15_000 + dur + 2_000)), "{what}");
+        let heard = rig.heard.lock().clone();
+        let tail = &heard[heard.len() - heard_ms(1_000)..];
+        let power = |hz| levels(tail, hz).iter().sum::<f64>();
+        let incoming = if power(900.0) > power(1400.0) { 900.0 } else { 1400.0 };
+        fades_through(&heard, heard_ms(start - 15_000 - 1_000), 200.0, incoming, dur, &what);
+    }
+}
+
 // ---- a MixRamp fade out of a song with no beat grid, left before its end ----
 
 /// An analysis with no usable beat grid (as the phone's Go Slowly and Black Star): leaving at `exit_ms`

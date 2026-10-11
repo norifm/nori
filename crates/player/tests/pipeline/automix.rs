@@ -205,8 +205,9 @@ fn page_changes_once_per_song() {
 
 #[test]
 fn shuffle_keeps_the_audible_mix() {
-    let make = || {
+    let make = |deep| {
         let mut p = Player::with_prefs(vec![song("a", 120.0), song("b", 123.0), song("c", 118.0), song("d", 121.0)], automix());
+        p.sink.deep = deep;
         for (id, bpm) in [("a", 120.0), ("b", 123.0), ("c", 118.0), ("d", 121.0)] {
             p.app.analyses.insert(id.into(), measured(id, bpm));
         }
@@ -215,13 +216,20 @@ fn shuffle_keeps_the_audible_mix() {
         p.run_for(500);
         p
     };
-    let mut reference = make();
-    let mut shuffled = make();
-    shuffled.queue.live.set_shuffle(true, 7);
-    shuffled.queue_changed();
-    reference.run_for(2_000);
-    shuffled.run_for(2_000);
-    assert!(shuffled.sink.heard_samples() == reference.sink.heard_samples(), "shuffle preserves the mix already being heard");
-    assert!(shuffled.sink.gaps.is_empty());
-    assert_eq!(shuffled.sink.timestamp_jumps, 0);
+    for deep in [false, true] {
+        for seed in 0..8 {
+            let mut reference = make(deep);
+            let mut shuffled = make(deep);
+            shuffled.queue.live.set_shuffle(true, seed);
+            shuffled.queue_changed();
+            shuffled.replan_ending();
+            assert!(reference.run_until(32_000, |p| !p.mixing()), "the original mix finishes");
+            let elapsed = reference.now_ms - shuffled.now_ms;
+            shuffled.run_for(elapsed);
+            assert_eq!(shuffled.current_id(), reference.current_id(), "the incoming song survives shuffle: deep={deep}, seed={seed}");
+            assert!(shuffled.sink.heard_samples() == reference.sink.heard_samples(), "shuffle preserves the audible mix: deep={deep}, seed={seed}");
+            assert!(shuffled.sink.gaps.is_empty());
+            assert_eq!(shuffled.sink.timestamp_jumps, 0);
+        }
+    }
 }
