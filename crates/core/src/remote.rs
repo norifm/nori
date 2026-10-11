@@ -494,6 +494,7 @@ impl Change {
     fn shown_in(&self, state: &DeviceState) -> bool {
         match *self {
             Change::Playing { playing, .. } => state.playing == playing,
+            Change::Place { index, .. } => state.index == index,
             _ => true,
         }
     }
@@ -508,11 +509,31 @@ impl Mirrored {
     /// every command of this device's (`me`) it says it carried out and shows; the rest still shows over it. False
     /// when it is the one already heard.
     fn heard(&mut self, state: &DeviceState, at: i64, me: &str) -> bool {
-        if self.heard.as_ref() == Some(state) {
-            return false;
+        if let Some(last) = &self.heard {
+            if state.instance == last.instance {
+                if state.seq < last.seq || state == last {
+                    return false;
+                }
+            } else {
+                if state.instance < last.instance {
+                    return false;
+                }
+                self.clock = ClockSync::default();
+                self.foreseen.clear();
+                self.pages.clear();
+                self.asking = None;
+                self.shown = None;
+            }
         }
         if let Some(done) = state.obeyed.iter().find(|o| o.from == me) {
-            self.foreseen.retain(|f| f.id > done.id || !f.change.shown_in(state));
+            let confirmed = self.foreseen.iter().filter(|f| f.id <= done.id && f.change.shown_in(state));
+            let playing = confirmed.clone().filter(|f| matches!(f.change, Change::Playing { .. })).map(|f| f.id).max();
+            let place = confirmed.filter(|f| matches!(f.change, Change::Place { .. })).map(|f| f.id).max();
+            self.foreseen.retain(|f| f.id > done.id || match f.change {
+                Change::Playing { .. } => playing.is_none_or(|id| f.id > id),
+                Change::Place { .. } => place.is_none_or(|id| f.id > id),
+                _ => !f.change.shown_in(state),
+            });
         }
         let rev = self.shown.as_ref().map(|s| (s.rev, s.len));
         if rev != Some((state.rev, state.len)) {
@@ -947,6 +968,7 @@ impl Inner {
 pub struct Remote {
     client: Arc<Client>,
     id: String,
+    instance: Option<u64>,
     me: RemoteMe,
     player: Arc<dyn RemotePlayer>,
     shown: Arc<dyn RemoteShown>,
@@ -979,9 +1001,16 @@ impl Remote {
             settings.keep_app_value(DEVICE_ID, id.clone());
             id
         });
+        // Persist once per process so delayed states stay ordered across restarts.
+        let instance = settings.app_db().and_then(|db| {
+            db.lock().query_row(
+                "INSERT INTO app_kv(key,value) VALUES('remoteInstance','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1 RETURNING value",
+                [], |row| row.get::<_, String>(0),
+            ).map_err(|e| crate::alog::info(&format!("remote: could not keep instance: {e}"))).ok()?.parse().ok()
+        });
         let (out, rx) = mpsc::channel();
         let (ending, out_ended) = mpsc::channel::<()>();
-        let remote = Arc::new(Remote { client, id, me, player, shown, discovery, inner: Mutex::default(), retry: Condvar::new(), timing: Condvar::new(), out: Mutex::new(Some(out)), out_ended: Mutex::new(out_ended), threads: Mutex::default(), follower: Mutex::default() });
+        let remote = Arc::new(Remote { client, id, instance, me, player, shown, discovery, inner: Mutex::default(), retry: Condvar::new(), timing: Condvar::new(), out: Mutex::new(Some(out)), out_ended: Mutex::new(out_ended), threads: Mutex::default(), follower: Mutex::default() });
         let (client, who) = (remote.client.clone(), remote.who());
         // Sends one at a time, in order; it ends once the remote stops or goes.
         let _ = std::thread::Builder::new().name("nori-remote-out".into()).spawn(move || {
@@ -2515,6 +2544,7 @@ impl Remote {
         let jam = i.hosted.as_ref().map(|h| JamState { along: h.along.then(|| self.along(q.index, &q.entries)), ..h.jam.state() });
         let mut st = DeviceState {
             seq: i.seq,
+            instance: self.instance,
             playing: p.playing,
             buffering: p.buffering,
             position_ms: p.position_ms,
@@ -2636,6 +2666,71 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acknowledged_skip_waits_for_the_heard_song() {
+        let entries = (0..2).map(|index| Entry { index, turn: index, duration: 300, ..Default::default() }).collect();
+        let old = DeviceState { seq: 1, index: Some(0), len: 2, entries, ..Default::default() };
+        let mut m = Mirrored::new("desk".into());
+        m.heard(&old, 0, "me");
+        m.foresee(1, &Op::Next);
+        assert_eq!(m.shown.as_ref().unwrap().index, Some(1));
+        let accepted = DeviceState { seq: 2, obeyed: vec![Obeyed { from: "me".into(), id: 1 }], ..old.clone() };
+        m.heard(&accepted, 1, "me");
+        assert_eq!(m.shown.as_ref().unwrap().index, Some(1), "accepting the command does not bring the old song back");
+        m.heard(&DeviceState { seq: 3, index: Some(1), ..accepted }, 2, "me");
+        assert!(m.foreseen.is_empty(), "the heard song confirms the skip");
+    }
+
+    #[test]
+    fn older_remote_state_cannot_undo_a_confirmed_command() {
+        let old = DeviceState { seq: 2, playing: true, index: Some(0), len: 1, entries: vec![Entry { duration: 300, ..Default::default() }], ..Default::default() };
+        let mut m = Mirrored::new("desk".into());
+        m.heard(&old, 0, "me");
+        m.foresee(1, &Op::Pause);
+        let paused = DeviceState { seq: 3, playing: false, obeyed: vec![Obeyed { from: "me".into(), id: 1 }], ..old.clone() };
+        m.heard(&paused, 1, "me");
+        assert!(m.foreseen.is_empty());
+        assert!(!m.heard(&old, 2, "me"), "a delayed relay answer cannot replace the newer direct answer");
+        assert!(!m.shown.as_ref().unwrap().playing);
+    }
+
+    #[test]
+    fn the_last_confirmed_command_replaces_earlier_ones() {
+        for ops in [vec![Op::Next, Op::Next], vec![Op::Pause, Op::Play]] {
+            let entries = (0..3).map(|index| Entry { index, turn: index, duration: 300, ..Default::default() }).collect();
+            let old = DeviceState { seq: 1, index: Some(0), len: 3, entries, playing: true, ..Default::default() };
+            let mut m = Mirrored::new("desk".into());
+            m.heard(&old, 0, "me");
+            for (k, op) in ops.iter().enumerate() {
+                m.foresee(k as u64 + 1, op);
+            }
+            let expected = m.shown.clone().unwrap();
+            let confirmed = DeviceState { seq: 2, obeyed: vec![Obeyed { from: "me".into(), id: 2 }], ..expected.clone() };
+            m.heard(&confirmed, 1, "me");
+            assert!(m.foreseen.is_empty());
+            let shown = m.shown.as_ref().unwrap();
+            assert_eq!((shown.index, shown.playing), (expected.index, expected.playing));
+        }
+    }
+
+    #[test]
+    fn restarted_remote_replaces_its_old_process() {
+        let old = DeviceState { instance: Some(1), seq: 80, playing: true, len: 2, rev: 1, ..Default::default() };
+        let mut m = Mirrored::new("desk".into());
+        m.heard(&old, 0, "me");
+        m.foresee(1, &Op::Pause);
+        let restarted = DeviceState { instance: Some(2), seq: 1, len: 2, rev: 1, playing: true, ..Default::default() };
+        assert!(m.heard(&restarted, 1, "me"));
+        assert!(m.foreseen.is_empty());
+        assert!(m.shown.as_ref().unwrap().playing);
+        assert!(!m.heard(&DeviceState { seq: 81, ..old }, 2, "me"));
+        assert!(!m.heard(&DeviceState { seq: 90, ..Default::default() }, 3, "me"));
+        assert_eq!(m.heard.as_ref().unwrap().instance, Some(2));
+        let mut fresh = Mirrored::new("desk".into());
+        fresh.heard(&restarted, 0, "me");
+        assert!(!fresh.heard(&DeviceState { instance: Some(1), seq: 100, ..Default::default() }, 1, "me"));
+    }
 
     #[test]
     fn only_time_moving_is_not_news() {
