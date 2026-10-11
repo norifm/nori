@@ -258,6 +258,9 @@ impl Entry {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 #[serde(default, rename_all = "camelCase")]
 pub struct DeviceState {
+    /// The publishing process; sequences start over when this changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<u64>,
     /// Bumped by every publish.
     pub seq: u64,
     pub playing: bool,
@@ -404,6 +407,10 @@ mod tests {
         assert!(matches!(old, Op::Replace { order: None, shuffle: false, repeat: 0, .. }), "{old:?}");
         let st: DeviceState = serde_json::from_str(r#"{"playing":true,"index":1,"entries":[{"index":1,"id":"s2","title":"Two"}],"later":7}"#).unwrap();
         assert_eq!((st.seq, st.len, st.entries[0].turn, st.entries[0].starred), (0, 0, 0, false));
+        assert!(st.instance.is_none());
+        let running = DeviceState { instance: Some(7), seq: 8, ..st };
+        let json = serde_json::to_string(&running).unwrap();
+        assert_eq!(serde_json::from_str::<DeviceState>(&json).unwrap(), running);
 
         let page = Body::Page { id: 2, rev: 9, from: 40, entries: vec![Entry::of(3, 40, &song, None)] };
         let json = serde_json::to_string(&page).unwrap();

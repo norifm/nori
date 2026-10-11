@@ -660,6 +660,28 @@ impl Device {
 }
 
 #[test]
+fn a_restarted_device_publishes_a_newer_instance() {
+    let relay = Relay::new();
+    let dir = nori_testdir::TempDir::new("remote-restart");
+    let first = Device::kept(&relay, &dir, DeviceKind::Desktop, "Desk");
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    first.playing(&["s1", "s2"], 0);
+    first.remote.clone().serve(true);
+    phone.remote.clone().watch(true);
+    let before = phone.until("the first process", |r| r.devices().into_iter().find(|d| d.name == "Desk").and_then(|d| d.state));
+    let id = first.remote.id();
+    eventually("the device id is stored", || first.core.session.settings.app_value("remoteDeviceId").as_deref() == Some(&id));
+    first.remote.clone().stop();
+    let second = Device::kept(&relay, &dir, DeviceKind::Desktop, "Desk");
+    assert_eq!(second.remote.id(), id);
+    second.playing(&["s1", "s2"], 1);
+    second.remote.clone().serve(true);
+    let after = phone.until("the restarted process", |r| r.devices().into_iter().find(|d| d.id == id).and_then(|d| d.state).filter(|s| s.index == Some(1)));
+    assert!(after.instance.unwrap() > before.instance.unwrap());
+    relay.close();
+}
+
+#[test]
 fn two_devices_control_each_other_through_the_relay() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
