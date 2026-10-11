@@ -132,9 +132,9 @@ private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String): 
             val params = txt.split(";").filter { "=" in it }.map { dev.nori.music.ffi.Param(it.substringBefore("="), it.substringAfter("=")) }
             r()?.lanFound("test-${params.firstOrNull { it.key == "id" }?.value}", host, port.toUShort(), params); "found"
         }
-        // "pick <device name>|here": the devices sheet's tap.
+        // "pick <device id or name>|here": the devices sheet's tap.
         "pick" -> {
-            val id = if (value == "here") null else r()?.devices()?.firstOrNull { it.name == value }?.id ?: return "no device $value"
+            val id = if (value == "here") null else r()?.devices()?.firstOrNull { it.id == value || it.name == value }?.id ?: return "no device $value"
             nori.remotes.pick(id); "picked ${id ?: "here"}"
         }
         // What the player mirrors: the device, its song, place and volume.
