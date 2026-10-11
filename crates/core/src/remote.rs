@@ -709,6 +709,12 @@ impl Mirrored {
     }
 }
 
+struct PendingTransfer {
+    from: String,
+    id: u64,
+    rev: u64,
+}
+
 #[derive(Default)]
 struct Inner {
     serving: bool,
@@ -745,6 +751,8 @@ struct Inner {
     obeyed: Vec<Obeyed>,
     /// The account's active device, while it is another one.
     mirror: Option<Mirrored>,
+    /// The queue asked for after this device took its controls back.
+    taking: Option<PendingTransfer>,
     /// A thread lets the mirrored device's foresights go as they end ([`Remote::end_foresight`]).
     ending_foresight: bool,
     /// Bumped to end the running time keeper (each runs while its generation is current).
@@ -785,7 +793,7 @@ impl Peer {
 
 impl Inner {
     fn wants_relay(&self) -> bool {
-        self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.discovering || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
+        self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.discovering || self.taking.is_some() || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
     }
 
     /// Whether the mirrored device is followed: while something here shows it, or it plays.
@@ -796,7 +804,7 @@ impl Inner {
     /// Whether the door of nearby device `id` is followed: every one while a picker is open, else only
     /// the one mirrored.
     fn follows_peer(&self, id: &str) -> bool {
-        self.watching || self.discovering || (self.follows_mirror() && self.mirror.as_ref().is_some_and(|m| m.id == id))
+        self.watching || self.discovering || self.taking.as_ref().is_some_and(|t| t.from == id) || (self.follows_mirror() && self.mirror.as_ref().is_some_and(|m| m.id == id))
     }
 
     /// Ends the relay poller, a held poll at once.
@@ -1095,7 +1103,7 @@ impl Remote {
     pub fn discover_active(self: Arc<Self>, on: bool) {
         let browse = {
             let mut i = self.inner.lock();
-            let on = on && self.me.kind != DeviceKind::Guest && !i.stopped && i.sight == Sight::Screen && i.mirror.is_none() && !i.playing.playing && !i.jams();
+            let on = on && self.me.kind != DeviceKind::Guest && !i.stopped && i.sight == Sight::Screen && i.mirror.is_none() && i.taking.is_none() && !i.playing.playing && !i.jams();
             if i.discovering == on {
                 return;
             }
@@ -1136,7 +1144,7 @@ impl Remote {
     /// The platform's playback changed (play, pause, seek, another song, the queue, the volume). Music
     /// starting here makes this the active device again.
     pub fn played(self: Arc<Self>, playing: Playing) {
-        let (publish, started, shown) = {
+        let (publish, started, shown, cancelled) = {
             let mut i = self.inner.lock();
             let started = playing.playing && !i.playing.playing;
             // A guest listening along paused or played here: its controls say so.
@@ -1148,9 +1156,11 @@ impl Remote {
             if playing.playing || i.playing.playing {
                 i.played_last = Some(now);
             }
+            let moved_here = started || (!i.playing.playing && (playing.index != i.playing.index || (playing.position_ms - i.playing.position_ms).abs() > POSITION_SLACK_MS));
+            let cancelled = moved_here && i.taking.take().is_some();
             i.playing = playing;
             i.playing_at = Some(now);
-            (i.serving || i.hosted.is_some(), started && i.mirror.is_some(), shown)
+            (i.serving || i.hosted.is_some(), started && i.mirror.is_some(), shown, cancelled)
         };
         if playing.playing {
             self.clone().discover_active(false);
@@ -1160,6 +1170,9 @@ impl Remote {
         }
         if publish {
             self.publish();
+        }
+        if cancelled {
+            self.keep_polling();
         }
         if shown {
             self.shown.changed();
@@ -1195,6 +1208,7 @@ impl Remote {
     /// followed, as is any device while nothing is queued here.
     pub fn pick(self: Arc<Self>, device: Option<String>) {
         self.clone().discover_active(false);
+        let cancelled = self.inner.lock().taking.take().is_some();
         let (active, idle, plays, leads) = {
             let i = self.inner.lock();
             if device.is_some() && i.jams() {
@@ -1208,12 +1222,8 @@ impl Remote {
         match (active, device) {
             (None, None) => {}
             (Some(_), None) if idle => self.set_active(None),
-            // Followed until the queue arrives (its transfer replaces the queue here).
-            (Some(a), None) => {
-                let to = self.id.clone();
-                self.send(a, Op::Transfer { to })
-            }
-            (None, Some(d)) if here && !leads => self.hand_over(d),
+            (Some(a), None) => self.pull(a),
+            (None, Some(d)) if here && !leads => self.clone().hand_over(d),
             (None, Some(d)) => self.set_active(Some(d)),
             (Some(a), Some(d)) if a == d => {}
             (Some(_), Some(d)) if plays => self.set_active(Some(d)),
@@ -1221,6 +1231,9 @@ impl Remote {
                 self.clone().send(a, Op::Transfer { to: d.clone() });
                 self.set_active(Some(d));
             }
+        }
+        if cancelled {
+            self.keep_polling();
         }
     }
 
@@ -1242,6 +1255,10 @@ impl Remote {
     /// Sends `op` to device `device`; its answer shows in [`Remote::devices`]. Sent to the mirrored
     /// device, it shows in [`Remote::active`] at once, as it is expected to come out.
     pub fn send(self: Arc<Self>, device: String, op: Op) {
+        if matches!(&op, Op::Transfer { to } if to == &self.id) {
+            self.pull(device);
+            return;
+        }
         let id = self.next_id();
         let mut foreseen = false;
         let link = {
@@ -1299,7 +1316,7 @@ impl Remote {
     /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
     pub fn hand_over(self: Arc<Self>, to: String) {
         let me = self.id.clone();
-        self.transfer(&Via::Relay(None), &me, to);
+        self.transfer(&Via::Relay(None), &me, to, None);
     }
 
     /// A door the platform's discovery found: service `service` at `host`:`port` with TXT `txt`.
@@ -1564,6 +1581,7 @@ impl Remote {
             let mut i = self.inner.lock();
             i.stopped = true;
             i.mirror = None;
+            i.taking = None;
             i.listen = None;
             i.generation += 1;
             i.relay_polling = false;
@@ -2397,9 +2415,16 @@ impl Remote {
     /// Takes the mirrored device's newest state, follows it on to the device it handed its playback to,
     /// lets it go once it is gone, and asks for the next page of its queue.
     fn follow_active(self: &Arc<Self>) {
+        let gone = {
+            let mut i = self.inner.lock();
+            let gone = i.taking.as_ref().is_some_and(|t| !i.listed(&t.from));
+            if gone { i.taking = None; }
+            gone
+        };
+        if gone { self.keep_polling(); }
         let discovered = {
             let mut i = self.inner.lock();
-            let to = if i.discovering && i.mirror.is_none() && !i.playing.playing && !i.jams() {
+            let to = if i.discovering && i.mirror.is_none() && i.taking.is_none() && !i.playing.playing && !i.jams() {
                 i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam && !i.relay_down).flat_map(|r| &r.members))
                     .find(|m| i.state_of(&m.id).is_some_and(|(s, _)| s.playing && s.index.is_some()))
                     .map(|m| m.id.clone())
@@ -2516,6 +2541,23 @@ impl Remote {
         };
         let (rev, len) = self.client.core.session.playlist(|p| (p.rev(), p.len() as u32));
         admit(&op, sender, rev, len)?;
+        if let Op::Replace { transfer, .. } = &op {
+            let mut i = self.inner.lock();
+            if let Some(request) = transfer {
+                if !i.taking.as_ref().is_some_and(|t| t.from == from && t.id == *request) {
+                    return Err(Refusal::Stale);
+                }
+            }
+            let stale = i.taking.as_ref().is_some_and(|t| t.from == from && t.rev != rev);
+            let cancelled = i.taking.take().is_some();
+            drop(i);
+            if cancelled {
+                self.keep_polling();
+            }
+            if stale {
+                return Err(Refusal::Stale);
+            }
+        }
         // Said with the next state published, which shows what the player made of it.
         if !in_jam {
             let mut i = self.inner.lock();
@@ -2523,7 +2565,10 @@ impl Remote {
             i.obeyed.push(Obeyed { from: from.to_string(), id });
         }
         match op {
-            Op::Transfer { to } => self.transfer(via, from, to),
+            Op::Transfer { to } => {
+                let transfer = (to == from).then_some(id);
+                self.transfer(via, from, to, transfer);
+            }
             Op::Clear => {
                 for index in self.client.core.session.playlist(|p| p.after_current()) {
                     self.player.apply(Op::Remove { index: index as u32, rev });
@@ -2540,9 +2585,25 @@ impl Remote {
         Ok(())
     }
 
+    /// Takes the controls back here while the previous device answers with its queue.
+    fn pull(self: &Arc<Self>, from: String) {
+        let id = self.next_id();
+        let rev = self.client.core.session.playlist(|p| p.rev());
+        let link = {
+            let mut i = self.inner.lock();
+            let link = i.peers.iter().find(|p| p.member.id == from).map_or(Link::Relay, |p| Link::Lan(p.base()));
+            i.taking = Some(PendingTransfer { from: from.clone(), id, rev });
+            i.mirror = None;
+            link
+        };
+        self.retime();
+        self.out(Out::send(link, Outgoing { to: Some(from), body: Some(Body::Command { id, op: Box::new(Op::Transfer { to: self.id.clone() }) }), ..Default::default() }));
+        self.keep_polling();
+    }
+
     /// Hands the queue, its play order, shuffle, repeat and the position to device `to`, then pauses here
     /// and follows `to`, the active device now.
-    fn transfer(self: &Arc<Self>, via: &Via, from: &str, to: String) {
+    fn transfer(self: &Arc<Self>, via: &Via, from: &str, to: String, transfer: Option<u64>) {
         if to != self.id && self.inner.lock().jams() {
             return;
         }
@@ -2556,7 +2617,7 @@ impl Remote {
             i.handed_to = Some(to.clone());
             (i.playing.playing, i.position_now())
         };
-        let op = Op::Replace { songs, index: index as u32, position_ms, play: playing, order, shuffle, repeat };
+        let op = Op::Replace { songs, index: index as u32, position_ms, play: playing, order, shuffle, repeat, transfer };
         let id = self.next_id();
         let command = Body::Command { id, op: Box::new(op) };
         if to == from {

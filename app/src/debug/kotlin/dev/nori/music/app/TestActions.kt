@@ -198,7 +198,7 @@ object TestActions {
             "undownload" -> actions.removeDownloads(songs.map { it.id })
             // Everything not yet downloaded is dropped; finished downloads stay.
             "canceldownloads" -> actions.cancelAllDownloads()
-            "star" -> songs.firstOrNull()?.let { actions.star(it, !it.starred) }
+            "star" -> songs.firstOrNull()?.let { actions.star(it, !nori.library.isStarred(dev.nori.music.data.StarKind.SONG, it.id, it.starred)) }
             // "notification favourite" / "notification shuffle": the session command the notification's button sends.
             "notification" -> nori.player.pressSessionButton(if (ref == "shuffle") dev.nori.music.playback.PlaybackService.CMD_SHUFFLE else dev.nori.music.playback.PlaybackService.CMD_FAVOURITE)
             "pause" -> player.toggle()

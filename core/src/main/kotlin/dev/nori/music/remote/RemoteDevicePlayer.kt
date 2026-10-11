@@ -118,7 +118,7 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
         val songs = nori.session.queueSongs(mediaItems.map { it.mediaId })
         val start = if (startIndex == C.INDEX_UNSET) 0 else startIndex
         val position = if (startPositionMs == C.TIME_UNSET) 0 else startPositionMs
-        return send(Op.Replace(songs, start.toUInt(), position, true, null, mirror?.shuffle == true, mirror?.repeat ?: 0u))
+        return send(Op.Replace(songs, start.toUInt(), position, true, null, mirror?.shuffle == true, mirror?.repeat ?: 0u, null))
     }
 
     override fun handleAddMediaItems(index: Int, mediaItems: MutableList<MediaItem>): ListenableFuture<*> =

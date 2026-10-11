@@ -9,8 +9,12 @@
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
 SECTIONS="lyrics motion notification album-page bridge download-notification downloads foryou dac device-sound remote jam"
-OPT_IN="lyrics-services"
+OPT_IN="lyrics-services scrobble"
 list_sections
+if want scrobble && [ "$NORI_E2E_SERVER" != local ]; then
+  echo "the scrobble check requires NORI_E2E_SERVER=local" >&2
+  exit 2
+fi
 json() { python3 -c "import sys,json;d=json.load(sys.stdin)['subsonic-response'];print(eval('d$1',{'d':d}))" 2>/dev/null; }
 # What the screen itself reports, read out of the accessibility tree rather than guessed at from a
 # screenshot: a label to assert on, and a node to press where the UI says the button is.
@@ -82,15 +86,49 @@ app_up >/dev/null || { echo "the app did not come up"; exit 1; }
 remember_settings offload autoMix eq
 id=$(long_song)
 
+if want scrobble; then section scrobble
+  remember_settings scrobble scrobblePercent
+  "$app" set scrobble true >/dev/null
+  "$app" set scrobblePercent 25 >/dev/null
+  "$app" set autoMix false >/dev/null
+  scrobble_first=$(song_id 'Long Track 01'); scrobble_second=$(song_id 'Long Track 02'); scrobble_third=$(song_id 'Long Track 03')
+  count() { api getSong "&id=$1" | python3 -c 'import json,sys;print(json.load(sys.stdin)["subsonic-response"]["song"].get("playCount",0))'; }
+  scrobble_before_first=$(count "$scrobble_first"); scrobble_before_second=$(count "$scrobble_second")
+  "$app" play "song:$scrobble_first" >/dev/null
+  check 'first track produces audio' sounds 15
+  check 'first track starts' wait_for positionMs '>1000' 10
+  "$app" play "song:$scrobble_second" >/dev/null
+  check 'second track produces audio' sounds 15
+  check 'an early skip does not count a play' test "$(count "$scrobble_first")" = "$scrobble_before_first"
+  check 'second track advances' wait_for positionMs '>3000' 10
+  "$app" do pause >/dev/null
+  check 'pause stops audio' silent 10
+  check 'pause does not submit a play' test "$(count "$scrobble_second")" = "$scrobble_before_second"
+  "$app" do resume >/dev/null
+  check 'resuming starts audio' sounds 10
+  check 'enough audio is heard' wait_for positionMs '>25000' 40
+  "$app" play "song:$scrobble_third" >/dev/null
+  count_is() { [ "$(count "$1")" = "$2" ]; }
+  check 'the server counts the completed listen exactly once' wait_until 10 count_is "$scrobble_second" "$((scrobble_before_second + 1))"
+  check 'the next track produces audio' sounds 10
+  check 'the next track advances' wait_for positionMs '>2000' 10
+  check 'the completed listen stays at one submission' test "$(count "$scrobble_second")" = "$((scrobble_before_second + 1))"
+  "$app" do pause >/dev/null
+fi
+
 if want lyrics; then section lyrics
   # Which answer wins, word timing, the lookups switch and every service's format are the lyrics crate's
   # (crates/lyrics tests, over recorded answers). Here: that an answer comes back through the platform.
   if [ "$NORI_E2E_SERVER" = local ]; then
-    remember_settings lyricsOnline lyricsPrefetch
+    remember_settings lyricsOnline lyricsPrefetch autoFill
+    lyrics_fill=$(field autoFill | tr 'TF' 'tf')
+    "$app" set autoFill false >/dev/null
     "$app" set lyricsOnline false >/dev/null
     "$app" set lyricsPrefetch true >/dev/null
     "$app" play "$LYRICS_SONG" >/dev/null; sounds 20
-    "$app" do lyrics >/dev/null
+    check "the lyrics fixture is the current song" wait_for title "Long Track 05" 10
+    lyric_id=$(song_id "Long Track 05")
+    "$app" do "lyrics song:$lyric_id" >/dev/null
     check "fixture lyrics arrive through the Android binding" wait_for lyricLines ">0" 10
     check "the fixture keeps its line timing" test "$(field lyricsSynced)" = True
     next_id=$(song_id "Long Track 06")
@@ -116,6 +154,7 @@ if want lyrics; then section lyrics
     check "its prefetched lyrics cross the binding offline" wait_for lyricsSong "$next_id" 10
     check "cached lyrics retain their timing offline" test "$(field lyricsSynced)" = True
     online
+    "$app" set autoFill "$lyrics_fill" >/dev/null
   else
     "$app" set thirdPartyLookups true >/dev/null
     "$app" play "$LYRICS_SONG" >/dev/null; sounds 20
@@ -165,6 +204,9 @@ if want notification; then section "the notification's heart and shuffle"
   # in the state is what the session last published to its controllers (the notification is one of them).
   # That the star reaches the server as Subsonic asks is client.rs a_heart_a_new_playlist_...
   "$app" play "song:$id" >/dev/null; sounds 20
+  if [ "$NORI_E2E_SERVER" = local ]; then
+    check "the notification fixture is the current song" wait_for title "Far Song Three" 10
+  fi
   buttons=$(field notification); echo "     buttons: $buttons"
   check "the notification has a heart and a shuffle button" bash -c '[[ "'"$buttons"'" == *heart* && "'"$buttons"'" == *shuffle* ]]'
   was=$(field starred); flip=$([ "$was" = True ] && echo False || echo True)
@@ -354,10 +396,11 @@ print(sum(1 for s in d.get('song',[]) if not s.get('isExternal') and not s['id']
   check "the favourites tile opens its page" wait_for route "mix/{id}" 8
   server=$(starred_count)
   check "it lists the songs the server has starred (server $server)" wait_until 8 count_is "$server"
+  star_delta=$([ "$(starred_on_server "$id")" = True ] && echo -1 || echo 1)
   "$app" do "star song:$id" >/dev/null
-  check "starring a song adds it while the page is open" wait_until 10 count_is "$((server + 1))"
+  check "toggling a favorite updates the open page" wait_until 10 count_is "$((server + star_delta))"
   "$app" do "star song:$id" >/dev/null   # put it back
-  check "and unstarring takes it away again" wait_until 10 count_is "$server"
+  check "restoring the favorite restores the open page" wait_until 10 count_is "$server"
   if [ "$NORI_E2E_SERVER" = local ]; then
     # A fresh fixture profile needs album rows in its local index for Discover.
     "$app" open "album/$(mix_album)" >/dev/null
@@ -484,8 +527,16 @@ PY
     check "\"This phone\" brings it back" wait_for playingOn "" 15
     check "and it sounds here" sounds 15
     check "the Mac paused" wait_until 10 bash -c "tmux capture-pane -p -t $peer | grep -q '▶'"
-    "$app" set remoteControl false >/dev/null
+    "$app" remote pick "$name" >/dev/null
+    check "the phone can hand playback back to the Mac" wait_for playingOn "$name" 10
+    check "the phone releases its output again" silent 10
+    check "the peer is playing before it closes" wait_until 10 bash -c "'$app' remote devices | grep -Fq '$name (nearby): playing'"
     tmux kill-session -t "$peer"
+    "$app" remote pick here >/dev/null
+    check "a closed peer immediately releases the phone controls" wait_for playingOn "" 3
+    "$app" play "$PLAIN" >/dev/null
+    check "local playback works after the peer closes" sounds 10
+    "$app" set remoteControl false >/dev/null
   fi
 }
 if want remote; then
