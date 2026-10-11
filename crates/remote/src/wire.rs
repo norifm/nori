@@ -150,6 +150,9 @@ pub enum Op {
         /// Media3 numbering, as [`Op::Repeat`].
         #[serde(default)]
         repeat: u8,
+        /// The pull request this queue answers; None for a new queue or an older peer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transfer: Option<u64>,
     },
     /// The device's media volume, 0 to 100.
     Volume { percent: u8 },
@@ -404,7 +407,7 @@ mod tests {
 
         // An older client's transfer and state read with the newer fields at their defaults.
         let old: Op = serde_json::from_str(r#"{"op":"replace","songs":[{"id":"s1"}],"index":0,"position_ms":5,"play":true}"#).unwrap();
-        assert!(matches!(old, Op::Replace { order: None, shuffle: false, repeat: 0, .. }), "{old:?}");
+        assert!(matches!(old, Op::Replace { order: None, shuffle: false, repeat: 0, transfer: None, .. }), "{old:?}");
         let st: DeviceState = serde_json::from_str(r#"{"playing":true,"index":1,"entries":[{"index":1,"id":"s2","title":"Two"}],"later":7}"#).unwrap();
         assert_eq!((st.seq, st.len, st.entries[0].turn, st.entries[0].starred), (0, 0, 0, false));
         assert!(st.instance.is_none());

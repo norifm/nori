@@ -79,6 +79,12 @@ only while the player is visible and resumed.
 
 ## Running the device checks
 
+`NORI_E2E_SERVER=local tools/feature-e2e.sh --only scrobble` checks that Android media3
+track changes and play/pause callbacks reach the shared scrobbler and update the server play count
+once after a qualifying listen. An early skip and pause leave the count unchanged. The thresholds
+and paused-time accounting are Rust tests; the callbacks and Android write queue require the app.
+This opt-in check uses fixture songs and restores the scrobbling settings.
+
 ```sh
 tools/smoke.sh                                  # the real server in ~/.music.pass
 NORI_E2E_SERVER=local tools/smoke.sh            # tools/dev-server.sh's Navidrome, through tools/lying-proxy.py
@@ -241,7 +247,8 @@ is Android glue and stays on the device. 50 moved, 60 stay.
   other device (local server only): the emulator cannot hear the Mac's mDNS, so the door is handed to the app
   (`app.sh remote "found" "<host>|<port>|<txt>"`, read with `dns-sd`), then `remote pick`, `remote mirror`.
   It also force-stops and reopens Android while the peer plays: the foreground lifecycle must rediscover
-  playback and rebuild its remote media session without playing the saved queue locally.
+  playback and rebuild its remote media session without playing the saved queue locally. It then closes
+  the peer and checks that returning here releases Android controls and permits local playback.
   `--only jam` hosts a jam on the emulator against octo-fiesta's real relay (the local one on 5274,
   `NORI_E2E_JAM`) with two guests on this Mac (`tools/jam-guest.py`, the relay's frames in Python): what only
   the device shows is the jam in the player, its queue and the devices sheet, requests arriving live and
