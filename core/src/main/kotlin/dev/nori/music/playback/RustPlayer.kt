@@ -340,6 +340,12 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     val pace: Float get() = RustPlayerJni.pace(h)
     /** Plays along with the jam whose guest [remote] is, while it listens along (the core says when). */
     fun follow(remote: dev.nori.music.ffi.Remote) = RustPlayerJni.follow(h, remote.uniffiCloneHandle())
+    /** Shows the queue and place the engine set while following a jam. */
+    fun showFollowingQueue(mediaItems: List<MediaItem>, index: Int) {
+        replaceItems(mediaItems)
+        current = index.coerceIn(0, (items.size - 1).coerceAtLeast(0))
+        invalidateState()
+    }
     /** The sound chain is in the samples' path, and what its limiter takes off, dB: see [Equalizer.inChain]. */
     val chainIn: Boolean get() = RustPlayerJni.chainIn(h)
     /** The ear is on music the CPU made, through the engine's own output: where [chainIn] says anything. */
@@ -574,9 +580,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
 
     override fun handleSetMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
         val was = items.getOrNull(current)?.mediaId
-        items.clear()
-        uids.clear()
-        for (item in mediaItems) { items += item; uids += nextUid++ }
+        replaceItems(mediaItems)
         stations(mediaItems)
         edited()
         val at = if (startIndex == C.INDEX_UNSET || items.isEmpty()) timeline().getFirstWindowIndex(shuffle).coerceAtLeast(0) else startIndex.coerceIn(0, items.size - 1)
@@ -590,6 +594,13 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         jumped(RustPlayerJni.goTo(h, at, if (startPositionMs == C.TIME_UNSET) 0 else startPositionMs))
         if (audible()) start()
         return done()
+    }
+
+    private fun replaceItems(mediaItems: List<MediaItem>) {
+        items.clear()
+        uids.clear()
+        for (item in mediaItems) { items += item; uids += nextUid++ }
+        timeline = null
     }
 
     override fun handleAddMediaItems(index: Int, mediaItems: MutableList<MediaItem>): ListenableFuture<*> {

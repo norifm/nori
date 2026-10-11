@@ -156,6 +156,7 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_PAGE_MIX 15
 #define NORI_PAGE_SMARTS 16
 #define NORI_PAGE_SMART 17
+#define NORI_PAGE_DOWNLOADED_ALBUM 18
 
 /// A page answer: `json` is valid for the call only. Comes on a library thread, the stored copy first.
 typedef void (*NoriPageFn)(uint64_t token, const char *json);

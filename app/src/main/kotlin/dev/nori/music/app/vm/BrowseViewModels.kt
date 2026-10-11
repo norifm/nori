@@ -232,7 +232,7 @@ abstract class DetailViewModel<T>(app: Application) : NoriViewModel(app) {
     val ui: StateFlow<Load<T>> by lazy { id.flatMapLatest { if (it == null) flow { } else load(it) }.asLoad() }
 }
 
-class AlbumViewModel(app: Application) : DetailViewModel<AlbumDetail>(app) {
+open class AlbumViewModel(app: Application) : DetailViewModel<AlbumDetail>(app) {
     /**
      * Read again when a provider's song (octo-fiesta) starts sounding and when it stops: playing it made
      * the server download it into the library, and its row's cloud goes only once the server is asked
@@ -243,6 +243,14 @@ class AlbumViewModel(app: Application) : DetailViewModel<AlbumDetail>(app) {
     override fun load(id: String) = remoteSounding().flatMapLatest { nori.library.album(id) }
 
     private fun remoteSounding() = nori.player.state.map { s -> s.current?.takeIf { s.playing && it.isExternal }?.id }.distinctUntilChanged()
+}
+
+class DownloadedAlbumViewModel(app: Application) : AlbumViewModel(app) {
+    override fun load(id: String) = nori.downloads.state.map {
+        withContext(Dispatchers.IO) {
+            nori.core.downloadedAlbum(id) ?: error(getApplication<Application>().getString(dev.nori.music.app.R.string.note_no_downloads))
+        }
+    }
 }
 
 data class ArtistUi(val detail: ArtistDetail, val info: ArtistInfo?, val top: List<Song>)

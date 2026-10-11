@@ -265,6 +265,7 @@ pub fn origin_of(parent: &str) -> Option<PageOrigin> {
     let (kind, id) = parent.split_once(':')?;
     let kind = match kind {
         "album" => OriginKind::Album,
+        "downloaded" => OriginKind::Downloads,
         "artist" => OriginKind::Artist,
         "playlist" => OriginKind::Playlist,
         "mix" => OriginKind::Mix,

@@ -13,6 +13,11 @@ Download a song, an album, a playlist, everything by an artist, or the whole lib
 without a connection and are listed on the Downloads page with their progress, speed and time left, and
 a retry for any that failed.
 
+Android, Android Auto, the iPod touch, and the CLI group finished downloads by album, with the most
+recently downloaded album first. Open an album to see and play only its downloaded tracks in disc
+and track order. Songs without an album stay in a separate list. On Android, **Download queue**
+opens the progress and retry controls.
+
 | Setting | Default |
 |---|---|
 | Quality for downloads | Original (or MP3 320, or Opus 192, 128, 96 or 64, transcoded by the server) |

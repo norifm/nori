@@ -89,7 +89,7 @@ internal class CarTree(private val context: Context) {
             if (f.kind == CarFolder.ROOT) putBoolean(SEARCH_SUPPORTED, true)
         }
         val type = when (f.id.substringBefore(':')) {
-            "album" -> MediaMetadata.MEDIA_TYPE_ALBUM
+            "album", "downloaded" -> MediaMetadata.MEDIA_TYPE_ALBUM
             "artist" -> MediaMetadata.MEDIA_TYPE_ARTIST
             "playlist", "mix" -> MediaMetadata.MEDIA_TYPE_PLAYLIST
             "genre" -> MediaMetadata.MEDIA_TYPE_GENRE

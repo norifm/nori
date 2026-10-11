@@ -831,7 +831,7 @@ class PlaybackService : MediaLibraryService() {
         if (q.songs.isEmpty()) return
         val host = nori.remotes.jam.value?.members?.firstOrNull { it.role == dev.nori.music.ffi.remote.Role.HOST }?.name
         val jam = host?.let { getString(R.string.jam_sub, it) }
-        player.setMediaItems(held(q.songs).map { it.inJam(jam) }, q.index.toInt(), C.TIME_UNSET)
+        player.showFollowingQueue(held(q.songs).map { it.inJam(jam) }, q.index.toInt())
         if (!began) return
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
         player.play()
