@@ -1,31 +1,40 @@
 #!/usr/bin/env python3
 """Resolve one CLI peer's announced LAN door, as the emulator cannot browse host multicast."""
 import json
+import os
 import re
 import selectors
 import shlex
 import sqlite3
+import socket
 import subprocess
 import sys
 import time
 
 
 def lines(command, deadline):
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
+    pending = b""
     try:
         while time.monotonic() < deadline:
             if not selector.select(max(0, deadline - time.monotonic())):
                 break
-            line = process.stdout.readline()
-            if not line:
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                if pending:
+                    yield pending.decode()
                 break
-            yield line
+            pending += chunk
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                yield line.decode()
     finally:
         selector.close()
         process.terminate()
         process.wait()
+        process.stdout.close()
 
 
 def resolve(database, timeout=15):
@@ -42,6 +51,11 @@ def resolve(database, timeout=15):
             port = int(match[1])
         txt = dict(word.split("=", 1) for word in shlex.split(line) if "=" in word)
         if port and txt.get("id") == device and txt.get("kind") == "terminal":
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    pass
+            except OSError:
+                continue
             return {"name": txt["name"], "door": f"10.0.2.2|{port}|" + ";".join(f"{k}={v}" for k, v in txt.items())}
     raise RuntimeError("the CLI peer did not announce its LAN door")
 

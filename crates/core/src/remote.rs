@@ -713,6 +713,8 @@ impl Mirrored {
 struct Inner {
     serving: bool,
     watching: bool,
+    /// A foreground app is looking for playback already active on the account.
+    discovering: bool,
     relay: RelaySupport,
     /// Bumped to end the running relay poller (each runs while its generation is current).
     generation: u64,
@@ -783,7 +785,7 @@ impl Peer {
 
 impl Inner {
     fn wants_relay(&self) -> bool {
-        self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
+        self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.discovering || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
     }
 
     /// Whether the mirrored device is followed: while something here shows it, or it plays.
@@ -794,7 +796,7 @@ impl Inner {
     /// Whether the door of nearby device `id` is followed: every one while a picker is open, else only
     /// the one mirrored.
     fn follows_peer(&self, id: &str) -> bool {
-        self.watching || (self.follows_mirror() && self.mirror.as_ref().is_some_and(|m| m.id == id))
+        self.watching || self.discovering || (self.follows_mirror() && self.mirror.as_ref().is_some_and(|m| m.id == id))
     }
 
     /// Ends the relay poller, a held poll at once.
@@ -1067,24 +1069,51 @@ impl Remote {
     /// A device picker or jam screen is open: other devices' states are followed while on. Opened while
     /// the server was found without the relay, it is asked again (it may have gained one since).
     pub fn watch(self: Arc<Self>, on: bool) {
-        let probe = {
+        let (probe, browse) = {
             let mut i = self.inner.lock();
             if i.watching == on {
                 return;
             }
             i.watching = on;
-            if !on {
+            let browse = on || i.discovering;
+            if !browse {
                 i.lan_generation += 1;
                 i.peers.iter_mut().for_each(|p| p.polling = false);
             }
-            on && i.relay == RelaySupport::Unsupported
+            (on && i.relay == RelaySupport::Unsupported, browse)
         };
         if let Some(d) = &self.discovery {
-            d.browse(on);
+            d.browse(browse);
         }
         if probe {
             self.probe();
         }
+        self.keep_polling();
+    }
+
+    /// Looks for the account's playing device while this app is in front.
+    pub fn discover_active(self: Arc<Self>, on: bool) {
+        let browse = {
+            let mut i = self.inner.lock();
+            let on = on && self.me.kind != DeviceKind::Guest && !i.stopped && i.sight == Sight::Screen && i.mirror.is_none() && !i.playing.playing && !i.jams();
+            if i.discovering == on {
+                return;
+            }
+            i.discovering = on;
+            if on {
+                i.end_relay_poll();
+            }
+            let browse = i.watching || on;
+            if !browse {
+                i.lan_generation += 1;
+                i.peers.iter_mut().for_each(|p| p.polling = false);
+            }
+            browse
+        };
+        if let Some(d) = &self.discovery {
+            d.browse(browse);
+        }
+        self.follow_active();
         self.keep_polling();
     }
 
@@ -1096,6 +1125,9 @@ impl Remote {
                 return;
             }
             i.sight = sight;
+        }
+        if sight != Sight::Screen {
+            self.clone().discover_active(false);
         }
         self.timing.notify_all();
         self.keep_polling();
@@ -1120,6 +1152,9 @@ impl Remote {
             i.playing_at = Some(now);
             (i.serving || i.hosted.is_some(), started && i.mirror.is_some(), shown)
         };
+        if playing.playing {
+            self.clone().discover_active(false);
+        }
         if started {
             self.set_active(None);
         }
@@ -1159,6 +1194,7 @@ impl Remote {
     /// pauses. A device that is the active one already (it plays, or played since this one did) is only
     /// followed, as is any device while nothing is queued here.
     pub fn pick(self: Arc<Self>, device: Option<String>) {
+        self.clone().discover_active(false);
         let (active, idle, plays, leads) = {
             let i = self.inner.lock();
             if device.is_some() && i.jams() {
@@ -1521,6 +1557,7 @@ impl Remote {
     /// waited for up to [`SENT_WAIT_MS`]: a client quitting next leaves the device lists at once.
     pub fn stop(self: Arc<Self>) {
         self.clone().serve(false);
+        self.clone().discover_active(false);
         self.clone().watch(false);
         self.clone().jam_close();
         let waiting = {
@@ -1996,6 +2033,7 @@ impl Remote {
     }
 
     fn poll_relay(self: Arc<Self>, generation: u64) {
+        let mut first = true;
         loop {
             let url = {
                 let mut i = self.inner.lock();
@@ -2007,7 +2045,9 @@ impl Remote {
                     i.relay_polling = false;
                     return;
                 }
-                self.poll_url(i.since, !i.relay_down, i.serving)
+                let url = self.poll_url(i.since, !first && !i.relay_down, i.serving);
+                first = false;
+                url
             };
             let Some(got) = self.get(url, POLL_TIMEOUT_MS, |i| i.generation == generation) else { return };
             let received = clock::now_us();
@@ -2357,6 +2397,32 @@ impl Remote {
     /// Takes the mirrored device's newest state, follows it on to the device it handed its playback to,
     /// lets it go once it is gone, and asks for the next page of its queue.
     fn follow_active(self: &Arc<Self>) {
+        let discovered = {
+            let mut i = self.inner.lock();
+            let to = if i.discovering && i.mirror.is_none() && !i.playing.playing && !i.jams() {
+                i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam && !i.relay_down).flat_map(|r| &r.members))
+                    .find(|m| i.state_of(&m.id).is_some_and(|(s, _)| s.playing && s.index.is_some()))
+                    .map(|m| m.id.clone())
+            } else {
+                None
+            };
+            to.map(|id| {
+                i.mirror = Some(Mirrored::new(id));
+                i.discovering = false;
+                if !i.watching {
+                    i.lan_generation += 1;
+                    i.peers.iter_mut().for_each(|p| p.polling = false);
+                }
+                i.watching
+            })
+        };
+        if let Some(browse) = discovered {
+            if let Some(d) = &self.discovery {
+                d.browse(browse);
+            }
+            self.retime();
+            self.keep_polling();
+        }
         let mut page = None;
         let next = {
             let mut i = self.inner.lock();

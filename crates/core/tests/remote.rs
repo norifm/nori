@@ -524,14 +524,14 @@ fn lan_exchange(request: &Exchange) -> Result<TransportResponse, TransportError>
 
 /// What a device's discovery was asked to announce.
 #[derive(Default)]
-struct Announced(Mutex<Option<nori_core::remote::Announcement>>);
+struct Announced(Mutex<Option<nori_core::remote::Announcement>>, std::sync::atomic::AtomicBool);
 
 impl Discovery for Announced {
     fn announce(&self, door: Option<nori_core::remote::Announcement>) {
         *self.0.lock() = door;
     }
 
-    fn browse(&self, _: bool) {}
+    fn browse(&self, on: bool) { self.1.store(on, Ordering::Relaxed); }
 }
 
 struct NoMarks;
@@ -657,6 +657,63 @@ impl Device {
         self.core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(start), false, None);
         self.remote.clone().played(Playing { playing: true, position_ms: 5_000, index: None, volume: Some(40), ..Default::default() });
     }
+}
+
+#[test]
+fn active_discovery_follows_the_playing_device() {
+    let relay = Relay::new();
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.playing(&["s1", "s2"], 1);
+    desk.remote.clone().serve(true);
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    phone.queued(&["old"]);
+    phone.remote.clone().discover_active(true);
+    let mirror = phone.until("the desktop already playing", |r| r.active());
+    assert_eq!((mirror.id, mirror.at, mirror.playing), (desk.remote.id(), Some(1), true));
+    assert!(desk.ops.try_recv().is_err(), "discovering does not replace the desktop's queue");
+    assert!(phone.ops.try_recv().is_err(), "discovering does not play the saved queue locally");
+    relay.close();
+}
+
+#[test]
+fn active_discovery_respects_local_controls_and_visibility() {
+    for case in ["hidden", "picked here", "playing here", "paused peer"] {
+        let relay = Relay::new();
+        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+        phone.remote.clone().discover_active(true);
+        match case {
+            "hidden" => phone.remote.clone().sight(Sight::Nothing),
+            "picked here" => phone.remote.clone().pick(None),
+            "playing here" => phone.playing(&["own"], 0),
+            _ => {}
+        }
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        if case == "paused peer" { desk.queued(&["s1"]); } else { desk.playing(&["s1"], 0); }
+        desk.remote.clone().serve(true);
+        phone.remote.clone().watch(true);
+        phone.until(case, |r| r.devices().into_iter().find(|d| d.name == "Desk").and_then(|d| d.state));
+        assert!(phone.remote.active().is_none(), "{case}");
+        relay.close();
+    }
+}
+
+#[test]
+fn active_discovery_uses_lan_without_a_relay() {
+    let relay = Relay::absent();
+    let announced = Arc::new(Announced::default());
+    let desk = Device::found(&relay, ann(), DeviceKind::Desktop, "Desk", Some(announced.clone()));
+    desk.playing(&["s1", "s2"], 1);
+    desk.remote.clone().serve(true);
+    let door = announced.0.lock().clone().unwrap();
+    let browsing = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(browsing.clone()));
+    phone.remote.clone().discover_active(true);
+    assert!(browsing.1.load(Ordering::Relaxed));
+    phone.remote.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+    let mirror = phone.until("the playing LAN device", |r| r.active());
+    assert_eq!((mirror.id, mirror.at), (desk.remote.id(), Some(1)));
+    assert!(!browsing.1.load(Ordering::Relaxed), "after discovery only the active device is followed");
+    relay.close();
 }
 
 #[test]
