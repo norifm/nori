@@ -15,7 +15,7 @@ Applies to nori 0.6. "All" means Android, the desktop, the terminal and the iPod
 
 ## Library
 
-- Albums, artists, songs, playlists, genres, favourites, years, folders, internet radio. All.
+- Albums, artists, songs, playlists, genres, favorites, years, folders, internet radio. All.
 - Instant search from an index on the device, merged with the server's results. All.
 - Playlists, smart playlists from rules, M3U import and export. Playlists all; the smart playlist editor
   on Android.

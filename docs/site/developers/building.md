@@ -75,7 +75,7 @@ peer, guest logs and failure artifacts. Port 5554 uses proxy 4534; port 5556 use
 4536. The library fixture is shared. An explicit `NORI_E2E_PROXY_PORT` supports
 other serials. Jam checks need an up-to-date octo-fiesta relay on localhost:5274
 whose `/nori/jam` page offers “Open in nori”. `tools/jam-server.sh` starts one
-from the neighbouring octo-fiesta checkout; override with `NORI_OCTO_ROOT`. A missing or outdated prerequisite
+from the neighboring octo-fiesta checkout; override with `NORI_OCTO_ROOT`. A missing or outdated prerequisite
 fails promptly. Generated fixture songs have no lyrics; test those against the
 real server as documented in [Testing](testing.md).
 
@@ -279,7 +279,7 @@ for the other clients. What holds it, read from the code, and what was done:
 |---|---|---|---|
 | The moving cover's ExoPlayer: media3's default `DefaultLoadControl`, 50 s ahead, looping, up to 1080 px HLS in the Java heap | tens of MB with the player open (50 s at 5-10 Mbit/s is 30-60 MB) | both | `motion_load_control`: 4-8 s, at most 4 MB. The loop comes from the disk cache, so this costs no network |
 | Decoded covers (`CoverLoader`, hardware Bitmaps, counted under Graphics) | up to 15 % of the memory class: 29 MB on the emulator (192 MB), 38 MB on a 256 MB phone | both | a quarter stays while no screen is in sight (`cover_rules().hidden_share`). Covers still on the page are held by their views anyway |
-| Page colours (`CoverPalette`): 128 entries, each with a 128 px ARGB wash | up to 8 MB (native heap) | both | an LRU capped at 2 MB, about 30 washes |
+| Page colors (`CoverPalette`): 128 entries, each with a 128 px ARGB wash | up to 8 MB (native heap) | both | an LRU capped at 2 MB, about 30 washes |
 | The music's buffer (`load_control`): a quarter of the memory class, at most 48 MB, the whole song in one burst | the whole song, played part included | both | kept: one network wake per song is the battery design. The Rust loader could drop what it has played (it needs chunked storage, since `Vec::drain` keeps the allocation), but a seek back then needs the network |
 | The Rust engine's ring: 12 s of f32 | 4.2 MB at 44.1 kHz stereo, 9.2 MB at 96 kHz | Rust | kept: storing i16 for a 16-bit device would halve it, but the fades run on the samples as they are pulled |
 | The AudioTrack: 11.5 s | 2 MB i16, 4 MB float (shared memory) | Rust | kept (the burst design) |

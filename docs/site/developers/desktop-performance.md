@@ -127,7 +127,7 @@ This demonstrates a plateau for that workload, not proof that every path is leak
 ## Mouse scrolling and border dragging
 
 The custom backend now forwards wheel phases as Slint's native winit backend does. The public
-`PointerScrolled` event marks wheels as cancelled, which makes Flickable jump immediately instead
+`PointerScrolled` event marks wheels as canceled, which makes Flickable jump immediately instead
 of using its wheel deceleration. A virtual-clock regression failed before the phase correction;
 it checks motion between notches and the final accumulated distance. Precise touchpad phases
 remain intact. Shelves support mouse dragging, Shift+wheel and arrows.

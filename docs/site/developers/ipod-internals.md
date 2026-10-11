@@ -79,7 +79,7 @@ no-op off Linux already.
 ├───────────── C doors (@_cdecl-free: plain `extern "C"`, per frame / row / buffer) ─┤
 │ crates/ios  (staticlib `libnori_ios.a`)                                             │
 │   session glue over nori-host::Session · IosOutput (AudioOutput) · CgPaint (covers)  │
-│   doors: seek bar step, lyric clock, cover colours blend, playhead read             │
+│   doors: seek bar step, lyric clock, cover colors blend, playhead read              │
 ├─────────────────────────────────────────────────────────────────────────────────────┤
 │ ios/Sound/NoriAudio.m  (C ABI): AVAudioSession, AURemoteIO, route + interruption    │
 │ notifications; calls back into Rust for every I/O cycle (`nori_ios_pull`)           │
@@ -108,7 +108,7 @@ Decisions, with the reasons:
   desktop keep on. That is the only change the core needs for a third platform, and it removes a platform
   decision from a shared crate.
 - **HTTP in Rust (`nori-http`, ureq + rustls), not NSURLSession**, for v1: one pool for API, covers and
-  audio, the engine's cancellable `ByteSource` already written, identical behaviour to the desktop. Roots
+  audio, the engine's cancellable `ByteSource` already written, identical behavior to the desktop. Roots
   are `webpki-roots`; a self-signed Navidrome goes through the core's own certificate settings (already a
   feature), not the iOS trust store. NSURLSession comes back only if background downloads are wanted
   (section 7).
@@ -326,12 +326,12 @@ Top to bottom on 568 pt: status bar 20, grabber 14, cover **272 × 272** (24 pt 
 when paused, as Apple's does, a spring the user's tap drives), title/artist/album with star and menu (56),
 seek bar with times (36), transport row (72), `MPVolumeView` (36), bottom row: lyrics, route picker
 (`AVRoutePickerView`), queue (44). The background is black whatever the cover (the owner's decision,
-2026-10-04): the cover's colours tint nothing, so pale covers never wash out the light text and nothing
+2026-10-04): the cover's colors tint nothing, so pale covers never wash out the light text and nothing
 is derived or composed per song.
 
 ### 6.3 Lyrics
 
-Full black card. Lines in SF Pro Semibold 24 pt, the lit line at full colour, the others at
+Full black card. Lines in SF Pro Semibold 24 pt, the lit line at full color, the others at
 `UNSUNG`; word-by-word fill drawn with CoreText in a custom view's `draw(_:)` from the record's word times.
 Redraw is paced by the core's `LyricClock` (`Step::wait`, `still`): a one-shot `DispatchSourceTimer` set
 to the clock's next moment, and a `CADisplayLink` only while a word fill is moving on screen. Off screen or
@@ -432,7 +432,7 @@ Each ends with something that runs on the iPod; nothing moves on until the one b
 | uniffi's pinned revision will not generate Swift | Hand-written C ABI (cbindgen) for everything; the doors are planned that way regardless |
 | RemoteIO will not grant 93 ms on some route (Bluetooth often caps at ~40 ms) | Read `ioBufferDuration` after activation and size `latency_us` from it; the engine's ring and bursts do not depend on the buffer length, only the wake count does |
 | 1 GB: jetsam kills the app in the background | The budget in section 7; `didReceiveMemoryWarning` trims the cover cache and the core's memory (`trim_memory`); the engine's loaders are bounded by `load_control`'s byte cap and reported by `Engine::held` for the perf log; measured in milestone 4 |
-| A8 too slow for AutoMix's analysis of two songs around a mix | The measurer already runs at the lowest priority on one thread; if a 5-minute FLAC takes more than its own length to analyse, AutoMix measures only as songs come (`measure_as_it_comes`) and never from the disk |
+| A8 too slow for AutoMix's analysis of two songs around a mix | The measurer already runs at the lowest priority on one thread; if a 5-minute FLAC takes more than its own length to analyze, AutoMix measures only as songs come (`measure_as_it_comes`) and never from the disk |
 | No debugger | The core's log over SSH, `os_log` from Swift, crash reports in `/var/mobile/Library/Logs/CrashReporter`, and `atos` against the unstripped build |
 | checkra1n's semi-tethered boot: a reboot without a computer loses the jailbreak | The app does not depend on the jailbreak at runtime; only AppSync's signature bypass does, and an unsigned app will not launch after an unjailbroken boot. A free developer certificate (7-day) from Xcode is the fallback for a trip |
 
@@ -443,9 +443,9 @@ Each ends with something that runs on the iPod; nothing moves on until the one b
   and the DAC pages are not built for this client; Bluetooth and the speaker are the other two routes.
 - **Downloads run while the app is open or playing.** No `NSURLSession` background sessions; the Downloads
   page says so in one line.
-- **The player is black.** (2026-10-04) Whatever the cover; its colours tint nothing.
+- **The player is black.** (2026-10-04) Whatever the cover; its colors tint nothing.
 - **The icons are Android's.** (2026-10-04) Its Material icons, drawn from their path data.
-- **Other music apps on the device are not a reference.** Nothing of their behaviour is copied; the
+- **Other music apps on the device are not a reference.** Nothing of their behavior is copied; the
   reference is Android's app and Apple's own Music app (section 6).
 
 ## 12. Where the skeleton stands (2026-10-03)
@@ -564,7 +564,7 @@ installed.
 
 ### W6 - the OS around the player (Swift)
 
-In `ios/Sources/Player.swift` as `NowPlaying`: the info centre (600 px artwork once per song), the
+In `ios/Sources/Player.swift` as `NowPlaying`: the info center (600 px artwork once per song), the
 remote commands, like → star, and `AVAudioSession.outputVolume` → `nori_ios_volume` for loudness. Route
 lost pauses and an interruption pauses / resumes, decided in `session.rs::audio_changed`. Left: the
 device check below.
@@ -590,7 +590,7 @@ W8 is in `pages.rs` (`nori_ios_cover` / `_cancel`, RGBA on the cover callback, c
 Covers reach Swift without a copy: the callback carries an owner that `CGDataProvider` releases
 (`nori_ios_cover_release`). Only the core's two renditions are fetched (`cover_rendition`: 320 px for
 rows and cards, 800 px for the album page, the player and the lock screen), each decoded to the view's
-size, so every view of a cover shares one download; at each song change its covers and its neighbours'
+size, so every view of a cover shares one download; at each song change its covers and its neighbors'
 are warmed into the disk cache (`covers_around`), and the lock screen's artwork is decoded at the card's
 size into the cache the card reads. A size not decoded yet shows the cover's sharpest decoded picture
 until it comes. While one loads a sheen crosses the plate (three passes at most) and the
@@ -599,7 +599,7 @@ picture fades in over 260 ms; a cached picture shows at once.
 **W7.** `UITabBarController` (Home, Library, Search, Settings), each in a `UINavigationController` with
 large titles on the roots; the mini player over the tab bar; `Design.swift` (the Apple-Music-like shapes:
 list rows, grid cells, section headers, the pill buttons, the play/shuffle pair; SF system font, Dynamic
-Type through `UIFontMetrics`); `Theme.swift` (dark default, light; the colours from the core's theme
+Type through `UIFontMetrics`); `Theme.swift` (dark default, light; the colors from the core's theme
 model); the glyph set as PDF assets rendered to @2x by a script step (`actool` is in Xcode but, like
 `ibtool`, may crash: fall back to pre-rendered PNGs in `ios/Assets/`); `Say.swift` over
 `Localizable.strings` carried from `app/src/main/res/values/strings*.xml` by a one-off script
@@ -669,7 +669,7 @@ playing.
 The custom presentation controller and interactive transition (one pan, `UISpringTimingParameters`,
 scrubbed), the layout of 6.2, the paused cover scale, the seek bar drawn once per pixel with
 `nori_look::motion`'s step through a door, times from `Fmt` cached per second, `MPVolumeView`,
-`AVRoutePickerView`, star and menu, the wash and colours from `nori_look` (`dress`, `cover::derive`) through
+`AVRoutePickerView`, star and menu, the wash and colors from `nori_look` (`dress`, `cover::derive`) through
 doors with the per-frame `mix` only while a change runs. Check: the card opens and settles with the finger,
 reduce-motion snaps; the player draws nothing while paused and nothing per second with the screen off
 (`CADisplayLink` count in the debug overlay).

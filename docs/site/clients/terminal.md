@@ -38,7 +38,7 @@ the outer terminal, and nori draws them again when the pane has focus back; it t
 | `enter` / `l` | open, or play from here |
 | `a` / `A` | add to the queue, or play next |
 | `x` / `X` | play the whole page, or shuffle it |
-| `D` / `f` | download; favourite |
+| `D` / `f` | download; favorite |
 | `i` / `o` | start a jam with the selected item; join one from its link |
 | `m` | mouse on or off (off: the terminal selects text) |
 | `q` | quit |

@@ -31,4 +31,4 @@ means is written once, in Rust. Each client draws its own screens over it:
 - **Your data.** No accounts, no analytics. Your music stays on your server. See
   [Privacy and network](../privacy.md).
 
-nori is open source under the MIT licence.
+nori is open source under the MIT license.

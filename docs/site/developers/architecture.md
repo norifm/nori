@@ -25,7 +25,7 @@ there; the clients (Kotlin, Slint, ratatui, Swift) draw, hold the words, and wir
 
 - **The domain crates** each own one area: decoding and the sound chain (`player`), the library and its
   pages (`library`), the queue and autofill (`queue`), lyrics (`lyrics`), settings (`settings`), outputs
-  and AutoEQ (`devices`), covers (`covers`), colours from covers (`look`), and so on.
+  and AutoEQ (`devices`), covers (`covers`), colors from covers (`look`), and so on.
 - **`nori-core`** holds a `Core` per server profile and the Subsonic `Client`, and re-exports every domain
   crate, so a client can link it alone.
 - **`nori-engine`** is the whole player for a platform without one: it loads in bursts, decodes, runs the

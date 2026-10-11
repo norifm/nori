@@ -39,7 +39,7 @@ second address. They do not apply extra headers or accept self-signed certificat
 
 ## octo-fiesta
 
-octo-fiesta sits in front of your Subsonic server. nori recognises its provider songs, marks them, and
+octo-fiesta sits in front of your Subsonic server. nori recognizes its provider songs, marks them, and
 never queues or downloads one you did not ask for, since playing one makes the server download it. It is
 also what [remote control](../connected/remote-control.md) away from home and
 [jams](../connected/jams.md) go through.

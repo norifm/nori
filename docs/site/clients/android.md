@@ -12,13 +12,13 @@ per-output sound, [widgets](../using/widgets.md), [Android Auto](../using/androi
 system's media controls, notification and lock screen.
 
 - **Install**: see [Install](../start/install.md#android).
-- **Look**: pages take their colour from the album cover, with light, dark or system theme, the
-  wallpaper's colours or an accent of your own, and true black for OLED screens.
+- **Look**: pages take their color from the album cover, with light, dark or system theme, the
+  wallpaper's colors or an accent of your own, and true black for OLED screens.
 - **Battery**: music plays from a deep buffer, or through the phone's audio chip when nothing needs the
   samples. See [Offload and processing](../sound/offload.md).
 - **Updates**: the app checks GitHub for a newer release at most once a day and offers to install it.
   Turn this off in the Updates section of Settings, or opt into beta releases there.
 - **Moving covers** (off by default): some albums on Apple Music have a short looping video of their
   cover, and the player can play it in place of the still cover, only while the player is open and at
-  rest. Finding the video asks Apple's public search and its catalogue for the album, sending the artist
+  rest. Finding the video asks Apple's public search and its catalog for the album, sending the artist
   and album name; it is unofficial, and by default only on Wi-Fi. See [Privacy and network](../privacy.md).

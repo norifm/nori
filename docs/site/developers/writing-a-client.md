@@ -12,7 +12,7 @@ writes only what is specific to its platform. This page lists what the core alre
 client has to build itself. The Android app (`app/`, `core/`) is the reference for each item.
 
 One rule decides where a piece of work goes, and it outranks the split below: **speed, CPU, memory,
-wakeups and battery come first.** Something that measures faster on the client side (animation maths
+wakeups and battery come first.** Something that measures faster on the client side (animation math
 called every frame, for example) belongs in the client even when it looks like "logic".
 
 ## What the core does
@@ -25,7 +25,7 @@ platform opens and re-exports every crate below it by its module name (`nori_cor
 |---|---|
 | Server API, sync, the one app database (`nori.db`), the settings model and effects | `nori-net`: `api`, `transport`, `requests`, `stream`; `nori-core`: `Core`, `Client`, `cache_policy`; `nori-db`; `nori-settings`: `settings`, `settings_store`, `settings_model`, `lyrics_sources`, `dsp` |
 | The records the server sends and the app shows, the core's error and log | `nori-model` |
-| Library, search, browse, mixes, smart lists, stats, history, favourites, playlists, M3U | `nori-library`: `library`, `search`, `browse`, `mixes`, `smart`, `history`, `stars`, `m3u` |
+| Library, search, browse, mixes, smart lists, stats, history, favorites, playlists, M3U | `nori-library`: `library`, `search`, `browse`, `mixes`, `smart`, `history`, `stars`, `m3u` |
 | What each page shows, as data: an album's discs, an artist's releases by kind, a page's queue, its big buttons, the letters down a long list, the offer on a provider's page; the song menus; what the listening stats read out (the busiest hour and day) | `nori-library`: `pages`, `menus`, `rows`, `browse`; `nori-queue::actions` |
 | The queue: order, shuffle (artists and albums always spread), autofill (taking turns with what it picked or played lately), radio, the offline bridge, error runs | `nori-player::playlist`; `nori-queue`: `playlist`, `queue`, `autofill`, `bridge`, `rules` |
 | Decoding MP3, FLAC, AAC-LC, Vorbis, ALAC and Opus, gapless, without allocating per packet; HE-AAC through a decoder the client lends | `nori-player::decode` |
@@ -41,9 +41,9 @@ platform opens and re-exports every crate below it by its module name (`nori_cor
 | Scrobbling decisions; lyrics: the server's, and sixteen lyrics services asked through the `Transport` (requests, matching, every format they answer in, credits stripped, each answer scored, asking them in waves, remembering the answers and the choice in the app's database, the lyrics cache's size and clearing), the current line, backing vocals and duet sides, and when the page redraws | `nori-queue::scrobble`; `nori-lyrics`: `lyrics`, `formats`, `json`, `html`, `lrclib`, `services`, `credits`, `trust`, `sync`, `race`, `look`; `nori-core::race` (`Client::lyrics_lookup`); `nori-settings::lyrics_sources`; `nori-look::lyrics` |
 | Why a song will not play, as a kind (`PlaybackError`); the credits (the core's crates, Android's libraries, the typeface and the third parties' data) | `nori-model`; `nori-settings::credits`: `core_credits`, `android_credits`, `data_credits` |
 | A perf recorder's bookkeeping: the state a stretch is filed under, what two readings of the counters make (the threads that woke most among them), the stretches kept, their sums by state, the page's figures, the audio output's line and the shared report | `nori-perf::perf_log` |
-| Cover colours: palette, theme, the page's colour scheme, the wash and melt behind the player | `nori-look::cover`, `palette`, `theme`, `dress` |
+| Cover colors: palette, theme, the page's color scheme, the wash and melt behind the player | `nori-look::cover`, `palette`, `theme`, `dress` |
 | Cover art: fetched through the `Transport`, kept on disk and in memory, JPEG, PNG, WebP and a GIF's first frame decoded straight to the size drawn and turned as their EXIF says (Android's Bitmaps included) | `nori-covers` |
-| Moving album covers: finding an album's motion artwork in Apple Music's catalogue (the search, the web player's token, the square video's address), remembered per album | `nori-core::motion` (`Client::motion_video`, `motion_forget`) |
+| Moving album covers: finding an album's motion artwork in Apple Music's catalog (the search, the web player's token, the square video's address), remembered per album | `nori-core::motion` (`Client::motion_video`, `motion_forget`) |
 | The car browse tree | `nori-library::car` |
 
 ## The reference terminal client
@@ -68,7 +68,7 @@ builds:
   rows and wording - sound (the equalizer, ReplayGain and its pre-amp, crossfade, AutoMix, speed and
   pitch, skipping silence, bit-exact output), playback, the library and history, lyrics (online lookups,
   the sources in order, their keys), the server, storage and caches, and the client's own (the mouse,
-  covers and colours, the volume, the output device for the next start). What only a phone can do is
+  covers and colors, the volume, the output device for the next start). What only a phone can do is
   simply not there. Each row's options are the core's values (`settings_model::specs`), the value now
   and the rules' facts are `settings_model::state`, and a row changes its setting by name through
   `setting_set`, `edit_level` or the sound tools. What a change asks of the player
@@ -81,7 +81,7 @@ builds:
   `Client::autofill` when the queue runs out. A next pressed at the end is taken when the songs land
   (`autofill_landed`) only within 2 s of the last press.
 - **Pictures**: nori-covers decodes the cover (fetched through the same `Transport`), nori-look's
-  `cover::derive` gives the page, text and accent colours, and ratatui-image draws the picture in
+  `cover::derive` gives the page, text and accent colors, and ratatui-image draws the picture in
   whichever protocol the terminal answers to (kitty graphics, sixel, iTerm2) or in half blocks. ratatui
   0.30 takes a cell's text width as the columns it covers, so the cell holding a picture's escape
   sequence is marked one column wide (`CellDiffOption::ForcedWidth`), or the rest of the frame is
@@ -118,7 +118,7 @@ builds:
   TLS, self-signed servers, client certificates and the headers the profile asks for. Ask
   `request_policy` once per host (cache it) to learn which requests go to the server.
   `send` is the same with a third party's own headers and a JSON body (the lyrics services, Apple's
-  catalogue); the platform sends it as it is and hands back whatever came, error statuses included.
+  catalog); the platform sends it as it is and hands back whatever came, error statuses included.
   Android: `net/Http.kt` on OkHttp. Keep API calls, covers and audio on one HTTP/2 connection, so the
   radio wakes once. Keep a per-read timeout off the audio: OkHttp arms its watchdog thread around every
   read of a body with one, a network packet at a time; Android's audio client has none and finds a
@@ -222,7 +222,7 @@ The engine also plays what the Android player plays around the sound chain, each
   unit at a time on the engine's thread, and the device is opened at the rate and channels it says.
   Android lends MediaCodec through the NDK (crates/android `mediacodec.rs`). A desktop client lends none
   by default and plays the core: no decoder of SBR in Rust is both free to link and fast enough (the one
-  found, oxideav-aac, MIT, decodes at 1.85 times real time), and FDK-AAC's licence and faad2's GPL do not
+  found, oxideav-aac, MIT, decodes at 1.85 times real time), and FDK-AAC's license and faad2's GPL do not
   suit an MIT client. A desktop client that wants the treble can lend one over the system's libavcodec
   (LGPL, linked at run time, its `aac` decoder has SBR and PS), feeding it each unit with a 7-byte ADTS
   header put in front when there is no config.
@@ -317,7 +317,7 @@ that beside the database, the same on every client (`nori-core::model_download`)
 ### 4. Pictures
 - Draw cover images. Fetching, caching and decoding are `nori-covers`', on every client, Android
   included: a client asks for a cover at a view's size and draws what comes back.
-- Hand decoded pixels to `nori-look::cover::derive`, which returns the page's colours and the wash
+- Hand decoded pixels to `nori-look::cover::derive`, which returns the page's colors and the wash
   picture. Draw them; never recompute them. Android has the core do both in one call (below).
 
 `nori-covers` (`crates/covers`) is platform-free:
@@ -330,7 +330,7 @@ that beside the database, the same on every client (`nori-core::model_download`)
   size while it is on its way share one fetch and one decode, and the newest request is served first, so
   the covers on screen now come before the rows flung past. `warm(url)` fetches onto the disk only,
   behind every view's request (a download's covers); `read(url, bytes)` hands the file itself over on the
-  calling thread (a page's colours). `cached(url, w, h)` is the memory cache alone, for drawing at once;
+  calling thread (a page's colors). `cached(url, w, h)` is the memory cache alone, for drawing at once;
   `load` waits on the calling thread. Workers start with the first requests, at most `Config::workers`,
   and sleep when idle; nothing touches the disk on the thread that asks, not even opening the cache.
 - **`Paint`**: what a cover's file becomes, on the worker that fetched it. `Rgba` is tight RGBA rows at
@@ -379,9 +379,9 @@ draws them.
   let go past 512x512) and copied to the GPU there, so no frame pays the upload. `request(loader, url, w,
   h, waiter)` answers a handle; the core calls `waiter.done(bitmap, status)` once, on the loader thread
   that finished it, and `cancel(handle)` (`@FastNative`) drops the core's ticket, after which it is not
-  called for a cover finished later (one finished as it is cancelled may still arrive, and Kotlin drops
+  called for a cover finished later (one finished as it is canceled may still arrive, and Kotlin drops
   it: `cancel` does not wait for a call back under way, which would be a `@FastNative` door waiting on
-  Java). `warm` and `clear` are the loader's; `colours` is the page's colours, below. The loader fetches
+  Java). `warm` and `clear` are the loader's; `colours` is the page's colors, below. The loader fetches
   through `Nori.coverNet` (the core's `CoverNet`), which gets the app's transport once `Nori` builds it on
   the warm-up thread; a cover that reaches the network before that waits for it on its loader thread,
   never on the main one.
@@ -394,21 +394,21 @@ draws them.
   again, and a view that needs more is shown what is kept while the larger one comes. A request posts
   its call back to the main thread (`Handler.post` of the request itself: nothing else allocated) and
   keeps the picture there. `prefetch` decodes at the file's own size (at most 2048 a side) into memory
-  (the library's next screenful, the player's neighbours); `warm` is disk only (a download's covers, hundreds of them, which
+  (the library's next screenful, the player's neighbors); `warm` is disk only (a download's covers, hundreds of them, which
   would push the screen's covers out of memory). Provider covers are never kept.
 - **`Cover` and `rememberCover`** (app/.../ui): the one component every screen draws a cover with. It
   asks at the view's own pixel size (a view sized by its layout asks once measured), draws the kept
   picture at once, otherwise the plate, its sheen and then the picture faded in over 260 ms; a picture
   that never comes leaves the note glyph, faded in. The picture is drawn in the draw phase, the middle of
   it in the view's shape as `ContentScale.Crop` did, and the fade is read there too, so it recomposes
-  nothing. Leaving composition cancels the request. The player's sleeve and its neighbours take the same
+  nothing. Leaving composition cancels the request. The player's sleeve and its neighbors take the same
   `CoverImage` as a painter.
-- **The page's colours** (`CoverLoader.colours`, the door's `colours`): the core reads the cover's file
-  (disk or network), decodes the whole picture to fit 320 px in straight colours and hands the pixels to
+- **The page's colors** (`CoverLoader.colours`, the door's `colours`): the core reads the cover's file
+  (disk or network), decodes the whole picture to fit 320 px in straight colors and hands the pixels to
   `nori_look::cover::derive`, writing the look into an int array and the wash into a Bitmap: no Bitmap
   of the cover in between, and no round trip through premultiplied pixels. One call works out the page
   in the plain theme and on AMOLED black from the one decode, where the bar is black and the player
-  keeps the record's colours.
+  keeps the record's colors.
 
 The debug build measures the core's covers (the perf build runs the same from its Performance page,
 [the perf build](building.md#the-perf-build)):
@@ -441,7 +441,7 @@ native heaps before and after.
   vectors) and keeps each second's clock text. The terminal client's words are `crates/cli/src/text.rs`;
   every client's numbers and unit symbols are `numbers`'. Logs, the perf report and the self test are tooling, in English.
 - **Settings**: the core holds the model only (`nori-settings::settings_model`): every setting's name
-  (what `setting_set` takes), its kind (a switch, a choice, a level, text, a colour), its options as
+  (what `setting_set` takes), its kind (a switch, a choice, a level, text, a color), its options as
   values ("0.75", "320:mp3", "SYSTEM"), its range and default (`setting_specs`); the values now in the same
   form, and what the core's rules make of them - whether the output is played untouched, whether the
   sound chain is on, whether the battery saver stands down, the lyrics services in the order they are
@@ -455,13 +455,13 @@ native heaps before and after.
   the player is on screen and at rest, and let the player go when it is not. Android: `MotionPlayer`
   (core/playback, its own ExoPlayer with media3's HLS module and a 64 MB cache, so a loop is fetched
   once) in a TextureView in the sleeve (app/ui `SleeveMotion.kt`). A video decoder is the platform's.
-- **Where things sit on the screen.** The core gives the gradients' stops, the timings and the colours;
+- **Where things sit on the screen.** The core gives the gradients' stops, the timings and the colors;
   the boxes are the platform's. Android's player sleeve is 0.74 wide for 1 tall and runs 9.5 % of its
   height under the title (`PlayerScreen.kt`), tuned for a phone held upright; the interface is scaled
   to a phone 411 dp wide when Android's display size is set large (`Theme.uiScale`). A desktop window
   lays its player out and sizes its text otherwise.
 - **Animations, gestures and transitions.** Their feel is per platform: easing, springs, flick
-  thresholds, swipe maths. Android's are in `app/ui/` (`PlayerScreen.kt`, `Chrome.kt`, `Components.kt`),
+  thresholds, swipe math. Android's are in `app/ui/` (`PlayerScreen.kt`, `Chrome.kt`, `Components.kt`),
   described in `docs/motion.md`.
 - **A perf recorder** (optional): read the platform's counters (CPU time, every thread's name, CPU time and
   context switches, heap, memory, the battery's counter and gauge, frames, the network bytes, and the audio
@@ -487,7 +487,7 @@ their facts (`NetError::{Transport, Http, Api, Parse, Db}`, `SearchFallback`, `M
 `SoundError::NoFilters`). Left in English, on purpose:
 - output keys ("Phone speaker", "USB: K3", "Wired headphones"): identifiers kept with the settings and the
   profiles bound to them, never shown as they are (`outputs::parts` reads them back);
-- the credits' lines (`nori-settings::credits`): licence data, shown on the licences page as given;
+- the credits' lines (`nori-settings::credits`): license data, shown on the licenses page as given;
 - a smart playlist definition's validation errors (`smart.rs`: "match.rules[1].op: ..."): a developer's
   JSON reader, shown in the editor as the core wrote them;
 - the album card's subtitle (`nori-model::lines::album_subtitle`, "Artist · 2019"): data joined
@@ -528,7 +528,7 @@ answers; the rule itself is never written again in a client. Android and nori-cl
   `offset_ms` (the sync check found their times that much late against the song's voice, 0 otherwise): a
   clock made by `lyrics_clock` applies it, and a client timing lines itself makes its
   `LyricClock` with `with_offset` (nori-cli) or adds it to the playhead.
-- **A favourite**: `Client::star(kind, id, on, StarsShown)` puts the mark up before asking the server,
+- **A favorite**: `Client::star(kind, id, on, StarsShown)` puts the mark up before asking the server,
   hands the marks over, and puts the one from before back if the server refuses.
 - **A download's covers**: `Core::download_cover_urls(cover ids)` gives the addresses to fetch onto the
   disk (both sizes, no provider's, at most 500), for the client's cover loader to `warm`.
@@ -585,7 +585,7 @@ and temporary doors over each twin, three runs, 200 000 calls each after a warm-
 | Work | Kotlin | Rust (crossing included) | Where it lives |
 |---|---|---|---|
 | Seek bar step (easing, once-a-pixel pacing) | 14-20 ns | 8 ns (`@CriticalNative`) | Rust (`nori_look::motion`) |
-| One cover-colour blend frame, all 52 colours | 42 µs (Compose `lerp`) | 16 µs | Rust (`nori_look::dress::mix`) |
+| One cover-color blend frame, all 52 colors | 42 µs (Compose `lerp`) | 16 µs | Rust (`nori_look::dress::mix`) |
 | A time label ("3:07"), made the first time a second is shown, then kept (debug build, emulator, 2026-09-25) | 1.2 µs, 120 B (a char array and the string); from the cache 15 ns, nothing | 0.3-0.5 µs, one 24-byte string, over JNI | Rust (`nori_model::numbers::clock`), cached per second for the process in `Fmt.duration`; the seek bar reads the cache |
 | A small uniffi call | - | 0.1-0.3 µs, no garbage (uniffi's JNI bindings; JNA was 10-25 µs and 1.5-4 KB) | Rust |
 | Decoding a packet | MediaCodec: a hop to the codec process, framework buffer objects per packet | in-process, nothing allocated | Rust (`nori_player::decode`) |
@@ -593,7 +593,7 @@ and temporary doors over each twin, three runs, 200 000 calls each after a warm-
 | Decoding a cover to 1080 px (the player), same phone | 9.48 ms, native heap up 14-178 MB during the run | 2.80 ms either way, native heap flat | Rust; the pixels are practically BitmapFactory's (mean difference under 0.25/255) |
 | Is a cover a provider's (per cover a list draws) | 0.5 µs, 32 B (`any { contains }`) | 0.2 µs, nothing allocated (`@FastNative`) | Rust (`covers::is_provider_cover`) |
 | A row's cover address with `Uri.encode` | 0.28-0.39 µs, 186 B | 0.48-0.59 µs, 186 B (`@FastNative`, the prefix kept in Rust) | Kotlin (`Library.coverUrl`); Rust twin |
-| A cover-colour cache key (`"$url|$dark|$amoled"`) | 0.13-0.17 µs, 196 B | 0.40-0.47 µs, 196 B | Kotlin (`paletteKey`); Rust twin |
+| A cover-color cache key (`"$url|$dark|$amoled"`) | 0.13-0.17 µs, 196 B | 0.40-0.47 µs, 196 B | Kotlin (`paletteKey`); Rust twin |
 | The soft band's effect key, once a frame | 16-19 ns | 7 ns (`@CriticalNative`) | Kotlin, 3 lines keying a Kotlin cache of RenderEffects; Rust twin |
 | Volume step for a slider position, per drag event (then a binder call of tens of µs) | 8-11 ns | 4-5 ns (`@CriticalNative`), 0.13-0.16 µs (uniffi) | Kotlin (2 lines beside `AudioManager`); Rust twin |
 | Live search's wait, per keystroke (`isBlank`) | 9-11 ns | 72-81 ns (`@FastNative`), 0.18-0.27 µs (uniffi) | Kotlin; Rust twin |
@@ -601,7 +601,7 @@ and temporary doors over each twin, three runs, 200 000 calls each after a warm-
 | A car browser's page (`drop`/`take` over 500 items) | 1.3-1.7 µs, 1 KB | uniffi range + `subList`: 0.3-1.1 µs, 200 B | Kotlin (a one-liner on media3's lists, a few times a drive); Rust twin |
 
 Kept in the client (Kotlin on Android), because crossing would cost more than the work:
-- **Per-frame gesture and animation maths**: drag offsets, spring and easing values, flick velocity
+- **Per-frame gesture and animation math**: drag offsets, spring and easing values, flick velocity
   tracking, sleeve lift and scale. Each is a few multiplications Compose already does inline (about
   1 ns); a crossing costs 8 ns at best, and the numbers are consumed by Compose on the same frame. The
   decisions a gesture ends in (which way a swipe turns, where the sheet settles, the flick speeds, how
@@ -609,9 +609,9 @@ Kept in the client (Kotlin on Android), because crossing would cost more than th
   small a held record gets) stay beside it too (Chrome.kt, PlayerScreen.kt, PlayerSheet.kt,
   Components.kt): gestures are mobile UI, and a desktop or terminal client has other input.
 - **Drawing**: layout, text measurement, the glyph-cached seek times, bitmaps. The core says what to draw
-  and with which colours; the platform draws it. The lyrics' fill with its soft edge, the words' rise and
+  and with which colors; the platform draws it. The lyrics' fill with its soft edge, the words' rise and
   a held note's glow (`LyricsView.kt`: `SungText`, `lift`, `glow`) are drawing and per-frame animation
-  maths over the word times the record already carries; how far the singing is, when the page redraws
+  math over the word times the record already carries; how far the singing is, when the page redraws
   and the animation's timings are the core's (`LyricsClock`, `stage`). Phone-only layout lives here too, with no twin: the
   sleeve's box (`PlayerScreen.SLEEVE`, `SLEEVE_UNDER_TEXT`) and the interface's scale for a large display
   size (`Theme.uiScale`), both of which the core carried once.

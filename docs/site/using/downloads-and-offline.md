@@ -29,7 +29,7 @@ by default.
 ## Offline
 
 Without a network, nori opens on what it has stored: your library, its covers and your downloads. What
-you do meanwhile (favourites, plays, playlist edits) is queued and sent when the server is back.
+you do meanwhile (favorites, plays, playlist edits) is queued and sent when the server is back.
 
 **Play downloads when offline** (off by default): if the server drops mid-queue, nori jumps to a
 download further on in the queue, or plays from your downloads, and comes back to your queue when the

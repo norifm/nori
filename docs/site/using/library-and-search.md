@@ -9,7 +9,7 @@ Applies to nori 0.6. Every client browses and searches the same way; the gesture
 
 ## Browsing
 
-The library lists albums, artists, songs, playlists, genres, favourites, years and decades, folders as
+The library lists albums, artists, songs, playlists, genres, favorites, years and decades, folders as
 the server keeps them, internet radio and downloads. Album lists sort by name, artist, year, date added,
 last played, most played, starred or at random. An artist's page groups albums, EPs, singles, live
 albums and compilations, with top songs and similar artists. Each song's info sheet shows its file, codec,
