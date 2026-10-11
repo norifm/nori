@@ -1101,7 +1101,7 @@ class OpenedTrack(val track: AudioTrack, val askedBytes: Int, val askedMode: Int
 
 /**
  * What the perf build's recorder is told as it happens, for the timeline under each stretch
- * (docs/perf-build.md). Only that build sets [PlaybackService.observer]; in every other build it stays
+ * (docs/site/developers/building.md). Only that build sets [PlaybackService.observer]; in every other build it stays
  * null and each call site is one null check. Called on whatever thread the event is on: the recorder
  * hands everything to its own.
  */
