@@ -3905,11 +3905,14 @@ name = "nori-desktop"
 version = "0.6.0-beta.2"
 dependencies = [
  "arboard",
+ "glow 0.18.0",
+ "glutin",
  "i-slint-backend-testing",
  "i-slint-core",
  "i-slint-renderer-skia",
  "libc",
  "muda",
+ "naga 30.0.1",
  "nori-core",
  "nori-covers",
  "nori-engine",
