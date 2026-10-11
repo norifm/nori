@@ -10,7 +10,7 @@ use crate::common;
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -55,12 +55,14 @@ fn song(secs: f64, seed: u64, quiet: Option<(i64, i64)>) -> Vec<i16> {
 }
 
 /// Songs as WAV files in a temporary directory, fetched as from a server that holds back its answers
-/// until [`Net::stalled_until`] on the rig's clock.
+/// until [`Net::stalled_until`] on the rig's clock, or downloaded ([`Net::downloaded`]).
 struct Songs(Vec<(String, PathBuf, i64)>, Arc<Net>);
 
 struct Net {
     clock: Virtual,
     stalled_until: AtomicI64,
+    /// The songs are read from disk.
+    downloaded: AtomicBool,
     #[allow(dead_code)]
     dir: nori_testdir::TempDir,
 }
@@ -90,7 +92,7 @@ impl Songs {
                 (id.to_string(), path, (s.len() / 2) as i64 * 1000 / RATE as i64)
             })
             .collect();
-        Songs(files, Arc::new(Net { clock, stalled_until: AtomicI64::new(0), dir }))
+        Songs(files, Arc::new(Net { clock, stalled_until: AtomicI64::new(0), downloaded: AtomicBool::new(false), dir }))
     }
 }
 
@@ -98,7 +100,8 @@ impl Library for Songs {
     fn locate(&mut self, id: &str) -> Result<Located, String> {
         let (_, path, ms) = self.0.iter().find(|s| s.0 == id).cloned().ok_or("no such song")?;
         let bytes: Arc<dyn ByteSource> = self.1.clone();
-        Ok(Located { source: Source::Url { url: path.to_string_lossy().into_owned(), bytes }, hint: Some("wav".into()), duration_ms: Some(ms), estimated: false })
+        let source = if self.1.downloaded.load(Ordering::Relaxed) { Source::File(vec![path]) } else { Source::Url { url: path.to_string_lossy().into_owned(), bytes } };
+        Ok(Located { source, hint: Some("wav".into()), duration_ms: Some(ms), estimated: false })
     }
 
     fn about(&self, id: &str) -> WindowSong {
@@ -1099,9 +1102,10 @@ fn a_guest_ends_with_its_hosts_queue() {
 #[test]
 fn a_pause_cancels_a_guest_starting_a_mix() {
     let (a, b) = (song(30.0, 1, None), song(40.0, 2, None));
-    for (local, hold_ms) in [(false, 0), (true, 0), (false, 10_000), (true, 10_000)] {
+    for (local, hold_ms, downloaded) in [(false, 0, false), (true, 0, false), (false, 10_000, false), (true, 10_000, false), (false, 0, true), (true, 0, true)] {
         let mut jam = Jam::new(&[("a", &a), ("b", &b)], Some(mix(20_000, 4.0, 1.0, 0.0)), Settings::default(), &two_ways()[..1]);
         jam.guests[0].rig.card.0.lock().holds_ns = hold_ms * 1_000_000;
+        jam.guests[0].rig.net.downloaded.store(downloaded, Ordering::Relaxed);
         jam.host.engine.play_at(0, 18_000);
         jam.run(2_500);
         assert!(jam.host.engine.status().mixing);
@@ -1112,7 +1116,7 @@ fn a_pause_cancels_a_guest_starting_a_mix() {
         assert!(jam.guests[0].rig.card.0.lock().heard.is_empty(), "local={local}, hold={hold_ms}: a cancelled start must remain silent: {:?}", jam.guests[0].rig.logs.lock());
         if local { jam.guests[0].rig.engine.play(); } else { jam.host.engine.play(); }
         jam.run(800);
-        let samples = jam.guests[0].rig.card.left_before(jam.now_ns(), 441).unwrap_or_else(|| panic!("local={local}, hold={hold_ms}: the resumed guest plays: {:?}", jam.guests[0].rig.logs.lock()));
+        let samples = jam.guests[0].rig.card.left_before(jam.now_ns(), 441).unwrap_or_else(|| panic!("local={local}, hold={hold_ms}, downloaded={downloaded}: the resumed guest plays: {:?}", jam.guests[0].rig.logs.lock()));
         assert!(samples.iter().map(|s| s * s).sum::<f32>() > 0.01, "local={local}, hold={hold_ms}: resuming must be audible");
     }
 }
