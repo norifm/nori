@@ -351,7 +351,7 @@ battery and deep idle of a real phone stay the owner's `tools/bench.sh`.
 | covers | decoders against Pillow's references, the scaler, the disk and memory caches, the loader's workers |
 | look | colors from a cover (the AndroidX palette port), Compose's color math, the lyrics and motion layout |
 | library, queue, settings, transfers, devices, perf | pages, menus, the queue's rules, settings and their store (tests/stored_format.rs: the stored keys and encodings against a golden copy), the download table, AutoEQ, the perf log's report |
-| cli, android, mpris, net, http, db | each client's own glue: the terminal's drawing, the AudioTrack model (track.rs), every JNI door's signature against its Kotlin `external fun` (lib.rs), media controls, requests |
+| cli, android, mpris, net, http, db | each client's own glue: the terminal's drawing, the AudioTrack model (track.rs), every JNI door's signature against its Kotlin `external fun` (lib.rs), generated async JNI calls retaining their receiver through profile changes (receiver_tests.rs), media controls, requests |
 | testdir | the tests' temp directories, and tests/registered.rs: every file under a crate's `tests/` is in a test binary |
 
 The Kotlin unit tests (`./gradlew :core:testDebugUnitTest :app:testDebugUnitTest`, a minute, no device)
