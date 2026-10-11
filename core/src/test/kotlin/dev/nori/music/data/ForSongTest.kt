@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
@@ -72,6 +73,25 @@ class ForSongTest {
     }
 
     /** Follows [playing] with the answers kept, recording what arrives and how often each song is fetched. */
+    @Test
+    fun lyrics_already_shown_survive_a_refresh_failure() = runBlocking {
+        val answers = SongAnswers<String>()
+        val seen = flowOf("a").followSong({ it }, "loading", { "none" }, { "failed" }, answers, keep = { it != "failed" }) {
+            flow { emit("cached words"); throw java.io.IOException("offline") }
+        }.toList()
+        assertEquals(listOf(ForSong("a", "loading"), ForSong("a", "cached words")), seen)
+        val again = flowOf("a").followSong({ it }, "loading", { "none" }, { "failed" }, answers) { flowOf("better words") }.toList()
+        assertEquals(listOf(ForSong("a", "cached words"), ForSong("a", "better words")), again)
+    }
+
+    @Test
+    fun a_lookup_without_kept_words_still_reports_its_failure() = runBlocking {
+        val seen = flowOf("a").followSong({ it }, "loading", { "none" }, { "failed" }) {
+            flow<String> { throw java.io.IOException("offline") }
+        }.toList()
+        assertEquals(listOf(ForSong("a", "loading"), ForSong("a", "failed")), seen)
+    }
+
     private class Following(val answers: SongAnswers<String> = SongAnswers()) {
         val playing = MutableStateFlow<String?>("a")
         val fetched = mutableMapOf<String, Int>()

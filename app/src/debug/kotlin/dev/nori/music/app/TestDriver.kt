@@ -64,6 +64,8 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 """"error":"${st.error.orEmpty()}","bridging":${st.bridging},"parkedId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().parked.orEmpty()}","songId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().current.orEmpty()}","eq":${p.eqEnabled},"limiter":${p.limiter},"hiRes":${p.hiRes},""" +
                 """"dspActive":${dev.nori.music.playback.Equalizer.inChain},"gainReductionDb":${dev.nori.music.playback.Equalizer.meterDb},"compressionDb":${dev.nori.music.playback.Equalizer.compressionDb},"soundBypass":${p.soundBypass},"loudness":${p.loudness},""" +
                 """"output":"${settings.currentOutput.value}","offload":${p.offload},"offloadWanted":${dev.nori.music.playback.PlaybackService.offloadWanted},"autoMix":${p.autoMix},"amoled":${p.amoled},""" +
+                """"lyricsOnline":${p.lyricsOnline},"lyricsPrefetch":${p.lyricsPrefetch},""" +
+                """"lyricsAnswerSong":"${TestActions.lastLyrics?.songId.orEmpty()}","lyricsAnswerLines":${TestActions.lastLyrics?.value?.lyrics?.lines?.size ?: 0},""" +
                 // The player answers from its own engine and output.
                 dev.nori.music.playback.PlaybackService.rustPlayer.let { r ->
                     """"engine":"rust","mixing":${r?.mixing ?: false},"offloaded":${r?.offloaded ?: false},"""
@@ -88,8 +90,8 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                     """"dac":"${d.device.orEmpty()}","bitPerfect":${d.bitPerfect},"dacModes":${d.modes.size},""" +
                         """"dacBlocked":"${d.blockedBy?.let { dev.nori.music.app.vm.dacBlockWords(context.resources, it) }.orEmpty()}","dacTrack":"${d.track?.let { dev.nori.music.app.vm.dacTrackWords(context.resources, it) }.orEmpty()}","""
                 } +
-                (TestActions.lastLyrics ?: (player2.lyrics.value.value as? dev.nori.music.app.vm.Load.Ready)?.data)?.let { f ->
-                    """"lyricLines":${f.lyrics.lines.size},"lyricsSynced":${f.lyrics.synced},""" +
+                (TestActions.lastLyrics?.takeIf { it.songId == st.current?.id }?.value ?: (player2.lyrics.value.of(st.current?.id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data)?.let { f ->
+                    """"lyricsSong":"${st.current?.id.orEmpty()}","lyricLines":${f.lyrics.lines.size},"lyricsSynced":${f.lyrics.synced},""" +
                         """"lyricsWordTimed":${f.lyrics.wordTimed},"lyricsWordLines":${f.lyrics.lines.count { it.words.isNotEmpty() }},"lyricsSource":"${f.source}","""
                 }.orEmpty() +
                 // What the screen shows, mark included - not the snapshot the queue was painted with,

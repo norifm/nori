@@ -10,12 +10,13 @@ use crate::{m3u, Album, Core, Result, Song};
 pub use nori_queue::actions::*;
 
 impl Client {
+    pub(crate) fn stored_song_of(&self, id: &str) -> Option<Song> {
+        self.core.session.song(id).or_else(|| self.core.download_song(id))
+    }
+
     /// Song `id` from the queue store, else the downloads, else the cache or server.
     pub(crate) async fn song_of(&self, id: String) -> NetResult<Song> {
-        if let Some(s) = self.core.session.song(&id) {
-            return Ok(s);
-        }
-        if let Some(s) = self.core.download_song(&id) {
+        if let Some(s) = self.stored_song_of(&id) {
             return Ok(s);
         }
         Ok(match self.first(Read::SongById { id: id.clone() }).await? {

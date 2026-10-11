@@ -283,6 +283,9 @@
     <!-- Lyrics. -->
     <string name="settings_section_display">Display</string>
     <string name="settings_section_sources">Sources</string>
+    <string name="settings_lyrics_prefetch">Prepare next song’s lyrics</string>
+    <string name="settings_lyrics_prefetch_detail">Fetch lyrics for one upcoming library song while the current song plays.</string>
+    <string name="settings_hint_lyrics_prefetch">Prefetch, preload and cache the next song’s lyrics</string>
     <string name="settings_lyrics_sweep">Fill in words as they\'re sung</string>
     <string name="settings_lyrics_sweep_detail">For lyrics timed word by word.</string>
     <string name="settings_lyrics_size">Text size</string>

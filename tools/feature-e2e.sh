@@ -86,7 +86,36 @@ if want lyrics; then section lyrics
   # Which answer wins, word timing, the lookups switch and every service's format are the lyrics crate's
   # (crates/lyrics tests, over recorded answers). Here: that an answer comes back through the platform.
   if [ "$NORI_E2E_SERVER" = local ]; then
-    echo "  NOTE  the local server's generated songs have no lyrics anywhere; run against the real server"
+    remember_settings lyricsOnline lyricsPrefetch
+    "$app" set lyricsOnline false >/dev/null
+    "$app" set lyricsPrefetch true >/dev/null
+    "$app" play "$LYRICS_SONG" >/dev/null; sounds 20
+    "$app" do lyrics >/dev/null
+    check "fixture lyrics arrive through the Android binding" wait_for lyricLines ">0" 10
+    check "the fixture keeps its line timing" test "$(field lyricsSynced)" = True
+    next_id=$(song_id "Long Track 06")
+    downloaded_song() {
+      [ "$(adb shell "run-as $pkg sqlite3 files/nori.db \"select count(*) from downloads where id='$next_id' and done=1\"" | tr -d '\r')" = "$1" ]
+    }
+    "$app" do "undownload song:$next_id" >/dev/null
+    check "the upcoming fixture has no download" wait_until 10 downloaded_song 0
+    watch_from_now
+    "$app" do "enqueue song:$next_id" >/dev/null
+    check "the upcoming lyrics finish preparing before playback or download" waitfor_log "lyrics: prefetched $next_id" 20
+    offline
+    "$app" do "lyrics song:$next_id" >/dev/null
+    check "the upcoming words are cached before downloading" wait_for lyricsAnswerSong "$next_id" 10
+    check "the cached upcoming answer has lines" test "$(field lyricsAnswerLines)" -gt 0
+    online
+    "$app" do "download song:$next_id" >/dev/null
+    check "the upcoming fixture song is downloaded" wait_until 30 downloaded_song 1
+    offline
+    "$app" do next >/dev/null
+    check "the downloaded upcoming song plays offline" wait_for title "Long Track 06" 15
+    "$app" do "lyrics song:$next_id" >/dev/null
+    check "its prefetched lyrics cross the binding offline" wait_for lyricsSong "$next_id" 10
+    check "cached lyrics retain their timing offline" test "$(field lyricsSynced)" = True
+    online
   else
     "$app" set thirdPartyLookups true >/dev/null
     "$app" play "$LYRICS_SONG" >/dev/null; sounds 20

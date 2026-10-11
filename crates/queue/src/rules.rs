@@ -154,12 +154,28 @@ impl Session {
             bridge: bridge_step(on, bridging, parked),
             precache_after_ms: t::PRECACHE_AFTER_MS,
             pause_at_end: self.sleep_song_changed(),
+            lyrics_ahead: self.lyrics_prefetch_ready(),
         }
     }
+
+    /// Whether lyrics prefetch should reconcile the next queue entry.
+    pub fn lyrics_prefetch_ready(&self) -> bool { self.settings.prefs(|p| p.lyrics_prefetch) }
 
     /// Whether previous restarts the current song (per "previous always skips").
     pub fn queue_previous_restarts(&self, position_ms: i64, has_previous: bool) -> bool {
         q::previous_restarts(position_ms, has_previous, self.settings.prefs(|p| p.previous_always_skips))
+    }
+}
+
+impl Session {
+    /// Next queue entry to warm; disabled prefetch and provider tracks have no work.
+    pub fn lyrics_ahead(&self) -> Option<(u64, String)> {
+        if !self.settings.prefs(|p| p.lyrics_prefetch) { return None; }
+        self.playlist(|p| {
+            let next = p.next()?;
+            let id = &p.ids()[next];
+            (!nori_model::model::is_provider_id(id)).then(|| (p.seqs()[next], id.clone()))
+        })
     }
 }
 
@@ -293,6 +309,8 @@ pub struct SongSteps {
     pub precache_after_ms: i64,
     /// The sleep timer's last song: pause at its end.
     pub pause_at_end: bool,
+    /// Warm the next library song's lyrics (`Client::lyrics_prefetch`).
+    pub lyrics_ahead: bool,
 }
 
 /// Whether the equalizer screen switches to the shallow buffer (`set_shallow`): screen visible, sound

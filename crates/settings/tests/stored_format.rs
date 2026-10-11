@@ -131,6 +131,7 @@ fn sample() -> StoredPrefs {
         lyrics_translation: false,
         lyrics_size: 2,
         lyrics_online: false,
+        lyrics_prefetch: false,
         lyrics_order: {
             let mut o = nori_settings::lyrics_sources::default_order();
             o.reverse();

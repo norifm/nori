@@ -650,6 +650,7 @@ fn service(id: &str) -> (&'static str, &'static str) {
 
 fn lyrics(b: &Build) -> Vec<Section> {
     let display = vec![
+        b.toggle("lyricsPrefetch", crate::text::LYRICS_PREFETCH, crate::text::LYRICS_PREFETCH_DETAIL),
         b.toggle("lyricsSweep", "Word fill", "Color words in as they are sung (word-timed lyrics)"),
         b.toggle("lyricsTranslation", "Translations", "When the server has them"),
     ];

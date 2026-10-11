@@ -387,6 +387,7 @@ impl Build<'_> {
 
     fn lyrics(&self) -> Vec<(&'static str, Vec<Row>)> {
         let display = vec![
+            self.toggle("lyricsPrefetch", crate::words::LYRICS_PREFETCH, crate::words::LYRICS_PREFETCH_DETAIL),
             self.toggle("lyricsSweep", "Fill in words as they're sung", "For lyrics timed word by word."),
             self.toggle("lyricsTranslation", "Show translations", "When your server has them."),
         ];
