@@ -487,6 +487,10 @@ impl Session {
                 r.follow_with(Some(Arc::new(crate::remote::Along { engine: self.engine.clone(), session: self.core.session.clone() })));
             }
             self.remotes.set(Some(r.clone()));
+            self.remotes.played(&self.engine);
+            if prefs.remote_control && !self.guest {
+                r.clone().discover_active(true);
+            }
             r
         });
         // A guest is no device of the account's; it follows its jam.

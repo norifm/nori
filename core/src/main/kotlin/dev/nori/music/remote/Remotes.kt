@@ -214,6 +214,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
             if (serving) remote?.serve(p.remoteControl)
             if (watching) remote?.watch(true)
             if (sight() != Sight.SCREEN) remote?.sight(sight())
+            if (appShown && p.remoteControl && !isGuest()) remote?.discoverActive(true)
         }
         remote
     }
@@ -257,7 +258,12 @@ class Remotes(private val context: Context, private val nori: Nori) {
     /** Whether the app is on screen; see [sight]. Main thread. */
     fun appShown(on: Boolean) {
         appShown = on
-        tellSight()
+        if (remote == null && (!on || !wanted())) return
+        work {
+            val r = if (on) current() else remote
+            r?.sight(sight())
+            r?.discoverActive(on && nori.settings.value.remoteControl && !isGuest())
+        }
     }
 
     /** Whether the playback notification is up; see [sight]. Main thread. */
