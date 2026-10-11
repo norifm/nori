@@ -463,6 +463,16 @@ impl SkiaRenderer {
         )
     }
 
+    /// NORI: OpenGL layers preserve their pixels between paints.
+    #[cfg(any(not(target_vendor = "apple"), target_os = "macos"))]
+    pub fn retained_opengl(context: &SkiaSharedContext) -> Self {
+        Self::new_with_surface_factory(
+            context,
+            surface_factory::<opengl_surface::OpenGLSurface>,
+            Some(PartialRenderingState::default()),
+        )
+    }
+
     #[cfg(all(target_vendor = "apple", skia_backend_wgpu))]
     /// Creates a new SkiaRenderer that will always render using Metal, through WGPU.
     pub fn default_metal(context: &SkiaSharedContext) -> Self {
@@ -639,11 +649,21 @@ impl SkiaRenderer {
         &self,
         surface: &mut skia_safe::Surface,
         context: &mut skia_safe::gpu::DirectContext,
-    ) -> Result<(), PlatformError> {
+        retained: bool,
+    ) -> Result<Option<DirtyRegion>, PlatformError> {
         let adapter = self.window_adapter()?;
-        self.render_to_canvas(surface.canvas(), 0., (0., 0.), Some(context), 0, None, adapter.window(), None);
+        let damage = self.render_to_canvas(
+            surface.canvas(),
+            0.,
+            (0., 0.),
+            Some(context),
+            u8::from(retained),
+            None,
+            adapter.window(),
+            None,
+        );
         context.flush_and_submit_surface(surface, None);
-        Ok(())
+        Ok(damage)
     }
 
     fn invoke_rendering_notifier_setup(

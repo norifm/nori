@@ -1,7 +1,8 @@
 # Linux desktop GPU investigation, October 11, 2026
 
-Issue #33 remains open. These measurements do not reproduce the owner's native
-desktop jank or demonstrate an unbounded memory leak.
+The retained-layer repaint regression reproduces unnecessary full-layer work
+in issue #33. The track-change measurements do not demonstrate an unbounded
+memory leak after the cover ownership fixes.
 
 Host: Arch Linux, NVIDIA GeForce GTX 960, driver 580.178.04. Release desktop
 with test-control, isolated Navidrome account and data directory. Interactive
@@ -39,3 +40,29 @@ Artifacts: build/linux-desktop-gpu/{track-memory.json,settled-paused.txt,
 after-resize-idle.txt,after-home-resize-idle.txt,
 after-home-resize-repeat-idle.txt,playing-pulse-memory.txt,
 gpu-resize-test.log,gpu-resize-native-before.log,perf-report.txt}.
+
+## Native retained-layer rendering
+
+The Linux compositor keeps each layer's GPU surface between paints. Its Skia
+renderer nevertheless disabled partial rendering and reported a new back buffer
+on every paint. The fix enables partial rendering for retained OpenGL layers and
+reports buffer age one only when the surface survived the previous paint. New
+and resized surfaces still repaint completely.
+
+The native GPU regression changes an 8 × 8 control in a 72 × 64 layer, asserts
+a bounded dirty region, then checks every pixel in the layer. It fails before
+the change because no repaint region is tracked. After the change, Skia reports
+1.39% repainted, and the surrounding pixels retain their expected colors. The
+existing resize, cover ownership, mosaic and blur checks also pass.
+
+Fullscreen playback of Long Track 04 at 1280 × 820, directly on NVIDIA EGL with
+DPMS on and a private PulseAudio sink, averaged 12.15% of one CPU core before
+and 2.75% afterward over 20 seconds. These are short process CPU measurements,
+not a frame-rate or battery measurement. The after run used its own fixture
+account to exclude commands from concurrent device checks. Its average RSS was
+134618 KiB; differences in startup caches prevent interpreting that as a heap
+reduction. The desktop window remained offscreen without taking focus.
+
+Artifacts: build/{desktop-retained-before.log,desktop-retained-after.log,
+desktop-retained-damage.log}, build/linux-desktop-native/{playback-cpu.txt,
+playback-retained-isolated-cpu.txt}.

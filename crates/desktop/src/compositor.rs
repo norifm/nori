@@ -567,6 +567,13 @@ impl ApplicationHandler<Wake> for Runner {
             return;
         }
         let attrs = WindowAttributes::default().with_title("nori").with_inner_size(winit::dpi::LogicalSize::new(1280.0, 820.0)).with_min_inner_size(winit::dpi::LogicalSize::new(860.0, 560.0));
+        #[cfg(all(feature = "test-control", target_os = "linux"))]
+        let attrs = if std::env::var_os("NORI_TEST_OFFSCREEN").is_some() {
+            use winit::platform::x11::WindowAttributesExtX11;
+            attrs.with_override_redirect(true).with_position(winit::dpi::PhysicalPosition::new(-4096, -4096)).with_active(false)
+        } else {
+            attrs
+        };
         #[cfg(target_os = "linux")]
         let attrs = match gl::window_attributes(el, attrs) {
             Ok(attrs) => attrs,
