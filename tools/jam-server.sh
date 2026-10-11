@@ -17,6 +17,7 @@ source_dir="${NORI_OCTO_ROOT:-$(dirname "$(dirname "$common")")/octo-fiesta}"
 docker build -t nori-e2e-jam "$source_dir"
 docker rm nori-e2e-jam >/dev/null 2>&1 || true
 docker run -d --name nori-e2e-jam -p 5274:8080 \
+  --add-host host.docker.internal:host-gateway \
   -e Subsonic__Url=http://host.docker.internal:4533 \
   -e Library__DownloadPath=/app/downloads nori-e2e-jam >/dev/null
 deadline=$((SECONDS + 60))

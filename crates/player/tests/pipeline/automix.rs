@@ -203,3 +203,25 @@ fn page_changes_once_per_song() {
     }
 }
 
+#[test]
+fn shuffle_keeps_the_audible_mix() {
+    let make = || {
+        let mut p = Player::with_prefs(vec![song("a", 120.0), song("b", 123.0), song("c", 118.0), song("d", 121.0)], automix());
+        for (id, bpm) in [("a", 120.0), ("b", 123.0), ("c", 118.0), ("d", 121.0)] {
+            p.app.analyses.insert(id.into(), measured(id, bpm));
+        }
+        p.play_from(0);
+        assert!(p.run_until(40_000, |p| p.mixing()), "the first mix is audible");
+        p.run_for(500);
+        p
+    };
+    let mut reference = make();
+    let mut shuffled = make();
+    shuffled.queue.live.set_shuffle(true, 7);
+    shuffled.queue_changed();
+    reference.run_for(2_000);
+    shuffled.run_for(2_000);
+    assert!(shuffled.sink.heard_samples() == reference.sink.heard_samples(), "shuffle preserves the mix already being heard");
+    assert!(shuffled.sink.gaps.is_empty());
+    assert_eq!(shuffled.sink.timestamp_jumps, 0);
+}

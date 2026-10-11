@@ -10,19 +10,25 @@ set -uo pipefail
 export ANDROID_SERIAL=${ANDROID_SERIAL:-emulator-5554}
 pkg=${NORI_PKG:-dev.nori.music}
 send() {
-  # The answer is the first noritest line after the ones already there: the log is never cleared, so the
-  # app's own lines stay readable for whoever is debugging a run.
-  local before; before=$(adb logcat -d -s noritest:I | grep -c 'noritest')
-  # Quote for the shell ON THE DEVICE: adb hands it a command line, so an unquoted | or space there
-  # becomes a pipe or an argument break and the extra arrives mangled (or not at all).
-  local cmdline="am broadcast -n $pkg/dev.nori.music.app.TestBridge -a dev.nori.music.TEST --es cmd '$1'"
-  [ -n "${2:-}" ] && cmdline="$cmdline --es arg '$2'"
-  [ -n "${3:-}" ] && cmdline="$cmdline --es value '$3'"
-  adb shell "$cmdline" >/dev/null 2>&1
+  local request cmdline
+  request=$(python3 -c 'import uuid; print(uuid.uuid4().hex)')
+  cmdline=$(python3 - "$pkg" "$request" "$@" <<'PYTHON'
+import shlex
+import sys
+pkg, request, *args = sys.argv[1:]
+command = ['am', 'broadcast', '-n', f'{pkg}/dev.nori.music.app.TestBridge',
+           '-a', 'dev.nori.music.TEST', '--es', 'request', request]
+for key, value in zip(('cmd', 'arg', 'value'), args):
+    command.extend(['--es', key, value])
+print(shlex.join(command))
+PYTHON
+  )
+  adb shell "$cmdline" >/dev/null 2>&1 || return 1
   for _ in $(seq 20); do
-    local lines; lines=$(adb logcat -d -s noritest:I | grep 'noritest')
-    if [ "$(printf '%s\n' "$lines" | grep -c 'noritest')" -gt "$before" ]; then
-      printf '%s\n' "$lines" | tail -1 | sed -E 's/^.*noritest: //'; return 0
+    local reply
+    reply=$(adb logcat -d -s noritest:I | sed -n "s/^.*noritest: $request //p" | head -1)
+    if [ -n "$reply" ]; then
+      printf '%s\n' "$reply"; return 0
     fi
     sleep 0.25
   done
