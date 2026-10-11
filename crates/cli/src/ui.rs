@@ -857,15 +857,15 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
     let Some(p) = pages.last_mut() else { return };
     // star: None when the page cannot be starred.
     let (kind, title, sub, caption, art_key, star): (&str, String, String, String, Option<String>, Option<bool>) = match p {
-        Page::Album { detail: Load::Ready(d), .. } => ("ALBUM", d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), d.album.cover_art.clone(), Some(marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
+        Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => ("ALBUM", d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), d.album.cover_art.clone(), Some(marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
         Page::Artist { detail: Load::Ready(d), .. } => ("ARTIST", d.artist.name.clone(), crate::text::albums(d.artist.album_count), String::new(), None, Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
         Page::Playlist { detail: Load::Ready(d), .. } => ("PLAYLIST", d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), None, None),
-        Page::Album { detail: Load::Failed(e), .. } | Page::Artist { detail: Load::Failed(e), .. } | Page::Playlist { detail: Load::Failed(e), .. } => {
+        Page::Album { detail: Load::Failed(e), .. } | Page::DownloadedAlbum { detail: Load::Failed(e), .. } | Page::Artist { detail: Load::Failed(e), .. } | Page::Playlist { detail: Load::Failed(e), .. } => {
             return failed(f, area, t, e);
         }
         _ => return loading(f, area, t),
     };
-    let with_cover = images && matches!(p, Page::Album { .. }) && area.height >= 16;
+    let with_cover = images && matches!(p, Page::Album { .. } | Page::DownloadedAlbum { .. }) && area.height >= 16;
     let head_h = if with_cover { 8 } else { 6 }.min(area.height);
     let head = Rect { height: head_h, ..area };
     let mut words = head;
@@ -892,7 +892,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         if let Some(on) = star.filter(|_| account) {
             pill(f, hits, &mut x, y, end, if on { "♥ Favorite" } else { "♡ Favorite" }, false, Button::Star, t);
         }
-        if account {
+        if account && !matches!(p, Page::DownloadedAlbum { .. }) {
             pill(f, hits, &mut x, y, end, "↓ Download", false, Button::Download, t);
         }
         let back = "‹ Back";
@@ -904,7 +904,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
     }
     let body = Rect { y: area.y + head_h + 1, height: area.height.saturating_sub(head_h + 1), ..area };
     match p {
-        Page::Album { detail: Load::Ready(d), sel, .. } => {
+        Page::Album { detail: Load::Ready(d), sel, .. } | Page::DownloadedAlbum { detail: Load::Ready(d), sel, .. } => {
             let multi = d.discs.len() > 1;
             let songs = &d.songs;
             let body = table_head(f, body, t, false);
@@ -943,9 +943,10 @@ fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     }
     let lines: Vec<Line> = rows
         .iter()
-        .map(|(title, song)| match song {
-            None => Line::from(Span::styled(title.clone(), bold().fg(t.text))),
-            Some((list, i)) => {
+        .map(|row| match row {
+            crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.text))),
+            crate::app::DownloadRow::Album(a) => Line::from(vec![Span::styled("  ↓  ", Style::default().fg(t.accent)), Span::raw(a.name.clone()), Span::styled(format!("  {} · {} songs", a.artist, a.song_count), dim(t))]),
+            crate::app::DownloadRow::Song(list, i) => {
                 let s = &list[*i];
                 Line::from(vec![Span::styled("  ↓  ", Style::default().fg(t.accent)), Span::raw(s.title.clone()), Span::styled(format!("  {}", s.artist), dim(t))])
             }

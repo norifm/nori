@@ -1122,6 +1122,34 @@ fn a_pause_cancels_a_guest_starting_a_mix() {
 }
 
 #[test]
+fn guests_resume_a_paused_mix() {
+    let (a, b) = (song(30.0, 1, None), song(40.0, 2, None));
+    for (hold_ms, downloaded) in [(0, false), (10_000, false), (0, true), (10_000, true)] {
+        let mut jam = Jam::new(&[("a", &a), ("b", &b)], Some(mix(20_000, 4.0, 1.0, 0.0)), Settings::default(), &two_ways()[..1]);
+        jam.guests[0].rig.card.0.lock().holds_ns = hold_ms * 1_000_000;
+        jam.guests[0].rig.net.downloaded.store(downloaded, Ordering::Relaxed);
+        jam.host.engine.play_at(0, 12_000);
+        jam.run(1_000);
+        jam.join(0);
+        jam.run(7_500);
+        assert!(jam.host.engine.status().mixing && jam.guests[0].rig.engine.status().mixing);
+        jam.host.engine.pause();
+        jam.run(1_000);
+        assert_eq!(jam.guests[0].rig.engine.status().state, nori_engine::State::Paused);
+        jam.host.engine.play();
+        jam.run(800);
+        let samples = jam.guests[0].rig.card.left_before(jam.now_ns(), 441).expect("the resumed mix reaches the guest's output");
+        assert!(samples.iter().map(|s| s * s).sum::<f32>() > 0.01, "hold={hold_ms}, downloaded={downloaded}: the guest resumes before the next song");
+        let mut gaps = Gaps::default();
+        for _ in 0..20 {
+            jam.run(100);
+            gaps.0.extend(behind_ms(&jam.host.card, &jam.guests[0].rig.card, jam.now_ns()));
+        }
+        assert!(gaps.within(10, 2.5, 5.0), "hold={hold_ms}, downloaded={downloaded}: the resumed mix stays in phase: {gaps}; {:?}", jam.guests[0].rig.logs.lock());
+    }
+}
+
+#[test]
 fn a_pause_reports_the_place_that_stopped() {
     let a = song(20.0, 1, None);
     let rig = Rig::new(&[("a", &a)], None, Settings::default());

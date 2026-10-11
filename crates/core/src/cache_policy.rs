@@ -389,6 +389,7 @@ impl Client {
             return Ok(Some(self.parse_fresh(sp.parser, body)?));
         }
         let k = key(sp.endpoint, &self.scoped(sp.endpoint, sp.params.clone()));
+        let revision = self.core.cache_revision.load(std::sync::atomic::Ordering::Relaxed);
         let body = self.fetch(sp.endpoint, sp.params).await?;
         let page = if stored_digest != Some(digest(&body)) {
             match self.parse_fresh(sp.parser, body.clone()) {
@@ -401,7 +402,7 @@ impl Client {
         } else {
             None
         };
-        self.core.cache_put(k, body)?;
+        self.core.cache_put_checked(k, body, Some(revision))?;
         Ok(page)
     }
 }
@@ -416,6 +417,24 @@ mod tests {
 
     const GENRES: &str = r#"{"subsonic-response":{"status":"ok","genres":{"genre":[{"value":"Rock","songCount":3}]}}}"#;
     const GENRES2: &str = r#"{"subsonic-response":{"status":"ok","genres":{"genre":[{"value":"Jazz","songCount":1}]}}}"#;
+
+    #[test]
+    fn a_read_before_a_star_cannot_restore_its_evicted_cache() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        use crate::client::{Starrable, Write};
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        *fake.pends.lock() = true;
+        let mut old = std::pin::pin!(c.read_fetch(Read::StarredItems, None));
+        assert!(matches!(old.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Pending));
+        fake.answer(crate::client::tests::OK);
+        block(c.write(Write::Star { kind: Starrable::Song, id: "s".into(), on: true })).unwrap();
+        fake.answer(r#"{"subsonic-response":{"status":"ok","starred2":{}}}"#);
+        block(old).unwrap();
+        fake.answer(r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s"}]}}}"#);
+        let page = block(c.cached_or_fetched(Read::StarredItems)).unwrap().unwrap();
+        assert_eq!(page.songs().iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["s"]);
+    }
 
     fn genres(p: &Option<Page>) -> String {
         match p {

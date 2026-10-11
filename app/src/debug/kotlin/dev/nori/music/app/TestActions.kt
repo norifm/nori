@@ -308,6 +308,7 @@ object TestActions {
             }
         } finally {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { browser.release() }
+            log("done $what")
         }
     }
 }

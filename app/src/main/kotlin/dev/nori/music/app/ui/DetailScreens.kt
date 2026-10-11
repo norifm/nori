@@ -291,7 +291,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     // The album's own caption once it is read; until then what the row that opened it knew.
     val caption = remember(detail, album) { detail?.let(say::albumCaption) ?: say.albumHintCaption(album.year.toInt(), album.songCount.toInt(), album.duration.toLong()) }
     // A queue started here - its Play, Shuffle or a row - is the album's; its song played from anywhere else is not.
-    val from = rememberOrigin(OriginKind.ALBUM, album.id)
+    val from = remember(detail?.queue, album.id) { detail?.queue?.origin() ?: PageOrigin(OriginKind.ALBUM, album.id) }
     val queue = rememberPageQueue(from, detail?.queue)
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
@@ -324,7 +324,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     ) {
         when {
             detail != null -> {
-                if (account) item(key = "offer", contentType = "offer") { Box(Modifier.arriving(arrival)) { LibraryOffer(album.id, album.isExternal, actions) } }
+                if (account && from.kind == OriginKind.ALBUM) item(key = "offer", contentType = "offer") { Box(Modifier.arriving(arrival)) { LibraryOffer(album.id, album.isExternal, actions) } }
                 // An album is short enough to scroll and its running order is the point of it, so the songs
                 // stay exactly as the record has them, grouped by disc (as the core laid them out,
                 // `pages::album_discs`) and never narrowed. A row each: only the ones on screen are composed.

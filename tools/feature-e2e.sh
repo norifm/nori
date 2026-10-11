@@ -9,10 +9,10 @@
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
 SECTIONS="lyrics motion notification album-page bridge download-notification downloads foryou dac device-sound remote jam"
-OPT_IN="lyrics-services scrobble"
+OPT_IN="lyrics-services scrobble download-albums"
 list_sections
-if want scrobble && [ "$NORI_E2E_SERVER" != local ]; then
-  echo "the scrobble check requires NORI_E2E_SERVER=local" >&2
+if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
+  echo "the scrobble and download-albums checks require NORI_E2E_SERVER=local" >&2
   exit 2
 fi
 json() { python3 -c "import sys,json;d=json.load(sys.stdin)['subsonic-response'];print(eval('d$1',{'d':d}))" 2>/dev/null; }
@@ -22,17 +22,7 @@ ui() { "$here/ui-dump.sh"; }
 pill() { ui | grep -oE 'text="(Play|Pause)"' | head -1 | cut -d'"' -f2; }
 pill_is() { [ "$(pill)" = "$1" ]; }
 tapnode_now() { # $1 = text|content-desc, $2 = that value, $3 = which of several (the first by default)
-  local c; c=$(ui | python3 -c "
-import sys,re
-found=[]
-for m in re.finditer(r'<node[^>]*>', sys.stdin.read()):
-    a=re.search('$1=\"([^\"]*)\"', m.group(0))
-    if a and a.group(1)=='$2':
-        b=[int(v) for v in re.findall(r'\d+', re.search(r'bounds=\"([^\"]*)\"', m.group(0)).group(1))]
-        found.append('%d %d' % ((b[0]+b[2])//2, (b[1]+b[3])//2))
-if len(found) >= ${3:-1}: print(found[${3:-1}-1])")
-  [ -n "$c" ] || return 1
-  adb shell input tap $c
+  "$here/ui-dump.sh" --click "$1" "$2" "${3:-1}" >/dev/null 2>&1
 }
 tapnode() { wait_until 10 tapnode_now "$@"; }
 on_screen() { ui | grep -q -- "$1"; }
@@ -372,6 +362,64 @@ print('$a' if all(not x['id'].startswith('ext-') and x.get('suffix')!='Remote' f
   fi
 fi
 
+if want download-albums; then section "downloaded albums on the phone and through the car's media browser"
+  remember_settings autoMixBetterBeats
+  "$app" set autoMixBetterBeats false >/dev/null
+  album_id=$(mix_album); first_id=$(song_id "Long Track 01"); third_id=$(song_id "Long Track 03")
+  car_log=$(mktemp)
+  car_read() {
+    local parent="$1" before
+    before=$(adb logcat -d -v brief -s noricar:I | wc -l | tr -d ' ')
+    "$app" do "car tree $parent" >/dev/null
+    car_done() {
+      adb logcat -d -v brief -s noricar:I | tail -n "+$((before + 1))" > "$car_log"
+      grep -Fq "done tree $parent" "$car_log"
+    }
+    wait_until 20 car_done && grep -Fq "tree $parent: code=0" "$car_log"
+  }
+  "$app" do "undownload album:$album_id" >/dev/null
+  removed_album() { car_read downloads && ! grep -Fq "downloaded:$album_id |" "$car_log"; }
+  check "the fixture album starts without saved tracks" wait_until 20 removed_album
+  before=$(field downloaded)
+  "$app" do "download song:$first_id" >/dev/null
+  check "the first fixture track finishes through media3" wait_for downloaded ">$before" 60
+  "$app" do "download song:$third_id" >/dev/null
+  check "the second fixture track finishes through media3" wait_for downloaded ">$((before + 1))" 60
+  check "the car can read its downloads tab" car_read downloads
+  check "the car lists the saved album as a folder" grep -Fq "downloaded:$album_id | Long Album" "$car_log"
+  check "the car opens the saved tracks" car_read "downloaded:$album_id"
+  check "only downloaded tracks appear in the album" python3 - "$car_log" "$first_id" "$third_id" <<'CAR'
+import re,sys
+text=open(sys.argv[1]).read()
+ids=re.findall(r': in\|downloaded:[^|]+\|([^ ]+) \|',text)
+assert ids == sys.argv[2:], ids
+CAR
+  "$app" open library >/dev/null
+  downloads_tab() {
+    if on_screen 'text="Downloads"'; then tapnode text Downloads; return; fi
+    adb shell input swipe 950 265 100 265 250
+    return 1
+  }
+  check "the library's Downloads tab opens" wait_until 10 downloads_tab
+  check "the phone lists the saved album" wait_until 10 on_screen 'text="Long Album"'
+  check "the phone opens the downloaded album" tapnode text "Long Album"
+  check "the album uses its downloaded page" wait_for route "downloaded/{id}" 8
+  check "its saved tracks appear on the phone" wait_until 10 on_screen 'text="Long Track 01"'
+  check "unsaved tracks are absent on the phone" off_screen 'text="Long Track 02"'
+  offline
+  check "a saved album track can be tapped offline" tapnode text "Long Track 01"
+  check "a saved album track plays offline" sounds 10
+  online
+  was_starred=$(starred_on_server "$first_id")
+  [ "$was_starred" = True ] || "$app" do "star song:$first_id" >/dev/null
+  check "the car's Favorites tab loads" car_read starred
+  check "the favorite crosses the native media browser" grep -Fq "in|starred|$first_id |" "$car_log"
+  [ "$was_starred" = True ] || "$app" do "star song:$first_id" >/dev/null
+  "$app" do "undownload album:$album_id" >/dev/null
+  check "removing the saved tracks removes the album folder" wait_until 20 removed_album
+  rm -f "$car_log"
+fi
+
 if want foryou; then section "for you: favourites and mixes open as pages"
   # What a mix page shows, read from the screen: "<count>|<title>@<x>,<y>|..." for the song count in its
   # caption and every fully visible row title (rows sit below the Play pill and above the mini player).
@@ -666,8 +714,11 @@ print(json.dumps({k:s.get(k) for k in ['id','title','artist','album','albumId','
     check "and the row lets go" wait_until 10 off_screen 'text="Asked"'
     "$app" open queue >/dev/null
     check "the host's queue says it was asked for here" wait_until 10 on_screen 'content-desc="Added by '
+    watch_from_now
     tapnode text "Listen here"
     check "Listen here plays the host's music on this phone" sounds 30
+    check "the guest follows before it starts" wait_until 10 grep -q 'following: Start' "$watching"
+    check "the guest timeline never seeks back to the song's start" bash -c '! grep -Eq "rust player: to song [0-9]+ at 0 ms" "$1"' _ "$watching"
     # Listening along is playback as any other: the service in the foreground, its notification the
     # jam's song with whose jam it is, on through the background and the screen off (the deep buffer's
     # bursts keep coming).
