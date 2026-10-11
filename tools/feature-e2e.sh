@@ -547,7 +547,8 @@ PY
     door=$(printf '%s' "$resolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["door"])')
     echo "     the peer's door: $door"
     "$app" set remoteControl true >/dev/null
-    "$app" play "$PLAIN" >/dev/null; sounds 20
+    "$app" play "album:$(mix_album)" >/dev/null; sounds 20
+    check "the transfer starts with the album's first song" wait_for title "Long Track 01" 10
     "$app" open player >/dev/null; "$app" remote watch on >/dev/null
     "$app" remote found "$door" >/dev/null
     check "the peer is listed" wait_until 15 bash -c "'$app' remote devices | grep -Fq '$name'" || return 1
@@ -576,11 +577,17 @@ PY
     adb shell input keyevent KEYCODE_VOLUME_UP; adb shell input keyevent KEYCODE_VOLUME_UP
     louder() { [ "$(peer_volume)" -gt "$before" ]; }
     check "the volume keys turn the peer up ($before%)" wait_until 10 louder
+    for track in 02 03 04; do
+      "$app" do next >/dev/null
+      check "the remote queue reaches song $track" wait_for title "Long Track $track" 10
+    done
+    check "remote skips keep this phone silent" silent 10
     adb shell am broadcast -a com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG -p com.android.systemui --es package_name "$pkg" >/dev/null
     check "the native output picker opens" wait_until 10 on_screen 'package="com.android.systemui"'
     check "the native picker offers this phone" wait_until 10 on_screen 'text="This phone"'
     check "the native picker can return playback here" tapnode text "This phone"
     check "native transfer returns the session to the phone" wait_for playingOn "" 15
+    check "the transfer keeps the peer's latest song" wait_for title "Long Track 04" 10
     if on_screen 'text="Done"'; then tapnode text Done; fi
     "$app" remote pick here >/dev/null
     check "\"This phone\" brings it back" wait_for playingOn "" 15
