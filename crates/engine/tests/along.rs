@@ -297,6 +297,10 @@ impl AudioOutput for Card {
         }
         p.playing = true;
         p.resumed_ns = now;
+        // An unbuffered card has no queued callback latency at startup.
+        if p.holds_ns == 0 {
+            p.due_ns = now;
+        }
         p.resumes += 1;
     }
     /// The block pulled plays from the pull on, after the output's delay: what is left of it.

@@ -1281,6 +1281,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     fn command(&mut self, c: Command) {
         let now = self.now();
+        self.p.clock(now);
         // Following another device, its place rules: this one's own skips and seeks do nothing (counted
         // still); its pause holds the listening here, and play joins the leader again where it is.
         if let Some(f) = self.following.as_mut() {
