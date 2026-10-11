@@ -40,9 +40,3 @@ default password unless `NORI_IPOD_PASSWORD` says otherwise. See
   and self-signed certificates are not applied yet.
 - After a reboot without a computer, checkra1n's jailbreak is gone and the app will not open until the
   device is jailbroken again.
-
-## Battery
-
-The app is built to sleep between bursts of music, as on Android. A 30-minute battery run against
-Apple's Music app on the same songs (`tools/ipod-bench.sh`) is the measure; results will be on the
-[performance page](../performance.md) once they are in.
