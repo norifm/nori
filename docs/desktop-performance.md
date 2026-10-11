@@ -269,3 +269,17 @@ orientation. The macOS wgpu handoff regression also passed. A private Xvfb contr
 panels, fullscreen, twenty play/pause actions, thirty next/previous actions and advancing audio.
 The control check used a 960×600 window to keep software rendering cheap; hardware resize
 measurements used the physical display.
+
+## Playback controls
+
+The desktop seek timer now uses subpixel updates; large seeks/skips and incoming volume changes
+animate, while small playback increments do not keep a whole layer animating every frame. Hidden
+fullscreen/compact layouts keep their last displayed position until opened. Android's shared Rust
+seek pacer draws quarter-pixel steps and still becomes idle while paused or off screen.
+
+A separate local Navidrome fixture on the physical X11/NVIDIA display, at 1280 × 820, used an
+optimized `android-dev` build with symbols, a private audio sink and generated music. After startup
+settled, five-second samples measured 0.4% of one CPU core paused, 10.2% playing on Home and 12.0%
+in fullscreen. The current fixture song was 80 seconds long. RSS was 128–144 MiB and anonymous RSS
+47–54 MiB. The fixture has no cover images; these are observations, not a matched CPU improvement
+or a memory guarantee for the owner's library. Two subsequent skips and play/pause completed.

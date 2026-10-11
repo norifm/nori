@@ -435,6 +435,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
     });
     let h = app.borrow().me.clone();
     wire(ui, &h);
+    ui.set_display_position_ms(ui.get_position_ms());
     h.with(|a| {
         ui.set_queue(ModelRc::from(a.queue_rows.clone()));
         ui.set_lyric_pieces_side(ModelRc::from(a.pieces[0].clone()));
@@ -563,6 +564,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_zoom_window, h, |a| a.compositor.zoom_window());
     on!(ui.on_page_moved, h, |a| a.place_player());
     on!(ui.on_player_changed, h, |a| {
+        position_shown(&a.ui(), a.player.as_ref(), a.position_now() as i32);
         a.lyrics_step(true);
         a.mirror();
         a.place_player();
@@ -1196,7 +1198,7 @@ impl App {
     fn seek(&mut self, fraction: f32) {
         let Some(song) = &self.song else { return };
         let ms = (fraction as f64 * song.duration as f64 * 1000.0) as i64;
-        self.ui().set_position_ms(ms as i32);
+        position_shown(&self.ui(), self.player.as_ref(), ms as i32);
         self.seek_to(ms);
     }
 
@@ -1907,7 +1909,7 @@ impl App {
         };
         ui.set_playing(playing);
         ui.set_mixing(self.elsewhere.is_none() && s.engine.status_with(|st| st.mixing));
-        ui.set_position_ms(self.position_now() as i32);
+        position_shown(&ui, self.player.as_ref(), self.position_now() as i32);
         if id != self.heard {
             self.song_shown(id);
         }
@@ -1949,7 +1951,7 @@ impl App {
             ui.set_queue_from(queue_from(upcoming(&v).map(|(_, s)| s)).into());
             self.queue = Some(v);
         }
-        // Seek bar timer: only while playing, one step per pixel of the widest bar.
+        // Seek bar timer: only while playing, quarter-pixel steps of the widest bar.
         let step = pixel_ms(ui.get_duration_ms() as i64);
         if playing && (!self.tick.running() || self.tick_ms != step) {
             self.tick_ms = step;
@@ -1957,10 +1959,7 @@ impl App {
             self.tick.start(TimerMode::Repeated, Duration::from_millis(step), move || {
                 me.with(|a| {
                     let ui = a.ui();
-                    ui.set_position_ms(a.position_now() as i32);
-                    if let Some(p) = &a.player {
-                        p.set_position_ms(ui.get_position_ms());
-                    }
+                    position_shown(&ui, a.player.as_ref(), a.position_now() as i32);
                 });
             });
         } else if !playing {
@@ -1971,9 +1970,15 @@ impl App {
     }
 }
 
-/// Seek bar step: one pixel of the widest bar (~380 pt at 2x), clamped to 16..250 ms.
+fn position_shown(ui: &AppWindow, player: Option<&PlayerBar>, position_ms: i32) {
+    ui.set_position_ms(position_ms);
+    if ui.get_full_player() || player.is_none() { ui.set_display_position_ms(position_ms); }
+    if let Some(player) = player.filter(|_| !ui.get_full_player()) { player.set_position_ms(position_ms); }
+}
+
+/// Seek bar step: a quarter pixel of the widest bar (~380 pt at 2x), clamped to 16..250 ms.
 fn pixel_ms(duration_ms: i64) -> u64 {
-    (duration_ms.max(1) as u64 / 760).clamp(16, 250)
+    (duration_ms.max(1) as u64 / (760 * 4)).clamp(16, 250)
 }
 
 fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
@@ -2248,6 +2253,61 @@ mod tests {
             let end = ui.window().take_snapshot().unwrap();
             assert!(start.as_slice() != middle.as_slice(), "opening or closing a panel still animates");
             assert!(middle.as_slice() != end.as_slice(), "the panel passes through an intermediate layout");
+        }
+    }
+
+    #[test]
+    fn playback_only_moves_the_visible_player() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = AppWindow::new().unwrap();
+        let player = crate::PlayerBar::new().unwrap();
+        ui.set_display_position_ms(10_000);
+        position_shown(&ui, Some(&player), 20_000);
+        assert_eq!(ui.get_position_ms(), 20_000, "the control socket keeps the current position");
+        assert_eq!(player.get_position_ms(), 20_000);
+        assert_eq!(ui.get_display_position_ms(), 10_000, "the hidden fullscreen layout stays still");
+        ui.set_full_player(true);
+        position_shown(&ui, Some(&player), 30_000);
+        assert_eq!(ui.get_display_position_ms(), 30_000, "opening fullscreen shows its current position");
+        assert_eq!(player.get_position_ms(), 20_000, "the hidden compact controls stay still");
+        ui.set_full_player(false);
+        position_shown(&ui, None, 40_000);
+        assert_eq!(ui.get_display_position_ms(), 40_000, "an embedded player follows playback");
+    }
+
+    #[test]
+    fn volume_and_seek_animate_between_updates() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let bar = crate::PlayerBar::new().unwrap();
+        bar.window().set_size(slint::PhysicalSize::new(720, 76));
+        bar.set_has_song(true);
+        bar.set_duration_ms(200_000);
+        bar.set_position_ms(50_000);
+        bar.set_volume(0.2);
+        bar.show().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        bar.window().take_snapshot().unwrap();
+        bar.set_position_ms(50_100);
+        slint::platform::update_timers_and_animations();
+        bar.window().take_snapshot().unwrap();
+        assert!(!bar.window().has_active_animations(), "subpixel playback does not animate a full layer every frame");
+        for seek in [false, true] {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let before = bar.window().take_snapshot().unwrap();
+            if seek { bar.set_position_ms(0); } else { bar.set_volume(0.8); }
+            let first = bar.window().take_snapshot().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(90));
+            slint::platform::update_timers_and_animations();
+            let middle = bar.window().take_snapshot().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let after = bar.window().take_snapshot().unwrap();
+            assert!(first.as_slice() != after.as_slice(), "the bar must start from its previous value, seek={seek}");
+            assert!(middle.as_slice() != before.as_slice() && middle.as_slice() != after.as_slice(), "the bar must draw an intermediate value, seek={seek}");
         }
     }
 

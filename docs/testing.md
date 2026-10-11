@@ -63,6 +63,12 @@ It checks every pixel after live surface resizing, GPU cover ownership after rel
 mosaic quadrants and seam opacity, and the blur pyramid’s smoothness and vertical orientation.
 The software regression `resizing_does_not_animate_layout` verifies immediate layout at several
 window sizes while retaining the animations triggered by opening and closing panels.
+The desktop regression `volume_and_seek_animate_between_updates` checks intermediate rendered
+values for incoming volume changes and a skipped song, without continuous animation for subpixel
+playback updates. `playback_only_moves_the_visible_player` keeps the hidden fullscreen/compact
+layout still while retaining the current control-socket position. `nori-look` tests quarter-pixel playback
+steps, seek glides and a paused bar becoming idle on a virtual clock; Android draws those values
+only while the player is visible and resumed.
 
 ## Running the device checks
 

@@ -532,6 +532,15 @@ component Capsule inherits Rectangle {
 // let go, `moved` where it is while held.
 component Bar inherits Rectangle {
     in property <float> value;
+    in property <duration> settling: 180ms;
+    in property <bool> progress;
+    property <float> previous;
+    property <duration> transition: 0ms;
+    init => { root.previous = root.value; }
+    changed value => {
+        root.transition = !root.progress || abs(root.value - root.previous) * root.width >= 1px ? root.settling : 0ms;
+        root.previous = root.value;
+    }
     in property <length> thin: 3px;
     in property <length> thick: 5px;
     in property <color> fill: #ffffffcc;
@@ -541,6 +550,7 @@ component Bar inherits Rectangle {
     callback done(float);
     property <float> held: -1;
     property <float> shown: root.held >= 0 ? root.held : max(0, min(1, root.value));
+    animate shown { duration: root.held >= 0 ? 0ms : root.transition; easing: linear; }
     height: 12px;
     Rectangle {
         y: (parent.height - self.height) / 2;
@@ -1477,6 +1487,8 @@ component PlayerControls inherits Rectangle {
                     thin: 2px;
                     thick: 6px;
                     value: root.duration-ms > 0 ? (parent.dragged >= 0 ? parent.dragged : root.position-ms) / root.duration-ms : 0;
+                    progress: true;
+                    settling: 250ms;
                     moved(v) => {
                         if root.can-seek {
                             parent.dragged = v * root.duration-ms;
@@ -3545,6 +3557,7 @@ export component AppWindow inherits Window {
     in property <string> mixing-label;
     in property <bool> buffering;
     in property <int> position-ms;
+    in property <int> display-position-ms: root.position-ms;
     in property <int> duration-ms;
     in property <bool> shuffle;
     in property <int> repeat;
@@ -4638,7 +4651,7 @@ export component AppWindow inherits Window {
                         playing: root.playing;
                         mixing: root.mixing;
                         mixing-label: root.mixing-label;
-                        position-ms: root.position-ms;
+                        position-ms: root.display-position-ms;
                         duration-ms: root.duration-ms;
                         shuffle: root.shuffle;
                         repeat: root.repeat;
@@ -5061,7 +5074,9 @@ export component AppWindow inherits Window {
                         thick: 8px;
                         fill: #ffffffd9;
                         track: #ffffff33;
-                        value: root.duration-ms > 0 ? (parent.dragged >= 0 ? parent.dragged : root.position-ms) / root.duration-ms : 0;
+                        value: root.duration-ms > 0 ? (parent.dragged >= 0 ? parent.dragged : root.display-position-ms) / root.duration-ms : 0;
+                        progress: true;
+                        settling: 250ms;
                         moved(v) => { parent.dragged = v * root.duration-ms; }
                         done(v) => {
                             parent.dragged = -1;
@@ -5072,12 +5087,12 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     padding-top: 4px;
                     Text {
-                        text: root.clock(root.position-ms);
+                        text: root.clock(root.display-position-ms);
                         color: #ffffff8c;
                         font-size: 10px;
                     }
                     Text {
-                        text: "-" + root.clock(root.duration-ms - root.position-ms);
+                        text: "-" + root.clock(root.duration-ms - root.display-position-ms);
                         color: #ffffff8c;
                         font-size: 10px;
                         horizontal-alignment: right;
