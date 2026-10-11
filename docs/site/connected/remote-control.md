@@ -17,6 +17,9 @@ with nori, signed in to the same server account, see each other. One plays at a 
   and the volume keys show it and control it. The device you hold stops its own playback.
 - **The terminal** lists your devices in its right panel (`C`).
 
+On Android 11 and newer, the system media output picker also lists your nori devices while you
+control remote playback. Choose **This phone** there to bring playback back without opening nori.
+
 ## How devices reach each other
 
 On the same network, devices talk straight to each other, found by mDNS and signed with your Subsonic

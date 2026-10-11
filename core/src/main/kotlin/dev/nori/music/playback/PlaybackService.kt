@@ -313,7 +313,13 @@ class PlaybackService : MediaLibraryService() {
      * The mirrored device named in the system's output switcher (RemoteRoute) while the session is engaged:
      * after media3's idle timeout nothing is bound to hold the process up for it.
      */
-    private fun showRoute() = dev.nori.music.remote.RemoteRoute.show(this, nori.remotes.mirror.value?.name?.takeIf { engaged })
+    private fun showRoute() {
+        val mirror = nori.remotes.mirror.value?.takeIf { engaged }
+        if (mirror == null) dev.nori.music.remote.RemoteRoute.show(this, null)
+        else nori.remotes.ask({ it.devices() }) { devices ->
+            dev.nori.music.remote.RemoteRoute.show(this, nori.remotes.mirror.value?.takeIf { engaged }, devices)
+        }
+    }
 
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
         // Listening along while the jam's host is paused: still in the foreground, so its play is heard here

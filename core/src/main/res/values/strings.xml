@@ -126,4 +126,5 @@
     <string name="updated_text">Tap to open</string>
     <!-- The name of the profile a jam guest is signed in with. -->
     <string name="jam_profile">Jam</string>
+    <string name="remote_this_phone">This phone</string>
 </resources>

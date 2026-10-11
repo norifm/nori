@@ -11,40 +11,37 @@ import android.media.RoutingSessionInfo
 import android.os.Build
 import android.os.Bundle
 import androidx.annotation.RequiresApi
+import dev.nori.music.Nori
+import dev.nori.music.core.R
+import dev.nori.music.ffi.Mirror
+import dev.nori.music.ffi.RemoteDevice
+import dev.nori.music.ffi.remote.Op
 
-/**
- * The device this phone mirrors as Android's media router knows it: one route and one routing session
- * named after it, so the system's output switcher, the media controls and the volume panel say
- * "Filips-MacBook-Pro" rather than "Other device". The session's id is what the media session names as
- * its remote volume's controller (RemoteDevicePlayer's DeviceInfo). Nothing is registered while nothing
- * is mirrored. While something is, this app scans for its own route (the system binds the provider for
- * that, and lists the route as where this app's media goes) and the provider holds the session.
- *
- * The provider is enabled only while something is mirrored (manifest: disabled): the system keeps a
- * provider it bound, at a foreground service's priority, after its session is released until it next
- * looks at the routes; disabling the component makes it let go at once.
- */
+/** The mirrored device and transfer choices in Android's output picker, while the media session is engaged. */
 object RemoteRoute {
-    /** The device mirrored now, or null; the provider shows it whenever the system binds it. */
-    private var shown: String? = null
+    internal data class Shown(val id: String, val name: String, val volume: Int?, val devices: List<Pair<String, String>>)
+    /** The system creates the provider, so its current routes are kept for the next binding. */
+    private var shown: Shown? = null
     /** The provider while the system has it bound: it is the system's to make, so it is reached through here. */
     private var provider: Provider? = null
     private var scan: MediaRouter2.RouteCallback? = null
 
     private const val FEATURE = "dev.nori.music.REMOTE"
-    private const val ROUTE = "mirrored"
+    private const val HERE = "here"
     private const val SESSION = "mirrored"
 
     /** The routing controller id of the session, as the system knows it: the provider's id and the session's. */
     fun controllerId(context: Context): String? =
         if (Build.VERSION.SDK_INT >= 30) ComponentName(context, Provider::class.java).flattenToShortString() + ":" + SESSION else null
 
-    /** Shows [device] (its name) as where this phone's media plays, or nothing (null). Main thread. */
-    fun show(context: Context, device: String?) {
-        if (Build.VERSION.SDK_INT < 30 || device == shown) return
-        shown = device
-        provider?.show(device)
-        if (device != null) {
+    /** Shows the device mirrored now and the account's other devices. Main thread. */
+    fun show(context: Context, device: Mirror?, devices: List<RemoteDevice> = emptyList()) {
+        if (Build.VERSION.SDK_INT < 30) return
+        val next = device?.let { Shown(it.id, it.name, it.volume?.toInt(), devices.map { d -> d.id to d.name }) }
+        if (next == shown) return
+        shown = next
+        provider?.show(next)
+        if (next != null) {
             enable(context, true)
             startScan(context)
         } else {
@@ -95,29 +92,78 @@ object RemoteRoute {
             show(shown)
         }
 
-        fun show(device: String?) {
+        private fun nativeId(device: String) = "device-$device"
+
+        private fun sessionInfo(device: Shown): RoutingSessionInfo {
+            val selected = nativeId(device.id)
+            val builder = RoutingSessionInfo.Builder(SESSION, packageName).addSelectedRoute(selected).setName(device.name)
+                .addTransferableRoute(HERE)
+            device.devices.forEach { (id, _) -> if (id != device.id) builder.addTransferableRoute(nativeId(id)) }
+            device.volume?.let { builder.setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE).setVolumeMax(100).setVolume(it) }
+            return builder.build()
+        }
+
+        private fun route(id: String, name: String, local: Boolean, selected: Boolean, volume: Int?): MediaRoute2Info {
+            val builder = MediaRoute2Info.Builder(id, name).addFeature(FEATURE).addFeature(MediaRoute2Info.FEATURE_LIVE_AUDIO)
+                .setType(if (local) MediaRoute2Info.TYPE_BUILTIN_SPEAKER else MediaRoute2Info.TYPE_REMOTE_SPEAKER)
+                .setConnectionState(if (selected) MediaRoute2Info.CONNECTION_STATE_CONNECTED else MediaRoute2Info.CONNECTION_STATE_DISCONNECTED)
+            volume?.let { builder.setVolumeHandling(MediaRoute2Info.PLAYBACK_VOLUME_VARIABLE).setVolumeMax(100).setVolume(it) }
+            return builder.build()
+        }
+
+        internal fun show(device: Shown?) {
             if (device == null) {
                 session?.let { notifySessionReleased(it.id) }
                 session = null
                 notifyRoutes(emptyList())
                 return
             }
-            val route = MediaRoute2Info.Builder(ROUTE, device).addFeature(FEATURE)
-                .setType(MediaRoute2Info.TYPE_REMOTE_SPEAKER).setConnectionState(MediaRoute2Info.CONNECTION_STATE_CONNECTED).build()
-            notifyRoutes(listOf(route))
-            val made = RoutingSessionInfo.Builder(SESSION, packageName).addSelectedRoute(ROUTE).setName(device).build()
+            val choices = device.devices.toMap().toMutableMap()
+            choices[device.id] = device.name
+            notifyRoutes(listOf(route(HERE, getString(R.string.remote_this_phone), true, false, null)) +
+                choices.map { (id, name) -> route(nativeId(id), name, false, id == device.id, device.volume.takeIf { id == device.id }) })
+            val made = sessionInfo(device)
             if (session == null) notifySessionCreated(REQUEST_ID_NONE, made) else notifySessionUpdated(made)
             session = made
         }
 
-        // Nothing is routed through here: the session only names the device the media session controls.
         override fun onCreateSession(requestId: Long, packageName: String, routeId: String, sessionHints: Bundle?) =
             notifyRequestFailed(requestId, REASON_ROUTE_NOT_AVAILABLE)
-        override fun onReleaseSession(requestId: Long, sessionId: String) = notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
-        override fun onSelectRoute(requestId: Long, sessionId: String, routeId: String) = notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
+        override fun onReleaseSession(requestId: Long, sessionId: String) {
+            if (sessionId != SESSION || session == null) return notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
+            notifySessionReleased(sessionId)
+            session = null
+            Nori.get(this).remotes.pick(null)
+        }
+
+        override fun onSelectRoute(requestId: Long, sessionId: String, routeId: String) = onTransferToRoute(requestId, sessionId, routeId)
         override fun onDeselectRoute(requestId: Long, sessionId: String, routeId: String) = notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
-        override fun onTransferToRoute(requestId: Long, sessionId: String, routeId: String) = notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
-        override fun onSetRouteVolume(requestId: Long, routeId: String, volume: Int) = notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
-        override fun onSetSessionVolume(requestId: Long, sessionId: String, volume: Int) = notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
+
+        override fun onTransferToRoute(requestId: Long, sessionId: String, routeId: String) {
+            val device = shown ?: return notifyRequestFailed(requestId, REASON_ROUTE_NOT_AVAILABLE)
+            if (sessionId != SESSION) return notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
+            val target = when (routeId) {
+                HERE -> null
+                nativeId(device.id) -> device.id
+                else -> device.devices.firstOrNull { nativeId(it.first) == routeId }?.first
+                    ?: return notifyRequestFailed(requestId, REASON_ROUTE_NOT_AVAILABLE)
+            }
+            Nori.get(this).remotes.pick(target)
+        }
+
+        private fun setVolume(requestId: Long, volume: Int) {
+            if (shown?.volume == null) return notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
+            Nori.get(this).remotes.command(Op.Volume(volume.coerceIn(0, 100).toUByte()))
+        }
+
+        override fun onSetRouteVolume(requestId: Long, routeId: String, volume: Int) {
+            if (shown?.let { nativeId(it.id) } != routeId) return notifyRequestFailed(requestId, REASON_ROUTE_NOT_AVAILABLE)
+            setVolume(requestId, volume)
+        }
+
+        override fun onSetSessionVolume(requestId: Long, sessionId: String, volume: Int) {
+            if (sessionId != SESSION) return notifyRequestFailed(requestId, REASON_INVALID_COMMAND)
+            setVolume(requestId, volume)
+        }
     }
 }
