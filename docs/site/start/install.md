@@ -29,7 +29,9 @@ Linux archive and run its binary on other distributions. For AppImage, download 
 For Flatpak, install the desktop `.flatpak` with `flatpak install --user ./nori-desktop-<version>-linux-<architecture>.flatpak`
 and run `flatpak run dev.nori.desktop`. The bundle also includes the terminal client:
 `flatpak run --command=nori-cli dev.nori.desktop`. Flatpak installs its Freedesktop runtime
-from Flathub and keeps its data inside the app sandbox. On macOS, open the desktop `.dmg` and drag `nori.app` onto Applications; the CLI archive contains `nori-cli`, which you can place on your PATH.
+from Flathub and keeps its data inside the app sandbox. On macOS, open the desktop `.dmg` and follow
+the arrow: drag nori onto the Applications folder. Then open nori from Applications and eject the
+disk image. The CLI archive contains `nori-cli`, which you can place on your PATH.
 macOS bundles are ad-hoc signed; approve the downloaded app in Privacy & Security when macOS asks.
 
 To build from source, with [Rust](https://rustup.rs) installed:

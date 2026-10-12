@@ -5,6 +5,7 @@ import hashlib
 import os
 import platform
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -19,9 +20,15 @@ def package(binary, output, version, arch):
         stage = Path(temporary) / "stage"
         env = dict(os.environ, NORI_APP_DIR=str(stage), NORI_DESKTOP_BINARY=str(binary.resolve()), NORI_VERSION=version)
         subprocess.run([str(ROOT / "tools/desktop-app.sh"), "--no-build"], env=env, check=True)
-        (stage / "Applications").symlink_to("/Applications")
-        (stage / "LICENSE").write_bytes((ROOT / "LICENSE").read_bytes())
-        subprocess.run(["hdiutil", "create", "-volname", "nori", "-srcfolder", str(stage), "-ov", "-format", "UDZO", "-fs", "HFS+", str(artifact)], check=True)
+        (stage / "nori.app/Contents/Resources/LICENSE").write_bytes((ROOT / "LICENSE").read_bytes())
+        subprocess.run(["codesign", "--force", "--sign", "-", str(stage / "nori.app")], check=True)
+        environment = Path(temporary) / "python"
+        subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
+        python = str(environment / "bin/python")
+        subprocess.run([python, "-m", "pip", "install", "--disable-pip-version-check", "dmgbuild==1.6.7", "Pillow==11.3.0"], check=True)
+        layout = str(ROOT / "tools/host-release/dmg-layout.py")
+        subprocess.run([python, layout, "build", str(stage), str(artifact)], check=True)
+        subprocess.run([python, layout, "verify", str(artifact)], check=True)
     verify(artifact)
     return artifact
 
