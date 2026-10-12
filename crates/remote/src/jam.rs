@@ -82,16 +82,40 @@ impl Jam {
         }
     }
 
+    /// Whether this member may choose `song`, including the host's provider permission.
+    pub fn may_request(&self, by: By, song: &Song) -> Result<(), Refusal> {
+        self.role(by).ok_or(Refusal::NotAllowed)?;
+        if matches!(by, By::Member(_)) && is_provider_id(&song.id) && !self.remote_songs {
+            Err(Refusal::NotAllowed)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Records songs an admin adds directly to the queue.
+    pub fn queue_songs(&mut self, by: By, songs: &[Song]) -> Result<(), Refusal> {
+        if !matches!(self.role(by), Some(Role::Host | Role::Admin)) {
+            return Err(Refusal::NotAllowed);
+        }
+        for song in songs {
+            self.may_request(by, song)?;
+        }
+        let name = self.name(by);
+        for song in songs {
+            self.added.insert(song.id.clone(), name.clone());
+        }
+        Ok(())
+    }
     /// Applies a jam op; the song to add to the queue when one goes in.
     pub fn apply(&mut self, by: By, op: Op) -> Result<Option<Song>, Refusal> {
         let role = self.role(by).ok_or(Refusal::NotAllowed)?;
-        if matches!(by, By::Member(_)) && matches!(&op, Op::Request { song } if is_provider_id(&song.id)) && !self.remote_songs {
-            return Err(Refusal::NotAllowed);
+        if let Op::Request { song } = &op {
+            self.may_request(by, song)?;
         }
         let decides = matches!(role, Role::Host | Role::Admin);
         match op {
             Op::Request { song } if decides => {
-                self.added.insert(song.id.clone(), self.name(by));
+                self.queue_songs(by, std::slice::from_ref(&song))?;
                 Ok(Some(song))
             }
             Op::Request { song } => {

@@ -1130,7 +1130,24 @@ impl Handle {
         }
         let start = picked.and_then(|id| songs.iter().position(|s| s.id == id)).unwrap_or(0);
         if self.guest {
-            return self.ask(songs.into_iter().skip(start).take(1).collect());
+
+            let Some(r) = self.remotes.get() else { return  };
+            if r.jam_controls().is_some_and(|c| !c.asks) {
+                let repeat = r.jam_playing().map_or(0, |m| m.repeat);
+                r.jam_press(Op::Replace {
+                    songs,
+                    index: start as u32,
+                    position_ms: 0,
+                    play: true,
+                    order: None,
+                    shuffle,
+                    repeat,
+                    transfer: None,
+                });
+            } else {
+                self.ask(songs.into_iter().skip(start).take(1).collect());
+            }
+            return;
         }
         if let Some(e) = self.remotes.elsewhere() {
             return e.play(songs, start, shuffle);
@@ -1146,7 +1163,15 @@ impl Handle {
     /// [`Handle::enqueue`] on the device playing: the active device while it is another one.
     fn add(&self, songs: Vec<Song>, next: bool) {
         if self.guest {
-            return self.ask(queueable(songs));
+
+            let Some(r) = self.remotes.get() else { return  };
+            let songs = queueable(songs);
+            if r.jam_controls().is_some_and(|c| !c.asks) {
+                r.jam_press(Op::Add { songs, next });
+            } else {
+                self.ask(songs);
+            }
+            return;
         }
         let Some(e) = self.remotes.elsewhere() else { return self.enqueue(songs, next) };
         let songs = queueable(songs);

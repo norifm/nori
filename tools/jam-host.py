@@ -89,7 +89,7 @@ def publish():
 
 def obey(op):
     """An admin's control, carried out as the core's host carries it out."""
-    global place
+    global place, queue, rev
     place = place_now()
     kind = op.get("op")
     if kind == "play":
@@ -103,6 +103,15 @@ def obey(op):
         place["ms"] = 0
     elif kind == "jump":
         place["index"], place["ms"] = op["index"], 0
+    elif kind == "replace":
+        queue = [entry(s, k) for k, s in enumerate(op["songs"])]
+        rev += 1
+        place.update(index=op["index"], ms=op["position_ms"], playing=op["play"], at_us=now_us())
+    elif kind == "add":
+        at = place["index"] + 1 if op["next"] else len(queue)
+        queue[at:at] = [entry(s, 0) for s in op["songs"]]
+        queue = [{**s, "index": k, "turn": k} for k, s in enumerate(queue)]
+        rev += 1
     else:
         return False
     print(f"obeyed: {kind}", flush=True)
