@@ -471,8 +471,8 @@ struct Mirrored {
 struct Foreseen {
     /// The command's id.
     id: u64,
-    /// Until when (this device's clock) it shows without the device's word.
-    until: i64,
+    /// Deadline on this device's clock; accepted position changes wait for the player.
+    until: Option<i64>,
     change: Change,
 }
 
@@ -535,6 +535,9 @@ impl Mirrored {
                 Change::Place { .. } => place.is_none_or(|id| f.id > id),
                 _ => !f.change.shown_in(state),
             });
+            for f in self.foreseen.iter_mut().filter(|f| f.id <= done.id && matches!(f.change, Change::Place { .. })) {
+                f.until = None;
+            }
         }
         let rev = self.shown.as_ref().map(|s| (s.rev, s.len));
         if rev != Some((state.rev, state.len)) {
@@ -562,11 +565,10 @@ impl Mirrored {
         }
     }
 
-    /// Drops the foresight of command `id` (refused), and of every command shown for long enough by
-    /// `now`; whether anything shown changed.
+    /// Drops a refused command or an unanswered command past its deadline; whether anything shown changed.
     fn forget(&mut self, id: Option<u64>, now: i64) -> bool {
         let before = self.foreseen.len();
-        self.foreseen.retain(|f| Some(f.id) != id && f.until > now);
+        self.foreseen.retain(|f| Some(f.id) != id && f.until.is_none_or(|until| until > now));
         let changed = self.foreseen.len() != before;
         if changed {
             self.show();
@@ -574,9 +576,9 @@ impl Mirrored {
         changed
     }
 
-    /// When the oldest foresight left ends without the device's word.
+    /// When the oldest unanswered command expires.
     fn foreseen_until(&self) -> Option<i64> {
-        self.foreseen.iter().map(|f| f.until).min()
+        self.foreseen.iter().filter_map(|f| f.until).min()
     }
 
     fn put(&mut self, change: &Change) {
@@ -654,8 +656,8 @@ impl Mirrored {
         all
     }
 
-    /// Command `id`, `op`, sent to the device, as this device expects it to come out: shown until the
-    /// device says it carried it out, refuses it, or [`FORESEEN_US`] passes.
+    /// Command `id`, `op`, as expected: until the player reports it, it is refused, or an unanswered
+    /// command expires.
     fn foresee(&mut self, id: u64, op: &Op) {
         let rows = self.rows();
         let at = self.shown_at();
@@ -683,7 +685,7 @@ impl Mirrored {
             _ => return,
         };
         self.put(&change);
-        self.foreseen.push(Foreseen { id, until: here + FORESEEN_US, change });
+        self.foreseen.push(Foreseen { id, until: Some(here + FORESEEN_US), change });
     }
 
     fn view(&self, name: String, kind: DeviceKind, refused: Option<Refusal>) -> Option<Mirror> {
@@ -2645,8 +2647,12 @@ impl Remote {
     /// The songs at the turns of the play order `span` picks (from where the song heard is, and how many
     /// there are), with the queue's revision, length, shuffle and repeat.
     fn read_queue(&self, span: impl FnOnce(Option<usize>, usize) -> Range<usize>) -> QueueRead {
+        self.read_queue_at(&self.inner.lock(), span)
+    }
+
+    fn read_queue_at(&self, i: &Inner, span: impl FnOnce(Option<usize>, usize) -> Range<usize>) -> QueueRead {
         let session = &self.client.core.session;
-        let heard = self.inner.lock().playing.index.map(|i| i as usize);
+        let heard = i.playing.index.map(|i| i as usize);
         let (picked, index, rev, len, shuffle, repeat) = session.playlist(|p| {
             let current = heard.filter(|&i| i < p.len()).or(p.current());
             let order: Vec<usize> = p.play_order().collect();
@@ -2655,7 +2661,6 @@ impl Remote {
             let picked: Vec<(u32, u32, String)> = order[r.clone()].iter().zip(r.start..).map(|(&i, turn)| (i as u32, turn as u32, p.ids()[i].clone())).collect();
             (picked, current.map(|c| c as u32), p.rev(), p.len() as u32, p.lit(), p.repeat())
         });
-        let i = self.inner.lock();
         let jam = i.hosted.as_ref().map(|h| &h.jam);
         // Hearts as this device shows them: pressed here or by another device since the song was read.
         let stars = self.client.core.stars.lock();
@@ -2672,12 +2677,11 @@ impl Remote {
     }
 
     /// This device's state now, its position where the song is at this moment.
-    fn state_now(&self) -> DeviceState {
-        let q = self.read_queue(|at, len| {
+    fn state_now(&self, i: &Inner) -> DeviceState {
+        let q = self.read_queue_at(i, |at, len| {
             let at = at.unwrap_or(0);
             at.saturating_sub(ENTRIES_BEFORE)..(at + ENTRIES_AFTER + 1).min(len)
         });
-        let i = self.inner.lock();
         let p = i.playing;
         let jam = i.hosted.as_ref().map(|h| JamState { along: h.along.then(|| self.along(q.index, &q.entries)), ..h.jam.state() });
         let mut st = DeviceState {
@@ -2709,9 +2713,9 @@ impl Remote {
 
     /// Publishes this device's state where it is followed, unless only time moved on.
     fn publish(self: &Arc<Self>) {
-        let mut state = self.state_now();
-        let (serving, jam_room, relay) = {
+        let (state, serving, jam_room, relay) = {
             let mut i = self.inner.lock();
+            let mut state = self.state_now(&i);
             if let Some((last, _)) = &i.published {
                 if same_but_time(last, &state) {
                     return;
@@ -2723,7 +2727,7 @@ impl Remote {
             if let Some(d) = &i.door {
                 d.publish(state.clone());
             }
-            (i.serving && i.since.is_some(), i.jam_room().map(str::to_string), i.relay != RelaySupport::Unsupported)
+            (state, i.serving && i.since.is_some(), i.jam_room().map(str::to_string), i.relay != RelaySupport::Unsupported)
         };
         if serving && relay {
             self.out(Out::send(Link::Relay, Outgoing { state: Some(state.clone()), ..Default::default() }));
@@ -2806,18 +2810,70 @@ mod tests {
     use super::*;
 
     #[test]
+    fn published_state_uses_one_player_report() {
+        struct Quiet;
+        impl RemotePlayer for Quiet { fn apply(&self, _: Op) {} }
+        impl RemoteShown for Quiet {
+            fn changed(&self) {}
+            fn jam_ended(&self, _: Option<String>) {}
+        }
+        let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        client.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        remote.inner.lock().playing = Playing { index: Some(0), volume: Some(0), ..Default::default() };
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let reporter = {
+            let (remote, done, start) = (remote.clone(), done.clone(), start.clone());
+            std::thread::spawn(move || {
+                start.wait();
+                let mut index = 0;
+                while !done.load(std::sync::atomic::Ordering::Acquire) {
+                    index ^= 1;
+                    remote.inner.lock().playing = Playing { index: Some(index), volume: Some(index as u8), ..Default::default() };
+                }
+            })
+        };
+        start.wait();
+        let inconsistent = (0..50_000).find_map(|_| {
+            remote.publish();
+            let i = remote.inner.lock();
+            let state = &i.published.as_ref().expect("published").0;
+            (state.index != state.volume.map(u32::from)).then_some((state.index, state.volume, state.seq))
+        });
+        done.store(true, std::sync::atomic::Ordering::Release);
+        reporter.join().unwrap();
+        remote.stop();
+        assert!(inconsistent.is_none(), "a published frame mixed player reports: {inconsistent:?}");
+    }
+
+    #[test]
     fn acknowledged_skip_waits_for_the_heard_song() {
-        let entries = (0..2).map(|index| Entry { index, turn: index, duration: 300, ..Default::default() }).collect();
-        let old = DeviceState { seq: 1, index: Some(0), len: 2, entries, ..Default::default() };
-        let mut m = Mirrored::new("desk".into());
-        m.heard(&old, 0, "me");
-        m.foresee(1, &Op::Next);
-        assert_eq!(m.shown.as_ref().unwrap().index, Some(1));
-        let accepted = DeviceState { seq: 2, obeyed: vec![Obeyed { from: "me".into(), id: 1 }], ..old.clone() };
-        m.heard(&accepted, 1, "me");
-        assert_eq!(m.shown.as_ref().unwrap().index, Some(1), "accepting the command does not bring the old song back");
-        m.heard(&DeviceState { seq: 3, index: Some(1), ..accepted }, 2, "me");
-        assert!(m.foreseen.is_empty(), "the heard song confirms the skip");
+        let entries = (0..3).map(|index| Entry { index, turn: index, duration: 300, ..Default::default() }).collect();
+        let old = DeviceState { seq: 1, index: Some(0), len: 3, entries, ..Default::default() };
+        for refused in [false, true] {
+            let mut m = Mirrored::new("desk".into());
+            m.heard(&old, 0, "me");
+            m.foresee(1, &Op::Next);
+            assert_eq!(m.shown.as_ref().unwrap().index, Some(1));
+            let accepted = DeviceState { seq: 2, obeyed: vec![Obeyed { from: "me".into(), id: 1 }], ..old.clone() };
+            m.heard(&accepted, 1, "me");
+            assert_eq!(m.shown.as_ref().unwrap().index, Some(1), "accepting the command keeps the next song");
+            assert!(!m.forget(None, clock::now_us() + FORESEEN_US * 2), "an accepted skip waits for the player");
+            assert_eq!(m.shown.as_ref().unwrap().index, Some(1));
+            if refused {
+                assert!(m.forget(Some(1), clock::now_us()));
+            } else {
+                m.heard(&DeviceState { seq: 3, index: Some(1), ..accepted }, 2, "me");
+            }
+            assert!(m.foreseen.is_empty(), "the heard song or a refusal settles the skip");
+            assert_eq!(m.shown.as_ref().unwrap().index, Some(if refused { 0 } else { 1 }));
+        }
+        let mut unanswered = Mirrored::new("legacy".into());
+        unanswered.heard(&old, 0, "me");
+        unanswered.foresee(1, &Op::Next);
+        assert!(unanswered.forget(None, clock::now_us() + FORESEEN_US * 2));
+        assert_eq!(unanswered.shown.as_ref().unwrap().index, Some(0), "an unanswered skip expires");
     }
 
     #[test]

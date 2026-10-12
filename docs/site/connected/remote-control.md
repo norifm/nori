@@ -23,6 +23,9 @@ control remote playback. Choose **This phone** there to bring playback back with
 Existing installs keep the feature enabled if either remote control or jams was enabled before
 the switches were merged. Turning the merged switch off ends hosted rooms and disables discovery.
 
+On 0.6.0-beta.3 and later, a skip accepted by the playing device stays on the requested song while
+that device loads it. It does not briefly return to the previous song when loading takes longer.
+
 ## How devices reach each other
 
 On the same network, devices talk straight to each other, found by mDNS and signed with your Subsonic
