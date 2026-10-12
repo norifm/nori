@@ -14,7 +14,7 @@ and [jams](../connected/jams.md).
 
 ## Install
 
-Build it from source: see [Install](../start/install.md#desktop-and-terminal). It shares its data
+Download a Linux package or macOS app bundle: see [Install](../start/install.md#desktop-and-terminal). It shares its data
 directory with the terminal client.
 
 ## Limits

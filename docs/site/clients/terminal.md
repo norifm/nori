@@ -8,6 +8,7 @@ sidebar:
 Applies to nori 0.6 on Linux and macOS terminals.
 
 The terminal client is a whole music player in a terminal, drawn with ratatui. Start it with
+Download the `nori-cli` archive for your system and processor, or build it with
 `cargo run --release -p nori-cli` (see [Install](../start/install.md#desktop-and-terminal)).
 
 ## Covers
