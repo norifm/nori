@@ -3106,7 +3106,7 @@ fn analyses_mid_hold_still_mix() {
 #[test]
 fn shuffle_near_mix_keeps_audio() {
     let songs = [("a", 200.0), ("b", 900.0), ("c", 1400.0)];
-    for (when_ms, hold_ms, seed, delay_ms) in [-100, 1_500].into_iter().flat_map(|when| {
+    for (when_ms, hold_ms, seed, delay_ms) in [-100, 10, 50, 90, 110, 1_500].into_iter().flat_map(|when| {
         [0, 2_000, 10_000].into_iter().flat_map(move |hold| {
             [1, 7].into_iter().flat_map(move |seed| [0, 150].map(move |delay| (when, hold, seed, delay)))
         })

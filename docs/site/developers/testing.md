@@ -23,6 +23,12 @@ notification, audio focus, routing, JNI, the service and a force stop.
 Never `-j` above 4: the machine runs out of memory. For queued host checks, nextest,
 Bazel player targets and a pool of hardware-rendered emulators, see [Building](building.md#faster-development-checks).
 
+The player’s AutoMix shuffle regression advances the output clock across a transition without a
+render turn, then edits the queue. Replanning must recognize the audible mix immediately and preserve
+every PCM sample through its end. It covers three starting tracks, four shuffle seeds, and output
+clocks 100 ms, 1 s, or 5 s ahead of the last turn. Engine tests also shuffle 10–110 ms into a mix with
+shallow and deep output buffers, checking what the card heard.
+
 `./gradlew :core:testDebugUnitTest` checks the Android stream bridge with a data source whose
 next packet is unavailable. Available bytes must reach Rust before another network read; this
 exercises the Kotlin `DataSource` adapter and does not need a device.

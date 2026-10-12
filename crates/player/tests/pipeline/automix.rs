@@ -237,3 +237,37 @@ fn shuffle_keeps_the_audible_mix() {
         }
     }
 }
+
+#[test]
+fn shuffle_between_turns_keeps_the_mix() {
+    let make = |index| {
+        let mut p = Player::with_prefs(vec![song("a", 120.0), song("b", 123.0), song("c", 118.0), song("d", 121.0)], automix());
+        p.sink.deep = true;
+        for (id, bpm) in [("a", 120.0), ("b", 123.0), ("c", 118.0), ("d", 121.0)] {
+            p.app.analyses.insert(id.into(), measured(id, bpm));
+        }
+        p.play_from(index);
+        p
+    };
+    for (index, lag_ms, seed) in (0..3).flat_map(|index| [100, 1000, 5000].into_iter().flat_map(move |lag| (0..4).map(move |seed| (index, lag, seed)))) {
+        let mut reference = make(index);
+        assert!(reference.run_until(40_000, |p| p.mixing()));
+        let start = reference.now_ms;
+        reference.run_for(100);
+        let mut shuffled = make(index);
+        shuffled.run_for(start - lag_ms - shuffled.now_ms);
+        assert!(!shuffled.mixing(), "first mix at {start}, shuffled at {}", shuffled.now_ms);
+        shuffled.sink.advance((lag_ms + 100) * 1000);
+        shuffled.clock(shuffled.now_ms + lag_ms + 100);
+        shuffled.queue.live.set_shuffle(true, seed);
+        shuffled.queue_changed();
+        shuffled.replan_ending();
+        assert!(shuffled.mixing(), "a command sees the mix already audible on the output clock");
+        assert!(reference.run_until(32_000, |p| !p.mixing()));
+        shuffled.run_for(reference.now_ms - shuffled.now_ms);
+        assert_eq!(shuffled.current_id(), reference.current_id(), "seed {seed}: the audible incoming song survives");
+        assert!(shuffled.sink.heard_samples() == reference.sink.heard_samples(), "seed {seed}: a command before the next render turn preserves every sample");
+        assert!(shuffled.sink.gaps.is_empty());
+        assert_eq!(shuffled.sink.timestamp_jumps, 0);
+    }
+}
