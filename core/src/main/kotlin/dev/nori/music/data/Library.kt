@@ -93,6 +93,12 @@ class Library(
     private val _starMarks = MutableStateFlow(StarMarks(emptyMap(), emptyMap(), emptyMap()))
     val starMarks: StateFlow<StarMarks> = _starMarks.asStateFlow()
     /** Star state as it should be shown: this session's change wins over the [snapshot] a list or queue item was built with. */
+    /** Applies the core's favorite marks to the visible library. */
+    fun applyMarks(marks: StarMarks) {
+        _starMarks.value = marks
+        _starsVersion.update { it + 1 }
+    }
+
     fun isStarred(kind: StarKind, id: String, snapshot: Boolean): Boolean = _starMarks.value.of(kind, id) ?: snapshot
     /** Bumped on every star change, so one-shot reads (the favourites list) can re-query. */
     private val _starsVersion = MutableStateFlow(0)
@@ -271,8 +277,7 @@ class Library(
         // those and replays them), handing the marks over each time (`Client::star`).
         val shown = object : StarsShown {
             override fun marks(marks: StarMarks) {
-                _starMarks.value = marks
-                _starsVersion.update { it + 1 }
+                applyMarks(marks)
             }
         }
         withContext(Dispatchers.IO) { lifted { client.star(kind.target, id, on, shown) } }

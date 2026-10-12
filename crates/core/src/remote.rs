@@ -88,6 +88,8 @@ pub trait RemotePlayer: Send + Sync {
 #[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
 pub trait RemoteShown: Send + Sync {
     fn changed(&self);
+    /// The account's library favorites changed on another device.
+    fn marks_changed(&self);
     /// The jam this guest was in ended (its host ended it, or the relay no longer knows it), once: the
     /// platform leaves it as after [`Remote::jam_leave`]. `host`: its host's name, if seen.
     fn jam_ended(&self, host: Option<String>);
@@ -416,6 +418,7 @@ fn support(got: &Result<Vec<u8>, NetError>) -> Option<RelaySupport> {
 }
 
 struct Peer {
+    library_marks: bool,
     service: String,
     /// Where its door was seen (mDNS tells each of the device's addresses), the one answering first.
     bases: Vec<String>,
@@ -795,6 +798,10 @@ impl Peer {
 }
 
 impl Inner {
+    fn browsing(&self) -> bool {
+        self.watching || self.discovering || (self.serving && self.sight == Sight::Screen && !self.stopped)
+    }
+
     fn wants_relay(&self) -> bool {
         self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.discovering || self.taking.is_some() || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
     }
@@ -1032,8 +1039,14 @@ impl Remote {
                 deliver(&client, &who, o);
             }
         });
+        *remote.client.core.remote.lock() = Arc::downgrade(&remote);
         remote.probe();
         remote
+    }
+
+    /// Current library favorites, including changes received from nearby devices.
+    pub fn star_marks(&self) -> crate::stars::StarMarks {
+        self.client.core.stars.lock().clone()
     }
 
     /// Whether the server relays remote control and jams; the screens offer jams and far devices only then.
@@ -1053,21 +1066,23 @@ impl Remote {
 
     /// Makes this device controllable (its playback service is up) or not.
     pub fn serve(self: Arc<Self>, on: bool) {
-        let announce = {
+        let (announce, browse) = {
             let mut i = self.inner.lock();
             if i.serving == on {
                 return;
             }
+            let before = i.browsing();
             i.serving = on;
             i.published = None;
             i.door = None;
             if on {
                 i.door = self.open_door();
             }
-            i.door.as_ref().map(|d| self.announcement(d.port()))
+            (i.door.as_ref().map(|d| self.announcement(d.port())), (before != i.browsing()).then_some(i.browsing()))
         };
         if let Some(d) = &self.discovery {
             d.announce(announce);
+            if let Some(on) = browse { d.browse(on); }
         }
         if on {
             self.publish();
@@ -1085,16 +1100,17 @@ impl Remote {
             if i.watching == on {
                 return;
             }
+            let before = i.browsing();
             i.watching = on;
-            let browse = on || i.discovering;
-            if !browse {
+            let browse = i.browsing();
+            if !i.watching && !i.discovering {
                 i.lan_generation += 1;
                 i.peers.iter_mut().for_each(|p| p.polling = false);
             }
-            (on && i.relay == RelaySupport::Unsupported, browse)
+            (on && i.relay == RelaySupport::Unsupported, (before != browse).then_some(browse))
         };
-        if let Some(d) = &self.discovery {
-            d.browse(browse);
+        if let (Some(d), Some(on)) = (&self.discovery, browse) {
+            d.browse(on);
         }
         if probe {
             self.probe();
@@ -1110,19 +1126,20 @@ impl Remote {
             if i.discovering == on {
                 return;
             }
+            let before = i.browsing();
             i.discovering = on;
             if on {
                 i.end_relay_poll();
             }
-            let browse = i.watching || on;
-            if !browse {
+            let browse = i.browsing();
+            if !i.watching && !i.discovering {
                 i.lan_generation += 1;
                 i.peers.iter_mut().for_each(|p| p.polling = false);
             }
-            browse
+            (before != browse).then_some(browse)
         };
-        if let Some(d) = &self.discovery {
-            d.browse(browse);
+        if let (Some(d), Some(on)) = (&self.discovery, browse) {
+            d.browse(on);
         }
         self.follow_active();
         self.keep_polling();
@@ -1130,15 +1147,20 @@ impl Remote {
 
     /// What shows the mirrored device here; [`Sight::Screen`] until said otherwise.
     pub fn sight(self: Arc<Self>, sight: Sight) {
-        {
+        let browse = {
             let mut i = self.inner.lock();
             if i.sight == sight {
                 return;
             }
+            let before = i.browsing();
             i.sight = sight;
-        }
+            (before != i.browsing()).then_some(i.browsing())
+        };
         if sight != Sight::Screen {
             self.clone().discover_active(false);
+        }
+        if let (Some(d), Some(on)) = (&self.discovery, browse) {
+            d.browse(on);
         }
         self.timing.notify_all();
         self.keep_polling();
@@ -1337,6 +1359,7 @@ impl Remote {
             let mut i = self.inner.lock();
             // Seen again, maybe at another of its addresses: its poller goes on, and tries that one too.
             if let Some(p) = i.peers.iter_mut().find(|p| p.service == service && p.member.id == id) {
+                p.library_marks = get("marks") == "1";
                 if !p.bases.contains(&base) {
                     p.bases.push(base);
                 }
@@ -1344,7 +1367,7 @@ impl Remote {
             }
             i.peers.retain(|p| p.service != service && p.member.id != id);
             let member = Member { id, name: get("name"), kind, state: None };
-            i.peers.push(Peer { service, bases: vec![base], failed: 0, member, received: clock::now_us(), since: None, polling: false });
+            i.peers.push(Peer { library_marks: get("marks") == "1", service, bases: vec![base], failed: 0, member, received: clock::now_us(), since: None, polling: false });
         }
         self.keep_polling();
     }
@@ -1978,9 +2001,38 @@ impl Remote {
         self.client.core.account.read().as_ref().map(|(user, secret)| lan::account_tag(user, secret))
     }
 
+    pub(crate) fn sync_mark(&self, kind: crate::client::Starrable, id: String) {
+        if !self.client.core.session.settings.current().is_some_and(|p| p.remote_control) {
+            return;
+        }
+        let on = {
+            let marks = self.client.core.stars.lock();
+            let map = match kind {
+                crate::client::Starrable::Song => &marks.songs,
+                crate::client::Starrable::Album => &marks.albums,
+                crate::client::Starrable::Artist => &marks.artists,
+            };
+            map.get(&id).copied()
+        };
+        let Some(on) = on else { return };
+        let (command, peers) = {
+            let mut i = self.inner.lock();
+            if i.stopped { return }
+            i.next_id += 1;
+            let peers: Vec<_> = i.peers.iter().filter(|p| p.library_marks)
+                .map(|p| (p.member.id.clone(), p.base())).collect();
+            (i.next_id, peers)
+        };
+        for (to, base) in peers {
+            let op = Op::LibraryMarks { marks: vec![wire::LibraryMark { kind, id: id.clone(), on }] };
+            self.out(Out::send(Link::Lan(base), Outgoing { to: Some(to), body: Some(Body::Command { id: command, op: Box::new(op) }), ..Default::default() }));
+        }
+    }
+
     fn announcement(&self, port: u16) -> Announcement {
         let mut txt = self.who();
         txt[0].0 = "id".into();
+        txt.push(("marks".into(), "1".into()));
         txt.push(("acct".into(), self.account_tag().unwrap_or_default()));
         Announcement { name: format!("nori-{}", self.id), port, txt: txt.into_iter().map(|(key, value)| Param { key, value }).collect() }
     }
@@ -2445,18 +2497,19 @@ impl Remote {
                 None
             };
             to.map(|id| {
+                let before = i.browsing();
                 i.mirror = Some(Mirrored::new(id));
                 i.discovering = false;
                 if !i.watching {
                     i.lan_generation += 1;
                     i.peers.iter_mut().for_each(|p| p.polling = false);
                 }
-                i.watching
+                (before != i.browsing()).then_some(i.browsing())
             })
         };
         if let Some(browse) = discovered {
-            if let Some(d) = &self.discovery {
-                d.browse(browse);
+            if let (Some(d), Some(on)) = (&self.discovery, browse) {
+                d.browse(on);
             }
             self.retime();
             self.keep_polling();
@@ -2502,6 +2555,31 @@ impl Remote {
     /// Carries out a command, received at `received` (this device's clock), and answers it.
     fn obey(self: &Arc<Self>, via: Via, from: String, id: u64, op: Op, received: i64) {
         let body = match op {
+            Op::LibraryMarks { marks } => {
+                let allowed = matches!(via, Via::Door) && !self.inner.lock().stopped
+                    && self.client.core.session.settings.current().is_some_and(|p| p.remote_control)
+                    && self.account_tag().is_some();
+                let refusal = if allowed {
+                    for mark in &marks {
+                        let (_, _, stale) = nori_net::requests::request(crate::client::Write::Star { kind: mark.kind, id: mark.id.clone(), on: mark.on });
+                        for prefix in stale {
+                            let _ = self.client.core.cache_evict((*prefix).into());
+                        }
+                    }
+                    {
+                        let mut stars = self.client.core.stars.lock();
+                        for mark in marks {
+                            stars.insert(mark.kind, mark.id, mark.on);
+                        }
+                    }
+                    self.shown.marks_changed();
+                    self.publish();
+                    None
+                } else {
+                    Some(Refusal::NotAllowed)
+                };
+                Body::Ack { id, refusal }
+            }
             Op::Clock { t1 } => Body::Clock { t1, t2: received, t3: clock::now_us() },
             Op::Page { from: turn, count } if !matches!(via, Via::Relay(Some(_))) => {
                 let q = self.read_queue(|_, len| turn as usize..(turn.saturating_add(count.min(PAGE_MAX)) as usize).min(len));
@@ -2815,6 +2893,7 @@ mod tests {
         impl RemotePlayer for Quiet { fn apply(&self, _: Op) {} }
         impl RemoteShown for Quiet {
             fn changed(&self) {}
+            fn marks_changed(&self) {}
             fn jam_ended(&self, _: Option<String>) {}
         }
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });

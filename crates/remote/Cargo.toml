@@ -10,7 +10,7 @@ name = "nori_remote"
 
 [features]
 # The uniffi records the Android app's Kotlin bindings are generated from.
-ffi = ["dep:uniffi", "nori-model/ffi"]
+ffi = ["dep:uniffi", "nori-model/ffi", "nori-net/ffi"]
 
 [dependencies]
 uniffi = { workspace = true, optional = true }
@@ -22,6 +22,7 @@ sha2 = "0.11"
 # The jam's invite as a QR code: the matrix only, each client draws it.
 qrcode = { version = "0.14", default-features = false }
 nori-model = { path = "../model" }
+nori-net = { path = "../net" }
 
 # The remote timing clock (clock.rs): CLOCK_BOOTTIME, which std does not read.
 [target.'cfg(unix)'.dependencies]

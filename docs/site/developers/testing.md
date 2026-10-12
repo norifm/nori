@@ -20,6 +20,8 @@ notification, audio focus, routing, JNI, the service and a force stop.
 | `tools/audio-e2e.sh` in full | every audio device check | 95 s on the arm64 emulator against the local server; 33 checks passed | the coordinator, once per batch, before a perf APK build |
 | `tools/feature-e2e.sh` in full | every feature device check | 216 s, 123 passing checks, hardware graphics and isolated local fixtures ([details](building.md#development-build-and-test-times)) | the coordinator, once per batch, before a perf APK build |
 
+`NORI_E2E_SERVER=local tools/library-sync-e2e.sh` checks incoming authenticated favorite changes on an Android emulator. It verifies that JNI callbacks update the visible heart and media session buttons; Rust tests cover the network protocol and favorite policy. The check temporarily roots the emulator to find its local listener and restores its previous adb state.
+
 Never `-j` above 4: the machine runs out of memory. For queued host checks, nextest,
 Bazel player targets and a pool of hardware-rendered emulators, see [Building](building.md#faster-development-checks).
 

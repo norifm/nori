@@ -138,7 +138,7 @@ impl RemotePlayer for HostPlayer {
             // The devices see it once the core has marked it.
             Op::Star { id, on } => return h.star(id, on),
             // The core keeps transfers, pages, time exchanges and jam ops to itself.
-            Op::Transfer { .. } | Op::Clear | Op::Page { .. } | Op::Clock { .. } | Op::Request { .. } | Op::Decide { .. } | Op::Promote { .. } | Op::Kick { .. } => {}
+            Op::Transfer { .. } | Op::Clear | Op::LibraryMarks { .. } | Op::Page { .. } | Op::Clock { .. } | Op::Request { .. } | Op::Decide { .. } | Op::Promote { .. } | Op::Kick { .. } => {}
         }
         h.remotes.played(&h.engine);
     }
@@ -153,6 +153,12 @@ pub(crate) struct Shown {
 }
 
 impl RemoteShown for Shown {
+    fn marks_changed(&self) {
+        if let Some(remote) = self.remotes.get() {
+            (self.out)(Said::Starred(remote.star_marks()));
+        }
+    }
+
     fn changed(&self) {
         let elsewhere = self.remotes.get().is_some_and(|r| r.active().is_some());
         if self.remotes.mirroring(elsewhere) {
@@ -565,6 +571,8 @@ mod tests {
     }
 
     impl RemoteShown for Nothing {
+    fn marks_changed(&self) {}
+
         fn changed(&self) {}
         fn jam_ended(&self, _: Option<String>) {}
     }
