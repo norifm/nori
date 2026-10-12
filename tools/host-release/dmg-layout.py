@@ -37,7 +37,6 @@ def build(stage, artifact):
         "icon_size": 128,
         "text_size": 16,
         "icon_locations": {"nori.app": (160, 170), "Applications": (480, 170)},
-        "hide_extensions": ["nori.app"],
         "show_toolbar": False,
         "show_sidebar": False,
         "show_status_bar": False,
