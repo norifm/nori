@@ -907,8 +907,11 @@ final class NowPlaying: NSObject {
             MPNowPlayingInfoPropertyPlaybackQueueIndex: max(0, now.index),
             MPNowPlayingInfoPropertyPlaybackQueueCount: now.length,
         ]
-        if artworkFor == song.cover, let artwork {
-            info[MPMediaItemPropertyArtwork] = artwork
+        if artworkFor == song.cover {
+            if artwork == nil, let image = CoverCache.any(song.cover) {
+                artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            }
+            if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
         } else if !song.cover.isEmpty {
             let id = song.cover
             artworkFor = id
@@ -916,6 +919,7 @@ final class NowPlaying: NSObject {
             // At the player card's own size, kept in the cache: the card then opens on its picture.
             let px = PlayerCard.coverPx
             _ = Core.shared.cover(id, px: px) { [weak self] image in
+                guard let image else { return }
                 CoverCache.put(image, id, px)
                 guard let self, self.artworkFor == id else { return }
                 self.artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }

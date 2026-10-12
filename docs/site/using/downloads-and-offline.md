@@ -23,7 +23,9 @@ opens the progress and retry controls.
 | Quality for downloads | Original (or MP3 320, or Opus 192, 128, 96 or 64, transcoded by the server) |
 | Downloads at once | 5 (1 to 10) |
 
-On the iPod touch, downloads run while the app is open or playing.
+On the iPod touch, downloads run while the app is open or playing. Downloaded album pages use
+the saved tracks, and cached covers decode without reaching the server. In 0.6.0-beta.3 and later,
+unavailable artwork finishes loading with a placeholder.
 
 ## The stream cache
 
