@@ -89,17 +89,17 @@ object Painter {
     /**
      * A "For you" tile as the Home page draws it (SmartScreens' MixArt): the mix's colour running to its
      * deeper one, its covers - four as a square of four - and the band rising under its name. [tile] is
-     * nori-core's `mix_tile_colours`.
+     * nori-core's `mix_tile_colours`. Missing pictures keep their places in the square.
      */
-    fun mix(covers: List<Bitmap>, tile: List<Int>, w: Int, h: Int, r: Float): Bitmap {
+    fun mix(covers: List<Bitmap?>, tile: List<Int>, w: Int, h: Int, r: Float): Bitmap {
         val (b, c) = canvas(w, h)
         round(c, w, h, r)
         c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = LinearGradient(0f, 0f, w.toFloat(), h.toFloat(), tile[0], tile[1], Shader.TileMode.CLAMP) })
         if (covers.size >= 4) {
             val hw = w / 2f
             val hh = h / 2f
-            for (i in 0..3) crop(c, covers[i], RectF((i % 2) * hw, (i / 2) * hh, (i % 2 + 1) * hw, (i / 2 + 1) * hh))
-        } else if (covers.isNotEmpty()) crop(c, covers[0], RectF(0f, 0f, w.toFloat(), h.toFloat()))
+            for (i in 0..3) covers[i]?.let { crop(c, it, RectF((i % 2) * hw, (i / 2) * hh, (i % 2 + 1) * hw, (i / 2 + 1) * hh)) }
+        } else covers.firstOrNull()?.let { crop(c, it, RectF(0f, 0f, w.toFloat(), h.toFloat())) }
         c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply {
             shader = LinearGradient(0f, 0f, 0f, h.toFloat(), intArrayOf(tile[2], tile[2], tile[3], tile[4]), floatArrayOf(0f, 0.38f, 0.72f, 1f), Shader.TileMode.CLAMP)
         })

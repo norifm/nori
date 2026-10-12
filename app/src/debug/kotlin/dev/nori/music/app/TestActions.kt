@@ -274,6 +274,31 @@ object TestActions {
         val arg = what.substringAfter(' ', "")
         try {
             when (verb) {
+                "art" -> {
+                    val ids = arg.split('|')
+                    require(ids.size == 4)
+                    val images = withContext(Dispatchers.IO) {
+                        listOf(ids, ids.take(3) + "nori-e2e-missing-cover").map { covers ->
+                            val uri = dev.nori.music.playback.CarArt.mosaic(context, "discover", covers)
+                            context.contentResolver.openInputStream(uri).use { android.graphics.BitmapFactory.decodeStream(it) }
+                                ?: error("the car's mosaic did not decode")
+                        }
+                    }
+                    try {
+                        val errors = listOf(0 to 0, 150 to 0, 0 to 150).map { (x, y) ->
+                            var difference = 0L
+                            for (dy in 50 until 100) for (dx in 50 until 100) {
+                                val a = images[0].getPixel(x + dx, y + dy)
+                                val b = images[1].getPixel(x + dx, y + dy)
+                                for (shift in listOf(0, 8, 16)) difference += kotlin.math.abs(((a shr shift) and 255) - ((b shr shift) and 255))
+                            }
+                            difference / 7500.0
+                        }
+                        log("mosaic errors=$errors kept=${errors.all { it < 3 }}")
+                    } finally {
+                        images.forEach { it.recycle() }
+                    }
+                }
                 "root" -> wait(browser.getLibraryRoot(params)).let { r -> log("root: code=${r.resultCode} error=${r.sessionError?.message}"); r.value?.let(::row) }
                 "tree" -> wait(browser.getChildren(arg, 0, 500, params)).let { r -> log("tree $arg: code=${r.resultCode} error=${r.sessionError?.message} rows=${r.value?.size}"); r.value?.forEach(::row) }
                 "search" -> {

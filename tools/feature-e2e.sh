@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="lyrics motion notification album-page bridge download-notification downloads foryou dac device-sound remote jam"
+SECTIONS="lyrics motion notification album-page bridge download-notification downloads car-art foryou dac device-sound remote jam"
 OPT_IN="lyrics-services scrobble download-albums"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -218,6 +218,25 @@ if want notification; then section "the notification's heart and shuffle"
   kept_bytes=$(adb shell "content read --uri '$art' | wc -c" | tr -d '\r ')
   drawn_still() { [ "${kept_bytes:-0}" -gt 1000 ] && [ "$(field coversDrawn)" = "$drawn" ]; }
   check "the cover opened again is read from the disk, not drawn again ($kept_bytes bytes)" drawn_still
+fi
+
+if want car-art; then section "the car's mosaic when a cover is unavailable"
+  covers=$(api getAlbumList2 "&type=newest&size=20" | python3 -c '
+import json,sys
+albums=json.load(sys.stdin)["subsonic-response"]["albumList2"].get("album",[])
+ids=list(dict.fromkeys(a["coverArt"] for a in albums if a.get("coverArt")))[:4]
+assert len(ids)==4, "four distinct fixture covers are needed"
+print("|".join(ids))')
+  art_log=$(mktemp)
+  before=$(adb logcat -d -v brief -s noricar:I | wc -l | tr -d ' ')
+  "$app" do "car art $covers" >/dev/null
+  car_art_done() {
+    adb logcat -d -v brief -s noricar:I | tail -n "+$((before + 1))" > "$art_log"
+    grep -Fq "done art $covers" "$art_log"
+  }
+  check "the artwork provider's pictures decode" wait_until 20 car_art_done
+  check "a missing cover keeps the other three in their quadrants" grep -Fq "kept=true" "$art_log"
+  rm -f "$art_log"
 fi
 
 if want album-page; then section "the album page answers for its own queue"
