@@ -26,7 +26,8 @@ void nori_ios_free(char *s);
 /// 9 note, 10 reachable, 11 lyrics, 12 search, 13 title, 14 mixing, 15 bridge, 16 placed, 17 awake,
 /// 18 remote (the devices, the one playing or the jam changed), 19 volume (another device set it: `ms`
 /// thousandths), 20 jam joined, 21 jam left (`nori_ios_jam_join`, `nori_ios_jam_leave`; `index` 1: the jam
-/// ended, `text` its host's name if known).
+/// ended, `text` its host's name if known), 22 output curve, 23 favorites (`text`: JSON maps
+/// keyed by song, album and artist, each containing item ids and their starred state).
 /// `state`: 0 idle, 1 playing, 2 paused, 3 ended.
 typedef struct NoriReport {
     int32_t kind;
@@ -80,6 +81,8 @@ void nori_ios_move(int32_t from, int32_t to);
 
 /// Saves the queue now (the app left the foreground). Does not push it.
 void nori_ios_background(void);
+/// The app entered the foreground: restores discovery and the remote player clock.
+void nori_ios_foreground(void);
 
 /// Drops decoded covers.
 void nori_ios_memory_warning(void);

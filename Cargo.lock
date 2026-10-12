@@ -3995,6 +3995,7 @@ dependencies = [
  "nori-model",
  "parking_lot",
  "rusqlite",
+ "serde",
  "uniffi",
 ]
 
@@ -4061,6 +4062,7 @@ version = "0.6.0-beta.3"
 dependencies = [
  "libc",
  "nori-model",
+ "nori-net",
  "parking_lot",
  "qrcode",
  "serde",

@@ -130,6 +130,14 @@ class Remotes(private val context: Context, private val nori: Nori) {
     }
 
     private val shown = object : RemoteShown {
+        override fun marksChanged() {
+            work {
+                val r = remote ?: return@work
+                val marks = r.starMarks()
+                main.post { if (remote === r) nori.library.applyMarks(marks) }
+            }
+        }
+
         override fun changed() {
             _changes.update { it + 1 }
             work { mirrorNow(); jamNow() }

@@ -42,9 +42,14 @@ impl StarMarks {
         }
     }
 
+    /// Applies a mark received from another device.
+    pub fn insert(&mut self, kind: Starrable, id: String, on: bool) -> Option<bool> {
+        self.of_mut(kind).insert(id, on)
+    }
+
     /// A heart pressed: marked at once, before the server is asked.
     pub fn mark(&mut self, kind: Starrable, id: String, on: bool) -> StarMarked {
-        let previous = self.of_mut(kind).insert(id, on);
+        let previous = self.insert(kind, id, on);
         StarMarked { previous, marks: self.clone() }
     }
 
