@@ -1202,13 +1202,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a GPU; run with --ignored"]
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     fn layer_pixels_survive_first_sampling_and_redraw() {
         slint::slint! {
             export component TestWindow inherits Window {
                 in-out property <color> colour;
+                in-out property <image> picture;
                 background: colour;
+                Image { width: 32px; height: 32px; source: root.picture; }
             }
         }
         struct TestPlatform(Rc<Layer>);
@@ -1239,10 +1240,22 @@ mod tests {
         let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("layer pixels"), size: 64 * 256, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
         });
-        for (fresh, colour, expected) in [
-            (true, slint::Color::from_rgb_u8(18, 52, 86), [86, 52, 18, 255]),
-            (false, slint::Color::from_rgb_u8(171, 205, 239), [239, 205, 171, 255]),
-        ] {
+        let cover = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("test cover"), size: wgpu::Extent3d { width: 32, height: 32, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(cover.as_image_copy(), &[27, 91, 173, 255].repeat(32 * 32),
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(128), rows_per_image: Some(32) }, cover.size());
+        ui.set_picture(slint::Image::try_from(cover).unwrap());
+        for frame in 0..64 {
+            let fresh = frame == 0;
+            let (colour, expected) = if frame % 2 == 0 {
+                (slint::Color::from_rgb_u8(18, 52, 86), [86, 52, 18, 255])
+            } else {
+                (slint::Color::from_rgb_u8(171, 205, 239), [239, 205, 171, 255])
+            };
             ui.set_colour(colour);
             prepare_layer(&gpu, &target, fresh);
             layer.renderer.render_to_texture(&target).unwrap();
@@ -1257,7 +1270,10 @@ mod tests {
             rx.recv().unwrap().unwrap();
             {
                 let pixels = buffer.slice(..).get_mapped_range().unwrap();
-                for pixel in pixels.as_chunks::<4>().0 { assert_eq!(*pixel, expected, "layer pixels must survive wgpu's first read and subsequent redraws"); }
+                for (index, pixel) in pixels.as_chunks::<4>().0.iter().enumerate() {
+                    let expected = if index % 64 < 32 && index / 64 < 32 { [173, 91, 27, 255] } else { expected };
+                    assert_eq!(*pixel, expected, "cover and layer pixels on frame {frame}");
+                }
             }
             buffer.unmap();
         }
