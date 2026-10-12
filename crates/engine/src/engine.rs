@@ -278,6 +278,7 @@ enum Command {
     Output(OutputFacts),
     Replan,
     QueueChanged,
+    Refilled(u64),
     Repeat(u8),
     Gain,
     Shallow(bool),
@@ -502,6 +503,11 @@ impl Engine {
 
     pub fn queue_changed(&self) {
         self.send(Command::QueueChanged);
+    }
+
+    /// Continues an exhausted queue after autoplay appended songs, while its last entry still owns it.
+    pub fn resume_after_refill(&self, entry: u64) {
+        self.send(Command::Refilled(entry));
     }
 
     /// Repeat off, one or all (`nori_player::playlist::REPEAT_*`).
@@ -1359,6 +1365,17 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.follow_queue();
                 // Another song may follow now.
                 self.replan();
+            }
+            Command::Refilled(entry) => {
+                let continues = self.state == State::Ended && self.p.queue.read(|q| {
+                    q.current().and_then(|at| q.seqs().get(at)).copied() == Some(entry)
+                        && q.repeat() == nori_player::playlist::REPEAT_OFF && q.next().is_some()
+                });
+                if continues {
+                    self.jumps += 1;
+                    self.hold(Switched::Next);
+                    self.play();
+                }
             }
             Command::Repeat(m) => {
                 self.p.set_repeat(m);
