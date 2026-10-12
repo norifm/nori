@@ -54,6 +54,50 @@ struct Gpu {
     queue: wgpu::Queue,
 }
 
+#[cfg(not(target_os = "linux"))]
+impl Gpu {
+    /// Uploads decoded pixels once; Slint keeps the texture instead of CPU raster copies.
+    fn picture(&self, pixels: &[u8], width: u32, height: u32) -> slint::Image {
+        let texture = self.image_texture(width, height);
+        self.queue.write_texture(
+            texture.as_image_copy(), pixels,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(width * 4), rows_per_image: Some(height) },
+            texture.size(),
+        );
+        slint::Image::try_from(texture).expect("RGBA texture with render and sampling usages")
+    }
+
+    fn image_texture(&self, width: u32, height: u32) -> wgpu::Texture {
+        self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cover"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    }
+
+    /// Card covers are decoded to equal squares; copy their pixels into one seamless image.
+    fn mosaic(&self, images: &[slint::Image]) -> Option<slint::Image> {
+        if images.len() != 4 { return None; }
+        let textures: Vec<_> = images.iter().map(slint::Image::to_wgpu_30_texture).collect::<Option<_>>()?;
+        let size = textures[0].size();
+        if size.width != size.height || textures.iter().any(|t| t.size() != size) { return None; }
+        let target = self.image_texture(size.width * 2, size.height * 2);
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pick covers") });
+        for (i, texture) in textures.iter().enumerate() {
+            let mut destination = target.as_image_copy();
+            destination.origin = wgpu::Origin3d { x: (i as u32 % 2) * size.width, y: (i as u32 / 2) * size.height, z: 0 };
+            encoder.copy_texture_to_texture(texture.as_image_copy(), destination, size);
+        }
+        self.queue.submit([encoder.finish()]);
+        Some(slint::Image::try_from(target).expect("RGBA texture with render and sampling usages"))
+    }
+
+}
+
 /// A Slint window rendered into its own texture.
 struct Layer {
     window: slint::Window,
@@ -293,47 +337,14 @@ impl Compositor {
     #[cfg(target_os = "linux")]
     pub fn on_mosaics_ready(&self, callback: impl Fn() + 'static) { self.0.gpu.on_mosaics_ready(callback); }
 
-    /// Uploads decoded pixels once; Slint keeps the texture instead of CPU raster copies.
     #[cfg(not(target_os = "linux"))]
     pub fn picture(&self, pixels: &[u8], width: u32, height: u32) -> slint::Image {
-        let texture = self.image_texture(width, height);
-        self.0.gpu.queue.write_texture(
-            texture.as_image_copy(), pixels,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(width * 4), rows_per_image: Some(height) },
-            texture.size(),
-        );
-        slint::Image::try_from(texture).expect("RGBA texture with render and sampling usages")
+        self.0.gpu.picture(pixels, width, height)
     }
 
-    #[cfg(not(target_os = "linux"))]
-    fn image_texture(&self, width: u32, height: u32) -> wgpu::Texture {
-        self.0.gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("cover"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        })
-    }
-
-    /// Card covers are decoded to equal squares; copy their pixels into one seamless image.
     #[cfg(not(target_os = "linux"))]
     pub fn mosaic(&self, images: &[slint::Image]) -> Option<slint::Image> {
-        if images.len() != 4 { return None; }
-        let textures: Vec<_> = images.iter().map(slint::Image::to_wgpu_30_texture).collect::<Option<_>>()?;
-        let size = textures[0].size();
-        if size.width != size.height || textures.iter().any(|t| t.size() != size) { return None; }
-        let target = self.image_texture(size.width * 2, size.height * 2);
-        let mut encoder = self.0.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("pick covers") });
-        for (i, texture) in textures.iter().enumerate() {
-            let mut destination = target.as_image_copy();
-            destination.origin = wgpu::Origin3d { x: (i as u32 % 2) * size.width, y: (i as u32 / 2) * size.height, z: 0 };
-            encoder.copy_texture_to_texture(texture.as_image_copy(), destination, size);
-        }
-        self.0.gpu.queue.submit([encoder.finish()]);
-        Some(slint::Image::try_from(target).expect("RGBA texture with render and sampling usages"))
+        self.0.gpu.mosaic(images)
     }
 
     /// Assigns each Slint window its layer role.
@@ -1199,6 +1210,105 @@ mod tests {
         i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
         slint::platform::update_timers_and_animations();
         assert!((ui.get_scroll_y() + 120.0).abs() < 0.1, "successive notches keep their full distance");
+    }
+
+    slint::slint! {
+        export component CoverWindow inherits Window {
+            width: 256px; height: 256px;
+            in-out property <int> revision;
+            pure callback cover(int, int) -> image;
+            for tile in 16: Rectangle {
+                x: mod(tile, 4) * 64px; y: floor(tile / 4) * 64px;
+                width: 64px; height: 64px;
+                border-radius: 6px; clip: true;
+                Image {
+                    width: 64px; height: 64px;
+                    source: root.cover(tile, root.revision);
+                }
+                Text { x: 0px; y: 48px; height: 16px; text: "Cover"; color: white; }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn cover_pixels_survive_async_layers_and_mosaics() {
+        struct TestPlatform { gpu: Rc<Gpu>, layers: Rc<RefCell<Vec<Rc<Layer>>>> }
+        impl slint::platform::Platform for TestPlatform {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, PlatformError> {
+                let gpu = &self.gpu;
+                let renderer = SkiaWGPU30Renderer::new(gpu.instance.clone(), gpu.adapter.clone(), gpu.device.clone(), gpu.queue.clone())?;
+                renderer.set_resource_cache_limit(16 * 1024 * 1024);
+                let layer = Rc::new_cyclic(|me: &Weak<Layer>| Layer {
+                    window: slint::Window::new(me.clone() as Weak<dyn WindowAdapter>), renderer,
+                    size: Cell::new(PhysicalSize::new(256, 256)), dirty: Cell::new(true),
+                    texture: RefCell::new(None), shared: Weak::new(),
+                });
+                self.layers.borrow_mut().push(layer.clone());
+                Ok(layer)
+            }
+        }
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.flags.remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
+        let instance = wgpu::Instance::new(descriptor);
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions { power_preference: wgpu::PowerPreference::LowPower, ..Default::default() })).unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { memory_hints: wgpu::MemoryHints::MemoryUsage, ..Default::default() })).unwrap();
+        let gpu = Rc::new(Gpu { instance, adapter, device, queue });
+        let layers = Rc::new(RefCell::new(Vec::new()));
+        slint::platform::set_platform(Box::new(TestPlatform { gpu: gpu.clone(), layers: layers.clone() })).unwrap();
+        use slint::ComponentHandle;
+        let cover = gpu.picture(&[27, 91, 173, 255].repeat(256 * 256), 256, 256);
+        let windows: Vec<_> = (0..3).map(|_| {
+            let ui = CoverWindow::new().unwrap();
+            let (gpu, cover) = (gpu.clone(), cover.clone());
+            ui.on_cover(move |tile, _| if tile % 2 == 0 { cover.clone() } else { gpu.mosaic(&vec![cover.clone(); 4]).unwrap() });
+            ui.show().unwrap();
+            ui
+        }).collect();
+        let targets: Vec<_> = (0..3).map(|_| gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cover layer"), size: wgpu::Extent3d { width: 256, height: 256, depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[],
+        })).collect();
+        let frame_bytes = 256 * 1024;
+        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("async cover frames"), size: frame_bytes * 3 * 32,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false,
+        });
+        for frame in 0..32 {
+            for (index, ui) in windows.iter().enumerate() {
+                ui.set_revision(frame);
+                let target = &targets[index];
+                prepare_layer(&gpu, target, frame == 0);
+                layers.borrow()[index].renderer.render_to_texture(target).unwrap();
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                encoder.copy_texture_to_buffer(target.as_image_copy(), wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer, layout: wgpu::TexelCopyBufferLayout {
+                        offset: (frame as u64 * 3 + index as u64) * frame_bytes,
+                        bytes_per_row: Some(1024), rows_per_image: Some(256),
+                    },
+                }, target.size());
+                gpu.queue.submit([encoder.finish()]);
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| tx.send(result).unwrap());
+        gpu.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        let pixels = buffer.slice(..).get_mapped_range().unwrap();
+        let pixels = pixels.as_chunks::<4>().0;
+        for frame in 0..32 {
+            for layer in 0..3 {
+                for tile in 0..16 {
+                    for y in 8..40 {
+                        for x in 8..56 {
+                            let index = (frame * 3 + layer) * 256 * 256 + (tile / 4 * 64 + y) * 256 + tile % 4 * 64 + x;
+                            assert_eq!(pixels[index], [173, 91, 27, 255], "frame {frame}, layer {layer}, cover {tile} at {x},{y}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

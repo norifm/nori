@@ -2136,6 +2136,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sidebar_loads_visible_covers() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = SidebarWindow::new().unwrap();
+        ui.window().set_size(slint::PhysicalSize::new(216, 820));
+        ui.set_side_playlists(ModelRc::new(VecModel::from((0..500).map(|i| Card {
+            id: i.to_string().into(), art: i.to_string().into(), title: format!("Playlist {i}").into(), ..Default::default()
+        }).collect::<Vec<_>>())));
+        let requested = Rc::new(RefCell::new(HashSet::new()));
+        let seen = requested.clone();
+        let art = Rc::new(RefCell::new(Art::default()));
+        let cache = art.clone();
+        ui.on_art(move |id, size, _| {
+            seen.borrow_mut().insert(id.to_string());
+            cover_image(&cache, &AppHandle(Weak::new()), id, size)
+        });
+        ui.show().unwrap();
+        ui.window().take_snapshot().unwrap();
+        ui.set_covers_rev(1);
+        ui.window().take_snapshot().unwrap();
+        assert!(requested.borrow().contains("0"), "the first playlist cover is visible");
+        assert!(!requested.borrow().contains("499"), "offscreen covers must not displace visible covers");
+        let pending: Vec<_> = art.borrow_mut().wanted.drain(..).collect();
+        let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(SMALL_PX, SMALL_PX);
+        pixels.make_mut_slice().fill(Rgba8Pixel { r: 27, g: 91, b: 173, a: 255 });
+        let image = Image::from_rgba8(pixels);
+        for key in pending {
+            art.borrow_mut().insert(key, image.clone(), None, Instant::now());
+        }
+        ui.set_covers_rev(2);
+        let ready = ui.window().take_snapshot().unwrap();
+        ui.set_covers_rev(3);
+        let still = ui.window().take_snapshot().unwrap();
+        assert!(art.borrow().wanted.is_empty(), "visible covers must remain cached across redraws");
+        assert_eq!(ready.as_slice(), still.as_slice(), "an unchanged sidebar keeps its cover pixels");
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(100.0, 400.0), delta_x: 0.0, delta_y: -30_000.0,
+        });
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        ui.window().take_snapshot().unwrap();
+        assert!(requested.borrow().contains("499"), "scrolling to the bottom loads its covers");
+    }
+
+    #[test]
     fn cover_bursts_keep_the_cache_bounded() {
         let now = Instant::now();
         for size in [CoverSize::Card, CoverSize::Large, CoverSize::Hero] {
