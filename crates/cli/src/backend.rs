@@ -329,7 +329,9 @@ impl Session {
     fn cover_as(&self, id: String, art: String, size: u32, colours: bool) -> Option<nori_covers::loader::Ticket> {
         let (tx, me) = (self.tx.clone(), self.id);
         self.host.cover(id, size, colours, move |image, colours| {
-            let _ = tx.send(Msg::From(me, Box::new(Msg::Cover { art, image, colours })));
+            if let Ok(image) = image {
+                let _ = tx.send(Msg::From(me, Box::new(Msg::Cover { art, image, colours })));
+            }
         })
     }
 
