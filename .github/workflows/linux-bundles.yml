@@ -21,7 +21,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y flatpak libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev librsvg2-bin imagemagick
+      - run: sudo apt-get update && sudo apt-get install -y flatpak libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev librsvg2-bin imagemagick pulseaudio
       - name: Download released binaries
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,7 +50,9 @@ jobs:
       - name: Build and verify bundles
         env:
           RELEASE: ${{ inputs.release }}
-        run: dbus-run-session -- python3 tools/host-release/linux.py --binaries binaries --version "${RELEASE#v}" --output packages
+        run: |
+          pulseaudio --start
+          dbus-run-session -- python3 tools/host-release/linux.py --binaries binaries --version "${RELEASE#v}" --output packages
       - uses: actions/upload-artifact@v7
         with:
           name: bundles-${{ matrix.arch }}

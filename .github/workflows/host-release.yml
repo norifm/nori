@@ -37,7 +37,7 @@ jobs:
           path: release-tooling
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev dpkg-dev flatpak librsvg2-bin imagemagick
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev dpkg-dev flatpak librsvg2-bin imagemagick pulseaudio
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
       - name: Test clients
@@ -48,7 +48,9 @@ jobs:
         run: python3 release-tooling/tools/host-release/package.py --binaries "$PWD/target/release" --version "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" --output build/host-release
       - name: Package AppImage and Flatpak
         if: runner.os == 'Linux'
-        run: dbus-run-session -- python3 release-tooling/tools/host-release/linux.py --binaries "$PWD/target/release" --version "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" --output build/host-release
+        run: |
+          pulseaudio --start
+          dbus-run-session -- python3 release-tooling/tools/host-release/linux.py --binaries "$PWD/target/release" --version "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" --output build/host-release
       - name: Verify packages
         run: python3 release-tooling/tools/host-release/check.py build/host-release
       - uses: actions/upload-artifact@v7
