@@ -859,3 +859,8 @@ under `build/host-release/host-<runner>/`, with a checksum file per platform. `t
 also packages locally built native binaries. Debian dependencies come from `dpkg-shlibdeps` on
 Debian/Ubuntu; Arch native builds produce archives, not Debian packages. macOS bundles are ad-hoc
 signed, without Apple notarization. Windows builds are outside this release workflow.
+
+Linux release builders also produce desktop AppImage and Flatpak bundles for x86-64 and ARM64.
+The Flatpak includes `nori-cli` and uses the Freedesktop 25.08 runtime. Both bundles are checked
+by running their clients before upload. The Backfill Linux bundles workflow can add these formats
+to an existing release using its checksum-verified native binaries, without rebuilding Rust.

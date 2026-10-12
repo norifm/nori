@@ -24,7 +24,12 @@ Releases include desktop and terminal packages for Linux and macOS, on x86-64 an
 Choose `nori-desktop` for the window or `nori-cli` for the terminal. Official Linux builds
 use Ubuntu 22.04 and need glibc 2.35 or later. Linux `.deb` packages install with
 `sudo apt install ./nori-desktop_<version>_<architecture>.deb` (or the CLI package). Extract a
-Linux archive and run its binary on other distributions. On macOS, extract the desktop archive and
+Linux archive and run its binary on other distributions. For AppImage, download the desktop
+`.AppImage` for your processor, make it executable with `chmod +x`, and open it.
+For Flatpak, install the desktop `.flatpak` with `flatpak install --user ./nori-desktop-<version>-linux-<architecture>.flatpak`
+and run `flatpak run dev.nori.desktop`. The bundle also includes the terminal client:
+`flatpak run --command=nori-cli dev.nori.desktop`. Flatpak installs its Freedesktop runtime
+from Flathub and keeps its data inside the app sandbox. On macOS, extract the desktop archive and
 move `nori.app` into Applications; the CLI archive contains `nori-cli`, which you can place on your PATH.
 macOS bundles are ad-hoc signed; approve the downloaded app in Privacy & Security when macOS asks.
 
