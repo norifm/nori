@@ -3,7 +3,7 @@
 import argparse
 import hashlib
 import platform
-import plistlib
+import os
 import shutil
 import subprocess
 import tarfile
@@ -24,27 +24,8 @@ def package(binaries, output, version, system, arch):
             stage.mkdir()
             binary = binaries / f"nori-{client}"
             if system == "macos" and client == "desktop":
-                contents = stage / "nori.app/Contents"
-                (contents / "MacOS").mkdir(parents=True)
-                shutil.copy2(binary, contents / "MacOS/nori-desktop")
-                resources = contents / "Resources"
-                resources.mkdir()
-                iconset = resources / "nori.iconset"
-                iconset.mkdir()
-                for size in (16, 32, 128, 256, 512):
-                    for scale in (1, 2):
-                        filename = f"icon_{size}x{size}{'@2x' if scale == 2 else ''}.png"
-                        subprocess.run(["sips", "-z", str(size * scale), str(size * scale),
-                                        str(ROOT / "app/src/main/res/drawable-xxxhdpi/nori_mark.png"),
-                                        "--out", str(iconset / filename)], check=True, stdout=subprocess.DEVNULL)
-                subprocess.run(["iconutil", "-c", "icns", "-o", str(resources / "nori.icns"), str(iconset)], check=True)
-                shutil.rmtree(iconset)
-                with (contents / "Info.plist").open("wb") as f:
-                    plistlib.dump({"CFBundleExecutable": "nori-desktop", "CFBundleIdentifier": "dev.nori.music.desktop",
-                                   "CFBundleName": "nori", "CFBundleIconFile": "nori.icns", "CFBundlePackageType": "APPL",
-                                   "CFBundleShortVersionString": version.split("-")[0], "CFBundleVersion": version.replace("-beta.", "b"),
-                                   "NSHighResolutionCapable": True}, f)
-                subprocess.run(["codesign", "--force", "--sign", "-", str(contents.parent)], check=True)
+                env = dict(os.environ, NORI_APP_DIR=str(stage), NORI_DESKTOP_BINARY=str(binary.resolve()), NORI_VERSION=version)
+                subprocess.run([str(ROOT / "tools/desktop-app.sh"), "--no-build"], env=env, check=True)
             else:
                 shutil.copy2(binary, stage / binary.name)
                 if system == "macos":
