@@ -1209,7 +1209,7 @@ mod tests {
                 in-out property <color> colour;
                 in-out property <image> picture;
                 background: colour;
-                Image { width: 32px; height: 32px; source: root.picture; }
+                Image { x: 0px; y: 0px; width: 32px; height: 32px; source: root.picture; }
             }
         }
         struct TestPlatform(Rc<Layer>);
