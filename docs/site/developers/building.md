@@ -858,7 +858,9 @@ The workflow uses its current packaging tools with the requested source revision
 under `build/host-release/host-<runner>/`, with a checksum file per platform. `tools/host-release/package.py`
 also packages locally built native binaries. Debian dependencies come from `dpkg-shlibdeps` on
 Debian/Ubuntu; Arch native builds produce archives, not Debian packages. macOS bundles are ad-hoc
-signed, without Apple notarization. Windows builds are outside this release workflow.
+signed, without Apple notarization. Desktop builds use a `.dmg` with an Applications shortcut;
+the terminal uses an archive. The Backfill macOS disk images workflow adds verified DMGs to
+an existing release from its desktop archives. Windows builds are outside this release workflow.
 
 Linux release builders also produce desktop AppImage and Flatpak bundles for x86-64 and ARM64.
 The Flatpak includes `nori-cli` and uses the Freedesktop 25.08 runtime. Both bundles are checked
