@@ -2729,7 +2729,7 @@ private fun Queue(vm: PlayerViewModel) {
         val edits = !state.jamGuest
         Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
             Caption(remember { say.queue }, Modifier.padding(top = 4.dp, bottom = 8.dp))
-            if (edits) Row(Modifier, Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
+            if (state.offersReorder) Row(Modifier, Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
                 val shuffleOn = state.shuffle
                 val repeatOn = state.repeat != Repeat.OFF
                 IconButton(vm::toggleShuffle, Modifier.size(44.dp)) {

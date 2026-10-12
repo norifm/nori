@@ -913,7 +913,6 @@ fn terminal_replies() {
     }
 }
 
-
 fn device(id: &str, name: &str, kind: nori_core::remote::wire::DeviceKind, playing: Option<&str>) -> nori_core::remote::RemoteDevice {
     use nori_core::remote::wire::{DeviceState, Entry};
     let state = playing.map(|title| DeviceState { playing: true, index: Some(0), entries: vec![Entry { title: title.into(), artist: "Artist".into(), ..Default::default() }], ..Default::default() });
@@ -1276,7 +1275,9 @@ fn a_guests_controls_go_by_its_role() {
     use nori_core::remote::{Controls, JamControls};
     let mut a = guest();
     a.go(View::Songs);
-    a.devices.controls = Some(JamControls { controls: Controls::of(Role::Guest, true), playing: false, paused_here: true });
+    a.devices.controls = Some(JamControls { controls: Controls::of(Role::Guest, true),
+        asks: true,
+        playing: false, paused_here: true });
     let s = draw(&mut a, 160, 30);
     dump("guest-paused-here", &s);
     assert!(s.contains(" ▶ ") && !s.contains('⏮') && !s.contains('⤮') && s.contains(crate::text::JAM_PAUSED_HERE), "play only, and paused here:\n{s}");
@@ -1286,7 +1287,8 @@ fn a_guests_controls_go_by_its_role() {
     }
     assert_eq!(a.cmds, [Cmd::Toggle], "its play, not a skip");
 
-    a.devices.controls = Some(JamControls { controls: Controls::of(Role::Admin, true), playing: true, paused_here: false });
+    a.devices.controls = Some(JamControls { controls: Controls::of(Role::Admin, true),
+        asks: false, playing: true, paused_here: false });
     let s = draw(&mut a, 160, 30);
     assert!(s.contains('⏮') && s.contains('⏭') && !s.contains('⤮') && s.contains("◉ Jam · Desk"), "the host's skips:\n{s}");
     a.cmds.clear();

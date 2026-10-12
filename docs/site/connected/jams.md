@@ -21,7 +21,7 @@ network, and a public address in the server settings lets guests join from elsew
 | Role | Can |
 |---|---|
 | Host | play, accept or refuse requests, make a guest an admin, remove anyone |
-| Admin | add songs straight to the queue |
+| Admin | play songs, pause, skip, seek, rearrange the queue, add songs directly, accept or refuse requests |
 | Guest | ask for songs; each guest may have five requests waiting at once |
 
 A song a guest asks for waits under **Asked for** until the host or an admin accepts it. Provider songs
@@ -33,5 +33,8 @@ the host must enable it before guests or admins can request songs from external 
 With **Let guests listen along** on (the default), guests can play the jam's music on their own devices,
 in step with the host, its speed, skipped silence and transitions included. Change it in the room settings next to **Invite**. These settings apply only to the current room.
 In the terminal, press s in the invite to open room settings.
+
+In current 0.6 development builds, an admin's tap on a song plays it immediately. **Play next** and **Add to queue**
+add it directly, without an approval request. Guests still request songs from the host.
 
 In the terminal, `i` starts a jam around the selected item and `o` joins one from its link.

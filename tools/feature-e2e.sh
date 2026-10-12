@@ -818,6 +818,17 @@ print(json.dumps({k:s.get(k) for k in ['id','title','artist','album','albumId','
     "$app" do next >/dev/null
     check "its skip is the host's" wait_until 15 grep -q "obeyed: next" "$guests/admin-host.log"
     check "and here it plays the host's next song" wait_for title "Long Track 05" 20
+    "$app" open "album/$far" >/dev/null
+    wait_until 15 on_screen 'text="Far Song Two"'
+    tapnode text "Far Song Two"
+    check "an admin's song tap directly plays on the host" wait_until 15 grep -q "obeyed: replace" "$guests/admin-host.log"
+    check "the admin sees the new song" wait_for title "Far Song Two" 15
+    check "the admin's tap sends no approval request" bash -c '! grep -q "asked:" "$1"' _ "$guests/admin-host.log"
+    "$app" open queue >/dev/null
+    "$app" do "enqueue search:Long Track 04" >/dev/null
+    check "an admin's queue addition goes straight to the host" wait_until 15 grep -q "obeyed: add" "$guests/admin-host.log"
+    check "the admin sees the updated queue" wait_for queue 4 15
+    check "the admin sees the queue confirmation" wait_until 5 on_screen 'text="Added to queue"'
     tapnode text Leave
     check "leaving returns to the home server" wait_for server "$APP_URL" 20
     kill $host 2>/dev/null
