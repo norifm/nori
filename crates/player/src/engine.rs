@@ -168,6 +168,13 @@ enum Phase {
     Mix,
 }
 
+#[derive(Default)]
+enum Landing {
+    #[default]
+    None,
+    Track,
+    Mix(i64),
+}
 /// A queued piece of output.
 struct Chunk {
     data: Vec<u8>,
@@ -204,7 +211,7 @@ pub struct TransitionEngine {
     /// Flushed and nothing has flowed since: the next configure is the stream about to play.
     fresh: bool,
     /// Flushed and no buffer has passed since: the next one is where a seek or a remake landed.
-    landing: bool,
+    landing: Landing,
     /// A discontinuity without a mix and nothing flowed since: the next new stream is the one about to
     /// flow (media3 announces a stream with its first buffer, after the discontinuity).
     awaiting_stream: bool,
@@ -339,7 +346,7 @@ impl TransitionEngine {
             current_id: None,
             playing_id: None,
             fresh: false,
-            landing: false,
+            landing: Landing::None,
             awaiting_stream: false,
             offset_us: 0,
             phase: Phase::Pass,
@@ -713,7 +720,12 @@ impl TransitionEngine {
         if self.playing_id.is_none() {
             self.playing_id = self.current_id.clone();
         }
-        let landed = std::mem::take(&mut self.landing);
+        let landing = std::mem::take(&mut self.landing);
+        let landed = !matches!(landing, Landing::None);
+        let mix_phase = match landing {
+            Landing::Mix(us) => Some(us),
+            _ => None,
+        };
         let mut p = self.refresh_plan(host);
         if p.is_none() && self.playing_id != self.current_id {
             // A stale playing id (rapid skips): trust the decoder's id; costs one replan.
@@ -723,7 +735,10 @@ impl TransitionEngine {
         let track_pos = pts_us - self.offset_us;
         let fb = out.frame_bytes();
         let frames = (buf.len() / fb) as i64;
-        let start_frame = p.map_or(i64::MAX, |(start_us, _)| (start_us - track_pos) * out.rate as i64 / 1_000_000);
+        let start_frame = p.map_or(i64::MAX, |(start_us, _)| {
+            let frames = (start_us - track_pos) * out.rate as i64 ;
+            (frames + if frames >= 0 { 500_000 } else { -500_000 }) / 1_000_000
+        });
         // Past the start but inside the transition (a seek): hold what is left. Past its end: nothing to hold.
         let skip_transition = p.is_some_and(|(_, duration_us)| start_frame < -duration_us * out.rate as i64 / 1_000_000);
         if start_frame >= frames || skip_transition {
@@ -744,12 +759,14 @@ impl TransitionEngine {
             let head = self.copy_of(&buf[..before]);
             self.enqueue(head, pts_us, Some(self.offset_us), gain);
         }
-        self.late_us = if late { -start_frame * 1_000_000 / out.rate as i64 } else { 0 };
+        self.late_us = mix_phase.unwrap_or_else(|| {
+            if late { -start_frame * 1_000_000 / out.rate as i64 } else { 0 }
+        });
         self.begin_hold(&p, out);
         if late {
             host.log(&format!("transition: late hold, {} ms in", self.late_us / 1000));
         }
-        let held_from = pts_us + (before / fb) as i64 * 1_000_000 / out.rate as i64;
+        let held_from = pts_us + (before / fb) as i64 * 1_000_000 / out.rate as i64 + mix_phase.unwrap_or(0);
         self.held_from_us = Some(held_from);
         self.heard.audible_us = held_from - self.held_offset_us + self.takeover_us;
         self.held_at = host.now_ms();
@@ -921,7 +938,7 @@ impl TransitionEngine {
                 m.configure(&p.mixer);
                 // A late hold starts the mix curves that far in.
                 if late > 0 {
-                    m.seek((late * out.rate as i64 / 1_000_000) as u64);
+                    m.seek(((late * out.rate as i64  + 500_000) / 1_000_000) as u64);
                 }
                 self.skip_left = 0;
                 self.enter_incoming(&p, late);
@@ -934,8 +951,12 @@ impl TransitionEngine {
                 // The hold goes out as the mix now; the position already reported stands.
                 self.held_us = 0;
                 self.tail_read = 0;
-                self.mix_out_frame = 0;
-                self.mix_out_frames = ((p.duration_us - late) * out.rate as i64 / 1_000_000).max(0) as usize;
+                self.mix_out_frame = if p.out_loop_us > 0 {
+                    ((late * out.rate as i64 + 500_000) / 1_000_000) as usize
+                } else {
+                    0
+                };
+                self.mix_out_frames = ((p.duration_us -  if p.out_loop_us > 0 { 0 } else { late }) * out.rate as i64 / 1_000_000).max(0) as usize;
                 self.out_loop_frames = if p.out_loop_us > 0 { ((p.out_loop_us * out.rate as i64 / 1_000_000) as usize).max(1) } else { 0 };
                 self.mixed_end_us = None;
                 self.mix_from_us = None;
@@ -978,7 +999,8 @@ impl TransitionEngine {
             self.stretch_pace = p.tempo_ratio as f64;
             self.last_content = 0.0;
         }
-        self.skip_left = s_fmt.bytes(p.in_skip_us + in_late_us);
+        let skip_frames = ((p.in_skip_us + in_late_us).max(0) * s_fmt.rate as i64 + 500_000) / 1_000_000;
+        self.skip_left = skip_frames as usize * s_fmt.frame_bytes();
     }
 
     /// Mixes the incoming track into the held ending.
@@ -1038,7 +1060,7 @@ impl TransitionEngine {
                 if let Some((m, ..)) = self.mixer.as_mut() {
                     m.process_bytes(&mut chunk, &src[..bytes], out.encoding);
                 }
-                let at = self.stamp(pts_us, frames, pace, out);
+                let at = self.stamp(first_us, frames, pace, out);
                 let c = self.copy_of(&chunk);
                 self.loop_buf = chunk;
                 self.enqueue_paced(c, at, None, pace);
@@ -1049,7 +1071,7 @@ impl TransitionEngine {
                 if let Some((m, ..)) = self.mixer.as_mut() {
                     m.process_bytes(&mut self.tail[r..r + bytes], &src[..bytes], out.encoding);
                 }
-                let at = self.stamp(pts_us, frames, pace, out);
+                let at = self.stamp(first_us, frames, pace, out);
                 let mut c = self.take_pooled(bytes);
                 c.extend_from_slice(&self.tail[r..r + bytes]);
                 self.enqueue_paced(c, at, None, pace);
@@ -1060,7 +1082,7 @@ impl TransitionEngine {
         }
         if used < src.len() && !looping {
             let rest = &src[used..];
-            let at = self.stamp(pts_us, rest.len() / fb, pace, out);
+            let at = self.stamp(first_us + out.us(used), rest.len() / fb, pace, out);
             let c = self.copy_of(rest);
             self.enqueue_paced(c, at, Some(self.offset_us), pace);
             self.mixed_end_us = Some(at + span_us(rest.len() / fb, pace, out));
@@ -1436,6 +1458,19 @@ impl TransitionEngine {
         Some(self.reported)
     }
 
+    /// The outgoing side's position while the transition is audible.
+    pub(crate) fn mix_position_us(&self) -> Option<i64> {
+        if !self.heard.mixing {
+            return None;
+        }
+        let start = self.held_from_us? - self.held_offset_us;
+        Some(
+            start
+                + ((self.clock_us? - self.mix_from_us?) as f64
+                    / self.heard.next_rate.max(0.01) as f64) as i64,
+        )
+    }
+
     /// Output time from the last [`TransitionEngine::position_us`] until what is heard changes: a mix's
     /// takeover and, unless `song_only`, a mix becoming audible, the end of it or of the clock's shift, a
     /// held ending caught up.
@@ -1537,7 +1572,11 @@ impl TransitionEngine {
     pub fn flush<H: Host>(&mut self, host: &mut H) {
         self.clear(host);
         self.fresh = true;
-        self.landing = true;
+        self.landing = Landing::Track;
+    }
+
+    pub(crate) fn land_in_mix(&mut self, phase_us: i64) {
+        self.landing = Landing::Mix(phase_us);
     }
 
     /// Stopped: also forgets the output format and frees buffers.

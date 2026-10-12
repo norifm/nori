@@ -190,7 +190,7 @@ class PlaybackService : MediaLibraryService() {
         scrobbler = Scrobbler(nori, scope)
         meteredNow(nori.http.metered)
         runCatching { connectivity.registerDefaultNetworkCallback(network, main) }
-        player = EnginePlayer(this, nori).also { rustPlayer = it }
+        player = EnginePlayer(this, nori).also { rustPlayer = it; it.onRemoteStateChanged = ::remoteState }
         engine = "rust"
         observer?.engine(engine)
         // A song that has become whole on the device is measured then, whoever fetched it (see AutoMixPrefetch).
@@ -520,9 +520,9 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /** Tells the remote control (if it is on) the player changed; a null check otherwise. */
-    private fun remoteState() = nori.remotes.played(
-        player.playWhenReady, player.playbackState == Player.STATE_BUFFERING && player.playWhenReady, player.currentPosition, player.pace, player.currentMediaItemIndex,
-    )
+    private fun remoteState() {
+        if (nori.remotes.peek() != null) nori.remotes.played(player.remotePlaying())
+    }
 
     /** What another device asks of this one through the remote control, done to the player as the session's controllers would. */
     private val remotePlayer = object : dev.nori.music.ffi.RemotePlayer {

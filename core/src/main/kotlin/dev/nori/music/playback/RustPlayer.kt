@@ -68,6 +68,7 @@ internal object RustPlayerJni {
     /** The engine reads its output once, now. */
     @JvmStatic @CriticalNative external fun look(h: Long)
     @JvmStatic @CriticalNative external fun mixing(h: Long): Boolean
+    @JvmStatic @FastNative external fun remoteState(h: Long, buffering: Boolean, words: LongArray)
     @JvmStatic @CriticalNative external fun chainIn(h: Long): Boolean
     @JvmStatic @CriticalNative external fun onCpu(h: Long): Boolean
     /** Song ms per real ms: the speed times a mix's tempo. */
@@ -328,6 +329,16 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     fun setForeground(on: Boolean) = RustPlayerJni.setForeground(h, on)
     fun replan() = RustPlayerJni.replan(h)
     val mixing: Boolean get() = RustPlayerJni.mixing(h)
+    internal var onRemoteStateChanged: (() -> Unit)? = null
+    private var remoteWords: LongArray? = null
+    internal fun remotePlaying(): dev.nori.music.ffi.Playing {
+        val w = remoteWords ?: LongArray(8).also { remoteWords = it }
+        RustPlayerJni.remoteState(h, buffering, w)
+        return dev.nori.music.ffi.Playing(
+            w[0] != 0L, buffering, w[4] != 0L, w[5].takeIf { it >= 0 }?.toUInt(), w[6], Float.fromBits(w[7].toInt()),
+            w[1], Float.fromBits(w[2].toInt()), w[3].takeIf { it >= 0 }?.toUInt(), null,
+        )
+    }
     /** How fast the place moves: the speed times a mix's tempo. */
     val pace: Float get() = RustPlayerJni.pace(h)
     /** Plays along with the jam whose guest [remote] is, while it listens along (the core says when). */
@@ -679,25 +690,25 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     internal fun signal() { main.post(drain) }
 
     private val drain = Runnable {
+        var remoteChanged = false
         while (true) {
             val e = RustPlayerJni.event(h)
             if (e < 0) break
             val arg = e.toInt()
             when ((e ushr 32).toInt()) {
-                EVENT_STATE -> onState(arg)
-                EVENT_SONG -> onSong(arg, RustPlayerJni.eventJumps(h))
+                EVENT_STATE -> { onState(arg); remoteChanged = true }
+                EVENT_SONG -> { onSong(arg, RustPlayerJni.eventJumps(h)); remoteChanged = true }
                 EVENT_ERROR -> RustPlayerJni.eventText(h).let { lastError = it; "rust player error: $it".let { t -> dev.nori.music.NoriLog.w(t); PlaybackService.observer?.error(t) } }
                 EVENT_STOPPED -> stoppedByItself()
-                EVENT_BUFFERING -> buffering = arg != 0
-                EVENT_LOOPED -> onLoop(arg, RustPlayerJni.eventJumps(h))
+                EVENT_BUFFERING -> { buffering = arg != 0; remoteChanged = true }
+                EVENT_LOOPED -> { onLoop(arg, RustPlayerJni.eventJumps(h)); remoteChanged = true }
                 EVENT_TITLE -> announced = RustPlayerJni.eventText(h)
-                // A mix began or ended being heard: the page is nudged, and reads [mixing] then. Nothing
-                // else changes, so nothing else is said.
-                EVENT_MIXING -> PlaybackService.onMixingChanged?.invoke()
-                EVENT_PLACED -> placed = true
+                // A mix became audible or ended: update local and remote observers.
+                EVENT_MIXING -> { remoteChanged = true; PlaybackService.onMixingChanged?.invoke() }
+                EVENT_PLACED -> { placed = true; remoteChanged = true }
                 EVENT_FOLLOWING -> onFollowing(arg)
                 // The engine is where a jump or seek asked: the session says that place, not its own guess.
-                EVENT_LANDED -> { landed = RustPlayerJni.eventJumps(h); placed = true; PlaybackService.onLanded?.invoke() }
+                EVENT_LANDED -> { landed = RustPlayerJni.eventJumps(h); placed = true; remoteChanged = true; PlaybackService.onLanded?.invoke() }
                 // Handed on after the batch: the bridge edits and seeks this player itself.
                 EVENT_BRIDGE -> main.post { if (onBridge?.invoke() != true) { stoppedByItself(); follow(); invalidateState() } }
                 // The output device's own sound is DeviceSound's, from Outputs: its name is not asked for,
@@ -707,6 +718,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         }
         follow()
         invalidateState()
+        if (remoteChanged) onRemoteStateChanged?.invoke()
     }
 
     private fun onState(state: Int) {

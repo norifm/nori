@@ -647,6 +647,8 @@
     <string name="jam_ended_by">%1$s ended the Jam</string>
     <string name="jam_ended">The Jam ended</string>
     <string name="jam_listen_here">Listen here</string>
+    <string name="jam_not_playing_here">Not playing here</string>
+    <string name="jam_watching">Watching the Jam · Tap Listen here to hear the music</string>
     <string name="jam_playing_here">Playing here</string>
     <!-- A jam guest paused its own listening; play joins the jam again. -->
     <string name="jam_paused_here">Paused here · Jam still playing</string>

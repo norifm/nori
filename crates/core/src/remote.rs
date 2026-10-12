@@ -128,6 +128,11 @@ pub struct Playing {
     pub playing: bool,
     /// Waiting for the song's bytes while it should play.
     pub buffering: bool,
+    pub mixing: bool,
+    /// The queue entry mixed out of, even after the incoming song becomes current.
+    pub mix_from: Option<u32>,
+    pub mix_position_ms: i64,
+    pub mix_rate: f32,
     pub position_ms: i64,
     /// Song ms per real ms: the speed times a mix's tempo (the engine's `Status::pace`).
     pub rate: f32,
@@ -139,7 +144,11 @@ pub struct Playing {
 
 impl Default for Playing {
     fn default() -> Self {
-        Playing { playing: false, buffering: false, position_ms: 0, rate: 1.0, index: None, volume: None }
+        Playing { playing: false, buffering: false,
+            mixing: false,
+            mix_from: None,
+            mix_position_ms: 0,
+            mix_rate: 1.0, position_ms: 0, rate: 1.0, index: None, volume: None }
     }
 }
 
@@ -176,6 +185,7 @@ pub struct Mirror {
     pub rev: u64,
     pub playing: bool,
     pub buffering: bool,
+    pub mixing: bool,
     /// Where the song was at `at_us`; it runs on at `rate` from there while `playing`.
     pub position_ms: i64,
     /// Song ms per real ms there; zero while paused or waiting for audio.
@@ -322,6 +332,7 @@ pub struct Lead {
     pub pitch: f32,
     /// (outgoing song id, its plan).
     pub mix: Option<(String, Plan)>,
+    pub mix_place: Option<(usize, f64, f64)>,
 }
 
 impl Lead {
@@ -707,6 +718,8 @@ impl Mirrored {
             rev: st.rev,
             playing: st.playing,
             buffering: st.buffering,
+
+            mixing: st.mixing,
             position_ms: st.position_ms,
             rate: nori_remote::pace(st),
             at_us: self.shown_at(),
@@ -954,6 +967,14 @@ impl Inner {
         let at = self.heard_at(st)?;
         let index = st.entries.iter().position(|e| Some(e.index) == st.index)?;
         let mix = along.mix.as_ref().and_then(|m| plan_of(m, &st.entries));
+
+        let mix_place = mix.as_ref().and(along.mix.as_ref()).and_then(|m| {
+            Some((
+                st.entries.iter().position(|e| e.index == m.from)?,
+                m.position_ms? as f64,
+                m.rate? as f64,
+            ))
+        });
         Some(Lead {
             songs: st.entries.iter().map(Entry::song).collect(),
             index,
@@ -965,6 +986,7 @@ impl Inner {
             speed: along.speed,
             pitch: along.pitch,
             mix,
+            mix_place,
         })
     }
 
@@ -1174,6 +1196,9 @@ impl Remote {
     /// The platform's playback changed (play, pause, seek, another song, the queue, the volume). Music
     /// starting here makes this the active device again.
     pub fn played(self: Arc<Self>, playing: Playing) {
+
+        // The report belongs to call entry, before waiting for the session lock.
+        let now = clock::now_us();
         let (publish, started, shown, cancelled) = {
             let mut i = self.inner.lock();
             let started = playing.playing && !i.playing.playing;
@@ -1182,7 +1207,7 @@ impl Remote {
             if started {
                 i.handed_to = None;
             }
-            let now = clock::now_us();
+
             if playing.playing || i.playing.playing {
                 i.played_last = Some(now);
             }
@@ -1676,6 +1701,8 @@ impl Remote {
             rev: st.rev,
             playing: st.playing,
             buffering: st.buffering,
+
+            mixing: st.mixing,
             position_ms: st.position_ms,
             rate: nori_remote::pace(st),
             at_us: i.heard_at(st).or_else(|| i.received.get(&host.id).copied()).unwrap_or_else(clock::now_us),
@@ -1928,10 +1955,18 @@ impl Remote {
     }
 
     /// What guests play along by: this device's speed and pitch, and the plan out of the song heard.
-    fn along(&self, index: Option<u32>, entries: &[Entry]) -> Along {
+    fn along(&self, index: Option<u32>, playing: Playing) -> Along {
         let session = &self.client.core.session;
         let (speed, pitch) = session.settings.current().map_or((1.0, 1.0), |p| (p.speed, p.pitch));
-        let mix = index.and_then(|at| mix_of(at, &session.planner.made(&entries.iter().find(|e| e.index == at)?.id)??));
+        let mix = playing.mix_from.or(index).and_then(|at| {
+            let id = session.playlist(|p| p.ids().get(at as usize).cloned())?;
+            let mut mix = mix_of(at, &session.planner.made(&id)??)?;
+            if playing.mix_from == Some(at) {
+                mix.position_ms = Some(playing.mix_position_ms);
+                mix.rate = Some(playing.mix_rate);
+            }
+            Some(mix)
+        });
         Along { speed, pitch, mix }
     }
 
@@ -2779,12 +2814,13 @@ impl Remote {
             at.saturating_sub(ENTRIES_BEFORE)..(at + ENTRIES_AFTER + 1).min(len)
         });
         let p = i.playing;
-        let jam = i.hosted.as_ref().map(|h| JamState { along: h.along.then(|| self.along(q.index, &q.entries)), ..h.jam.state() });
+        let jam = i.hosted.as_ref().map(|h| JamState { along: h.along.then(|| self.along(q.index, p)), ..h.jam.state() });
         let mut st = DeviceState {
             seq: i.seq,
             instance: self.instance,
             playing: p.playing,
             buffering: p.buffering,
+            mixing: p.mixing,
             position_ms: p.position_ms,
             index: q.index,
             rev: q.rev,
@@ -2802,6 +2838,19 @@ impl Remote {
         };
         let now = clock::now_us();
         st.position_ms = i.position_at_of(&st, now);
+
+        if p.playing && !p.buffering {
+            if let Some(mix) = st
+                .jam
+                .as_mut()
+                .and_then(|j| j.along.as_mut())
+                .and_then(|a| a.mix.as_mut())
+            {
+                if let Some(ms) = mix.position_ms.as_mut() {
+                    *ms += (i.since_played_ms(now) as f64 * mix.rate.unwrap_or(1.0) as f64) as i64;
+                }
+            }
+        }
         st.at_us = Some(now);
         st.server_us = i.server_clock.settled_offset_at(now).filter(|_| i.hosts_along());
         st
@@ -2847,7 +2896,9 @@ struct QueueRead {
 
 /// The transition planned out of list index `from`, as a jam's guests get it.
 fn mix_of(from: u32, plan: &Plan) -> Option<Mix> {
-    Some(Mix { from, into: plan.incoming_id.clone(), plan: serde_json::to_string(&plan.mixer).ok()? })
+    Some(Mix { from, into: plan.incoming_id.clone(), plan: serde_json::to_string(&plan.mixer).ok()? ,
+        position_ms: None,
+        rate: None})
 }
 
 /// A guest's transition out of the song `mix` names in the host's `entries`: (its id, the plan).
@@ -2898,7 +2949,31 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
         (Some(a), Some(b)) => (a - b).abs() <= SERVER_SLACK_US,
         (a, b) => a == b,
     };
-    (expected - now.position_ms).abs() <= POSITION_SLACK_MS && server_same && DeviceState { position_ms: now.position_ms, seq: now.seq, at_us: now.at_us, server_us: now.server_us, ..last.clone() } == *now
+    let mut adjusted= DeviceState { position_ms: now.position_ms, seq: now.seq, at_us: now.at_us, server_us: now.server_us, ..last.clone() } ;
+    if let (Some(a), Some(b)) = (
+        adjusted
+            .jam
+            .as_mut()
+            .and_then(|j| j.along.as_mut())
+            .and_then(|a| a.mix.as_mut()),
+        now.jam
+            .as_ref()
+            .and_then(|j| j.along.as_ref())
+            .and_then(|a| a.mix.as_ref()),
+    ) {
+        if let (Some(a_ms), Some(b_ms)) = (a.position_ms.as_mut(), b.position_ms) {
+            let ran = if last.playing && !last.buffering {
+                (elapsed_ms as f64 * a.rate.unwrap_or(1.0) as f64) as i64
+            } else {
+                0
+            };
+            if (*a_ms + ran - b_ms).abs() > POSITION_SLACK_MS {
+                return false;
+            }
+            *a_ms = b_ms;
+        }
+    }
+    (expected - now.position_ms).abs() <= POSITION_SLACK_MS && server_same && adjusted == *now
 }
 
 #[cfg(test)]
@@ -3088,6 +3163,166 @@ mod tests {
             let devices = devices.iter().map(|&(name, kind, id)| RemoteDevice { id: id.into(), name: name.into(), kind, state: None, age_ms: 0, nearby: false, refused: None }).collect();
             assert_eq!(device_names(devices, me.clone(), words.clone()), *want);
         }
+    }
+
+    #[test]
+    fn a_mix_survives_the_incoming_song_takeover() {
+        struct Quiet;
+        impl RemotePlayer for Quiet {
+            fn apply(&self, _: Op) {}
+        }
+        impl RemoteShown for Quiet {
+            fn changed(&self) {}
+            fn marks_changed(&self) {}
+            fn jam_ended(&self, _: Option<String>) {}
+        }
+        let (client, _) = crate::client::tests::client(crate::client::NetProfile {
+            url: "http://test".into(),
+            ..Default::default()
+        });
+        let session = &client.core.session;
+        session.settings.open("").unwrap();
+        let mut prefs = session.settings.current().unwrap();
+        prefs.crossfade_sec = 4;
+        prefs.crossfade_keep_albums = false;
+        session.settings.put(prefs);
+        session.set(
+            vec!["a".into(), "b".into(), "c".into()],
+            Some(0),
+            false,
+            None,
+        );
+        session.planner.transition_window(
+            ["a", "b", "c"]
+                .into_iter()
+                .map(|id| nori_player::transitions::WindowSong {
+                    id: id.into(),
+                    duration_ms: 30_000,
+                    ..Default::default()
+                })
+                .collect(),
+            false,
+        );
+        let a = session.planner.plan_for("a").unwrap();
+        session.planner.plan_for("b").unwrap();
+        let remote = Remote::new(
+            client,
+            RemoteMe {
+                name: "Test".into(),
+                kind: DeviceKind::Desktop,
+            },
+            Arc::new(Quiet),
+            Arc::new(Quiet),
+            None,
+        );
+        for playing in [true, false] {
+            remote.inner.lock().playing = Playing {
+                index: Some(1),
+                mix_from: Some(0),
+                mixing: true,
+                playing,
+                ..Default::default()
+            };
+            let playing = remote.inner.lock().playing;
+            let along = remote.along(Some(1), playing);
+            assert_eq!(
+                along.mix.map(|m| Mix {
+                    position_ms: None,
+                    rate: None,
+                    ..m
+                }),
+                mix_of(0, &a),
+                "the displayed song changed, the audible transition did not"
+            );
+        }
+        remote.stop();
+    }
+
+    #[test]
+    fn a_mirrored_mix_runs_on_without_extra_publications() {
+        let plan = engine_plan(
+            &nori_player::automix::plan::plan(None, None, 30_000, 30_000, &Default::default()),
+            "b",
+        )
+        .unwrap();
+        let mut mix = mix_of(0, &plan).unwrap();
+        mix.position_ms = Some(28_000);
+        mix.rate = Some(1.0);
+        let last = DeviceState {
+            index: Some(1),
+            len: 2,
+            entries: vec![
+                Entry {
+                    id: "a".into(),
+                    duration: 30,
+                    ..Default::default()
+                },
+                Entry {
+                    index: 1,
+                    id: "b".into(),
+                    duration: 30,
+                    ..Default::default()
+                },
+            ],
+            playing: true,
+            mixing: true,
+            position_ms: 2_000,
+            rate: Some(1.04),
+            at_us: Some(1_000_000),
+            jam: Some(JamState {
+                along: Some(Along {
+                    speed: 1.0,
+                    pitch: 1.0,
+                    mix: Some(mix),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut now = DeviceState {
+            position_ms: 3_040,
+            at_us: Some(2_000_000),
+            ..last.clone()
+        };
+        now.jam
+            .as_mut()
+            .unwrap()
+            .along
+            .as_mut()
+            .unwrap()
+            .mix
+            .as_mut()
+            .unwrap()
+            .position_ms = Some(29_000);
+        assert!(same_but_time(&last, &now));
+        let mut mirrored = Mirrored::new("host".into());
+        mirrored.heard(&now, 2_000_000, "guest");
+        assert!(
+            mirrored
+                .view("Host".into(), DeviceKind::Phone, None)
+                .unwrap()
+                .mixing
+        );
+        assert!(
+            !same_but_time(
+                &now,
+                &DeviceState {
+                    mixing: false,
+                    ..now.clone()
+                }
+            ),
+            "the mix ending must be published"
+        );
+        assert!(
+            !same_but_time(
+                &now,
+                &DeviceState {
+                    playing: false,
+                    ..now.clone()
+                }
+            ),
+            "a pause must be published"
+        );
     }
 
     #[test]

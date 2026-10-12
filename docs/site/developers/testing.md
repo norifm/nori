@@ -287,7 +287,8 @@ is Android glue and stays on the device. 50 moved, 60 stay.
   The section also opens Android's native media output picker and transfers playback to This phone;
   route publication and System UI's transfer callbacks require Android's MediaRouter2 service.
   It also force-stops and reopens Android while the peer plays: the foreground lifecycle must rediscover
-  playback and rebuild its remote media session without playing the saved queue locally. It then closes
+  playback and rebuild its remote media session without playing the saved queue locally. It also checks
+  that the playing peer's mix reaches the controller's Mixing label while its own output stays silent. It then closes
   the peer and checks that returning here releases Android controls and permits local playback.
   `--only jam` hosts a jam on the emulator against octo-fiesta's real relay (the local one on 5274,
   `NORI_E2E_JAM`) with two guests on this computer (`tools/jam-guest.py`, the relay's frames in Python): what only
@@ -300,8 +301,9 @@ is Android glue and stays on the device. 50 moved, 60 stay.
   Listening along there is the playback service's own (media3's foreground service and notification, the
   AudioTrack's deep buffer with the screen off, the session's state): the notification saying whose jam it
   is, the music going on in the background with the screen off, a plain guest's pause holding only its
-  own listening and play joining again, and an admin's pause, play and skip reaching the host
-  (`NORI_JAM_ADMINS=1`). What a guest's engine does with them (holding, joining where the host is, its
+  own listening and play joining again, the host's progress and mixing state while watching, and an admin's song taps, queue additions, pause, play and skip reaching the host
+  (`NORI_JAM_ADMINS=1`). The transport checks cover engine state events reaching the remote
+  snapshot after media3 reports readiness; this needs the real service and JNI. What a guest's engine does with them (holding, joining where the host is, its
   output let go and back) is nori-engine's along.rs; which control reaches where is nori-remote's and
   nori-core's tests/remote.rs.
 - The car: the tree, the rows a pick plays, search and spoken requests are nori-core's (car.rs, tested there);

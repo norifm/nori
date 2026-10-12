@@ -469,7 +469,7 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
     // Read here rather than threaded through every list: these bars exist on exactly one row, so this
     // is one collector on one boolean, not one per song.
     val player: dev.nori.music.app.vm.PlayerViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val moving by player.sounding.collectAsStateWithLifecycle()
+    val moving by player.advancing.collectAsStateWithLifecycle()
     val phase = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     val seen = seen()
     androidx.compose.runtime.LaunchedEffect(moving, seen) {

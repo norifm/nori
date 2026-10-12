@@ -103,6 +103,9 @@ class InitOrderTest {
             listOf("openTrack", "open", "openLive", "kept", "busy", "disk", "forget", "offloadSupport", "openOffload", "signal", "engineAwake"),
         )
 
+    @Test fun whatThePlayerMirrorCollectorReachesIsBuiltBeforeItStarts() =
+        check("playback/PlayerConnection.kt", "PlayerConnection", Regex("""^    init \{"""), listOf("mirrored"))
+
     /** Downloads' own `init` runs [publish] and [reconcile] on its pool before the rest of it is built. */
     @Test fun whatDownloadsInitThreadReachesIsBuiltBeforeIt() =
         check("downloads/Downloads.kt", "Downloads", Regex("""^    init \{"""), listOf("publish", "reconcile"))

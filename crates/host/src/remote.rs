@@ -79,10 +79,17 @@ impl Remotes {
 
     /// The playback other devices see, from the engine's status `s`.
     fn playing(&self, s: &Status) -> Playing {
+
+        let buffering = self.buffering.load(Ordering::Relaxed);
+        let (position_ms, mix_position_ms) = s.positions_at(std::time::Instant::now(), buffering);
         Playing {
             playing: s.state == State::Playing,
-            buffering: self.buffering.load(Ordering::Relaxed),
-            position_ms: s.position_now().max(0),
+            buffering,
+            mixing: s.mixing,
+            mix_from: s.mix_from.map(|i| i as u32),
+            mix_position_ms,
+            mix_rate: s.speed,
+            position_ms: position_ms.max(0),
             rate: s.pace,
             index: s.index.map(|i| i as u32),
             volume: self.level.percent(),
@@ -594,6 +601,8 @@ mod tests {
             rev: 7,
             playing: true,
             buffering: false,
+
+            mixing: false,
             position_ms: 10_000,
             rate: 1.0,
             at_us: 0,

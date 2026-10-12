@@ -593,7 +593,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             )
                             .then(if (page == Panel.QUEUE) Modifier.padding(horizontal = 26.dp) else Modifier),
                     ) {
-                        if (page == Panel.QUEUE) Queue(vm) else LyricsView(vm, actions, state.playing)
+                        if (page == Panel.QUEUE) Queue(vm) else LyricsView(vm, actions, state.advancing)
                     }
                 }
 
@@ -695,7 +695,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                 )
 
-                Box(kept("seek")) { SeekBar(vm, state.playing, state.durationMs, seekable = state.offersSeek) }
+                Box(kept("seek")) { SeekBar(vm, state.advancing, state.durationMs, seekable = state.offersSeek) }
 
                 // Three controls, plain glyphs with no containers. Shuffle and repeat live in the queue header.
                 // Sized off `w4` as a share of the screen's width: Apple's pause glyph stands 9.8 % of the
