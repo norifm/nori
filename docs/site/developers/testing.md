@@ -467,3 +467,6 @@ cancellation/release and selecting an available pool device. It does not replace
 the device checks. Clippy completed with existing warnings in unchanged Rust
 code. The complete Cargo workspace check, Android APK build and actual Bazel
 player unit/pipeline execution also passed.
+
+The Android Jam device checks also verify that Start a Jam expands the existing devices sheet.
+Compose navigation and the sheet animation are platform UI behavior and cannot be tested in Rust.

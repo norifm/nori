@@ -662,7 +662,7 @@ jam_checks() {
     app_jam=$(echo "$jam_server" | sed 's#localhost#10.0.2.2#')
     start_jam() {
       tapnode text "Start a Jam" || return 1
-      wait_until 10 off_screen 'content-desc="Close sheet"'
+      wait_until 10 on_screen 'text="Your Jam"'
     }
     lib_song=$(song_id "Far Song Two"); first=$(song_id "Long Track 04")
     # A provider's song for Dee to ask for: only its id and words travel, nothing streams it.
@@ -672,9 +672,7 @@ jam_checks() {
     "$app" play "song:$first" >/dev/null; sounds 20
     "$app" open devices >/dev/null
     check "the devices sheet offers to start a jam" wait_until 10 on_screen 'text="Start a Jam"' || return 1
-    check "starting the jam closes the devices sheet" start_jam || return 1
-    check "the player opens on the queue" wait_until 10 on_screen 'text="Long Track 04"' || return 1
-    "$app" open devices >/dev/null
+    check "starting the jam expands the existing devices sheet" start_jam || return 1
     check "the devices sheet shows the hosted jam" wait_until 10 on_screen 'text="Your Jam"' || return 1
     check "nobody listens yet" on_screen 'text="Jam · no one yet"'
     check "the devices sheet offers the invite" wait_until 10 on_screen 'text="Invite"'
@@ -738,8 +736,7 @@ jam_checks() {
     check "no jam under the song" off_screen 'text="Jam · '
     "$app" open devices >/dev/null
     check "the devices sheet offers a jam again" wait_until 10 on_screen 'text="Start a Jam"'
-    check "restarting the jam closes the devices sheet" start_jam || return 1
-    "$app" open devices >/dev/null
+    check "restarting the jam expands the existing devices sheet" start_jam || return 1
     check "and it starts at once" wait_until 5 on_screen 'text="Your Jam"'
     tapnode text End
     adb shell input keyevent KEYCODE_BACK

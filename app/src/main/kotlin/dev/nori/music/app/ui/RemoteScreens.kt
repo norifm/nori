@@ -1,6 +1,12 @@
 package dev.nori.music.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -134,7 +140,6 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                     !jams -> {}
                     hosted != null -> {
                         YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
-                        JamControls(hosted, { page = RoomPage.INVITE }, { page = RoomPage.SETTINGS })
                     }
                     unsupported -> Text(
                         words(R.string.jam_unsupported), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
@@ -145,7 +150,11 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     start == dev.nori.music.ffi.JamStart.OFFERED ->
-                        ActionRow(words(R.string.jam_start), Icons.Filled.Groups, { onDismiss(); vm.jamStart(); nav.player(Panel.QUEUE) }, divider = false)
+                        ActionRow(words(R.string.jam_start), Icons.Filled.Groups, vm::jamStart, divider = false)
+                }
+                val ms = if (reduceMotion()) 0 else 220
+                AnimatedVisibility(jams && hosted != null, enter = fadeIn(tween(ms)) + expandVertically(tween(ms)), exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms))) {
+                    hosted?.let { JamControls(it, { page = RoomPage.INVITE }, { page = RoomPage.SETTINGS }) }
                 }
             }
         }
