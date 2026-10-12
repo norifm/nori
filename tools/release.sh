@@ -73,6 +73,17 @@ while [ $# -gt 0 ]; do
 done
 
 die() { echo "$@" >&2; exit 1; }
+checksum() {
+  python3 - "$1" <<'PYSHA'
+import hashlib, sys
+with open(sys.argv[1], "rb") as f:
+    digest = hashlib.sha256()
+    for block in iter(lambda: f.read(1024 * 1024), b""):
+        digest.update(block)
+print(digest.hexdigest())
+PYSHA
+}
+
 code_version() { sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1; }
 # a > b, as versions (0.3.10 is after 0.3.9, 0.5.2 after 0.5.2-beta.3)
 newer() {
@@ -111,7 +122,7 @@ if [ "$GUIDED" = 1 ]; then
         ./tools/ipod.sh build || die "the iPod build failed (tools/ipod.sh build, needs Docker)"
         sums=$(mktemp -d)
         gh release download "v$current" -p SHA256SUMS -D "$sums"
-        ( cd build/ios && sha256sum "$ipa" ) >> "$sums/SHA256SUMS"
+        echo "$(checksum "build/ios/$ipa")  $ipa" >> "$sums/SHA256SUMS"
         gh release upload "v$current" "build/ios/$ipa" "$sums/SHA256SUMS" --clobber
         rm -rf "$sums"
         echo "done: $(gh release view "v$current" --json url --jq .url)"
@@ -276,14 +287,24 @@ if [ "$HOSTS" = 1 ]; then
 fi
 
 # --- what is in the directory ---------------------------------------------------
-apksigner=$(ls -d "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
+apksigner=$(python3 - "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}" <<'PYSDK'
+from pathlib import Path
+import re, sys
+paths = list(Path(sys.argv[1]).glob("build-tools/*/apksigner"))
+print(max(paths, key=lambda p: tuple(map(int, re.findall(r"\d+", p.parent.name)))) if paths else "")
+PYSDK
+)
 signer() {
   [ -x "${apksigner:-}" ] || { echo "unknown (apksigner not found)"; return; }
   "$apksigner" verify --print-certs "$1" 2>/dev/null |
     sed -n 's/.*certificate SHA-256 digest: \(.*\)/\1/p' | head -1
 }
 
-( cd "$out" && sha256sum ./*.apk ${ipa:+"./$ipa"} | sed 's# \./# #' > SHA256SUMS )
+
+{
+  echo "$(checksum "$out/$name")  $name"
+  if [ -n "$ipa" ]; then echo "$(checksum "$out/$ipa")  $ipa"; fi
+} > "$out/SHA256SUMS"
 
 {
   echo "nori $version"
@@ -294,13 +315,13 @@ signer() {
   f="$out/$name"
   echo "$name"
   echo "  carries ${ABI//,/ + }"
-  echo "  $(du -h "$f" | cut -f1)  ·  sha256 $(sha256sum "$f" | cut -c1-16)…"
+  echo "  $(du -h "$f" | cut -f1)  ·  sha256 $(checksum "$f" | cut -c1-16)…"
   echo "  signing certificate SHA-256: $(signer "$f")"
   if [ -n "$ipa" ]; then
     echo
     echo "$ipa"
     echo "  iOS 12.2 and later, arm64; fake-signed (AppSync)"
-    echo "  $(du -h "$out/$ipa" | cut -f1)  ·  sha256 $(sha256sum "$out/$ipa" | cut -c1-16)…"
+    echo "  $(du -h "$out/$ipa" | cut -f1)  ·  sha256 $(checksum "$out/$ipa" | cut -c1-16)…"
   fi
 } > "$out/RELEASE.txt"
 
