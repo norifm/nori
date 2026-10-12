@@ -241,6 +241,10 @@ impl Session {
     /// Opens the profile without touching the network, so an unreachable server still opens with what
     /// is stored; [`Session::check`] reports reachability.
     pub fn open(o: Open) -> Result<Session, String> {
+        Self::open_on(o, None::<nori_engine::Monotonic>)
+    }
+
+    fn open_on<C: nori_engine::Clock + Sync>(o: Open, clock: Option<C>) -> Result<Session, String> {
         let db = db_path(o.data);
         let core = Core::new(db.clone(), nori_core::settings::server_db_id(&o.profile.id), o.queue.clone()).map_err(|e| format!("the database: {e}"))?;
         core.configure(config(&o.profile)).map_err(|e| format!("the server: {e}"))?;
@@ -266,7 +270,11 @@ impl Session {
         let library = CoreLibrary { client: client.clone(), bytes: audio, store: Some(store.clone()), analyses };
         let events = o.out.clone();
         let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs, loudness.db()), ..Config::default() };
-        let engine = Arc::new(Engine::start(library, app, CoreQueue(core.session.clone()), output, None, config, move |e| events(Said::Engine(e))));
+        let events = move |e| events(Said::Engine(e));
+        let engine = Arc::new(match clock {
+            Some(clock) => Engine::start_on(library, app, CoreQueue(core.session.clone()), output, None, config, clock, events),
+            None => Engine::start(library, app, CoreQueue(core.session.clone()), output, None, config, events),
+        });
         let covers = o.covers.map(|config| Arc::new(Loader::new(config, cover_net)));
         let remotes = Arc::new(crate::remote::Remotes::new(level.clone()));
         let keeper = Keeper::start(core.clone(), engine.clone());
@@ -855,16 +863,7 @@ impl Session {
         let (client, me) = (self.client.clone(), self.handle());
         spawn("nori-autofill", move || {
             let fresh = block_on(client.autofill());
-            let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
-            if client.autofill_arrived(fresh) && !ids.is_empty() {
-                let len = me.queue.playlist(|p| p.len());
-                let n = ids.len();
-                me.queue.take(len as u32, ids, vec![Hand::No; n]);
-                me.edited();
-            }
-            if me.queue.autofill_landed() {
-                me.engine.next();
-            }
+            me.filled(fresh);
         });
     }
 
@@ -914,6 +913,22 @@ pub(crate) struct Handle {
 }
 
 impl Handle {
+    fn filled(&self, fresh: nori_core::autofill::Refill) {
+        let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
+        if !self.client.autofill_arrived(fresh) || ids.is_empty() {
+            return;
+        }
+        let (len, end) = self.queue.playlist(|p| (p.len(), p.play_order().last().map(|at| p.seqs()[at])));
+        let n = ids.len();
+        self.queue.take(len as u32, ids, vec![Hand::No; n]);
+        self.edited();
+        if self.queue.autofill_landed() {
+            self.engine.next();
+        } else if let Some(end) = end {
+            self.engine.resume_after_refill(end);
+        }
+    }
+
     fn note(&self, n: Note) {
         (self.out)(Said::Note(n));
     }
@@ -1209,6 +1224,17 @@ fn monotonic_ms() -> i64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START.get_or_init(std::time::Instant::now).elapsed().as_millis() as i64
 }
+
+#[cfg(test)]
+#[path = "refill_tests.rs"]
+mod refill_tests;
+
+#[cfg(test)]
+use nori_engine::testing::Device;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../engine/tests/common/card.rs"]
+mod test_card;
 
 #[cfg(test)]
 mod tests {
