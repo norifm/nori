@@ -19,4 +19,4 @@ jobs:
         with:
           cache-on-failure: true
       - name: Test Metal covers and layers
-        run: cargo test --locked -j2 -p nori-desktop compositor::tests:: -- --nocapture
+        run: 'cargo test --locked -j2 -p nori-desktop compositor::tests:: -- --nocapture'
