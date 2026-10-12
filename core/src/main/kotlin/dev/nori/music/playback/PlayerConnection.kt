@@ -49,6 +49,8 @@ data class PlayerState(
     val queued: Set<Int> = emptySet(),
     val radio: String? = null,
     val playing: Boolean = false,
+    /** The displayed song's clock advances, including while watching a jam. */
+    val advancing: Boolean = playing,
     val buffering: Boolean = false,
     val shuffle: Boolean = false,
     val repeat: Repeat = Repeat.OFF,
@@ -112,12 +114,6 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     private var mirror: Mirror? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    init {
-        scope.launch {
-            kotlinx.coroutines.flow.combine(nori.remotes.mirror, nori.remotes.jamPlaying, nori.remotes.jamControls) { m, host, jam -> m?.let { Triple(it, false, null) } ?: host?.let { Triple(it, true, jam) } }
-                .collect { mirrored(it?.first, it?.second == true, it?.third) }
-        }
-    }
 
     /** The jam this phone is a guest in, while it is one: its controls go by its role. */
     private var jamGuest = false
@@ -129,7 +125,10 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         when {
             m != null -> showMirror(m, guest, jam)
             // Back here: the page shows this phone's own player again.
-            was != null -> controller?.let { publish(it, queueChanged = true) } ?: run { _state.value = PlayerState() }
+            was != null -> {
+                _mixing.value = false
+                controller?.let { publish(it, queueChanged = true) } ?: run { _state.value = PlayerState() }
+            }
         }
     }
 
@@ -138,6 +137,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
      * jam [guest] skips by its role ([jam]), and its play button shows what [jam] says.
      */
     private fun showMirror(m: Mirror, guest: Boolean, jam: dev.nori.music.ffi.JamControls? = null) {
+        _mixing.value = m.playing && m.mixing
         val old = _state.value
         val songs = m.rows.map { it.song }
         val queue = if (songs == old.queue) old.queue else songs
@@ -148,7 +148,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             nextIndex = if (at < 0 || (guest && jam?.controls?.skip == Reach.NOWHERE)) -1 else (at + 1).takeIf { it < queue.size } ?: (if (all) 0 else -1),
             previousIndex = if (at < 0 || (guest && jam?.controls?.skip == Reach.NOWHERE)) -1 else (at - 1).takeIf { it >= 0 } ?: (if (all) queue.lastIndex else -1),
             order = if (old.order.size == queue.size && old.order.withIndex().all { (k, v) -> k == v }) old.order else queue.indices.toList(),
-            queued = emptySet(), radio = null, playing = jam?.playing ?: m.playing, buffering = m.buffering && m.playing, shuffle = m.shuffle,
+            queued = emptySet(), radio = null, playing = jam?.playing ?: m.playing, advancing = m.playing && !m.buffering, buffering = m.buffering && m.playing, shuffle = m.shuffle,
             repeat = when (m.repeat.toInt()) { Player.REPEAT_MODE_ALL -> Repeat.ALL; Player.REPEAT_MODE_ONE -> Repeat.ONE; else -> Repeat.OFF },
             durationMs = (queue.getOrNull(at)?.duration?.toLong() ?: 0L) * 1000, error = null, bridging = false, playingOn = m.name,
             jamGuest = guest, jam = jam,
@@ -411,7 +411,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             // For a stream the live metadata carries what the station announces (ICY title); which of that and
             // the station's name shows is the core's (words.rs radio_title).
             radio = item?.takeIf { it.isRadio }?.let { radioTitle(p.mediaMetadata.title?.toString(), it.mediaMetadata.title?.toString()) },
-            playing = p.isPlaying, buffering = p.playbackState == Player.STATE_BUFFERING && p.playWhenReady,
+            playing = p.isPlaying, advancing = p.isPlaying, buffering = p.playbackState == Player.STATE_BUFFERING && p.playWhenReady,
             // A weighted shuffle plays a pre-spread list with the player's shuffle off so the order sticks;
             // the core keeps the control lit until the user turns it off or starts a plain Play.
             shuffle = p.shuffleModeEnabled || PlaylistJni.shuffleShown(nori.sessionHandle),
@@ -662,6 +662,13 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         val shown = dev.nori.music.ffi.queue.sleepShown(minutes.coerceAtLeast(0).toUInt(), endOfTrack, songs.coerceAtLeast(0).toUInt(), SystemClock.elapsedRealtime())
         _state.value = _state.value.copy(sleepAt = shown.atMs, sleepAtEndOfTrack = shown.atEndOfTrack)
     }
+    init {
+        scope.launch {
+            kotlinx.coroutines.flow.combine(nori.remotes.mirror, nori.remotes.jamPlaying, nori.remotes.jamControls) { m, host, jam -> m?.let { Triple(it, false, null) } ?: host?.let { Triple(it, true, jam) } }
+                .collect { mirrored(it?.first, it?.second == true, it?.third) }
+        }
+    }
+
 }
 
 /** Every seek bar reading logged (tag noripos), for a check frame by frame: the test bridge's "tracelyrics". */

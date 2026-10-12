@@ -54,6 +54,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"shownMs", c"(JI)J", shown_ms),
         native!(c"look", c"(J)V", look),
         native!(c"mixing", c"(J)Z", mixing),
+        native!(c"remoteState", c"(JZ[J)V", remote_state),
         native!(c"chainIn", c"(J)Z", chain_in),
         native!(c"onCpu", c"(J)Z", on_cpu),
         native!(c"pace", c"(J)F", pace),
@@ -1553,6 +1554,31 @@ extern "system" fn mixing(h: jlong) -> jboolean {
     player(h).is_some_and(|p| p.engine.status_with(|s| s.mixing)) as jboolean
 }
 
+extern "system" fn remote_state(
+    env: JNIEnv,
+    _: JClass,
+    h: jlong,
+    buffering: jboolean,
+    out: JLongArray,
+) {
+    let Some(p) = player(h) else { return };
+    let words = p.engine.status_with(|s| {
+        let playing = s.state == nori_engine::State::Playing;
+        let (position_ms, mix_position_ms) =
+            s.positions_at(std::time::Instant::now(), buffering != 0);
+        [
+            playing as jlong,
+            position_ms,
+            s.pace.to_bits() as jlong,
+            s.index.map_or(-1, |i| i as jlong),
+            s.mixing as jlong,
+            s.mix_from.map_or(-1, |i| i as jlong),
+            mix_position_ms,
+            s.speed.to_bits() as jlong,
+        ]
+    });
+    let _ = env.set_long_array_region(&out, 0, &words);
+}
 /// Whether the sound chain processes the samples.
 extern "system" fn chain_in(h: jlong) -> jboolean {
     player(h).is_some_and(|p| p.engine.status_with(|s| s.chain)) as jboolean

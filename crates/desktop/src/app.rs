@@ -1912,7 +1912,11 @@ impl App {
             (None, None) => s.engine.status_with(|st| (st.id.clone(), st.state == State::Playing)),
         };
         ui.set_playing(playing);
-        ui.set_mixing(self.elsewhere.is_none() && s.engine.status_with(|st| st.mixing));
+        let mixing = match (&self.elsewhere, &self.jam_now) {(Some(e) , _) => e.mirror.playing &&  e.mirror.mixing,
+            (None, Some((st, _))) => st.playing && st.mixing,
+            (None, None) => s.engine.status_with(|st| st.state == State::Playing && st.mixing),
+        };
+        ui.set_mixing(mixing);
         position_shown(&ui, self.player.as_ref(), self.position_now() as i32);
         if id != self.heard {
             self.song_shown(id);

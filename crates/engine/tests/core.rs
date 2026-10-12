@@ -4,9 +4,6 @@
 
 mod common;
 
-use std::io::Cursor;
-use std::sync::Arc;
-
 use nori_engine::core::{Analyses, CoreLibrary, Downloader, Measurer, Shelf, Whole};
 use nori_engine::{Body, ByteSource, Library, Source, Store};
 use nori_core::client::{Client, NetProfile};
@@ -14,6 +11,8 @@ use nori_core::client::{Client, NetProfile};
 use nori_core::transport::{Exchange, Transport, TransportError, TransportResponse};
 use nori_core::{Core, ServerConfig, Song};
 use parking_lot::Mutex;
+use std::io::Cursor;
+use std::sync::Arc;
 
 use common::NoApi;
 
@@ -499,6 +498,8 @@ fn a_guest_queues_the_host_songs_once() {
     let (core, _client) = common::own_core(&dir, |p| p.auto_fill = true);
     let song = |id: &str| Song { id: id.into(), title: id.into(), ..Default::default() };
     let lead = |ids: &[&str], index: usize| nori_core::remote::Lead {
+
+        mix_place: None,
         songs: ids.iter().map(|id| song(id)).collect(),
         index,
         ms: 0.0,
@@ -517,6 +518,15 @@ fn a_guest_queues_the_host_songs_once() {
     // A song put next there: queued anew.
     assert_eq!(nori_engine::core::queued_for(s, &lead(&["b", "x", "c"], 0)), (0, true));
     assert_eq!(s.playlist(|p| p.ids().to_vec()), ["b", "x", "c"]);
+
+    let mut mixing = lead(&["a", "b", "x", "c"], 1);
+    mixing.mix_place = Some((0, 29_000.0, 1.0));
+    assert_eq!(
+        nori_engine::core::queued_for(s, &mixing),
+        (1, true),
+        "joining the mix needs its outgoing entry too"
+    );
+    assert_eq!(s.playlist(|p| p.ids().to_vec()), ["a", "b", "x", "c"]);
     // Near its end, autofill on here: the host's queue is the host's to fill.
     s.moved_to(1);
     assert!(!s.song_arrived().fill, "nothing fetched for it here");

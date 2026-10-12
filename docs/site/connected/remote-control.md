@@ -14,7 +14,8 @@ with nori, signed in to the same server account, see each other. One plays at a 
   outputs. Choosing another device moves the playback there: the queue, its order, shuffle, repeat and
   the place in the song.
 - **Controlling it.** While another device plays, the player, the notification, the lock screen, the car
-  and the volume keys show it and control it. The device you hold stops its own playback.
+  and the volume keys show it and control it. The seek bar and **Mixing** indicator follow the playing
+  device. The device you hold stops its own playback.
 - **The terminal** lists your devices in its right panel (`C`).
 
 On Android 11 and newer, the system media output picker also lists your nori devices while you

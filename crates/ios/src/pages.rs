@@ -170,7 +170,6 @@ fn album_json(a: &Album) -> Value {
     })
 }
 
-
 fn album_page(v: &nori_core::AlbumDetail) -> Value {
     let a = &v.album;
     json!({
@@ -818,7 +817,7 @@ fn mirrored_now_json(e: &Elsewhere) -> Value {
     };
     let mut v = json!({
         "state": state, "index": row.map_or(-1, |r| r.index as i64), "ms": e.position_ms().max(0),
-        "pace": 1.0, "repeat": m.repeat, "shuffle": m.shuffle, "len": m.len, "mixing": false,
+        "pace": m.rate, "repeat": m.repeat, "shuffle": m.shuffle, "len": m.len, "mixing": m.mixing,
         "eq": false, "remote": true, "device": m.name, "buffering": m.buffering, "volume": m.volume,
     });
     if let Some(r) = row {
@@ -1457,7 +1456,6 @@ mod tests {
         assert_eq!(tiles_again(&drawn, drawn.clone(), false), Some(drawn), "no shelf answered: the row alone");
     }
 
-
     fn song(id: &str) -> Song {
         Song {
             id: id.into(),
@@ -1540,6 +1538,8 @@ mod tests {
             rev: 7,
             playing: true,
             buffering: false,
+
+            mixing: false,
             position_ms: 0,
             at_us: 0,
             rate: 1.0,

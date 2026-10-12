@@ -83,7 +83,7 @@ internal fun jamListening(n: Int): String = if (n == 0) words(R.string.jam_no_on
 /** "Jam · 2 listening" while this phone hosts a jam, or "Jam · Filip · 2 listening" in one it is a guest in. */
 @Composable
 internal fun jamLabel(jam: PlayerViewModel.JamStripState): String {
-    val listening = jamListening(jam.listening)
+    val listening = if (jam.watching) words(R.string.jam_not_playing_here) else jamListening(jam.listening)
     return if (jam.host == null) words(R.string.jam_strip, listening) else words(R.string.jam_strip_guest, jam.host, listening)
 }
 
@@ -245,7 +245,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
                 val here = j.listening == Listening.PLAYING
                 PillButton(
                     words(if (here) R.string.jam_playing_here else R.string.jam_listen_here), Icons.Filled.Speaker,
-                    { vm.listen(j.listening == Listening.WATCHING) }, prominent = here,
+                    { vm.listen(j.listening == Listening.WATCHING) }, prominent = true,
                 )
             }
         }
@@ -259,6 +259,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
             )
         }
         when (j.listening) {
+            Listening.WATCHING -> if (j.along) R.string.jam_watching else null
             Listening.HOST_OFF -> R.string.jam_along_host_off
             Listening.SERVER_OFF -> R.string.jam_along_server_off
             else -> null

@@ -47,7 +47,7 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         else nori.core.queueRows(len.toUInt(), shuffle, shown)
 
     /** A jam as the player's strip says it: who hosts it ([host] null: this phone) and how many listen. */
-    data class JamStripState(val host: String?, val listening: Int)
+    data class JamStripState(val host: String?, val listening: Int, val watching: Boolean)
 
     /**
      * The jam this phone hosts or is a guest in, for the "Jam · 2 listening" strips (the host not counted
@@ -57,7 +57,7 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         .map { j ->
             j?.let { v ->
                 val host = v.members.firstOrNull { it.role == dev.nori.music.ffi.remote.Role.HOST }
-                JamStripState(if (v.hosting) null else host?.name.orEmpty(), v.members.count { it.role != dev.nori.music.ffi.remote.Role.HOST })
+                JamStripState(if (v.hosting) null else host?.name.orEmpty(), v.members.count { it.role != dev.nori.music.ffi.remote.Role.HOST }, !v.hosting && v.listening == dev.nori.music.ffi.Listening.WATCHING)
             }
         }
         .distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -66,7 +66,7 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     val jamAdded: StateFlow<Map<String, String>> = nori.remotes.jamAdded
 
     /** Just the play/pause flag, for the same reason: the marked row's bars move only while it sounds. */
-    val sounding: StateFlow<Boolean> = state.map { it.playing }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val advancing: StateFlow<Boolean> = state.map { it.advancing }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     private val lyricsKept = dev.nori.music.data.SongAnswers<Load<FoundLyrics>>()
 

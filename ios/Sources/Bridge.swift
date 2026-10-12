@@ -100,6 +100,7 @@ struct Now {
     var bits = 0
     var stamp = Date()
     /// Waiting for bytes after a seek or open: the place stands still until sound is heard again.
+    var mixing = false
     var buffering = false
     /// Another device plays, and this is its music: its name.
     var device: String?
@@ -171,7 +172,7 @@ struct Jam {
         pausedHere = d["pausedHere"] as? Bool ?? false
     }
 
-    var strip: String { pausedHere ? Say.jamPausedHere : Say.jamStrip(host, listeners.count) }
+    var strip: String { pausedHere ? Say.jamPausedHere : listening == 0 ? "Jam · \(host) · \(Say.jamNotPlayingHere)" : Say.jamStrip(host, listeners.count) }
 }
 
 private func json(_ text: UnsafePointer<CChar>) -> [String: Any] {
@@ -324,6 +325,7 @@ final class Core {
         n.index = d["index"] as? Int ?? -1
         n.ms = d["ms"] as? Int ?? 0
         n.pace = d["pace"] as? Double ?? 1
+        n.mixing = d["mixing"] as? Bool ?? false
         n.repeatMode = d["repeat"] as? Int ?? 0
         n.shuffle = d["shuffle"] as? Bool ?? false
         n.length = d["len"] as? Int ?? 0

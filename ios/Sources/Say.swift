@@ -3,6 +3,8 @@ import Foundation
 /// The app's words. The library answers with codes and keys; this is where they become English,
 /// following the Android app's `strings.xml`.
 enum Say {
+    static let mixing = "Mixing"
+    static let jamNotPlayingHere = "Not playing here"
     static func shelf(_ key: String) -> String {
         switch key {
         case "mixes": return "For you"

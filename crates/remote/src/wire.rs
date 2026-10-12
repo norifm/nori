@@ -279,6 +279,9 @@ pub struct DeviceState {
     pub playing: bool,
     /// Waiting for the song's bytes while it should play.
     pub buffering: bool,
+
+    /// A transition is audible at the host.
+    pub mixing: bool,
     /// Where the song was at `at_us`, or as this was published.
     pub position_ms: i64,
     /// When the listener heard `position_ms`, on the device's clock ([`crate::clock::now_us`]); None from
@@ -391,6 +394,11 @@ pub struct Mix {
     pub into: String,
     /// nori-player's `TransitionPlan` as JSON, for the core to read.
     pub plan: String,
+    /// The outgoing side's position at the host state's timestamp, during an active mix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<f32>,
 }
 
 #[cfg(test)]

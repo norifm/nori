@@ -553,7 +553,9 @@ remote_checks() {
 import sqlite3, sys
 with sqlite3.connect(sys.argv[1]) as db:
     db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
-    db.execute("INSERT OR REPLACE INTO settings VALUES('remoteControl', '{\"b\":true}')")
+    db.executemany("INSERT OR REPLACE INTO settings VALUES(?, ?)", [
+        ("remoteControl", '{"b":true}'), ("crossfadeSec", '{"i":4}'), ("crossfadeKeepAlbums", '{"b":false}'),
+    ])
 PY
     tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --url http://localhost:4533 --user $USER --password $PASS --no-images --no-mpris"
     screen() { tmux capture-pane -p -t "$peer"; }
@@ -602,6 +604,14 @@ PY
       check "the remote queue reaches song $track" wait_for title "Long Track $track" 10
     done
     check "remote skips keep this phone silent" silent 10
+    for _ in $(seq 16); do keys -; done
+    "$app" do "seek $(( $(field durationMs) - 4000 ))" >/dev/null
+    check "remote playback reports the host's active mix" wait_for displayMixing True 10
+    check "the controlling phone shows Mixing" wait_until 5 on_screen 'text="MIXING"'
+    check "the controlling phone keeps its own output silent during the mix" wait_for mixing False 5
+    "$app" play "search:Long Track 04" >/dev/null
+    check "a new remote play clears the mix indicator" wait_for displayMixing False 10
+    check "the peer returns to the selected song" wait_for title "Long Track 04" 10
     adb shell am broadcast -a com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG -p com.android.systemui --es package_name "$pkg" >/dev/null
     check "the native output picker opens" wait_until 10 on_screen 'package="com.android.systemui"'
     check "the native picker offers this phone" wait_until 10 on_screen 'text="This phone"'
@@ -751,9 +761,11 @@ print(json.dumps({k:s.get(k) for k in ['id','title','artist','album','albumId','
     check "the guest invite reaches nori" open_invite "$link" || return 1
     check "the invite opens the player on the host's jam" wait_until 20 on_screen 'text="Mac Host’s Jam"' || return 1
     check "playing what the host plays" wait_for title "Long Track 04" 15
-    check "said under the song" wait_until 10 on_screen 'text="Jam · Mac Host · 1 listening"'
+    check "said under the song" wait_until 10 on_screen 'text="Jam · Mac Host · Not playing here"'
     no_controls() { off_screen 'content-desc="Next"' && off_screen 'content-desc="Shuffle"' && off_screen 'content-desc="Remove"'; }
     check "with no controls of its own" no_controls
+    check "watching is clearly marked" wait_until 10 on_screen 'text="Watching the Jam · Tap Listen here to hear the music"'
+    check "the host's clock advances while watching" wait_for advancing True 10
     "$app" open library >/dev/null
     guest_library() { on_screen 'text="Albums"' && on_screen 'text="Artists"' && on_screen 'text="Genres"' && off_screen 'text="Playlists"'; }
     check "its Library is the host's, without the account's playlists" wait_until 10 guest_library
