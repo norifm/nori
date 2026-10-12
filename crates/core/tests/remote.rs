@@ -281,7 +281,6 @@ impl Relay {
     }
 
     fn answer(&self, endpoint: &str, p: &HashMap<String, String>, body: Option<&str>) -> Vec<u8> {
-        self.hub.lock().asked.push(format!("{endpoint} {} {}", p.get("id").map_or("", String::as_str), p.get("dev").map_or("", String::as_str)));
         if self.absent.load(Ordering::Relaxed) && endpoint.starts_with("noriRemote.") {
             return subsonic_error("not here");
         }
@@ -437,6 +436,7 @@ impl Transport for Relay {
             self.hub.lock().asked.push("open waits".into());
             std::thread::sleep(Duration::from_millis(300 - 50 * k.min(5)));
         }
+        self.hub.lock().asked.push(format!("{endpoint} {} {}", params.get("id").map_or("", String::as_str), params.get("dev").map_or("", String::as_str)));
         if endpoint == "noriRemote.poll" {
             if self.leave_late.load(Ordering::Relaxed) && params.get("serve").map(String::as_str) == Some("0") {
                 std::thread::sleep(Duration::from_millis(250));
