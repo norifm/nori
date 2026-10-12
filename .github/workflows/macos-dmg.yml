@@ -37,7 +37,7 @@ jobs:
           expected = dict(line.split('  ', 1)[::-1] for line in sums.read_text().splitlines())
           assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected[archive.name]
           with tarfile.open(archive) as tar:
-              binary = next(member for member in tar.getmembers() if member.name.endswith('/nori.app/Contents/MacOS/nori'))
+              binary = next(member for member in tar.getmembers() if '/nori.app/Contents/MacOS/' in member.name and member.isfile())
               target = pathlib.Path('nori-desktop')
               target.write_bytes(tar.extractfile(binary).read())
               target.chmod(0o755)
