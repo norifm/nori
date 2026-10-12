@@ -20,7 +20,14 @@ menu open Developer settings and turn on Unknown sources.
 
 ## Desktop and terminal
 
-The desktop and terminal clients are built from source for now. With [Rust](https://rustup.rs) installed:
+Releases include desktop and terminal packages for Linux and macOS, on x86-64 and ARM64.
+Choose `nori-desktop` for the window or `nori-cli` for the terminal. Linux `.deb` packages install with
+`sudo apt install ./nori-desktop_<version>_<architecture>.deb` (or the CLI package). Extract a
+Linux archive and run its binary on other distributions. On macOS, extract the desktop archive and
+move `nori.app` into Applications; the CLI archive contains `nori-cli`, which you can place on your PATH.
+macOS bundles are ad-hoc signed; approve the downloaded app in Privacy & Security when macOS asks.
+
+To build from source, with [Rust](https://rustup.rs) installed:
 
 ```sh
 git clone https://github.com/norifm/nori

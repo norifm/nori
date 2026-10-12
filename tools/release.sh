@@ -7,6 +7,7 @@
 #   tools/release.sh --live             with --publish: published rather than a draft
 #   tools/release.sh --abi arm64-v8a    phones only: about half the size
 #   tools/release.sh --no-test          skip cargo test first
+#   tools/release.sh --no-hosts        omit desktop and CLI packages
 #   tools/release.sh --no-ipod          the APK alone, without the iPod app (built in Docker)
 #   tools/release.sh --beta             a beta (0.5.2-beta.1): a GitHub prerelease, offered in the app only to
 #                                       those who turned on Beta updates. Its notes are the changes since the
@@ -50,6 +51,7 @@ cd "$(dirname "$0")/.."
 ABI=arm64-v8a,x86_64
 RUN_TESTS=1
 IPOD=1
+HOSTS=1
 PUBLISH=0
 GUIDED=1
 DRAFT=--draft
@@ -59,6 +61,7 @@ while [ $# -gt 0 ]; do
     --abi) ABI="$2"; shift ;;
     --no-test) RUN_TESTS=0 ;;
     --no-ipod) IPOD=0 ;;
+    --no-hosts) HOSTS=0 ;;
     --build) GUIDED=0 ;;
     --publish) PUBLISH=1; GUIDED=0 ;;
     --live) DRAFT="" ;;
@@ -243,7 +246,7 @@ fi
 
 if [ "$RUN_TESTS" = 1 ]; then
   echo "==> cargo test"
-  cargo test -q
+  cargo test -q -j4 --workspace
 fi
 
 out="build/release-$version"
@@ -264,6 +267,12 @@ if [ "$IPOD" = 1 ]; then
   ./tools/ipod.sh build || die "the iPod build failed (tools/ipod.sh build, needs Docker); --no-ipod releases the APK alone"
   ipa="nori-ipod-$version.ipa"
   cp "build/ios/$ipa" "$out/$ipa"
+fi
+
+if [ "$HOSTS" = 1 ]; then
+  [ -z "$dirty" ] || die "desktop and CLI builds need a committed, pushed revision"
+  if [ "$PUBLISH" = 1 ]; then git push origin "$(git branch --show-current)"; fi
+  ./tools/host-release.sh "$(git rev-parse HEAD)" "$out/hosts"
 fi
 
 # --- what is in the directory ---------------------------------------------------
@@ -327,7 +336,11 @@ git push origin "v$version"
 
 echo "==> creating the release${DRAFT:+ (draft)}"
 # shellcheck disable=SC2086
-gh release create "v$version" "$out/$name" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" \
+host_assets=()
+if [ "$HOSTS" = 1 ]; then
+  while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out/hosts" -type f)
+fi
+gh release create "v$version" "$out/$name" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} \
   --title "nori $version" --notes-file "$notes" $DRAFT $(is_beta "$version" && echo --prerelease)
 
 echo

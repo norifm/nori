@@ -833,3 +833,29 @@ Final artifacts: `build/development-timings/smoke-hardware/`, `audio-final/`,
 `feature-passing/`, `kotlin-edit-final/` and `bazel-rust-edit/`. The Bazel command's
 process-tree CPU excludes its persistent server; its near-zero driver CPU must
 not be used as the compilation cost. Sampled compiler CPU includes that work.
+
+## Desktop and terminal releases
+
+Applies to 0.6 development and releases from beta4 onward. `tools/release.sh --beta` collects
+Linux and macOS desktop/CLI packages alongside Android and iPod artifacts. Both Linux architectures
+are built on Ubuntu 22.04; macOS Intel and Apple Silicon use native macOS builders. The command
+works from Arch Linux or macOS with GitHub CLI authentication and a pushed source commit.
+`--no-hosts` omits these packages. Android signing still requires the existing release keystore.
+
+Build every desktop/CLI platform without publishing:
+
+```sh
+tools/host-release.sh master
+```
+
+Add packages to an existing release, building its exact tag:
+
+```sh
+tools/host-release.sh v0.6.0-beta.4 build/release-0.6.0-beta.4 v0.6.0-beta.4
+```
+
+The workflow uses its current packaging tools with the requested source revision. Downloads land
+under `build/host-release/host-<runner>/`, with a checksum file per platform. `tools/host-release/package.py`
+also packages locally built native binaries. Debian dependencies come from `dpkg-shlibdeps` on
+Debian/Ubuntu; Arch native builds produce archives, not Debian packages. macOS bundles are ad-hoc
+signed, without Apple notarization. Windows builds are outside this release workflow.

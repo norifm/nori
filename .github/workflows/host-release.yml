@@ -1,0 +1,70 @@
+name: Desktop and CLI release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Commit, branch, or release tag to build
+        default: master
+        required: true
+      release:
+        description: Existing release tag to attach packages to (empty builds only)
+        default: ''
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    env:
+      RUSTC_WRAPPER: ''
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_LTO: thin
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source || github.event.release.tag_name }}
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          path: release-tooling
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev dpkg-dev
+      - name: Install Rust
+        run: rustup update stable --no-self-update && rustup default stable
+      - name: Test clients
+        run: cargo test --locked --release -j2 -p nori-cli -p nori-desktop
+      - name: Build clients
+        run: cargo build --locked --release -j2 -p nori-desktop -p nori-cli
+      - name: Package clients
+        run: python3 release-tooling/tools/host-release/package.py --binaries "$PWD/target/release" --version "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" --output build/host-release
+      - name: Verify packages
+        run: python3 release-tooling/tools/host-release/check.py build/host-release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: host-${{ matrix.runner }}
+          path: build/host-release/*
+  publish:
+    needs: build
+    if: github.event_name == 'release' || inputs.release != ''
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release || github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" packages/* --repo "$REPO" --clobber
