@@ -673,7 +673,7 @@ fn returning_here_does_not_wait_for_a_dead_device() {
         desk.queued(&["local"]);
         desk.remote.clone().serve(true);
         desk.remote.clone().watch(true);
-        desk.until("the stale relay entry", |r| r.devices().into_iter().find(|d| d.id == phone.remote.id()));
+        desk.until("the stale relay entry", |r| r.devices().into_iter().find(|d| d.id == phone.remote.id() && d.state.as_ref().is_some_and(|s| s.playing)));
         desk.remote.clone().watch(false);
         desk.remote.clone().pick(Some(phone.remote.id()));
         assert!(desk.remote.active().is_some());
@@ -900,10 +900,13 @@ fn a_jam_takes_requests_through_its_host() {
     // What the host plays, as a guest's player shows it: the song, the queue around it, who added each.
     host.core.session.register(vec![blue]);
     host.core.session.take(2, vec!["s5".into()], vec![Hand::Last]);
+    let said_before = clock::now_us();
     host.remote.clone().played(Playing { playing: true, position_ms: 9_000, index: Some(0), ..Default::default() });
     let m = gus.until("the host's queue in Gus's player", |r| r.jam_playing().filter(|m| m.rows.len() == 3));
     assert_eq!(m.rows.iter().map(|r| r.song.id.as_str()).collect::<Vec<_>>(), ["s1", "s5", "s2"], "in play order: what was asked for plays next");
-    assert_eq!((m.name.as_str(), m.at, m.playing, m.position_ms), ("Host", Some(0), true, 9_000));
+    assert_eq!((m.name.as_str(), m.at, m.playing), ("Host", Some(0), true));
+    let latest = 9_000 + (clock::now_us() - said_before) / 1_000;
+    assert!((9_000..=latest).contains(&m.position_ms), "the published position advances from the report: {} outside 9000..={latest}", m.position_ms);
     assert_eq!(gus.remote.jam_added().get("s5").map(String::as_str), Some("Dee"));
     assert!(host.remote.jam_playing().is_none(), "the host plays it itself");
 
@@ -1009,12 +1012,14 @@ fn nearby_devices_need_no_relay() {
 
     // Its word comes late through the door; its clock, learned there at once, says when it was heard.
     relay.door_late.store(true, Ordering::Relaxed);
-    let said = clock::now_us();
+    let said_before = clock::now_us();
     phone.remote.clone().played(Playing { playing: true, position_ms: 12_000, index: None, volume: None, ..Default::default() });
+    let said_after = clock::now_us();
     let m = desk.until("the phone's place", |r| r.active().filter(|m| m.playing && m.position_ms >= 12_000));
     let now = clock::now_us();
-    let off = m.position_at(now) - heard_at(12_000, said, now);
-    assert!(off.abs() <= 5, "the desk shows the phone {off} ms off what is heard there");
+    let earliest = heard_at(12_000, said_after, now) - 5;
+    let latest = heard_at(12_000, said_before, now) + 5;
+    assert!((earliest..=latest).contains(&m.position_at(now)), "the desk shows {} ms outside the heard interval {earliest}..={latest}", m.position_at(now));
     relay.door_late.store(false, Ordering::Relaxed);
 
     // A device of the same user with an old password is not shown the door.
