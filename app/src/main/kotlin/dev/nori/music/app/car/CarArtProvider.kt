@@ -83,7 +83,7 @@ class CarArtProvider : ContentProvider() {
                     val tile = CarArt.ART / 2
                     val rendition = coverRendition(tile.toUInt()).toInt()
                     val covers = coroutineScope { uri.getQueryParameters("c").map { id -> async { Widgets.picture(context, library.coverUrl(id, rendition), tile) } }.awaitAll() }
-                    Drawn(Painter.mix(covers.filterNotNull(), dev.nori.music.ffi.library.mixTileColours(mix).map { it.toInt() }, CarArt.ART, CarArt.ART, 0f), false)
+                    Drawn(Painter.mix(covers, dev.nori.music.ffi.library.mixTileColours(mix).map { it.toInt() }, CarArt.ART, CarArt.ART, 0f), false)
                 }
                 else -> null
             }

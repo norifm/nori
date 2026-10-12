@@ -108,7 +108,7 @@ class MixesWidget : NoriWidget() {
                         async {
                             val covers = t.covers.take(4).map { c -> async { Widgets.picture(context, nori.library.coverUrl(c, CoverSize.ROW), pw / 2) } }.awaitAll()
                             val colours = dev.nori.music.ffi.library.mixTileColours(t.id).map { it.toInt() }
-                            v.setImageViewBitmap(MIX_ART[i], Painter.mix(covers.filterNotNull(), colours, pw, ph, 12f * pw / tileW))
+                            v.setImageViewBitmap(MIX_ART[i], Painter.mix(covers, colours, pw, ph, 12f * pw / tileW))
                         }
                     }.awaitAll()
                 }
