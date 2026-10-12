@@ -441,6 +441,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// If its ending was made otherwise and can still change, it is made again from where the old and
     /// new endings part. A mix already audible plays out as it began.
     pub fn replan_ending(&mut self) {
+        if self.playing {
+            self.follow_clock();
+        }
         self.engine.replan();
         if self.mixing() {
             return;
