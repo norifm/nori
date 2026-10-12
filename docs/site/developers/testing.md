@@ -99,6 +99,10 @@ opens the saved tracks, taps one offline, checks Favorites through the browser, 
 album. Grouping, disc order, partial albums, and songs without an album are Rust tests; media3
 browser callbacks, Compose navigation, and offline AudioTrack playback require Android.
 
+`tools/feature-e2e.sh --only car-art` opens four-cover mosaics through Android’s content
+provider, then repeats with one unavailable cover. It compares decoded pixels in the three
+available quadrants. Content-provider pipes, Bitmap decoding, and Canvas painting require Android.
+
 The `jam` section also checks that media3 receives the guest timeline without issuing a seek to
 zero after Rust has aligned playback with the host. This queue handoff belongs to the Android service.
 
