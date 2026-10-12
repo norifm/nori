@@ -67,7 +67,7 @@ def package(binaries, output, version, system, arch):
                 (deb / "DEBIAN/control").write_text(
                     f"Package: nori-{client}\nVersion: {deb_version}\nArchitecture: {deb_arch}\nMaintainer: nori <filipton@users.noreply.github.com>\n"
                     f"Depends: {deps}\nSection: sound\nPriority: optional\nHomepage: https://norifm.com\nDescription: nori music {client} client\n")
-                artifact = output / f"nori-{client}_{deb_version}_{deb_arch}.deb"
+                artifact = output / f"nori-{client}_{version}_{deb_arch}.deb"
                 subprocess.run(["dpkg-deb", "--root-owner-group", "--build", str(deb), str(artifact)], check=True)
                 artifacts.append(artifact)
     sums = output / f"SHA256SUMS-{system}-{arch}"
