@@ -1,0 +1,20 @@
+name: macOS rendering checks
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-15
+    env:
+      RUSTC_WRAPPER: ''
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup update stable --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test Metal covers and layers
+        run: cargo test --locked -j2 -p nori-desktop compositor::tests::layer_pixels_survive_first_sampling_and_redraw -- --nocapture
