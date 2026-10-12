@@ -216,7 +216,7 @@ final class Core {
     private(set) var now = Now()
     private var nextToken: UInt64 = 1
     private var pages: [UInt64: (PageAnswer) -> Void] = [:]
-    private var covers: [UInt64: (UIImage) -> Void] = [:]
+    private var covers: [UInt64: (UIImage?) -> Void] = [:]
     private let lock = NSLock()
     private var systemVolume: SystemVolume?
 
@@ -271,7 +271,7 @@ final class Core {
             DispatchQueue.main.async { Core.shared.answered(token, answer) }
         }
         nori_ios_on_cover { token, width, height, rgba, len, owner in
-            guard let image = Core.image(width: Int(width), height: Int(height), rgba: rgba, len: len, owner: owner) else { return }
+            let image = Core.image(width: Int(width), height: Int(height), rgba: rgba, len: len, owner: owner)
             DispatchQueue.main.async { Core.shared.painted(token, image) }
         }
     }
@@ -297,7 +297,7 @@ final class Core {
         pages[token] = nil
     }
 
-    func cover(_ id: String, px: Int, done: @escaping (UIImage) -> Void) -> UInt64? {
+    func cover(_ id: String, px: Int, done: @escaping (UIImage?) -> Void) -> UInt64? {
         guard !id.isEmpty else { return nil }
         let t = token()
         covers[t] = done
@@ -440,7 +440,7 @@ final class Core {
         pages[token]?(answer)
     }
 
-    private func painted(_ token: UInt64, _ image: UIImage) {
+    private func painted(_ token: UInt64, _ image: UIImage?) {
         guard let done = covers.removeValue(forKey: token) else { return }
         done(image)
     }

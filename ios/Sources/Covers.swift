@@ -122,10 +122,11 @@ final class CoverView: UIView {
             waiting(true)
         }
         token = Core.shared.cover(id, px: px) { [weak self] image in
-            CoverCache.put(image, id, px)
+            if let image { CoverCache.put(image, id, px) }
             guard let self, self.shown == key else { return }
             self.token = nil
             self.waiting(false)
+            guard let image else { self.shown = nil; return }
             self.mark.isHidden = true
             // Sharpening a stand-in is a short cross-fade; a first picture fades in.
             let fade = UIAccessibility.isReduceMotionEnabled ? 0 : standIn == nil ? 0.26 : 0.15

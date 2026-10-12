@@ -872,8 +872,7 @@ mod tests {
 
     /// The process holds one session: the tests that open it take turns.
     fn one_session() -> std::sync::MutexGuard<'static, ()> {
-        static ONE: Mutex<()> = Mutex::new(());
-        ONE.lock().unwrap_or_else(|e| e.into_inner())
+        crate::pages::ABI_IN_USE.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn profile() -> SavedServer {
@@ -901,6 +900,92 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &bytes).unwrap();
         }
+    }
+
+    #[test]
+    fn downloaded_albums_and_covers_work_offline() {
+        use crate::pages::{nori_ios_on_page, nori_ios_read, nori_ios_tap_song, PAGE_DOWNLOADS, PAGE_DOWNLOADED_ALBUM, nori_ios_cover, nori_ios_on_cover, nori_ios_cover_release};
+        use serde_json::Value;
+        struct PageReply { token: u64, value: Value }
+        struct Picture { token: u64, width: u32, height: u32, pixels: Vec<u8> }
+        static PAGES: OnceLock<(Mutex<Vec<PageReply>>, Condvar)> = OnceLock::new();
+        unsafe extern "C" fn page(token: u64, text: *const std::ffi::c_char) {
+            let value = serde_json::from_str(&copy_c(text)).unwrap();
+            let (got, changed) = PAGES.get().unwrap();
+            got.lock().unwrap().push(PageReply { token, value });
+            changed.notify_all();
+        }
+        fn answer(token: u64) -> Value {
+            let (got, changed) = PAGES.get().unwrap();
+            let mut got = got.lock().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(page) = got.iter().find(|page| page.token == token) { return page.value.clone(); }
+                let left = deadline.saturating_duration_since(Instant::now());
+                assert!(!left.is_zero(), "no offline page for {token}");
+                got = changed.wait_timeout(got, left).unwrap().0;
+            }
+        }
+        static COVERS: Mutex<Option<std::sync::mpsc::Sender<Picture>>> = Mutex::new(None);
+        unsafe extern "C" fn cover(token: u64, width: u32, height: u32, pixels: *const u8, len: usize, owner: *mut std::ffi::c_void) {
+            let pixels = if len == 0 { Vec::new() } else { unsafe { std::slice::from_raw_parts(pixels, len) }.to_vec() };
+            if let Some(sent) = &*COVERS.lock().unwrap() { let _ = sent.send(Picture { token, width, height, pixels }); }
+            unsafe { nori_ios_cover_release(owner) };
+        }
+        let _one = one_session();
+        hear_reports();
+        PAGES.get_or_init(|| (Mutex::new(Vec::new()), Condvar::new()));
+        let dir = nori_testdir::TempDir::new("ios-offline-album");
+        let _close = Close;
+        super::start(dir.path(), profile(), Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)), true, None).unwrap();
+        let songs: Vec<Song> = [("a", 1), ("c", 3)].map(|(id, track)| Song {
+            album_id: Some("album".into()), album: "Offline album".into(), cover_art: Some("cover".into()),
+            track, duration: 2, ..song(id)
+        }).to_vec();
+        downloaded(&songs, 2);
+        let urls = super::with_session(|s| s.core.download_cover_urls(vec!["cover".into()])).unwrap();
+        let disk = nori_covers::disk::DiskCache::open(dir.path().join("covers"), 1024 * 1024).unwrap();
+        let net = nori_core::covers::CoverNet::new();
+        for url in urls {
+            disk.put(nori_covers::disk::Key::of(&net, &url), include_bytes!("../../covers/testdata/photo.png")).unwrap();
+        }
+        drop(disk);
+        unsafe { nori_ios_on_page(Some(page)); nori_ios_read(77, PAGE_DOWNLOADS, std::ptr::null()); }
+        let downloads = answer(77);
+        assert!(downloads.get("error").is_none(), "{downloads}");
+        let card = &downloads["sections"][0]["items"][0];
+        assert_eq!((card["k"].as_str(), card["id"].as_str()), (Some("downloadedAlbum"), Some("album")));
+        let album = CString::new("album").unwrap();
+        unsafe { nori_ios_read(78, PAGE_DOWNLOADED_ALBUM, album.as_ptr()); }
+        let album = answer(78);
+        assert!(album.get("error").is_none(), "{album}");
+        assert_eq!(album["head"]["k"], "downloadedAlbum");
+        let ids: Vec<&str> = album["sections"][0]["items"].as_array().unwrap().iter().map(|row| row["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["a", "c"]);
+        let (sent, received) = std::sync::mpsc::channel();
+        *COVERS.lock().unwrap() = Some(sent);
+        let cover_id = CString::new("cover").unwrap();
+        unsafe { nori_ios_on_cover(Some(cover)); nori_ios_cover(79, cover_id.as_ptr(), 8); }
+        let Picture { token, width, height, pixels } = received.recv_timeout(Duration::from_secs(10)).expect("a cached cover without a connection");
+        assert_eq!((token, width, height), (79, 8, 8));
+        assert_eq!(pixels.len(), (width * height * 4) as usize);
+        assert!(pixels.as_chunks::<4>().0.iter().any(|rgba| rgba[..3] != pixels[..3]), "the cached artwork has image content");
+        let missing = CString::new("missing").unwrap();
+        unsafe { nori_ios_cover(80, missing.as_ptr(), 8); }
+        let Picture { token, width, height, pixels } = received.recv_timeout(Duration::from_secs(10)).expect("an unavailable cover finishes its request");
+        assert_eq!((token, width, height), (80, 0, 0));
+        assert!(pixels.is_empty());
+        unsafe { nori_ios_on_cover(None); }
+        *COVERS.lock().unwrap() = None;
+        let at = mark();
+        nori_ios_tap_song(78, 1);
+        song_of(at, "c", 1);
+        expect(at, REPORT_STATE, |r| r.state == STATE_PLAYING);
+        expect(at, REPORT_STATE, |r| r.state == super::STATE_ENDED);
+        super::close();
+        let heard = std::fs::read(dir.path().join("heard.wav")).unwrap();
+        assert!(heard[44..].iter().any(|&b| b != 0), "downloaded audio reached the output");
+        unsafe { nori_ios_on_page(None); }
     }
 
     #[test]

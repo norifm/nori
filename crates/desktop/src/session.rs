@@ -307,7 +307,9 @@ impl Session {
     /// Requests a cover at `px` square; large ones also get page colours, derived on the loader thread.
     pub fn cover(&self, key: CoverKey, px: u32) -> Option<Ticket> {
         let (send, colours) = (self.sender(), key.size != CoverSize::Card);
-        self.host.cover(key.id.clone(), px, colours, move |image, colours| send(Msg::Cover { key, image, colours }))
+        self.host.cover(key.id.clone(), px, colours, move |image, colours| {
+            if let Ok(image) = image { send(Msg::Cover { key, image, colours }); }
+        })
     }
 
     /// Remote control, while it is on: the other devices and moving the music between them.

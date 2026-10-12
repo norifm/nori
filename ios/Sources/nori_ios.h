@@ -186,8 +186,8 @@ void nori_ios_star(int32_t kind, const char *id, int32_t on);
 /// What plays now, as JSON; free it. NULL when nothing is open.
 char *nori_ios_now(void);
 
-/// A decoded cover: straight RGBA, `len` bytes, valid until `owner` is given to nori_ios_cover_release
-/// (so it is drawn without a copy). Comes on a loader thread.
+/// A decoded cover: straight RGBA, `len` bytes, valid until `owner` is given to nori_ios_cover_release.
+/// Delivered on a loader thread without a copy. A failed request has zero dimensions and a null owner.
 typedef void (*NoriCoverFn)(uint64_t token, uint32_t width, uint32_t height, const uint8_t *rgba, size_t len, void *owner);
 void nori_ios_cover_release(void *owner);
 void nori_ios_on_cover(NoriCoverFn cb);

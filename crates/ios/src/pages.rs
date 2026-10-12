@@ -88,6 +88,10 @@ pub unsafe extern "C" fn nori_ios_cover_release(owner: *mut std::ffi::c_void) {
     }
 }
 
+// ABI tests share callbacks and retained lists.
+#[cfg(test)]
+pub(crate) static ABI_IN_USE: Mutex<()> = Mutex::new(());
+
 static PAGE_HOOK: Mutex<Option<PageFn>> = Mutex::new(None);
 static COVER_HOOK: Mutex<Option<CoverFn>> = Mutex::new(None);
 
@@ -1078,7 +1082,7 @@ pub unsafe extern "C" fn nori_ios_on_cover(cb: Option<CoverFn>) {
 }
 
 /// Asks for cover `id` at `px` square; the answer comes to the cover callback with `token`, from the
-/// memory cache, the disk or the server. Nothing comes for a cover that fails or is cancelled.
+/// memory cache, disk, or server. A failure has zero dimensions and no owner; cancellation has no answer.
 ///
 /// # Safety
 /// `id` is NUL-terminated UTF-8.
@@ -1086,13 +1090,17 @@ pub unsafe extern "C" fn nori_ios_on_cover(cb: Option<CoverFn>) {
 pub unsafe extern "C" fn nori_ios_cover(token: u64, id: *const c_char, px: u32) {
     request(token, c_text(id), px, move |image| {
         // The decoded image's own buffer, shared with the loader's memory cache.
-        let (w, h) = (image.width, image.height);
-        hand(token, w, h, image, |i| &i.pixels);
+        if let Some(image) = image {
+            let (w, h) = (image.width, image.height);
+            hand(token, w, h, image, |i| &i.pixels);
+        } else if let Some(cb) = *lock(&COVER_HOOK) {
+            unsafe { cb(token, 0, 0, std::ptr::null(), 0, std::ptr::null_mut()) };
+        }
     });
 }
 
 /// Asks for cover `id` at `px`, kept under `token` until it comes or is let go.
-fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Arc<nori_covers::Image>) + Send + 'static) {
+fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Option<Arc<nori_covers::Image>>) + Send + 'static) {
     if id.is_empty() || px == 0 {
         return;
     }
@@ -1102,15 +1110,16 @@ fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Arc<nori_covers
         s.cover(id, px, false, move |image, _| {
             finished.store(true, Ordering::Release);
             lock(&TICKETS).retain(|(t, _)| *t != token);
-            deliver(image);
+            deliver(image.ok());
         })
     })
     .flatten();
     if let Some(ticket) = ticket {
+        let mut tickets = lock(&TICKETS);
         if done.load(Ordering::Acquire) {
             ticket.detach();
         } else {
-            lock(&TICKETS).push((token, ticket));
+            tickets.push((token, ticket));
         }
     }
 }
@@ -1449,9 +1458,6 @@ mod tests {
     }
 
 
-    /// Tests that empty and fill the process-wide `LISTS` take turns.
-    static LISTS_IN_USE: Mutex<()> = Mutex::new(());
-
     fn song(id: &str) -> Song {
         Song {
             id: id.into(),
@@ -1462,6 +1468,7 @@ mod tests {
 
     #[test]
     fn a_handed_picture_lives_until_the_app_lets_go() {
+        let _turn = lock(&ABI_IN_USE);
         static HELD: Mutex<Vec<usize>> = Mutex::new(Vec::new());
         unsafe extern "C" fn keep(_: u64, _: u32, _: u32, _: *const u8, _: usize, owner: *mut std::ffi::c_void) {
             lock(&HELD).push(owner as usize);
@@ -1556,7 +1563,7 @@ mod tests {
 
     #[test]
     fn a_list_is_kept_by_its_token_and_old_ones_fall_off() {
-        let _turn = lock(&LISTS_IN_USE);
+        let _turn = lock(&ABI_IN_USE);
         forget_lists();
         for t in 0..(KEPT_LISTS as u64 + 2) {
             keep_list(1000 + t, vec![song(&t.to_string())], None);
@@ -1569,7 +1576,7 @@ mod tests {
 
     #[test]
     fn a_search_answer_keeps_its_songs_for_a_tap() {
-        let _turn = lock(&LISTS_IN_USE);
+        let _turn = lock(&ABI_IN_USE);
         forget_lists();
         let r = SearchResult {
             songs: vec![song("a"), song("b")],
