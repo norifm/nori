@@ -8,6 +8,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import dmg
+
 output = Path(sys.argv[1]).resolve()
 for sums in output.glob("SHA256SUMS-*"):
     for line in sums.read_text().splitlines():
@@ -34,3 +36,6 @@ for deb in output.glob("*.deb"):
     subprocess.run(["dpkg-deb", "--info", str(deb)], check=True)
     dependencies = subprocess.check_output(["dpkg-deb", "--field", str(deb), "Depends"], text=True)
     assert dependencies.strip(), deb
+
+for image in output.glob("*.dmg"):
+    dmg.verify(image)

@@ -1,0 +1,71 @@
+name: Backfill macOS disk images
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Existing release tag whose desktop archives to package
+        required: true
+        default: v0.6.0-beta.4
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: aarch64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download and verify the released desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p packages
+          gh release download "$RELEASE" --pattern "nori-desktop-*-macos-$ARCH.tar.gz" --pattern "SHA256SUMS-macos-$ARCH" --dir packages
+          python3 - <<'PY'
+          import hashlib, pathlib, tarfile
+          root = pathlib.Path('packages')
+          archive = next(root.glob('*.tar.gz'))
+          sums = next(root.glob('SHA256SUMS-*'))
+          expected = dict(line.split('  ', 1)[::-1] for line in sums.read_text().splitlines())
+          assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected[archive.name]
+          with tarfile.open(archive) as tar:
+              binary = next(member for member in tar.getmembers() if member.name.endswith('/nori.app/Contents/MacOS/nori'))
+              target = pathlib.Path('nori-desktop')
+              target.write_bytes(tar.extractfile(binary).read())
+              target.chmod(0o755)
+          PY
+      - name: Check Metal availability
+        run: swift -e 'import Metal; print(MTLCopyAllDevices().map { $0.name })'
+      - name: Package and verify disk image
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: python3 tools/host-release/dmg.py --binary nori-desktop --version "${RELEASE#v}" --output packages
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: |
+            packages/*.dmg
+            packages/SHA256SUMS-*
+  publish:
+    needs: package
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+          REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE" packages/* --repo "$REPO" --clobber
