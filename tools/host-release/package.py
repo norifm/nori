@@ -3,12 +3,13 @@
 import argparse
 import hashlib
 import platform
-import os
 import shutil
 import subprocess
 import tarfile
 import tempfile
 from pathlib import Path
+
+import dmg
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,21 +20,20 @@ def package(binaries, output, version, system, arch):
     with tempfile.TemporaryDirectory(prefix="nori-package-") as temporary:
         work = Path(temporary)
         for client in ("desktop", "cli"):
+            if system == "macos" and client == "desktop":
+                artifacts.append(dmg.package(binaries / "nori-desktop", output, version, arch))
+                continue
             name = f"nori-{client}-{version}-{system}-{arch}"
             stage = work / name
             stage.mkdir()
             binary = binaries / f"nori-{client}"
-            if system == "macos" and client == "desktop":
-                env = dict(os.environ, NORI_APP_DIR=str(stage), NORI_DESKTOP_BINARY=str(binary.resolve()), NORI_VERSION=version)
-                subprocess.run([str(ROOT / "tools/desktop-app.sh"), "--no-build"], env=env, check=True)
-            else:
-                shutil.copy2(binary, stage / binary.name)
-                if system == "macos":
-                    subprocess.run(["codesign", "--force", "--sign", "-", str(stage / binary.name)], check=True)
+            shutil.copy2(binary, stage / binary.name)
+            if system == "macos":
+                subprocess.run(["codesign", "--force", "--sign", "-", str(stage / binary.name)], check=True)
             shutil.copy2(ROOT / "LICENSE", stage / "LICENSE")
             (stage / "README.txt").write_text(
                 "nori music\nhttps://github.com/norifm/nori\n\n"
-                + ("Move nori.app to Applications.\n" if system == "macos" and client == "desktop" else f"Run ./{binary.name} or install it on your PATH.\n")
+                + f"Run ./{binary.name} or install it on your PATH.\n"
                 + "Desktop and terminal share ~/.local/share/nori (or $XDG_DATA_HOME/nori).\n")
             archive = output / f"{name}.tar.gz"
             with tarfile.open(archive, "w:gz") as tar:
