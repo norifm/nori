@@ -34,7 +34,13 @@ fn rules_json(r: &ProfileRules) -> Value {
 /// to free ([`rules_json`]); NULL with no session.
 #[no_mangle]
 pub extern "C" fn nori_ios_rules() -> *mut c_char {
-    with_session(|s| owned(&rules_json(&s.rules))).unwrap_or(std::ptr::null_mut())
+    with_session(|s|  {
+        let mut rules = s.rules.clone();
+        if let Some(c) = s.remote().and_then(|r| r.jam_controls()) {
+            rules.asks = c.asks;
+        }
+        owned(&rules_json(&rules))
+    }).unwrap_or(std::ptr::null_mut())
 }
 
 fn listening_code(l: Listening) -> u8 {
@@ -172,7 +178,9 @@ mod tests {
             listening: Listening::HostOff,
         };
         // Paused here, a plain guest's play and pause are its own; it skips and seeks nothing.
-        let controls = JamControls { controls: Controls::of(Role::Guest, true), playing: false, paused_here: true };
+        let controls = JamControls { controls: Controls::of(Role::Guest, true),
+            asks: true,
+            playing: false, paused_here: true };
         assert_eq!(
             jam_json(&v, Some(controls)),
             json!({
@@ -180,7 +188,9 @@ mod tests {
                 "play": 1, "skip": 0, "seek": 0, "playing": false, "pausedHere": true,
             })
         );
-        let admin = JamControls { controls: Controls::of(Role::Admin, false), playing: true, paused_here: false };
+        let admin = JamControls { controls: Controls::of(Role::Admin, false),
+            asks: false,
+            playing: true, paused_here: false };
         let j = jam_json(&v, Some(admin));
         assert_eq!((&j["play"], &j["skip"], &j["seek"], &j["playing"]), (&json!(2), &json!(2), &json!(2), &json!(true)), "an admin's reach the host");
     }

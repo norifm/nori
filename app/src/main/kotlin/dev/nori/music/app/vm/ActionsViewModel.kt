@@ -56,10 +56,10 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     private val picked = Selection<Song> { it.id }
     val selection: StateFlow<List<Song>> = picked.items
     /** A jam guest has nothing to do with a selection: a long press selects nothing. */
-    fun toggleSelected(song: Song) { if (!asks) picked.toggle(song) }
+    fun toggleSelected(song: Song) { if (!nori.rules.asks) picked.toggle(song) }
 
     /** A song played or queued here is asked of the jam's host (a guest's profile, the core's `ProfileRules`). */
-    private val asks: Boolean get() = nori.rules.asks
+    private val asks: Boolean get() = nori.remotes.jamControls.value?.asks ?: nori.rules.asks
 
     /** Asks the jam's host for [songs] (a guest's Play next and Add to queue). */
     private fun ask(songs: List<Song>) {

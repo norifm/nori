@@ -82,7 +82,12 @@ impl Controls {
             Op::Play | Op::Pause => self.play_pause,
             Op::Next | Op::Previous | Op::Jump { .. } => self.skip,
             Op::Seek { .. } => self.seek,
-            Op::Move { .. } => self.reorder,
+            Op::Move { .. }
+            | Op::Remove { .. }
+            | Op::Restore { .. }
+            | Op::Shuffle { .. }
+            | Op::Repeat { .. } => self.reorder,
+            Op::Replace { .. } | Op::Add { .. } => self.skip,
             Op::Volume { .. } => self.volume,
             _ => Reach::Nowhere,
         }
@@ -125,6 +130,33 @@ mod tests {
         ];
         for (op, from, want) in cases {
             assert_eq!(admit(op, *from, 7, 3), *want, "{op:?} from {from:?}");
+        }
+    }
+
+    #[test]
+    fn admins_play_and_queue_songs() {
+        let replace = Op::Replace {
+            songs: vec![Default::default()],
+            index: 0,
+            position_ms: 0,
+            play: true,
+            order: None,
+            shuffle: false,
+            repeat: 0,
+            transfer: None,
+        };
+        for op in [
+            replace,
+            Op::Add {
+                songs: vec![Default::default()],
+                next: false,
+            },
+        ] {
+            assert_eq!(admit(&op, Sender::Member(Role::Admin), 7, 3), Ok(()));
+            assert_eq!(
+                admit(&op, Sender::Member(Role::Guest), 7, 3),
+                Err(Refusal::NotAllowed)
+            );
         }
     }
 

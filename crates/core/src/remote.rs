@@ -294,6 +294,9 @@ pub enum JamStart {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct JamControls {
     pub controls: Controls,
+
+    /// Song actions request approval from the host.
+    pub asks: bool,
     /// The play button shows playing: the jam's playback where play and pause reach the jam, else this
     /// device's.
     pub playing: bool,
@@ -927,7 +930,9 @@ impl Inner {
         let (there, here) = (st.playing, self.playing.playing);
         let paused_here = listening && there && !here;
         let playing = !paused_here && if controls.play_pause == Reach::Jam { there } else { here };
-        Some(JamControls { controls, playing, paused_here })
+        Some(JamControls { controls,
+            asks: role == Role::Guest,
+            playing, paused_here })
     }
 
     /// When the jam's host heard `st`'s place, on this device's clock, once its clock is known here
@@ -2632,6 +2637,19 @@ impl Remote {
         };
         let (rev, len) = self.client.core.session.playlist(|p| (p.rev(), p.len() as u32));
         admit(&op, sender, rev, len)?;
+        if in_jam {
+            let mut i = self.inner.lock();
+            let h = i.hosted.as_mut().ok_or(Refusal::Unknown)?;
+            match &op {
+                Op::Add { songs, .. } => h.jam.queue_songs(By::Member(from), songs)?,
+                Op::Replace { songs, .. } => {
+                    for song in songs {
+                        h.jam.may_request(By::Member(from), song)?;
+                    }
+                }
+                _ => {}
+            }
+        }
         if let Op::Replace { transfer, .. } = &op {
             let mut i = self.inner.lock();
             if let Some(request) = transfer {

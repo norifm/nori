@@ -2067,14 +2067,14 @@ fn jam_controls_reach_by_role() {
     let dee_id = dee.until("the jam", |r| r.jam_view().filter(|v| v.members.len() == 3)).you;
     host.remote.clone().jam_act(Op::Promote { member: dee_id, admin: true });
     let admin = dee.until("Dee's role", |r| r.jam_controls().filter(|c| c.controls.skip == Reach::Jam));
-    assert_eq!(admin, JamControls { controls: Controls::of(Role::Admin, true), playing: true, paused_here: false });
+    assert_eq!(admin, JamControls { controls: Controls::of(Role::Admin, true), asks: false, playing: true, paused_here: false });
 
     // The guest's own pause: carried out here, nothing sent; the jam plays on.
     gus.until("Gus's controls", |r| r.jam_controls().filter(|c| c.playing));
     assert_eq!(gus.remote.clone().jam_press(Op::Pause), Reach::Here);
     gus.remote.clone().played(Playing { playing: false, position_ms: 31_000, index: Some(0), ..Default::default() });
     let paused = gus.until("paused here", |r| r.jam_controls().filter(|c| c.paused_here));
-    assert_eq!(paused, JamControls { controls: Controls::of(Role::Guest, true), playing: false, paused_here: true });
+    assert_eq!(paused, JamControls { controls: Controls::of(Role::Guest, true), asks: true, playing: false, paused_here: true });
     for op in [Op::Next, Op::Seek { ms: 1_000 }, Op::Move { from: 0, to: 1, rev: 0 }] {
         assert_eq!(gus.remote.clone().jam_press(op), Reach::Nowhere);
     }
@@ -2089,9 +2089,71 @@ fn jam_controls_reach_by_role() {
     assert_eq!(host.told(), Op::Pause);
     assert_eq!(dee.remote.clone().jam_press(Op::Next), Reach::Jam);
     assert_eq!(host.told(), Op::Next);
+    let blue = Song {
+        id: "s5".into(),
+        title: "Blue".into(),
+        ..Default::default()
+    };
+    let replace = Op::Replace {
+        songs: vec![blue.clone()],
+        index: 0,
+        position_ms: 0,
+        play: true,
+        order: None,
+        shuffle: false,
+        repeat: 0,
+        transfer: None,
+    };
+    assert_eq!(dee.remote.clone().jam_press(replace.clone()), Reach::Jam);
+    assert_eq!(
+        host.told(),
+        replace,
+        "an admin's tap plays rather than requesting a queue addition"
+    );
+    host.core.session.register(vec![blue]);
+    host.core
+        .session
+        .set(vec!["s5".into()], Some(0), false, None);
+    host.remote.clone().played(Playing {
+        playing: true,
+        index: Some(0),
+        ..Default::default()
+    });
+    dee.until("the admin's new queue", |r| {
+        r.jam_playing()
+            .filter(|m| m.rows.len() == 1 && m.rows[0].song.id == "s5")
+    });
+    let song = Song {
+        id: "s4".into(),
+        title: "Four".into(),
+        ..Default::default()
+    };
+    let add = Op::Add {
+        songs: vec![song.clone()],
+        next: false,
+    };
+    assert_eq!(dee.remote.clone().jam_press(add.clone()), Reach::Jam);
+    assert_eq!(host.told(), add);
+    host.core.session.register(vec![song]);
+    host.core
+        .session
+        .take(1, vec!["s4".into()], vec![Hand::Last]);
+    host.remote.clone().played(Playing {
+        playing: true,
+        index: Some(0),
+        ..Default::default()
+    });
+    dee.until("the admin's queue addition", |r| {
+        r.jam_playing()
+            .filter(|m| m.rows.iter().any(|row| row.song.id == "s4"))
+    });
+    assert!(dee.remote.jam_view().unwrap().pending.is_empty());
+    assert_eq!(
+        dee.remote.jam_added().get("s4").map(String::as_str),
+        Some("Dee")
+    );
     relay.close();
 }
-
 
 /// A jam plays here and nowhere else: starting one brings the playback back to this device, and while it
 /// runs, the playback cannot be moved to another device.
