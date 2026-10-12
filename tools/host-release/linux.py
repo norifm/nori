@@ -28,7 +28,7 @@ def package(binaries, output, version):
         (app / "usr/bin").mkdir(parents=True)
         shutil.copy2(binaries / "nori-desktop", app / "usr/bin/nori-desktop")
         icon = app / "nori.png"
-        shutil.copy2(ROOT / "app/src/main/res/drawable-xxxhdpi/nori_mark.png", icon)
+        run("convert", ROOT / "app/src/main/res/drawable-xxxhdpi/nori_mark.png", "-resize", "512x512", icon)
         desktop = app / f"{APP_ID}.desktop"
         desktop.write_text("[Desktop Entry]\nType=Application\nName=nori\nExec=nori-desktop\nIcon=nori\nTerminal=false\nCategories=AudioVideo;Audio;Player;\n")
         licenses = app / "usr/share/licenses/nori"
@@ -80,7 +80,7 @@ def package(binaries, output, version):
         (applications / f"{APP_ID}.desktop").write_text(desktop.read_text().replace("Icon=nori", f"Icon={APP_ID}"))
         icons = files / "share/icons/hicolor/512x512/apps"
         icons.mkdir(parents=True)
-        run("convert", icon, "-resize", "512x512", icons / f"{APP_ID}.png")
+        shutil.copy2(icon, icons / f"{APP_ID}.png")
         licenses = files / "share/licenses/nori"
         licenses.mkdir(parents=True)
         shutil.copy2(ROOT / "LICENSE", licenses / "LICENSE")
