@@ -70,12 +70,15 @@ for CPU, live heap and GPU measurements.
 Desktop UI regressions use Slint's software testing backend and virtual time. They check that Home
 Show all links open vertically scrollable collections, offscreen cards are released, mouse dragging
 reveals later shelf items, and wheel notches move over time to their accumulated destination.
+The playlist sidebar test checks that offscreen covers do not enter the cache, loaded covers keep
+their pixels across redraws, and scrolling to the last playlist requests its cover.
 On Linux, check actual border dragging under a private window manager on a 1920 × 1080 Xvfb screen;
 programmatic window-size changes alone do not exercise interactive resizing.
 
-The desktop GPU regression reads rendered pixels before and after a redraw, checking that wgpu
-does not clear Skia's first frame. It needs a real GPU backend, so it runs explicitly rather than
-on headless CI: `cargo test -j4 -p nori-desktop layer_pixels_survive_first_sampling_and_redraw -- --ignored`.
+The macOS rendering workflow runs Metal pixel tests on a native Mac runner. They check the first
+frame and redraws, plus rounded covers and mosaics across three asynchronous layer renderers with
+the application's GPU cache budget. Run them on a Mac with
+`cargo test -j4 -p nori-desktop compositor::tests:: -- --nocapture`.
 This checks the renderer handoff and texture layouts, which the playback virtual clock cannot exercise.
 On Linux, run `DISPLAY=:0 cargo test -j4 -p nori-desktop layers_resize_without_losing_pixels_or_blur -- --ignored`.
 It checks every pixel after live surface resizing, retained pixels and bounded repaint regions after
