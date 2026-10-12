@@ -290,3 +290,11 @@ settled, five-second samples measured 0.4% of one CPU core paused, 10.2% playing
 in fullscreen. The current fixture song was 80 seconds long. RSS was 128–144 MiB and anonymous RSS
 47–54 MiB. The fixture has no cover images; these are observations, not a matched CPU improvement
 or a memory guarantee for the owner's library. Two subsequent skips and play/pause completed.
+
+## Sidebar cover requests
+
+After beta4, the playlist sidebar creates rows only around its viewport. Previously, layout evaluated
+cover bindings for offscreen playlists too. A long playlist list could displace visible covers from
+the bounded cache and request them again on the next cover revision, even with the window still.
+The regression test uses 500 playlists, checks that offscreen covers are not requested, verifies
+stable pixels and cached covers across redraws, and scrolls to the last playlist.

@@ -3353,7 +3353,7 @@ component SidebarContent inherits Rectangle {
         drag => { root.drag-window(); }
         zoom => { root.zoom-window(); }
     }
-    Flickable {
+    side-flick := Flickable {
         y: root.inset-top;
         height: parent.height - self.y - foot.height;
         content-height: side.preferred-height;
@@ -3405,12 +3405,21 @@ component SidebarContent inherits Rectangle {
                 chosen: root.view == 4;
                 clicked => { root.go(4); }
             }
-            for p in root.side-playlists: SideItem {
-                text: p.title;
-                has-picture: true;
-                picture: root.art(p.art, 0, root.covers-rev);
-                chosen: root.view == 6 && root.page-kind == 2 && root.page-id == p.id;
-                clicked => { root.open-playlist(p.id); }
+            playlist-rows := Rectangle {
+                height: root.side-playlists.length * 35px;
+                property <int> first: max(0, floor((-side-flick.content-y - self.y) / 35px) - 2);
+                property <int> count: max(0, min(root.side-playlists.length - self.first, ceil(side-flick.height / 35px) + 4));
+                for slot in playlist-rows.count: SideItem {
+                    property <int> index: playlist-rows.first + slot;
+                    property <Card> item: root.side-playlists[self.index];
+                    y: self.index * 35px;
+                    width: parent.width;
+                    text: self.item.title;
+                    has-picture: true;
+                    picture: root.art(self.item.art, 0, root.covers-rev);
+                    chosen: root.view == 6 && root.page-kind == 2 && root.page-id == self.item.id;
+                    clicked => { root.open-playlist(self.item.id); }
+                }
             }
         }
     }
