@@ -6,16 +6,18 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 app="${NORI_APP_DIR:-$HOME/Applications}/nori.app"
-version=$(grep -oE '^version = "[^"]+"' "$root/Cargo.toml" | head -1 | cut -d'"' -f2)
+version=${NORI_VERSION:-$(grep -oE '^version = "[^"]+"' "$root/Cargo.toml" | head -1 | cut -d'"' -f2)}
 
 [ "${1:-}" = --no-build ] || (cd "$root" && cargo build -j4 --release -p nori-desktop)
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$root/target/release/nori-desktop" "$app/Contents/MacOS/nori"
+cp "${NORI_DESKTOP_BINARY:-$root/target/release/nori-desktop}" "$app/Contents/MacOS/nori"
 
 # The icon at every size iconutil wants, from the one 1024 px picture.
-set_dir=$(mktemp -d)/nori.iconset
+icon_dir=$(mktemp -d)
+trap 'rm -rf "$icon_dir"' EXIT
+set_dir="$icon_dir/nori.iconset"
 mkdir -p "$set_dir"
 for size in 16 32 128 256 512; do
   sips -z $size $size "$root/docs/brand/nori-macos.png" --out "$set_dir/icon_${size}x${size}.png" >/dev/null
@@ -33,8 +35,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>CFBundleExecutable</key><string>nori</string>
 <key>CFBundleIconFile</key><string>nori</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>$version</string>
-<key>CFBundleVersion</key><string>$version</string>
+<key>CFBundleShortVersionString</key><string>${version%%-*}</string>
+<key>CFBundleVersion</key><string>${version/-beta./b}</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
 <key>NSHighResolutionCapable</key><true/>
