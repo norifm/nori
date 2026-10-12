@@ -5,6 +5,7 @@ import hashlib
 import os
 import platform
 import shutil
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -44,8 +45,8 @@ def package(binaries, output, version):
         plugins = (libdir / "alsa-lib/libasound_module_pcm_pulse.so", libdir / "alsa-lib/libasound_module_ctl_pulse.so")
         args += [arg for plugin in plugins for arg in ("--library", plugin)]
         run(deploy, "--appdir", app, "--executable", app / "usr/bin/nori-desktop", "--desktop-file", desktop, "--icon-file", icon, *args, env=env)
-        shutil.copytree("/usr/share/alsa", app / "usr/share/alsa")
-        (app / "usr/share/alsa/nori.conf").write_text("<confdir:alsa.conf>\npcm.!default { type pulse }\nctl.!default { type pulse }\n")
+        (app / "usr/share/alsa").mkdir(parents=True)
+        (app / "usr/share/alsa/nori.conf").write_text("pcm.!default { type pulse }\nctl.!default { type pulse }\n")
         plugin_dir = app / "usr/lib/alsa-lib"
         plugin_dir.mkdir()
         for plugin in plugins:
@@ -55,7 +56,6 @@ def package(binaries, output, version):
         launcher.write_text('#!/bin/sh\nroot="$(dirname "$(readlink -f "$0")")"\n'
                             'export LD_LIBRARY_PATH="$root/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
                             'export ALSA_CONFIG_PATH="$root/usr/share/alsa/nori.conf"\n'
-                            'export ALSA_CONFIG_DIR="$root/usr/share/alsa"\n'
                             'export ALSA_PLUGIN_DIR="$root/usr/lib/alsa-lib"\n'
                             'exec "$root/usr/bin/nori-desktop" "$@"\n')
         launcher.chmod(0o755)
@@ -66,6 +66,8 @@ def package(binaries, output, version):
         run(tool, app, image, env=env)
         result = subprocess.run([str(image), "--appimage-extract-and-run", "--help"], capture_output=True, text=True)
         assert "usage: nori-desktop" in result.stdout + result.stderr, result.stderr
+        audio_env = dict(os.environ, LD_LIBRARY_PATH=str(app / "usr/lib"), ALSA_CONFIG_PATH=str(app / "usr/share/alsa/nori.conf"), ALSA_PLUGIN_DIR=str(app / "usr/lib/alsa-lib"))
+        run(sys.executable, "-c", "import ctypes; lib = ctypes.CDLL('libasound.so.2'); lib.snd_strerror.restype = ctypes.c_char_p; pcm = ctypes.c_void_p(); result = lib.snd_pcm_open(ctypes.byref(pcm), b'default', 0, 0); assert result == 0, lib.snd_strerror(result); lib.snd_pcm_close(pcm)", env=audio_env)
 
         run("flatpak", "remote-add", "--user", "--if-not-exists", "flathub", "https://dl.flathub.org/repo/flathub.flatpakrepo")
         run("flatpak", "install", "--user", "--noninteractive", "flathub", f"org.freedesktop.Platform//{RUNTIME}", f"org.freedesktop.Sdk//{RUNTIME}")
