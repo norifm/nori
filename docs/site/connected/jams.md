@@ -34,7 +34,15 @@ With **Let guests listen along** on (the default), guests can play the jam's mus
 in step with the host, its speed, skipped silence and transitions included. Change it in the room settings next to **Invite**. These settings apply only to the current room.
 In the terminal, press s in the invite to open room settings.
 
+On Android and the iPod, **Not playing here** means the jam is shown without playing audio on that
+device. Choose **Listen here** to hear it. The host's song, progress, and **Mixing** indicator still
+update while watching.
+
 In current 0.6 development builds, an admin's tap on a song plays it immediately. **Play next** and **Add to queue**
 add it directly, without an approval request. Guests still request songs from the host.
+
+Listening devices use the host's transition plan and timing, including joining or resuming partway
+through a mix. Each device keeps its own equalizer and output processing. Controlling another device
+also shows that device's **Mixing** indicator.
 
 In the terminal, `i` starts a jam around the selected item and `o` joins one from its link.

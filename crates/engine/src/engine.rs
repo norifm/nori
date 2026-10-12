@@ -160,6 +160,9 @@ pub struct Lead {
     pub pitch: f32,
     /// The transition out of a song there (its id), once planned.
     pub mix: Option<(String, Plan)>,
+
+    /// The outgoing side's position and rate at the same moment as `ms`.
+    pub mix_place: Option<(usize, f64, f64)>,
 }
 
 /// A [`Lead`] timed on the engine's clock.
@@ -168,6 +171,7 @@ struct Leading {
     speed: f32,
     pitch: f32,
     mix: Option<(String, Plan)>,
+    mix_place: Option<Led>,
 }
 
 /// The engine's last reading, for a screen to read without waking it.
@@ -183,6 +187,8 @@ pub struct Status {
     /// How fast the position moves: speed times the tempo a mix plays the song at.
     pub pace: f32,
     pub mixing: bool,
+    pub mix_from: Option<usize>,
+    pub mix_position_ms: i64,
     /// Pulls that found the ring short while music was due.
     pub underruns: u64,
     /// Times the output was let go after a long pause.
@@ -215,6 +221,9 @@ impl Default for Status {
             speed: 1.0,
             pace: 1.0,
             mixing: false,
+
+            mix_from: None,
+            mix_position_ms: 0,
             underruns: 0,
             releases: 0,
             switching: false,
@@ -233,10 +242,20 @@ impl Default for Status {
 impl Status {
     /// The position now: the last reading moved on at its pace while playing.
     pub fn position_now(&self) -> i64 {
-        match self.state {
-            State::Playing => self.position_ms + (self.at.elapsed().as_secs_f64() * 1000.0 * self.pace as f64) as i64,
-            _ => self.position_ms,
-        }
+        self.positions_at(Instant::now(), false).0
+    }
+
+    /// The displayed and outgoing transition positions at one moment, held while waiting for audio.
+    pub fn positions_at(&self, now: Instant, buffering: bool) -> (i64, i64) {
+        let elapsed = if self.state == State::Playing && !buffering {
+            now.saturating_duration_since(self.at).as_secs_f64() * 1000.0
+        } else {
+            0.0
+        };
+        (
+            self.position_ms + (elapsed * self.pace as f64) as i64,
+            self.mix_position_ms + (elapsed * self.speed as f64) as i64,
+        )
     }
 
     /// The position for a seek bar, and whether the reading is old enough to [`Engine::look`] again.
@@ -560,7 +579,15 @@ impl Engine {
     pub fn follow(&self, lead: Option<Lead>) {
         let leading = lead.map(|l| {
             let led = Led { index: l.index, ms: l.ms, at_us: (self.now_us)() - l.ago_us, there_us: l.there_us, rate: l.rate, playing: l.playing };
-            Box::new(Leading { led, speed: l.speed, pitch: l.pitch, mix: l.mix })
+
+            let mix_place = l.mix_place.map(|(index, ms, rate)| Led {
+                index,
+                ms,
+                rate,
+                ..led.clone()
+            });
+            Box::new(Leading { led, speed: l.speed, pitch: l.pitch, mix: l.mix ,
+                mix_place})
         });
         self.send(Command::Follow(leading));
     }
@@ -739,6 +766,8 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     /// Another device's playback followed, and its speed and pitch.
     following: Option<Following>,
     led_speed: (f32, f32),
+
+    mix_place: Option<Led>,
 }
 
 impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E, C> {
@@ -780,6 +809,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             why: String::new(),
             following: None,
             led_speed: (1.0, 1.0),
+            mix_place: None,
         };
         w.apply(config.settings);
         w
@@ -1402,6 +1432,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let was = self.following.is_some();
         let Some(l) = leading else {
             self.following = None;
+            self.mix_place = None;
             self.p.sink.track.set_slip(0.0, 0.0, 0.0);
             self.p.priming = false;
             self.p.engine.plans = Plans::Own;
@@ -1411,7 +1442,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             }
             return;
         };
-        let Leading { led, speed, pitch, mix } = *l;
+        let Leading { led, speed, pitch, mix,
+            mix_place,
+        } = *l;
+        self.mix_place = mix_place;
         let now_us = self.clock.now_us();
         match self.following.as_mut() {
             Some(f) => f.lead(led, now_us),
@@ -1508,7 +1542,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
         match step {
             follow::Step::Stay => {}
-            follow::Step::Pause => self.pause(now, self.settings.fade_ms),
+            follow::Step::Pause => self.pause(now, 0),
             follow::Step::Slip { rate, owed_ms, remake } => {
                 f.slip = rate;
                 self.p.sink.track.set_slip(rate, owed_ms, follow::CLOSE_MAX);
@@ -1517,6 +1551,16 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 }
             }
             follow::Step::Start { index, ms, at_us } => {
+
+                let (index, ms) = match (&self.mix_place, &self.p.engine.plans) {
+                    (Some(place), Plans::Led(Some((_, plan))))
+                        if place.place_at(at_us) * 1000.0
+                            < (plan.out_start_us + plan.duration_us) as f64 =>
+                    {
+                        (place.index, place.place_at(at_us))
+                    }
+                    _ => (index, ms),
+                };
                 // What was owed was owed to the music before.
                 self.p.sink.track.set_slip(f.slip, 0.0, follow::CLOSE_MAX);
                 let playing = here.playing;
@@ -1546,7 +1590,17 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         self.p.pause();
         self.leave_offload();
         self.p.priming = true;
-        self.p.jump(index, ms.max(0.0).round() as i64);
+
+        match (&self.mix_place, &self.p.engine.plans) {
+            (Some(place), Plans::Led(Some((_, plan))))
+                if place.index == index && plan.out_loop_us > 0 =>
+            {
+                let from_ms = plan.out_start_us / 1000;
+                let phase_us = (ms * 1000.0).round() as i64 - plan.out_start_us;
+                self.p.resume_mix(index, from_ms, phase_us);
+            }
+            _ => self.p.jump(index, ms.max(0.0).round() as i64),
+        }
         self.ramp(Some(0.0), 0.0, 0);
         // This turn has read already; a song opened ready (from disk) wakes nothing.
         self.p.turn(now);
@@ -2291,6 +2345,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let looped = !other && self.p.loops != self.told.loops;
         self.told.loops = self.p.loops;
         let mixing = self.p.mixing();
+
+        let mix_from = self.p.mix_from();
+        let mix_position_ms = self.p.mix_position_ms().unwrap_or(0);
         // The place moves at the speed times the tempo a mix brings the song in at.
         let tempo = self.p.sink.pace_heard();
         let stretched = (tempo - 1.0).abs() > 1e-3;
@@ -2303,6 +2360,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             s.speed = speed;
             s.pace = speed * tempo as f32;
             s.mixing = mixing;
+            s.mix_from = mix_from;
+            s.mix_position_ms = mix_position_ms;
             s.underruns = underruns;
             s.switching = switching;
             s.chain = chain;
@@ -2343,6 +2402,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             s.speed = 1.0;
             s.pace = 1.0;
             s.mixing = false;
+            s.mix_from = None;
             s.switching = switching;
             s.chain = false;
             s.on_cpu = false;

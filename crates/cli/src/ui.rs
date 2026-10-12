@@ -1676,7 +1676,9 @@ fn player_bar(f: &mut Frame, area: Rect, app: &mut App, ui: &Theme) {
             None => text(f, Rect { x: area.x + 1, width: left_w - 1, ..l1 }, "Nothing playing", dim(&t)),
         }
     }
-    let playing = app.now.state == State::Playing;
+    let playing = app.devices
+        .controls
+        .map_or(app.now.state == State::Playing, |c| c.playing);
     let lit = |on: bool| if on { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { dim(&t) };
     let repeat = if app.repeat() == crate::app::REPEAT_ONE { "↻¹" } else { "↻" };
     let toggle = if app.now.buffering { " ⋯ " } else if playing { " ⏸ " } else { " ▶ " };

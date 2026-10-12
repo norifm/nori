@@ -589,6 +589,11 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.jump_opened(i, from_ms, None);
     }
 
+    /// Opens the outgoing loop at its source start and resumes its transition phase.
+    pub fn resume_mix(&mut self, i: usize, from_ms: i64, phase_us: i64) {
+        self.jump(i, from_ms);
+        self.engine.land_in_mix(phase_us);
+    }
     /// [`Player::jump`] reusing a reading opened ahead (id, reading, opened-at ms) if it is that song
     /// and can reach `from_ms` ([`taken_from`]); otherwise the song is reopened.
     pub fn jump_from(&mut self, i: usize, from_ms: i64, opened: (String, S::Reading, i64)) {
@@ -967,6 +972,23 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// What is audible now, per the engine.
     pub fn heard(&self) -> &Heard {
         self.engine.heard()
+    }
+
+    /// The queue entry whose ending is audible, including after the incoming song takes over.
+    pub fn mix_from(&self) -> Option<usize> {
+        if !self.mixing() {
+            return None;
+        }
+        let serial = self.heard().from?;
+        self.periods
+            .iter()
+            .find(|p| p.serial == serial)
+            .map(|p| p.index)
+    }
+
+    /// Position of the outgoing side of the audible transition.
+    pub fn mix_position_ms(&self) -> Option<i64> {
+        self.engine.mix_position_us().map(|us| us / 1000)
     }
 
     /// A mix is audible now.

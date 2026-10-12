@@ -1226,7 +1226,14 @@ pub fn follow(engine: &crate::Engine, session: &Session, lead: Option<nori_core:
         engine.queue_changed();
     }
     let ago_us = l.ago_us();
-    engine.follow(Some(crate::Lead { index, ms: l.ms, ago_us, there_us: l.there_us, rate: l.rate, playing: l.playing, speed: l.speed, pitch: l.pitch, mix: l.mix }));
+
+    let mix_place = l.mix_place.and_then(|(from, ms, rate)| {
+        index
+            .checked_add_signed(from as isize - l.index as isize)
+            .map(|from| (from, ms, rate))
+    });
+    engine.follow(Some(crate::Lead { index, ms: l.ms, ago_us, there_us: l.there_us, rate: l.rate, playing: l.playing, speed: l.speed, pitch: l.pitch, mix: l.mix ,
+        mix_place}));
 }
 
 /// Where the host's song is in this session's queue, followed by the one after it there, and whether
@@ -1239,7 +1246,14 @@ pub fn queued_for(session: &Session, l: &nori_core::remote::Lead) -> (usize, boo
         let here = p.ids();
         // Nearest to the song playing here: the same song may be queued twice.
         let cur = p.current().unwrap_or(0);
-        (0..here.len()).filter(|&k| here[k] == *at && here.get(k + 1) == next).min_by_key(|&k| k.abs_diff(cur))
+        (0..here.len()).filter(|&k|  {
+                let outgoing = l.mix_place.is_none_or(|(from, _, _)| {
+                    k.checked_add_signed(from as isize - l.index as isize)
+                        .and_then(|i| here.get(i))
+                        == ids.get(from)
+                });
+                outgoing && here[k] == *at && here.get(k + 1) == next
+            }).min_by_key(|&k| k.abs_diff(cur))
     });
     match found {
         Some(k) => (k, false),

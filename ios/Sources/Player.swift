@@ -25,6 +25,7 @@ final class PlayerCard: UIViewController {
     private let seek = UISlider()
     private let elapsed = UILabel()
     private let remaining = UILabel()
+    private let mixing = UILabel()
     private let previous = UIButton(type: .system)
     private let play = UIButton(type: .system)
     private let nextButton = UIButton(type: .system)
@@ -101,7 +102,12 @@ final class PlayerCard: UIViewController {
             l.setContentHuggingPriority(.required, for: .horizontal)
             l.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
-        let times = UIStackView(arrangedSubviews: [elapsed, remaining])
+        mixing.text = Say.mixing
+        mixing.font = UIFont.preferredFont(forTextStyle: .caption2)
+        mixing.textColor = Theme.Card.secondary
+        mixing.textAlignment = .center
+        mixing.isHidden = true
+        let times = UIStackView(arrangedSubviews: [elapsed, mixing, remaining])
         times.distribution = .equalSpacing
         times.spacing = 8
 
@@ -253,6 +259,7 @@ final class PlayerCard: UIViewController {
         devices.setImage(now.jam ? (listened ? Glyph.groups : Glyph.groupsOutline) : Glyph.speaker, for: .normal)
         devices.accessibilityLabel = now.jam ? (Core.shared.jam?.strip ?? Say.jamGuest) : Say.output
         seek.isUserInteractionEnabled = !now.jam || (jam?.seek ?? 0) != 0
+        mixing.isHidden = !now.playing || !now.mixing
         guard let song = now.song else {
             songTitle.text = Say.nothingPlaying
             artist.text = ""

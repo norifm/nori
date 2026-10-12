@@ -415,14 +415,14 @@ impl Runner {
         }
         if let Some(e) = &self.elsewhere {
             let m = &e.mirror;
-            // A jam guest's play button says what its controls say: paused here while the jam plays on.
-            let playing = app.devices.controls.map_or(m.playing, |c| c.playing);
+            // The displayed playback follows the host even while this guest only watches.
+            let playing = m.playing;
             let state = match (playing, e.song()) {
                 (true, _) => State::Playing,
                 (false, Some(_)) => State::Paused,
                 (false, None) => State::Idle,
             };
-            app.follow_now(Now { state, position_ms: e.position_ms(), at: Instant::now(), speed: m.rate as f32, mixing: false, buffering: m.buffering && m.playing });
+            app.follow_now(Now { state, position_ms: e.position_ms(), at: Instant::now(), speed: m.rate as f32, mixing: m.playing && m.mixing, buffering: m.buffering && m.playing });
             let id = e.song().map(|s| s.id.clone());
             if id != self.heard {
                 self.heard = id;
