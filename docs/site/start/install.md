@@ -21,8 +21,8 @@ menu open Developer settings and turn on Unknown sources.
 ## Desktop and terminal
 
 Releases include desktop and terminal packages for Linux and macOS, on x86-64 and ARM64.
-Choose `nori-desktop` for the window or `nori-cli` for the terminal. Official Linux builds
-use Ubuntu 22.04 and need glibc 2.35 or later. Linux `.deb` packages install with
+Choose `nori-desktop` for the window or `nori-cli` for the terminal. Linux archives, `.deb`
+packages, and AppImages use Ubuntu 22.04 and need glibc 2.35 or later. Linux `.deb` packages install with
 `sudo apt install ./nori-desktop_<version>_<architecture>.deb` (or the CLI package). Extract a
 Linux archive and run its binary on other distributions. For AppImage, download the desktop
 `.AppImage` for your processor, make it executable with `chmod +x`, and open it.
