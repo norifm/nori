@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::task::{Poll, Waker};
 use std::time::{Duration, Instant};
 
@@ -76,6 +76,7 @@ struct Hub {
 
 /// The relay in front of a server whose library is a few songs.
 struct Relay {
+    devices: Mutex<Vec<Weak<Remote>>>,
     hub: Mutex<Hub>,
     /// Held polls waiting for news; dropping one gives it up, as a cancelled request.
     waiting: Mutex<Vec<Waker>>,
@@ -140,7 +141,9 @@ const GUEST_ENDPOINTS: &[&str] = &["ping", "search3", "getCoverArt", "getSong", 
 
 impl Relay {
     fn new() -> Arc<Relay> {
-        Arc::new(Relay { hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: Default::default(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0) })
+        Arc::new(Relay {
+            devices: Mutex::default(),
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: Default::default(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0) })
     }
 
     fn absent() -> Arc<Relay> {
@@ -206,9 +209,16 @@ impl Relay {
     }
 
     fn close(&self) {
-        let mut hub = self.hub.lock();
-        hub.closed = true;
-        self.wake();
+        self.down.store(true, Ordering::Relaxed);
+        {
+            let mut hub = self.hub.lock();
+            hub.closed = true;
+            self.wake();
+        }
+        let devices = std::mem::take(&mut *self.devices.lock());
+        for device in devices.into_iter().filter_map(|d| d.upgrade()) {
+            device.stop();
+        }
     }
 
     /// Starts afresh, as after a restart: every room and key is gone, and held polls answer.
@@ -412,6 +422,9 @@ impl Transport for Relay {
             .await;
         }
         let unreachable = || Err(TransportError::Failed { kind: FailureKind::Connect, detail: Some("unreachable".into()) });
+        if self.down.load(Ordering::Relaxed) {
+            return unreachable();
+        }
         if let Some(t1) = request.url.strip_prefix(&format!("{SERVER}/nori/time?t1=")).filter(|_| self.time.load(Ordering::Relaxed)) {
             self.hub.lock().asked.push("nori/time".into());
             let now = clock::now_us() + SERVER_SKEW_US;
@@ -620,6 +633,8 @@ impl Device {
         let (news_to, news) = channel();
         let ended = Arc::new(Mutex::new(Vec::new()));
         let remote = Remote::new(client.clone(), RemoteMe { name: name.into(), kind }, Arc::new(Player(Mutex::new(ops_to))), Arc::new(Shown(Mutex::new(news_to), ended.clone())), discovery);
+
+        relay.devices.lock().push(Arc::downgrade(&remote));
         Device { core, client, remote, ops, news, ended }
     }
 
@@ -659,6 +674,29 @@ impl Device {
         self.core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(start), false, None);
         self.remote.clone().played(Playing { playing: true, position_ms: 5_000, index: None, volume: Some(40), ..Default::default() });
     }
+
+}
+
+#[test]
+fn a_closed_relay_rejects_requests() {
+    let relay = Relay::new();
+    relay.close();
+    let response = block_on(relay.send(Exchange {
+        url: format!(
+            "{SERVER}/rest/noriRemote.poll?u=ann&dev=closed&name=Closed&kind=phone&serve=1"
+        ),
+        ..Default::default()
+    }));
+    assert!(
+        matches!(
+            response,
+            Err(TransportError::Failed {
+                kind: FailureKind::Connect,
+                ..
+            })
+        ),
+        "a closed relay kept answering polls: {response:?}"
+    );
 }
 
 #[test]
