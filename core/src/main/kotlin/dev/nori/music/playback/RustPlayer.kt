@@ -179,28 +179,20 @@ class RustBody internal constructor(
     private var broke = false
 
     /**
-     * Bytes read into [buffer], at most [max]: as many as come until it is full or the song ends, so the
-     * loader crosses over once per quarter megabyte rather than once per network packet (a read from the
-     * network gives at most what one packet brought). -1 at the end, -2 when the connection broke; what
-     * came before it broke is handed over first.
+     * Available bytes read into [buffer], at most [max]. The core controls buffering; waiting to fill
+     * this buffer holds up decoding on a slow connection. -1 at the end, -2 when the connection broke.
      */
     fun read(max: Int): Int {
         if (broke) return -2
         val source = source ?: return -1
         val want = minOf(max, buffer.size)
-        var got = 0
-        try {
-            while (got < want) {
-                val n = source.read(buffer, got, want - got)
-                if (n == C.RESULT_END_OF_INPUT) break
-                got += n
-            }
+        return try {
+            source.read(buffer, 0, want)
         } catch (e: Exception) {
             dev.nori.music.NoriLog.w("rust player: the song's bytes stopped coming: $e")
             broke = true
-            if (got == 0) return -2
+            -2
         }
-        return if (got == 0) -1 else got
     }
 
     fun close() {
