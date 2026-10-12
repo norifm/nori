@@ -16,5 +16,7 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup update stable --no-self-update && rustup default stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Test Metal covers and layers
         run: cargo test --locked -j2 -p nori-desktop compositor::tests::layer_pixels_survive_first_sampling_and_redraw -- --nocapture
