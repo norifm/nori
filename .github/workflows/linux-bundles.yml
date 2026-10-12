@@ -1,0 +1,75 @@
+name: Backfill Linux bundles
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Existing release tag whose native archives to package
+        required: true
+        default: v0.6.0-beta.4
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y flatpak libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev librsvg2-bin imagemagick
+      - name: Download released binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p packages binaries
+          gh release download "$RELEASE" --pattern "*-linux-$ARCH.tar.gz" --pattern "SHA256SUMS-linux-$ARCH" --dir packages
+          python3 - <<'PY'
+          import hashlib, os, pathlib, tarfile
+          root = pathlib.Path('packages')
+          for line in (root / ('SHA256SUMS-linux-' + os.environ['ARCH'])).read_text().splitlines():
+              digest, name = line.split('  ', 1)
+              path = root / name
+              if path.exists():
+                  assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, name
+          for archive in root.glob('*.tar.gz'):
+              with tarfile.open(archive) as tar:
+                  for client in ('desktop', 'cli'):
+                      for member in tar.getmembers():
+                          if member.name.endswith('/nori-' + client):
+                              target = pathlib.Path('binaries/nori-' + client)
+                              target.write_bytes(tar.extractfile(member).read())
+                              target.chmod(0o755)
+          PY
+      - name: Build and verify bundles
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: dbus-run-session -- python3 tools/host-release/linux.py --binaries binaries --version "${RELEASE#v}" --output packages
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bundles-${{ matrix.arch }}
+          path: |
+            packages/*.AppImage
+            packages/*.flatpak
+            packages/SHA256SUMS-*
+  publish:
+    needs: package
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: packages
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+          REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE" packages/* --repo "$REPO" --clobber
