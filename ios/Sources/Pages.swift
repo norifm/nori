@@ -745,7 +745,7 @@ class PageController: UITableViewController {
         ])
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .noriOpened, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(nowChanged), name: .noriNow, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(paintVisibleRows), name: .noriFavorites, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(favoritesChanged), name: .noriFavorites, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(paintVisibleRows), name: .noriJam, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .noriDownloads, object: nil)
         tableView.sectionIndexColor = Theme.secondary
@@ -999,6 +999,14 @@ class PageController: UITableViewController {
         guard id != paintedCurrent else { return }
         paintedCurrent = id
         paintVisibleRows()
+    }
+
+    @objc private func favoritesChanged() {
+        if kind == NORI_PAGE_STARRED || kind == NORI_PAGE_HOME {
+            reload()
+        } else {
+            paintVisibleRows()
+        }
     }
 
     /// The visible song rows painted again in place (their playing mark, heart and "Asked"); a reload would

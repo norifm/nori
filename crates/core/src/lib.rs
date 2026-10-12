@@ -376,6 +376,7 @@ pub struct Core {
     board: Mutex<mixes::board::Board>,
     /// This session's star changes, overlaid on the server's favourites.
     stars: Mutex<stars::StarMarks>,
+    remote: Mutex<std::sync::Weak<remote::Remote>>,
     cache_revision: AtomicU64,
     /// The queue this core saves and restores and its clients fill.
     pub session: Arc<nori_queue::Session>,
@@ -447,6 +448,7 @@ impl Core {
             server: RwLock::new(api::Server::default()),
             board: Mutex::new(mixes::board::Board::default()),
             stars: Mutex::new(stars::StarMarks::default()),
+            remote: Mutex::default(),
             cache_revision: AtomicU64::new(0),
             session,
             account: RwLock::new(None),

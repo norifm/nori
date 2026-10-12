@@ -113,6 +113,15 @@ pub enum Body {
     Clock { t1: i64, t2: i64, t3: i64 },
 }
 
+/// A favorite changed by another device of the account.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct LibraryMark {
+    pub kind: nori_net::requests::Starrable,
+    pub id: String,
+    pub on: bool,
+}
+
 /// What a controller asks of a device. Index-based edits carry the queue revision they were made
 /// against (`DeviceState::rev`); a device whose queue changed since refuses them as [`Refusal::Stale`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -120,6 +129,7 @@ pub enum Body {
 #[serde(tag = "op", rename_all = "camelCase")]
 #[allow(clippy::large_enum_variant, reason = "uniffi cannot pass a boxed field; ops are few and short-lived")]
 pub enum Op {
+    LibraryMarks { marks: Vec<LibraryMark> },
     Play,
     Pause,
     Seek { ms: i64 },

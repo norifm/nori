@@ -554,6 +554,8 @@ impl RemotePlayer for Player {
 struct Shown(Mutex<Sender<()>>, Arc<Mutex<Vec<Option<String>>>>);
 
 impl RemoteShown for Shown {
+    fn marks_changed(&self) { self.changed(); }
+
     fn changed(&self) {
         let _ = self.0.lock().send(());
     }
@@ -955,6 +957,58 @@ fn a_jam_opened_while_a_poll_is_held_hears_its_first_request() {
     gus.remote.clone().jam_act(Op::Request { song: Song { id: "s2".into(), title: "S2".into(), ..Default::default() } });
     let asked = host.until("Gus's request", |r| r.jam_view().and_then(|v| v.pending.first().cloned()));
     assert_eq!((asked.from_name.as_str(), asked.song.id.as_str()), ("Gus", "s2"));
+    relay.close();
+}
+
+#[test]
+fn library_discovery_follows_the_foreground_while_playing() {
+    let relay = Relay::absent();
+    let announced = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+    phone.core.session.settings.open("").unwrap();
+    phone.remote.clone().serve(true);
+    phone.playing(&["s1"], 0);
+    assert!(announced.1.load(Ordering::Relaxed), "a playing client can find peers for favorite updates");
+    phone.remote.clone().sight(Sight::Nothing);
+    assert!(!announced.1.load(Ordering::Relaxed), "background playback adds no discovery listener");
+    phone.remote.clone().sight(Sight::Screen);
+    assert!(announced.1.load(Ordering::Relaxed));
+    phone.remote.stop();
+    relay.close();
+}
+
+#[test]
+fn nearby_favorites_update_without_playback_commands() {
+    let relay = Relay::absent();
+    let announced = Arc::new(Announced::default());
+    let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+    phone.core.session.settings.open("").unwrap();
+    phone.remote.clone().serve(true);
+    let door = announced.0.lock().clone().expect("the door announced");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    desk.core.session.settings.open("").unwrap();
+    desk.remote.clone().watch(true);
+    desk.remote.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+    desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.state.is_some()));
+    for kind in [Starrable::Song, Starrable::Album, Starrable::Artist] {
+        for on in [true, false] {
+            block_on(desk.client.star(kind, "s1".into(), on, Arc::new(NoMarks))).unwrap();
+            phone.until("the favorite change", |_| {
+                (phone.core.starred(kind, "s1", !on) == on).then_some(())
+            });
+            assert!(phone.ops.try_recv().is_err(), "library changes do not reach the player");
+        }
+    }
+    assert_eq!(relay.asked_for("star"), 3, "only the three local writes reach the server");
+    assert_eq!(relay.asked_for("unstar"), 3, "received marks do not repeat server writes");
+    let mut prefs = phone.core.session.settings.current().unwrap();
+    prefs.remote_control = false;
+    phone.core.session.settings.put(prefs);
+    desk.remote.clone().send(phone.remote.id(), Op::LibraryMarks { marks: vec![nori_remote::wire::LibraryMark { kind: Starrable::Song, id: "blocked".into(), on: true }] });
+    desk.until("disabled favorites refused", |r| r.devices().into_iter().find(|d| d.id == phone.remote.id() && d.refused == Some(Refusal::NotAllowed)));
+    assert!(!phone.core.starred(Starrable::Song, "blocked", false));
+    desk.remote.stop();
+    phone.remote.stop();
     relay.close();
 }
 

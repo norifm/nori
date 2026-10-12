@@ -236,9 +236,9 @@ final class Core {
     }
 
     /// Hearts changed in this session, by item id, until a page read brings the server's word.
-    private var marks: [String: Bool] = [:]
+    private var marks: [String: [String: Bool]] = [:]
 
-    func isFavorite(_ item: Item) -> Bool { marks[item.id] ?? item.starred }
+    func isFavorite(_ item: Item) -> Bool { marks[item.kind]?[item.id] ?? item.starred }
 
     /// Hearts (or un-hearts) a song, album or artist.
     func favorite(_ item: Item, _ on: Bool) {
@@ -248,7 +248,7 @@ final class Core {
         case "artist": kind = 3
         default: kind = 1
         }
-        marks[item.id] = on
+        marks[item.kind, default: [:]][item.id] = on
         item.id.withCString { nori_ios_star(kind, $0, on ? 1 : 0) }
         NotificationCenter.default.post(name: .noriFavorites, object: nil)
     }
@@ -417,6 +417,13 @@ final class Core {
             }
         case 11:
             NotificationCenter.default.post(name: .noriLyrics, object: id)
+        case 23:
+            if let data = text.data(using: .utf8),
+               let values = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Bool]] {
+                marks = values
+                refresh()
+                NotificationCenter.default.post(name: .noriFavorites, object: nil)
+            }
         case 22:
             askCurve(text, offered: flag != 0)
         default:

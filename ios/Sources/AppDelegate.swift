@@ -65,6 +65,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
+        nori_ios_foreground()
         Core.shared.refresh()
     }
 

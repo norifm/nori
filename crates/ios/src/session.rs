@@ -69,6 +69,8 @@ pub const REPORT_JAM_LEFT: i32 = 21;
 /// 0). [`Report::text`] is the curve, [`Report::id`] the output; `nori_ios_curve_answer` applies or
 /// undoes it.
 pub const REPORT_CURVE: i32 = 22;
+/// The current favorite overlays, by kind, in `text` as JSON.
+pub const REPORT_STARRED: i32 = 23;
 
 pub const STATE_IDLE: i32 = 0;
 pub const STATE_PLAYING: i32 = 1;
@@ -250,8 +252,10 @@ fn pack(said: &Said) -> Packed {
             p.kind = REPORT_VOLUME;
             p.ms = (v * 1000.0).round() as i64;
         }
-        // Hearts are read again when a page or the player is.
-        Said::Starred(_) => {}
+        Said::Starred(marks) => {
+            p.kind = REPORT_STARRED;
+            p.text = c(&serde_json::json!({ "song": marks.songs, "album": marks.albums, "artist": marks.artists }).to_string());
+        }
         Said::Curve(n) => {
             p.kind = REPORT_CURVE;
             let (output, curve, offer) = match n {
@@ -719,7 +723,23 @@ pub extern "C" fn nori_ios_move(from: i32, to: i32) {
 /// Saves the queue now, as the app leaves the foreground. Does not push it to the server.
 #[no_mangle]
 pub extern "C" fn nori_ios_background() {
-    with_session(|s| s.keep(QueueMoment::Closing));
+    with_session(|s| {
+        s.keep(QueueMoment::Closing);
+        if let Some(remote) = s.remote() {
+            remote.sight(nori_core::remote::Sight::Nothing);
+        }
+    });
+}
+
+/// Restores foreground discovery and the mirrored player clock.
+#[no_mangle]
+pub extern "C" fn nori_ios_foreground() {
+    with_session(|s| {
+        if let Some(remote) = s.remote() {
+            remote.clone().sight(nori_core::remote::Sight::Screen);
+            remote.discover_active(true);
+        }
+    });
 }
 
 /// Drops decoded covers.
@@ -1200,14 +1220,14 @@ mod tests {
 
     /// What the iPod's remote asked Bonjour to announce.
     #[derive(Default)]
-    struct Announced(Mutex<Option<nori_core::remote::Announcement>>);
+    struct Announced(Mutex<Option<nori_core::remote::Announcement>>, std::sync::atomic::AtomicBool);
 
     impl nori_core::remote::Discovery for Announced {
         fn announce(&self, door: Option<nori_core::remote::Announcement>) {
             *self.0.lock().unwrap() = door;
         }
 
-        fn browse(&self, _: bool) {}
+        fn browse(&self, on: bool) { self.1.store(on, std::sync::atomic::Ordering::Relaxed); }
     }
 
     struct Obeys;
@@ -1220,6 +1240,8 @@ mod tests {
     struct News(Mutex<std::sync::mpsc::Sender<()>>);
 
     impl nori_core::remote::RemoteShown for News {
+        fn marks_changed(&self) {}
+
         fn changed(&self) {
             let _ = self.0.lock().unwrap().send(());
         }
@@ -1273,6 +1295,11 @@ mod tests {
             assert!(s.setting("remoteControl", "true").is_some());
             s.remote().expect("remote control on").id()
         };
+        assert!(announced.1.load(Ordering::Relaxed));
+        super::nori_ios_background();
+        assert!(!announced.1.load(Ordering::Relaxed));
+        super::nori_ios_foreground();
+        assert!(announced.1.load(Ordering::Relaxed));
         let door = announced.0.lock().unwrap().clone().expect("the door announced");
 
         // The phone, signed in to the same account, finds the door as Bonjour would.
@@ -1314,6 +1341,20 @@ mod tests {
         expect(at, REPORT_VOLUME, |r| r.ms == 300);
         super::nori_ios_volume(0.55);
         until("the iPod's own volume", &|r| volume(r) == Some(55));
+        for kind in [nori_core::client::Starrable::Song, nori_core::client::Starrable::Album] {
+            for on in [true, false] {
+                let at = mark();
+                phone.clone().send(ipod.clone(), Op::LibraryMarks { marks: vec![nori_core::remote::wire::LibraryMark { kind, id: "a".into(), on }] });
+                let report = expect(at, super::REPORT_STARRED, |_| true);
+                let marks: serde_json::Value = serde_json::from_str(&report.text).unwrap();
+                let key = if kind == nori_core::client::Starrable::Song { "song" } else { "album" };
+                assert_eq!(marks[key]["a"], on);
+                let h = super::held().unwrap();
+                assert_eq!(h.session.lock().unwrap().core.starred(kind, "a", !on), on);
+                assert!(!SINK.get().unwrap().got.lock().unwrap()[at..].iter().any(|r| r.kind == super::REPORT_NOTE && matches!(r.flag, super::NOTE_STARRED | super::NOTE_UNSTARRED)), "receiving favorites does not show a toast");
+            }
+        }
+
         // The iPod first: its door closing answers the phone's held poll.
         super::close();
         phone.clone().stop();

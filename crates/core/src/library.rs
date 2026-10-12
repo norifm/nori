@@ -24,7 +24,11 @@ impl Client {
         marked.marks(m.marks);
         let sent = self.write(Write::Star { kind, id: id.clone(), on }).await;
         if sent.is_err() {
-            marked.marks(self.core.stars.lock().restore(kind, id, on, m.previous));
+            marked.marks(self.core.stars.lock().restore(kind, id.clone(), on, m.previous));
+        }
+        let remote = self.core.remote.lock().upgrade();
+        if let Some(remote) = remote {
+            remote.sync_mark(kind, id);
         }
         sent
     }

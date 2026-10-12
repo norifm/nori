@@ -102,6 +102,8 @@ mod tests {
     fn commands_admitted() {
         let jump = |index, rev| Op::Jump { index, rev };
         let cases: &[(Op, Sender, Result<(), Refusal>)] = &[
+            (Op::LibraryMarks { marks: vec![] }, Sender::Member(Role::Guest), Err(Refusal::NotAllowed)),
+            (Op::LibraryMarks { marks: vec![] }, Sender::Member(Role::Admin), Err(Refusal::NotAllowed)),
             (Op::Play, Sender::Owner, Ok(())),
             (jump(2, 7), Sender::Owner, Ok(())),
             (jump(2, 6), Sender::Owner, Err(Refusal::Stale)),
