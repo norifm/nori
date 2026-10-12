@@ -29,43 +29,7 @@ impl Gate {
     }
 }
 
-/// A 16-bit stereo WAV file of interleaved `samples`.
-pub fn wav(rate: u32, samples: &[i16]) -> Vec<u8> {
-    let samples: Vec<i32> = samples.iter().map(|&v| v as i32).collect();
-    wav_bits(rate, 16, &samples)
-}
-
-/// A stereo PCM WAV file with `bits` (16 or 24) per sample.
-pub fn wav_bits(rate: u32, bits: u16, samples: &[i32]) -> Vec<u8> {
-    let width = bits as u32 / 8;
-    let data = samples.len() as u32 * width;
-    let mut w = Vec::with_capacity(44 + data as usize);
-    w.extend_from_slice(b"RIFF");
-    w.extend_from_slice(&(36 + data).to_le_bytes());
-    w.extend_from_slice(b"WAVEfmt ");
-    w.extend_from_slice(&16u32.to_le_bytes());
-    w.extend_from_slice(&1u16.to_le_bytes());
-    w.extend_from_slice(&2u16.to_le_bytes());
-    w.extend_from_slice(&rate.to_le_bytes());
-    w.extend_from_slice(&(rate * 2 * width).to_le_bytes());
-    w.extend_from_slice(&(2 * width as u16).to_le_bytes());
-    w.extend_from_slice(&bits.to_le_bytes());
-    w.extend_from_slice(b"data");
-    w.extend_from_slice(&data.to_le_bytes());
-    for v in samples {
-        w.extend_from_slice(&v.to_le_bytes()[..width as usize]);
-    }
-    w
-}
-
-/// Interleaved stereo 16-bit samples of a sine at `hz`, `secs` long, peaking at `peak`.
-pub fn sine(rate: u32, hz: f64, secs: f64, peak: f64) -> Vec<i16> {
-    let frames = (rate as f64 * secs) as usize;
-    (0..frames).flat_map(|i| {
-        let v = ((std::f64::consts::TAU * hz * i as f64 / rate as f64).sin() * peak) as i16;
-        [v, v]
-    }).collect()
-}
+pub use nori_engine::testing::{wav, wav_bits, sine};
 
 /// Forty seconds of a 120 bpm click over a quiet tone at `hz`, stereo 16-bit at 44.1 kHz.
 pub fn beat(hz: f64) -> Vec<i16> {

@@ -1355,6 +1355,19 @@ mod tests {
             }
         }
 
+        let at = mark();
+        phone.clone().send(ipod.clone(), Op::Seek { ms: 59_000 });
+        expect(at, REPORT_STATE, |r| r.state == super::STATE_ENDED);
+        let next_album = Song { duration: 1, album_id: Some("next-album".into()), ..song("b") };
+        downloaded(std::slice::from_ref(&next_album), 1);
+        let heard_before = heard_ms();
+        let at = mark();
+        phone.clone().send(ipod.clone(), Op::Replace {
+            songs: vec![next_album], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None,
+        });
+        expect(at, REPORT_SONG, |r| r.id == "b");
+        until("the new remote album heard after the old one ended", &|_| heard_ms() >= heard_before + 500);
+
         // The iPod first: its door closing answers the phone's held poll.
         super::close();
         phone.clone().stop();
