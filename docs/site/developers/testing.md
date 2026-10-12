@@ -23,6 +23,10 @@ notification, audio focus, routing, JNI, the service and a force stop.
 Never `-j` above 4: the machine runs out of memory. For queued host checks, nextest,
 Bazel player targets and a pool of hardware-rendered emulators, see [Building](building.md#faster-development-checks).
 
+`./gradlew :core:testDebugUnitTest` checks the Android stream bridge with a data source whose
+next packet is unavailable. Available bytes must reach Rust before another network read; this
+exercises the Kotlin `DataSource` adapter and does not need a device.
+
 ## Desktop UI controls
 
 On Linux and macOS, build with `--features test-control` and pass `--control-socket PATH` to opt in.
