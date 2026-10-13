@@ -153,6 +153,8 @@ jobs:
       - name: Publish verified release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
           NORI_DRAFT: ${{ inputs.draft }}
           NORI_RELEASE_WORKSPACE: ${{ github.workspace }}/source
         run: |
