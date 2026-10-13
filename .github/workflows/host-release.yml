@@ -1,7 +1,10 @@
 name: Desktop and CLI release
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      source:
+        type: string
+        default: master
   workflow_dispatch:
     inputs:
       source:
@@ -18,7 +21,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15, macos-15-intel]
+        include:
+          - runner: ubuntu-22.04
+            platform: linux-x86_64
+          - runner: ubuntu-22.04-arm
+            platform: linux-aarch64
+          - runner: macos-15
+            platform: macos-aarch64
+          - runner: macos-15-intel
+            platform: macos-x86_64
     runs-on: ${{ matrix.runner }}
     env:
       RUSTC_WRAPPER: ''
@@ -30,37 +41,26 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.source || github.event.release.tag_name }}
+          ref: ${{ inputs.source }}
       - uses: actions/checkout@v7
         with:
-          ref: master
+          ref: ${{ github.workflow_sha }}
           path: release-tooling
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev dpkg-dev flatpak librsvg2-bin imagemagick pulseaudio
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev dpkg-dev file squashfs-tools zstd flatpak librsvg2-bin imagemagick pulseaudio
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
-      - name: Test clients
-        # Concurrent GPU tests contend for Metal's compiler and can exceed Skia's one-second limit.
-        run: cargo test --locked --release -j2 -p nori-cli -p nori-desktop -- --test-threads=1
-      - name: Build clients
-        run: cargo build --locked --release -j2 -p nori-desktop -p nori-cli
-      - name: Package clients
-        run: python3 release-tooling/tools/host-release/package.py --binaries "$PWD/target/release" --version "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" --output build/host-release
-      - name: Package AppImage and Flatpak
-        if: runner.os == 'Linux'
-        run: |
-          pulseaudio --start
-          dbus-run-session -- python3 release-tooling/tools/host-release/linux.py --binaries "$PWD/target/release" --version "$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)" --output build/host-release
-      - name: Verify packages
-        run: python3 release-tooling/tools/host-release/check.py build/host-release
+      - name: Build, test, package and verify clients
+        run: release-tooling/tools/host-release.sh --native --workspace "$PWD" --platform "${{ matrix.platform }}" --output build/host-release
       - uses: actions/upload-artifact@v7
         with:
-          name: host-${{ matrix.runner }}
-          path: build/host-release/*
+          name: host-${{ matrix.platform }}
+          path: build/host-release/${{ matrix.platform }}/*
+          if-no-files-found: error
   publish:
     needs: build
-    if: github.event_name == 'release' || inputs.release != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.release != ''
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -71,6 +71,6 @@ jobs:
           merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release || github.event.release.tag_name }}
+          RELEASE_TAG: ${{ inputs.release }}
           REPO: ${{ github.repository }}
         run: gh release upload "$RELEASE_TAG" packages/* --repo "$REPO" --clobber

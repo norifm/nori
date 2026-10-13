@@ -1,0 +1,157 @@
+name: Full release
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: Commit, branch, or tag to release (version comes from the source)
+        required: true
+        default: master
+      publish:
+        description: Create the GitHub release after all packages pass
+        type: boolean
+        default: false
+      draft:
+        description: Leave the release as a draft
+        type: boolean
+        default: true
+permissions:
+  contents: read
+jobs:
+  hosts:
+    uses: ./.github/workflows/host-release.yml
+    with:
+      source: ${{ inputs.source }}
+  android:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: source
+    env:
+      RUSTC_WRAPPER: ''
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source }}
+          fetch-depth: 0
+          path: source
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tooling
+      - name: Restore release signing key
+        env:
+          NORI_RELEASE_KEYSTORE_BASE64: ${{ secrets.NORI_RELEASE_KEYSTORE_BASE64 }}
+          NORI_KEYSTORE_PROPERTIES: ${{ secrets.NORI_KEYSTORE_PROPERTIES }}
+        run: |
+          python3 - <<'PY'
+          import base64, os, pathlib, re
+          key = os.environ['NORI_RELEASE_KEYSTORE_BASE64']
+          properties = os.environ['NORI_KEYSTORE_PROPERTIES']
+          if not key or not properties:
+              raise SystemExit('Set NORI_RELEASE_KEYSTORE_BASE64 and NORI_KEYSTORE_PROPERTIES to the existing release key before using this workflow')
+          properties = re.sub(r'^storeFile=.*$', 'storeFile=nori-release.jks', properties, flags=re.M)
+          for name, contents in [('nori-release.jks', base64.b64decode(key, validate=True)), ('keystore.properties', properties.encode())]:
+              path = pathlib.Path(name)
+              path.write_bytes(contents)
+              path.chmod(0o600)
+          PY
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android and Rust build tools
+        run: |
+          sdk=$(sed -n 's/.*compileSdk = \([0-9]*\).*/\1/p' core/build.gradle.kts | head -1)
+          sdkmanager "platforms;android-$sdk" 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo install --locked cargo-ndk --version 4.1.2
+      - name: Build signed APK
+        env:
+          NORI_RELEASE_WORKSPACE: ${{ github.workspace }}/source
+        run: ../release-tooling/tools/with-resource.py build ../release-tooling/tools/release.sh --build --no-hosts --no-ipod --no-test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android
+          path: |
+            source/build/release-*/*.apk
+            source/build/release-*/SHA256SUMS
+          if-no-files-found: error
+  ipod:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source }}
+      - name: Build iPod app
+        run: |
+          tools/with-resource.py build tools/ipod.sh build
+          (cd build/ios && sha256sum -- *.ipa > SHA256SUMS-ipod)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ipod
+          path: |
+            build/ios/*.ipa
+            build/ios/SHA256SUMS-ipod
+          if-no-files-found: error
+  test:
+    runs-on: ubuntu-22.04
+    env:
+      RUSTC_WRAPPER: ''
+      CARGO_BUILD_JOBS: '4'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source }}
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tooling
+      - name: Test release artifact handoff
+        run: python3 release-tooling/tools/test-release.py
+      - name: Install Rust and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev
+          rustup update stable --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: tools/with-resource.py build cargo test -j4 --workspace
+  publish:
+    needs: [hosts, android, ipod, test]
+    if: inputs.publish
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: source
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source }}
+          fetch-depth: 0
+          path: source
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tooling
+      - uses: actions/download-artifact@v8
+        with:
+          path: source/build/workflow-release
+          merge-multiple: true
+      - name: Publish verified release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NORI_DRAFT: ${{ inputs.draft }}
+          NORI_RELEASE_WORKSPACE: ${{ github.workspace }}/source
+        run: |
+          flags=()
+          if [ "$NORI_DRAFT" != true ]; then flags+=(--live); fi
+          ../release-tooling/tools/release.sh --publish --from build/workflow-release "${flags[@]}"

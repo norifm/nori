@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Verify packaged clients load on their native platform."""
+import argparse
 import hashlib
 import platform
 import plistlib
@@ -10,11 +11,17 @@ from pathlib import Path
 
 import dmg
 
-output = Path(sys.argv[1]).resolve()
-for sums in output.glob("SHA256SUMS-*"):
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("output", type=Path)
+parser.add_argument("--checksums-only", action="store_true", help="verify downloads without executing foreign binaries")
+args = parser.parse_args()
+output = args.output.resolve()
+for sums in output.rglob("SHA256SUMS*"):
     for line in sums.read_text().splitlines():
         digest, name = line.split("  ", 1)
-        assert hashlib.sha256((output / name).read_bytes()).hexdigest() == digest, name
+        assert hashlib.sha256((sums.parent / name).read_bytes()).hexdigest() == digest, name
+if args.checksums_only:
+    sys.exit(0)
 for archive in output.glob("*.tar.gz"):
     with tempfile.TemporaryDirectory(prefix="nori-package-check-") as directory:
         subprocess.run(["tar", "-xzf", str(archive), "-C", directory], check=True)

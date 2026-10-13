@@ -5,6 +5,7 @@
 #   tools/release.sh --build            only build, into build/release-<version>/, nothing leaves the machine
 #   tools/release.sh --publish          build this version and publish it, no questions (for scripts)
 #   tools/release.sh --live             with --publish: published rather than a draft
+#   tools/release.sh --from DIR         publish verified artifacts built by release workers
 #   tools/release.sh --abi arm64-v8a    phones only: about half the size
 #   tools/release.sh --no-test          skip cargo test first
 #   tools/release.sh --no-hosts        omit desktop and CLI packages
@@ -46,7 +47,8 @@
 # the files to a GitHub release - a draft, so nothing is public until you press publish. --live skips
 # the draft.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+tooling="$(cd "$(dirname "$0")/.." && pwd)"
+cd "${NORI_RELEASE_WORKSPACE:-$tooling}"
 
 ABI=arm64-v8a,x86_64
 RUN_TESTS=1
@@ -56,6 +58,7 @@ PUBLISH=0
 GUIDED=1
 DRAFT=--draft
 BETA=0
+FROM=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --abi) ABI="$2"; shift ;;
@@ -66,6 +69,7 @@ while [ $# -gt 0 ]; do
     --publish) PUBLISH=1; GUIDED=0 ;;
     --live) DRAFT="" ;;
     --beta) BETA=1 ;;
+    --from) FROM="$2"; shift ;;
     -h|--help) sed -n 2,42p "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -214,7 +218,7 @@ if [ "$PUBLISH" = 1 ]; then
   gh auth status >/dev/null 2>&1 || die "gh is not logged in: run 'gh auth login'"
   git remote get-url origin >/dev/null 2>&1 || die "this repository has no 'origin' remote to publish to"
   [ -z "$dirty" ] || die "refusing to publish from a dirty tree: commit or stash first"
-  [ -f keystore.properties ] || die "no keystore.properties: run tools/release.sh --build once to create the key, and back it up"
+  [ -n "$FROM" ] || [ -f keystore.properties ] || die "no keystore.properties: run tools/release.sh --build once to create the key, and back it up"
   is_beta "$version" || ./tools/changelog.py --notes "$version" >/dev/null ||
     die "CHANGELOG.md has no section for $version.
 write one, or generate it:  tools/changelog.py --update && tools/changelog.py --release $version"
@@ -222,6 +226,14 @@ write one, or generate it:  tools/changelog.py --update && tools/changelog.py --
     die "a release v$version already exists. move to a new version first: tools/bump-version.sh <x.y.z>"
 fi
 
+out="${FROM:-build/release-$version}"
+case "$ABI" in
+  *,*) name="nori-music-$version.apk" ;;
+  *) name="nori-music-$version-$ABI.apk" ;;
+esac
+ipa=""
+if [ "$IPOD" = 1 ]; then ipa="nori-ipod-$version.ipa"; fi
+if [ -z "$FROM" ]; then
 # --- signing key ----------------------------------------------------------------
 # Every build before 0.3.2 was signed with this machine's Android debug key, and a phone only updates
 # in place from the same key. So the first run adopts that key as the release key - a copy, kept
@@ -260,16 +272,11 @@ if [ "$RUN_TESTS" = 1 ]; then
   cargo test -q -j4 --workspace
 fi
 
-out="build/release-$version"
 rm -rf "$out"
 mkdir -p "$out"
 
 echo "==> building $version for $ABI"
 ./gradlew :app:assembleRelease -PrustTargets="$ABI" -q
-case "$ABI" in
-  *,*) name="nori-music-$version.apk" ;;
-  *) name="nori-music-$version-$ABI.apk" ;;
-esac
 cp app/build/outputs/apk/release/app-release.apk "$out/$name"
 
 ipa=""
@@ -281,10 +288,18 @@ if [ "$IPOD" = 1 ]; then
 fi
 
 if [ "$HOSTS" = 1 ]; then
-  [ -z "$dirty" ] || die "desktop and CLI builds need a committed, pushed revision"
-  if [ "$PUBLISH" = 1 ]; then git push origin "$(git branch --show-current)"; fi
-  ./tools/host-release.sh "$(git rev-parse HEAD)" "$out/hosts"
+  "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts"
 fi
+fi
+
+[ -f "$out/$name" ] || die "missing release APK: $out/$name"
+[ -z "$ipa" ] || [ -f "$out/$ipa" ] || die "missing iPod IPA: $out/$ipa"
+if [ "$HOSTS" = 1 ]; then
+  for target in macos-aarch64 macos-x86_64 linux-aarch64 linux-x86_64; do
+    [ -n "$(find "$out" -type f -name "SHA256SUMS-$target" -print -quit)" ] || die "missing desktop/CLI packages for $target"
+  done
+fi
+python3 "$tooling/tools/host-release/check.py" "$out" --checksums-only
 
 # --- what is in the directory ---------------------------------------------------
 apksigner=$(python3 - "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}" <<'PYSDK'
@@ -352,17 +367,21 @@ else
   git tag -a "v$version" -m "nori $version"
 fi
 # The branch goes first: a tag whose commit is on no branch is one nobody can reach from the repo page.
-git push origin "$(git branch --show-current)"
+branch=$(git branch --show-current)
+if [ -n "$branch" ]; then git push origin "$branch"; fi
 git push origin "v$version"
 
 echo "==> creating the release${DRAFT:+ (draft)}"
-# shellcheck disable=SC2086
 host_assets=()
 if [ "$HOSTS" = 1 ]; then
-  while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out/hosts" -type f)
+  while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out" -type f \( -name 'nori-desktop-*' -o -name 'nori-desktop_*' -o -name 'nori-cli-*' -o -name 'nori-cli_*' -o -name 'SHA256SUMS-macos-*' -o -name 'SHA256SUMS-linux-*' \))
+  [ "${#host_assets[@]}" -gt 0 ] || die "no desktop/CLI release packages in $out"
 fi
+flags=()
+if [ -n "$DRAFT" ]; then flags+=("$DRAFT"); fi
+if is_beta "$version"; then flags+=(--prerelease); fi
 gh release create "v$version" "$out/$name" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} \
-  --title "nori $version" --notes-file "$notes" $DRAFT $(is_beta "$version" && echo --prerelease)
+  --title "nori $version" --notes-file "$notes" ${flags[@]+"${flags[@]}"}
 
 echo
 echo "done: $(gh release view "v$version" --json url --jq .url 2>/dev/null || echo "v$version")"

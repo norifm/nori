@@ -79,7 +79,8 @@ if __name__ == "__main__":
     p.add_argument("--binaries", type=Path, default=ROOT / "target/release")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--version", required=True)
+    p.add_argument("--arch", choices=("aarch64", "x86_64"))
     a = p.parse_args()
     system = {"Linux": "linux", "Darwin": "macos"}[platform.system()]
-    arch = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64"}[platform.machine()]
+    arch = a.arch or {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64"}[platform.machine()]
     package(a.binaries, a.output, a.version, system, arch)

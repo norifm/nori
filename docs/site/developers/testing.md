@@ -473,3 +473,17 @@ player unit/pipeline execution also passed.
 
 The Android Jam device checks also verify that Start a Jam expands the existing devices sheet.
 Compose navigation and the sheet animation are platform UI behavior and cannot be tested in Rust.
+
+## Release tooling checks
+
+Applies to 0.6 development. `python3 tools/test-release.py` checks that a worker handoff can be
+prepared without a compiler or signing key, that every selected host worker is required, and that
+a modified artifact fails checksum verification before a release receipt is written.
+`actionlint .github/workflows/host-release.yml .github/workflows/release.yml` validates the release
+workflow definitions.
+
+`tools/with-resource.py build tools/host-release.sh` builds and tests all four desktop/CLI platforms
+on an Apple Silicon Mac. Intel Mac tests run under Rosetta; Linux tests run inside their respective
+Docker images. Package checks verify checksums, load the archived clients, check signing on macOS,
+and run the AppImage and Flatpak clients on Linux. Native workers use the same checks with
+`--native --platform <platform>`.
