@@ -3921,22 +3921,26 @@ export component AppWindow inherits Window {
                                 loading: !root.picks-loaded;
                                 least: 230px;
                                 below: self.side * 0.3;
-                                for m[i] in root.picks: PickCard {
-                                    x: floor((picks-shelf.gap + i * picks-shelf.step) / 1phx) * 1phx;
+                                for slot in picks-shelf.visible-count: PickCard {
+                                    property <int> i: picks-shelf.first + slot;
+                                    property <Pick> m: root.picks[self.i];
+                                    x: floor((picks-shelf.gap + self.i * picks-shelf.step) / 1phx) * 1phx;
                                     side: picks-shelf.side;
-                                    pick: m;
-                                    picture: root.pick-art(m.covers, root.covers-rev);
-                                    open => { root.open-mix(m.id); }
+                                    pick: self.m;
+                                    picture: root.pick-art(self.m.covers, root.covers-rev);
+                                    open => { root.open-mix(self.m.id); }
                                 }
                             }
-                            for shelf[index] in root.shelves: VerticalLayout {
+                            for shelf[index] in root.shelves: home-row := VerticalLayout {
+                                property <length> top: self.y + home.y + home-scroll.content-y;
+                                property <bool> on-screen: self.top + self.height > 0px && self.top < home-scroll.height;
                                 if !shelf.loaded || shelf.cards.length > 0: albums-shelf := ShelfView {
                                     title: shelf.title;
                                     show-all-text: root.show-all-text;
                                     show-all => { root.shown-shelf = index; root.go(10); }
                                     count: shelf.cards.length;
                                     loading: !shelf.loaded;
-                                    for slot in albums-shelf.visible-count: CardView {
+                                    for slot in home-row.on-screen ? albums-shelf.visible-count : 0: CardView {
                                         property <int> i: albums-shelf.first + slot;
                                         property <Card> c: shelf.cards[self.i];
                                         x: albums-shelf.gap + self.i * albums-shelf.step;
