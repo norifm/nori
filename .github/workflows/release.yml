@@ -18,6 +18,8 @@ permissions:
   contents: read
 jobs:
   hosts:
+    permissions:
+      contents: write
     uses: ./.github/workflows/host-release.yml
     with:
       source: ${{ inputs.source }}
