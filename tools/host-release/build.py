@@ -44,7 +44,7 @@ def native(workspace, output, target_platform, jobs, test, package_only, target_
     run(sys.executable, ROOT / "tools/host-release/package.py", "--binaries", binaries,
         "--version", version, "--arch", arch, "--output", output, env=environment)
     if system == "linux":
-        run("pulseaudio", "--start", env=environment)
+        run("pulseaudio", "--start", "--exit-idle-time=-1", env=environment)
         run("dbus-run-session", "--", sys.executable, ROOT / "tools/host-release/linux.py",
             "--binaries", binaries, "--version", version, "--output", output, env=environment)
     run(sys.executable, ROOT / "tools/host-release/check.py", output, env=environment)
@@ -64,6 +64,9 @@ def container(workspace, output, target_platform, jobs, test, package_only):
         command.append("--no-test")
     if package_only:
         command.append("--package-only")
+    flatpak_environment = []
+    if arch != ARCHES[platform.machine()]:
+        flatpak_environment = ["--env", "FLATPAK_BWRAP=/tooling/tools/host-release/emulated-bwrap.py"]
     run("docker", "run", "--rm", "--init", "--privileged", "--platform", docker_platform,
         "--mount", f"type=bind,source={workspace},target=/workspace,readonly",
         "--mount", f"type=bind,source={ROOT},target=/tooling,readonly",
@@ -71,7 +74,7 @@ def container(workspace, output, target_platform, jobs, test, package_only):
         "--mount", f"type=volume,source={cache},target=/cache",
         "--mount", f"type=volume,source=nori-host-{arch}-home,target=/home/build",
         "--env", "CARGO_HOME=/cache/cargo", "--env", "CARGO_TARGET_DIR=/cache/target",
-        "--env", "SCCACHE_DIR=/cache/sccache", "--workdir", "/workspace", image, *command)
+        "--env", "SCCACHE_DIR=/cache/sccache", *flatpak_environment, "--workdir", "/workspace", image, *command)
 
 
 def main():
