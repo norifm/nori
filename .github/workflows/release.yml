@@ -109,7 +109,7 @@ jobs:
             build/ios/SHA256SUMS-ipod
           if-no-files-found: error
   test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-26.04
     env:
       RUSTC_WRAPPER: ''
       CARGO_BUILD_JOBS: '4'
