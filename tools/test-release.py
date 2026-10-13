@@ -23,7 +23,7 @@ class Release(unittest.TestCase):
         (self.root / "tools/host-release").mkdir(parents=True)
         (self.root / "app").mkdir()
         (self.root / "app/build.gradle.kts").write_text(f'versionName = "{VERSION}"\n')
-        for name in ("release.sh", "host-release/check.py", "host-release/dmg.py"):
+        for name in ("release.sh", "host-release/check.py", "host-release/dmg.py", "host-release/app.py"):
             shutil.copy2(ROOT / "tools" / name, self.root / "tools" / name)
         (self.root / "gradlew").write_text("#!/bin/sh\necho 'unexpected build' >&2\nexit 99\n")
         (self.root / "gradlew").chmod(0o755)
@@ -77,6 +77,28 @@ class EmulatedSandbox(unittest.TestCase):
             execute.assert_called_once_with("/usr/bin/bwrap", [
                 "bwrap", "--setenv", "EMPTY", "", "--ro-bind", "/runtime", "/usr", "--", "nori-cli", "--seccomp",
             ])
+
+
+class MacCrossBuild(unittest.TestCase):
+    def setUp(self):
+        self.builder = runpy.run_path(str(ROOT / "tools/host-release/build.py"))
+
+    def test_noninteractive_build_requires_acknowledgment(self):
+        with patch("sys.stdin.isatty", return_value=False), self.assertRaises(SystemExit):
+            self.builder["confirm_cross_tests"](False)
+
+    def test_confirmation_accepts_only_yes(self):
+        for answer in ("n", "", "yes", "y", "Y"):
+            with self.subTest(answer=answer), patch("sys.stdin.isatty", return_value=True), patch("builtins.input", return_value=answer):
+                if answer.lower() in ("y", "yes"):
+                    self.builder["confirm_cross_tests"](False)
+                else:
+                    with self.assertRaises(SystemExit):
+                        self.builder["confirm_cross_tests"](False)
+
+    def test_explicit_acknowledgment_never_prompts(self):
+        with patch("builtins.input", side_effect=AssertionError("worker prompted")):
+            self.builder["confirm_cross_tests"](True)
 
 
 if __name__ == "__main__":

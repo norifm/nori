@@ -20,6 +20,49 @@ def run(*args, **kwargs):
     subprocess.run([str(arg) for arg in args], check=True, **kwargs)
 
 
+def confirm_cross_tests(allowed):
+    print("The Linux cross-builder can compile macOS packages, but cannot run Mac rendering tests or execute the Mac apps.", flush=True)
+    if allowed:
+        return
+    if not sys.stdin.isatty():
+        raise SystemExit("Use --allow-untested-macos to acknowledge these skipped checks on a worker.")
+    if input("Build macOS packages with these checks skipped? [y/N] ").strip().lower() not in ("y", "yes"):
+        raise SystemExit("macOS cross-build canceled")
+
+
+def macos_container(workspace, output, target_platform, jobs, package_only):
+    run("docker", "build", "--build-arg", f"NORI_UID={os.getuid()}", "--build-arg", f"NORI_GID={os.getgid()}",
+        "-f", ROOT / "tools/host-release/Dockerfile.macos", "-t", "nori-macos-build", ROOT / "tools/host-release")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    run("docker", "run", "--rm", "--init",
+        "--mount", f"type=bind,source={workspace},target=/workspace,readonly",
+        "--mount", f"type=bind,source={ROOT},target=/tooling,readonly",
+        "--mount", f"type=bind,source={output.parent},target=/output",
+        "--mount", "type=volume,source=nori-macos-cache,target=/cache",
+        "--env", "CARGO_HOME=/cache/cargo", "--env", "CARGO_TARGET_DIR=/cache/target",
+        "--workdir", "/workspace", "nori-macos-build",
+        "python3", "/tooling/tools/host-release/build.py", "--cross-macos", "--platform", target_platform,
+        "--workspace", "/workspace", "--output", "/output", "--jobs", str(jobs),
+        *(["--package-only"] if package_only else []))
+
+
+def cross_macos(workspace, output, target_platform, jobs, package_only):
+    arch = target_platform.split("-", 1)[1]
+    target = f"{arch}-apple-darwin"
+    key = target.replace("-", "_")
+    environment = dict(os.environ, RUSTC_WRAPPER="", NORI_MACOS_TARGET=target)
+    environment.update({f"CARGO_TARGET_{key.upper()}_LINKER": "macos-cc",
+                        f"CC_{key}": "macos-cc", f"CXX_{key}": "macos-cxx", f"AR_{key}": "llvm-ar"})
+    binaries = Path(environment["CARGO_TARGET_DIR"]) / target / "release"
+    if not package_only:
+        run("cargo", "build", "--locked", "--release", f"-j{jobs}", "--target", target,
+            "-p", "nori-cli", "-p", "nori-desktop", cwd=workspace, env=environment)
+    version = re.search(r'^version = "([^"]+)"', (workspace / "Cargo.toml").read_text(), re.M).group(1)
+    run(sys.executable, ROOT / "tools/host-release/package.py", "--binaries", binaries,
+        "--version", version, "--system", "macos", "--arch", arch, "--output", output, env=environment)
+    run(sys.executable, ROOT / "tools/host-release/check.py", "--checksums-only", output, env=environment)
+
+
 def native(workspace, output, target_platform, jobs, test, package_only, target_dir):
     system, arch = target_platform.split("-", 1)
     current = {"Darwin": "macos", "Linux": "linux"}[platform.system()]
@@ -87,14 +130,25 @@ def main():
     parser.add_argument("--jobs", type=int, choices=range(1, 5), default=min(4, int(os.environ.get("CARGO_BUILD_JOBS", "4"))))
     parser.add_argument("--no-test", action="store_true")
     parser.add_argument("--package-only", action="store_true", help="package already built binaries and verify them")
+    parser.add_argument("--docker-macos", action="store_true", help="cross-compile macOS in Docker, including on a Mac")
+    parser.add_argument("--allow-untested-macos", action="store_true", help="acknowledge skipped macOS execution checks on Linux")
+    parser.add_argument("--preflight", action="store_true", help="check requirements and confirm skipped checks before building")
+    parser.add_argument("--cross-macos", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     selected = args.platforms or list(PLATFORMS)
     if args.native and not args.platforms:
         parser.error("--native requires --platform")
-    if platform.system() != "Darwin" and any(p.startswith("macos-") for p in selected):
-        parser.error("the full local release needs a Mac; select Linux platforms on Linux workers")
-    if not args.native and any(p.startswith("linux-") for p in selected) and not shutil.which("docker"):
-        parser.error("local Linux packages need Docker")
+    cross_platforms = {p for p in selected if p.startswith("macos-") and
+                       (args.docker_macos or platform.system() != "Darwin" or
+                        ARCHES[platform.machine()] == "x86_64" and p.endswith("aarch64"))}
+    if not args.cross_macos and cross_platforms:
+        if args.native:
+            parser.error("this Mac target needs the Linux Docker cross-builder; omit --native")
+        confirm_cross_tests(args.allow_untested_macos)
+    if not args.native and not args.cross_macos and (cross_platforms or any(p.startswith("linux-") for p in selected)) and not shutil.which("docker"):
+        parser.error("local cross-platform packages need Docker")
+    if args.preflight:
+        return
     output = args.output.resolve()
     workspace = args.workspace.resolve()
     target_dir = workspace / "target"
@@ -105,7 +159,11 @@ def main():
             run("tar", "-xf", "-", "-C", workspace, input=archive)
         for target_platform in selected:
             target_output = output / target_platform
-            if args.native or target_platform.startswith("macos-"):
+            if args.cross_macos:
+                cross_macos(workspace, target_output, target_platform, args.jobs, args.package_only)
+            elif target_platform in cross_platforms:
+                macos_container(workspace, target_output, target_platform, args.jobs, args.package_only)
+            elif args.native or target_platform.startswith("macos-"):
                 native(workspace, target_output, target_platform, args.jobs, not args.no_test, args.package_only, target_dir)
             else:
                 container(workspace, target_output, target_platform, args.jobs, not args.no_test, args.package_only)
