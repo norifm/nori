@@ -890,8 +890,8 @@ This uses the same rendering checks as the local build without the Intel hosted 
 one-second Metal compiler timeout.
 
 The **Full release** workflow runs the same builders for Android, iPod, and all four host platforms,
-plus the workspace tests. Select a source revision when dispatching it. The default builds and
-uploads artifacts only; enable `publish` to create a release, and disable `draft` to make it public.
+plus the workspace tests. Select a source revision when dispatching it. The default builds, verifies the complete handoff, and
+uploads a combined `release` artifact; enable `publish` to create a release, and disable `draft` to make it public.
 The version and beta status come from the selected source. Signed Android builds require repository
 secrets `NORI_RELEASE_KEYSTORE_BASE64` (the existing keystore encoded as base64) and
 `NORI_KEYSTORE_PROPERTIES` (the existing properties). The workflow restores these privately and
@@ -902,8 +902,8 @@ builds only unless an existing release tag is supplied for uploading packages. P
 release does not trigger another desktop build automatically.
 
 Workers can hand off packages and their checksum files to a single publisher. Copy the Android
-APK, iPod IPA, all desktop/CLI packages, and their checksum manifests into one directory, preserving
-any subdirectories containing a manifest and its files. Use the matching source checkout:
+APK and iPod IPA into the handoff directory root. Copy all desktop/CLI packages and their checksum
+manifests there too, preserving any host subdirectories containing a manifest and its files. Use the matching source checkout:
 
 ```sh
 # Verify and prepare a handoff without compiling or accessing the signing key.
