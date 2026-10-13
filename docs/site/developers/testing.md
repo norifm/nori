@@ -488,3 +488,8 @@ on an Apple Silicon Mac. Intel Mac tests run under Rosetta; Linux tests run insi
 Docker images. Package checks verify checksums, load the archived clients, check signing on macOS,
 and run the AppImage and Flatpak clients on Linux. Native workers use the same checks with
 `--native --platform <platform>`.
+
+Release workspace tests generate their encoded audio fixtures with FFmpeg 8, matching the local
+test environment. The workflow uses Ubuntu 26.04 for these tests; its package builders still use
+Ubuntu 22.04 for Linux compatibility. Older FFmpeg 4 encoders produce different AAC edit-list
+metadata and do not generate the gapless fixtures these tests require.
