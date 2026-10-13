@@ -834,46 +834,81 @@ Final artifacts: `build/development-timings/smoke-hardware/`, `audio-final/`,
 process-tree CPU excludes its persistent server; its near-zero driver CPU must
 not be used as the compilation cost. Sampled compiler CPU includes that work.
 
-## Desktop and terminal releases
+## Local and workflow releases
 
-Applies to 0.6 development and releases from beta4 onward. `tools/release.sh --beta` collects
-Linux and macOS desktop/CLI packages alongside Android and iPod artifacts. Both Linux architectures
-are built on Ubuntu 22.04; macOS Intel and Apple Silicon use native macOS builders. The command
-works from Arch Linux or macOS with GitHub CLI authentication and a pushed source commit.
-`--no-hosts` omits these packages. Android signing still requires the existing release keystore.
+Applies to 0.6 development. `tools/release.sh` builds Android, iPod, and both architectures of
+macOS and Linux desktop/CLI packages locally by default. Building does not dispatch Actions or
+require GitHub authentication. Publishing uses GitHub CLI authentication and a clean source tree.
+Windows packages are outside this release pipeline.
 
-Desktop/CLI release builds run in GitHub Actions so each package is built and tested on its native
-OS and architecture. Android and iPod artifacts are built locally. Release client tests run one at
-a time to avoid competing Metal shader compilations on the Intel Mac runner; Skia's compiler wait
-has a one-second limit.
-
-Build desktop and CLI binaries for the local machine:
+The complete local build needs an Apple Silicon Mac with the Apple command line tools, Rust,
+Rosetta, Docker, and the Android build tools described above. macOS packages use the installed
+Apple SDK; Intel binaries are tested under Rosetta. Linux packages use Ubuntu 22.04 Docker images
+for ARM64 and x86-64, with Docker emulation for x86-64. The iPod build also uses Docker. Android
+signing uses the existing `nori-release.jks` and `keystore.properties`; retain the same key for updates.
 
 ```sh
-tools/with-resource.py build cargo build --release -j4 -p nori-desktop -p nori-cli
+# All release artifacts, tests, and checks; nothing is published.
+tools/with-resource.py build tools/release.sh --build
+
+# Build and publish the version already in the source as a public beta.
+tools/with-resource.py build tools/release.sh --publish --beta --live
 ```
 
-Build every desktop/CLI platform without publishing:
+Artifacts land under `build/release-<version>/`, with desktop and CLI packages in
+`hosts/<platform>/`. `--no-hosts` and `--no-ipod` omit those clients. Release client tests run
+one at a time to avoid competing Metal shader compilations on Intel Macs.
+
+The desktop/CLI builder can run independently or on a native worker:
 
 ```sh
-tools/host-release.sh master
+# All four platforms on the local Mac.
+tools/with-resource.py build tools/host-release.sh
+
+# Build a committed revision, using the current packaging tools.
+tools/with-resource.py build tools/host-release.sh --source v0.6.0-beta.5
+
+# One Linux platform in Docker; --platform can be repeated.
+tools/with-resource.py build tools/host-release.sh --platform linux-x86_64
+
+# A native Linux worker, without Docker.
+tools/with-resource.py build tools/host-release.sh --native --platform linux-x86_64
 ```
 
-Add packages to an existing release, building its exact tag:
+Standalone packages land under `build/host-release/<platform>/`. Docker keeps separate Cargo,
+sccache, and Flatpak caches per architecture in named volumes. A native worker uses its local
+Cargo target directory. `--workspace DIR`, `--output DIR`, and `--jobs 1..4` let workers choose
+sources, handoff directories, and resource limits. Each worker builds, tests, packages, and runs
+package checks with the same command used locally.
+
+The **Full release** workflow runs the same builders for Android, iPod, and all four host platforms,
+plus the workspace tests. Select a source revision when dispatching it. The default builds and
+uploads artifacts only; enable `publish` to create a release, and disable `draft` to make it public.
+The version and beta status come from the selected source. Signed Android builds require repository
+secrets `NORI_RELEASE_KEYSTORE_BASE64` (the existing keystore encoded as base64) and
+`NORI_KEYSTORE_PROPERTIES` (the existing properties). The workflow restores these privately and
+keeps the existing signing identity.
+
+The **Desktop and CLI release** workflow is also callable by other workflows. Its manual dispatch
+builds only unless an existing release tag is supplied for uploading packages. Publishing a local
+release does not trigger another desktop build automatically.
+
+Workers can hand off packages and their checksum files to a single publisher. Copy the Android
+APK, iPod IPA, all desktop/CLI packages, and their checksum manifests into one directory, preserving
+any subdirectories containing a manifest and its files. Use the matching source checkout:
 
 ```sh
-tools/host-release.sh v0.6.0-beta.4 build/release-0.6.0-beta.4 v0.6.0-beta.4
+# Verify and prepare a handoff without compiling or accessing the signing key.
+tools/release.sh --build --from build/workflow-release
+
+# Publish that verified handoff without rebuilding.
+tools/release.sh --publish --from build/workflow-release --live
 ```
 
-The workflow uses its current packaging tools with the requested source revision. Downloads land
-under `build/host-release/host-<runner>/`, with a checksum file per platform. `tools/host-release/package.py`
-also packages locally built native binaries. Debian dependencies come from `dpkg-shlibdeps` on
-Debian/Ubuntu; Arch native builds produce archives, not Debian packages. macOS bundles are ad-hoc
-signed, without Apple notarization. Desktop builds use a `.dmg` with an Applications shortcut;
-the terminal uses an archive. The Backfill macOS disk images workflow adds verified DMGs to
-an existing release from its desktop archives. Windows builds are outside this release workflow.
-
-Linux release builders also produce desktop AppImage and Flatpak bundles for x86-64 and ARM64.
-The Flatpak includes `nori-cli` and uses the Freedesktop 25.08 runtime. Both bundles are checked
-by running their clients before upload. The Backfill Linux bundles workflow can add these formats
-to an existing release using its checksum-verified native binaries, without rebuilding Rust.
+The publisher verifies supplied checksums and requires every selected platform before tagging.
+Native workers already execute their package checks; the publisher does not execute foreign binaries.
+macOS packages are ad-hoc signed without Apple notarization. Desktop packages include a DMG with
+an Applications shortcut; CLI packages are archives. Linux builders also produce Debian packages,
+AppImages, and Flatpak bundles for both architectures. The Flatpak includes `nori-cli` and uses the
+Freedesktop 25.08 runtime. Existing backfill workflows can still add macOS disk images or Linux
+bundles to older releases using checksum-verified archives without rebuilding Rust.
