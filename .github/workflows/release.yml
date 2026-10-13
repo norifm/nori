@@ -78,13 +78,17 @@ jobs:
       - name: Build signed APK
         env:
           NORI_RELEASE_WORKSPACE: ${{ github.workspace }}/source
-        run: ../release-tooling/tools/with-resource.py build ../release-tooling/tools/release.sh --build --no-hosts --no-ipod --no-test
+        run: |
+          ../release-tooling/tools/with-resource.py build ../release-tooling/tools/release.sh --build --no-hosts --no-ipod --no-test
+          mkdir -p ../android-release
+          cp build/release-*/*.apk build/release-*/SHA256SUMS ../android-release/
       - uses: actions/upload-artifact@v7
         with:
           name: android
+          overwrite: true
           path: |
-            source/build/release-*/*.apk
-            source/build/release-*/SHA256SUMS
+            android-release/*.apk
+            android-release/SHA256SUMS
           if-no-files-found: error
   ipod:
     runs-on: ubuntu-22.04
@@ -99,6 +103,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: ipod
+          overwrite: true
           path: |
             build/ios/*.ipa
             build/ios/SHA256SUMS-ipod
@@ -127,9 +132,9 @@ jobs:
           rustup default stable
       - uses: Swatinem/rust-cache@v2
       - run: tools/with-resource.py build cargo test -j4 --workspace
-  publish:
+  release:
+    name: Assemble release
     needs: [hosts, android, ipod, test]
-    if: inputs.publish
     runs-on: ubuntu-22.04
     defaults:
       run:
@@ -149,8 +154,20 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: source/build/workflow-release
+          pattern: '{android,ipod,host-*}'
           merge-multiple: true
+      - name: Verify and prepare release artifacts
+        env:
+          NORI_RELEASE_WORKSPACE: ${{ github.workspace }}/source
+        run: ../release-tooling/tools/release.sh --build --from build/workflow-release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: source/build/workflow-release/
+          if-no-files-found: error
+          overwrite: true
       - name: Publish verified release artifacts
+        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
           GIT_COMMITTER_NAME: github-actions[bot]
