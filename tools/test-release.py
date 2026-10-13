@@ -2,11 +2,14 @@
 """Check artifact handoff and checksum failures without building or publishing."""
 import hashlib
 import os
+import runpy
+import sys
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = "1.2.3-beta.4"
@@ -59,6 +62,21 @@ class Release(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(self.apk.name, result.stderr)
         self.assertFalse((self.output / "RELEASE.txt").exists())
+
+
+class EmulatedSandbox(unittest.TestCase):
+    def test_preserve_environment_and_program_arguments(self):
+        with tempfile.TemporaryFile() as arguments:
+            arguments.write(b"\0".join([
+                b"--setenv", b"EMPTY", b"", b"--seccomp", b"42",
+                b"--ro-bind", b"/runtime", b"/usr", b"--", b"nori-cli", b"--seccomp",
+            ]) + b"\0")
+            arguments.seek(0)
+            with patch.object(sys, "argv", ["bwrap", "--args", str(arguments.fileno())]), patch("os.execv") as execute:
+                runpy.run_path(str(ROOT / "tools/host-release/emulated-bwrap.py"))
+            execute.assert_called_once_with("/usr/bin/bwrap", [
+                "bwrap", "--setenv", "EMPTY", "", "--ro-bind", "/runtime", "/usr", "--", "nori-cli", "--seccomp",
+            ])
 
 
 if __name__ == "__main__":

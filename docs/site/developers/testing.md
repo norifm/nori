@@ -480,7 +480,8 @@ Applies to 0.6 development. `python3 tools/test-release.py` checks that a worker
 prepared without a compiler or signing key, that every selected host worker is required, and that
 a modified artifact fails checksum verification before a release receipt is written.
 `actionlint .github/workflows/host-release.yml .github/workflows/release.yml` validates the release
-workflow definitions.
+workflow definitions. The tooling tests also check that emulated sandbox argument conversion preserves
+empty environment values and the client command.
 
 `tools/with-resource.py build tools/host-release.sh` builds and tests all four desktop/CLI platforms
 on an Apple Silicon Mac. Intel Mac tests run under Rosetta; Linux tests run inside their respective
