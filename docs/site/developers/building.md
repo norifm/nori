@@ -885,6 +885,10 @@ Cargo target directory. `--workspace DIR`, `--output DIR`, and `--jobs 1..4` let
 sources, handoff directories, and resource limits. Each worker builds, tests, packages, and runs
 package checks with the same command used locally.
 
+Workflow Mac builds use Apple Silicon workers for both architectures, with Intel tests under Rosetta.
+This uses the same rendering checks as the local build without the Intel hosted worker’s recurring
+one-second Metal compiler timeout.
+
 The **Full release** workflow runs the same builders for Android, iPod, and all four host platforms,
 plus the workspace tests. Select a source revision when dispatching it. The default builds and
 uploads artifacts only; enable `publish` to create a release, and disable `draft` to make it public.

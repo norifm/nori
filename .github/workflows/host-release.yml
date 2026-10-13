@@ -28,7 +28,7 @@ jobs:
             platform: linux-aarch64
           - runner: macos-15
             platform: macos-aarch64
-          - runner: macos-15-intel
+          - runner: macos-15
             platform: macos-x86_64
     runs-on: ${{ matrix.runner }}
     env:
@@ -49,6 +49,9 @@ jobs:
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev dpkg-dev file squashfs-tools zstd flatpak librsvg2-bin imagemagick pulseaudio
+      - name: Install Rosetta for Intel tests
+        if: runner.os == 'macOS' && runner.arch == 'ARM64' && matrix.platform == 'macos-x86_64'
+        run: sudo softwareupdate --install-rosetta --agree-to-license
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
       - name: Build, test, package and verify clients
