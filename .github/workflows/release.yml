@@ -122,7 +122,7 @@ jobs:
       - name: Install Rust and test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev
+          sudo apt-get install -y ffmpeg libasound2-dev libfontconfig1-dev libfreetype6-dev libdbus-1-dev libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev
           rustup update stable --no-self-update
           rustup default stable
       - uses: Swatinem/rust-cache@v2
