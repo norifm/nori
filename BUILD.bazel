@@ -1,1 +1,10 @@
+load("//tools/bazel:members.bzl", "MEMBERS")
+
+package(default_visibility = ["//visibility:public"])
+
 exports_files(["Cargo.toml", "Cargo.lock"])
+
+filegroup(name = "workspace_sources", srcs = ["//" + member + ":files" for member in MEMBERS] + ["Cargo.toml", "Cargo.lock", "//vendor/i-slint-renderer-skia:Cargo.toml", "//vendor/i-slint-renderer-skia:lib.rs", "//vendor/i-slint-renderer-skia:build.rs"])
+filegroup(name = "test_data", srcs = ["//" + member + ":resources" for member in MEMBERS] + glob(["app/src/main/assets/licences/**"]))
+filegroup(name = "desktop_fonts", srcs = glob(["app/src/main/res/font/**"]))
+filegroup(name = "kotlin_sources", srcs = glob(["app/src/main/kotlin/**/*.kt", "core/src/main/kotlin/**/*.kt"]))

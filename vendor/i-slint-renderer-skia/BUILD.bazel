@@ -61,25 +61,20 @@ rust_library(
             "@crates__bytemuck-1.25.2//:bytemuck",  # cfg(not(target_os = "android"))
             "@crates__glutin-0.32.3//:glutin",  # cfg(any(not(target_vendor = "apple"), target_os = "macos"))
         ],
-        "@rules_rust//rust/platform:wasm32-unknown-unknown": [
+        "@rules_rust//rust/platform:x86_64-apple-darwin": [
             "@crates__bytemuck-1.25.2//:bytemuck",  # cfg(not(target_os = "android"))
             "@crates__glutin-0.32.3//:glutin",  # cfg(any(not(target_vendor = "apple"), target_os = "macos"))
-        ],
-        "@rules_rust//rust/platform:wasm32-wasip1": [
-            "@crates__bytemuck-1.25.2//:bytemuck",  # cfg(not(target_os = "android"))
-            "@crates__glutin-0.32.3//:glutin",  # cfg(any(not(target_vendor = "apple"), target_os = "macos"))
-        ],
-        "@rules_rust//rust/platform:x86_64-pc-windows-msvc": [
-            "@crates__bytemuck-1.25.2//:bytemuck",  # cfg(not(target_os = "android"))
-            "@crates__glutin-0.32.3//:glutin",  # cfg(any(not(target_vendor = "apple"), target_os = "macos"))
-            "@crates__windows-0.62.2//:windows",  # cfg(target_family = "windows")
-            "@crates__windows-core-0.62.2//:windows_core",  # x86_64-pc-windows-msvc
+            "@crates__objc2-0.6.4//:objc2",  # cfg(target_vendor = "apple")
+            "@crates__objc2-app-kit-0.3.2//:objc2_app_kit",  # cfg(target_vendor = "apple")
+            "@crates__objc2-core-foundation-0.3.2//:objc2_core_foundation",  # cfg(target_vendor = "apple")
+            "@crates__objc2-foundation-0.3.2//:objc2_foundation",  # cfg(target_vendor = "apple")
+            "@crates__objc2-metal-0.3.2//:objc2_metal",  # cfg(target_vendor = "apple")
+            "@crates__objc2-quartz-core-0.3.2//:objc2_quartz_core",  # cfg(target_vendor = "apple")
+            "@crates__read-fonts-0.41.0//:read_fonts",  # cfg(target_vendor = "apple")
+            "@crates__wgpu-hal-30.0.1//:wgpu_hal",  # x86_64-apple-darwin
+            "@crates__write-fonts-0.50.0//:write_fonts",  # cfg(target_vendor = "apple")
         ],
         "@rules_rust//rust/platform:x86_64-unknown-linux-gnu": [
-            "@crates__bytemuck-1.25.2//:bytemuck",  # cfg(not(target_os = "android"))
-            "@crates__glutin-0.32.3//:glutin",  # cfg(any(not(target_vendor = "apple"), target_os = "macos"))
-        ],
-        "@rules_rust//rust/platform:x86_64-unknown-nixos-gnu": [
             "@crates__bytemuck-1.25.2//:bytemuck",  # cfg(not(target_os = "android"))
             "@crates__glutin-0.32.3//:glutin",  # cfg(any(not(target_vendor = "apple"), target_os = "macos"))
         ],
@@ -92,6 +87,10 @@ rust_library(
         "@rules_rust//rust/platform:aarch64-apple-darwin": {
             "@crates__wgpu-30.0.1//:wgpu": "wgpu_30",
             "@crates__wgpu-hal-30.0.1//:wgpu_hal": "wgpu_hal_30",  # aarch64-apple-darwin
+        },
+        "@rules_rust//rust/platform:x86_64-apple-darwin": {
+            "@crates__wgpu-30.0.1//:wgpu": "wgpu_30",
+            "@crates__wgpu-hal-30.0.1//:wgpu_hal": "wgpu_hal_30",  # x86_64-apple-darwin
         },
         "//conditions:default": {
             "@crates__wgpu-30.0.1//:wgpu": "wgpu_30",
@@ -135,11 +134,8 @@ rust_library(
     target_compatible_with = select({
         "@rules_rust//rust/platform:aarch64-apple-darwin": [],
         "@rules_rust//rust/platform:aarch64-unknown-linux-gnu": [],
-        "@rules_rust//rust/platform:wasm32-unknown-unknown": [],
-        "@rules_rust//rust/platform:wasm32-wasip1": [],
-        "@rules_rust//rust/platform:x86_64-pc-windows-msvc": [],
+        "@rules_rust//rust/platform:x86_64-apple-darwin": [],
         "@rules_rust//rust/platform:x86_64-unknown-linux-gnu": [],
-        "@rules_rust//rust/platform:x86_64-unknown-nixos-gnu": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     version = "1.18.1",

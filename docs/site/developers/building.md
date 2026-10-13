@@ -84,23 +84,73 @@ on demand by `tools/ui-dump.sh`. It reads visible nodes without waiting for an
 animating player to become idle. Conditions still wait for the expected state.
 Failures save XML and screenshots under `build/e2e/SERIAL/failures/`.
 
-### Bazel pilot
+### Native Rust with Bazel
 
-Cargo manifests and Cargo.lock remain the dependency source. The pinned Bazel
-and rules_rust versions currently cover the player unit and pipeline tests:
+Cargo manifests and Cargo.lock remain the dependency source. The experimental
+Bazel backend covers native workspace libraries, client binaries, unit tests,
+and integration tests. Cargo commands continue to use Cargo. APKs, iPod builds,
+release packages, doctests, and device checks use their existing tools.
 
 ```sh
-tools/check.sh bazel test //crates/player:unit_tests //crates/player:pipeline
+python3 tools/rust.py test --workspace
+python3 tools/rust.py test -p nori-player -- pipeline
+python3 tools/rust.py build -p nori-desktop
+python3 tools/rust.py run -p nori-cli
 ```
 
+The wrapper refreshes generated BUILD files from Cargo metadata and queues heavy
+work with the same resource guard as other checks. After changing manifests,
+regenerate and check the build definitions with:
+
+```sh
+python3 tools/bazel/generate.py
+python3 tools/bazel/generate.py --check
+python3 -m unittest discover -s tools/bazel -p 'test_*.py'
+tools/check.sh bazel test //crates/...
+```
+
+The default test profile unifies workspace default and development features.
+Package selection limits the targets, with the workspace feature set preserved.
+Desktop build/run commands use the production desktop feature set. Arbitrary
+Cargo feature selections and cross-compilation are outside this experiment.
+Bazel builds are optimized; these binaries are for development, and release
+scripts continue to use Cargo's release profile. Native tests need the same
+platform libraries and FFmpeg as Cargo tests. The current validation and timing
+measurements are on Apple Silicon macOS.
+
 The shared disk action cache is `~/.cache/nori/bazel`. Separate worktrees use
-separate Bazel output bases and reuse identical compilation and test actions.
+separate Bazel output bases and can reuse identical compilation and test actions.
 Cached passing tests do not execute again; use `--nocache_test_results` when you
-need an actual repeat. This pilot does not replace Android Gradle builds, the
-workspace check or device suites. The first dependency fetch and analysis are
-more expensive than an unchanged cached invocation. A remote cache can be added
-with Bazel's `--remote_cache` option when infrastructure is available; remote
-execution requires a separate service and is not configured here.
+need an actual repeat. The first dependency fetch and analysis are more expensive
+than an unchanged cached invocation. Add `--remote_cache` to a direct Bazel command
+when infrastructure is available; remote execution is not configured here.
+
+#### Native Rust measurements, October 13, 2026
+
+Measured on an Apple M4 Pro with 24 GiB RAM and macOS 26.6.2, with four build
+jobs. The player compilation comparison uses Rust 1.97.1 for both tools, with
+warm caches and the library unit and pipeline test binaries selected.
+
+| Check | Cargo | Bazel |
+| --- | ---: | ---: |
+| Unchanged player test compilation, median of three | 0.125 s | 0.771 s |
+| Player test compilation after a small gain-policy edit | 4.749 s | 9.827 s |
+| Player tests in a fresh worktree | 30.962 s, compilation only | 6.126 s, compilation and passing tests reused |
+| Unchanged workspace test check | 69.528 s, tests execute | 1.854 s through the wrapper, passing tests reused |
+
+The workspace Cargo baseline uses the default nightly compiler and includes
+doctests; Bazel covers 46 native test targets and reuses passing results. The
+player features match, while registry dependency optimization and feature
+unification differ. Fresh-worktree Cargo uses the existing sccache configuration
+and a separate target directory; Bazel recorded 293 disk-cache hits and reused
+both passing test results. Apart from the unchanged player compilation median,
+these are single observations. The temporary source edit was restored.
+
+These results favor Bazel for repeated checks and shared worktree caches, while
+Cargo was faster for the measured editing loop. They do not justify changing
+release defaults or predict whole-app compilation times. Commands and raw wall
+times are recorded in `docs/performance/raw/bazel-native-rust-2026-10-13.json`;
+full logs remain in `build/bazel-rust-benchmark/`.
 
 ### Measurements
 
