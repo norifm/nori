@@ -27,7 +27,8 @@ fn made(dir: &Path) -> (PathBuf, Vec<i16>) {
     let m4a = dir.join("tone.m4a");
     let raw = dir.join("tone.raw");
     let len = format!("{FRAMES}");
-    run(&["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-af", &format!("atrim=end_sample={len}"), "-ac", "2", "-c:a", "aac", "-b:a", "160k", m4a.to_str().unwrap()]);
+    // Noise substitution generates random samples whose sequence changes after a seek.
+    run(&["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-af", &format!("atrim=end_sample={len}"), "-ac", "2", "-c:a", "aac", "-aac_pns", "0", "-b:a", "160k", m4a.to_str().unwrap()]);
     run(&["-i", m4a.to_str().unwrap(), "-f", "s16le", "-acodec", "pcm_s16le", raw.to_str().unwrap()]);
     let bytes = std::fs::read(&raw).unwrap();
     (m4a, bytes.as_chunks::<2>().0.iter().map(|&b| i16::from_le_bytes(b)).collect())
