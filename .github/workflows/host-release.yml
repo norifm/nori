@@ -59,6 +59,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: host-${{ matrix.platform }}
+          overwrite: true
           path: build/host-release/${{ matrix.platform }}/*
           if-no-files-found: error
   publish:
