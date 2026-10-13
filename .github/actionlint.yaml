@@ -1,3 +1,4 @@
 # Hosted image used for FFmpeg 8 fixture tests.
-self-hosted-runner-labels:
-  - ubuntu-26.04
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
