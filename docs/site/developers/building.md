@@ -907,6 +907,8 @@ tools/release.sh --publish --from build/workflow-release --live
 
 The publisher verifies supplied checksums and requires every selected platform before tagging.
 Native workers already execute their package checks; the publisher does not execute foreign binaries.
+Publishers need a Git committer identity and GitHub CLI authentication. The full workflow supplies
+the GitHub Actions bot identity and its release token.
 macOS packages are ad-hoc signed without Apple notarization. Desktop packages include a DMG with
 an Applications shortcut; CLI packages are archives. Linux builders also produce Debian packages,
 AppImages, and Flatpak bundles for both architectures. The Flatpak includes `nori-cli` and uses the
