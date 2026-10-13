@@ -1,0 +1,22 @@
+# Generated from Cargo manifests by tools/bazel/generate.py.
+load("//tools/bazel:workspace.bzl", "workspace_crate")
+
+workspace_crate({'name': 'nori-uniffi-jni-runtime',
+ 'edition': '2021',
+ 'version': '0.31.1',
+ 'targets': [{'name': 'nori_uniffi_jni_runtime', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
+             {'name': 'threads', 'kind': 'test', 'root': 'tests/threads.rs', 'test': True}],
+ 'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
+ 'local': [],
+ 'registry': [{'label': '@crates//:jni-sys-0.4.1',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests']},
+              {'label': '@crates//:uniffi-bindgen-kotlin-jni-runtime-0.31.1',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests']}],
+ 'resources': [],
+ 'aliases': {}})

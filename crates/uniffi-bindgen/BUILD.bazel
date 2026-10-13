@@ -1,0 +1,16 @@
+# Generated from Cargo manifests by tools/bazel/generate.py.
+load("//tools/bazel:workspace.bzl", "workspace_crate")
+
+workspace_crate({'name': 'uniffi-bindgen',
+ 'edition': '2021',
+ 'version': '0.6.0-beta.5',
+ 'targets': [{'name': 'uniffi-bindgen', 'kind': 'bin', 'root': 'src/main.rs', 'test': True}],
+ 'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
+ 'local': [],
+ 'registry': [{'label': '@crates//:uniffi-bindgen-kotlin-jni-0.32.1',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests']}],
+ 'resources': [],
+ 'aliases': {}})

@@ -11,7 +11,10 @@ cargo test -j4 -p <crate>                           # one crate while iterating
 tools/check.sh rust --workspace                     # nextest, queued across worktrees; doctests separately
 tools/check.sh android                              # queued debug APK with incremental optimized Rust
 tools/device-check.sh smoke                         # lease one device from NORI_E2E_DEVICES
-tools/check.sh bazel test //crates/player:all        # cached player unit/pipeline pilot
+python3 tools/rust.py test --workspace               # optional Bazel native tests; shared worktree cache
+python3 tools/rust.py test -p nori-player            # Bazel tests for one crate, with workspace features
+python3 tools/rust.py build -p nori-desktop          # optional Bazel native desktop build
+python3 tools/rust.py run -p nori-cli                # optional Bazel terminal client
 cargo test -p nori-player --test pipeline    # player end to end on a virtual clock
 cargo clippy -j4 --workspace --all-targets          # no new warnings
 ./gradlew :app:compileDebugKotlin -PrustTargets=arm64-v8a    # Kotlin compiles (this Mac's emulator is arm64)
@@ -32,6 +35,14 @@ Before committing: `cargo test -j4 --workspace` and a build. If the change reach
 Use `tools/check.sh` or `tools/with-resource.py build <command>` for heavy commands across agents.
 Device scripts lease their emulator; `tools/device-check.sh` allocates from `NORI_E2E_DEVICES`.
 Multiple emulators are supported, with isolated fixture accounts and ports. See `docs/site/developers/building.md`.
+
+The optional Bazel wrapper generates BUILD files from Cargo manifests and Cargo.lock and queues heavy
+work automatically. Use it for cached native checks across worktrees; Cargo remains useful for local
+edits. Passing Bazel tests may be cached; execute them again with
+`tools/check.sh bazel test //crates/... --nocache_test_results`.
+Cargo handles doctests, and Cargo/Gradle handle mobile
+builds and releases. After manifest changes, run `python3 tools/bazel/generate.py`; generated BUILD
+files are not edited by hand. See the native Rust Bazel section in `docs/site/developers/building.md`.
 
 ## Layout
 
