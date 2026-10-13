@@ -1,0 +1,35 @@
+FROM ubuntu:24.04
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang lld llvm libclang-dev cmake curl ca-certificates git \
+    python3 python3-venv hfsprogs zlib1g-dev fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+ENV RUSTUP_HOME=/opt/rustup PATH=/opt/python/bin:/opt/cargo/bin:$PATH
+RUN curl -sSf https://sh.rustup.rs | CARGO_HOME=/opt/cargo sh -s -- -y --no-modify-path \
+    --profile minimal --default-toolchain stable --target aarch64-apple-darwin,x86_64-apple-darwin \
+    && chmod -R a+rX /opt/rustup /opt/cargo
+RUN python3 -m venv /opt/python && pip install --disable-pip-version-check Pillow==11.3.0 ds-store==1.3.1
+RUN curl -sSfL https://github.com/joseluisq/macosx-sdks/releases/download/14.5/MacOSX14.5.sdk.tar.xz -o /tmp/sdk.tar.xz \
+    && echo '6e146275d19f027faa2e8354da5e0267513abf013b8f16ad65a231653a2b1c5d  /tmp/sdk.tar.xz' | sha256sum -c - \
+    && tar -xJf /tmp/sdk.tar.xz -C /opt && rm /tmp/sdk.tar.xz
+ENV SDKROOT=/opt/MacOSX14.5.sdk MACOSX_DEPLOYMENT_TARGET=11.0
+RUN arch=$(uname -m) && case "$arch" in \
+      aarch64) digest=4af92c87ddf52f5f2d1258a3b4e56c7dcb8f1b2468df744976c5f139e031961f ;; \
+      x86_64) digest=dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002 ;; \
+    esac \
+    && curl -sSfL "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/0.29.0/apple-codesign-0.29.0-$arch-unknown-linux-musl.tar.gz" -o /tmp/codesign.tar.gz \
+    && echo "$digest  /tmp/codesign.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/codesign.tar.gz -C /usr/local/bin --strip-components 1 --wildcards '*/rcodesign' \
+    && rm /tmp/codesign.tar.gz
+RUN git clone https://github.com/planetbeing/libdmg-hfsplus.git /tmp/libdmg \
+    && git -C /tmp/libdmg checkout 7ac55ec64c96f7800d9818ce64c79670e7f02b67 \
+    && cmake -S /tmp/libdmg -B /tmp/libdmg/build -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE \
+    && cmake --build /tmp/libdmg/build -j4 && cmake --install /tmp/libdmg/build \
+    && rm -rf /tmp/libdmg
+COPY macos-cc.sh /usr/local/bin/macos-cc
+RUN ln -s macos-cc /usr/local/bin/macos-cxx
+ARG NORI_UID=1000
+ARG NORI_GID=1000
+RUN groupadd --non-unique --gid "$NORI_GID" build && useradd --non-unique --uid "$NORI_UID" --gid build --create-home build
+COPY macos-entrypoint.sh /usr/local/bin/nori-macos-entrypoint
+ENTRYPOINT ["/usr/local/bin/nori-macos-entrypoint"]

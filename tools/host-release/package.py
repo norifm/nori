@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 import dmg
+from app import sign
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -29,7 +30,7 @@ def package(binaries, output, version, system, arch):
             binary = binaries / f"nori-{client}"
             shutil.copy2(binary, stage / binary.name)
             if system == "macos":
-                subprocess.run(["codesign", "--force", "--sign", "-", str(stage / binary.name)], check=True)
+                sign(stage / binary.name)
             shutil.copy2(ROOT / "LICENSE", stage / "LICENSE")
             (stage / "README.txt").write_text(
                 "nori music\nhttps://github.com/norifm/nori\n\n"
@@ -80,7 +81,8 @@ if __name__ == "__main__":
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--arch", choices=("aarch64", "x86_64"))
+    p.add_argument("--system", choices=("macos", "linux"))
     a = p.parse_args()
-    system = {"Linux": "linux", "Darwin": "macos"}[platform.system()]
+    system = a.system or {"Linux": "linux", "Darwin": "macos"}[platform.system()]
     arch = a.arch or {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64"}[platform.machine()]
     package(a.binaries, a.output, a.version, system, arch)

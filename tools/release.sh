@@ -9,6 +9,8 @@
 #   tools/release.sh --abi arm64-v8a    phones only: about half the size
 #   tools/release.sh --no-test          skip cargo test first
 #   tools/release.sh --no-hosts        omit desktop and CLI packages
+#   tools/release.sh --allow-untested-macos  acknowledge skipped Mac execution checks on Linux
+#   tools/release.sh --docker-macos     build Mac packages in Docker even on a Mac
 #   tools/release.sh --no-ipod          the APK alone, without the iPod app (built in Docker)
 #   tools/release.sh --beta             a beta (0.5.2-beta.1): a GitHub prerelease, offered in the app only to
 #                                       those who turned on Beta updates. Its notes are the changes since the
@@ -59,6 +61,7 @@ GUIDED=1
 DRAFT=--draft
 BETA=0
 FROM=""
+HOST_FLAGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --abi) ABI="$2"; shift ;;
@@ -70,6 +73,8 @@ while [ $# -gt 0 ]; do
     --live) DRAFT="" ;;
     --beta) BETA=1 ;;
     --from) FROM="$2"; shift ;;
+    --allow-untested-macos) HOST_FLAGS+=(--allow-untested-macos) ;;
+    --docker-macos) HOST_FLAGS+=(--docker-macos) ;;
     -h|--help) sed -n 2,42p "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -234,6 +239,10 @@ esac
 ipa=""
 if [ "$IPOD" = 1 ]; then ipa="nori-ipod-$version.ipa"; fi
 if [ -z "$FROM" ]; then
+if [ "$HOSTS" = 1 ]; then
+  "$tooling/tools/host-release.sh" --preflight "${HOST_FLAGS[@]}"
+  HOST_FLAGS+=(--allow-untested-macos)
+fi
 # --- signing key ----------------------------------------------------------------
 # Every build before 0.3.2 was signed with this machine's Android debug key, and a phone only updates
 # in place from the same key. So the first run adopts that key as the release key - a copy, kept
@@ -288,7 +297,7 @@ if [ "$IPOD" = 1 ]; then
 fi
 
 if [ "$HOSTS" = 1 ]; then
-  "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts"
+  "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts" "${HOST_FLAGS[@]}"
 fi
 fi
 

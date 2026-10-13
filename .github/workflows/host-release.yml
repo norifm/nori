@@ -5,6 +5,9 @@ on:
       source:
         type: string
         default: master
+      macos_on_linux:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       source:
@@ -14,6 +17,10 @@ on:
       release:
         description: Existing release tag to attach packages to (empty builds only)
         default: ''
+      macos_on_linux:
+        description: Build Mac packages in Docker on Linux (Mac execution tests skipped)
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -26,9 +33,9 @@ jobs:
             platform: linux-x86_64
           - runner: ubuntu-22.04-arm
             platform: linux-aarch64
-          - runner: macos-15
+          - runner: ${{ inputs.macos_on_linux && 'ubuntu-22.04' || 'macos-15' }}
             platform: macos-aarch64
-          - runner: macos-15
+          - runner: ${{ inputs.macos_on_linux && 'ubuntu-22.04' || 'macos-15' }}
             platform: macos-x86_64
     runs-on: ${{ matrix.runner }}
     env:
@@ -55,7 +62,14 @@ jobs:
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
       - name: Build, test, package and verify clients
-        run: release-tooling/tools/host-release.sh --native --workspace "$PWD" --platform "${{ matrix.platform }}" --output build/host-release
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          flags=(--native)
+          if [[ "$RUNNER_OS" == Linux && "$TARGET_PLATFORM" == macos-* ]]; then
+            flags=(--allow-untested-macos)
+          fi
+          release-tooling/tools/host-release.sh "${flags[@]}" --workspace "$PWD" --platform "$TARGET_PLATFORM" --output build/host-release
       - uses: actions/upload-artifact@v7
         with:
           name: host-${{ matrix.platform }}

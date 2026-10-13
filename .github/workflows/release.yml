@@ -14,6 +14,10 @@ on:
         description: Leave the release as a draft
         type: boolean
         default: true
+      macos_on_linux:
+        description: Build Mac packages in Docker on Linux (Mac execution tests skipped)
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -23,6 +27,7 @@ jobs:
     uses: ./.github/workflows/host-release.yml
     with:
       source: ${{ inputs.source }}
+      macos_on_linux: ${{ inputs.macos_on_linux }}
   android:
     runs-on: ubuntu-22.04
     defaults:

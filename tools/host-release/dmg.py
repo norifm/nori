@@ -2,12 +2,13 @@
 """Create and verify a macOS disk image from a native desktop binary."""
 import argparse
 import hashlib
-import os
 import platform
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from app import bundle
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -18,10 +19,10 @@ def package(binary, output, version, arch):
     artifact = output / f"nori-desktop-{version}-macos-{arch}.dmg"
     with tempfile.TemporaryDirectory(prefix="nori-dmg-") as temporary:
         stage = Path(temporary) / "stage"
-        env = dict(os.environ, NORI_APP_DIR=str(stage), NORI_DESKTOP_BINARY=str(binary.resolve()), NORI_VERSION=version)
-        subprocess.run([str(ROOT / "tools/desktop-app.sh"), "--no-build"], env=env, check=True)
-        (stage / "nori.app/Contents/Resources/LICENSE").write_bytes((ROOT / "LICENSE").read_bytes())
-        subprocess.run(["codesign", "--force", "--sign", "-", str(stage / "nori.app")], check=True)
+        bundle(binary.resolve(), stage, version)
+        if platform.system() != "Darwin":
+            subprocess.run([sys.executable, str(ROOT / "tools/host-release/dmg-layout.py"), "build-linux", str(stage), str(artifact)], check=True)
+            return artifact
         environment = Path(temporary) / "python"
         subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
         python = str(environment / "bin/python")

@@ -481,13 +481,20 @@ prepared without a compiler or signing key, that every selected host worker is r
 a modified artifact fails checksum verification before a release receipt is written.
 `actionlint .github/workflows/host-release.yml .github/workflows/release.yml` validates the release
 workflow definitions. The tooling tests also check that emulated sandbox argument conversion preserves
-empty environment values and the client command.
+empty environment values and the client command, and that Mac cross-builds require an interactive
+confirmation or an explicit worker acknowledgment.
 
 `tools/with-resource.py build tools/host-release.sh` builds and tests all four desktop/CLI platforms
 on an Apple Silicon Mac. Intel Mac tests run under Rosetta; Linux tests run inside their respective
 Docker images. Package checks verify checksums, load the archived clients, check signing on macOS,
 and run the AppImage and Flatpak clients on Linux. Native workers use the same checks with
 `--native --platform <platform>`.
+
+On Linux, Mac packages compile in Docker after confirmation of the skipped Mac tests. Package checks
+verify signed code pages, bundle metadata hashes, and every file in the generated DMG. Mac execution
+and rendering tests require macOS. Use `--docker-macos --allow-untested-macos --platform macos-aarch64`
+to exercise this path on a Mac, then run `python3 tools/host-release/check.py <output>` on macOS to
+check the resulting signatures and execute the packaged apps.
 
 Release workspace tests generate their encoded audio fixtures with FFmpeg 8, matching the local
 test environment. The workflow uses Ubuntu 26.04 for these tests; its package builders still use
