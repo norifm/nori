@@ -41,7 +41,8 @@ jobs:
       - name: Install Rust
         run: rustup update stable --no-self-update && rustup default stable
       - name: Test clients
-        run: cargo test --locked --release -j2 -p nori-cli -p nori-desktop
+        # Concurrent GPU tests contend for Metal's compiler and can exceed Skia's one-second limit.
+        run: cargo test --locked --release -j2 -p nori-cli -p nori-desktop -- --test-threads=1
       - name: Build clients
         run: cargo build --locked --release -j2 -p nori-desktop -p nori-cli
       - name: Package clients

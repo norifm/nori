@@ -842,6 +842,17 @@ are built on Ubuntu 22.04; macOS Intel and Apple Silicon use native macOS builde
 works from Arch Linux or macOS with GitHub CLI authentication and a pushed source commit.
 `--no-hosts` omits these packages. Android signing still requires the existing release keystore.
 
+Desktop/CLI release builds run in GitHub Actions so each package is built and tested on its native
+OS and architecture. Android and iPod artifacts are built locally. Release client tests run one at
+a time to avoid competing Metal shader compilations on the Intel Mac runner; Skia's compiler wait
+has a one-second limit.
+
+Build desktop and CLI binaries for the local machine:
+
+```sh
+tools/with-resource.py build cargo build --release -j4 -p nori-desktop -p nori-cli
+```
+
 Build every desktop/CLI platform without publishing:
 
 ```sh
