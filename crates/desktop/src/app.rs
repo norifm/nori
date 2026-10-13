@@ -92,7 +92,7 @@ struct Lists {
 #[derive(Default)]
 struct Art {
     images: HashMap<CoverKey, (Image, Instant)>,
-    mosaics: HashMap<Vec<String>, Image>,
+    mosaics: HashMap<Vec<String>, Mosaic>,
     /// Page colours of large covers, by cover id.
     colours: HashMap<String, Rc<CoverColours>>,
     asked: HashSet<CoverKey>,
@@ -101,13 +101,28 @@ struct Art {
     missing: HashMap<CoverKey, Instant>,
 }
 
+enum Mosaic {
+    Ready(Image),
+    Updating(Image),
+}
+
+impl Mosaic {
+    fn image(&self) -> &Image {
+        match self { Self::Ready(image) | Self::Updating(image) => image }
+    }
+}
+
 impl Art {
     fn insert(&mut self, key: CoverKey, image: Image, colours: Option<Box<CoverColours>>, now: Instant) {
         let id = key.id.clone();
         let large = key.size != CoverSize::Card;
         self.missing.remove(&key);
         if !large {
-            self.mosaics.retain(|covers, _| !covers.contains(&id));
+            for (covers, mosaic) in &mut self.mosaics {
+                if covers.contains(&id) {
+                    *mosaic = Mosaic::Updating(mosaic.image().clone());
+                }
+            }
         }
         self.images.insert(key.clone(), (image, now));
         if let Some(c) = colours {
@@ -180,12 +195,24 @@ fn pick_image(art: &RefCell<Art>, app: &AppHandle, covers: ModelRc<SharedString>
     if ids.len() < 4 {
         return ids.first().map_or_else(Image::default, |id| cover_image(art, app, id.as_str().into(), 0));
     }
-    if let Some(image) = art.borrow().mosaics.get(&ids) {
-        return image.clone();
+    {
+        let mut cache = art.borrow_mut();
+        if let Some(Mosaic::Ready(image)) = cache.mosaics.get(&ids) {
+            let image = image.clone();
+            let now = Instant::now();
+            for id in &ids {
+                if let Some((_, drawn)) = cache.images.get_mut(&CoverKey { id: id.clone(), size: CoverSize::Card }) {
+                    *drawn = now;
+                }
+            }
+            return image;
+        }
     }
     let images: Vec<_> = ids.iter().map(|id| cover_image(art, app, id.as_str().into(), 0)).collect();
-    let Some(image) = compose(&images) else { return Image::default() };
-    art.borrow_mut().mosaics.insert(ids, image.clone());
+    let Some(image) = compose(&images) else {
+        return art.borrow().mosaics.get(&ids).map_or_else(Image::default, |mosaic| mosaic.image().clone());
+    };
+    art.borrow_mut().mosaics.insert(ids, Mosaic::Ready(image.clone()));
     image
 }
 
@@ -2232,6 +2259,28 @@ mod tests {
     }
 
     #[test]
+    fn visible_mosaic_keeps_source_covers() {
+        let art = RefCell::new(Art::default());
+        let now = Instant::now();
+        let image = Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(SMALL_PX, SMALL_PX));
+        let limit = SMALL_BYTES / (SMALL_PX * SMALL_PX * 4) as usize;
+        for i in 0..limit {
+            art.borrow_mut().insert(CoverKey { id: i.to_string(), size: CoverSize::Card }, image.clone(), None, now);
+        }
+        let covers = ModelRc::new(VecModel::from((0..4).map(|i| SharedString::from(i.to_string())).collect::<Vec<_>>()));
+        let app = AppHandle(Weak::new());
+        pick_image(&art, &app, covers.clone(), mosaic);
+        for i in 0..4 {
+            art.borrow_mut().images.get_mut(&CoverKey { id: i.to_string(), size: CoverSize::Card }).unwrap().1 = now - Duration::from_secs(1);
+        }
+        pick_image(&art, &app, covers, |_| panic!("an unchanged mosaic stays cached"));
+        art.borrow_mut().insert(CoverKey { id: "new".into(), size: CoverSize::Card }, image, None, Instant::now());
+        for i in 0..4 {
+            assert!(art.borrow().images.contains_key(&CoverKey { id: i.to_string(), size: CoverSize::Card }), "visible mosaic source {i} must remain cached");
+        }
+    }
+
+    #[test]
     fn pick_updates_replace_the_changed_quadrant() {
         let art = RefCell::new(Art::default());
         let now = Instant::now();
@@ -2247,6 +2296,8 @@ mod tests {
         let app = AppHandle(Weak::new());
         let before = image_pixels(&pick_image(&art, &app, covers.clone(), mosaic));
         art.borrow_mut().insert(CoverKey { id: "0".into(), size: CoverSize::Card }, solid(255, 0, 255), None, now);
+        let pending = image_pixels(&pick_image(&art, &app, covers.clone(), |_| None));
+        assert_eq!(pending.as_slice(), before.as_slice(), "the displayed mosaic remains while its replacement is pending");
         let after = image_pixels(&pick_image(&art, &app, covers, mosaic));
         for (i, expected) in [(255, 0, 255), (0, 255, 0), (0, 0, 255), (255, 255, 0)].into_iter().enumerate() {
             let offset = ((i / 2) * SMALL_PX as usize + 20) * after.width() as usize + (i % 2) * SMALL_PX as usize + 20;
@@ -2555,6 +2606,57 @@ mod tests {
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: slint::LogicalPosition::new(300.0, 250.0), button: slint::platform::PointerEventButton::Left });
         ui.window().take_snapshot().unwrap();
         assert!(requests.borrow().iter().any(|id| id.parse::<usize>().is_ok_and(|i| i > initial)), "dragging must reveal cards beyond the original viewport");
+    }
+
+    #[test]
+    fn home_keeps_pick_covers() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = AppWindow::new().unwrap();
+        ui.window().set_size(slint::PhysicalSize::new(1800, 1100));
+        ui.set_view(HOME);
+        ui.set_picks_loaded(true);
+        ui.set_picks(ModelRc::new(VecModel::from((0..6).map(|i| crate::Pick {
+            tint: Color::from_rgb_u8(255, 0, 0), deep: Color::from_rgb_u8(0, 0, 255),
+            covers: ModelRc::new(VecModel::from((0..4).map(|j| format!("pick-{i}-{j}").into()).collect::<Vec<_>>())),
+            ..Default::default()
+        }).collect::<Vec<_>>())));
+        ui.set_shelves(ModelRc::new(VecModel::from((0..20).map(|i| Shelf {
+            loaded: true, cards: cards((0..20).map(|j| Card { art: format!("album-{i}-{j}").into(), ..Default::default() })),
+            ..Default::default()
+        }).collect::<Vec<_>>())));
+        let art = Rc::new(RefCell::new(Art::default()));
+        let cache = art.clone();
+        ui.on_art(move |id, size, _| cover_image(&cache, &AppHandle(Weak::new()), id, size));
+        let cache = art.clone();
+        ui.on_pick_art(move |ids, _| pick_image(&cache, &AppHandle(Weak::new()), ids, mosaic));
+        let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(SMALL_PX, SMALL_PX);
+        pixels.make_mut_slice().fill(Rgba8Pixel { r: 27, g: 91, b: 173, a: 255 });
+        let image = Image::from_rgba8(pixels);
+        ui.show().unwrap();
+        for revision in 0..4 {
+            ui.set_covers_rev(revision);
+            ui.window().take_snapshot().unwrap();
+            let pending: Vec<_> = art.borrow_mut().wanted.drain(..).collect();
+            for key in pending {
+                art.borrow_mut().insert(key, image.clone(), None, Instant::now());
+            }
+        }
+        ui.set_covers_rev(4);
+        ui.window().take_snapshot().unwrap();
+        assert!(art.borrow().wanted.is_empty(), "Home must keep loaded covers while stationary: {} covers requested again", art.borrow().wanted.len());
+        let cache = art.borrow();
+        assert!(cache.images.keys().any(|key| key.id.starts_with("pick-0-")), "the first pick loads its artwork");
+        assert!(!cache.images.keys().any(|key| key.id.starts_with("album-19-")), "offscreen shelves must not load covers");
+        drop(cache);
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(1780.0, 950.0), delta_x: 0.0, delta_y: -30_000.0,
+        });
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        ui.window().take_snapshot().unwrap();
+        assert!(art.borrow().wanted.iter().any(|key| key.id.starts_with("album-19-")), "scrolling reveals the last shelf's covers");
     }
 
     #[test]

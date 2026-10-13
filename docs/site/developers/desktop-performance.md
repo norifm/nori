@@ -61,6 +61,14 @@ release offscreen image components. Desktop disables the cover loader's duplicat
 keeps its own LRU. Hidden sidebar/player layers and a page covered by an opaque fullscreen player do
 not render. Top Picks combine four covers into one image to avoid independent GPU pixel rounding.
 
+Home creates album cards only for shelves within the vertical viewport and Top Picks cards only
+within the horizontal viewport. Offscreen shelves keep their layout space without loading covers,
+so a long Home page cannot evict visible artwork and trigger repeated downloads while stationary.
+The desktop test `home_keeps_pick_covers` checks stable cover requests and loading after scrolling.
+Cached Top Picks mosaics refresh the usage times of their source covers and keep their completed
+image visible while a replacement is composed. A source-cover update swaps the mosaic only when
+the new image is ready; the card's background stays behind its artwork during asynchronous updates.
+
 In a 60-second physical-display interaction trace, the updated app averaged 13.2% of one CPU core and
 312–359 MiB RSS. Roughly 75% of sampled user CPU cycles were on the UI thread, 14% on analysis and 10%
 on the playback engine. This includes pauses between interactions and has no matched physical-display
