@@ -1,0 +1,19 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["workspace.bzl", "members.bzl", "normalize-generated.py"])
+
+string_flag(name = "client", build_setting_default = "tests")
+
+[
+    config_setting(name = name, flag_values = {":client": name})
+    for name in ["tests", "desktop", "desktop-tests"]
+]
+
+[
+    config_setting(name = profile + "_" + system, flag_values = {":client": profile},
+                   constraint_values = ["@platforms//os:" + ("osx" if system == "macos" else system)])
+    for profile in ["tests", "desktop", "desktop-tests"]
+    for system in ["macos", "linux", "android", "ios", "windows"]
+]
