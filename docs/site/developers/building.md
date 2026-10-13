@@ -876,7 +876,11 @@ tools/with-resource.py build tools/host-release.sh --native --platform linux-x86
 ```
 
 Standalone packages land under `build/host-release/<platform>/`. Docker keeps separate Cargo,
-sccache, and Flatpak caches per architecture in named volumes. A native worker uses its local
+sccache, and Flatpak caches per architecture in named volumes. AppImage checks run temporary ELF
+copies with the format marker cleared for emulator compatibility; distributed AppImages keep their
+original headers. Emulated Flatpak checks keep the runtime and namespace isolation while omitting
+the syscall filter that CPU emulation cannot install. Native workers check the full sandbox; the
+distributed Flatpak permissions are unchanged. A native worker uses its local
 Cargo target directory. `--workspace DIR`, `--output DIR`, and `--jobs 1..4` let workers choose
 sources, handoff directories, and resource limits. Each worker builds, tests, packages, and runs
 package checks with the same command used locally.

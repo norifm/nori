@@ -19,6 +19,16 @@ def run(*args, **kwargs):
     subprocess.run([str(a) for a in args], check=True, **kwargs)
 
 
+def appimage_executable(image, directory):
+    executable = directory / f"{image.name}.elf"
+    shutil.copy2(image, executable)
+    # AppImage's marker collides with the ELF mask used by Rosetta.
+    with executable.open("r+b") as file:
+        file.seek(8)
+        file.write(bytes(3))
+    return executable
+
+
 def package(binaries, output, version):
     arch = {"x86_64": "x86_64", "aarch64": "aarch64"}[platform.machine()]
     output = output.resolve()
@@ -44,7 +54,7 @@ def package(binaries, output, version):
         args = [arg for library in libraries for arg in ("--library", libdir / library)]
         plugins = (libdir / "alsa-lib/libasound_module_pcm_pulse.so", libdir / "alsa-lib/libasound_module_ctl_pulse.so")
         args += [arg for plugin in plugins for arg in ("--library", plugin)]
-        run(deploy, "--appdir", app, "--executable", app / "usr/bin/nori-desktop", "--desktop-file", desktop, "--icon-file", icon, *args, env=env)
+        run(appimage_executable(deploy, work), "--appdir", app, "--executable", app / "usr/bin/nori-desktop", "--desktop-file", desktop, "--icon-file", icon, *args, env=env)
         (app / "usr/share/alsa").mkdir(parents=True)
         (app / "usr/share/alsa/nori.conf").write_text("pcm.!default { type pulse }\nctl.!default { type pulse }\n")
         plugin_dir = app / "usr/lib/alsa-lib"
@@ -63,8 +73,8 @@ def package(binaries, output, version):
         run("curl", "-fL", f"https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-{arch}.AppImage", "-o", tool)
         tool.chmod(0o755)
         image = output / f"nori-desktop-{version}-linux-{arch}.AppImage"
-        run(tool, app, image, env=env)
-        result = subprocess.run([str(image), "--appimage-extract-and-run", "--help"], capture_output=True, text=True)
+        run(appimage_executable(tool, work), app, image, env=env)
+        result = subprocess.run([str(appimage_executable(image, work)), "--appimage-extract-and-run", "--help"], capture_output=True, text=True)
         assert "usage: nori-desktop" in result.stdout + result.stderr, result.stderr
         audio_env = dict(os.environ, LD_LIBRARY_PATH=str(app / "usr/lib"), ALSA_CONFIG_PATH=str(app / "usr/share/alsa/nori.conf"), ALSA_PLUGIN_DIR=str(app / "usr/lib/alsa-lib"))
         run(sys.executable, "-c", "import ctypes; lib = ctypes.CDLL('libasound.so.2'); lib.snd_strerror.restype = ctypes.c_char_p; pcm = ctypes.c_void_p(); result = lib.snd_pcm_open(ctypes.byref(pcm), b'default', 0, 0); assert result == 0, lib.snd_strerror(result); lib.snd_pcm_close(pcm)", env=audio_env)
