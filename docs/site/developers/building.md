@@ -841,15 +841,31 @@ macOS and Linux desktop/CLI packages locally by default. Building does not dispa
 require GitHub authentication. Publishing uses GitHub CLI authentication and a clean source tree.
 Windows packages are outside this release pipeline.
 
-The complete local build needs an Apple Silicon Mac with the Apple command line tools, Rust,
-Rosetta, Docker, and the Android build tools described above. macOS packages use the installed
-Apple SDK; Intel binaries are tested under Rosetta. Linux packages use Ubuntu 22.04 Docker images
-for ARM64 and x86-64, with Docker emulation for x86-64. The iPod build also uses Docker. Android
+The complete local build runs on macOS or Linux with Rust, Docker, and the Android build tools
+described above. On Apple Silicon Macs, macOS packages use the installed Apple SDK and Intel
+binaries are tested under Rosetta. Linux hosts build both Mac architectures in a Docker image with
+Clang, lld, a checksum-verified macOS 14.5 SDK, and `rcodesign` for ad-hoc signatures. Intel Macs use
+that container for the Apple Silicon package. Linux packages use Ubuntu 22.04 Docker images
+for ARM64 and x86-64, with Docker emulation for the foreign architecture. The iPod build also uses Docker. Android
 signing uses the existing `nori-release.jks` and `keystore.properties`; retain the same key for updates.
+Workspace tests also need the native desktop dependencies described above and FFmpeg 8.
+
+Docker Desktop includes CPU emulation. On Linux, install Docker's binfmt handlers once when building
+the other CPU architecture: `docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64`.
+Windows hosts can use the Linux path through WSL2 with Docker integration.
+
+The Linux cross-builder cannot execute macOS binaries or run Mac rendering tests. It still checks
+Mach-O signatures and the complete DMG filesystem contents. An interactive build asks for `y` before
+compiling with the Mac execution checks skipped. Unattended workers must explicitly pass
+`--allow-untested-macos`; otherwise the build stops before compiling. Native Mac builds retain
+their execution and rendering tests.
 
 ```sh
 # All release artifacts, tests, and checks; nothing is published.
 tools/with-resource.py build tools/release.sh --build
+
+# An unattended Linux worker; acknowledge the unavailable Mac execution checks.
+tools/with-resource.py build tools/release.sh --build --allow-untested-macos
 
 # Build and publish the version already in the source as a public beta.
 tools/with-resource.py build tools/release.sh --publish --beta --live
@@ -862,7 +878,7 @@ one at a time to avoid competing Metal shader compilations on Intel Macs.
 The desktop/CLI builder can run independently or on a native worker:
 
 ```sh
-# All four platforms on the local Mac.
+# All four platforms on macOS or Linux.
 tools/with-resource.py build tools/host-release.sh
 
 # Build a committed revision, using the current packaging tools.
@@ -873,6 +889,9 @@ tools/with-resource.py build tools/host-release.sh --platform linux-x86_64
 
 # A native Linux worker, without Docker.
 tools/with-resource.py build tools/host-release.sh --native --platform linux-x86_64
+
+# Exercise the Linux Mac cross-builder even when the host is a Mac.
+tools/with-resource.py build tools/host-release.sh --docker-macos --allow-untested-macos --platform macos-aarch64
 ```
 
 Standalone packages land under `build/host-release/<platform>/`. Docker keeps separate Cargo,
@@ -885,9 +904,11 @@ Cargo target directory. `--workspace DIR`, `--output DIR`, and `--jobs 1..4` let
 sources, handoff directories, and resource limits. Each worker builds, tests, packages, and runs
 package checks with the same command used locally.
 
-Workflow Mac builds use Apple Silicon workers for both architectures, with Intel tests under Rosetta.
+By default, workflow Mac builds use Apple Silicon workers for both architectures, with Intel tests under Rosetta.
 This uses the same rendering checks as the local build without the Intel hosted worker’s recurring
 one-second Metal compiler timeout.
+Enable `macos_on_linux` when dispatching either workflow to build both Mac packages on Linux Docker
+workers instead. That input explicitly acknowledges the skipped Mac execution and rendering checks.
 
 The **Full release** workflow runs the same builders for Android, iPod, and all four host platforms,
 plus the workspace tests. Select a source revision when dispatching it. The default builds, verifies the complete handoff, and
