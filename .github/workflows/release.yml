@@ -69,8 +69,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       - name: Install Android and Rust build tools
         run: |
-          sdk=$(sed -n 's/.*compileSdk = \([0-9]*\).*/\1/p' core/build.gradle.kts | head -1)
-          sdkmanager "platforms;android-$sdk" 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          sdkmanager 'ndk;28.2.13676358'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
           rustup update stable --no-self-update
           rustup default stable
