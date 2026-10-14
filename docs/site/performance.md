@@ -7,36 +7,42 @@ sidebar:
 
 Applies to nori 0.6. The model is the same on every client; the measurements are Android's.
 
-## Android 0.6 emulator snapshot
+## Android 0.6: real music
 
-On October 14, 2026, four Android apps were measured on the same ARM64 Android 16 emulator
-with four guest cores and 2.5 GiB RAM, hosted on an Apple M4 Pro. Each used the same local
-Navidrome server, account, library, and generated ten-minute 440 Hz stereo MP3 at 320 kbps.
-Apps ran one at a time with media volume at zero and the screen off.
+Measured October 14, 2026, on one Android 16 ARM64 emulator with four virtual cores and 2.5 GiB RAM,
+hosted on an Apple M4 Pro running macOS 26.6.2. All four apps use the same isolated Navidrome 0.64.0
+server, 97-song library, and playlist. Builds: nori 0.6.0-beta.5, Symfonium 15.1.0, Musly 2.0.2,
+and Navic v1.0.0-alpha59.
 
-| Metric | nori 0.6.0-beta.5 | Symfonium 15.1.0 | Musly 2.0.2 | Navic v1.0.0-alpha59 |
-| --- | ---: | ---: | ---: | ---: |
-| CPU, share of one core | 0.1% | 8.02% | 2.81% | 3.35% |
-| Voluntary context switches per second | 0.44 | 1023.81 | 391.94 | 307.1 |
-| Low-wakeup intervals, out of 90 | 87 | 0 | 0 | 0 |
-| Cold launch, median of five | 163 ms | 209 ms | 557 ms | 314 ms |
-| PSS, MiB | 95.6 | 115.0 | 168.7 | 87.7 |
+The input contains real-music excerpts from the existing background-test corpus. Two five-minute
+passes cover MP3 at 44.1 and 48 kHz, plus FLAC at 44.1, 48, and 96 kHz. The FLAC variants are derived
+from MP3 sources to exercise decoding and resampling; they are not original high-resolution masters.
+Every format was observed playing in both passes for every app. Short clips change tracks every
+minute; uninterrupted album playback can have different costs.
 
-Playback values average two 90-second windows after at least fifteen seconds of playback.
-CPU and context switches use app thread counters divided by actual elapsed time, excluding shared
-Android audio services. A low-wakeup interval has fewer than twelve voluntary context switches
-and an unchanged thread set; it does not measure physical CPU sleep residency. Cold launch uses
-Android's `am start -W` first-frame `TotalTime`, with filesystem and library caches retained.
+| Metric | nori | Symfonium | Musly | Navic |
+|---|---:|---:|---:|---:|
+| App CPU | 0.81% | 7.89% | 3.91% | 4.28% |
+| App + Android audio/codec CPU | 1.55% | 8.64% | 5.93% | 6.08% |
+| Observed quiet app intervals | 268 / 300 | 0 / 300 | 0 / 300 | 0 / 300 |
+| Observed voluntary app thread switches / second | 32.68 | 1037.29 | 326.46 | 254.5 |
+| Cold activity launch, median of five | 182 ms | 219 ms | 561 ms | 314 ms |
 
-nori used the optimized, minified perf build with its recorder disabled. Symfonium and Navic used
-official release APKs. Musly used a release build from v2.0.2 with its emulator startup guard
-removed; playback code was unchanged. Individual readings, APK hashes, the build diff, collectors,
-and compressed thread samples are in
-[the raw measurement report](../performance/raw/android-emulator-2026-10-14/README.md).
+CPU is a percentage of one virtual core. Process counters include work by threads that exit between
+samples. The combined row adds `audioserver`, `media.swcodec`, and `media.extractor`; it is not
+whole-device CPU. Quiet intervals and observed thread switches concern app threads only and do not
+measure CPU sleep residency or complete device wakeups. The screen is off and music volume is zero.
+Cold launches measure the first activity frame, with library and filesystem caches warm.
 
-These emulator results do not establish phone battery life or performance ordering on physical
-hardware. The synthetic tone does not represent every real music file. Older comparisons below
-used a different device, architecture, and nori version.
+nori uses its optimized, minified perf APK with recording disabled. Symfonium and Navic use official
+release APKs. Musly is the documented release build with its emulator startup guard removed and
+playback code unchanged. APK hashes, source-file hashes, every playback window, all five launches,
+MediaSession checks, and compressed counters are in the
+[raw music report](../performance/raw/android-emulator-music-2026-10-14/README.md).
+
+These are emulator measurements, not phone battery-life figures. The earlier
+[generated-tone report](../performance/raw/android-emulator-2026-10-14/README.md) remains archived;
+it uses a different input and CPU accounting method and is not combined with these results.
 
 ## Burst playback
 
