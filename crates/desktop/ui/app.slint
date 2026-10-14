@@ -610,6 +610,9 @@ component Art inherits Rectangle {
         Image {
             width: 100%;
             height: 100%;
+            // Artwork fills its box; decoded dimensions do not size the layout.
+            preferred-width: 0px;
+            preferred-height: 0px;
             source: root.source;
             image-fit: cover;
         }
@@ -2404,7 +2407,9 @@ component QueueView inherits Rectangle {
             height: 1px;
             background: Theme.hairline;
         }
-        Flickable {
+        queue-scroll := Flickable {
+            width: root.width - 24px;
+            content-width: self.width;
             vertical-stretch: 1;
             content-height: rows.preferred-height;
             // At the top however few the rows: a short queue left its space above them.
@@ -2412,6 +2417,9 @@ component QueueView inherits Rectangle {
             width: parent.width;
             alignment: start;
             for s[i] in root.queue: qrow := Rectangle {
+                width: parent.width;
+                property <length> top: self.y + rows.y + queue-scroll.content-y;
+                property <bool> on-screen: self.top + self.height > -100px && self.top < queue-scroll.height + 100px;
                 // A row put in opens from nothing; one leaving folds away (app.rs takes it out after).
                 property <bool> opened: !s.fresh;
                 // Its buttons show while the pointer is over the row.
@@ -2439,7 +2447,7 @@ component QueueView inherits Rectangle {
                         width: 34px;
                         height: 34px;
                         border-radius: 4px;
-                        source: root.art(s.art, 0, root.covers-rev);
+                        source: qrow.on-screen ? root.art(s.art, 0, root.covers-rev) : root.art("", 0, 0);
                     }
                     VerticalLayout {
                         alignment: center;
@@ -4816,7 +4824,7 @@ export component AppWindow inherits Window {
                     open-jam => { root.inspector = 1; }
                     join-jam => { root.join-open = true; }
                 }
-                if root.shown-panel == 1: QueueView {
+                if root.shown-panel == 1 && root.panel-width > 0px: QueueView {
                     y: 30px;
                     height: parent.height - 30px - 76px;
                     queue: root.queue;
@@ -5263,7 +5271,7 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-            if root.full-panel == 1: QueueView {
+            if full-screen.visible && root.full-panel == 1: QueueView {
                 x: root.width / 2 + 10px;
                 width: root.width / 2 - 70px;
                 y: 84px;
