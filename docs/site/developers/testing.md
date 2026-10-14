@@ -235,6 +235,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | the notification's star reaches the server | a | client.rs, shown.rs |
 | the second tap puts it back | a | stars.rs `star_marks`, shown.rs (the section still puts it back) |
 | the pill reads Play / Pause; shuffle lights; stays Pause; a second press turns it off; pill pauses; reads Play; Play picks up (8) | b | feature-e2e `album-page` (taps on the real screen) |
+| holding a track opens its song menu with Play next | b | feature-e2e `album-page` (Compose gesture and menu wiring) |
 | without drawing a new queue; without restarting it (2) | a | pages.rs, controls.rs |
 | (new) only the page a queue was started from answers for it, through edits and a restore; another page sharing the song reads Play | a | queue playlist.rs, core playlist.rs, cli tests.rs |
 | a downloaded song plays with the network off | b | smoke `offline` |
