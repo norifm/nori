@@ -1277,7 +1277,7 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool) {
     });
     devices.sel = sel;
     let mut y = body.y + body.height + 1;
-    let notes = [(devices.list.is_empty(), crate::text::NO_DEVICES), (devices.jams_unsupported, crate::text::JAM_UNSUPPORTED)];
+    let notes = [(devices.jams_unsupported, crate::text::JAM_UNSUPPORTED)];
     for (_, note) in notes.into_iter().filter(|(on, _)| *on) {
         for l in wrap(note, area.width as usize) {
             if y >= area.y + area.height {
