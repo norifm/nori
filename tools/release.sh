@@ -240,7 +240,7 @@ ipa=""
 if [ "$IPOD" = 1 ]; then ipa="nori-ipod-$version.ipa"; fi
 if [ -z "$FROM" ]; then
 if [ "$HOSTS" = 1 ]; then
-  "$tooling/tools/host-release.sh" --preflight "${HOST_FLAGS[@]}"
+  "$tooling/tools/host-release.sh" --preflight ${HOST_FLAGS[@]+"${HOST_FLAGS[@]}"}
   HOST_FLAGS+=(--allow-untested-macos)
 fi
 # --- signing key ----------------------------------------------------------------
@@ -297,7 +297,7 @@ if [ "$IPOD" = 1 ]; then
 fi
 
 if [ "$HOSTS" = 1 ]; then
-  "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts" "${HOST_FLAGS[@]}"
+  "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts" ${HOST_FLAGS[@]+"${HOST_FLAGS[@]}"}
 fi
 fi
 
