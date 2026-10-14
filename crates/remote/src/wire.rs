@@ -163,6 +163,9 @@ pub enum Op {
         /// The pull request this queue answers; None for a new queue or an older peer.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transfer: Option<u64>,
+        /// Listening accumulated on the device handing over playback.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        listen: Option<nori_model::Listen>,
     },
     /// The device's media volume, 0 to 100.
     Volume { percent: u8 },
@@ -170,7 +173,12 @@ pub enum Op {
     /// Media3 numbering: off 0, one 1, all 2.
     Repeat { mode: u8 },
     /// Hands the queue and position to device `to`, which plays on; this one pauses.
-    Transfer { to: String },
+    Transfer {
+        to: String,
+        /// The pulling device can continue the same listen.
+        #[serde(default)]
+        listen_handoff: bool,
+    },
     /// Favourites song `id` (or not) where the device shows it.
     Star { id: String, on: bool },
     /// Asks for `count` songs of the queue from turn `from` of its play order; answered with [`Body::Page`].
@@ -276,6 +284,8 @@ pub struct DeviceState {
     pub instance: Option<u64>,
     /// Bumped by every publish.
     pub seq: u64,
+    /// This device accepts accumulated listening time with a handed queue.
+    pub listen_handoff: bool,
     pub playing: bool,
     /// Waiting for the song's bytes while it should play.
     pub buffering: bool,
@@ -431,6 +441,9 @@ mod tests {
         let st: DeviceState = serde_json::from_str(r#"{"playing":true,"index":1,"entries":[{"index":1,"id":"s2","title":"Two"}],"later":7}"#).unwrap();
         assert_eq!((st.seq, st.len, st.entries[0].turn, st.entries[0].starred), (0, 0, 0, false));
         assert!(st.instance.is_none());
+        assert!(!st.listen_handoff, "older devices keep their existing accounting");
+        let old: Op = serde_json::from_str(r#"{"op":"transfer","to":"phone"}"#).unwrap();
+        assert!(matches!(old, Op::Transfer { listen_handoff: false, .. }));
         let running = DeviceState { instance: Some(7), seq: 8, ..st };
         let json = serde_json::to_string(&running).unwrap();
         assert_eq!(serde_json::from_str::<DeviceState>(&json).unwrap(), running);

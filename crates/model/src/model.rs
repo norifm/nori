@@ -2,6 +2,16 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// A listen handed to another device; elapsed time excludes pauses and transfer time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+#[serde(rename_all = "camelCase")]
+pub struct Listen {
+    pub song_id: String,
+    pub started_ms: i64,
+    pub heard_ms: i64,
+}
+
 // Player types, redeclared below for uniffi.
 pub use nori_player::types::{AutoMixSettings, EqBand, EqKind, FadeCurve, NamedPreset, PresetKind, TrackAnalysis};
 
