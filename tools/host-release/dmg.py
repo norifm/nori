@@ -45,7 +45,8 @@ def verify(artifact):
             result = subprocess.run([str(root / "nori.app/Contents/MacOS/nori"), "--help"], capture_output=True, text=True)
             assert "usage: nori-desktop" in result.stdout + result.stderr, result.stderr
         finally:
-            subprocess.run(["hdiutil", "detach", temporary], check=True)
+            # Forced: Rosetta keeps an Intel binary it ran open for a while; the mount is read-only.
+            subprocess.run(["hdiutil", "detach", "-force", temporary], check=True)
 
 
 if __name__ == "__main__":
