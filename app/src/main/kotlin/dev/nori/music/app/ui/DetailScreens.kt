@@ -209,13 +209,6 @@ internal fun downloadEntry(songs: List<Song>, done: Set<String>, actions: Action
     }
 }
 
-/** The offer on a provider's album or playlist page (the core's `library_offer`), under the hero. */
-@Composable
-private fun LibraryOffer(id: String, external: Boolean, actions: ActionsViewModel) {
-    val offer = remember(id, external) { dev.nori.music.ffi.library.libraryOffer(id, external)?.let(say::libraryOffer) } ?: return
-    TextButton({ actions.addToLibrary(id, isAlbum = true) }, Modifier.padding(horizontal = 12.dp)) { Text(offer) }
-}
-
 /**
  * A page's own queue before its songs are read, from what it shows (a queue started from it carries
  * [from]), so a page opened on the queue playing answers for it at once. Once read, the page comes with
@@ -324,7 +317,6 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     ) {
         when {
             detail != null -> {
-                if (account && from.kind == OriginKind.ALBUM) item(key = "offer", contentType = "offer") { Box(Modifier.arriving(arrival)) { LibraryOffer(album.id, album.isExternal, actions) } }
                 // An album is short enough to scroll and its running order is the point of it, so the songs
                 // stay exactly as the record has them, grouped by disc (as the core laid them out,
                 // `pages::album_discs`) and never narrowed. A row each: only the ones on screen are composed.
