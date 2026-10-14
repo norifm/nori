@@ -593,7 +593,6 @@
     <string name="devices_kind_terminal">terminal</string>
     <string name="devices_kind_guest">guest</string>
     <string name="devices_output">Audio output</string>
-    <string name="devices_none">No other devices yet. Turn on “Control from other devices” in nori on them.</string>
     <string name="devices_nearby">On this network</string>
     <string name="devices_idle">Not playing</string>
     <string name="devices_playing_on">Playing on %1$s</string>
