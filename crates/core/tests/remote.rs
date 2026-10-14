@@ -1595,6 +1595,26 @@ fn far_devices_are_hidden_while_the_relay_cannot_be_reached() {
     relay.close();
 }
 
+#[test]
+fn a_mirrored_device_that_leaves_the_lists_is_no_longer_mirrored() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
+    desk.remote.clone().pick(Some(phone_id.clone()));
+    desk.until("the phone mirrored", |r| r.active());
+
+    // The relay no longer answers: the phone is not listed, so it is not shown as the one played on.
+    relay.go_down(true);
+    desk.until("the phone hidden", |r| r.devices().is_empty().then_some(()));
+    desk.until("the phone no longer mirrored", |r| r.active().is_none().then_some(()));
+    relay.close();
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Did {
     /// Plays a queue of its own.
