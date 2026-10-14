@@ -34,4 +34,5 @@ On Android, a song row reacts to a tap and to a swipe in each direction. All thr
 | Swipe right | Add to queue | nothing, play next, favourite, download |
 | Swipe left | Favourite | nothing, add to queue, play next, download |
 
-Hold a row to select several and act on them together.
+Hold a row to open its song menu, the same as tapping its three-dot button. To select several songs
+and act on them together, set the tap action to Select.

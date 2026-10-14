@@ -5,9 +5,9 @@
 #   tools/apk.sh arm64-v8a,x86_64   both ABIs in one (bigger) APK
 #   tools/apk.sh --install       build arm64 and push it to the connected device
 #
-# The APK is signed with the Android debug key, which is fine for your own phone: it installs and
-# updates normally, but it cannot be published, and switching later to a real key means uninstalling
-# first. The Rust core is cross-compiled for exactly the ABIs asked for, so nothing unused is shipped.
+# The APK uses the release key from keystore.properties or the signing environment variables. Without
+# a release key it uses the debug key, which cannot update a release signed with a different key.
+# The Rust core is cross-compiled for exactly the ABIs asked for, so nothing unused is shipped.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/.." && pwd)"
 install=false

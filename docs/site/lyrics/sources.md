@@ -41,7 +41,7 @@ The sources, in their default order:
 | 9 | BetterLyrics Portato | words | |
 | 10 | PaxSenix: Musixmatch | words | needs your PaxSenix key |
 | 11 | LRCLIB | words where published, else lines | yes |
-| 12 | PaxSenix: Spotify | lines | needs your PaxSenix key |
+| 12 | PaxSenix: Spotify | words where supplied, else lines | needs your PaxSenix key |
 | 13 | YouTube captions | lines | |
 | 14 | Megalobiz | lines | |
 | 15 | YouTube Music | untimed | |
