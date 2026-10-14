@@ -1895,11 +1895,11 @@ fn jam_guests_listen_along_where_the_host_is_heard() {
     }
     relay.skew(&host.remote.id(), -4_000_000);
 
-    // The host stops letting its guests listen along: they stop.
+    // The host stops letting its guests listen along: they stop. The view and the follower are told
+    // one after the other, so the wait is for both.
     host.remote.clone().jam_along(false);
     for (g, leads) in [(&gus, &gus_leads), (&dee, &dee_leads)] {
-        g.until("the host's no", |r| r.jam_view().filter(|v| v.listening == Listening::HostOff));
-        assert_eq!(leads.last(), Some(None), "nothing to follow");
+        g.until("the host's no, nothing to follow", |r| r.jam_view().filter(|v| v.listening == Listening::HostOff && leads.last() == Some(None)));
     }
     host.remote.clone().jam_along(true);
     gus.until("listening again", |r| r.jam_view().filter(|v| v.listening == Listening::Playing));
@@ -1907,9 +1907,8 @@ fn jam_guests_listen_along_where_the_host_is_heard() {
     // A server that does not let guests stream: unavailable, the jam itself still there.
     relay.along.store(false, Ordering::Relaxed);
     host.remote.clone().played(Playing { playing: false, position_ms: 31_000, rate: 1.25, index: Some(0), volume: None, ..Default::default() });
-    let view = gus.until("the server's no", |r| r.jam_view().filter(|v| v.listening == Listening::ServerOff));
+    let view = gus.until("the server's no, nothing to follow", |r| r.jam_view().filter(|v| v.listening == Listening::ServerOff && gus_leads.last() == Some(None)));
     assert_eq!(view.members.len(), 3);
-    assert_eq!(gus_leads.last(), Some(None));
     gus.remote.clone().listen(false);
     assert_eq!(gus.remote.jam_view().map(|v| v.listening), Some(Listening::Watching));
     relay.close();
