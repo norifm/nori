@@ -69,6 +69,12 @@ Cached Top Picks mosaics refresh the usage times of their source covers and keep
 image visible while a replacement is composed. A source-cover update swaps the mosaic only when
 the new image is ready; the card's background stays behind its artwork during asynchronous updates.
 
+Playing Next creates artwork bindings only while its docked panel or fullscreen view is visible.
+Within an open queue, only rows within the viewport and a 100-pixel margin request covers. Hidden
+queues and offscreen tracks therefore cannot evict visible Home or miniplayer artwork. The
+`home_keeps_pick_covers` regression includes 500 queued tracks, opens both queue views, and scrolls
+to the last track before closing them.
+
 In a 60-second physical-display interaction trace, the updated app averaged 13.2% of one CPU core and
 312–359 MiB RSS. Roughly 75% of sampled user CPU cycles were on the UI thread, 14% on analysis and 10%
 on the playback engine. This includes pauses between interactions and has no matched physical-display
