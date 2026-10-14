@@ -102,21 +102,7 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         let d = takenJSON(nori_ios_remote_devices()) as? [String: Any] ?? [:]
         here = d["here"] as? Bool ?? true
         devices = d["devices"] as? [[String: Any]] ?? []
-        table.tableFooterView = devices.isEmpty ? footer(Say.devicesNone) : UIView()
         table.reloadData()
-    }
-
-    /// A line of quiet text under the rows.
-    private func footer(_ text: String) -> UIView {
-        let label = UILabel(frame: CGRect(x: 16, y: 12, width: view.bounds.width - 32, height: 0))
-        label.text = text
-        label.font = UIFont.preferredFont(forTextStyle: .footnote)
-        label.textColor = Theme.Card.secondary
-        label.numberOfLines = 0
-        label.sizeToFit()
-        let box = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: label.frame.height + 24))
-        box.addSubview(label)
-        return box
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { devices.count + 3 }

@@ -121,8 +121,8 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                         ) { pick(d.id) }
                     }
                     mirror?.refused?.let { Text(refusal(it), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-                    if (devices.isEmpty() || unsupported) Text(
-                        words(if (unsupported) R.string.devices_nearby_only else R.string.devices_none), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
+                    if (unsupported) Text(
+                        words(R.string.devices_nearby_only), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }

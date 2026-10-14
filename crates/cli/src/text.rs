@@ -202,7 +202,6 @@ pub fn search_fallback(reason: Option<&str>) -> String {
 
 pub const THIS_COMPUTER: &str = "This computer";
 pub const PLAY_ON: &str = "Play on";
-pub const NO_DEVICES: &str = "No other devices yet: open nori on your phone or computer, on this server, with remote control on.";
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";
 
 /// The player bar's line while another device plays: "Playing on Desk".
