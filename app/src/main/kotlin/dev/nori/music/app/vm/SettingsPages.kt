@@ -274,6 +274,7 @@ private val INDEX: List<Triple<String, Int, Int>> = listOf(
     Triple("library", R.string.settings_taste_model, R.string.settings_hint_taste_model),
     Triple("library", R.string.settings_scrobble, R.string.settings_hint_scrobble),
     Triple("library", R.string.settings_scrobble_after, 0),
+    Triple("library", R.string.settings_server_history, R.string.settings_hint_server_history),
     Triple("library", R.string.settings_lookups, R.string.settings_hint_lookups),
     Triple("library", R.string.settings_remote_control, R.string.settings_hint_remote_control),
     Triple("data", R.string.settings_quality_wifi, 0),
@@ -817,6 +818,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         val history = mutableListOf<SettingRow>(
             toggle("tasteModel", R.string.settings_taste_model, R.string.settings_taste_model_detail),
             toggle("scrobble", R.string.settings_scrobble, R.string.settings_scrobble_detail),
+            toggle("serverHistory", R.string.settings_server_history, R.string.settings_server_history_detail),
         )
         if (p.scrobble) history += choice("scrobblePercent", R.string.settings_scrobble_after) { if (it == "100") str(R.string.settings_scrobble_whole) else percent(it) }
         val online = listOf(toggle("thirdPartyLookups", R.string.settings_lookups, R.string.settings_lookups_detail))

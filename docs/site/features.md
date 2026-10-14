@@ -20,6 +20,8 @@ Applies to nori 0.6. "All" means Android, the desktop, the terminal and the iPod
 - Playlists, smart playlists from rules, M3U import and export. Playlists all; the smart playlist editor
   on Android.
 - Listening history, and listening stats for any period. Android.
+- Stats of your Navidrome account's plays from every device, with Navidrome 0.59 or later and a password
+  login. Plays only, from when the server was updated, without skips or time listened. Android.
 - Mixes from a taste model that learns on the device. Android, the desktop and the iPod.
 
 ## Playback

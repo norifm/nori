@@ -2,7 +2,7 @@
 
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult};
-use crate::{db, history, Core, ListeningStats, Result};
+use crate::{db, history, Core, Result};
 
 pub use nori_library::browse::*;
 
@@ -27,9 +27,17 @@ impl Core {
         Ok(HistoryPage { entries, next })
     }
 
-    /// The listening stats page for the last `days` days (0: all).
-    pub fn stats_page(&self, days: u32) -> Result<StatsPage> {
-        Ok(StatsPage::new(self.stats_days(days)?))
+    /// The listening stats page of `source`'s plays in the last `days` days (0: all). The server's plays
+    /// are charted at `tz_offset_ms`; this device's at the offset each was played at.
+    pub fn stats_page(&self, days: u32, source: StatsSource, tz_offset_ms: i32) -> Result<StatsPage> {
+        let now = db::now_ms();
+        let from = if days == 0 { 0 } else { now - days as i64 * DAY_MS };
+        let c = self.db.lock();
+        let stats = match source {
+            StatsSource::Device => history::summary(&c, from, now, STATS_TOP)?,
+            StatsSource::ServerAccount => history::server_summary(&c, from, now, tz_offset_ms, STATS_TOP)?,
+        };
+        Ok(StatsPage::new(source, stats))
     }
 
     /// Decades with indexed songs, newest first, with song counts.
@@ -81,15 +89,6 @@ pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years:
     sql
 }
 
-impl Core {
-    /// Listening stats of the last `days` days (0: all).
-    pub(crate) fn stats_days(&self, days: u32) -> Result<ListeningStats> {
-        let now = db::now_ms();
-        let from = if days == 0 { 0 } else { now - days as i64 * DAY_MS };
-        Ok(history::summary(&self.db.lock(), from, now, STATS_TOP)?)
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -134,8 +133,8 @@ pub(crate) mod tests {
         crate::history::record(&mut core.db.lock(), &s, now - DAY_MS, 200_000, 0, now).unwrap();
         let page = core.history_page(None).unwrap();
         assert_eq!((page.entries.len(), page.next), (2, None));
-        assert_eq!(core.stats_days(7).unwrap().plays, 1);
-        assert_eq!(core.stats_days(0).unwrap().plays, 2);
+        assert_eq!(core.stats_page(7, StatsSource::Device, 0).unwrap().stats.plays, 1);
+        assert_eq!(core.stats_page(0, StatsSource::Device, 0).unwrap().stats.plays, 2);
 
         // A listen recorded while paging repeats nothing.
         let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();

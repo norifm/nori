@@ -66,6 +66,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import dev.nori.music.app.vm.PlayerViewModel
 
 import dev.nori.music.ffi.library.SmartEditRule
+import dev.nori.music.ffi.library.StatsSource
 import dev.nori.music.app.vm.SmartViewModel
 
 @Composable
@@ -334,13 +335,21 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
     val periods = remember { say.statsPeriods }
     // A year opens.
     var days by remember { mutableStateOf(365) }
-    LaunchedEffect(days) { vm.loadStats(days) }
+    val sources = remember { say.statsSources.takeIf { vm.offersServer } }
+    var source by remember { mutableStateOf(StatsSource.DEVICE) }
+    LaunchedEffect(days, source) { vm.loadStats(days, source) }
     val s by vm.stats.collectAsStateWithLifecycle()
+    val server by vm.server.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp + LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
             IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
             Text(say.listening, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+        }
+        sources?.let { all ->
+            LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(all) { (from, label) -> Chip(label, source == from) { source = from } }
+            }
         }
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(periods) { (d, label) -> Chip(label, days == d) { days = d } }
@@ -349,12 +358,17 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
         val st = page.stats
         val tiles = remember(page) { say.statsTiles(page) }
         val habit = remember(page) { say.statsHabit(page) }
-        val headline = remember(page) { say.statsHeadline(st.listenedMs) }
+        val headline = remember(page) { say.statsHeadline(page) }
+        val fromServer = page.source == StatsSource.SERVER_ACCOUNT
 
         // The headline: two numbers worth reading from across the room, the rest as a grid of tiles.
         Column(Modifier.padding(horizontal = Space.gutter, vertical = 14.dp)) {
             Text("${st.plays}", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
             Text(headline, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (fromServer) Text(
+                say.statsServerNote(server), Modifier.padding(top = 6.dp),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Row(Modifier.padding(horizontal = 14.dp), Arrangement.spacedBy(8.dp)) {
             tiles.take(3).forEach { (value, label) -> StatTile(value, label, Modifier.weight(1f)) }
@@ -376,7 +390,7 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
         if (st.topSongs.isNotEmpty()) SectionTitle(say.topSongs)
         st.topSongs.forEachIndexed { i, t -> RankRow(i + 1, t.song.title, t.song.artist, "${t.plays}") }
         if (st.topArtists.isNotEmpty()) SectionTitle(say.topArtists)
-        st.topArtists.forEachIndexed { i, t -> RankRow(i + 1, t.name, duration(t.listenedMs / 1000), "${t.plays}") }
+        st.topArtists.forEachIndexed { i, t -> RankRow(i + 1, t.name, if (fromServer) "" else duration(t.listenedMs / 1000), "${t.plays}") }
         if (st.topAlbums.isNotEmpty()) SectionTitle(say.topAlbums)
         st.topAlbums.forEachIndexed { i, t -> RankRow(i + 1, t.name, "", "${t.plays}") }
         if (st.topGenres.isNotEmpty()) SectionTitle(say.topGenres)

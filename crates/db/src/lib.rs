@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS searches(server TEXT NOT NULL, query TEXT NOT NULL, t
 CREATE TABLE IF NOT EXISTS plays(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, song_id TEXT NOT NULL, started_ms INTEGER NOT NULL, heard_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL, completed INTEGER NOT NULL, skipped INTEGER NOT NULL, hour INTEGER NOT NULL, day INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS plays_started ON plays(server, started_ms);
 CREATE TABLE IF NOT EXISTS song_stats(server TEXT NOT NULL, song_id TEXT NOT NULL, plays INTEGER NOT NULL DEFAULT 0, skips INTEGER NOT NULL DEFAULT 0, last_played_ms INTEGER NOT NULL DEFAULT 0, heard_ms_total INTEGER NOT NULL DEFAULT 0, taste REAL NOT NULL DEFAULT 0, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS server_plays(server TEXT NOT NULL, id INTEGER NOT NULL, song_id TEXT NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS server_plays_at ON server_plays(server, at_ms);
 CREATE TABLE IF NOT EXISTS mix_excluded(server TEXT NOT NULL, song_id TEXT NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autofill_picks(server TEXT NOT NULL, kind INTEGER NOT NULL, id TEXT NOT NULL, picked_ms INTEGER NOT NULL, PRIMARY KEY(server, kind, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS smart_playlists(server TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, json TEXT NOT NULL, updated_ms INTEGER NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
@@ -60,8 +62,8 @@ CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NU
 ";
 
 /// Per-server tables, cleared when a profile is removed.
-const SERVER_TABLES: [&str; 14] = [
-    "items", "cache", "kv", "pending", "downloads", "download_beats", "searches", "plays", "song_stats", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
+const SERVER_TABLES: [&str; 15] = [
+    "items", "cache", "kv", "pending", "downloads", "download_beats", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
     "vocal_curve",
 ];
 
@@ -257,10 +259,13 @@ pub fn count(c: &Connection, kind: i64) -> rusqlite::Result<u32> {
     c.query_row("SELECT count(*) FROM items WHERE server=sid() AND kind=?1", [kind], |r| r.get(0))
 }
 
+/// Drops what came from the server account: the index, cached reads, queued writes, the saved queue and
+/// the account's play history.
 pub fn clear_library(c: &Connection) -> rusqlite::Result<()> {
     c.execute_batch(
         "DELETE FROM fts WHERE rowid IN (SELECT rowid FROM items WHERE server=sid()); DELETE FROM items WHERE server=sid();
-         DELETE FROM cache WHERE server=sid(); DELETE FROM pending WHERE server=sid(); DELETE FROM kv WHERE server=sid() AND key='queue';",
+         DELETE FROM cache WHERE server=sid(); DELETE FROM pending WHERE server=sid(); DELETE FROM kv WHERE server=sid() AND key='queue';
+         DELETE FROM server_plays WHERE server=sid();",
     )
 }
 

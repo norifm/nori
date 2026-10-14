@@ -405,6 +405,12 @@
     <string name="stats_year">Year</string>
     <string name="stats_all_time">All time</string>
     <string name="stats_headline">plays · %1$s listened</string>
+    <string name="stats_this_device">This device</string>
+    <string name="stats_all_devices">All devices</string>
+    <string name="stats_server_headline">plays on your server account</string>
+    <string name="stats_server_unreached">Your server didn\'t answer. Showing the plays fetched before.</string>
+    <string name="stats_server_unavailable">Your server doesn\'t share listening history. It needs Navidrome 0.59 or later and a password login.</string>
+    <string name="stats_server_since">Navidrome counts plays from when it was updated to 0.59, without skips or time listened.</string>
     <string name="stats_habit">Most around %1$d:00</string>
     <string name="stats_habit_day">Most around %1$d:00, mostly on %2$s</string>
     <string-array name="stats_weekdays">
