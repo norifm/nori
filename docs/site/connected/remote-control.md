@@ -12,7 +12,9 @@ with nori, signed in to the same server account, see each other. One plays at a 
 
 - **Moving the music.** The output button lists this device, your other devices and this device's own
   outputs. Choosing another device moves the playback there: the queue, its order, shuffle, repeat and
-  the place in the song.
+  the place in the song. On 0.6.0-beta.6 and later, the listening time and the original listen start
+  move too, so a qualifying listen is scrobbled once, by the device that finishes it. Both devices
+  need 0.6.0-beta.6; with an older one, each device counts its own part of the song.
 - **Controlling it.** While another device plays, the player, the notification, the lock screen, the car
   and the volume keys show it and control it. The seek bar and **Mixing** indicator follow the playing
   device. The device you hold stops its own playback.

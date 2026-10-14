@@ -144,6 +144,7 @@ mod tests {
             shuffle: false,
             repeat: 0,
             transfer: None,
+            listen: None,
         };
         for op in [
             replace,

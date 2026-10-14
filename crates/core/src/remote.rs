@@ -1283,7 +1283,7 @@ impl Remote {
             (Some(a), Some(d)) if a == d => {}
             (Some(_), Some(d)) if plays => self.set_active(Some(d)),
             (Some(a), Some(d)) => {
-                self.clone().send(a, Op::Transfer { to: d.clone() });
+                self.clone().send(a, Op::Transfer { to: d.clone(), listen_handoff: false });
                 self.set_active(Some(d));
             }
         }
@@ -1310,7 +1310,7 @@ impl Remote {
     /// Sends `op` to device `device`; its answer shows in [`Remote::devices`]. Sent to the mirrored
     /// device, it shows in [`Remote::active`] at once, as it is expected to come out.
     pub fn send(self: Arc<Self>, device: String, op: Op) {
-        if matches!(&op, Op::Transfer { to } if to == &self.id) {
+        if matches!(&op, Op::Transfer { to, .. } if to == &self.id) {
             self.pull(device);
             return;
         }
@@ -1371,7 +1371,7 @@ impl Remote {
     /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
     pub fn hand_over(self: Arc<Self>, to: String) {
         let me = self.id.clone();
-        self.transfer(&Via::Relay(None), &me, to, None);
+        self.transfer(&Via::Relay(None), &me, to, None, false);
     }
 
     /// A door the platform's discovery found: service `service` at `host`:`port` with TXT `txt`.
@@ -2709,9 +2709,9 @@ impl Remote {
             i.obeyed.push(Obeyed { from: from.to_string(), id });
         }
         match op {
-            Op::Transfer { to } => {
+            Op::Transfer { to, listen_handoff } => {
                 let transfer = (to == from).then_some(id);
-                self.transfer(via, from, to, transfer);
+                self.transfer(via, from, to, transfer, listen_handoff);
             }
             Op::Clear => {
                 for index in self.client.core.session.playlist(|p| p.after_current()) {
@@ -2720,7 +2720,8 @@ impl Remote {
             }
             op => {
                 // A queue sent here plays here: this is the active device.
-                if matches!(op, Op::Replace { .. }) {
+                if let Op::Replace { listen, .. } = &op {
+                    self.client.core.session.receive_listen(listen.clone());
                     self.set_active(None);
                 }
                 self.player.apply(op)
@@ -2741,13 +2742,13 @@ impl Remote {
             link
         };
         self.retime();
-        self.out(Out::send(link, Outgoing { to: Some(from), body: Some(Body::Command { id, op: Box::new(Op::Transfer { to: self.id.clone() }) }), ..Default::default() }));
+        self.out(Out::send(link, Outgoing { to: Some(from), body: Some(Body::Command { id, op: Box::new(Op::Transfer { to: self.id.clone(), listen_handoff: true }) }), ..Default::default() }));
         self.keep_polling();
     }
 
     /// Hands the queue, its play order, shuffle, repeat and the position to device `to`, then pauses here
     /// and follows `to`, the active device now.
-    fn transfer(self: &Arc<Self>, via: &Via, from: &str, to: String, transfer: Option<u64>) {
+    fn transfer(self: &Arc<Self>, via: &Via, from: &str, to: String, transfer: Option<u64>, listen_handoff: bool) {
         if to != self.id && self.inner.lock().jams() {
             return;
         }
@@ -2761,7 +2762,13 @@ impl Remote {
             i.handed_to = Some(to.clone());
             (i.playing.playing, i.position_now())
         };
-        let op = Op::Replace { songs, index: index as u32, position_ms, play: playing, order, shuffle, repeat, transfer };
+        let accepts_listen = (to == from && listen_handoff) || {
+            let i = self.inner.lock();
+            i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members))
+                .any(|m| m.id == to && m.state.as_ref().is_some_and(|s| s.listen_handoff))
+        };
+        let listen = accepts_listen.then(|| session.hand_listen(clock::now_us() / 1_000)).flatten();
+        let op = Op::Replace { songs, index: index as u32, position_ms, play: playing, order, shuffle, repeat, transfer, listen };
         let id = self.next_id();
         let command = Body::Command { id, op: Box::new(op) };
         if to == from {
@@ -2817,6 +2824,7 @@ impl Remote {
         let jam = i.hosted.as_ref().map(|h| JamState { along: h.along.then(|| self.along(q.index, p)), ..h.jam.state() });
         let mut st = DeviceState {
             seq: i.seq,
+            listen_handoff: true,
             instance: self.instance,
             playing: p.playing,
             buffering: p.buffering,

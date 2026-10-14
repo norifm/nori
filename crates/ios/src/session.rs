@@ -1322,7 +1322,7 @@ mod tests {
         until("the iPod listed", &|r| r.devices().iter().any(|d| d.id == ipod && d.name == "iPod touch"));
         phone.clone().pick(Some(ipod.clone()));
         until("the iPod mirrored", &|r| r.active().is_some());
-        phone.clone().send(ipod.clone(), Op::Replace { songs, index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None });
+        phone.clone().send(ipod.clone(), Op::Replace { songs, index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None });
 
         let heard_ms = || sim.heard(&render, HostClock.now_us()) as i64 * 1_000 / 44_100;
         until("three seconds heard", &|r| r.active().is_some_and(|m| m.playing) && heard_ms() > 3_000);
@@ -1363,7 +1363,7 @@ mod tests {
         let heard_before = heard_ms();
         let at = mark();
         phone.clone().send(ipod.clone(), Op::Replace {
-            songs: vec![next_album], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None,
+            songs: vec![next_album], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None,
         });
         expect(at, REPORT_SONG, |r| r.id == "b");
         until("the new remote album heard after the old one ended", &|_| heard_ms() >= heard_before + 500);
