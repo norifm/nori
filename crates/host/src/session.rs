@@ -1144,6 +1144,7 @@ impl Handle {
                     shuffle,
                     repeat,
                     transfer: None,
+                    listen: None,
                 });
             } else {
                 self.ask(songs.into_iter().skip(start).take(1).collect());
@@ -1245,10 +1246,9 @@ pub fn read_pages(client: &Client, read: Read, each: impl FnMut(Page)) -> Result
     block_on(client.read_each(read, each))
 }
 
-/// Monotonic ms for the scrobbler. A process-wide epoch: the core's scrobble state outlives sessions.
+/// The same monotonic clock remote handoffs use to close a listen.
 fn monotonic_ms() -> i64 {
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as i64
+    nori_remote::clock::now_us() / 1_000
 }
 
 #[cfg(test)]

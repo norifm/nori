@@ -299,7 +299,7 @@ impl Elsewhere {
 
     /// `songs` from `start` (or shuffled) as the device's queue, playing, its repeat kept.
     fn replace(&self, songs: Vec<Song>, start: usize, shuffle: bool) -> Op {
-        Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat: self.mirror.repeat, transfer: None }
+        Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat: self.mirror.repeat, transfer: None, listen: None }
     }
 
     pub(crate) fn play(&self, songs: Vec<Song>, start: usize, shuffle: bool) {

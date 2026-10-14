@@ -4,7 +4,7 @@
 
 use nori_db as db;
 use nori_db::background;
-use nori_model::Song;
+use nori_model::{Listen, Song};
 
 use crate::{queue, Session};
 
@@ -12,6 +12,7 @@ use crate::{queue, Session};
 pub(crate) struct Scrobbler {
     /// The current song, kept from its start: the queue may be replaced before it is left.
     song: Option<Song>,
+    incoming: Option<Listen>,
     started_at: i64,
     heard_ms: i64,
     /// Monotonic ms playback last started; None while paused.
@@ -36,6 +37,10 @@ impl Scrobbler {
         let done = std::mem::replace(&mut self.song, next);
         let heard = std::mem::take(&mut self.heard_ms);
         let at = std::mem::replace(&mut self.started_at, wall_ms);
+        if let Some(listen) = self.incoming.take().filter(|l| self.song.as_ref().is_some_and(|s| s.id == l.song_id)) {
+            self.started_at = listen.started_ms;
+            self.heard_ms = listen.heard_ms.max(0);
+        }
         self.edge(playing, now_ms);
         (done, heard, at)
     }
@@ -74,6 +79,21 @@ fn followed(id: Option<String>, why: TrackChange) -> Option<String> {
         TrackChange::Ended => None,
         TrackChange::Looped => id,
         TrackChange::Moved => id.filter(|i| !queue::is_radio(i)),
+    }
+}
+
+impl Session {
+    /// Relinquishes this listen before the old player is paused.
+    pub fn hand_listen(&self, now_ms: i64) -> Option<Listen> {
+        let mut s = self.scrobbler.lock();
+        s.edge(false, now_ms);
+        let song = s.song.take()?;
+        Some(Listen { song_id: song.id, started_ms: s.started_at, heard_ms: std::mem::take(&mut s.heard_ms) })
+    }
+
+    /// The next song edge adopts the handed listen after accounting for the song it replaces.
+    pub fn receive_listen(&self, listen: Option<Listen>) {
+        self.scrobbler.lock().incoming = listen;
     }
 }
 

@@ -721,7 +721,7 @@ fn returning_here_does_not_wait_for_a_dead_device() {
         assert!(desk.remote.active().is_none(), "choosing this computer releases remote controls immediately");
         assert_eq!(desk.core.session.playlist(|p| p.ids().to_vec()), ["local"], "the stored local queue remains usable");
         let request = || relay.hub.lock().rooms["u:ann"].events.iter().find_map(|(_, from, _, body)| match body {
-            Body::Command { id, op } if from == &desk.remote.id() && matches!(op.as_ref(), Op::Transfer { to } if to == &desk.remote.id()) => Some(*id),
+            Body::Command { id, op } if from == &desk.remote.id() && matches!(op.as_ref(), Op::Transfer { to, .. } if to == &desk.remote.id()) => Some(*id),
             _ => None,
         });
         eventually("the queue request", || request().is_some());
@@ -736,7 +736,7 @@ fn returning_here_does_not_wait_for_a_dead_device() {
             to: Some(desk.remote.id()),
             body: Some(Body::Command { id: 999, op: Box::new(Op::Replace {
                 songs: vec![Song::only_id("remote".into())], index: 0, position_ms: 5_000,
-                play: true, order: None, shuffle: false, repeat: 0, transfer,
+                play: true, order: None, shuffle: false, repeat: 0, transfer, listen: None,
             }) }),
             ..Default::default()
         };
@@ -836,6 +836,53 @@ fn a_restarted_device_publishes_a_newer_instance() {
 }
 
 #[test]
+fn a_handoff_counts_one_listen() {
+    use nori_core::scrobble::TrackChange;
+
+    for (heard, pull) in [(120_000, true), (300_000, true), (120_000, false), (300_000, false)] {
+        let relay = Relay::new();
+        let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        phone.playing(&["long"], 0);
+        let song = Song { id: "long".into(), duration: 600, ..Default::default() };
+        phone.core.session.register(vec![song]);
+        let now = clock::now_us() / 1_000;
+        let started = nori_core::db::now_ms() - heard;
+        phone.core.session.scrobble_track(Some("long".into()), TrackChange::Moved, true, now - heard, started, 0);
+        phone.remote.clone().serve(true);
+        desk.remote.clone().watch(true);
+        desk.until("the phone", |r| r.devices().into_iter().find(|d| d.name == "Phone"));
+        if pull {
+            desk.remote.clone().send(phone.remote.id(), Op::Transfer { to: desk.remote.id(), listen_handoff: true });
+        } else {
+            desk.playing(&["other"], 0);
+            desk.remote.clone().serve(true);
+            phone.remote.clone().watch(true);
+            phone.until("the desk", |r| r.devices().into_iter().find(|d| d.name == "Desk"));
+            phone.remote.clone().hand_over(desk.remote.id());
+        }
+        let Op::Replace { songs, .. } = desk.told() else { panic!("handed queue") };
+        assert_eq!(phone.told(), Op::Pause);
+        desk.core.session.register(songs);
+        let now = clock::now_us() / 1_000;
+        phone.core.session.scrobble_playing(false, now);
+        desk.core.session.scrobble_track(Some("long".into()), TrackChange::Moved, true, now, nori_core::db::now_ms(), 0);
+        let donor = phone.core.session.scrobble_track(None, TrackChange::Ended, false, now, nori_core::db::now_ms(), 0);
+        let receiver = desk.core.session.scrobble_track(None, TrackChange::Ended, false, now + heard, nori_core::db::now_ms() + heard, 0);
+        assert_eq!(donor.submit_id, None, "the old device no longer owns the listen");
+        assert_eq!(receiver.submit_id.as_deref(), Some("long"), "time heard on both devices qualifies");
+        assert_eq!(receiver.submit_at, started, "the original start belongs to the same listen");
+        nori_core::background::flush();
+        assert!(phone.core.history_recent(10, None, true).unwrap().0.is_empty(), "the donor does not record the listen again");
+        let history = desk.core.history_recent(10, None, true).unwrap().0;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].started_ms, started);
+        assert!(history[0].heard_ms >= 2 * heard);
+        relay.close();
+    }
+}
+
+#[test]
 fn two_devices_control_each_other_through_the_relay() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
@@ -869,7 +916,7 @@ fn two_devices_control_each_other_through_the_relay() {
     assert_eq!(phone.told(), Op::Remove { index: 0, rev: fresh.rev });
 
     // Playing here: the phone hands over its queue and position, then pauses.
-    desk.remote.clone().send(phone_id.clone(), Op::Transfer { to: desk.remote.id() });
+    desk.remote.clone().send(phone_id.clone(), Op::Transfer { to: desk.remote.id(), listen_handoff: true });
     match desk.told() {
         Op::Replace { songs, index, position_ms, play, .. } => {
             assert_eq!(songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["s1", "s2"]);
@@ -2102,7 +2149,7 @@ fn jam_controls_reach_by_role() {
         order: None,
         shuffle: false,
         repeat: 0,
-        transfer: None,
+        transfer: None, listen: None,
     };
     assert_eq!(dee.remote.clone().jam_press(replace.clone()), Reach::Jam);
     assert_eq!(
