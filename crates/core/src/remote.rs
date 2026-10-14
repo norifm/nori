@@ -1661,7 +1661,9 @@ impl Remote {
         waiting.into_values().for_each(Waker::wake);
         self.out.lock().take();
         let here = std::thread::current().id();
-        for t in std::mem::take(&mut *self.threads.lock()) {
+        // Taken apart from the loop: a thread ending may still lock the list to start another.
+        let threads = std::mem::take(&mut *self.threads.lock());
+        for t in threads {
             if t.thread().id() != here {
                 let _ = t.join();
             }
@@ -2988,15 +2990,36 @@ fn same_but_time(last: &DeviceState, now: &DeviceState) -> bool {
 mod tests {
     use super::*;
 
+    struct Quiet;
+    impl RemotePlayer for Quiet { fn apply(&self, _: Op) {} }
+    impl RemoteShown for Quiet {
+        fn changed(&self) {}
+        fn marks_changed(&self) {}
+        fn jam_ended(&self, _: Option<String>) {}
+    }
+
+    #[test]
+    fn stop_returns_while_a_thread_starts_another() {
+        let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
+        let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
+        let late = remote.clone();
+        remote.spawn("late", move || {
+            // Starts another thread once stop has the thread list: held, or already taken.
+            while !(late.inner.lock().stopped && late.threads.try_lock().is_none_or(|t| t.is_empty())) {
+                std::thread::yield_now();
+            }
+            late.spawn("later", || {});
+        });
+        let (sent, stopped) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            remote.stop();
+            let _ = sent.send(());
+        });
+        assert!(stopped.recv_timeout(Duration::from_secs(10)).is_ok(), "stop waited for a thread waiting on it");
+    }
+
     #[test]
     fn published_state_uses_one_player_report() {
-        struct Quiet;
-        impl RemotePlayer for Quiet { fn apply(&self, _: Op) {} }
-        impl RemoteShown for Quiet {
-            fn changed(&self) {}
-            fn marks_changed(&self) {}
-            fn jam_ended(&self, _: Option<String>) {}
-        }
         let (client, _) = crate::client::tests::client(crate::client::NetProfile { url: "http://test".into(), ..Default::default() });
         client.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
         let remote = Remote::new(client, RemoteMe { name: "Test".into(), kind: DeviceKind::Desktop }, Arc::new(Quiet), Arc::new(Quiet), None);
