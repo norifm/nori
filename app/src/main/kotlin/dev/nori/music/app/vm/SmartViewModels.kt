@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import dev.nori.music.ffi.model.HistoryEntry
 import dev.nori.music.ffi.library.HistoryAfter
 import dev.nori.music.ffi.library.SmartPage
+import dev.nori.music.ffi.library.ServerHistory
 import dev.nori.music.ffi.library.StatsPage
+import dev.nori.music.ffi.library.StatsSource
 import dev.nori.music.ffi.library.SmartEdit
 import dev.nori.music.ffi.model.SmartPlaylist
 import dev.nori.music.ffi.model.SmartProblem
@@ -88,9 +90,17 @@ class HistoryViewModel(app: Application) : NoriViewModel(app) {
         }
     }
 
-    /** [days] 0 means everything. */
-    fun loadStats(days: Int) = viewModelScope.launch {
-        _stats.value = runCatching { withContext(Dispatchers.IO) { nori.core.statsPage(days.toUInt()) } }.getOrNull()
+    private val _server = MutableStateFlow<ServerHistory?>(null)
+    /** How the server account's history stood when its new plays were asked for; null before. */
+    val server: StateFlow<ServerHistory?> = _server
+    /** Whether the stats offer the server account's plays (the setting). */
+    val offersServer: Boolean get() = nori.settings.value.serverHistory
+
+    /** [days] 0 means everything. The server's new plays are asked for once, when they are first shown. */
+    fun loadStats(days: Int, source: StatsSource) = viewModelScope.launch {
+        if (source == StatsSource.SERVER_ACCOUNT && _server.value == null) _server.value = nori.client.serverHistorySync()
+        val tzOffset = java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis())
+        _stats.value = runCatching { withContext(Dispatchers.IO) { nori.core.statsPage(days.toUInt(), source, tzOffset) } }.getOrNull()
     }
 
     fun clear() = viewModelScope.launch { nori.library.clearHistory(); _entries.value = Grown.empty(); exhausted = true }
