@@ -400,8 +400,6 @@
     <string name="settings_search_delay">Search delay</string>
     <string name="settings_taste_model">Keep listening history</string>
     <string name="settings_taste_model_detail">Stored on this device. Powers mixes and stats.</string>
-    <string name="settings_server_history">Plays from all your devices</string>
-    <string name="settings_server_history_detail">Stats can also show your Navidrome account\'s plays from every device. Fetched when you open the stats.</string>
     <string name="settings_scrobble">Tell the server what you play</string>
     <string name="settings_scrobble_detail">Sends your plays to your server (scrobbling).</string>
     <string name="settings_scrobble_after">Count a play after</string>
@@ -553,7 +551,6 @@
     <string name="settings_hint_playlist_descriptions">Playlist notes. The text under a playlist\'s name</string>
     <string name="settings_hint_hide_import_notes">Auto-imported playlists. Hides \"Auto-imported from\" under their name</string>
     <string name="settings_hint_scrobble">Scrobbling. Sends your plays to your server</string>
-    <string name="settings_hint_server_history">Server listening history. Stats from every device on your Navidrome account</string>
     <string name="settings_hint_lookups">Missing lyrics, the AutoEQ headphone list and moving covers. Third-party lookups</string>
     <string name="settings_hint_parallel_downloads">How many songs download at the same time</string>
     <string name="settings_hint_ahead_wifi">Songs fetched before you get to them</string>

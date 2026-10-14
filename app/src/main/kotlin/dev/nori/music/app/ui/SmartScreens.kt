@@ -335,7 +335,7 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
     val periods = remember { say.statsPeriods }
     // A year opens.
     var days by remember { mutableStateOf(365) }
-    val sources = remember { say.statsSources.takeIf { vm.offersServer } }
+    val sources = remember { say.statsSources }
     var source by remember { mutableStateOf(StatsSource.DEVICE) }
     LaunchedEffect(days, source) { vm.loadStats(days, source) }
     val s by vm.stats.collectAsStateWithLifecycle()
@@ -346,10 +346,8 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
             IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
             Text(say.listening, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
         }
-        sources?.let { all ->
-            LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(all) { (from, label) -> Chip(label, source == from) { source = from } }
-            }
+        LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(sources) { (from, label) -> Chip(label, source == from) { source = from } }
         }
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(periods) { (d, label) -> Chip(label, days == d) { days = d } }

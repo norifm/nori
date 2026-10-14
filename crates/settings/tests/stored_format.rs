@@ -113,7 +113,6 @@ fn sample() -> StoredPrefs {
         scrobble_percent: 75,
         live_search_delay_ms: 500,
         taste_model: false,
-        server_history: false,
         third_party_lookups: false,
         update_check: false,
         update_beta: true,

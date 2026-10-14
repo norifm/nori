@@ -39,7 +39,7 @@ fn answer<T: DeserializeOwned>(r: &TransportResponse) -> Option<T> {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
     /// Fetches the server account's plays submitted since the last fetch into the database, for
-    /// [`Core::stats_page`]. Asks nothing with the setting off or without a password.
+    /// [`Core::stats_page`]. Asks nothing without a password.
     pub async fn server_history_sync(&self) -> ServerHistory {
         match self.fetch_server_plays().await {
             Ok(true) => ServerHistory::Current,
@@ -55,7 +55,7 @@ impl Client {
     /// history newest first; ids, not play times, so plays submitted late are not missed. Kept only once
     /// all arrived, so an interrupted walk leaves no gap. False when the server has no history to give.
     async fn fetch_server_plays(&self) -> NetResult<bool> {
-        let login = self.core.native_login.read().clone().filter(|_| self.settings().prefs(|p| p.server_history));
+        let login = self.core.native_login.read().clone();
         let Some((user, password)) = login else { return Ok(false) };
         let base = self.core.server.read().base.clone();
         let json = serde_json::json!({ "username": user, "password": password }).to_string();
@@ -377,15 +377,10 @@ pub(crate) mod tests {
             assert_eq!(block(c.server_history_sync()), ServerHistory::Unreached);
             assert_eq!(fake.sent.lock().len(), 5);
 
-            // Nothing is asked with an API key, or with the setting off.
+            // Nothing is asked with an API key.
             c.core.configure(ServerConfig { url: "http://nd".into(), user: "u".into(), api_key: Some("k".into()), ..Default::default() }).unwrap();
             assert_eq!(block(c.server_history_sync()), ServerHistory::Unavailable);
             assert_eq!(fake.sent.lock().len(), 5);
-            let (c, fake) = client(NetProfile { url: "http://nd".into(), ..Default::default() });
-            c.settings().open("").unwrap();
-            c.settings().edit_by_name("serverHistory", "false").unwrap();
-            assert_eq!(block(c.server_history_sync()), ServerHistory::Unavailable);
-            assert!(fake.sent.lock().is_empty() && fake.asked().is_empty());
         }
 
         #[test]
