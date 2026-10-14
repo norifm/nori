@@ -539,10 +539,6 @@ pub struct StoredPrefs {
     pub scrobble: bool,
     #[setting("scrobblePercent", INT, default = 50, show = K::Choice(&["25", "50", "75", "90", "100"]))]
     pub scrobble_percent: i32,
-    /// The listening stats offer the server account's plays from every device (Navidrome's own API,
-    /// with the profile's password), fetched only while the stats are open.
-    #[setting("serverHistory", FLAG, default = true, show = K::Switch)]
-    pub server_history: bool,
     /// Master switch over third-party lookups (lyrics, AutoEQ, motion artwork), each with its own switch.
     #[setting("thirdPartyLookups", FLAG, default = true, show = K::Switch)]
     pub third_party_lookups: bool,

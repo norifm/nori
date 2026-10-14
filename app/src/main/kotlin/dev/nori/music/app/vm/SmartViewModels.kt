@@ -93,8 +93,6 @@ class HistoryViewModel(app: Application) : NoriViewModel(app) {
     private val _server = MutableStateFlow<ServerHistory?>(null)
     /** How the server account's history stood when its new plays were asked for; null before. */
     val server: StateFlow<ServerHistory?> = _server
-    /** Whether the stats offer the server account's plays (the setting). */
-    val offersServer: Boolean get() = nori.settings.value.serverHistory
 
     /** [days] 0 means everything. The server's new plays are asked for once, when they are first shown. */
     fun loadStats(days: Int, source: StatsSource) = viewModelScope.launch {
