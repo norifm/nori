@@ -2626,30 +2626,81 @@ mod tests {
             loaded: true, cards: cards((0..20).map(|j| Card { art: format!("album-{i}-{j}").into(), ..Default::default() })),
             ..Default::default()
         }).collect::<Vec<_>>())));
+        ui.set_has_song(true);
+        ui.set_now_art("playing-cover".into());
+        ui.set_queue(ModelRc::new(VecModel::from((0..500).map(|i| SongRow {
+            index: i, art: format!("queue-{i}").into(), title: format!("Song {i}").into(),
+            ..Default::default()
+        }).collect::<Vec<_>>())));
         let art = Rc::new(RefCell::new(Art::default()));
+        let requested = Rc::new(RefCell::new(HashSet::new()));
+        let seen = requested.clone();
         let cache = art.clone();
-        ui.on_art(move |id, size, _| cover_image(&cache, &AppHandle(Weak::new()), id, size));
+        ui.on_art(move |id, size, _| {
+            seen.borrow_mut().insert(id.to_string());
+            cover_image(&cache, &AppHandle(Weak::new()), id, size)
+        });
         let cache = art.clone();
         ui.on_pick_art(move |ids, _| pick_image(&cache, &AppHandle(Weak::new()), ids, mosaic));
         let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(SMALL_PX, SMALL_PX);
         pixels.make_mut_slice().fill(Rgba8Pixel { r: 27, g: 91, b: 173, a: 255 });
         let image = Image::from_rgba8(pixels);
         ui.show().unwrap();
-        for revision in 0..4 {
-            ui.set_covers_rev(revision);
-            ui.window().take_snapshot().unwrap();
-            let pending: Vec<_> = art.borrow_mut().wanted.drain(..).collect();
-            for key in pending {
-                art.borrow_mut().insert(key, image.clone(), None, Instant::now());
-            }
-        }
-        ui.set_covers_rev(4);
         ui.window().take_snapshot().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        let load_covers = || {
+            for _ in 0..4 {
+                ui.set_covers_rev(ui.get_covers_rev() + 1);
+                ui.window().take_snapshot().unwrap();
+                let pending: Vec<_> = art.borrow_mut().wanted.drain(..).collect();
+                for key in pending {
+                    art.borrow_mut().insert(key, image.clone(), None, Instant::now());
+                }
+            }
+            ui.set_covers_rev(ui.get_covers_rev() + 1);
+            ui.window().take_snapshot().unwrap();
+        };
+        load_covers();
         assert!(art.borrow().wanted.is_empty(), "Home must keep loaded covers while stationary: {} covers requested again", art.borrow().wanted.len());
         let cache = art.borrow();
         assert!(cache.images.keys().any(|key| key.id.starts_with("pick-0-")), "the first pick loads its artwork");
         assert!(!cache.images.keys().any(|key| key.id.starts_with("album-19-")), "offscreen shelves must not load covers");
         drop(cache);
+        assert!(art.borrow().images.contains_key(&CoverKey { id: "playing-cover".into(), size: CoverSize::Card }), "the miniplayer cover remains cached");
+        assert!(!requested.borrow().iter().any(|id| id.starts_with("queue-")), "the closed queue must not request artwork");
+        for full in [false, true] {
+            ui.set_inspector(if full { 0 } else { 1 });
+            ui.set_full_panel(1);
+            ui.set_full_player(full);
+            ui.window().take_snapshot().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            requested.borrow_mut().clear();
+            load_covers();
+            assert!(art.borrow().wanted.is_empty(), "an open queue keeps visible covers cached");
+            assert!(requested.borrow().contains("queue-0"), "the queue loads its first cover");
+            assert!(!requested.borrow().contains("queue-499"), "offscreen queue artwork must not evict visible covers");
+            requested.borrow_mut().clear();
+            let position = slint::LogicalPosition::new(if full { 1100.0 } else { 1600.0 }, 500.0);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position, delta_x: 0.0, delta_y: -30_000.0,
+            });
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            load_covers();
+            assert!(requested.borrow().contains("queue-499"), "scrolling the queue loads its last cover, full={full}");
+            ui.set_full_player(false);
+            ui.set_inspector(0);
+            ui.window().take_snapshot().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            requested.borrow_mut().clear();
+            load_covers();
+            assert!(!requested.borrow().iter().any(|id| id.starts_with("queue-")), "closing either queue releases its artwork bindings");
+        }
+
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
             position: slint::LogicalPosition::new(1780.0, 950.0), delta_x: 0.0, delta_y: -30_000.0,
         });
