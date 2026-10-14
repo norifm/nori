@@ -561,7 +561,7 @@ fun LazyListScope.songRows(
             onClick = { if (actions.tap(songs, at, from, playing = s.id == playingId)) sheet.open() }, onMenu = { menu(s) },
             modifier = if (arrival != null) modifier.arriving(arrival) else modifier,
             number = if (numbered) s.track.toInt() else null, playing = s.id == playingId, downloaded = s.id in downloaded,
-            selected = s.id in selected, onLongClick = { actions.toggleSelected(s) },
+            selected = s.id in selected, onLongClick = { menu(s) },
             swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
             divider = k < count - 1,
             line = lines?.getOrNull(k) ?: s.line,
