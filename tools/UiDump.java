@@ -77,11 +77,13 @@ public final class UiDump {
                     System.exit(1);
                 }
             }
-            if (args.length == 4 && args[0].equals("click")) {
+            if (args.length == 4 && (args[0].equals("click") || args[0].equals("long-click"))) {
+                boolean hold = args[0].equals("long-click");
                 String value = new String(Base64.getDecoder().decode(args[2]), StandardCharsets.UTF_8);
                 AccessibilityNodeInfo target = find(root, args[1], value, new int[] {Integer.parseInt(args[3])});
-                while (target != null && !target.isClickable()) target = target.getParent();
-                if (target == null || !target.isEnabled() || !target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                while (target != null && !(hold ? target.isLongClickable() : target.isClickable())) target = target.getParent();
+                int action = hold ? AccessibilityNodeInfo.ACTION_LONG_CLICK : AccessibilityNodeInfo.ACTION_CLICK;
+                if (target == null || !target.isEnabled() || !target.performAction(action)) {
                     System.err.println("no enabled click action for " + value);
                     System.exit(1);
                 }

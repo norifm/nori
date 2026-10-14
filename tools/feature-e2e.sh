@@ -267,6 +267,10 @@ print(0 if any(x.get('title')==t or x['id'].startswith('ext-') or x.get('suffix'
     "$app" do pause >/dev/null
     "$app" open "album/$aid" >/dev/null
     check "the pill reads Play before the album is played" wait_until 8 pill_is Play
+    track=$(api getAlbum "&id=$aid" | python3 -c "import json,sys; print(json.load(sys.stdin)['subsonic-response']['album']['song'][0]['title'])")
+    check "holding a track opens its song menu" "$here/ui-dump.sh" --long-click text "$track"
+    check "the hold menu offers Play next" wait_until 8 on_screen 'text="Play next"'
+    adb shell input keyevent 4
     "$app" play "album:$aid" >/dev/null; sounds 20
     check "the pill reads Pause while this album is what sounds" wait_until 8 pill_is Pause
     was=$(field shuffle)
