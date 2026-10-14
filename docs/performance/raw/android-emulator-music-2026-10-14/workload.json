@@ -1,0 +1,92 @@
+[
+  {
+    "file": "bg-quick/004 MP3 - 30 Seconds To Mars - A Beautiful Lie.mp3",
+    "title": "30 Seconds To Mars - A Beautiful Lie [MP3]",
+    "id": "30aWBhjfAYUCVTfuXzFE16",
+    "samplingRate": 44100,
+    "bitDepth": 0,
+    "duration": 60,
+    "sha256": "12f77ec5bc75d9b9edaf09daca2dd36c6c73d4323723c4cf012201a29cf7950d"
+  },
+  {
+    "file": "bg-quick/005 MP3 48k - Maphra - Silence.mp3",
+    "title": "Maphra - Silence [MP3 48k]",
+    "id": "6PQfxTxpJtJb4JlHCEEVNB",
+    "samplingRate": 48000,
+    "bitDepth": 0,
+    "duration": 60,
+    "sha256": "bc84d10ecbb34751f81f55eb2defa8ed1bf988b2b4187c9af6341d6d9c528dfc"
+  },
+  {
+    "file": "bg-quick/006 FLAC 44k - Bisou Noir - The Boys.flac",
+    "title": "Bisou Noir - The Boys [FLAC 44k]",
+    "id": "1WOiF0fKq5vo47hjJ1oFfC",
+    "samplingRate": 44100,
+    "bitDepth": 16,
+    "duration": 60,
+    "sha256": "cceaea2ebf9515c594da6e6a242e0dd0bfebc2bf28ff2065335bc2fc9b809d07"
+  },
+  {
+    "file": "bg-quick/007 FLAC 48k - Cage The Elephant - Back Against The Wall.flac",
+    "title": "Cage The Elephant - Back Against The Wall [FLAC 48k]",
+    "id": "0wg5qqYpkfOKNZpa8ivdZF",
+    "samplingRate": 48000,
+    "bitDepth": 24,
+    "duration": 60,
+    "sha256": "805b5cd00f870971862cc5ff22edd1e546b018077c17ae0c4b278de08722c2d4"
+  },
+  {
+    "file": "bg-quick/008 FLAC 96k - Foo Fighters - If You Only Knew.flac",
+    "title": "Foo Fighters - If You Only Knew [FLAC 96k]",
+    "id": "0ZPDHZJYu0igLz0ing2GQQ",
+    "samplingRate": 96000,
+    "bitDepth": 24,
+    "duration": 60,
+    "sha256": "2e98cb4c54bde5a0d3eeeba2c6c944294622bb5bbccf06770ba9da1d37f7128a"
+  },
+  {
+    "file": "bg-quick/009 MP3 - Gorillaz - Kids With Guns (featuring Neneh Cherry).mp3",
+    "title": "Gorillaz - Kids With Guns (featuring Neneh Cherry) [MP3]",
+    "id": "0skTaYYjbPNppKN4lzLG38",
+    "samplingRate": 44100,
+    "bitDepth": 0,
+    "duration": 60,
+    "sha256": "82b9e2e1ae4ba0de88a7aa610b3abe5cdb2787c70a6c249f3965ee0500f8e8fc"
+  },
+  {
+    "file": "bg-quick/010 MP3 48k - Maphra - The Emptiness Machine.mp3",
+    "title": "Maphra - The Emptiness Machine [MP3 48k]",
+    "id": "49wGKaMFnOLlKpGINxCxMI",
+    "samplingRate": 48000,
+    "bitDepth": 0,
+    "duration": 60,
+    "sha256": "f9129473a44ab3d7c5dda7de14081bd1a6f3f8883813223522d4cde0472b5224"
+  },
+  {
+    "file": "bg-quick/011 FLAC 44k - Joy Division - Shadowplay (2007 Remaster) (2007 Re-mastered Album Version).flac",
+    "title": "Joy Division - Shadowplay (2007 Remaster) (2007 Re-mastered Album Version) [FLAC 44k]",
+    "id": "7AyBKnmLy6xLmmZ6zP3CMX",
+    "samplingRate": 44100,
+    "bitDepth": 16,
+    "duration": 60,
+    "sha256": "c57ec170f74716f2f0d7f8c84cba1e4ae1034f6272488a1e9f5f91e1cdf6f9bd"
+  },
+  {
+    "file": "bg-quick/012 FLAC 48k - Linkin Park - Hit the Floor.flac",
+    "title": "Linkin Park - Hit the Floor [FLAC 48k]",
+    "id": "1Jt8vsKpBhN2lpB2GtLr9w",
+    "samplingRate": 48000,
+    "bitDepth": 24,
+    "duration": 60,
+    "sha256": "72e5d0763de6ebfb1946a737fb90cc2dac09847fbc7775d49ebea3be282eb5b2"
+  },
+  {
+    "file": "bg-quick/013 FLAC 96k - Metallica - Fuel.flac",
+    "title": "Metallica - Fuel [FLAC 96k]",
+    "id": "4rXYgoFruADwSWWHkj6iWQ",
+    "samplingRate": 96000,
+    "bitDepth": 24,
+    "duration": 60,
+    "sha256": "009b116f1af15baf0770ee460e9487853f891ca94cf97b4bf612e7c81350bf53"
+  }
+]
