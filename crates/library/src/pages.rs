@@ -313,24 +313,6 @@ impl HeroButtons {
     }
 }
 
-/// The "add to library" offer on a provider's album or playlist page (starring it has octo-fiesta fetch it).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
-pub struct LibraryOffer {
-    /// A playlist, else an album.
-    pub playlist: bool,
-}
-
-/// The offer for the page `id`; none for the library's own.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn library_offer(id: String, is_external: bool) -> Option<LibraryOffer> {
-    let playlist = id.starts_with("pl-");
-    if !is_external && !nori_model::is_provider_id(&id) {
-        return None;
-    }
-    Some(LibraryOffer { playlist })
-}
-
 /// Whether a list offers a filter: when long, or while one is typed.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn filter_offered(songs: u32, filtering: bool) -> bool {
@@ -530,11 +512,7 @@ mod tests {
         assert_eq!(idx.view("X".into()).rows, [3]);
         assert_eq!(biography("Hello <a href=x>more</a>".into()), "Hello ");
 
-        // Library offer and filter.
-        let offer = |playlist: bool| Some(LibraryOffer { playlist });
-        assert_eq!(library_offer("ext-deezer-album-1".into(), true), offer(false));
-        assert_eq!(library_offer("pl-deezer-1".into(), false), offer(true));
-        assert_eq!(library_offer("al-1".into(), false), None);
+        // Filter.
         assert_eq!((filter_offered(12, false), filter_offered(13, false), filter_offered(3, true)), (false, true, true));
         let a = |id: &str| nori_model::Artist { id: id.into(), ..Default::default() };
         assert_eq!(similar_artists(vec![a(""), a("x")]).len(), 1);

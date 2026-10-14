@@ -4,7 +4,6 @@ import android.content.res.Resources
 import dev.nori.music.app.R
 import dev.nori.music.ffi.library.AlbumDetail
 import dev.nori.music.ffi.library.DiscGroup
-import dev.nori.music.ffi.library.LibraryOffer
 import dev.nori.music.ffi.library.StatsPage
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.devices.OutputPort
@@ -399,9 +398,6 @@ class Say(private val r: Resources) {
         d.title.isEmpty() -> r.getString(R.string.disc_heading, d.disc.toInt())
         else -> r.getString(R.string.disc_heading_titled, d.disc.toInt(), d.title)
     }
-
-    /** The offer on a provider's page: "Add the whole album to the library". */
-    fun libraryOffer(o: LibraryOffer): String = r.getString(if (o.playlist) R.string.library_offer_playlist else R.string.library_offer_album)
 
     // ---- the player ----
 
