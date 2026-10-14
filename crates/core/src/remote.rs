@@ -849,15 +849,9 @@ impl Inner {
         m.state.as_ref().map(|s| (s, self.received.get(id).copied().unwrap_or_else(clock::now_us)))
     }
 
-    /// Whether device `id` is still there to be followed (it serves, nearby or through the relay).
+    /// Whether device `id` is still there to be followed: it serves nearby, or through the relay while it answers.
     fn listed(&self, id: &str) -> bool {
-        self.peers.iter().any(|p| p.member.id == id) || self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members).any(|m| m.id == id)
-    }
-
-    /// Whether device `id` is in the lists as `devices` gives them: heard from, and far ones only while the relay answers.
-    fn shown(&self, id: &str) -> bool {
-        let far = self.rooms.iter().filter(|r| !r.jam && !self.relay_down).flat_map(|r| &r.members);
-        self.peers.iter().map(|p| &p.member).chain(far).any(|m| m.id == id && m.state.is_some())
+        self.peers.iter().any(|p| p.member.id == id) || self.rooms.iter().filter(|r| !r.jam && !self.relay_down).flat_map(|r| &r.members).any(|m| m.id == id)
     }
 
     /// Whether device `id` plays, as last heard.
@@ -1260,9 +1254,6 @@ impl Remote {
     pub fn active(&self) -> Option<Mirror> {
         let i = self.inner.lock();
         let m = i.mirror.as_ref()?;
-        if !i.shown(&m.id) {
-            return None;
-        }
         let (name, kind) = i.who(&m.id)?;
         m.view(name, kind, i.refused.get(&m.id).copied())
     }
@@ -2202,6 +2193,7 @@ impl Remote {
                 (Some(_), _) => return self.no_relay(generation),
                 (None, _) => {
                     if !std::mem::replace(&mut self.inner.lock().relay_down, true) {
+                        self.follow_active();
                         self.shown.changed();
                     }
                     let mut i = self.inner.lock();
