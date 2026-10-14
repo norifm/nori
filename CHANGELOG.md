@@ -6,6 +6,27 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-15
+
+### New
+
+- **Play on your other devices.** Control and mirror the phone, desktop, terminal and iPod from each other's player.
+- **Jams.** Host from any device and invite people with a QR code or link. Guests ask for songs and can listen along in sync.
+- **Sing.** Turns the vocals down in any song, processed on your device.
+- **Listening stats from all your devices**, using your Navidrome play history.
+- **Desktop app for macOS and Linux** (disk image, AppImage, Flatpak), plus a terminal client.
+- Favorites sync between nearby devices. Updates install on their own, and you can opt into beta updates.
+
+### Better
+
+- Equalizer, compressor, limiter and crossfades use much less CPU.
+- Android Auto: every album, faster search, steadier covers, and the phone wakes far less often.
+- The desktop uses less memory and draws nothing while hidden.
+
+### Fixed
+
+- Over 150 fixes, mostly remote control, jams, lyrics timing, covers and the desktop app.
+
 ## [0.5.1] - 2026-10-04
 
 ### Added
