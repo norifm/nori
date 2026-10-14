@@ -1646,15 +1646,6 @@ component DevicesView inherits Rectangle {
                     }
                 }
             }
-            if root.devices.length <= 1: HorizontalLayout {
-                padding: 6px;
-                Text {
-                    text: "No other devices yet. Turn on “Remote control and jams” in nori on them.";
-                    color: Theme.dim;
-                    font-size: 12px;
-                    wrap: word-wrap;
-                }
-            }
             // The jam: starting one, or the one on (its row opens it in the queue panel) and ending it.
             if Jam.on || Jam.hosting || Jam.note != "": Rectangle {
                 height: 13px;
