@@ -383,6 +383,8 @@ pub struct Core {
     /// The user and the Subsonic secret (password or API key) the LAN's remote control proves the account
     /// with; None for a jam guest.
     account: RwLock<Option<(String, String)>>,
+    /// The user and password Navidrome's own API logs in with; None with an API key.
+    native_login: RwLock<Option<(String, String)>>,
     /// What the app offers over the profile (a jam guest's: the host's library, read only).
     rules: RwLock<browse::ProfileRules>,
     /// What the stored queue's songs were saved from (queue.rs).
@@ -452,6 +454,7 @@ impl Core {
             cache_revision: AtomicU64::new(0),
             session,
             account: RwLock::new(None),
+            native_login: RwLock::new(None),
             rules: RwLock::new(browse::profile_rules(false)),
             saved_queue: Mutex::new(None),
         });
@@ -473,6 +476,7 @@ impl Core {
         *self.server.write() = s;
         let key = config.api_key.unwrap_or_default();
         *self.rules.write() = browse::profile_rules(nori_remote::is_guest_key(&key));
+        *self.native_login.write() = key.is_empty().then(|| (config.user.clone(), config.password.clone()));
         *self.account.write() = match (key.is_empty(), nori_remote::is_guest_key(&key)) {
             (true, _) => Some((config.user, config.password)),
             (false, false) => Some((config.user, key)),

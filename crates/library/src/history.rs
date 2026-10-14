@@ -117,21 +117,39 @@ fn ranked(map: HashMap<String, TopEntry>, top: usize) -> (u32, Vec<TopEntry>) {
     (n, l)
 }
 
-/// The listening statistics of the plays between `from_ms` and `to_ms`, with the `top` songs, artists
-/// and albums.
+/// The plays a summary reads, between ?1 and ?2: an order, the song, skipped, time heard, completed,
+/// local hour and day, and the start.
+const DEVICE_PLAYS: &str = "SELECT rowid row, song_id, skipped, heard_ms, completed, hour, day, started_ms at FROM plays WHERE server=sid() AND started_ms>=?1 AND started_ms<?2";
+/// The server account's plays as [`DEVICE_PLAYS`] reads them, at local offset ?3. The server keeps no
+/// skips or time heard.
+const SERVER_PLAYS: &str = "SELECT id row, song_id, 0 skipped, 0 heard_ms, 0 completed, ((at_ms+?3) % 86400000 + 86400000) % 86400000 / 3600000 hour,
+    (at_ms+?3) / 86400000 day, at_ms at FROM server_plays WHERE server=sid() AND at_ms>=?1 AND at_ms<?2";
+
+/// The listening statistics of this device's plays between `from_ms` and `to_ms`, with the `top` songs,
+/// artists and albums.
 pub fn summary(c: &Connection, from_ms: i64, to_ms: i64, top: u32) -> rusqlite::Result<ListeningStats> {
+    summarize(c, DEVICE_PLAYS, params![from_ms, to_ms], top)
+}
+
+/// [`summary`] of the server account's plays, charted at `tz_offset_ms`. Skips and time heard are zero:
+/// the server does not know them.
+pub fn server_summary(c: &Connection, from_ms: i64, to_ms: i64, tz_offset_ms: i32, top: u32) -> rusqlite::Result<ListeningStats> {
+    summarize(c, SERVER_PLAYS, params![from_ms, to_ms, tz_offset_ms], top)
+}
+
+fn summarize(c: &Connection, plays: &str, p: &[&dyn rusqlite::ToSql], top: u32) -> rusqlite::Result<ListeningStats> {
     let top = top as usize;
     let mut out = ListeningStats { plays_per_hour: vec![0; 24], plays_per_weekday: vec![0; 7], ..Default::default() };
 
     // Per song in SQL, so a year of listening crosses into Rust as one row per distinct song.
     let mut songs: Vec<TopSong> = Vec::new();
     {
-        let mut st = c.prepare_cached(
-            "SELECT i.json, p.plays, p.skips, p.ms FROM
-               (SELECT song_id, sum(skipped=0) plays, sum(skipped) skips, sum(heard_ms) ms FROM plays WHERE server=sid() AND started_ms>=?1 AND started_ms<?2 GROUP BY song_id) p
-             LEFT JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id ORDER BY p.plays DESC, p.ms DESC, p.song_id",
-        )?;
-        let mut rows = st.query(params![from_ms, to_ms])?;
+        let mut st = c.prepare_cached(&format!(
+            "WITH p AS ({plays}) SELECT i.json, s.plays, s.skips, s.ms FROM
+               (SELECT song_id, sum(skipped=0) plays, sum(skipped) skips, sum(heard_ms) ms FROM p GROUP BY song_id) s
+             LEFT JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=s.song_id ORDER BY s.plays DESC, s.ms DESC, s.song_id"
+        ))?;
+        let mut rows = st.query(p)?;
         while let Some(r) = rows.next()? {
             let (json, plays, skips, ms): (Option<String>, u32, u32, i64) = (r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?);
             out.plays += plays;
@@ -168,15 +186,15 @@ pub fn summary(c: &Connection, from_ms: i64, to_ms: i64, top: u32) -> rusqlite::
     songs.truncate(top);
     out.top_songs = songs;
 
-    let mut st = c.prepare_cached("SELECT hour, count(*) FROM plays WHERE server=sid() AND started_ms>=?1 AND started_ms<?2 AND skipped=0 GROUP BY hour")?;
-    let mut rows = st.query(params![from_ms, to_ms])?;
+    let mut st = c.prepare_cached(&format!("WITH p AS ({plays}) SELECT hour, count(*) FROM p WHERE skipped=0 GROUP BY hour"))?;
+    let mut rows = st.query(p)?;
     while let Some(r) = rows.next()? {
         let (hour, n): (i64, u32) = (r.get(0)?, r.get(1)?);
         out.plays_per_hour[hour.clamp(0, 23) as usize] += n;
     }
 
-    let mut st = c.prepare_cached("SELECT day, count(*) FROM plays WHERE server=sid() AND started_ms>=?1 AND started_ms<?2 AND skipped=0 GROUP BY day ORDER BY day")?;
-    let mut rows = st.query(params![from_ms, to_ms])?;
+    let mut st = c.prepare_cached(&format!("WITH p AS ({plays}) SELECT day, count(*) FROM p WHERE skipped=0 GROUP BY day ORDER BY day"))?;
+    let mut rows = st.query(p)?;
     let (mut prev, mut run) = (i64::MIN, 0u32);
     while let Some(r) = rows.next()? {
         let (day, n): (i64, u32) = (r.get(0)?, r.get(1)?);
@@ -189,14 +207,44 @@ pub fn summary(c: &Connection, from_ms: i64, to_ms: i64, top: u32) -> rusqlite::
     }
 
     out.first_play = c
-        .prepare_cached(
-            "SELECT i.json, p.started_ms, p.heard_ms, p.completed, p.skipped FROM plays p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
-             WHERE p.server=sid() AND p.started_ms>=?1 AND p.started_ms<?2 AND p.skipped=0 ORDER BY p.started_ms, p.rowid LIMIT 1",
-        )?
-        .query_row(params![from_ms, to_ms], |r| Ok(entry(r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        .prepare_cached(&format!(
+            "WITH p AS ({plays}) SELECT i.json, p.at, p.heard_ms, p.completed, p.skipped FROM p JOIN items i ON i.server=sid() AND i.kind=2 AND i.id=p.song_id
+             WHERE p.skipped=0 ORDER BY p.at, p.row LIMIT 1"
+        ))?
+        .query_row(p, |r| Ok(entry(r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
         .optional()?
         .flatten();
     Ok(out)
+}
+
+/// One play of the server account's history: its id there (later submissions have higher ones), the
+/// song, and when it was played.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerPlay {
+    pub id: i64,
+    pub song_id: String,
+    pub at_ms: i64,
+}
+
+/// The highest id of the server plays kept; none before the first fetch.
+pub fn server_plays_newest(c: &Connection) -> rusqlite::Result<Option<i64>> {
+    c.prepare_cached("SELECT max(id) FROM server_plays WHERE server=sid()")?.query_row([], |r| r.get(0))
+}
+
+/// Keeps `plays` in one transaction, in place of every kept play with `replace`; otherwise plays
+/// already kept stay as they are.
+pub fn server_plays_keep(c: &mut Connection, plays: &[ServerPlay], replace: bool) -> rusqlite::Result<()> {
+    let tx = c.transaction()?;
+    if replace {
+        tx.execute("DELETE FROM server_plays WHERE server=sid()", [])?;
+    }
+    {
+        let mut st = tx.prepare_cached("INSERT OR IGNORE INTO server_plays(server, id, song_id, at_ms) VALUES(sid(), ?1, ?2, ?3)")?;
+        for p in plays {
+            st.execute(params![p.id, p.song_id, p.at_ms])?;
+        }
+    }
+    tx.commit()
 }
 
 #[cfg(test)]

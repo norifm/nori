@@ -409,10 +409,35 @@ pub struct HistoryAfter {
     pub row: i64,
 }
 
+/// Whose plays the listening stats count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum StatsSource {
+    /// The plays this installation recorded, with the time heard and skips.
+    Device,
+    /// The server account's plays from every device (Navidrome 0.59 on, from when the server was
+    /// updated): counted plays only, so no time heard and no skips.
+    ServerAccount,
+}
+
+/// How the server account's play history stands after asking the server for what is new.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum ServerHistory {
+    /// Up to date.
+    Current,
+    /// The server did not answer; the plays kept from earlier are counted.
+    Unreached,
+    /// The server keeps no play history this profile can read (not Navidrome 0.59 or later, an API key
+    /// instead of a password, or a login refused).
+    Unavailable,
+}
+
 /// The listening stats page.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct StatsPage {
+    pub source: StatsSource,
     pub stats: ListeningStats,
     /// The busiest hour, 0-23 (the first of equals); none when nothing was played.
     pub busiest_hour: Option<u32>,
@@ -434,13 +459,13 @@ fn busiest(v: &[u32]) -> Option<usize> {
 }
 
 impl StatsPage {
-    /// The page for `stats`.
-    pub fn new(stats: ListeningStats) -> Self {
+    /// The page for `stats`, counted from `source`.
+    pub fn new(source: StatsSource, stats: ListeningStats) -> Self {
         let busiest_hour = busiest(&stats.plays_per_hour).filter(|&h| stats.plays_per_hour[h] > 0);
         let busiest_weekday = busiest_hour.and(busiest(&stats.plays_per_weekday)).filter(|&d| d < 7);
         let peak = stats.plays_per_hour.iter().copied().max().unwrap_or(0).max(1) as f32;
         let hours = stats.plays_per_hour.iter().map(|&p| p as f32 / peak).collect();
-        StatsPage { busiest_hour: busiest_hour.map(|h| h as u32), busiest_weekday: busiest_weekday.map(|d| d as u32), hours, stats }
+        StatsPage { source, busiest_hour: busiest_hour.map(|h| h as u32), busiest_weekday: busiest_weekday.map(|d| d as u32), hours, stats }
     }
 }
 
@@ -485,12 +510,12 @@ mod tests {
             top_artists: vec![TopEntry { listened_ms: 187_900, ..Default::default() }],
             ..Default::default()
         };
-        let p = StatsPage::new(stats);
+        let p = StatsPage::new(StatsSource::Device, stats);
         // The first of equal peaks, as `maxByOrNull` picks.
         assert_eq!((p.busiest_hour, p.busiest_weekday), (Some(21), Some(4)));
         assert_eq!((p.hours[9], p.hours[21], p.hours[0]), (0.5, 1.0, 0.0));
         // Nothing played: no chart and nothing to say about it, and no dividing by nothing.
-        let none = StatsPage::new(ListeningStats { plays_per_hour: vec![0; 24], plays_per_weekday: vec![0; 7], ..Default::default() });
+        let none = StatsPage::new(StatsSource::Device, ListeningStats { plays_per_hour: vec![0; 24], plays_per_weekday: vec![0; 7], ..Default::default() });
         assert_eq!((none.busiest_hour, none.busiest_weekday, none.hours[3]), (None, None, 0.0));
     }
 

@@ -5,7 +5,9 @@ import dev.nori.music.app.R
 import dev.nori.music.ffi.library.AlbumDetail
 import dev.nori.music.ffi.library.DiscGroup
 import dev.nori.music.ffi.library.LibraryOffer
+import dev.nori.music.ffi.library.ServerHistory
 import dev.nori.music.ffi.library.StatsPage
+import dev.nori.music.ffi.library.StatsSource
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.devices.OutputPort
 import dev.nori.music.ffi.library.AlbumSort
@@ -785,21 +787,36 @@ class Say(private val r: Resources) {
         7 to r.getString(R.string.stats_week), 30 to r.getString(R.string.stats_month),
         365 to r.getString(R.string.stats_year), 0 to r.getString(R.string.stats_all_time),
     )
-    /** Under the play count: "plays · 12:34:56 listened". */
-    fun statsHeadline(listenedMs: Long): String = r.getString(R.string.stats_headline, Fmt.duration(listenedMs / 1000))
+    /** Whose plays the stats can count, in the order the chips run. */
+    val statsSources: List<Pair<StatsSource, String>> get() = listOf(
+        StatsSource.DEVICE to r.getString(R.string.stats_this_device), StatsSource.SERVER_ACCOUNT to r.getString(R.string.stats_all_devices),
+    )
+    /** Under the play count: "plays · 12:34:56 listened"; the server knows no time listened. */
+    fun statsHeadline(p: StatsPage): String = when (p.source) {
+        StatsSource.DEVICE -> r.getString(R.string.stats_headline, Fmt.duration(p.stats.listenedMs / 1000))
+        StatsSource.SERVER_ACCOUNT -> r.getString(R.string.stats_server_headline)
+    }
+    /** What the server account's figures are, or why they are missing or old. */
+    fun statsServerNote(h: ServerHistory?): String = r.getString(
+        when (h) {
+            ServerHistory.UNREACHED -> R.string.stats_server_unreached
+            ServerHistory.UNAVAILABLE -> R.string.stats_server_unavailable
+            ServerHistory.CURRENT, null -> R.string.stats_server_since
+        },
+    )
     /** "Most around 21:00, mostly on Fridays"; null (and no chart) when nothing was played. */
     fun statsHabit(p: StatsPage): String? {
         val hour = p.busiestHour?.toInt() ?: return null
         val day = p.busiestWeekday?.toInt() ?: return r.getString(R.string.stats_habit, hour)
         return r.getString(R.string.stats_habit_day, hour, r.getStringArray(R.array.stats_weekdays)[day])
     }
-    /** The six tiles under the headline, in two rows of three: a number and what it counts. */
+    /** The tiles under the headline, in rows of three: a number and what it counts. Skips are this device's only. */
     fun statsTiles(p: StatsPage): List<Pair<String, String>> = with(p.stats) {
-        listOf(
+        listOfNotNull(
             distinctSongs.toString() to r.getString(R.string.stat_songs),
             distinctArtists.toString() to r.getString(R.string.stat_artists),
             distinctAlbums.toString() to r.getString(R.string.stat_albums),
-            skips.toString() to r.getString(R.string.stat_skips),
+            (skips.toString() to r.getString(R.string.stat_skips)).takeIf { p.source == StatsSource.DEVICE },
             activeDays.toString() to r.getString(R.string.stat_active_days),
             longestStreakDays.toString() to r.getString(R.string.stat_day_streak),
         )

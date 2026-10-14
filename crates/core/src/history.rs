@@ -1,11 +1,89 @@
-//! Play history and taste model reads over the core's database. The model is nori-library's.
+//! Play history and taste model reads over the core's database, and the server account's play history
+//! fetched from Navidrome's own API. The model is nori-library's.
+
+use std::collections::HashMap;
 
 use rusqlite::params;
+use serde::de::DeserializeOwned;
+use serde::Deserialize;
 
-use crate::browse::HistoryAfter;
+use crate::browse::{HistoryAfter, ServerHistory};
+use crate::client::{Client, NetResult};
+use crate::transport::{Exchange, TransportResponse};
 use crate::{model::*, Core, Result};
 
 pub use nori_library::history::*;
+
+/// Server plays asked for per request.
+const SERVER_PAGE: usize = if cfg!(test) { 2 } else { 1000 };
+
+#[derive(Deserialize)]
+struct Login {
+    token: String,
+}
+
+/// One entry of Navidrome's `/api/scrobble`; `submissionTime` is in seconds.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Scrobble {
+    id: i64,
+    media_file_id: String,
+    submission_time: i64,
+}
+
+/// A successful answer's JSON; None for an error status or anything else.
+fn answer<T: DeserializeOwned>(r: &TransportResponse) -> Option<T> {
+    (200..300).contains(&r.status).then(|| serde_json::from_slice(&r.body).ok()).flatten()
+}
+
+#[cfg_attr(feature = "ffi", uniffi::export)]
+impl Client {
+    /// Fetches the server account's plays submitted since the last fetch into the database, for
+    /// [`Core::stats_page`]. Asks nothing with the setting off or without a password.
+    pub async fn server_history_sync(&self) -> ServerHistory {
+        match self.fetch_server_plays().await {
+            Ok(true) => ServerHistory::Current,
+            Ok(false) => ServerHistory::Unavailable,
+            Err(e) if e.is_io() => ServerHistory::Unreached,
+            Err(_) => ServerHistory::Unavailable,
+        }
+    }
+}
+
+impl Client {
+    /// Logs in to Navidrome's own API and keeps the plays with ids above the newest kept, walking the
+    /// history newest first; ids, not play times, so plays submitted late are not missed. Kept only once
+    /// all arrived, so an interrupted walk leaves no gap. False when the server has no history to give.
+    async fn fetch_server_plays(&self) -> NetResult<bool> {
+        let login = self.core.native_login.read().clone().filter(|_| self.settings().prefs(|p| p.server_history));
+        let Some((user, password)) = login else { return Ok(false) };
+        let base = self.core.server.read().base.clone();
+        let json = serde_json::json!({ "username": user, "password": password }).to_string();
+        let r = self.transport.send(Exchange { url: format!("{base}/auth/login"), json: Some(json), ..Default::default() }).await?;
+        let Some(Login { token }) = answer(&r) else { return Ok(false) };
+        let headers = HashMap::from([("x-nd-authorization".to_string(), format!("Bearer {token}"))]);
+        let mut newest = server_plays_newest(&self.core.db.lock())?;
+        let mut replace = false;
+        let mut fresh = Vec::new();
+        for start in (0..).step_by(SERVER_PAGE) {
+            let url = format!("{base}/api/scrobble?_sort=id&_order=DESC&_start={start}&_end={}", start + SERVER_PAGE);
+            let r = self.transport.send(Exchange { url, headers: headers.clone(), ..Default::default() }).await?;
+            let Some(page) = answer::<Vec<Scrobble>>(&r) else { return Ok(false) };
+            // The server's newest play is older than one kept: its database was reset.
+            if start == 0 && newest > page.first().map(|s| s.id) {
+                (newest, replace) = (None, true);
+            }
+            let kept = |id: i64| newest.is_some_and(|n| id <= n);
+            let last = page.len() < SERVER_PAGE || page.iter().any(|s| kept(s.id));
+            fresh.extend(page.into_iter().filter(|s| !kept(s.id)).map(|s| ServerPlay { id: s.id, song_id: s.media_file_id, at_ms: s.submission_time * 1000 }));
+            if last {
+                break;
+            }
+        }
+        server_plays_keep(&mut self.core.db.lock(), &fresh, replace)?;
+        Ok(true)
+    }
+}
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
@@ -214,6 +292,129 @@ pub(crate) mod tests {
         record(&mut core.db.lock(), &s, sunday_late, 200_000, 2 * 3_600_000, NOW).unwrap();
         let st = stats(&core, 0, i64::MAX, 1);
         assert_eq!((st.plays_per_hour[1], st.plays_per_weekday[0]), (1, 1));
+    }
+
+    mod server {
+        use super::*;
+        use crate::browse::StatsSource;
+        use crate::client::tests::{block, client, Fake};
+        use crate::client::NetProfile;
+        use crate::transport::FailureKind;
+        use crate::ServerConfig;
+
+        const TOKEN: &str = r#"{"id":"u1","name":"U","username":"u","token":"tok"}"#;
+
+        /// Navidrome's answer for plays `ids`, each at `id` hours after 2026-06-01 00:00 UTC.
+        fn page(ids: &[i64]) -> String {
+            let rows: Vec<String> = ids.iter().map(|id| format!(r#"{{"id":{id},"mediaFileId":"s{}","submissionTime":{}}}"#, id % 2, 1_780_272_000 + id * 3600)).collect();
+            format!("[{}]", rows.join(","))
+        }
+
+        fn sync(c: &Client, fake: &Fake, answers: &[&str]) -> ServerHistory {
+            for a in answers {
+                fake.answer(a);
+            }
+            block(c.server_history_sync())
+        }
+
+        fn server_plays(c: &Client) -> u32 {
+            c.core.stats_page(0, StatsSource::ServerAccount, 0).unwrap().stats.plays
+        }
+
+        #[test]
+        fn fetches_only_new_plays() {
+            let (c, fake) = client(NetProfile { url: "http://nd:4533".into(), ..Default::default() });
+            assert_eq!(sync(&c, &fake, &[TOKEN, &page(&[3, 2]), &page(&[1])]), ServerHistory::Current);
+            let sent = fake.sent.lock().clone();
+            assert_eq!(sent[0].url, "http://nd:4533/auth/login");
+            let login: serde_json::Value = serde_json::from_str(sent[0].json.as_deref().unwrap()).unwrap();
+            assert_eq!(login, serde_json::json!({ "username": "u", "password": "p" }));
+            assert_eq!(sent[1].url, "http://nd:4533/api/scrobble?_sort=id&_order=DESC&_start=0&_end=2");
+            assert_eq!(sent[1].headers.get("x-nd-authorization").map(String::as_str), Some("Bearer tok"));
+            assert_eq!((sent[1].json.as_deref(), sent[2].url.as_str()), (None, "http://nd:4533/api/scrobble?_sort=id&_order=DESC&_start=2&_end=4"));
+            assert_eq!(server_plays(&c), 3);
+
+            // The walk stops at the first page reaching a kept play; a late submission counts once.
+            fake.sent.lock().clear();
+            assert_eq!(sync(&c, &fake, &[TOKEN, &page(&[5, 4]), &page(&[3, 2])]), ServerHistory::Current);
+            assert_eq!((fake.sent.lock().len(), server_plays(&c)), (3, 5));
+
+            // An interrupted walk keeps nothing, and the next one fetches it all.
+            fake.answer(TOKEN);
+            fake.answer(&page(&[7, 6]));
+            fake.fail(FailureKind::Timeout);
+            assert_eq!(block(c.server_history_sync()), ServerHistory::Unreached);
+            assert_eq!(server_plays(&c), 5);
+            assert_eq!(sync(&c, &fake, &[TOKEN, &page(&[7, 6]), &page(&[5, 4])]), ServerHistory::Current);
+            assert_eq!(server_plays(&c), 7);
+
+            // Another account's plays go with the library.
+            c.core.configure(ServerConfig { url: "http://nd:4533".into(), user: "v".into(), password: "p".into(), ..Default::default() }).unwrap();
+            assert_eq!(server_plays(&c), 0);
+        }
+
+        #[test]
+        fn a_reset_server_history_replaces_the_kept_plays() {
+            let (c, fake) = client(NetProfile { url: "http://nd".into(), ..Default::default() });
+            assert_eq!(sync(&c, &fake, &[TOKEN, &page(&[5, 4]), &page(&[3, 2]), &page(&[1])]), ServerHistory::Current);
+            assert_eq!(sync(&c, &fake, &[TOKEN, &page(&[2, 1]), "[]"]), ServerHistory::Current);
+            assert_eq!(server_plays(&c), 2);
+            assert_eq!(sync(&c, &fake, &[TOKEN, "[]"]), ServerHistory::Current);
+            assert_eq!(server_plays(&c), 0);
+        }
+
+        #[test]
+        fn a_server_without_history_is_unavailable() {
+            let (c, fake) = client(NetProfile { url: "http://nd".into(), ..Default::default() });
+            fake.answers.lock().push_back(Ok((401, br#"{"error":"Invalid username or password"}"#.to_vec())));
+            assert_eq!(block(c.server_history_sync()), ServerHistory::Unavailable);
+            fake.answers.lock().push_back(Ok((200, b"<html>octo-fiesta</html>".to_vec())));
+            assert_eq!(block(c.server_history_sync()), ServerHistory::Unavailable);
+            fake.answer(TOKEN);
+            fake.answers.lock().push_back(Ok((404, vec![])));
+            assert_eq!(block(c.server_history_sync()), ServerHistory::Unavailable);
+            fake.fail(FailureKind::UnknownHost);
+            assert_eq!(block(c.server_history_sync()), ServerHistory::Unreached);
+            assert_eq!(fake.sent.lock().len(), 5);
+
+            // Nothing is asked with an API key, or with the setting off.
+            c.core.configure(ServerConfig { url: "http://nd".into(), user: "u".into(), api_key: Some("k".into()), ..Default::default() }).unwrap();
+            assert_eq!(block(c.server_history_sync()), ServerHistory::Unavailable);
+            assert_eq!(fake.sent.lock().len(), 5);
+            let (c, fake) = client(NetProfile { url: "http://nd".into(), ..Default::default() });
+            c.settings().open("").unwrap();
+            c.settings().edit_by_name("serverHistory", "false").unwrap();
+            assert_eq!(block(c.server_history_sync()), ServerHistory::Unavailable);
+            assert!(fake.sent.lock().is_empty() && fake.asked().is_empty());
+        }
+
+        #[test]
+        fn device_and_server_plays_are_counted_apart() {
+            let (c, fake) = client(NetProfile { url: "http://nd".into(), ..Default::default() });
+            let (s0, s1) = (song("s0", "A", "X", "Al", "Rock", 0), song("s1", "B", "Y", "Bl", "Jazz", 0));
+            db::index(&mut c.core.db.lock(), &[], &[], &[s0.clone(), s1]).unwrap();
+            listen(&c.core, &s0, db::now_ms() - DAY);
+            skip(&c.core, &s0, db::now_ms() - DAY + 1);
+            // Plays 1 to 3: Monday 01:00 to 03:00 UTC; s1, s0, s1.
+            assert_eq!(sync(&c, &fake, &[TOKEN, &page(&[3, 2]), &page(&[1])]), ServerHistory::Current);
+
+            let device = c.core.stats_page(0, StatsSource::Device, 0).unwrap();
+            assert_eq!((device.source, device.stats.plays, device.stats.skips, device.stats.listened_ms), (StatsSource::Device, 1, 1, 205_000));
+            let server = c.core.stats_page(0, StatsSource::ServerAccount, 0).unwrap();
+            let st = &server.stats;
+            assert_eq!((server.source, st.plays, st.skips, st.listened_ms, st.distinct_songs), (StatsSource::ServerAccount, 3, 0, 0, 2));
+            assert_eq!((st.top_songs[0].song.id.as_str(), st.top_songs[0].plays), ("s1", 2));
+            assert_eq!((st.top_artists[0].name.as_str(), st.top_genres[0].name.as_str()), ("Y", "Jazz"));
+            assert_eq!((st.plays_per_hour[1], st.plays_per_hour[3], st.plays_per_weekday[0]), (1, 1, 3));
+            assert_eq!(st.first_play.as_ref().unwrap().started_ms, 1_780_275_600_000);
+
+            // Charted at the offset asked: Monday 01:00 to 03:00 UTC is Sunday 22:00 to Monday 00:00 at UTC-3.
+            let west = c.core.stats_page(0, StatsSource::ServerAccount, -3 * 3_600_000).unwrap().stats;
+            assert_eq!((west.plays_per_hour[22], west.plays_per_hour[0], west.plays_per_hour[1]), (1, 1, 0));
+            assert_eq!((west.plays_per_weekday[6], west.plays_per_weekday[0]), (2, 1));
+            assert_eq!((west.active_days, west.longest_streak_days), (2, 2));
+            assert_eq!(c.core.stats_page(7, StatsSource::ServerAccount, 0).unwrap().stats.plays, 0, "older than a week");
+        }
     }
 
     #[test]
