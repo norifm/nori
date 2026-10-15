@@ -34,6 +34,11 @@ def package(binary, output, version, arch):
     return artifact
 
 
+def runs_here(binary):
+    """Whether the binary is native to this Mac; an Intel one would start Rosetta."""
+    return platform.machine() in subprocess.check_output(["lipo", "-archs", str(binary)], text=True).split()
+
+
 def verify(artifact):
     subprocess.run(["hdiutil", "verify", str(artifact)], check=True)
     with tempfile.TemporaryDirectory(prefix="nori-dmg-check-") as temporary:
@@ -42,11 +47,12 @@ def verify(artifact):
             root = Path(temporary)
             assert (root / "Applications").readlink() == Path("/Applications")
             subprocess.run(["codesign", "--verify", "--strict", str(root / "nori.app")], check=True)
-            result = subprocess.run([str(root / "nori.app/Contents/MacOS/nori"), "--help"], capture_output=True, text=True)
-            assert "usage: nori-desktop" in result.stdout + result.stderr, result.stderr
+            binary = root / "nori.app/Contents/MacOS/nori"
+            if runs_here(binary):
+                result = subprocess.run([str(binary), "--help"], capture_output=True, text=True)
+                assert "usage: nori-desktop" in result.stdout + result.stderr, result.stderr
         finally:
-            # Forced: Rosetta keeps an Intel binary it ran open for a while; the mount is read-only.
-            subprocess.run(["hdiutil", "detach", "-force", temporary], check=True)
+            subprocess.run(["hdiutil", "detach", temporary], check=True)
 
 
 if __name__ == "__main__":
