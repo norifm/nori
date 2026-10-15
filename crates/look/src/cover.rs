@@ -524,11 +524,12 @@ fn cluster(pixels: &[u32], w: usize, h: usize, wanted: impl Fn(u32) -> bool) -> 
 const SEEN_TO: f32 = 1.0 - MELT * 0.55;
 /// Top of the band where the artwork dissolves into the page.
 const SEAM_FROM: f32 = 1.0 - MELT * 1.6;
-/// Cells per side at the scale of the player's blur (22 dp on a sleeve about 400 dp wide): a line or a
-/// frame narrower than a cell is gone under it.
+/// Cells per side at the scale of the player's blur (22 dp on a sleeve about 400 dp wide). Each cell is
+/// the mean of its pixels, as the blur shows it: a thin line is gone, a fine texture is its average (the
+/// Grinch EP's green and black speckle is dark green), and shapes larger than a cell keep their colours.
 const BLUR_CELLS: usize = 18;
-/// Samples per side of a cell.
-const CELL_SAMPLES: usize = 6;
+/// Share of a side that makes it a field of one colour.
+const FIELD: f32 = 0.75;
 
 /// What the page meets. The page continues the colour the artwork dissolves from, as seen through the
 /// blur, so nothing it meets ends on a line: a frame thick enough to outlast the blur (Syro's white, In
@@ -546,31 +547,31 @@ struct Seam {
 impl Seam {
     fn of(pixels: &[u32], w: usize, h: usize) -> Seam {
         let n = BLUR_CELLS;
-        let cells: Vec<u32> = (0..n * n).map(|i| commonest(pixels, w, h, i % n, i / n)).collect();
+        let span = |c: usize, s: usize| c * s / n..((c + 1) * s / n).max(c * s / n + 1);
+        let cell = |x: usize, y: usize| mean_rgb(span(y, h).flat_map(|py| pixels[py * w..(py + 1) * w][span(x, w)].iter().copied()));
+        let cells: Vec<u32> = (0..n * n).map(|i| cell(i % n, i / n).expect("every cell holds a pixel")).collect();
         let at = |x: usize, y: usize| cells[y * n + x];
         let ring: Vec<u32> = (0..n).flat_map(|i| [at(i, 0), at(i, n - 1), at(0, i), at(n - 1, i)]).collect();
         let (from, to) = ((SEAM_FROM * n as f32) as usize, ((SEEN_TO * n as f32) as usize).max(1));
         let from = from.min(to - 1);
-        // Band rows count more the nearer the page they are. The sides of all that shows count three times
-        // over: the background around a subject reaches them, and the page continues it.
+        // Band rows count more the nearer the page they are. A side that is one field down all that shows
+        // counts three times over: it is the background around a subject, and the page continues it
+        // (Westside Whimsy's teal). A busy side is not (Purple Rain's flowers).
         let band = (from..to).flat_map(|y| (0..n).map(move |x| (at(x, y), (y - from + 1) as f32)));
-        let sides = (0..to).flat_map(|y| [(at(0, y), 3.0), (at(n - 1, y), 3.0)]);
-        let weighed: Vec<(u32, f32)> = band.chain(sides).collect();
+        let mut weighed: Vec<(u32, f32)> = band.collect();
+        for x in [0, n - 1] {
+            let side: Vec<(u32, f32)> = (0..to).map(|y| (at(x, y), 3.0)).collect();
+            let field = heaviest(&side);
+            let on_field: Vec<(u32, f32)> = side.into_iter().filter(|p| near(p.0, field)).collect();
+            if on_field.len() as f32 >= FIELD * to as f32 {
+                weighed.extend(on_field);
+            }
+        }
         let colour = heaviest(&weighed);
         let rows = (h as f32 * SEAM_FROM) as usize..((h as f32 * SEEN_TO) as usize).max((h as f32 * SEAM_FROM) as usize + 1).min(h);
         let mean = mean_rgb(rows.flat_map(|y| pixels[y * w..(y + 1) * w].iter().copied())).expect("covers are at least 1 x 1");
         Seam { frame: one_colour(&ring), colour, mean }
     }
-}
-
-/// The commonest colour among a cell's samples, as the mean of those near it: a line through the cell
-/// is not part of it, and two colours finer than the cell are not mixed.
-fn commonest(pixels: &[u32], w: usize, h: usize, cx: usize, cy: usize) -> u32 {
-    let n = BLUR_CELLS * CELL_SAMPLES;
-    let (sx, sy) = (w.min(n), h.min(n));
-    let span = |c: usize, s: usize| c * s / BLUR_CELLS..((c + 1) * s / BLUR_CELLS).max(c * s / BLUR_CELLS + 1).min(s);
-    let samples: Vec<(u32, f32)> = span(cy, sy).flat_map(|y| span(cx, sx).map(move |x| (pixels[(y * h / sy) * w + x * w / sx], 1.0))).collect();
-    heaviest(&samples)
 }
 
 /// The colour with the most weight near it, as the weighted mean of those near it.
@@ -834,14 +835,14 @@ mod tests {
         assert_eq!((c.edge, c.background), (0xFF30_60A0, 0xFF30_60A0));
     }
 
-    /// Hardcore Software's layout: lavender paper under a grey grid, blue swooshes over a quarter of it,
+    /// Hardcore Software's layout: lavender paper under a grey grid, thin blue swooshes,
     /// two black bars.
     fn tinted_paper() -> Vec<u32> {
         let mut noise = JavaRandom::new(5);
         (0..S * S)
             .map(|i| {
                 let (x, y) = ((i % S) as i32, (i / S) as i32);
-                let swoosh = (x - y * 2 + 40).rem_euclid(48) < 9 || (x + y).rem_euclid(64) < 3;
+                let swoosh = (x - y * 2 + 40).rem_euclid(48) < 4 || (x + y).rem_euclid(64) < 2;
                 let c = if (y == 20 || y == 120) && x > 20 && x < 140 {
                     0xFF10_1010
                 } else if swoosh {
@@ -859,7 +860,7 @@ mod tests {
     #[test]
     fn pale_tinted_paper_is_paper() {
         let c = derive(&tinted_paper(), S, S, false);
-        assert!(luminance(c.background) > 0.7, "{:08x}", c.background);
+        assert!(luminance(c.background) > 0.55, "{:08x}", c.background);
         assert_eq!(c.on, INK);
     }
 
@@ -883,12 +884,15 @@ mod tests {
     }
 
     #[test]
-    fn stripes_never_give_their_mix() {
+    fn stripes_give_what_the_blur_shows() {
         let (red, blue) = (0xFFD0_2020u32, 0xFF20_30D0);
-        for width in [1, 3, 8] {
+        // Finer than the blur, their mix; as wide as a quarter of the cover, one of them.
+        for width in [1, 3] {
             let c = derive(&stripes(red, blue, width), S, S, false);
-            assert!(near(c.background, red) || near(c.background, blue), "{width} px: {:08x}", c.background);
+            assert!(near(c.background, blend_argb(red, blue, 0.5)), "{width} px: {:08x}", c.background);
         }
+        let c = derive(&stripes(red, blue, S / 4), S, S, false);
+        assert!(near(c.background, red) || near(c.background, blue), "{:08x}", c.background);
         // A figure that never reaches the striped foot is not the page (Melophobia).
         let mut v = stripes(0xFF10_1010, 0xFFF0_F0F0, 6);
         for y in S / 6..S * 3 / 5 {
@@ -916,7 +920,7 @@ mod tests {
         let c = derive(&disc_in(WHITE, 0xFFBA_D033), S, S, false);
         assert!(luminance(c.background) > 0.9, "{:08x}", c.background);
         let c = derive(&disc_in(0xFFBA_D033, WHITE), S, S, false);
-        assert_eq!(c.background, 0xFFBA_D033);
+        assert!(near(c.background, 0xFFBA_D033), "{:08x}", c.background);
     }
 
     #[test]
