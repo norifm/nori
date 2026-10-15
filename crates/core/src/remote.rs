@@ -1930,6 +1930,9 @@ impl Remote {
 
     /// Hands the host's playback to the follower when it changed.
     fn follow_lead(self: &Arc<Self>) {
+        // Held from working the lead out until the follower has it, so leads reach it in the order they
+        // were made, and the last one it is given is the one noted.
+        let follower = self.follower.lock();
         let lead = {
             let mut i = self.inner.lock();
             let lead = i.lead();
@@ -1940,7 +1943,7 @@ impl Remote {
             }
             lead
         };
-        if let Some(f) = self.follower.lock().clone() {
+        if let Some(f) = &*follower {
             f.lead(lead);
         }
     }
