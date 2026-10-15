@@ -16,7 +16,7 @@ use nori_core::transport::{block_on, Exchange, FailureKind, Transport, Transport
 use nori_player::playlist::Hand;
 use nori_core::{Core, ServerConfig, Song};
 use nori_remote::clock;
-use nori_remote::wire::{Answer, Body, DeviceKind, Event, Member, Op, Outgoing, Refusal, Role, Room};
+use nori_remote::wire::{Answer, Body, DeviceKind, DeviceState, Event, Member, Op, Outgoing, Refusal, Role, Room};
 use parking_lot::Mutex;
 
 const SERVER: &str = "http://octo:5274";
@@ -248,6 +248,21 @@ impl Relay {
         for device in devices.into_iter().filter_map(|d| d.upgrade()) {
             device.stop();
         }
+    }
+
+    /// Lists device `id` in ann's room with `state`; None as the relay lists a device that polled and has
+    /// said nothing since.
+    fn list(&self, id: &str, state: Option<DeviceState>) {
+        let mut hub = self.hub.lock();
+        let room = hub.rooms.entry("u:ann".into()).or_default();
+        match room.members.iter_mut().find(|m| m.id == id) {
+            Some(m) => m.state = state,
+            None => room.members.push(Member { id: id.into(), name: id.into(), kind: DeviceKind::Phone, state }),
+        }
+        hub.seq += 1;
+        let seq = hub.seq;
+        room_touched(&mut hub, "u:ann", seq);
+        self.wake();
     }
 
     /// Starts afresh, as after a restart: every room and key is gone, and held polls answer.
@@ -1764,24 +1779,28 @@ fn far_devices_are_hidden_while_the_relay_cannot_be_reached() {
     relay.close();
 }
 
+/// A mirrored device that leaves the lists is no longer shown as the one played on: the relay no longer
+/// answers, or lists it without a state.
 #[test]
 fn a_mirrored_device_that_leaves_the_lists_is_no_longer_mirrored() {
-    let relay = Relay::new();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
-    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
-    phone.playing(&["s1"], 0);
-    phone.remote.clone().serve(true);
-    let phone_id = phone.remote.id();
-    desk.remote.clone().watch(true);
-    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
-    desk.remote.clone().pick(Some(phone_id.clone()));
-    desk.until("the phone mirrored", |r| r.active());
+    for relay_down in [true, false] {
+        let relay = Relay::new();
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        relay.list("phone", Some(DeviceState { playing: true, index: Some(0), len: 1, ..Default::default() }));
+        desk.remote.clone().watch(true);
+        desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == "phone").and_then(|d| d.state));
+        desk.remote.clone().pick(Some("phone".into()));
+        desk.until("the phone mirrored", |r| r.active());
 
-    // The relay no longer answers: the phone is not listed, so it is not shown as the one played on.
-    relay.go_down(true);
-    desk.until("the phone hidden", |r| r.devices().is_empty().then_some(()));
-    desk.until("the phone no longer mirrored", |r| r.active().is_none().then_some(()));
-    relay.close();
+        if relay_down {
+            relay.go_down(true);
+        } else {
+            relay.list("phone", None);
+        }
+        desk.until("the phone hidden", |r| r.devices().is_empty().then_some(()));
+        desk.until(&format!("the phone no longer mirrored, relay down: {relay_down}"), |r| r.active().is_none().then_some(()));
+        relay.close();
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
