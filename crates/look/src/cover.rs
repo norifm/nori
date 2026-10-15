@@ -133,8 +133,11 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, dark: bool, amoled: bool) -> C
     let ink = (body_ink && !light_foot) || (sleeve_paper && black_foot);
     let page_dark = (dark && !paper) || ink || black_foot;
     let ink_or_paper = paper || ink || body_grey;
+    // A monochrome sleeve's accent is its own tint, unless a vivid colour covers 1 % of it (Parachutes'
+    // orange globe, Turn On the Bright Lights' red box); smaller marks are specks.
+    let vivid = p.vibrant.or(p.light_vibrant).filter(|s| s.population * 100 >= p.area && ok.lightness_chroma(s.rgb).1 >= VIVID);
     let accent_seed = if ink_or_paper {
-        body
+        vivid.map_or(body, |s| s.rgb)
     } else {
         p.vibrant.or(p.light_vibrant).or(p.light_muted).or(p.dominant).map_or(body, |s| s.rgb)
     };
@@ -173,7 +176,7 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, dark: bool, amoled: bool) -> C
         // Near-black in the paper's hue.
         hsl_to_color([paper_hsl[0], paper_hsl[1].min(0.25), 0.17])
     } else {
-        readable(accent_seed, background, on)
+        readable(accent_seed, background, on, &ok)
     };
     let wash = (!(amoled && dark)).then(|| wash_of(pixels, w, h, background, page_dark, paper, ink));
     CoverColours {
@@ -206,7 +209,7 @@ pub fn under_white(c: &CoverColours) -> CoverColours {
         edge: down(c.edge),
         background,
         on: WHITE,
-        accent: readable(c.accent, background, WHITE),
+        accent: readable(c.accent, background, WHITE, &ok),
         wash: c.wash.as_ref().map(|w| w.iter().map(|&p| down(p)).collect()),
         wash_edge: down(c.wash_edge),
     }
@@ -392,7 +395,7 @@ const PAPER_CHROMA: f32 = 0.045;
 const INK_LIGHT: f32 = 0.15;
 const DIM: f32 = 0.26;
 /// Oklab chroma under which a colour is grey, from which a cell's hue vote counts fully, and from which
-/// it is vivid (part of a subject).
+/// it is vivid (part of a subject, or an accent on a monochrome sleeve).
 const GREY: f32 = 0.015;
 const HUED: f32 = 0.04;
 const VIVID: f32 = 0.08;
@@ -560,28 +563,42 @@ fn mean_rgb(px: impl Iterator<Item = u32>) -> Option<u32> {
     (n > 0).then(|| rgb((r / n) as i32, (g / n) as i32, (b / n) as i32))
 }
 
-/// Steps `color`'s lightness (away from the background's) until it reaches 3.2:1 contrast, else
-/// `fallback`.
-pub fn readable(color: u32, background: u32, fallback: u32) -> u32 {
-    stepped(color, background, luminance(background) < 0.4).unwrap_or(fallback)
+/// Contrast for text (WCAG AA): the accent writes the artist's name.
+const TEXT_CONTRAST: f64 = 4.5;
+/// Contrast for glyphs and controls.
+const GLYPH_CONTRAST: f64 = 3.2;
+
+/// Steps `color`'s lightness (away from the background's) until it reads as text on it, else `fallback`.
+fn readable(color: u32, background: u32, fallback: u32, ok: &Oklab) -> u32 {
+    stepped(color, background, luminance(background) < 0.4, TEXT_CONTRAST, ok).unwrap_or(fallback)
 }
 
-/// [`readable`] that also tries the opposite direction before `fallback`, for mid-tone surfaces.
+/// Like [`readable`] for a glyph, also trying the opposite direction before `fallback`, for mid-tone
+/// surfaces.
 pub fn readable_either_way(color: u32, background: u32, fallback: u32) -> u32 {
+    let ok = Oklab::new();
     let light = luminance(background) < 0.4;
-    stepped(color, background, light).or_else(|| stepped(color, background, !light)).unwrap_or(fallback)
+    let step = |towards_light| stepped(color, background, towards_light, GLYPH_CONTRAST, &ok);
+    step(light).or_else(|| step(!light)).unwrap_or(fallback)
 }
 
-fn stepped(color: u32, background: u32, towards_light: bool) -> Option<u32> {
-    if calculate_contrast(color, background) >= 3.2 {
+/// Each step also raises saturation, but never the chroma above `color`'s: HSL calls a near-black
+/// 020305 43 % saturated, and lightening it made a vivid blue.
+fn stepped(color: u32, background: u32, towards_light: bool, contrast: f64, ok: &Oklab) -> Option<u32> {
+    if calculate_contrast(color, background) >= contrast {
         return Some(color);
     }
+    let chroma = ok.lightness_chroma(color).1;
     let mut hsl = color_to_hsl(color);
     for _ in 1..=8 {
         hsl[2] = if towards_light { (hsl[2] + 0.07).min(0.92) } else { (hsl[2] - 0.07).max(0.15) };
         hsl[1] = (hsl[1] * 1.05).min(1.0);
-        let candidate = hsl_to_color(hsl);
-        if calculate_contrast(candidate, background) >= 3.2 {
+        let mut candidate = hsl_to_color(hsl);
+        let reached = ok.lightness_chroma(candidate).1;
+        if reached > chroma {
+            candidate = hsl_to_color([hsl[0], hsl[1] * chroma / reached, hsl[2]]);
+        }
+        if calculate_contrast(candidate, background) >= contrast {
             return Some(candidate);
         }
     }
@@ -594,17 +611,22 @@ mod tests {
 
     #[test]
     fn readable_text() {
+        let ok = Oklab::new();
         let (white, black, fallback) = (0xFFFF_FFFF, 0xFF12_1212, 0xFF67_50A4);
-        assert_eq!(readable(0xFF1E_5AA0, white, fallback), 0xFF1E_5AA0);
-        let on_white = readable(0xFFFF_E08A, white, fallback);
-        let on_black = readable(0xFF20_1060, black, fallback);
-        assert!(calculate_contrast(on_white, white) >= 3.2 && calculate_contrast(on_black, black) >= 3.2);
+        assert_eq!(readable(0xFF1E_5AA0, white, fallback, &ok), 0xFF1E_5AA0);
+        let on_white = readable(0xFFFF_E08A, white, fallback, &ok);
+        let on_black = readable(0xFF20_1060, black, fallback, &ok);
+        assert!(calculate_contrast(on_white, white) >= 4.5 && calculate_contrast(on_black, black) >= 4.5);
         assert!(on_white != fallback && on_black != fallback);
+
+        // A near-black stays nearly grey as it lightens (HSL calls 020305 43 % saturated).
+        let lifted = readable(0xFF02_0305, black, fallback, &ok);
+        assert!(calculate_contrast(lifted, black) >= 4.5 && ok.lightness_chroma(lifted).1 < 0.012, "{lifted:08x}");
 
         // Readable either way tries darker.
         // Pale blue accent on a mid-grey bar.
         let (accent, bar, ink) = (0xFFA0_B0C8, 0xFF8A_8878, 0xFFFF_FFFF);
-        assert_eq!(readable(accent, bar, ink), ink);
+        assert_eq!(readable(accent, bar, ink, &ok), ink);
         let got = readable_either_way(accent, bar, ink);
         assert!(got != ink && calculate_contrast(got, bar) >= 3.2 && luminance(got) < luminance(accent));
         let h = |c: u32| color_to_hsl(c)[0];
@@ -616,6 +638,7 @@ mod tests {
             for dark in [true, false] {
                 let c = derive(&solid(c0), S, S, dark, false);
                 assert!(calculate_contrast(c.on, c.background) >= 4.5, "{c0:08x} dark={dark}: {:08x} on {:08x}", c.on, c.background);
+                assert!(calculate_contrast(c.accent, c.background) >= 4.5, "{c0:08x} dark={dark}: accent {:08x} on {:08x}", c.accent, c.background);
             }
         }
     }
@@ -810,6 +833,29 @@ mod tests {
             assert!((hue(page) - hue(colour)).abs() < 15.0, "{colour:08x} made {page:08x}");
             assert!(calculate_contrast(WHITE, page) >= 8.0, "{page:08x}");
         }
+    }
+
+    /// Black with an orange disc of `radius` pixels in the middle.
+    fn black_with_disc(radius: f32) -> Vec<u32> {
+        let c = S as f32 / 2.0;
+        (0..S * S)
+            .map(|i| {
+                let (x, y) = ((i % S) as f32 + 0.5 - c, (i / S) as f32 + 0.5 - c);
+                if x * x + y * y < radius * radius { 0xFFE0_7810 } else { 0xFF08_0808 }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn black_sleeve_accent_is_its_vivid_mark() {
+        let ok = Oklab::new();
+        // A 22 px disc covers 6 %: the accent is its orange.
+        let c = derive(&black_with_disc(22.0), S, S, true, false);
+        let [h, _, _] = color_to_hsl(c.accent);
+        assert!((20.0..45.0).contains(&h) && ok.lightness_chroma(c.accent).1 >= VIVID, "{:08x}", c.accent);
+        // A 2 px speck (0.05 %) is not the cover's colour: the accent stays grey.
+        let c = derive(&black_with_disc(2.0), S, S, true, false);
+        assert!(ok.lightness_chroma(c.accent).1 < GREY, "{:08x}", c.accent);
     }
 
     /// `n` x `n` cover: a blue disc on white paper under a grey grid of lines `n / 160` pixels wide.
