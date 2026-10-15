@@ -1103,6 +1103,10 @@ impl Remote {
             let before = i.browsing();
             i.serving = on;
             i.published = None;
+            // A held poll saying this device serves says so again as it ends: it is asked anew.
+            if !on && i.relay_polling {
+                i.end_relay_poll();
+            }
             i.door = None;
             if on {
                 i.door = self.open_door();
@@ -1115,8 +1119,8 @@ impl Remote {
         }
         if on {
             self.publish();
-        } else if self.relay() != RelaySupport::Unsupported {
-            self.out(Out::Get(self.poll_url(None, false, false)));
+        } else {
+            self.leave();
         }
         self.keep_polling();
     }
@@ -1661,7 +1665,6 @@ impl Remote {
         self.retry.notify_all();
         self.timing.notify_all();
         waiting.into_values().for_each(Waker::wake);
-        self.out.lock().take();
         let here = std::thread::current().id();
         // Taken apart from the loop: a thread ending may still lock the list to start another.
         let threads = std::mem::take(&mut *self.threads.lock());
@@ -1670,6 +1673,8 @@ impl Remote {
                 let _ = t.join();
             }
         }
+        // After the threads: a poller ending may send the leave again.
+        self.out.lock().take();
         let _ = self.out_ended.lock().recv_timeout(Duration::from_millis(SENT_WAIT_MS));
         self.shown.changed();
     }
@@ -2115,6 +2120,13 @@ impl Remote {
         self.spawn("nori-remote", move || me.poll_relay(generation));
     }
 
+    /// Tells the relay this device no longer serves.
+    fn leave(&self) {
+        if self.relay() != RelaySupport::Unsupported {
+            self.out(Out::Get(self.poll_url(None, false, false)));
+        }
+    }
+
     /// Starts the pollers that should run and are not.
     fn keep_polling(self: &Arc<Self>) {
         let mut start_relay = None;
@@ -2149,43 +2161,58 @@ impl Remote {
     }
 
     fn poll_relay(self: Arc<Self>, generation: u64) {
+        let said_serving = self.clone().relay_polls(generation);
+        // Its last poll, saying this device serves, may reach the relay after the leave: it goes again.
+        if said_serving && !self.inner.lock().serving {
+            self.leave();
+        }
+    }
+
+    /// Polls the relay while `generation` is current; whether its last poll said this device serves.
+    fn relay_polls(self: Arc<Self>, generation: u64) -> bool {
         let mut first = true;
+        let mut said_serving = false;
         loop {
             let url = {
                 let mut i = self.inner.lock();
                 if i.generation != generation {
-                    return;
+                    return said_serving;
                 }
                 // A mirrored device paused out of sight: nothing else wants the relay.
                 if !i.wants_relay() {
                     i.relay_polling = false;
-                    return;
+                    return said_serving;
                 }
                 let url = self.poll_url(i.since, !first && !i.relay_down, i.serving);
                 first = false;
+                said_serving = i.serving;
                 url
             };
-            let Some(got) = self.get(url, POLL_TIMEOUT_MS, |i| i.generation == generation) else { return };
+            let Some(got) = self.get(url, POLL_TIMEOUT_MS, |i| i.generation == generation) else { return said_serving };
             let received = clock::now_us();
             {
                 let mut i = self.inner.lock();
                 // Asked for before the rooms changed: its seq may pass events of a room it did not cover.
                 if i.generation != generation {
-                    return;
+                    return said_serving;
                 }
                 i.probing = false;
             }
             let found = support(&got);
             self.note_relay(found, &got);
             if self.jam_gone(&got) {
-                return self.jam_ended(generation);
+                self.jam_ended(generation);
+                return said_serving;
             }
             match (found, got) {
                 (Some(RelaySupport::Supported), Ok(body)) => {
                     self.inner.lock().relay = RelaySupport::Supported;
                     self.took(answer(&body).unwrap_or_default(), received);
                 }
-                (Some(_), _) => return self.no_relay(generation),
+                (Some(_), _) => {
+                    self.no_relay(generation);
+                    return said_serving;
+                }
                 (None, _) => {
                     if !std::mem::replace(&mut self.inner.lock().relay_down, true) {
                         self.follow_active();

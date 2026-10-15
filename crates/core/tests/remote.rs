@@ -123,6 +123,15 @@ struct Relay {
     opens: AtomicU64,
     /// Polls with no `since` are not answered: no device has its first answer.
     first_answers_held: std::sync::atomic::AtomicBool,
+    /// The next poll of a device saying it serves stops on its way, sent: see [`Relay::late_poll`].
+    late_poll: Mutex<Option<LatePoll>>,
+}
+
+struct LatePoll {
+    dev: String,
+    caught: Sender<()>,
+    go: Receiver<()>,
+    arrived: Sender<()>,
 }
 
 const SERVER_SKEW_US: i64 = 9_000_000;
@@ -158,7 +167,7 @@ impl Relay {
     fn new() -> Arc<Relay> {
         Arc::new(Relay {
             devices: Mutex::default(),
-            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: Default::default(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default() })
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: Default::default(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None) })
     }
 
     fn absent() -> Arc<Relay> {
@@ -254,6 +263,14 @@ impl Relay {
         let _hub = self.hub.lock();
         self.down.store(down, Ordering::Relaxed);
         self.wake();
+    }
+
+    /// Device `dev`'s next poll saying it serves stops on its way here, sent and past recall: told on
+    /// the first channel; it goes on once the second is sent to, and has arrived when the third tells.
+    fn late_poll(&self, dev: &str) -> (Receiver<()>, Sender<()>, Receiver<()>) {
+        let ((caught, on_way), (go, wait), (arrived, here)) = (channel(), channel(), channel());
+        *self.late_poll.lock() = Some(LatePoll { dev: dev.to_string(), caught, go: wait, arrived });
+        (on_way, go, here)
     }
 
     /// Answers the polls with no `since` held until now, and those to come.
@@ -499,7 +516,18 @@ impl Transport for Relay {
             if self.leave_late.load(Ordering::Relaxed) && params.get("serve").map(String::as_str) == Some("0") {
                 std::thread::sleep(Duration::from_millis(250));
             }
+            let late = params.get("serve").filter(|s| *s == "1").and_then(|_| {
+                let mut late = self.late_poll.lock();
+                late.take_if(|l| params.get("dev") == Some(&l.dev))
+            });
+            if let Some(l) = &late {
+                l.caught.send(()).unwrap();
+                l.go.recv().unwrap();
+            }
             self.arrived(&params);
+            if let Some(l) = late {
+                l.arrived.send(()).unwrap();
+            }
             if !params.contains_key("since") {
                 self.first_answer().await;
             }
@@ -1293,6 +1321,34 @@ fn a_mirrored_device_is_timed_only_while_it_plays_on_screen() {
 
     desk.remote.clone().sight(Sight::Screen);
     desk.until("timed once it plays on screen", |_| (relay.clocks() > 0).then_some(()));
+    relay.close();
+}
+
+/// A device that stops serving while a poll saying it serves is on its way leaves again after it.
+#[test]
+fn a_device_leaves_after_its_last_poll() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    phone.playing(&["s1"], 0);
+    phone.remote.clone().serve(true);
+    let id = phone.remote.id();
+    let member = || relay.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == id);
+    eventually("the phone listed", || relay.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == id && m.state.is_some()));
+    let (caught, go, arrived) = relay.late_poll(&id);
+    // Its held poll answers, and the next one sets out.
+    {
+        let mut hub = relay.hub.lock();
+        hub.seq += 1;
+        let seq = hub.seq;
+        room_touched(&mut hub, "u:ann", seq);
+        relay.wake();
+    }
+    caught.recv_timeout(Duration::from_secs(10)).expect("the next poll on its way");
+    phone.remote.clone().serve(false);
+    eventually("the leave at the relay", || !member());
+    go.send(()).unwrap();
+    arrived.recv_timeout(Duration::from_secs(10)).expect("the poll arrived");
+    eventually("left again after it", || !member());
     relay.close();
 }
 
