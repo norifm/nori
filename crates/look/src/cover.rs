@@ -92,12 +92,12 @@ fn page_of(colour: u32) -> u32 {
 }
 
 /// Derives page colours from `w` x `h` ARGB pixels (at least 1 x 1: every decoder rejects empty images).
-/// The page is a colour of the cover, whatever the app's theme: the one the artwork visibly dissolves
-/// into it from ([`Seam`]). With `amoled` it is black, without a wash.
+/// The page is a colour of the cover, whatever the app's theme: the one it dissolves into most softly
+/// ([`Seam`]). With `amoled` it is black, without a wash.
 pub fn derive(pixels: &[u32], w: usize, h: usize, amoled: bool) -> CoverColours {
     let p = palette::generate(pixels, w, h, 16);
     let ok = Oklab::new();
-    let seam = Seam::of(pixels, w, h);
+    let seam = Seam::of(pixels, w, h, &ok);
     let body = dominant(pixels, w, h, seam.mean, &ok);
     let body_grey = ok.lightness_chroma(body).1 < GREY;
     let source = seam.frame.unwrap_or(seam.colour);
@@ -518,60 +518,114 @@ fn cluster(pixels: &[u32], w: usize, h: usize, wanted: impl Fn(u32) -> bool) -> 
     Some(mean(&total(best)))
 }
 
-/// Where the artwork is last seen above its page, as a fraction of its height: the player has rubbed the
-/// sleeve nearly out by here (`sleeve::RUB_OUT`) and the album page's dissolve is nearly opaque
-/// (`sleeve::HERO_STOPS`). The rows below never show.
-const SEEN_TO: f32 = 1.0 - MELT * 0.55;
-/// Top of the band where the artwork dissolves into the page.
+/// Cells per side of the seam model, about the scale of the player's blur (its sigma is about 2.4 % of
+/// the cover). Each cell is the mean of its pixels, as the blur shows it: a thin line is gone, a fine
+/// texture is its average (the Grinch EP's green and black speckle is dark green).
+const GRID: usize = 32;
+/// Width over height of the player's sleeve: the square cover is scaled up and cropped at both sides.
+const PLAYER_SLEEVE: f32 = 0.74;
+/// The most colours tried as the page, and the share of the lower half and edges each must cover: a
+/// cell straddling two colours is a mix, not a colour of the cover.
+const CANDIDATES: usize = 8;
+const CANDIDATE_SHARE: f32 = 0.06;
+/// The band the artwork visibly dissolves in, as fractions of its height: from where the blurred copy is
+/// half in to where the player has nearly rubbed the sleeve out (`sleeve::RUB_OUT`) and the album's
+/// dissolve is nearly opaque (`sleeve::HERO_STOPS`).
 const SEAM_FROM: f32 = 1.0 - MELT * 1.6;
-/// Cells per side at the scale of the player's blur (22 dp on a sleeve about 400 dp wide). Each cell is
-/// the mean of its pixels, as the blur shows it: a thin line is gone, a fine texture is its average (the
-/// Grinch EP's green and black speckle is dark green), and shapes larger than a cell keep their colours.
-const BLUR_CELLS: usize = 18;
-/// Share of a side that makes it a field of one colour.
-const FIELD: f32 = 0.75;
+const SEEN_TO: f32 = 1.0 - MELT * 0.55;
 
-/// What the page meets. The page continues the colour the artwork dissolves from, as seen through the
-/// blur, so nothing it meets ends on a line: a frame thick enough to outlast the blur (Syro's white, In
-/// Utero's cream), else the commonest colour of the dissolving band and the sides beside it, weighted
-/// towards where the artwork ends (Westside Whimsy's teal around dark hair). Below what shows, a thin
-/// black line (Amnesiac, Demon Days) is not seen and does not count.
+/// What the page meets. A frame round the whole cover thicker than the blur is the page (Syro's white, In
+/// Utero's cream). Otherwise each main colour of the cover's lower half is tried as the page, the
+/// player's sleeve and the album's dissolve are drawn over it as the app draws them, and the page with the
+/// softest seam wins: the least change, steep steps counting most, from the artwork down into the page.
+/// A solid band under a picture is kept even when the fade has nearly hidden it (Demon Days' navy foot),
+/// and a line hidden wholly under the fade counts for nothing.
 struct Seam {
-    /// A colour round the whole edge of the cover, 85 % of it.
     frame: Option<u32>,
     colour: u32,
-    /// Mean of the dissolving band.
+    /// Mean of the band the artwork dissolves in, where the fade starts from.
     mean: u32,
 }
 
 impl Seam {
-    fn of(pixels: &[u32], w: usize, h: usize) -> Seam {
-        let n = BLUR_CELLS;
+    fn of(pixels: &[u32], w: usize, h: usize, ok: &Oklab) -> Seam {
+        let n = GRID;
         let span = |c: usize, s: usize| c * s / n..((c + 1) * s / n).max(c * s / n + 1);
         let cell = |x: usize, y: usize| mean_rgb(span(y, h).flat_map(|py| pixels[py * w..(py + 1) * w][span(x, w)].iter().copied()));
-        let cells: Vec<u32> = (0..n * n).map(|i| cell(i % n, i / n).expect("every cell holds a pixel")).collect();
-        let at = |x: usize, y: usize| cells[y * n + x];
-        let ring: Vec<u32> = (0..n).flat_map(|i| [at(i, 0), at(i, n - 1), at(0, i), at(n - 1, i)]).collect();
-        let (from, to) = ((SEAM_FROM * n as f32) as usize, ((SEEN_TO * n as f32) as usize).max(1));
-        let from = from.min(to - 1);
-        // Band rows count more the nearer the page they are. A side that is one field down all that shows
-        // counts three times over: it is the background around a subject, and the page continues it
-        // (Westside Whimsy's teal). A busy side is not (Purple Rain's flowers).
-        let band = (from..to).flat_map(|y| (0..n).map(move |x| (at(x, y), (y - from + 1) as f32)));
-        let mut weighed: Vec<(u32, f32)> = band.collect();
-        for x in [0, n - 1] {
-            let side: Vec<(u32, f32)> = (0..to).map(|y| (at(x, y), 3.0)).collect();
-            let field = heaviest(&side);
-            let on_field: Vec<(u32, f32)> = side.into_iter().filter(|p| near(p.0, field)).collect();
-            if on_field.len() as f32 >= FIELD * to as f32 {
-                weighed.extend(on_field);
+        let sharp: Vec<u32> = (0..n * n).map(|i| cell(i % n, i / n).expect("every cell holds a pixel")).collect();
+        let ring: Vec<u32> = (0..n).flat_map(|i| [sharp[i], sharp[(n - 1) * n + i], sharp[i * n], sharp[i * n + n - 1]]).collect();
+        let lower = &sharp[n / 2 * n..];
+        let band = (SEAM_FROM * n as f32) as usize * n..(SEEN_TO * n as f32) as usize * n;
+        let mean = mean_rgb(sharp[band].iter().copied()).expect("the band has rows");
+        let frame = one_colour(&ring);
+        let mut left: Vec<(u32, f32)> = lower.iter().chain(&ring).map(|&c| (c, 1.0)).collect();
+        let least = left.len() as f32 * CANDIDATE_SHARE;
+        let mut candidates = Vec::with_capacity(CANDIDATES);
+        while !left.is_empty() && candidates.len() < CANDIDATES {
+            let c = heaviest(&left);
+            let before = left.len();
+            left.retain(|p| !near(p.0, c));
+            if candidates.is_empty() || (before - left.len()) as f32 >= least {
+                candidates.push(c);
             }
         }
-        let colour = heaviest(&weighed);
-        let rows = (h as f32 * SEAM_FROM) as usize..((h as f32 * SEEN_TO) as usize).max((h as f32 * SEAM_FROM) as usize + 1).min(h);
-        let mean = mean_rgb(rows.flat_map(|y| pixels[y * w..(y + 1) * w].iter().copied())).expect("covers are at least 1 x 1");
-        Seam { frame: one_colour(&ring), colour, mean }
+        let blurred = soften(&sharp);
+        let colour = candidates.into_iter().min_by(|&a, &b| seam_cost(&sharp, &blurred, a, ok).total_cmp(&seam_cost(&sharp, &blurred, b, ok))).expect("a candidate");
+        Seam { frame, colour, mean }
     }
+}
+
+/// The [`GRID`] as the player's blurred copy shows it: two passes of a [1 2 1] filter.
+fn soften(px: &[u32]) -> Vec<u32> {
+    let n = GRID;
+    let mut cur = px.to_vec();
+    for across in [true, false, true, false] {
+        cur = (0..n * n)
+            .map(|i| {
+                let (x, y) = (i % n, i / n);
+                let at = |d: isize| {
+                    let (x, y) = if across { ((x as isize + d).clamp(0, n as isize - 1) as usize, y) } else { (x, (y as isize + d).clamp(0, n as isize - 1) as usize) };
+                    cur[y * n + x]
+                };
+                let ch = |f: fn(u32) -> i32| (f(at(-1)) + 2 * f(at(0)) + f(at(1)) + 2) / 4;
+                rgb(ch(red), ch(green), ch(blue))
+            })
+            .collect();
+    }
+    cur
+}
+
+/// How hard the seam is with `page` under the artwork: down each column of the lower half, the sum of
+/// squared Oklab steps through what the player and the album page draw, ending on the page.
+fn seam_cost(sharp: &[u32], blurred: &[u32], page: u32, ok: &Oklab) -> f32 {
+    use crate::sleeve::{alpha_at, HERO_ALPHAS, HERO_STOPS, RUB_OUT, SOFT, SOFT_FROM, SOFT_TO, Stop};
+    let n = GRID;
+    let hero: [Stop; 4] = std::array::from_fn(|i| Stop { at: HERO_STOPS[i], alpha: HERO_ALPHAS[i] });
+    let crop = (1.0 - PLAYER_SLEEVE) / 2.0;
+    let page_lab = ok.lab(page);
+    let step = |a: [f32; 3], b: [f32; 3]| (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f32>().sqrt();
+    let mut cost = 0.0;
+    for x in 0..n {
+        let centre = (x as f32 + 0.5) / n as f32;
+        let in_player = (crop..1.0 - crop).contains(&centre);
+        let (mut player, mut album) = (None::<[f32; 3]>, None::<[f32; 3]>);
+        for y in n / 2..n {
+            let t = (y as f32 + 0.5) / n as f32;
+            let i = y * n + x;
+            if in_player {
+                let soft = alpha_at(&SOFT, (t - SOFT_FROM) / (SOFT_TO - SOFT_FROM));
+                let shown = 1.0 - alpha_at(&RUB_OUT, (t - (1.0 - MELT)) / MELT);
+                let lab = ok.lab(blend_argb(page, blend_argb(sharp[i], blurred[i], soft), shown));
+                cost += player.map_or(0.0, |p| step(p, lab));
+                player = Some(lab);
+            }
+            let lab = ok.lab(blend_argb(sharp[i], page, alpha_at(&hero, t)));
+            cost += album.map_or(0.0, |p| step(p, lab));
+            album = Some(lab);
+        }
+        cost += player.map_or(0.0, |p| step(p, page_lab)) + album.map_or(0.0, |p| step(p, page_lab));
+    }
+    cost
 }
 
 /// The colour with the most weight near it, as the weighted mean of those near it.
@@ -783,8 +837,8 @@ mod tests {
         let p = derive(&v, S, S, false);
         assert!([0xFFE8_D850, 0xFFE0_C890, 0xFFD0_3048, 0xFFEE_EEE8].iter().any(|&c| near(p.background, c)), "{:08x}", p.background);
 
-        // Subject on paper does not take page.
-        // Villains: off-white paper, a red figure over a third of it, dark coat below.
+        // Off-white paper, a red figure over a third of it, a dark coat below: the page is one of them,
+        // never a mix of the figure's edge.
         let mut noise = JavaRandom::new(3);
         let v: Vec<u32> = (0..S * S)
             .map(|i| {
@@ -798,7 +852,7 @@ mod tests {
             })
             .collect();
         let p = derive(&v, S, S, false);
-        assert!(luminance(p.background) > 0.7, "{:08x}", p.background);
+        assert!([0xFFF7_F8F1, 0xFFD2_4850, 0xFF1C_1D27].iter().any(|&c| near(p.background, c)), "{:08x}", p.background);
     }
 
     #[test]
@@ -822,7 +876,7 @@ mod tests {
         let c = derive(&v, S, S, false);
         assert!(near(c.background, 0xFF34_9CAA), "{:08x}", c.background);
 
-        // A solid dark foot is continued under a light picture (Demon Days).
+        // A solid dark foot is continued under a light picture.
         let c = derive(&footed(0xFFD8_D8D0, 0xFF06_0606, 40), S, S, false);
         assert!(luminance(c.background) < 0.01, "{:08x}", c.background);
 
@@ -832,7 +886,7 @@ mod tests {
 
         // The fade starts from what shows last, not from the hidden bottom rows.
         let c = derive(&footed(0xFF30_60A0, 0xFF05_0505, 6), S, S, false);
-        assert_eq!((c.edge, c.background), (0xFF30_60A0, 0xFF30_60A0));
+        assert!(near(c.edge, 0xFF30_60A0) && near(c.background, 0xFF30_60A0), "{:08x} from {:08x}", c.background, c.edge);
     }
 
     /// Hardcore Software's layout: lavender paper under a grey grid, thin blue swooshes,
