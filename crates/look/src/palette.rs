@@ -30,13 +30,15 @@ pub struct Palette {
     pub light_muted: Option<Swatch>,
     pub muted: Option<Swatch>,
     pub dark_muted: Option<Swatch>,
+    /// Pixels the populations are counted in (after the downscale).
+    pub area: i32,
 }
 
 /// `Palette.from(bitmap).maximumColorCount(max_colors).generate()` over `w` x `h` ARGB pixels.
 pub fn generate(pixels: &[u32], w: usize, h: usize, max_colors: usize) -> Palette {
     let scaled = scale_down(pixels, w, h);
-    let swatches = quantize(scaled.as_deref().unwrap_or(pixels), max_colors);
-    score(swatches)
+    let sampled = scaled.as_deref().unwrap_or(pixels);
+    score(quantize(sampled, max_colors), sampled.len() as i32)
 }
 
 /// `Palette.Builder.scaleBitmapDown`: above 112² pixels, nearest-neighbour downscale to that area, as
@@ -328,7 +330,7 @@ const VIBRANT: [f32; 3] = [0.35, 1.0, 1.0];
 const MUTED: [f32; 3] = [0.0, 0.3, 0.4];
 
 /// Scores each target in Palette's order; a picked swatch is excluded from later targets.
-fn score(swatches: Vec<Swatch>) -> Palette {
+fn score(swatches: Vec<Swatch>, area: i32) -> Palette {
     let dominant = swatches.iter().fold(None::<Swatch>, |best, s| match best {
         Some(b) if s.population <= b.population => Some(b),
         _ => Some(*s),
@@ -373,6 +375,7 @@ fn score(swatches: Vec<Swatch>) -> Palette {
         light_muted: pick(target(LIGHT, MUTED)),
         muted: pick(target(NORMAL, MUTED)),
         dark_muted: pick(target(DARK, MUTED)),
+        area,
     }
 }
 
