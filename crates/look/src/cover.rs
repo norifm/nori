@@ -95,10 +95,13 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, dark: bool, amoled: bool) -> C
     let foot = bottom_average(pixels, w, h);
     let edge_raw = foot.colour;
     let p = palette::generate(pixels, w, h, 16);
-    let body = dominant(pixels, w, h, edge_raw);
+    let ok = Oklab::new();
+    let body = dominant(pixels, w, h, edge_raw, &ok);
     let body_hsl = color_to_hsl(body);
-    // A white or pale grey sleeve is "paper": its page is its own colour, not a Palette swatch.
-    let sleeve_paper = body_hsl[2] > 0.85 || (body_hsl[1] < 0.10 && body_hsl[2] > 0.72);
+    let (body_light, body_colour) = ok.lightness_chroma(body);
+    let body_grey = body_colour < GREY;
+    // A white, pale or light grey sleeve is "paper": its page is its own colour, not a Palette swatch.
+    let sleeve_paper = body_light >= 0.86 || (body_grey && body_light >= 0.79);
     // A solid near-black foot forces a dark page (Demon Days' black frame would otherwise fade black
     // into white). Exception: a "frame", a thin contrasting strip (under half the melt) with the body
     // colour above it (Amnesiac's black line under the red book); the fade starts above it instead.
@@ -106,24 +109,24 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, dark: bool, amoled: bool) -> C
     let frame = foot.strip < MELT / 2.0
         && calculate_contrast(foot.colour, foot.above) >= 1.6
         && calculate_contrast(foot.above, body) < 1.25
-        && (body_hsl[1] < 0.15 || (((above[0] - body_hsl[0] + 540.0) % 360.0) - 180.0).abs() < 30.0);
+        && (body_grey || (((above[0] - body_hsl[0] + 540.0) % 360.0) - 180.0).abs() < 30.0);
     let solid = foot.solid && !frame;
     let edge_luma = luminance(edge_raw);
     let black_foot = solid && edge_luma < 0.03;
     // Paper and ink sleeves keep their own light or black page (with their tint) in either theme.
     // Mirror of the black foot: a solid light foot (>= 8 % of the height) under a would-be dark page
     // makes a paper page (In Utero, Dreamland).
-    let body_ink = body_hsl[2] < 0.10 && body_hsl[1] < 0.18;
+    let body_ink = body_grey && body_light < 0.21;
     let light_foot = solid && foot.strip >= 0.08 && edge_luma > 0.45 && !sleeve_paper && (dark || body_ink);
-    // Paper tint fades out below GREY_CHROMA levels of chroma and is gone under 4, so JPEG noise or a
-    // scanner cast does not tint the page while real creams stay.
+    // Paper tint fades out below 0.016 chroma and is gone under 0.006, so JPEG noise or a scanner cast
+    // does not tint the page while real creams stay.
     let paper_src = if light_foot { edge_raw } else { body };
     let mut paper_hsl = color_to_hsl(paper_src);
-    paper_hsl[1] *= ((chroma(paper_src) - 4) as f32 / (GREY_CHROMA - 4) as f32).clamp(0.0, 1.0);
+    paper_hsl[1] *= ((ok.lightness_chroma(paper_src).1 - 0.006) / 0.010).clamp(0.0, 1.0);
     let paper = (sleeve_paper && !black_foot) || light_foot;
     let ink = (body_ink && !light_foot) || (sleeve_paper && black_foot);
     let page_dark = (dark && !paper) || ink || black_foot;
-    let ink_or_paper = paper || ink || body_hsl[1] < 0.12;
+    let ink_or_paper = paper || ink || body_grey;
     let accent_seed = if ink_or_paper {
         body
     } else {
@@ -373,14 +376,19 @@ const HUES: usize = 18;
 const NEUTRAL: usize = HUES;
 const DARK: usize = HUES + 1;
 
-/// Minimum channel spread (of 255) for a pale pixel to count as coloured. HSL saturation is useless near
-/// white (FEFDFD is 33 % saturated), so JPEG noise on white paper used to vote for a hue.
-const GREY_CHROMA: i32 = 12;
+/// A cell at least this light (Oklab) and at most this colourful is paper: white, grey, cream or a pale
+/// tint (DJ_Dave's Hardcore Software: lavender E0E2F4 under a grey grid).
+const PAPER_LIGHT: f32 = 0.90;
+const PAPER_CHROMA: f32 = 0.045;
 
-fn chroma(c: u32) -> i32 {
-    let (r, g, b) = (red(c), green(c), blue(c));
-    r.max(g).max(b) - r.min(g).min(b)
-}
+/// Below this Oklab lightness a cell is ink whatever its colour, and below `DIM` if grey.
+const INK_LIGHT: f32 = 0.15;
+const DIM: f32 = 0.26;
+/// Oklab chroma under which a colour is grey, from which a cell's hue vote counts fully, and from which
+/// it is vivid (part of a subject).
+const GREY: f32 = 0.015;
+const HUED: f32 = 0.04;
+const VIVID: f32 = 0.08;
 
 /// Cells per side of the grid [`dominant`] votes on. Each cell is the mean of its pixels, so thin lines
 /// count the same at every resolution of a cover.
@@ -389,7 +397,7 @@ const CELLS: usize = 64;
 /// The colour covering most of the cover (Palette's dominant filters out whole families). Grid cells
 /// vote into 20° hue buckets (plus neutral and dark); the heaviest bucket with its neighbours wins, and
 /// the result is that family's weighted mean. Large dull fields beat small vivid marks.
-fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32) -> u32 {
+fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32, ok: &Oklab) -> u32 {
     if w == 0 || h == 0 {
         return fallback;
     }
@@ -408,27 +416,27 @@ fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32) -> u32 {
             let (x0, x1) = (gx * w / cols, (gx + 1) * w / cols);
             let cell = (y0..y1).flat_map(|y| pixels[y * w + x0..y * w + x1].iter().copied());
             let px = mean_rgb(cell).expect("every cell holds a pixel");
-            let hsl = color_to_hsl(px);
+            let hue = color_to_hsl(px)[0];
+            let (light, colour) = ok.lightness_chroma(px);
             total += 1.0;
-            let black = hsl[2] < 0.06 || (hsl[2] < 0.18 && hsl[1] < 0.25);
-            let white = hsl[2] > 0.88 && (hsl[1] < 0.18 || chroma(px) < GREY_CHROMA);
+            let black = light < INK_LIGHT || (light < DIM && colour < GREY);
+            let white = light >= PAPER_LIGHT && colour <= PAPER_CHROMA;
             if black {
                 ink += 1.0;
             }
             if white {
                 paper += 1.0;
             }
-            if !black && !white && hsl[1] >= 0.25 {
-                let hue = bucket_of(hsl[0]);
-                coloured[hue] += 1.0;
-                grid[gy * cols + gx] = hue as i32;
+            if !black && !white && colour >= VIVID {
+                coloured[bucket_of(hue)] += 1.0;
+                grid[gy * cols + gx] = bucket_of(hue) as i32;
             }
             let bucket = if black {
                 DARK
-            } else if white || hsl[1] < 0.10 {
+            } else if white || colour < GREY {
                 NEUTRAL
             } else {
-                bucket_of(hsl[0])
+                bucket_of(hue)
             };
             let wt = match bucket {
                 // Full weight so JPEG specks cannot outvote a white or black field.
@@ -440,7 +448,7 @@ fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32) -> u32 {
                         0.35
                     }
                 }
-                _ => 0.25 + 0.75 * (hsl[1] / 0.25).min(1.0),
+                _ => 0.25 + 0.75 * (colour / HUED).min(1.0),
             };
             weight[bucket] += wt;
             sum_r[bucket] += wt * red(px) as f32;
@@ -688,7 +696,7 @@ mod tests {
             .collect();
         for dark in [true, false] {
             let p = derive(&v, S, S, dark, false);
-            assert!(chroma(p.background) <= 3 && luminance(p.background) > 0.7, "dark={dark}: {:08x}", p.background);
+            assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "dark={dark}: {:08x}", p.background);
         }
 
         // Off white paper with splashes stays white.
@@ -708,7 +716,7 @@ mod tests {
             .collect();
         for dark in [true, false] {
             let p = derive(&v, S, S, dark, false);
-            assert!(chroma(p.background) <= 3 && luminance(p.background) > 0.7, "dark={dark}: {:08x}", p.background);
+            assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "dark={dark}: {:08x}", p.background);
         }
 
         // Subject on paper does not take page.
@@ -750,6 +758,37 @@ mod tests {
         // Edge is bottom rows colour.
         let c = derive(&footed(0xFF30_60A0, 0xFF20_4070, 20), S, S, true, false);
         assert_eq!(c.edge, 0xFF20_4070);
+    }
+
+    /// Hardcore Software's layout: lavender paper under a grey grid, blue swooshes over a quarter of it,
+    /// two black bars.
+    fn tinted_paper() -> Vec<u32> {
+        let mut noise = JavaRandom::new(5);
+        (0..S * S)
+            .map(|i| {
+                let (x, y) = ((i % S) as i32, (i / S) as i32);
+                let swoosh = (x - y * 2 + 40).rem_euclid(48) < 9 || (x + y).rem_euclid(64) < 3;
+                let c = if (y == 20 || y == 120) && x > 20 && x < 140 {
+                    0xFF10_1010
+                } else if swoosh {
+                    0xFF20_30E0
+                } else if x % 16 == 0 || y % 16 == 0 {
+                    0xFFB8_BAC8
+                } else {
+                    0xFFE0_E2F4
+                };
+                noisy(c, [0, 0, 0], &mut noise)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pale_tinted_paper_is_paper() {
+        for dark in [true, false] {
+            let c = derive(&tinted_paper(), S, S, dark, false);
+            assert!(luminance(c.background) > 0.7, "dark={dark}: {:08x}", c.background);
+            assert_eq!(c.on, 0xFF0D_0D0D);
+        }
     }
 
     /// `n` x `n` cover: a blue disc on white paper under a grey grid of lines `n / 160` pixels wide.
