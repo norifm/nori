@@ -149,10 +149,10 @@ impl Level {
     }
 }
 
-/// Page colours from a cover (dark theme), as Android's `CoverLoader.colours`: RGBA converted to ARGB.
+/// Page colours from a cover, as Android's `CoverLoader.colours`: RGBA converted to ARGB.
 pub fn derive(image: &Image) -> CoverColours {
     let px: Vec<u32> = image.pixels.as_chunks::<4>().0.iter().map(|p| u32::from_be_bytes([p[3], p[0], p[1], p[2]])).collect();
-    nori_look::cover::derive(&px, image.width as usize, image.height as usize, true, false)
+    nori_look::cover::derive(&px, image.width as usize, image.height as usize, false)
 }
 
 /// A collection whose songs are fetched on demand.

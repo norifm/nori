@@ -36,7 +36,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"clear", c"(J)V", clear),
         native!(c"rest", c"(J)V", rest),
         native!(c"show", c"(JZ)V", show),
-        native!(c"colours", c"(JLjava/lang/String;IZ[ILandroid/graphics/Bitmap;[I)I", colours),
+        native!(c"colours", c"(JLjava/lang/String;I[ILandroid/graphics/Bitmap;[I)I", colours),
         native!(c"decodeFile", c"(Ljava/lang/String;Landroid/graphics/Bitmap;Z)I", decode_file),
         native!(c"isProvider", c"(Ljava/lang/String;)Z", is_provider),
     ],
@@ -428,10 +428,10 @@ const WASH: jint = 2;
 const BLACK: jint = 4;
 
 /// Page colours (`look::page`) for the cover at `url`, decoded to fit `side` x `side` without a Bitmap:
-/// the plain theme into `out` and `wash`, AMOLED black into `black`, each when not null (one decode for
+/// its page into `out` and `wash`, AMOLED black into `black`, each when not null (one decode for
 /// both). Returns the bits written; 0 for no cover. May hit the network: off the main thread.
 #[allow(clippy::too_many_arguments)]
-extern "system" fn colours(env: JNIEnv, _: JClass, h: jlong, url: JString, side: jint, dark: jboolean, out: JIntArray, wash: JObject, black: JIntArray) -> jint {
+extern "system" fn colours(env: JNIEnv, _: JClass, h: jlong, url: JString, side: jint, out: JIntArray, wash: JObject, black: JIntArray) -> jint {
     let Some(loader) = loader(h) else { return 0 };
     let mut c = loader.paint().colours.lock().pop().unwrap_or_default();
     // Unwinding out of a JNI native aborts the app.
@@ -453,13 +453,13 @@ extern "system" fn colours(env: JNIEnv, _: JClass, h: jlong, url: JString, side:
         c.argb.extend(c.rgba.as_chunks::<4>().0.iter().map(|p| u32::from(p[3]) << 24 | u32::from(p[0]) << 16 | u32::from(p[1]) << 8 | u32::from(p[2])));
         let mut answer = 0;
         if !out.is_null() {
-            answer |= match crate::look::page(&env, &c.argb, w, h, dark != 0, false, &out, &wash) {
+            answer |= match crate::look::page(&env, &c.argb, w, h, false, &out, &wash) {
                 0 => 0,
                 1 => PLAIN,
                 _ => PLAIN | WASH,
             };
         }
-        if !black.is_null() && crate::look::page(&env, &c.argb, w, h, dark != 0, true, &black, &JObject::null()) != 0 {
+        if !black.is_null() && crate::look::page(&env, &c.argb, w, h, true, &black, &JObject::null()) != 0 {
             answer |= BLACK;
         }
         answer

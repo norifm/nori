@@ -31,7 +31,7 @@ private object CoverPalette {
     }
 
     /**
-     * One lock per cover and theme (both its pages, plain and on black, are measured together), so a
+     * One lock per cover (both its pages, its own and on black, are measured together), so a
      * picture the bar, the player and the warm-up all ask for at once is measured once and the others
      * wait for it. Bounded: an evicted lock costs one repeated measurement, which is the behaviour this
      * replaces.
@@ -42,29 +42,29 @@ private object CoverPalette {
         synchronized(locks) { locks.get(key) ?: kotlinx.coroutines.sync.Mutex().also { locks.put(key, it) } }.withLock { block() }
 }
 
-private fun paletteKey(url: String, dark: Boolean, amoled: Boolean) = "$url|$dark|$amoled"
+private fun paletteKey(url: String, amoled: Boolean) = "$url|$amoled"
 
 /**
  * Fetches the cover and works its colours out, unless that has been done before. Slow the first time
  * (a read of the disk, or the network, and a decode) and a map lookup every time after.
  */
-private suspend fun paletteOf(context: android.content.Context, url: String, dark: Boolean, amoled: Boolean): PagePalette? {
-    val key = paletteKey(url, dark, amoled)
+private suspend fun paletteOf(context: android.content.Context, url: String, amoled: Boolean): PagePalette? {
+    val key = paletteKey(url, amoled)
     CoverPalette.cache.get(key)?.let { return it }
-    measure(context, url, dark, black = amoled, plain = !amoled)
+    measure(context, url, black = amoled, plain = !amoled)
     return CoverPalette.cache.get(key)
 }
 
 /**
- * Works out the cover's page on AMOLED [black] and in the [plain] theme, whichever is asked for and not
+ * Works out the cover's page on AMOLED [black] and its own [plain] one, whichever is asked for and not
  * known yet, from one decode: the bar and the player can want both for the same record.
  */
-private suspend fun measure(context: android.content.Context, url: String, dark: Boolean, black: Boolean, plain: Boolean) {
-    fun wanted(amoled: Boolean) = (if (amoled) black else plain) && CoverPalette.cache.get(paletteKey(url, dark, amoled)) == null
+private suspend fun measure(context: android.content.Context, url: String, black: Boolean, plain: Boolean) {
+    fun wanted(amoled: Boolean) = (if (amoled) black else plain) && CoverPalette.cache.get(paletteKey(url, amoled)) == null
     if (!wanted(true) && !wanted(false)) return
     // One cover is only ever worked out once, even when the bar, the player and the warm-up below all
     // ask for it in the same frame: the others wait here and then find it in the cache.
-    CoverPalette.once("$url|$dark") {
+    CoverPalette.once(url) {
         val onBlack = wanted(true)
         val onPlain = wanted(false)
         if (!onBlack && !onPlain) return@once
@@ -72,9 +72,9 @@ private suspend fun measure(context: android.content.Context, url: String, dark:
         // drawn on screen (which is 5-6-5 to save memory): the colours are worked out from the same
         // pixels any other app on nori-look would hand in, so the same record gets the same page
         // everywhere.
-        val pages = withContext(Dispatchers.IO) { CoverLoader.get(context).colours(url, CoverSize.ROW, dark, onPlain, onBlack) } ?: return@once
-        pages.plain?.let { CoverPalette.cache.put(paletteKey(url, dark, false), PagePalette(it.look, wash = it.wash?.asImageBitmap())) }
-        pages.black?.let { CoverPalette.cache.put(paletteKey(url, dark, true), PagePalette(it.look, wash = null)) }
+        val pages = withContext(Dispatchers.IO) { CoverLoader.get(context).colours(url, CoverSize.ROW, onPlain, onBlack) } ?: return@once
+        pages.plain?.let { CoverPalette.cache.put(paletteKey(url, false), PagePalette(it.look, wash = it.wash?.asImageBitmap())) }
+        pages.black?.let { CoverPalette.cache.put(paletteKey(url, true), PagePalette(it.look, wash = null)) }
     }
 }
 
@@ -82,12 +82,12 @@ private suspend fun measure(context: android.content.Context, url: String, dark:
  * Works a cover's colours out before anything asks for them. The covers either side of what is playing
  * are fetched ahead (PlayerViewModel) so a skip lands on a picture that is already there, but the page's
  * colour was still being worked out after the fact, which is the beat the page spent wearing the last
- * song's colour. Done here, the cross-fade starts with the song. [andPlain]: its page in the plain
- * theme as well, from the same decode.
+ * song's colour. Done here, the cross-fade starts with the song. [andPlain]: its own page as well,
+ * from the same decode.
  */
-suspend fun warmCoverPalette(context: android.content.Context, url: String?, dark: Boolean, amoled: Boolean, andPlain: Boolean = false) {
+suspend fun warmCoverPalette(context: android.content.Context, url: String?, amoled: Boolean, andPlain: Boolean = false) {
     if (url == null) return
-    runCatching { measure(context, url, dark, black = amoled, plain = !amoled || andPlain) }
+    runCatching { measure(context, url, black = amoled, plain = !amoled || andPlain) }
 }
 
 /**
@@ -98,10 +98,10 @@ suspend fun warmCoverPalette(context: android.content.Context, url: String?, dar
 data class CoverTint(val url: String?, val palette: PagePalette?)
 
 @Composable
-fun rememberCoverTint(url: String?, dark: Boolean, amoled: Boolean): CoverTint {
+fun rememberCoverTint(url: String?, amoled: Boolean): CoverTint {
     val context = LocalContext.current
-    // Built once per cover and theme, not on every recomposition.
-    val key = remember(url, dark, amoled) { url?.let { paletteKey(it, dark, amoled) } }
+    // Built once per cover, not on every recomposition.
+    val key = remember(url, amoled) { url?.let { paletteKey(it, amoled) } }
     // Straight out of the cache, here in composition. It used to come from `produceState`, whose block
     // is a coroutine that runs *after* the frame the cover changed on: a cover measured long ago still
     // arrived a frame or two late, and until it did, everything drawn from it - the page, the soft
@@ -114,12 +114,12 @@ fun rememberCoverTint(url: String?, dark: Boolean, amoled: Boolean): CoverTint {
     var measured by remember(key) { mutableStateOf<PagePalette?>(null) }
     LaunchedEffect(key) {
         if (url == null || ready != null) return@LaunchedEffect
-        measured = paletteOf(context, url, dark, amoled)
+        measured = paletteOf(context, url, amoled)
     }
     return CoverTint(url, ready ?: measured)
 }
 
 @Composable
-fun rememberCoverPalette(url: String?, dark: Boolean, amoled: Boolean): PagePalette? =
-    rememberCoverTint(url, dark, amoled).palette
+fun rememberCoverPalette(url: String?, amoled: Boolean): PagePalette? =
+    rememberCoverTint(url, amoled).palette
 

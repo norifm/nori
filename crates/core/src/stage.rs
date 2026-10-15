@@ -118,8 +118,8 @@ pub fn motion_reduced(reduce: bool, ignore_system: bool, system_off: bool) -> bo
 
 /// See `nori_look::sleeve::page_black`.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn page_black(amoled: bool, cover_colours: bool) -> bool {
-    sleeve::page_black(amoled, cover_colours)
+pub fn page_black(dark: bool, amoled: bool, cover_colours: bool) -> bool {
+    sleeve::page_black(dark, amoled, cover_colours)
 }
 
 /// See `nori_look::sleeve::band_matrix`.
