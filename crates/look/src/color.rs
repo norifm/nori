@@ -163,9 +163,14 @@ impl Oklab {
     }
 
     pub(crate) fn lightness_chroma(&self, c: u32) -> (f32, f32) {
+        let [l, a, b] = self.lab(c);
+        (l, (a * a + b * b).sqrt())
+    }
+
+    pub(crate) fn lab(&self, c: u32) -> [f32; 3] {
         let lin = |v: i32| self.linear[v as usize];
         let (l, a, b) = crate::compose::linear_to_oklab(lin(red(c)), lin(green(c)), lin(blue(c)), f32::cbrt);
-        (l, (a * a + b * b).sqrt())
+        [l, a, b]
     }
 }
 
