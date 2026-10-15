@@ -36,6 +36,9 @@ for archive in output.glob("*.tar.gz"):
                 subprocess.run(["codesign", "--verify", "--strict", str(bundle)], check=True)
             else:
                 subprocess.run(["codesign", "--verify", "--strict", str(binary)], check=True)
+            if not dmg.runs_here(binary):
+                print(f"Verified {archive.name} without running it")
+                continue
         result = subprocess.run([str(binary), "--help"], capture_output=True, text=True)
         assert f"usage: nori-{client}" in result.stdout + result.stderr, result.stderr
         print(f"Verified {archive.name}")
