@@ -382,30 +382,32 @@ fn chroma(c: u32) -> i32 {
     r.max(g).max(b) - r.min(g).min(b)
 }
 
-/// The colour covering most of the cover (Palette's dominant filters out whole families). Sampled pixels
+/// Cells per side of the grid [`dominant`] votes on. Each cell is the mean of its pixels, so thin lines
+/// count the same at every resolution of a cover.
+const CELLS: usize = 64;
+
+/// The colour covering most of the cover (Palette's dominant filters out whole families). Grid cells
 /// vote into 20° hue buckets (plus neutral and dark); the heaviest bucket with its neighbours wins, and
 /// the result is that family's weighted mean. Large dull fields beat small vivid marks.
 fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32) -> u32 {
     if w == 0 || h == 0 {
         return fallback;
     }
-    let row_step = (h / 64).max(1);
-    let col_step = (w / 64).max(1);
+    let (cols, rows) = (w.min(CELLS), h.min(CELLS));
     let mut weight = [0f32; HUES + 2];
     let (mut sum_r, mut sum_g, mut sum_b) = ([0f32; HUES + 2], [0f32; HUES + 2], [0f32; HUES + 2]);
     let (mut paper, mut ink, mut total) = (0f32, 0f32, 0f32);
-    // Unweighted coloured-pixel counts per hue, comparable with the paper and ink counts.
+    // Unweighted coloured-cell counts per hue, comparable with the paper and ink counts.
     let mut coloured = [0f32; HUES];
-    // Hue bucket per sampled cell (-1: none), to tell solid fields from lines.
-    let cols = w.div_ceil(col_step);
-    let rows = h.div_ceil(row_step);
+    // Hue bucket per cell (-1: none), to tell solid fields from lines.
     let mut grid = vec![-1i32; cols * rows];
     let bucket_of = |hue: f32| ((hue / (360.0 / HUES as f32)) as i32).clamp(0, HUES as i32 - 1) as usize;
-    let mut y = 0;
-    while y < h {
-        let mut x = 0;
-        while x < w {
-            let px = pixels[y * w + x];
+    for gy in 0..rows {
+        let (y0, y1) = (gy * h / rows, (gy + 1) * h / rows);
+        for gx in 0..cols {
+            let (x0, x1) = (gx * w / cols, (gx + 1) * w / cols);
+            let cell = (y0..y1).flat_map(|y| pixels[y * w + x0..y * w + x1].iter().copied());
+            let px = mean_rgb(cell).expect("every cell holds a pixel");
             let hsl = color_to_hsl(px);
             total += 1.0;
             let black = hsl[2] < 0.06 || (hsl[2] < 0.18 && hsl[1] < 0.25);
@@ -419,7 +421,7 @@ fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32) -> u32 {
             if !black && !white && hsl[1] >= 0.25 {
                 let hue = bucket_of(hsl[0]);
                 coloured[hue] += 1.0;
-                grid[(y / row_step) * cols + x / col_step] = hue as i32;
+                grid[gy * cols + gx] = hue as i32;
             }
             let bucket = if black {
                 DARK
@@ -444,9 +446,7 @@ fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32) -> u32 {
             sum_r[bucket] += wt * red(px) as f32;
             sum_g[bucket] += wt * green(px) as f32;
             sum_b[bucket] += wt * blue(px) as f32;
-            x += col_step;
         }
-        y += row_step;
     }
     // A hue scores with its two neighbours (one perceived colour spans several buckets); neutral and dark
     // score alone.
@@ -750,6 +750,46 @@ mod tests {
         // Edge is bottom rows colour.
         let c = derive(&footed(0xFF30_60A0, 0xFF20_4070, 20), S, S, true, false);
         assert_eq!(c.edge, 0xFF20_4070);
+    }
+
+    /// `n` x `n` cover: a blue disc on white paper under a grey grid of lines `n / 160` pixels wide.
+    fn gridded(n: usize) -> Vec<u32> {
+        let unit = n / 160;
+        (0..n * n)
+            .map(|i| {
+                let (x, y) = (i % n / unit, i / n / unit);
+                let (dx, dy) = (x as f32 - 100.0, y as f32 - 70.0);
+                if x % 8 == 0 || y % 8 == 0 {
+                    0xFF80_8080
+                } else if dx * dx + dy * dy < 50.0 * 50.0 {
+                    0xFF20_30C0
+                } else {
+                    WHITE
+                }
+            })
+            .collect()
+    }
+
+    /// Mean of each `k` x `k` block, as a server's smaller copy of a cover.
+    fn shrunk(px: &[u32], n: usize, k: usize) -> Vec<u32> {
+        let m = n / k;
+        (0..m * m)
+            .map(|i| {
+                let (bx, by) = (i % m * k, i / m * k);
+                mean_rgb((by..by + k).flat_map(|y| px[y * n + bx..y * n + bx + k].iter().copied())).expect("k > 0")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn same_page_at_every_size() {
+        let big = gridded(S * 6);
+        let small = shrunk(&big, S * 6, 6);
+        for dark in [true, false] {
+            let (a, b) = (derive(&big, S * 6, S * 6, dark, false), derive(&small, S, S, dark, false));
+            assert!(calculate_contrast(a.background, b.background) < 1.05, "dark={dark}: {:08x} vs {:08x}", a.background, b.background);
+            assert_eq!(a.on, b.on);
+        }
     }
 
     #[test]
