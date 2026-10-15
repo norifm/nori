@@ -13,6 +13,8 @@ import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.data.FoundLyrics
 import dev.nori.music.ffi.model.Song
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import dev.nori.music.settings.server
 import dev.nori.music.settings.loggedIn
 
@@ -33,6 +35,7 @@ val traceLyrics: Boolean get() = TestHooks.traceLyrics
 fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, settings: SettingsViewModel, actions: ActionsViewModel, player: PlayerViewModel, devices: () -> Unit) {
     val context = LocalContext.current
     val player2 = player
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     DisposableEffect(controller) {
         // "queue" is the player on its queue (where a jam's header is), "devices" the devices sheet.
         val open = { route: String ->
@@ -48,7 +51,12 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
         TestHooks.play = { what -> TestActions.playByRef(context, actions, what) }
         TestHooks.login = { spec ->
             val (url, user, pass) = spec.split("|").let { Triple(it[0], it.getOrElse(1) { "" }, it.getOrElse(2) { "" }) }
-            settings.login(settings.newProfile().copy(url = url, user = user, password = pass))
+            val profile = settings.newProfile().copy(url = url, user = user, password = pass)
+            // Logins come back to back (the app's start, then a section's): one still busy would drop the next.
+            scope.launch {
+                settings.login.first { !it.busy }
+                settings.login(profile)
+            }
         }
         TestHooks.act = { what -> TestActions.act(context, actions, what, player2) }
         TestHooks.state = {
