@@ -6,6 +6,31 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-16
+
+### Added
+
+- A cover's page colours follow the cover, not the theme
+
+### Fixed
+
+- A headset play with nothing saved no longer crashes the app
+- A cover has the same colours at every size
+- A jam host shows to its guests once it can hear their commands
+- A device just started no longer drops off the device lists
+- A guest listening along gets the host's playback in order
+- A serving device the relay lost says its state again
+- A device that stops serving leaves after its last poll
+- The speaker is filled only while another device plays
+- The speaker is lit only for a device the devices list shows
+- Pale and tinted covers get a light paper page
+- A pastel cover's dark page keeps its soft colour
+- Accents read as text and keep a black cover's own colour
+- A page takes the colour that touches the artwork's bottom, never a mix
+- A page takes the colour the cover visibly dissolves from, not a hidden line
+- A cover's fine texture gives its page the colour the blur shows
+- A page takes the cover colour it dissolves into most softly
+
 ## [0.6.0] - 2026-10-15
 
 ### New
