@@ -34,14 +34,13 @@ pub struct CoverColours {
     pub wash_edge: u32,
 }
 
-/// Dark page: the colour at its own lightness (at most [`PAGE_LIGHTEST`]), darkened only until its
-/// luminance allows white text at about 8:1. Darker colours are never brightened.
+/// Dark page for white text: the colour at its own lightness (at most [`PAGE_LIGHTEST`]), darkened only
+/// until its luminance allows white text at about 8:1, and never more colourful than `chroma`, its
+/// source's (keeping HSL saturation while darkening Lover's pink F3BBD7 made a wine 8C2157).
 const PAGE_LIGHTEST: f32 = 0.34;
 const PAGE_MAX_LUMA: f32 = 0.081;
 
-/// Its chroma is at most `chroma`, the source's: HSL saturation kept while darkening a pastel more than
-/// doubled its colour (Lover's pink F3BBD7 made a wine 8C2157).
-fn dark_page(hsl: [f32; 3], max_luma: f32, chroma: f32, ok: &Oklab) -> u32 {
+fn dark_page(hsl: [f32; 3], chroma: f32, ok: &Oklab) -> u32 {
     let hi = hsl[2].clamp(0.04, PAGE_LIGHTEST);
     let mut sat = (hsl[1] * 0.95).min(0.62);
     let colour_at = |s: f32| ok.lightness_chroma(hsl_to_color([hsl[0], s, hi])).1;
@@ -49,33 +48,11 @@ fn dark_page(hsl: [f32; 3], max_luma: f32, chroma: f32, ok: &Oklab) -> u32 {
         sat = bisect(0.0, sat, |s| colour_at(s) <= chroma);
     }
     let at = |l: f32| hsl_to_color([hsl[0], sat, l]);
-    if luminance(at(hi)) <= max_luma {
+    if luminance(at(hi)) <= PAGE_MAX_LUMA {
         return at(hi);
     }
     // The lightest allowed lightness.
-    at(bisect(0.04, hi, |l| luminance(at(l)) <= max_luma))
-}
-
-/// Over a solid dark foot, the page's max luminance is this far from the foot's up to its natural one,
-/// so the fade out of the foot changes hue more than lightness.
-const FOOT_PULL: f32 = 0.35;
-
-/// Foot/page contrast above which the fade reads as a band.
-const FOOT_JUMP: f64 = 1.8;
-
-/// Light page: the mirror of [`dark_page`], lightened only as far as dark text needs (a fixed 92-96 %
-/// lightness bleached creams and yellows).
-const PAGE_MIN_LUMA: f32 = 0.42;
-
-fn paper_page(hsl: [f32; 3]) -> u32 {
-    let sat = hsl[1].min(0.75);
-    let at = |l: f32| hsl_to_color([hsl[0], sat, l]);
-    let lo = hsl[2].clamp(0.5, 0.96);
-    if luminance(at(lo)) >= PAGE_MIN_LUMA {
-        return at(lo);
-    }
-    // The darkest allowed lightness.
-    at(bisect(0.96, lo, |l| luminance(at(l)) >= PAGE_MIN_LUMA))
+    at(bisect(0.04, hi, |l| luminance(at(l)) <= PAGE_MAX_LUMA))
 }
 
 /// Binary search between a value that is `ok` and one that is not (12 steps, ~0.001): the last `ok`.
@@ -91,94 +68,82 @@ fn bisect(mut good: f32, mut bad: f32, ok: impl Fn(f32) -> bool) -> f32 {
     good
 }
 
-/// Black page keeping the sleeve's hue.
-fn ink_page(hsl: [f32; 3]) -> u32 {
-    hsl_to_color([hsl[0], hsl[1].min(0.35), hsl[2].clamp(0.03, 0.06)])
+/// Contrast for text (WCAG AA), on the page and in the accent.
+const TEXT_CONTRAST: f64 = 4.5;
+const INK: u32 = 0xFF0D_0D0D;
+
+/// The text colour that reads better on `page`: white or near-black.
+fn text_on(page: u32) -> u32 {
+    if calculate_contrast(WHITE, page) >= calculate_contrast(INK, page) { WHITE } else { INK }
+}
+
+/// `colour` as a page: itself when white or near-black text reads on it, which is almost always; in the
+/// narrow band of luminance where neither does, the least lightness step that lets the nearer one.
+fn page_of(colour: u32) -> u32 {
+    if calculate_contrast(text_on(colour), colour) >= TEXT_CONTRAST {
+        return colour;
+    }
+    let hsl = color_to_hsl(colour);
+    let at = |l: f32| hsl_to_color([hsl[0], hsl[1], l]);
+    let reads = |l: f32| calculate_contrast(text_on(at(l)), at(l)) >= TEXT_CONTRAST;
+    let darker = at(bisect(0.0, hsl[2], reads));
+    let lighter = at(bisect(1.0, hsl[2], reads));
+    if hsl[2] - color_to_hsl(darker)[2] <= color_to_hsl(lighter)[2] - hsl[2] { darker } else { lighter }
 }
 
 /// Derives page colours from `w` x `h` ARGB pixels (at least 1 x 1: every decoder rejects empty images).
-pub fn derive(pixels: &[u32], w: usize, h: usize, dark: bool, amoled: bool) -> CoverColours {
+/// The page is a colour of the cover, whatever the app's theme: its bottom edge where that is one solid
+/// colour (the artwork dissolves into it), else the colour covering most of it. With `amoled` it is
+/// black, without a wash.
+pub fn derive(pixels: &[u32], w: usize, h: usize, amoled: bool) -> CoverColours {
     let foot = bottom_average(pixels, w, h);
     let edge_raw = foot.colour;
     let p = palette::generate(pixels, w, h, 16);
     let ok = Oklab::new();
     let body = dominant(pixels, w, h, edge_raw, &ok);
-    let body_hsl = color_to_hsl(body);
-    let (body_light, body_colour) = ok.lightness_chroma(body);
-    let body_grey = body_colour < GREY;
-    // A white, pale or light grey sleeve is "paper": its page is its own colour, not a Palette swatch.
-    let sleeve_paper = body_light >= 0.86 || (body_grey && body_light >= 0.79);
-    // A solid near-black foot forces a dark page (Demon Days' black frame would otherwise fade black
-    // into white). Exception: a "frame", a thin contrasting strip (under half the melt) with the body
-    // colour above it (Amnesiac's black line under the red book); the fade starts above it instead.
-    let above = color_to_hsl(foot.above);
-    let frame = foot.strip < MELT / 2.0
-        && calculate_contrast(foot.colour, foot.above) >= 1.6
-        && calculate_contrast(foot.above, body) < 1.25
-        && (body_grey || (((above[0] - body_hsl[0] + 540.0) % 360.0) - 180.0).abs() < 30.0);
+    let body_grey = ok.lightness_chroma(body).1 < GREY;
+    // A "frame" is a thin contrasting strip under the artwork, under half the melt (Amnesiac's black line
+    // under the red book, a white border): the fade starts above it and the page is not its colour.
+    let frame = foot.strip < MELT / 2.0 && calculate_contrast(foot.colour, foot.above) >= 1.6;
+    // What the page meets matters most: a border of one colour is continued, then a solid foot (Demon
+    // Days' black frame, In Utero's cream); otherwise the page is the body and the fade starts from the
+    // foot's average.
     let solid = foot.solid && !frame;
-    let edge_luma = luminance(edge_raw);
-    let black_foot = solid && edge_luma < 0.03;
-    // Paper and ink sleeves keep their own light or black page (with their tint) in either theme.
-    // Mirror of the black foot: a solid light foot (>= 8 % of the height) under a would-be dark page
-    // makes a paper page (In Utero, Dreamland).
-    let body_ink = body_grey && body_light < 0.21;
-    let light_foot = solid && foot.strip >= 0.08 && edge_luma > 0.45 && !sleeve_paper && (dark || body_ink);
-    // Paper tint fades out below 0.016 chroma and is gone under 0.006, so JPEG noise or a scanner cast
-    // does not tint the page while real creams stay.
-    let paper_src = if light_foot { edge_raw } else { body };
-    let mut paper_hsl = color_to_hsl(paper_src);
-    paper_hsl[1] *= ((ok.lightness_chroma(paper_src).1 - 0.006) / 0.010).clamp(0.0, 1.0);
-    let paper = (sleeve_paper && !black_foot) || light_foot;
-    let ink = (body_ink && !light_foot) || (sleeve_paper && black_foot);
-    let page_dark = (dark && !paper) || ink || black_foot;
-    let ink_or_paper = paper || ink || body_grey;
+    let rim = border(pixels, w, h);
+    let source = rim.unwrap_or(if solid { edge_raw } else { body });
+    let (source_light, source_colour) = ok.lightness_chroma(source);
+    // Paper and ink: a near-neutral page, light or dark. Their tint fades out below 0.016 chroma and is
+    // gone under 0.006, so JPEG noise or a scanner cast does not tint the page while real creams stay.
+    let neutral = source_colour < PAPER_CHROMA;
+    let paper = neutral && source_light >= 0.79;
+    let ink = source_colour < GREY && source_light < 0.21;
+    let mut source_hsl = color_to_hsl(source);
+    source_hsl[1] *= ((source_colour - 0.006) / 0.010).clamp(0.0, 1.0);
+    let background = if amoled { BLACK } else { page_of(hsl_to_color(source_hsl)) };
+    let on = text_on(background);
     // A monochrome sleeve's accent is its own tint, unless a vivid colour covers 1 % of it (Parachutes'
     // orange globe, Turn On the Bright Lights' red box); smaller marks are specks.
     let vivid = p.vibrant.or(p.light_vibrant).filter(|s| s.population * 100 >= p.area && ok.lightness_chroma(s.rgb).1 >= VIVID);
-    let accent_seed = if ink_or_paper {
-        vivid.map_or(body, |s| s.rgb)
-    } else {
-        p.vibrant.or(p.light_vibrant).or(p.light_muted).or(p.dominant).map_or(body, |s| s.rgb)
-    };
-    // Fade from the colour above a frame, not the frame itself.
-    let foot_colour = if frame { foot.above } else { edge_raw };
-    let edge = if paper {
-        blend_argb(foot_colour, paper_page(paper_hsl), 0.75)
-    } else if ink {
-        blend_argb(foot_colour, ink_page(body_hsl), 0.70)
-    } else {
-        foot_colour
-    };
-    let hsl = body_hsl;
-    // Over a solid foot much darker than the page, darken the page towards it (keeping the hue) so the
-    // strip fades in instead of ending on a lighter colour.
-    let natural = (page_dark && !ink && !paper).then(|| dark_page(hsl, PAGE_MAX_LUMA, body_colour, &ok));
-    let foot_max = natural
-        .filter(|&n| solid && calculate_contrast(n, edge_raw | 0xFF00_0000) >= FOOT_JUMP && edge_luma < luminance(n))
-        .map(|n| edge_luma + (luminance(n) - edge_luma) * FOOT_PULL);
-    let background = if dark && amoled {
-        BLACK
-    } else if paper {
-        paper_page(paper_hsl)
-    } else if ink {
-        ink_page(if sleeve_paper && black_foot { color_to_hsl(edge_raw) } else { hsl })
-    } else if page_dark {
-        match foot_max {
-            Some(m) => dark_page(hsl, m, body_colour, &ok),
-            None => natural.expect("a dark page that is neither ink nor paper"),
-        }
-    } else {
-        hsl_to_color([hsl[0], (hsl[1] * 0.55).min(0.4), hsl[2].clamp(0.90, 0.96)])
-    };
-    let on = if luminance(background) < 0.4 { WHITE } else { 0xFF0D_0D0D };
     let accent = if paper {
         // Near-black in the paper's hue.
-        hsl_to_color([paper_hsl[0], paper_hsl[1].min(0.25), 0.17])
+        hsl_to_color([source_hsl[0], source_hsl[1].min(0.25), 0.17])
     } else {
-        readable(accent_seed, background, on, &ok)
+        let seed = if ink || body_grey {
+            vivid.map_or(body, |s| s.rgb)
+        } else {
+            p.vibrant.or(p.light_vibrant).or(p.light_muted).or(p.dominant).map_or(body, |s| s.rgb)
+        };
+        readable(seed, background, on, &ok)
     };
-    let wash = (!(amoled && dark)).then(|| wash_of(pixels, w, h, background, page_dark, paper, ink));
+    // Fade from the colour above a frame, not the frame itself; a mixed foot mostly towards the page.
+    let edge = if rim.is_some() || solid || amoled {
+        edge_raw
+    } else if frame {
+        foot.above
+    } else {
+        blend_argb(edge_raw, background, 0.75)
+    };
+    let wash = (!amoled).then(|| wash_of(pixels, w, h, background, on, paper, ink));
     CoverColours {
         edge,
         background,
@@ -198,7 +163,7 @@ pub fn under_white(c: &CoverColours) -> CoverColours {
     }
     let page = color_to_hsl(c.background);
     let ok = Oklab::new();
-    let background = dark_page(page, PAGE_MAX_LUMA, ok.lightness_chroma(c.background).1, &ok);
+    let background = dark_page(page, ok.lightness_chroma(c.background).1, &ok);
     let drop = page[2] - color_to_hsl(background)[2];
     let down = |argb: u32| {
         let mut hsl = color_to_hsl(argb);
@@ -220,8 +185,9 @@ const MUTE: f32 = 0.38;
 
 /// The page wash: the cover downscaled to [`WASH`], heavily blurred, with lightness held near the page's
 /// and saturation capped so text contrast holds. Returns the upsampled wash and its bottom average.
-fn wash_of(pixels: &[u32], w: usize, h: usize, background: u32, dark: bool, paper: bool, ink: bool) -> (Vec<u32>, u32) {
+fn wash_of(pixels: &[u32], w: usize, h: usize, background: u32, on: u32, paper: bool, ink: bool) -> (Vec<u32>, u32) {
     let ink_or_paper = paper || ink;
+    let dark = on == WHITE;
     let mut px = scale_bilinear(pixels, w, h, WASH, WASH);
     // Five passes: at three, strong central shapes still showed.
     for _ in 0..5 {
@@ -264,6 +230,10 @@ fn wash_of(pixels: &[u32], w: usize, h: usize, background: u32, dark: bool, pape
         hsl[2] = (page_hsl[2] + (hsl[2] - mean_l) * spread * 2.5).max(floor).min(page_hsl[2] + spread).clamp(0.0, 1.0);
         // Mostly back to the page colour so distinct hue regions read as a glow, not patches.
         *p = blend_argb(hsl_to_color(hsl), background, mute);
+        // The page reads at 4.5:1; where the glow would not, it is the page.
+        if calculate_contrast(on, *p) < TEXT_CONTRAST {
+            *p = background;
+        }
     }
     let first = ((WASH as f32 * (1.0 - MELT)) as usize).min(WASH - 1);
     let (mut r, mut g, mut b) = (0f32, 0f32, 0f32);
@@ -538,10 +508,6 @@ fn bottom_average(pixels: &[u32], w: usize, h: usize) -> Foot {
     let rows = (h / 12).clamp(1, 12);
     let foot = &pixels[(h - rows) * w..h * w];
     let colour = mean_rgb(foot.iter().copied()).expect("covers are at least 1 x 1");
-    let near = |a: u32, b: u32| {
-        let (dr, dg, db) = (red(a) - red(b), green(a) - green(b), blue(a) - blue(b));
-        dr * dr + dg * dg + db * db < 48 * 48
-    };
     let close = foot.iter().filter(|&&px| near(px, colour)).count();
     let row_mean = |y: usize| mean_rgb(pixels[y * w..(y + 1) * w].iter().copied()).expect("covers are at least 1 x 1");
     // Walk up while rows still match the strip.
@@ -554,6 +520,25 @@ fn bottom_average(pixels: &[u32], w: usize, h: usize) -> Foot {
     Foot { colour, solid: close as f32 >= foot.len() as f32 * 0.85, strip: (h - top) as f32 / h as f32, above }
 }
 
+/// Whether two colours look alike (within 48 levels).
+fn near(a: u32, b: u32) -> bool {
+    let (dr, dg, db) = (red(a) - red(b), green(a) - green(b), blue(a) - blue(b));
+    dr * dr + dg * dg + db * db < 48 * 48
+}
+
+/// The colour of the band along the cover's sides and bottom (1/32 of its side deep), where the page
+/// meets the artwork, if 85 % of it is that one colour (Syro's white around the green disc).
+fn border(pixels: &[u32], w: usize, h: usize) -> Option<u32> {
+    let d = (w.min(h) / 32).max(1);
+    let band = || {
+        let sides = (0..h - d).flat_map(move |y| pixels[y * w..y * w + d].iter().chain(&pixels[(y + 1) * w - d..(y + 1) * w]));
+        sides.chain(&pixels[(h - d) * w..]).copied()
+    };
+    let colour = mean_rgb(band())?;
+    let (close, all) = band().fold((0, 0), |(c, n), px| (c + near(px, colour) as usize, n + 1));
+    (close * 100 >= all * 85).then_some(colour)
+}
+
 /// The mean colour of `px`, each channel's sum divided down; None for no pixels.
 fn mean_rgb(px: impl Iterator<Item = u32>) -> Option<u32> {
     let (mut r, mut g, mut b, mut n) = (0i64, 0i64, 0i64, 0i64);
@@ -563,14 +548,13 @@ fn mean_rgb(px: impl Iterator<Item = u32>) -> Option<u32> {
     (n > 0).then(|| rgb((r / n) as i32, (g / n) as i32, (b / n) as i32))
 }
 
-/// Contrast for text (WCAG AA): the accent writes the artist's name.
-const TEXT_CONTRAST: f64 = 4.5;
 /// Contrast for glyphs and controls.
 const GLYPH_CONTRAST: f64 = 3.2;
 
-/// Steps `color`'s lightness (away from the background's) until it reads as text on it, else `fallback`.
+/// Steps `color`'s lightness towards `fallback`, the page's text colour, until it reads as text on the
+/// page, else `fallback`.
 fn readable(color: u32, background: u32, fallback: u32, ok: &Oklab) -> u32 {
-    stepped(color, background, luminance(background) < 0.4, TEXT_CONTRAST, ok).unwrap_or(fallback)
+    stepped(color, background, luminance(fallback) > luminance(background), TEXT_CONTRAST, ok).unwrap_or(fallback)
 }
 
 /// Like [`readable`] for a glyph, also trying the opposite direction before `fallback`, for mid-tone
@@ -634,12 +618,10 @@ mod tests {
         assert_eq!(readable_either_way(0xFF1E_5AA0, 0xFFFF_FFFF, ink), 0xFF1E_5AA0);
 
         // Text contrast on page.
-        for &c0 in &[0xFFE0_2020u32, 0xFF20_E020, 0xFF20_20E0, 0xFFE0_E020, 0xFF80_8080, 0xFF30_1060] {
-            for dark in [true, false] {
-                let c = derive(&solid(c0), S, S, dark, false);
-                assert!(calculate_contrast(c.on, c.background) >= 4.5, "{c0:08x} dark={dark}: {:08x} on {:08x}", c.on, c.background);
-                assert!(calculate_contrast(c.accent, c.background) >= 4.5, "{c0:08x} dark={dark}: accent {:08x} on {:08x}", c.accent, c.background);
-            }
+        for &c0 in &[0xFFE0_2020u32, 0xFF20_E020, 0xFF20_20E0, 0xFFE0_E020, 0xFF80_8080, 0xFF77_7777, 0xFF30_1060] {
+            let c = derive(&solid(c0), S, S, false);
+            assert!(calculate_contrast(c.on, c.background) >= 4.5, "{c0:08x}: {:08x} on {:08x}", c.on, c.background);
+            assert!(calculate_contrast(c.accent, c.background) >= 4.5, "{c0:08x}: accent {:08x} on {:08x}", c.accent, c.background);
         }
     }
 
@@ -658,27 +640,24 @@ mod tests {
 
     #[test]
     fn plain_covers() {
-        for dark in [true, false] {
-            let c = derive(&solid(0xFF08_0808), S, S, dark, false);
-            assert!(luminance(c.background) < 0.01, "{:08x}", c.background);
-            assert_eq!(c.on, WHITE);
-        }
-
-        // White cover gets white page in dark theme.
-        let c = derive(&solid(0xFFF6_F6F4), S, S, true, false);
+        // Black and white covers keep their own page.
+        let c = derive(&solid(0xFF08_0808), S, S, false);
+        assert!(luminance(c.background) < 0.01, "{:08x}", c.background);
+        assert_eq!(c.on, WHITE);
+        let c = derive(&solid(0xFFF6_F6F4), S, S, false);
         assert!(luminance(c.background) > 0.8, "{:08x}", c.background);
-        assert_eq!(c.on, 0xFF0D_0D0D);
+        assert_eq!(c.on, INK);
 
         // Cream and yellow keep their hue.
-        let cream = derive(&solid(0xFFEF_E4C8), S, S, false, false);
+        let cream = derive(&solid(0xFFEF_E4C8), S, S, false);
         let [h, s, _] = color_to_hsl(cream.background);
         assert!((35.0..55.0).contains(&h) && s > 0.2, "cream bleached to {:08x}", cream.background);
-        let yellow = derive(&solid(0xFFF2_D544), S, S, false, false);
+        let yellow = derive(&solid(0xFFF2_D544), S, S, false);
         let [h, s, _] = color_to_hsl(yellow.background);
         assert!((40.0..60.0).contains(&h) && s > 0.3, "yellow bleached to {:08x}", yellow.background);
 
-        // Amoled dark is black with no wash.
-        let c = derive(&solid(0xFF30_60A0), S, S, true, true);
+        // Amoled is black with no wash.
+        let c = derive(&solid(0xFF30_60A0), S, S, true);
         assert_eq!(c.background, BLACK);
         assert!(c.wash.is_none());
         assert_eq!(c.wash_edge, c.edge);
@@ -687,7 +666,7 @@ mod tests {
     #[test]
     fn under_white_darkens_only_light_pages() {
         // A paper sleeve: its light page and wash go dark enough for white text, in its own hue.
-        let paper = derive(&solid(0xFFE8_EEF4), S, S, true, false);
+        let paper = derive(&solid(0xFFE8_EEF4), S, S, false);
         assert_ne!(paper.on, WHITE, "a paper sleeve keeps a light page");
         let c = under_white(&paper);
         assert_eq!(c.on, WHITE);
@@ -697,7 +676,7 @@ mod tests {
         assert!((color_to_hsl(c.background)[0] - color_to_hsl(paper.background)[0]).abs() < 10.0, "its hue kept");
 
         // A dark page is left as it is.
-        let dark = derive(&solid(0xFF30_60A0), S, S, true, false);
+        let dark = derive(&solid(0xFF20_3060), S, S, false);
         assert_eq!(under_white(&dark), dark);
     }
 
@@ -724,10 +703,8 @@ mod tests {
                 }
             })
             .collect();
-        for dark in [true, false] {
-            let p = derive(&v, S, S, dark, false);
-            assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "dark={dark}: {:08x}", p.background);
-        }
+        let p = derive(&v, S, S, false);
+        assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "{:08x}", p.background);
 
         // Off white paper with splashes stays white.
         // Regression (Cage the Elephant): off-white paper and yellow splashes averaged into olive.
@@ -744,10 +721,8 @@ mod tests {
                 }
             })
             .collect();
-        for dark in [true, false] {
-            let p = derive(&v, S, S, dark, false);
-            assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "dark={dark}: {:08x}", p.background);
-        }
+        let p = derive(&v, S, S, false);
+        assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "{:08x}", p.background);
 
         // Subject on paper does not take page.
         // Villains: off-white paper, a red figure over a third of it, dark coat below.
@@ -763,7 +738,7 @@ mod tests {
                 }
             })
             .collect();
-        let p = derive(&v, S, S, true, false);
+        let p = derive(&v, S, S, false);
         assert!(luminance(p.background) > 0.7, "{:08x}", p.background);
     }
 
@@ -777,16 +752,21 @@ mod tests {
             }
         }
         v[(S - 3) * S..].fill(0xFF05_0505);
-        let c = derive(&v, S, S, true, false);
+        let c = derive(&v, S, S, false);
         let [h, s, _] = color_to_hsl(c.background);
         assert!((h < 15.0 || h > 345.0) && s > 0.3, "not red: {:08x}", c.background);
+        assert_ne!(c.edge, 0xFF05_0505, "the fade starts above the line");
 
-        // Solid dark foot forces dark page.
-        let c = derive(&footed(0xFFD8_D8D0, 0xFF06_0606, 40), S, S, false, false);
-        assert!(luminance(c.background) < 0.1, "{:08x}", c.background);
+        // A solid dark foot is continued under a light picture (Demon Days).
+        let c = derive(&footed(0xFFD8_D8D0, 0xFF06_0606, 40), S, S, false);
+        assert!(luminance(c.background) < 0.01, "{:08x}", c.background);
+
+        // And a solid light foot under a dark one (In Utero, Dreamland).
+        let c = derive(&footed(0xFF20_1810, 0xFFEE_E8C8, 30), S, S, false);
+        assert!(luminance(c.background) > 0.7 && color_to_hsl(c.background)[1] > 0.3, "{:08x}", c.background);
 
         // Edge is bottom rows colour.
-        let c = derive(&footed(0xFF30_60A0, 0xFF20_4070, 20), S, S, true, false);
+        let c = derive(&footed(0xFF30_60A0, 0xFF20_4070, 20), S, S, false);
         assert_eq!(c.edge, 0xFF20_4070);
     }
 
@@ -814,11 +794,42 @@ mod tests {
 
     #[test]
     fn pale_tinted_paper_is_paper() {
-        for dark in [true, false] {
-            let c = derive(&tinted_paper(), S, S, dark, false);
-            assert!(luminance(c.background) > 0.7, "dark={dark}: {:08x}", c.background);
-            assert_eq!(c.on, 0xFF0D_0D0D);
+        let c = derive(&tinted_paper(), S, S, false);
+        assert!(luminance(c.background) > 0.7, "{:08x}", c.background);
+        assert_eq!(c.on, INK);
+    }
+
+    #[test]
+    fn page_is_the_covers_own_colour() {
+        // Light, mid and dark colours stay as they are; only the text colour follows them.
+        for (colour, on) in [(0xFFF3_BBD7u32, INK), (0xFF86_7FC2, INK), (0xFFA4_4C2B, WHITE), (0xFFE3_001B, WHITE), (0xFF40_B5D9, INK)] {
+            let c = derive(&solid(colour), S, S, false);
+            assert_eq!((c.background, c.on), (colour, on), "{colour:08x}");
         }
+        // Where neither text colour reads, the least lightness step that lets one.
+        let grey = 0xFF77_7777;
+        let c = derive(&solid(grey), S, S, false);
+        assert!(calculate_contrast(c.on, c.background) >= 4.5, "{:08x}", c.background);
+        assert!((color_to_hsl(c.background)[2] - color_to_hsl(grey)[2]).abs() < 0.02, "{:08x}", c.background);
+    }
+
+    /// `around` with a disc of `inside` covering most of it (Syro).
+    fn disc_in(around: u32, inside: u32) -> Vec<u32> {
+        let c = S as f32 / 2.0;
+        (0..S * S)
+            .map(|i| {
+                let (x, y) = ((i % S) as f32 + 0.5 - c, (i / S) as f32 + 0.5 - c);
+                if x * x + y * y < (S as f32 * 0.46).powi(2) { inside } else { around }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_border_of_one_colour_is_the_page() {
+        let c = derive(&disc_in(WHITE, 0xFFBA_D033), S, S, false);
+        assert!(luminance(c.background) > 0.9, "{:08x}", c.background);
+        let c = derive(&disc_in(0xFFBA_D033, WHITE), S, S, false);
+        assert_eq!(c.background, 0xFFBA_D033);
     }
 
     #[test]
@@ -826,7 +837,7 @@ mod tests {
         let ok = Oklab::new();
         // Lover's pink and a pale lavender; a saturated red keeps its depth.
         for colour in [0xFFF3_BBD7u32, 0xFFC7_B0F9, 0xFFB0_1818] {
-            let page = dark_page(color_to_hsl(colour), PAGE_MAX_LUMA, ok.lightness_chroma(colour).1, &ok);
+            let page = dark_page(color_to_hsl(colour), ok.lightness_chroma(colour).1, &ok);
             let (got, cover) = (ok.lightness_chroma(page).1, ok.lightness_chroma(colour).1);
             assert!(got <= cover + 0.005 && got > cover * 0.5, "{colour:08x} made {page:08x}: chroma {got:.3}, cover {cover:.3}");
             let hue = |c: u32| color_to_hsl(c)[0];
@@ -850,11 +861,11 @@ mod tests {
     fn black_sleeve_accent_is_its_vivid_mark() {
         let ok = Oklab::new();
         // A 22 px disc covers 6 %: the accent is its orange.
-        let c = derive(&black_with_disc(22.0), S, S, true, false);
+        let c = derive(&black_with_disc(22.0), S, S, false);
         let [h, _, _] = color_to_hsl(c.accent);
         assert!((20.0..45.0).contains(&h) && ok.lightness_chroma(c.accent).1 >= VIVID, "{:08x}", c.accent);
         // A 2 px speck (0.05 %) is not the cover's colour: the accent stays grey.
-        let c = derive(&black_with_disc(2.0), S, S, true, false);
+        let c = derive(&black_with_disc(2.0), S, S, false);
         assert!(ok.lightness_chroma(c.accent).1 < GREY, "{:08x}", c.accent);
     }
 
@@ -891,18 +902,16 @@ mod tests {
     fn same_page_at_every_size() {
         let big = gridded(S * 6);
         let small = shrunk(&big, S * 6, 6);
-        for dark in [true, false] {
-            let (a, b) = (derive(&big, S * 6, S * 6, dark, false), derive(&small, S, S, dark, false));
-            assert!(calculate_contrast(a.background, b.background) < 1.05, "dark={dark}: {:08x} vs {:08x}", a.background, b.background);
-            assert_eq!(a.on, b.on);
-        }
+        let (a, b) = (derive(&big, S * 6, S * 6, false), derive(&small, S, S, false));
+        assert!(calculate_contrast(a.background, b.background) < 1.05, "{:08x} vs {:08x}", a.background, b.background);
+        assert_eq!(a.on, b.on);
     }
 
     #[test]
     fn wash_size_and_determinism() {
         let v: Vec<u32> = (0..S * S).map(|i| rgb((i % S) as i32, (i / S) as i32, 90)).collect();
-        let a = derive(&v, S, S, true, false);
-        let b = derive(&v, S, S, true, false);
+        let a = derive(&v, S, S, false);
+        let b = derive(&v, S, S, false);
         assert_eq!(a.wash.as_ref().map(Vec::len), Some(WASH_OUT * WASH_OUT));
         assert_eq!(a, b);
     }

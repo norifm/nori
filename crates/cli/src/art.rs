@@ -148,7 +148,7 @@ mod tests {
         let c = nori_host::derive(&image);
         let t = Theme::from_cover(&c);
         let Some(Color::Rgb(r, g, b)) = t.page else { panic!("a page colour") };
-        assert!(r > g && r > b, "the page is the record's red, darkened: {r} {g} {b}");
+        assert!(r > g && r > b, "the page is the record's red: {r} {g} {b}");
         assert_ne!(t.accent, Theme::plain(0xff3478f6).accent);
 
         // Cover renders in every protocol.

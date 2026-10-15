@@ -74,7 +74,7 @@ pub const CHROME_CONTENT_75: usize = 40;
 /// List fade under the chrome: page at 75 %.
 pub const CHROME_FADE: usize = 41;
 
-/// 1 for dark status bar icons (light page), else 0.
+/// 1 for dark status bar icons (dark text), else 0.
 pub const STATUS_LIGHT: usize = 42;
 /// `f32` bits: blurred band tint strength (1 on white, cream or black pages); a float so cross-fades
 /// mix it. The next three are per-channel luminance scales for [`crate::sleeve::band_matrix`].
@@ -201,7 +201,7 @@ fn dress(s: &Scheme, edge: Option<u32>, out: &mut [u32; LEN]) {
     out[CHROME_CONTENT_75] = with_alpha(on, 0.75);
     out[CHROME_FADE] = with_alpha(bg, 0.75);
 
-    out[STATUS_LIGHT] = (luminance(bg) > 0.5) as u32;
+    out[STATUS_LIGHT] = (luminance(on) < 0.5) as u32;
     // White, cream and black pages have a single-tint wash, so the blurred band takes that tint too.
     let l = color_to_hsl(bg)[2];
     let tinted = l > 0.85 || l < 0.08;
@@ -285,6 +285,9 @@ mod tests {
         assert_eq!(white[PILL], PILL_ON_PAPER);
         assert_eq!(dark[PILL], 0xFFE0_4040);
         assert_eq!((dark[STATUS_LIGHT], white[STATUS_LIGHT]), (0, 1));
+        // Status icons follow the text, also on a mid-tone page.
+        let mid = page(0xFFB0_A080, 0xFFB0_A080, 0xFF0D_0D0D, 0xFF0A_B4E3, 0xFFB0_A080);
+        assert_eq!(mid[STATUS_LIGHT], 1);
         assert_eq!((f32::from_bits(dark[BAND_TINT]), f32::from_bits(white[BAND_TINT])), (0.0, 1.0));
         assert_eq!(f32::from_bits(white[BAND_KG]), 1.0);
     }

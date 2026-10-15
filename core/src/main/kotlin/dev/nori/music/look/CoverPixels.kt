@@ -83,12 +83,12 @@ object CoverPixels {
 
     /**
      * The pages for the cover at [url], worked out from one decode of it to fit [side] with no Bitmap in
-     * between: in the plain theme ([CoverLook.Colours]'s look into [out], its wash into [wash]) and on
+     * between: its own page, whatever the theme ([CoverLook.Colours]'s look into [out], its wash into [wash]) and on
      * AMOLED black (the look into [black]), each where its array is not null. Answers [PLAIN], [WASH]
      * and [BLACK] for what it wrote, 0 for no cover. Reads the disk and may wait for the network: off
      * the main thread.
      */
-    @JvmStatic external fun colours(loader: Long, url: String, side: Int, dark: Boolean, out: IntArray?, wash: Bitmap?, black: IntArray?): Int
+    @JvmStatic external fun colours(loader: Long, url: String, side: Int, out: IntArray?, wash: Bitmap?, black: IntArray?): Int
 
     const val PLAIN = 1
     const val WASH = 2

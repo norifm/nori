@@ -146,19 +146,19 @@ class CoverLoader private constructor(context: Context) {
     /** Fetches the cover at [url] onto the disk, not decoded, behind every cover a view is waiting for. */
     fun warm(url: String) = CoverPixels.warm(loader, url)
 
-    /** A cover's page in the plain theme and on AMOLED black, each null when it was not asked for. */
+    /** A cover's own page and its page on AMOLED black, each null when it was not asked for. */
     class Pages(val plain: CoverLook.Colours?, val black: CoverLook.Colours?)
 
     /**
-     * The pages for the cover at [url], [plain] and on AMOLED [black], worked out by the core from the
+     * The pages for the cover at [url], its own ([plain]) and on AMOLED [black], worked out by the core from the
      * cover's own pixels, decoded once to fit [side]: no Bitmap in between but the wash it draws into.
      * Null when there is no cover. Reads the disk and may wait for the network: off the main thread.
      */
-    fun colours(url: String, side: Int, dark: Boolean, plain: Boolean, black: Boolean): Pages? {
+    fun colours(url: String, side: Int, plain: Boolean, black: Boolean): Pages? {
         val out = if (plain) IntArray(CoverLook.LEN) else null
         val wash = if (plain) Bitmap.createBitmap(CoverLook.WASH, CoverLook.WASH, Bitmap.Config.ARGB_8888) else null
         val onBlack = if (black) IntArray(CoverLook.LEN) else null
-        val got = CoverPixels.colours(loader, url, side, dark, out, wash, onBlack)
+        val got = CoverPixels.colours(loader, url, side, out, wash, onBlack)
         if (got == 0) return null
         return Pages(
             plain = if (got and CoverPixels.PLAIN != 0 && out != null) CoverLook.Colours(out, if (got and CoverPixels.WASH != 0) wash else null) else null,

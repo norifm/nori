@@ -932,11 +932,12 @@ impl App {
         self.open_page(req);
     }
 
-    /// Page colours from its cover, or the defaults.
+    /// Page colours from its cover, or the defaults. The desktop's pages are dark under white text.
     fn page_colours(&self, c: Option<&CoverColours>) {
         let ui = self.ui();
         match c {
             Some(c) => {
+                let c = &nori_look::cover::under_white(c);
                 ui.set_page_bg(colour(c.background));
                 ui.set_page_accent(colour(c.accent));
                 ui.set_page_wash(wash(c));
@@ -2231,7 +2232,7 @@ mod tests {
         let now = Instant::now();
         let image = |size| { let side = cover_px(size); Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(side, side)) };
         let key = |id: &str, size| CoverKey { id: id.into(), size };
-        let colours = nori_look::cover::derive(&[0xff406080], 1, 1, true, false);
+        let colours = nori_look::cover::derive(&[0xff406080], 1, 1, false);
         art.insert(key("shared", CoverSize::Card), image(CoverSize::Card), None, now);
         art.insert(key("shared", CoverSize::Large), image(CoverSize::Large), Some(Box::new(colours)), now);
         art.insert(key("shared", CoverSize::Hero), image(CoverSize::Hero), None, now + Duration::from_millis(1));
