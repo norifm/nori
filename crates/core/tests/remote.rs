@@ -72,6 +72,19 @@ struct Hub {
     /// Every endpoint asked, with its id parameter.
     asked: Vec<String>,
     closed: bool,
+    /// The devices whose held polls wait for news, once for each.
+    parked: Vec<String>,
+}
+
+/// Device `dev`'s held poll, while it waits for news.
+struct Parked<'a>(&'a Relay, String);
+
+impl Drop for Parked<'_> {
+    fn drop(&mut self) {
+        let mut hub = self.0.hub.lock();
+        let at = hub.parked.iter().position(|d| *d == self.1).unwrap();
+        hub.parked.swap_remove(at);
+    }
 }
 
 /// The relay in front of a server whose library is a few songs.
@@ -200,6 +213,11 @@ impl Relay {
         self.hub.lock().asked.clone()
     }
 
+    /// Whether device `dev` has a poll waiting for news.
+    fn parked(&self, dev: &str) -> bool {
+        self.hub.lock().parked.iter().any(|d| d == dev)
+    }
+
     /// How many times `endpoint` was asked.
     fn asked_for(&self, endpoint: &str) -> usize {
         self.hub.lock().asked.iter().filter(|a| a.split(' ').next() == Some(endpoint)).count()
@@ -288,11 +306,16 @@ impl Relay {
 
     /// A held poll's wait: until there is news after `since` in one of `rooms`, or the relay closed or
     /// went down.
-    async fn news(&self, since: u64, rooms: &[String]) {
+    async fn news(&self, since: u64, rooms: &[String], dev: &str) {
+        let mut parked = None;
         std::future::poll_fn(|cx| {
-            let hub = self.hub.lock();
+            let mut hub = self.hub.lock();
             if rooms.iter().any(|r| hub.rooms.get(r).is_none_or(|s| s.touched > since)) || hub.closed || self.down.load(Ordering::Relaxed) {
                 return Poll::Ready(());
+            }
+            if parked.is_none() {
+                hub.parked.push(dev.to_string());
+                parked = Some(Parked(self, dev.to_string()));
             }
             self.waiting.lock().push(cx.waker().clone());
             Poll::Pending
@@ -484,8 +507,9 @@ impl Transport for Relay {
                 // The rooms it listens to as it arrives: a jam opened meanwhile is not one of them. A key
                 // no longer known is refused at once.
                 if let Ok(c) = self.caller(endpoint, &params) {
-                    let rooms = listened(&self.hub.lock(), &c, params.get("dev").map_or("", String::as_str));
-                    self.news(since, &rooms).await;
+                    let dev = params.get("dev").map_or("", String::as_str);
+                    let rooms = listened(&self.hub.lock(), &c, dev);
+                    self.news(since, &rooms, dev).await;
                 }
                 if self.down.load(Ordering::Relaxed) {
                     return unreachable();
@@ -1289,13 +1313,13 @@ fn a_paused_device_out_of_sight_is_not_followed() {
 
     // Nothing shows the phone on the desk any more: its held poll ends, and the phone playing is not heard.
     desk.remote.clone().sight(Sight::Nothing);
-    let polls = desk.polls(&relay);
     phone.remote.clone().played(Playing { playing: true, position_ms: 5_000, ..Default::default() });
     let plays = || relay.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == phone_id && m.state.as_ref().is_some_and(|s| s.playing));
     phone.until("the relay has the phone playing", |_| plays().then_some(()));
     std::thread::sleep(Duration::from_millis(300));
     assert!(desk.remote.active().is_some_and(|m| !m.playing), "the desk did not hear it");
-    assert_eq!(desk.polls(&relay), polls, "nor asked");
+    // A poll on its way as the sight changed may still arrive, and is answered; none waits for more.
+    assert!(!relay.parked(&desk.remote.id()), "nor asks");
 
     desk.remote.clone().sight(Sight::Screen);
     desk.until("followed again, playing", |r| r.active().filter(|m| m.playing));
@@ -1760,7 +1784,8 @@ fn picking_a_device_moves_the_active_ones_playback() {
             Picked::Transfers => {
                 assert!(matches!(phone.told(), Op::Replace { songs, .. } if songs[0].id == "d1"), "{case}: the desk's queue goes");
                 phone.queued(&["d1", "d2"]);
-                heard("the queue there", &|s| s.entries.first().is_some_and(|e| e.id == "d1"));
+                // Waited for in the mirror the pick goes by, not in the device list read before it.
+                desk.until(&format!("{case}: the queue there"), |r| r.active().filter(|m| m.at.is_some() && m.rows.first().is_some_and(|e| e.song.id == "d1")));
                 // Picked back, the queue comes here again.
                 desk.remote.clone().pick(None);
                 assert!(matches!(desk.told(), Op::Replace { songs, .. } if songs[0].id == "d1"), "{case}: pulled back");
@@ -2130,6 +2155,7 @@ fn a_guest_profile_opened_after_its_jam_ended_hears_so_at_once() {
     let link = opened(&host);
     let pass = joined(&relay, link, "Gus".into());
     host.remote.clone().jam_close();
+    eventually("the jam closed at the relay", || relay.jams() == 0);
     // The app opens again on the guest profile: its first look at the jam finds it gone.
     let gus = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, "Gus");
     gus.remote.clone().watch(true);
