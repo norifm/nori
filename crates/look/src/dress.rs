@@ -214,8 +214,8 @@ fn dress(s: &Scheme, edge: Option<u32>, out: &mut [u32; LEN]) {
     out[BAND_KB] = k[2].to_bits();
 
     let e = out[EDGE];
-    out[HERO_EDGE] = with_alpha(e, 0.40);
-    out[HERO_MID] = with_alpha(blend(e, bg, 0.55), 0.86);
+    out[HERO_EDGE] = with_alpha(e, crate::sleeve::HERO_ALPHAS[1]);
+    out[HERO_MID] = with_alpha(blend(e, bg, 0.55), crate::sleeve::HERO_ALPHAS[2]);
     out[FLOOR_0] = with_alpha(bg, 0.0);
     out[FLOOR_22] = with_alpha(bg, 0.22);
     out[FLOOR_75] = with_alpha(bg, 0.75);

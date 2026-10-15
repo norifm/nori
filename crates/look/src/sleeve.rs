@@ -32,6 +32,19 @@ pub const STATUS_SHADE_TO: f32 = 0.16;
 /// Album artwork dissolve: clear until `[0]`, then `HERO_EDGE`, `HERO_MID` and the page colour. Ends
 /// on the page colour inside the artwork so parallax never exposes a seam.
 pub const HERO_STOPS: [f32; 4] = [0.60, 0.76, 0.88, 1.0];
+/// Opacity of the dissolve at each of [`HERO_STOPS`].
+pub const HERO_ALPHAS: [f32; 4] = [0.0, 0.40, 0.86, 1.0];
+
+/// The alpha of `stops` at `t`, linear between them, held beyond the ends.
+pub fn alpha_at(stops: &[Stop], t: f32) -> f32 {
+    let i = stops.partition_point(|s| s.at <= t);
+    match (stops.get(i.wrapping_sub(1)), stops.get(i)) {
+        (Some(a), Some(b)) => a.alpha + (b.alpha - a.alpha) * (t - a.at) / (b.at - a.at),
+        (Some(a), None) => a.alpha,
+        (None, Some(b)) => b.alpha,
+        (None, None) => 0.0,
+    }
+}
 
 /// Player floor gradient stops for `FLOOR_0`, `FLOOR_22`, `FLOOR_75` and the page colour.
 pub const FLOOR_STOPS: [f32; 4] = [0.0, 0.45, 0.80, 1.0];
