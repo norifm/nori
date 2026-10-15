@@ -2067,9 +2067,9 @@ fn ending_a_jam_being_started_cancels_it() {
 #[test]
 fn a_jam_host_shows_once_it_hears_its_guests() {
     let relay = Relay::new();
+    relay.first_answers_held.store(true, Ordering::Relaxed);
     let host = Device::account(&relay, DeviceKind::Phone, "Host");
     host.playing(&["s1"], 0);
-    relay.first_answers_held.store(true, Ordering::Relaxed);
     opened(&host);
     let shown = || relay.hub.lock().rooms.values().filter(|r| r.jam).flat_map(|r| &r.members).any(|m| m.id == host.remote.id() && m.state.is_some());
     // Sent after the jam's first state would have been, the same way.
