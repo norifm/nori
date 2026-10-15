@@ -150,6 +150,25 @@ pub fn luminance(c: u32) -> f32 {
     ((0.2126 * ch(red(c))) + (0.7152 * ch(green(c))) + (0.0722 * ch(blue(c)))).clamp(0.0, 1.0) as f32
 }
 
+/// Oklab lightness (0..1) and chroma (0 to about 0.32) of 8-bit colours. Unlike HSL saturation, chroma
+/// stays small for a pale tint or a dark shade (E0E2F4 is 50 % saturated but 0.024 chroma).
+pub(crate) struct Oklab {
+    /// Linear light of each 8-bit sRGB level.
+    linear: [f32; 256],
+}
+
+impl Oklab {
+    pub(crate) fn new() -> Self {
+        Oklab { linear: std::array::from_fn(|v| crate::compose::eotf(v as f32 / 255.0)) }
+    }
+
+    pub(crate) fn lightness_chroma(&self, c: u32) -> (f32, f32) {
+        let lin = |v: i32| self.linear[v as usize];
+        let (l, a, b) = crate::compose::linear_to_oklab(lin(red(c)), lin(green(c)), lin(blue(c)), f32::cbrt);
+        (l, (a * a + b * b).sqrt())
+    }
+}
+
 /// Compose's opaque `Color(red, green, blue)`.
 pub(crate) fn from_floats(r: f32, g: f32, b: f32) -> u32 {
     crate::compose::from_floats_a(r, g, b, 1.0)
