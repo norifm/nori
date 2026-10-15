@@ -73,8 +73,6 @@ pub enum OutputGlyph {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct OutputLook {
     pub glyph: OutputGlyph,
-    /// Not the phone's speaker (the glyph is accented).
-    pub elsewhere: bool,
     pub port: OutputPort,
     /// The device's own name, if it gave one.
     pub name: Option<String>,
@@ -89,7 +87,7 @@ pub fn output_look(output: String) -> OutputLook {
         OutputPort::Bluetooth => OutputGlyph::Bluetooth,
         _ => OutputGlyph::Cast,
     };
-    OutputLook { glyph, elsewhere: output != outputs::SPEAKER, port, name: name.map(str::to_string) }
+    OutputLook { glyph, port, name: name.map(str::to_string) }
 }
 
 /// `AudioFormat.ENCODING_*` in bits per sample; float counts as 32.
@@ -233,15 +231,12 @@ mod tests {
         assert_eq!(dac_mock("K3@x/16,44100/8".into()).rates, Vec::<u32>::new());
 
         // Output look by port.
-        let l = |o: &str| {
-            let l = output_look(o.into());
-            (l.glyph, l.elsewhere)
-        };
-        assert_eq!(l("USB: K3"), (OutputGlyph::Headphones, true));
-        assert_eq!(l("Wired headphones"), (OutputGlyph::Headphones, true));
-        assert_eq!(l("Bluetooth: buds"), (OutputGlyph::Bluetooth, true));
-        assert_eq!(l(outputs::SPEAKER), (OutputGlyph::Cast, false));
-        assert_eq!(l("HDMI"), (OutputGlyph::Cast, true));
+        let l = |o: &str| output_look(o.into()).glyph;
+        assert_eq!(l("USB: K3"), OutputGlyph::Headphones);
+        assert_eq!(l("Wired headphones"), OutputGlyph::Headphones);
+        assert_eq!(l("Bluetooth: buds"), OutputGlyph::Bluetooth);
+        assert_eq!(l(outputs::SPEAKER), OutputGlyph::Cast);
+        assert_eq!(l("HDMI"), OutputGlyph::Cast);
         let buds = output_look("Bluetooth: buds".into());
         assert_eq!((buds.port, buds.name.as_deref()), (OutputPort::Bluetooth, Some("buds")));
     }
