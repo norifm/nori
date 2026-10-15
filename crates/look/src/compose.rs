@@ -81,7 +81,7 @@ const TC: f64 = 0.07739938080495357;
 const TD: f64 = 0.04045;
 const TG: f64 = 2.4;
 
-fn eotf(x: f32) -> f32 {
+pub(crate) fn eotf(x: f32) -> f32 {
     let x = (x as f64).clamp(0.0, 1.0);
     (if x >= TD { (TA * x + TB).powf(TG) } else { TC * x }) as f32
 }
@@ -158,12 +158,16 @@ fn unhalf(h: u16) -> f32 {
     f32::from_bits(((s << 16) | (out_e << 23) | out_m) as u32)
 }
 
-/// sRGB to Compose's Oklab storage: L, a, b as half floats, 10-bit alpha.
-fn to_oklab(c: u32) -> ([u16; 3], i32) {
-    let (r, g, b) = (eotf(ch(red(c))), eotf(ch(green(c))), eotf(ch(blue(c))));
+/// Linear sRGB to Oklab L, a, b, with the given cube root.
+pub(crate) fn linear_to_oklab(r: f32, g: f32, b: f32, cbrt: fn(f32) -> f32) -> (f32, f32, f32) {
     let (x, y, z) = mul(&SRGB_TO_XYZ, r, g, b);
     let (l, m, s) = mul(&M1, x, y, z);
-    let (l, a, bb) = mul(&M2, fast_cbrt(l), fast_cbrt(m), fast_cbrt(s));
+    mul(&M2, cbrt(l), cbrt(m), cbrt(s))
+}
+
+/// sRGB to Compose's Oklab storage: L, a, b as half floats, 10-bit alpha.
+fn to_oklab(c: u32) -> ([u16; 3], i32) {
+    let (l, a, bb) = linear_to_oklab(eotf(ch(red(c))), eotf(ch(green(c))), eotf(ch(blue(c))), fast_cbrt);
     let a10 = (ch(alpha(c)).clamp(0.0, 1.0) * 1023.0 + 0.5) as i32;
     ([half(l.clamp(0.0, 1.0)), half(a.clamp(-0.5, 0.5)), half(bb.clamp(-0.5, 0.5))], a10)
 }
