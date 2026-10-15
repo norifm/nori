@@ -96,21 +96,21 @@ fn page_of(colour: u32) -> u32 {
 /// colour (the artwork dissolves into it), else the colour covering most of it. With `amoled` it is
 /// black, without a wash.
 pub fn derive(pixels: &[u32], w: usize, h: usize, amoled: bool) -> CoverColours {
-    let foot = bottom_average(pixels, w, h);
-    let edge_raw = foot.colour;
+    let foot = bottom_rows(pixels, w, h);
+    let edge_raw = mean_rgb(foot.iter().copied()).expect("covers are at least 1 x 1");
     let p = palette::generate(pixels, w, h, 16);
     let ok = Oklab::new();
     let body = dominant(pixels, w, h, edge_raw, &ok);
     let body_grey = ok.lightness_chroma(body).1 < GREY;
-    // A "frame" is a thin contrasting strip under the artwork, under half the melt (Amnesiac's black line
-    // under the red book, a white border): the fade starts above it and the page is not its colour.
-    let frame = foot.strip < MELT / 2.0 && calculate_contrast(foot.colour, foot.above) >= 1.6;
-    // What the page meets matters most: a border of one colour is continued, then a solid foot (Demon
-    // Days' black frame, In Utero's cream); otherwise the page is the body and the fade starts from the
-    // foot's average.
-    let solid = foot.solid && !frame;
-    let rim = border(pixels, w, h);
-    let source = rim.unwrap_or(if solid { edge_raw } else { body });
+    // The page is what the artwork's blurred bottom dissolves into, so nothing blends across a hard edge.
+    // A colour along the whole bottom edge is continued, however thin (Demon Days' black frame, In
+    // Utero's cream, Amnesiac's black line under the red book), then a border of one colour (Syro's
+    // white); otherwise the body where the foot shows it (a fifth of its pixels), else the foot's own
+    // commonest colour: Melophobia's coral figure never reaches its striped foot.
+    let touching = bottom_edge(pixels, w, h).or_else(|| border(pixels, w, h));
+    let shows_body = share_near(foot, body) >= 0.2;
+    let foot_colour = || cluster(foot, w, foot.len() / w, |_| true).expect("the foot holds a pixel");
+    let source = touching.unwrap_or_else(|| if shows_body { body } else { foot_colour() });
     let (source_light, source_colour) = ok.lightness_chroma(source);
     // Paper and ink: a near-neutral page, light or dark. Their tint fades out below 0.016 chroma and is
     // gone under 0.006, so JPEG noise or a scanner cast does not tint the page while real creams stay.
@@ -135,13 +135,12 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, amoled: bool) -> CoverColours 
         };
         readable(seed, background, on, &ok)
     };
-    // Fade from the colour above a frame, not the frame itself; a mixed foot mostly towards the page.
-    let edge = if rim.is_some() || solid || amoled {
-        edge_raw
-    } else if frame {
-        foot.above
-    } else {
-        blend_argb(edge_raw, background, 0.75)
+    // The fade starts from the colour the bottom touches, or from a mixed foot's average mostly towards
+    // the page.
+    let edge = match touching {
+        Some(colour) => colour,
+        None if amoled => edge_raw,
+        None => blend_argb(edge_raw, background, 0.75),
     };
     let wash = (!amoled).then(|| wash_of(pixels, w, h, background, on, paper, ink));
     CoverColours {
@@ -383,24 +382,19 @@ fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32, ok: &Oklab) -> u3
     }
     let (cols, rows) = (w.min(CELLS), h.min(CELLS));
     let mut weight = [0f32; HUES + 2];
-    let (mut sum_r, mut sum_g, mut sum_b) = ([0f32; HUES + 2], [0f32; HUES + 2], [0f32; HUES + 2]);
     let (mut paper, mut ink, mut total) = (0f32, 0f32, 0f32);
     // Unweighted coloured-cell counts per hue, comparable with the paper and ink counts.
     let mut coloured = [0f32; HUES];
     // Hue bucket per cell (-1: none), to tell solid fields from lines.
     let mut grid = vec![-1i32; cols * rows];
-    let bucket_of = |hue: f32| ((hue / (360.0 / HUES as f32)) as i32).clamp(0, HUES as i32 - 1) as usize;
     for gy in 0..rows {
         let (y0, y1) = (gy * h / rows, (gy + 1) * h / rows);
         for gx in 0..cols {
             let (x0, x1) = (gx * w / cols, (gx + 1) * w / cols);
             let cell = (y0..y1).flat_map(|y| pixels[y * w + x0..y * w + x1].iter().copied());
             let px = mean_rgb(cell).expect("every cell holds a pixel");
-            let hue = color_to_hsl(px)[0];
-            let (light, colour) = ok.lightness_chroma(px);
+            let Vote { bucket, black, white, colour } = vote(px, ok);
             total += 1.0;
-            let black = light < INK_LIGHT || (light < DIM && colour < GREY);
-            let white = light >= PAPER_LIGHT && colour <= PAPER_CHROMA;
             if black {
                 ink += 1.0;
             }
@@ -408,16 +402,9 @@ fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32, ok: &Oklab) -> u3
                 paper += 1.0;
             }
             if !black && !white && colour >= VIVID {
-                coloured[bucket_of(hue)] += 1.0;
-                grid[gy * cols + gx] = bucket_of(hue) as i32;
+                coloured[bucket] += 1.0;
+                grid[gy * cols + gx] = bucket as i32;
             }
-            let bucket = if black {
-                DARK
-            } else if white || colour < GREY {
-                NEUTRAL
-            } else {
-                bucket_of(hue)
-            };
             let wt = match bucket {
                 // Full weight so JPEG specks cannot outvote a white or black field.
                 DARK => 1.0,
@@ -431,9 +418,6 @@ fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32, ok: &Oklab) -> u3
                 _ => 0.25 + 0.75 * (colour / HUED).min(1.0),
             };
             weight[bucket] += wt;
-            sum_r[bucket] += wt * red(px) as f32;
-            sum_g[bucket] += wt * green(px) as f32;
-            sum_b[bucket] += wt * blue(px) as f32;
         }
     }
     // A hue scores with its two neighbours (one perceived colour spans several buckets); neutral and dark
@@ -484,40 +468,87 @@ fn dominant(pixels: &[u32], w: usize, h: usize, fallback: u32, ok: &Oklab) -> u3
         }
     }
     let run: &[usize] = if best < HUES { &[(best + HUES - 1) % HUES, best, (best + 1) % HUES] } else { std::slice::from_ref(&best) };
-    let n = run.iter().map(|&i| weight[i] as f64).sum::<f64>() as f32;
-    if n <= 0.0 {
-        return fallback;
-    }
-    let mean = |s: &[f32; HUES + 2]| ((run.iter().map(|&i| s[i] as f64).sum::<f64>() / n as f64) as i32).clamp(0, 255);
-    rgb(mean(&sum_r), mean(&sum_g), mean(&sum_b))
+    // Stripes finer than a cell vote for their mix, which no pixel has: then the commonest colour at all.
+    cluster(pixels, w, h, |c| run.contains(&vote(c, ok).bucket)).or_else(|| cluster(pixels, w, h, |_| true)).unwrap_or(fallback)
 }
 
-/// The cover's bottom rows.
-struct Foot {
-    /// Average colour of the bottom rows.
-    colour: u32,
-    /// Whether at least 85 % of those pixels are close to the average.
-    solid: bool,
-    /// Height of the uniform strip, as a fraction of the cover.
-    strip: f32,
-    /// Average of the melt band's rows above the strip.
-    above: u32,
+/// A colour's bucket in [`dominant`], whether it is ink or paper, and its Oklab chroma.
+struct Vote {
+    bucket: usize,
+    black: bool,
+    white: bool,
+    colour: f32,
 }
 
-fn bottom_average(pixels: &[u32], w: usize, h: usize) -> Foot {
-    let rows = (h / 12).clamp(1, 12);
-    let foot = &pixels[(h - rows) * w..h * w];
-    let colour = mean_rgb(foot.iter().copied()).expect("covers are at least 1 x 1");
-    let close = foot.iter().filter(|&&px| near(px, colour)).count();
-    let row_mean = |y: usize| mean_rgb(pixels[y * w..(y + 1) * w].iter().copied()).expect("covers are at least 1 x 1");
-    // Walk up while rows still match the strip.
-    let mut top = h;
-    while top > h / 2 && near(row_mean(top - 1), colour) {
-        top -= 1;
+fn vote(px: u32, ok: &Oklab) -> Vote {
+    let (light, colour) = ok.lightness_chroma(px);
+    let black = light < INK_LIGHT || (light < DIM && colour < GREY);
+    let white = light >= PAPER_LIGHT && colour <= PAPER_CHROMA;
+    let bucket = if black {
+        DARK
+    } else if white || colour < GREY {
+        NEUTRAL
+    } else {
+        ((color_to_hsl(px)[0] / (360.0 / HUES as f32)) as usize).min(HUES - 1)
+    };
+    Vote { bucket, black, white, colour }
+}
+
+/// Point samples per side for [`cluster`].
+const SAMPLES: usize = 128;
+
+/// The commonest colour of the cover among those `wanted`: sampled pixels counted in 16-level bins,
+/// the heaviest bin with its wanted neighbours, and their mean. A real colour of the cover, never the
+/// mean of a family of them (a figure over stripes averaged into a colour that is nowhere).
+fn cluster(pixels: &[u32], w: usize, h: usize, wanted: impl Fn(u32) -> bool) -> Option<u32> {
+    let bin = |c: u32| ((red(c) >> 4) << 8 | (green(c) >> 4) << 4 | blue(c) >> 4) as usize;
+    // Count and channel sums per bin.
+    let mut bins = vec![[0u32; 4]; 4096];
+    let (sx, sy) = (w.min(SAMPLES), h.min(SAMPLES));
+    for y in 0..sy {
+        for x in 0..sx {
+            let c = pixels[(y * h / sy) * w + x * w / sx];
+            let b = &mut bins[bin(c)];
+            b[0] += 1;
+            b[1] += red(c) as u32;
+            b[2] += green(c) as u32;
+            b[3] += blue(c) as u32;
+        }
     }
-    let melt_top = (h as f32 * (1.0 - MELT)) as usize;
-    let above = mean_rgb((melt_top..top).map(row_mean)).unwrap_or(colour);
-    Foot { colour, solid: close as f32 >= foot.len() as f32 * 0.85, strip: (h - top) as f32 / h as f32, above }
+    let mean = |b: &[u32; 4]| rgb((b[1] / b[0]) as i32, (b[2] / b[0]) as i32, (b[3] / b[0]) as i32);
+    let keep: Vec<bool> = bins.iter().map(|b| b[0] > 0 && wanted(mean(b))).collect();
+    // A bin with the kept bins around it (one colour straddles bin edges).
+    let around = |i: usize| {
+        let (r, g, b) = ((i >> 8) as i32, ((i >> 4) & 15) as i32, (i & 15) as i32);
+        (-1..=1).flat_map(move |dr| (-1..=1).flat_map(move |dg| (-1..=1).map(move |db| (r + dr, g + dg, b + db))))
+            .filter(|&(r, g, b)| (0..16).contains(&r) && (0..16).contains(&g) && (0..16).contains(&b))
+            .map(|(r, g, b)| (r << 8 | g << 4 | b) as usize)
+    };
+    let total = |i: usize| around(i).filter(|&j| keep[j]).fold([0u32; 4], |a, j| [a[0] + bins[j][0], a[1] + bins[j][1], a[2] + bins[j][2], a[3] + bins[j][3]]);
+    let best = (0..4096).filter(|&i| keep[i]).max_by_key(|&i| total(i)[0])?;
+    Some(mean(&total(best)))
+}
+
+/// The cover's bottom rows (1/12 of its height, at most 12).
+fn bottom_rows(pixels: &[u32], w: usize, h: usize) -> &[u32] {
+    &pixels[(h - (h / 12).clamp(1, 12)) * w..h * w]
+}
+
+/// The fraction of `px` that looks like `colour`.
+fn share_near(px: &[u32], colour: u32) -> f32 {
+    px.iter().filter(|&&p| near(p, colour)).count() as f32 / px.len() as f32
+}
+
+/// The colour along the cover's very bottom edge (its last 1/64), if 85 % of it is that one colour: the
+/// mean of those pixels.
+fn bottom_edge(pixels: &[u32], w: usize, h: usize) -> Option<u32> {
+    one_colour(&pixels[(h - (h / 64).max(1)) * w..])
+}
+
+/// The colour 85 % of `px` share, as the mean of those pixels; None for a mix.
+fn one_colour(px: &[u32]) -> Option<u32> {
+    let mean = mean_rgb(px.iter().copied())?;
+    (share_near(px, mean) >= 0.85).then(|| mean_rgb(px.iter().copied().filter(|&p| near(p, mean))).unwrap_or(mean))
 }
 
 /// Whether two colours look alike (within 48 levels).
@@ -530,13 +561,9 @@ fn near(a: u32, b: u32) -> bool {
 /// meets the artwork, if 85 % of it is that one colour (Syro's white around the green disc).
 fn border(pixels: &[u32], w: usize, h: usize) -> Option<u32> {
     let d = (w.min(h) / 32).max(1);
-    let band = || {
-        let sides = (0..h - d).flat_map(move |y| pixels[y * w..y * w + d].iter().chain(&pixels[(y + 1) * w - d..(y + 1) * w]));
-        sides.chain(&pixels[(h - d) * w..]).copied()
-    };
-    let colour = mean_rgb(band())?;
-    let (close, all) = band().fold((0, 0), |(c, n), px| (c + near(px, colour) as usize, n + 1));
-    (close * 100 >= all * 85).then_some(colour)
+    let sides = (0..h - d).flat_map(|y| pixels[y * w..y * w + d].iter().chain(&pixels[(y + 1) * w - d..(y + 1) * w]));
+    let band: Vec<u32> = sides.chain(&pixels[(h - d) * w..]).copied().collect();
+    one_colour(&band)
 }
 
 /// The mean colour of `px`, each channel's sum divided down; None for no pixels.
@@ -706,8 +733,8 @@ mod tests {
         let p = derive(&v, S, S, false);
         assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "{:08x}", p.background);
 
-        // Off white paper with splashes stays white.
-        // Regression (Cage the Elephant): off-white paper and yellow splashes averaged into olive.
+        // Off-white paper inside a band of splashes: the band is what the page meets, so the page is one of
+        // its colours, never their average (Cage the Elephant: they averaged into olive).
         let mut noise = JavaRandom::new(11);
         let v: Vec<u32> = (0..S * S)
             .map(|i| {
@@ -722,7 +749,7 @@ mod tests {
             })
             .collect();
         let p = derive(&v, S, S, false);
-        assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "{:08x}", p.background);
+        assert!([0xFFE8_D850, 0xFFE0_C890, 0xFFD0_3048].iter().any(|&c| near(p.background, c)), "{:08x}", p.background);
 
         // Subject on paper does not take page.
         // Villains: off-white paper, a red figure over a third of it, dark coat below.
@@ -744,18 +771,21 @@ mod tests {
 
     #[test]
     fn dark_fields() {
-        // Amnesiac: half red, half black, thin black line at the foot.
+        // Amnesiac: half red, half black. Red down to the bottom edge is the page.
         let mut v = solid(0xFF08_0808);
         for y in 0..S {
             for x in 0..S / 2 + 4 {
                 v[y * S + x] = 0xFFB0_1818;
             }
         }
-        v[(S - 3) * S..].fill(0xFF05_0505);
         let c = derive(&v, S, S, false);
         let [h, s, _] = color_to_hsl(c.background);
         assert!((h < 15.0 || h > 345.0) && s > 0.3, "not red: {:08x}", c.background);
-        assert_ne!(c.edge, 0xFF05_0505, "the fade starts above the line");
+        // Under a thin black line along the bottom the red never reaches the page: blending it across the
+        // line would leave a seam, so the page is the line's black, and the fade starts from it.
+        v[(S - 3) * S..].fill(0xFF05_0505);
+        let c = derive(&v, S, S, false);
+        assert!(luminance(c.background) < 0.01 && c.edge == c.background, "{:08x} from {:08x}", c.background, c.edge);
 
         // A solid dark foot is continued under a light picture (Demon Days).
         let c = derive(&footed(0xFFD8_D8D0, 0xFF06_0606, 40), S, S, false);
@@ -811,6 +841,29 @@ mod tests {
         let c = derive(&solid(grey), S, S, false);
         assert!(calculate_contrast(c.on, c.background) >= 4.5, "{:08x}", c.background);
         assert!((color_to_hsl(c.background)[2] - color_to_hsl(grey)[2]).abs() < 0.02, "{:08x}", c.background);
+    }
+
+    /// Vertical stripes of `a` and `b`, `width` pixels each.
+    fn stripes(a: u32, b: u32, width: usize) -> Vec<u32> {
+        (0..S * S).map(|i| if (i % S / width).is_multiple_of(2) { a } else { b }).collect()
+    }
+
+    #[test]
+    fn stripes_never_give_their_mix() {
+        let (red, blue) = (0xFFD0_2020u32, 0xFF20_30D0);
+        for width in [1, 3, 8] {
+            let c = derive(&stripes(red, blue, width), S, S, false);
+            assert!(near(c.background, red) || near(c.background, blue), "{width} px: {:08x}", c.background);
+        }
+        // A figure that never reaches the striped foot is not the page (Melophobia).
+        let mut v = stripes(0xFF10_1010, 0xFFF0_F0F0, 6);
+        for y in S / 6..S * 3 / 5 {
+            for x in S / 4..S * 3 / 4 {
+                v[y * S + x] = 0xFFE0_7A60;
+            }
+        }
+        let c = derive(&v, S, S, false);
+        assert!(Oklab::new().lightness_chroma(c.background).1 < GREY, "{:08x}", c.background);
     }
 
     /// `around` with a disc of `inside` covering most of it (Syro).
