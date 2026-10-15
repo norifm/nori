@@ -747,6 +747,8 @@ struct Inner {
     /// Bumped to end the running relay poller (each runs while its generation is current).
     generation: u64,
     relay_polling: bool,
+    /// The relay is asked whether it relays: its poller runs until it answers.
+    probing: bool,
     /// The last relay poll failed: the devices it listed may have gone since, and are not shown.
     relay_down: bool,
     /// What the relay's last answer said of it, as logged.
@@ -819,7 +821,7 @@ impl Inner {
     }
 
     fn wants_relay(&self) -> bool {
-        self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.discovering || self.taking.is_some() || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
+        self.probing || self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.discovering || self.taking.is_some() || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
     }
 
     /// Whether the mirrored device is followed: while something here shows it, or it plays.
@@ -1029,7 +1031,7 @@ pub struct Remote {
     out: Mutex<Option<mpsc::Sender<Out>>>,
     /// Disconnected once the sender ended.
     out_ended: Mutex<mpsc::Receiver<()>>,
-    /// The pollers, the time keeper and the probe, joined when the remote stops.
+    /// The pollers and the time keeper, joined when the remote stops.
     threads: Mutex<Vec<JoinHandle<()>>>,
     /// What plays along with a jam's host here.
     follower: Mutex<Option<Arc<dyn Follower>>>,
@@ -2095,33 +2097,19 @@ impl Remote {
         opened.map_err(|e| crate::alog::info(&format!("remote: no door: {e}"))).ok()
     }
 
-    /// Asks whether the server relays, on a thread of its own: one poll that is not held.
+    /// Asks whether the server relays: the relay poller's first poll, which is not held. Polls side by
+    /// side could reach the relay out of order, a late one saying this device does not serve.
     fn probe(self: &Arc<Self>) {
+        let generation = {
+            let mut i = self.inner.lock();
+            i.probing = true;
+            if std::mem::replace(&mut i.relay_polling, true) {
+                return;
+            }
+            i.generation
+        };
         let me = self.clone();
-        self.spawn("nori-remote-probe", move || {
-            let generation = me.inner.lock().generation;
-            let Some(got) = me.get(me.poll_url(None, false, false), 0, |_| true) else { return };
-            me.note_relay(support(&got), &got);
-            if me.jam_gone(&got) {
-                return me.jam_ended(generation);
-            }
-            let serving = {
-                let mut i = me.inner.lock();
-                if let Some(found) = support(&got) {
-                    i.relay = found;
-                }
-                // The probe says this device does not serve, and may have reached the relay after its
-                // first state did: serving by now, it says its state again.
-                if i.serving {
-                    i.published = None;
-                }
-                i.serving
-            };
-            if serving {
-                me.publish();
-            }
-            me.keep_polling();
-        });
+        self.spawn("nori-remote", move || me.poll_relay(generation));
     }
 
     /// Starts the pollers that should run and are not.
@@ -2176,9 +2164,13 @@ impl Remote {
             };
             let Some(got) = self.get(url, POLL_TIMEOUT_MS, |i| i.generation == generation) else { return };
             let received = clock::now_us();
-            // Asked for before the rooms changed: its seq may pass events of a room it did not cover.
-            if self.inner.lock().generation != generation {
-                return;
+            {
+                let mut i = self.inner.lock();
+                // Asked for before the rooms changed: its seq may pass events of a room it did not cover.
+                if i.generation != generation {
+                    return;
+                }
+                i.probing = false;
             }
             let found = support(&got);
             self.note_relay(found, &got);
