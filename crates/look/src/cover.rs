@@ -92,25 +92,15 @@ fn page_of(colour: u32) -> u32 {
 }
 
 /// Derives page colours from `w` x `h` ARGB pixels (at least 1 x 1: every decoder rejects empty images).
-/// The page is a colour of the cover, whatever the app's theme: its bottom edge where that is one solid
-/// colour (the artwork dissolves into it), else the colour covering most of it. With `amoled` it is
-/// black, without a wash.
+/// The page is a colour of the cover, whatever the app's theme: the one the artwork visibly dissolves
+/// into it from ([`Seam`]). With `amoled` it is black, without a wash.
 pub fn derive(pixels: &[u32], w: usize, h: usize, amoled: bool) -> CoverColours {
-    let foot = bottom_rows(pixels, w, h);
-    let edge_raw = mean_rgb(foot.iter().copied()).expect("covers are at least 1 x 1");
     let p = palette::generate(pixels, w, h, 16);
     let ok = Oklab::new();
-    let body = dominant(pixels, w, h, edge_raw, &ok);
+    let seam = Seam::of(pixels, w, h);
+    let body = dominant(pixels, w, h, seam.mean, &ok);
     let body_grey = ok.lightness_chroma(body).1 < GREY;
-    // The page is what the artwork's blurred bottom dissolves into, so nothing blends across a hard edge.
-    // A colour along the whole bottom edge is continued, however thin (Demon Days' black frame, In
-    // Utero's cream, Amnesiac's black line under the red book), then a border of one colour (Syro's
-    // white); otherwise the body where the foot shows it (a fifth of its pixels), else the foot's own
-    // commonest colour: Melophobia's coral figure never reaches its striped foot.
-    let touching = bottom_edge(pixels, w, h).or_else(|| border(pixels, w, h));
-    let shows_body = share_near(foot, body) >= 0.2;
-    let foot_colour = || cluster(foot, w, foot.len() / w, |_| true).expect("the foot holds a pixel");
-    let source = touching.unwrap_or_else(|| if shows_body { body } else { foot_colour() });
+    let source = seam.frame.unwrap_or(seam.colour);
     let (source_light, source_colour) = ok.lightness_chroma(source);
     // Paper and ink: a near-neutral page, light or dark. Their tint fades out below 0.016 chroma and is
     // gone under 0.006, so JPEG noise or a scanner cast does not tint the page while real creams stay.
@@ -135,12 +125,11 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, amoled: bool) -> CoverColours 
         };
         readable(seed, background, on, &ok)
     };
-    // The fade starts from the colour the bottom touches, or from a mixed foot's average mostly towards
-    // the page.
-    let edge = match touching {
+    // The fade starts from the frame, or from the seam's average mostly towards the page.
+    let edge = match seam.frame {
         Some(colour) => colour,
-        None if amoled => edge_raw,
-        None => blend_argb(edge_raw, background, 0.75),
+        None if amoled => seam.mean,
+        None => blend_argb(seam.mean, background, 0.75),
     };
     let wash = (!amoled).then(|| wash_of(pixels, w, h, background, on, paper, ink));
     CoverColours {
@@ -529,41 +518,83 @@ fn cluster(pixels: &[u32], w: usize, h: usize, wanted: impl Fn(u32) -> bool) -> 
     Some(mean(&total(best)))
 }
 
-/// The cover's bottom rows (1/12 of its height, at most 12).
-fn bottom_rows(pixels: &[u32], w: usize, h: usize) -> &[u32] {
-    &pixels[(h - (h / 12).clamp(1, 12)) * w..h * w]
+/// Where the artwork is last seen above its page, as a fraction of its height: the player has rubbed the
+/// sleeve nearly out by here (`sleeve::RUB_OUT`) and the album page's dissolve is nearly opaque
+/// (`sleeve::HERO_STOPS`). The rows below never show.
+const SEEN_TO: f32 = 1.0 - MELT * 0.55;
+/// Top of the band where the artwork dissolves into the page.
+const SEAM_FROM: f32 = 1.0 - MELT * 1.6;
+/// Cells per side at the scale of the player's blur (22 dp on a sleeve about 400 dp wide): a line or a
+/// frame narrower than a cell is gone under it.
+const BLUR_CELLS: usize = 18;
+/// Samples per side of a cell.
+const CELL_SAMPLES: usize = 6;
+
+/// What the page meets. The page continues the colour the artwork dissolves from, as seen through the
+/// blur, so nothing it meets ends on a line: a frame thick enough to outlast the blur (Syro's white, In
+/// Utero's cream), else the commonest colour of the dissolving band and the sides beside it, weighted
+/// towards where the artwork ends (Westside Whimsy's teal around dark hair). Below what shows, a thin
+/// black line (Amnesiac, Demon Days) is not seen and does not count.
+struct Seam {
+    /// A colour round the whole edge of the cover, 85 % of it.
+    frame: Option<u32>,
+    colour: u32,
+    /// Mean of the dissolving band.
+    mean: u32,
 }
 
-/// The fraction of `px` that looks like `colour`.
-fn share_near(px: &[u32], colour: u32) -> f32 {
-    px.iter().filter(|&&p| near(p, colour)).count() as f32 / px.len() as f32
+impl Seam {
+    fn of(pixels: &[u32], w: usize, h: usize) -> Seam {
+        let n = BLUR_CELLS;
+        let cells: Vec<u32> = (0..n * n).map(|i| commonest(pixels, w, h, i % n, i / n)).collect();
+        let at = |x: usize, y: usize| cells[y * n + x];
+        let ring: Vec<u32> = (0..n).flat_map(|i| [at(i, 0), at(i, n - 1), at(0, i), at(n - 1, i)]).collect();
+        let (from, to) = ((SEAM_FROM * n as f32) as usize, ((SEEN_TO * n as f32) as usize).max(1));
+        let from = from.min(to - 1);
+        // Band rows count more the nearer the page they are. The sides of all that shows count three times
+        // over: the background around a subject reaches them, and the page continues it.
+        let band = (from..to).flat_map(|y| (0..n).map(move |x| (at(x, y), (y - from + 1) as f32)));
+        let sides = (0..to).flat_map(|y| [(at(0, y), 3.0), (at(n - 1, y), 3.0)]);
+        let weighed: Vec<(u32, f32)> = band.chain(sides).collect();
+        let colour = heaviest(&weighed);
+        let rows = (h as f32 * SEAM_FROM) as usize..((h as f32 * SEEN_TO) as usize).max((h as f32 * SEAM_FROM) as usize + 1).min(h);
+        let mean = mean_rgb(rows.flat_map(|y| pixels[y * w..(y + 1) * w].iter().copied())).expect("covers are at least 1 x 1");
+        Seam { frame: one_colour(&ring), colour, mean }
+    }
 }
 
-/// The colour along the cover's very bottom edge (its last 1/64), if 85 % of it is that one colour: the
-/// mean of those pixels.
-fn bottom_edge(pixels: &[u32], w: usize, h: usize) -> Option<u32> {
-    one_colour(&pixels[(h - (h / 64).max(1)) * w..])
+/// The commonest colour among a cell's samples, as the mean of those near it: a line through the cell
+/// is not part of it, and two colours finer than the cell are not mixed.
+fn commonest(pixels: &[u32], w: usize, h: usize, cx: usize, cy: usize) -> u32 {
+    let n = BLUR_CELLS * CELL_SAMPLES;
+    let (sx, sy) = (w.min(n), h.min(n));
+    let span = |c: usize, s: usize| c * s / BLUR_CELLS..((c + 1) * s / BLUR_CELLS).max(c * s / BLUR_CELLS + 1).min(s);
+    let samples: Vec<(u32, f32)> = span(cy, sy).flat_map(|y| span(cx, sx).map(move |x| (pixels[(y * h / sy) * w + x * w / sx], 1.0))).collect();
+    heaviest(&samples)
+}
+
+/// The colour with the most weight near it, as the weighted mean of those near it.
+fn heaviest(px: &[(u32, f32)]) -> u32 {
+    let near_weight = |c: u32| px.iter().filter(|p| near(p.0, c)).map(|p| p.1).sum::<f32>();
+    let best = px.iter().map(|p| p.0).max_by(|&a, &b| near_weight(a).total_cmp(&near_weight(b))).expect("at least one colour");
+    let (mut r, mut g, mut b, mut total) = (0f32, 0f32, 0f32, 0f32);
+    for &(c, wt) in px.iter().filter(|p| near(p.0, best)) {
+        (r, g, b, total) = (r + red(c) as f32 * wt, g + green(c) as f32 * wt, b + blue(c) as f32 * wt, total + wt);
+    }
+    rgb((r / total).round() as i32, (g / total).round() as i32, (b / total).round() as i32)
 }
 
 /// The colour 85 % of `px` share, as the mean of those pixels; None for a mix.
 fn one_colour(px: &[u32]) -> Option<u32> {
     let mean = mean_rgb(px.iter().copied())?;
-    (share_near(px, mean) >= 0.85).then(|| mean_rgb(px.iter().copied().filter(|&p| near(p, mean))).unwrap_or(mean))
+    let share = px.iter().filter(|&&p| near(p, mean)).count() as f32 / px.len() as f32;
+    (share >= 0.85).then(|| mean_rgb(px.iter().copied().filter(|&p| near(p, mean))).unwrap_or(mean))
 }
 
 /// Whether two colours look alike (within 48 levels).
 fn near(a: u32, b: u32) -> bool {
     let (dr, dg, db) = (red(a) - red(b), green(a) - green(b), blue(a) - blue(b));
     dr * dr + dg * dg + db * db < 48 * 48
-}
-
-/// The colour of the band along the cover's sides and bottom (1/32 of its side deep), where the page
-/// meets the artwork, if 85 % of it is that one colour (Syro's white around the green disc).
-fn border(pixels: &[u32], w: usize, h: usize) -> Option<u32> {
-    let d = (w.min(h) / 32).max(1);
-    let sides = (0..h - d).flat_map(|y| pixels[y * w..y * w + d].iter().chain(&pixels[(y + 1) * w - d..(y + 1) * w]));
-    let band: Vec<u32> = sides.chain(&pixels[(h - d) * w..]).copied().collect();
-    one_colour(&band)
 }
 
 /// The mean colour of `px`, each channel's sum divided down; None for no pixels.
@@ -733,8 +764,8 @@ mod tests {
         let p = derive(&v, S, S, false);
         assert!(Oklab::new().lightness_chroma(p.background).1 < 0.005 && luminance(p.background) > 0.7, "{:08x}", p.background);
 
-        // Off-white paper inside a band of splashes: the band is what the page meets, so the page is one of
-        // its colours, never their average (Cage the Elephant: they averaged into olive).
+        // Off-white paper inside a band of splashes: the page is one of their colours, never their average
+        // (Cage the Elephant: they averaged into olive).
         let mut noise = JavaRandom::new(11);
         let v: Vec<u32> = (0..S * S)
             .map(|i| {
@@ -749,7 +780,7 @@ mod tests {
             })
             .collect();
         let p = derive(&v, S, S, false);
-        assert!([0xFFE8_D850, 0xFFE0_C890, 0xFFD0_3048].iter().any(|&c| near(p.background, c)), "{:08x}", p.background);
+        assert!([0xFFE8_D850, 0xFFE0_C890, 0xFFD0_3048, 0xFFEE_EEE8].iter().any(|&c| near(p.background, c)), "{:08x}", p.background);
 
         // Subject on paper does not take page.
         // Villains: off-white paper, a red figure over a third of it, dark coat below.
@@ -771,33 +802,36 @@ mod tests {
 
     #[test]
     fn dark_fields() {
-        // Amnesiac: half red, half black. Red down to the bottom edge is the page.
-        let mut v = solid(0xFF08_0808);
-        for y in 0..S {
-            for x in 0..S / 2 + 4 {
-                v[y * S + x] = 0xFFB0_1818;
-            }
-        }
+        // A thin black line along the bottom is rubbed out and blurred away: the red above it is the page.
+        let mut v = solid(0xFFB0_1818);
+        v[(S - 3) * S..].fill(0xFF05_0505);
         let c = derive(&v, S, S, false);
         let [h, s, _] = color_to_hsl(c.background);
         assert!((h < 15.0 || h > 345.0) && s > 0.3, "not red: {:08x}", c.background);
-        // Under a thin black line along the bottom the red never reaches the page: blending it across the
-        // line would leave a seam, so the page is the line's black, and the fade starts from it.
-        v[(S - 3) * S..].fill(0xFF05_0505);
+        // A black frame thicker than the blur is the page, and the fade starts from it (Amnesiac).
+        let edge = S / 12;
+        let v: Vec<u32> = (0..S * S)
+            .map(|i| if (i % S).min(i / S).min(S - 1 - i % S).min(S - 1 - i / S) < edge { 0xFF05_0505 } else { 0xFFB0_1818 })
+            .collect();
         let c = derive(&v, S, S, false);
         assert!(luminance(c.background) < 0.01 && c.edge == c.background, "{:08x} from {:08x}", c.background, c.edge);
+
+        // A dark subject in a coloured field: the field reaching the sides is the page (Westside Whimsy).
+        let v: Vec<u32> = (0..S * S).map(|i| if (S / 4..S * 3 / 4).contains(&(i % S)) && i / S > S / 3 { 0xFF06_0606 } else { 0xFF34_9CAA }).collect();
+        let c = derive(&v, S, S, false);
+        assert!(near(c.background, 0xFF34_9CAA), "{:08x}", c.background);
 
         // A solid dark foot is continued under a light picture (Demon Days).
         let c = derive(&footed(0xFFD8_D8D0, 0xFF06_0606, 40), S, S, false);
         assert!(luminance(c.background) < 0.01, "{:08x}", c.background);
 
         // And a solid light foot under a dark one (In Utero, Dreamland).
-        let c = derive(&footed(0xFF20_1810, 0xFFEE_E8C8, 30), S, S, false);
+        let c = derive(&footed(0xFF20_1810, 0xFFEE_E8C8, 56), S, S, false);
         assert!(luminance(c.background) > 0.7 && color_to_hsl(c.background)[1] > 0.3, "{:08x}", c.background);
 
-        // Edge is bottom rows colour.
-        let c = derive(&footed(0xFF30_60A0, 0xFF20_4070, 20), S, S, false);
-        assert_eq!(c.edge, 0xFF20_4070);
+        // The fade starts from what shows last, not from the hidden bottom rows.
+        let c = derive(&footed(0xFF30_60A0, 0xFF05_0505, 6), S, S, false);
+        assert_eq!((c.edge, c.background), (0xFF30_60A0, 0xFF30_60A0));
     }
 
     /// Hardcore Software's layout: lavender paper under a grey grid, blue swooshes over a quarter of it,
