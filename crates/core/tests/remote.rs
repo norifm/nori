@@ -108,6 +108,8 @@ struct Relay {
     /// come back in the reverse order.
     opens_late: std::sync::atomic::AtomicBool,
     opens: AtomicU64,
+    /// Polls with no `since` are not answered: no device has its first answer.
+    first_answers_held: std::sync::atomic::AtomicBool,
 }
 
 const SERVER_SKEW_US: i64 = 9_000_000;
@@ -143,7 +145,7 @@ impl Relay {
     fn new() -> Arc<Relay> {
         Arc::new(Relay {
             devices: Mutex::default(),
-            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: Default::default(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0) })
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: Default::default(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default() })
     }
 
     fn absent() -> Arc<Relay> {
@@ -234,6 +236,26 @@ impl Relay {
         let _hub = self.hub.lock();
         self.down.store(down, Ordering::Relaxed);
         self.wake();
+    }
+
+    /// Answers the polls with no `since` held until now, and those to come.
+    fn release_first_answers(&self) {
+        let _hub = self.hub.lock();
+        self.first_answers_held.store(false, Ordering::Relaxed);
+        self.wake();
+    }
+
+    /// Until first answers are no longer held, or the relay closed.
+    async fn first_answer(&self) {
+        std::future::poll_fn(|cx| {
+            let hub = self.hub.lock();
+            if !self.first_answers_held.load(Ordering::Relaxed) || hub.closed {
+                return Poll::Ready(());
+            }
+            self.waiting.lock().push(cx.waker().clone());
+            Poll::Pending
+        })
+        .await
     }
 
     /// Wakes the held polls; called with the hub locked.
@@ -455,6 +477,9 @@ impl Transport for Relay {
                 std::thread::sleep(Duration::from_millis(250));
             }
             self.arrived(&params);
+            if !params.contains_key("since") {
+                self.first_answer().await;
+            }
             if let (Some(since), Some("1")) = (params.get("since").and_then(|s| s.parse().ok()), params.get("hold").map(String::as_str)) {
                 // The rooms it listens to as it arrives: a jam opened meanwhile is not one of them. A key
                 // no longer known is refused at once.
@@ -2035,6 +2060,24 @@ fn ending_a_jam_being_started_cancels_it() {
     assert_eq!(start.join().unwrap().unwrap(), None);
     assert!(host.remote.jam_view().is_none());
     eventually("its jam closed at the relay", || relay.jams() == 0);
+    relay.close();
+}
+
+/// A jam's host shows in it once it hears commands: a guest's time exchanges sent before would be lost.
+#[test]
+fn a_jam_host_shows_once_it_hears_its_guests() {
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    host.playing(&["s1"], 0);
+    relay.first_answers_held.store(true, Ordering::Relaxed);
+    opened(&host);
+    let shown = || relay.hub.lock().rooms.values().filter(|r| r.jam).flat_map(|r| &r.members).any(|m| m.id == host.remote.id() && m.state.is_some());
+    // Sent after the jam's first state would have been, the same way.
+    host.remote.clone().send("nobody".into(), Op::Play);
+    eventually("the command at the relay", || relay.hub.lock().rooms.values().flat_map(|r| &r.events).any(|e| e.2.as_deref() == Some("nobody")));
+    assert!(!shown(), "shown before its first answer");
+    relay.release_first_answers();
+    eventually("the host shown", shown);
     relay.close();
 }
 

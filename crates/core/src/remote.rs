@@ -2352,8 +2352,8 @@ impl Remote {
                 }
             }
             // Commands are heard from the first answer on: only then is this device's state said to the
-            // relay, so no controller sends it one before it can hear it.
-            if i.since.is_none() && i.serving {
+            // relay, so no controller or guest sends it one before it can hear it.
+            if i.since.is_none() && (i.serving || i.hosted.is_some()) {
                 i.published = None;
                 republish = true;
             }
@@ -2378,7 +2378,7 @@ impl Remote {
             }
             if let Some(h) = &mut i.hosted {
                 if let Some(r) = a.rooms.iter().find(|r| r.room == h.jam.room) {
-                    republish = h.jam.present(&r.members);
+                    republish |= h.jam.present(&r.members);
                 }
             }
             for e in a.events {
@@ -2883,7 +2883,8 @@ impl Remote {
             if let Some(d) = &i.door {
                 d.publish(state.clone());
             }
-            (state, i.serving && i.since.is_some(), i.jam_room().map(str::to_string), i.relay != RelaySupport::Unsupported)
+            let heard = i.since.is_some();
+            (state, i.serving && heard, i.jam_room().filter(|_| heard).map(str::to_string), i.relay != RelaySupport::Unsupported)
         };
         if serving && relay {
             self.out(Out::send(Link::Relay, Outgoing { state: Some(state.clone()), ..Default::default() }));
