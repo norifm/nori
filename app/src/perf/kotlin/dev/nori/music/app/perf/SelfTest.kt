@@ -728,7 +728,7 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
                 val bitmap = withTimeout(10_000) { suspendCancellableCoroutine { c -> val r = loader.load(url, 300, 300) { c.resume(it) }; c.invokeOnCancellation { r.cancel() } } }
                 val decodeMs = SystemClock.elapsedRealtime() - t
                 val t2 = SystemClock.elapsedRealtime()
-                val pages = withContext(Dispatchers.IO) { loader.colours(url, 300, true, true, true) }
+                val pages = withContext(Dispatchers.IO) { loader.colours(url, 300, true, true) }
                 val colourMs = SystemClock.elapsedRealtime() - t2
                 val look = pages?.plain?.look
                 if (bitmap == null) problems += "cover $art did not decode"

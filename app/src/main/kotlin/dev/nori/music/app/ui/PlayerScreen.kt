@@ -255,17 +255,17 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // AMOLED black everywhere else, but the player keeps the cover's colours unless asked not to: in
     // black, the page under the sleeve was pure black and the picture looked cut off, where Apple's
     // carries the record's colour down the whole screen.
-    val black = remember(prefs.amoled, prefs.playerColours) { dev.nori.music.ffi.pageBlack(prefs.amoled, prefs.playerColours) }
+    val black = remember(dark, prefs.amoled, prefs.playerColours) { dev.nori.music.ffi.pageBlack(dark, prefs.amoled, prefs.playerColours) }
     // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
     val rowUrl = vm.cover(state.current?.coverArt, CoverSize.ROW)
-    val tint = if (prefs.coverColors) rememberCoverTint(rowUrl, dark, black) else CoverTint(rowUrl, null)
+    val tint = if (prefs.coverColors) rememberCoverTint(rowUrl, black) else CoverTint(rowUrl, null)
     val found = tint.palette
     // The colours of the record on its way in, already worked out by the time it is asked for (the now
     // playing bar measures both neighbours ahead; see warmCoverPalette). Only as they were when the record
     // set off: colours worked out while it was already on its way would be brought up at however far it
     // had got, in one frame. Those come after it instead, the page cross-fading to them once it is in.
-    val arrivingNowMeasured = if (prefs.coverColors) rememberCoverPalette(shift.towards, dark, black) else null
-    val arriving = remember(shift.towards, prefs.coverColors, dark, black) { arrivingNowMeasured }
+    val arrivingNowMeasured = if (prefs.coverColors) rememberCoverPalette(shift.towards, black) else null
+    val arriving = remember(shift.towards, prefs.coverColors, black) { arrivingNowMeasured }
     val previousTintUrl = state.queue.getOrNull(state.previousIndex)?.let { vm.cover(it.coverArt, CoverSize.ROW)?.takeUnless(::isProviderCover) }
     val nextTintUrl = state.queue.getOrNull(state.nextIndex)?.let { vm.cover(it.coverArt, CoverSize.ROW)?.takeUnless(::isProviderCover) }
     // Both neighbours' colours are worked out while nothing is happening, so that a record swiped to has
@@ -274,10 +274,10 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // record's colours for the whole swipe and changed to the new one in a single frame at the end,
     // which is the old colour sitting under a cover that had already changed.
     val warmContext = LocalContext.current
-    LaunchedEffect(previousTintUrl, nextTintUrl, dark, black) {
+    LaunchedEffect(previousTintUrl, nextTintUrl, black) {
         if (!prefs.coverColors) return@LaunchedEffect
-        warmCoverPalette(warmContext, nextTintUrl, dark, black)
-        warmCoverPalette(warmContext, previousTintUrl, dark, black)
+        warmCoverPalette(warmContext, nextTintUrl, black)
+        warmCoverPalette(warmContext, previousTintUrl, black)
     }
     // The page's colours change with the song by cross-fading, not in one frame. A song whose colours are
     // not worked out yet keeps the last song's for a moment (the same grace the sleeve's picture has, so

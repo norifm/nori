@@ -163,8 +163,8 @@ fn premultiplied(argb: u32, out: &mut [u8]) {
 
 /// The page for a cover's ARGB `pixels`: its look into `out` (`dress::LEN` ints), its wash into `wash` (a
 /// mutable `WASH_OUT`² ARGB_8888 Bitmap). Returns 0 no page, 1 page, 2 page and wash.
-pub(crate) fn page(env: &JNIEnv, pixels: &[u32], w: usize, h: usize, dark: bool, amoled: bool, out: &JIntArray, wash: &JObject) -> jint {
-    let c = derive(pixels, w, h, dark, amoled);
+pub(crate) fn page(env: &JNIEnv, pixels: &[u32], w: usize, h: usize, amoled: bool, out: &JIntArray, wash: &JObject) -> jint {
+    let c = derive(pixels, w, h, amoled);
     let look = dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge).map(|v| v as i32);
     if env.set_int_array_region(out, 0, &look).is_err() {
         return 0;
