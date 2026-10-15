@@ -2324,6 +2324,8 @@ impl Remote {
 
     /// A relay poll's answer, received at `received` (this device's clock).
     fn took(self: &Arc<Self>, mut a: Answer, received: i64) {
+        // A request from before this device served, reaching the relay late, takes it off the list.
+        let unlisted = !a.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members).any(|m| m.id == self.id && m.state.is_some());
         // The relay may still list this device from before it restarted: it is never one of the others.
         for r in &mut a.rooms {
             r.members.retain(|m| m.id != self.id);
@@ -2348,7 +2350,7 @@ impl Remote {
             }
             // Commands are heard from the first answer on: only then is this device's state said to the
             // relay, so no controller or guest sends it one before it can hear it.
-            if i.since.is_none() && (i.serving || i.hosted.is_some()) {
+            if i.since.is_none() && (i.serving || i.hosted.is_some()) || i.serving && unlisted {
                 i.published = None;
                 republish = true;
             }

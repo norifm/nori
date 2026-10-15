@@ -1296,6 +1296,23 @@ fn a_mirrored_device_is_timed_only_while_it_plays_on_screen() {
     relay.close();
 }
 
+/// A poll from before the device served, reaching the relay late, takes it off the list: it says its
+/// state again.
+#[test]
+fn a_serving_device_the_relay_dropped_is_listed_again() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    phone.playing(&["s1"], 0);
+    phone.remote.clone().serve(true);
+    let id = phone.remote.id();
+    let listed = || relay.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == id && m.state.is_some());
+    eventually("the phone listed", listed);
+    let late: HashMap<String, String> = [("u", "ann"), ("dev", id.as_str()), ("serve", "0")].into_iter().map(|(k, v)| (k.into(), v.into())).collect();
+    relay.arrived(&late);
+    eventually("the phone listed again", listed);
+    relay.close();
+}
+
 #[test]
 fn a_paused_device_out_of_sight_is_not_followed() {
     let relay = Relay::new();
