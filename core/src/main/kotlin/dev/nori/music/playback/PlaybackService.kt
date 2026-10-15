@@ -1150,6 +1150,17 @@ internal object LongPause {
     fun releases(playWhenReady: Boolean, state: Int): Boolean = !playWhenReady && state != Player.STATE_IDLE
 }
 
+/**
+ * A play button (a headset, Bluetooth) while no session is up. media3 starts the service as a foreground
+ * service for it, which only reaches the foreground by playing the saved queue (onPlaybackResumption); the
+ * system kills an app whose service never does. With no saved queue the press starts nothing.
+ */
+@UnstableApi
+class MediaButtons : androidx.media3.session.MediaButtonReceiver() {
+    override fun shouldStartForegroundService(context: android.content.Context, intent: android.content.Intent): Boolean =
+        runCatching { Nori.get(context).core.queueSaved() }.getOrDefault(false)
+}
+
 /** media3's notification, a jam's song saying whose jam it is beside the app's name ([inJam]). */
 @UnstableApi
 private class JamNotification(context: android.content.Context) : androidx.media3.session.DefaultMediaNotificationProvider(

@@ -134,6 +134,12 @@ where a condition can be awaited. The two that stay are real durations being mea
 the background (the system has to treat the app as idle), and the ten-second burst cycle
 (`bursts_continue` waits for the next top-up, up to 15 s).
 
+audio-e2e's `coldkey` section presses play with the app's process gone: once with a saved queue (it
+resumes) and once with the queue emptied (`tools/app.sh queuesaved` reads `false`), where the app's
+`MediaButtons` receiver must start no service. Whether a queue is saved is the core's `queue_saved`,
+tested in Rust; only a device has the system's media-button routing, media3's receiver and the rule that
+a service started this way has to reach the foreground.
+
 Debug bridge commands carry a unique request ID. `tools/app.sh` reads only that
 request's reply, so concurrent state and remote-view reads cannot consume each
 other's answers. `python3 tools/test-app.py` checks correlation and device-shell

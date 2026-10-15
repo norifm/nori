@@ -99,6 +99,8 @@ class TestBridge : BroadcastReceiver() {
                 "gc" -> "gc ${android.os.Debug.getRuntimeStat("art.gc.gc-count")} blocking ${android.os.Debug.getRuntimeStat("art.gc.blocking-gc-count")}"
                 // What a crossing into the core costs, by kind, against the same work done in Kotlin.
                 "bench" -> Bench.calls()
+                // Whether the core holds a saved queue a play button can resume (MediaButtons).
+                "queuesaved" -> dev.nori.music.Nori.get(context).core.queueSaved().toString()
                 else -> "unknown command $cmd"
             }
             answer(reply)

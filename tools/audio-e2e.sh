@@ -7,7 +7,7 @@
 #   tools/audio-e2e.sh [--only <section>,...] [--list] [song-ref] [other-song-ref]
 #   NORI_E2E_SERVER=local for tools/dev-server.sh
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="play transport processing crossfade eq tuning automix restart transcode errors"
+SECTIONS="play transport coldkey processing crossfade eq tuning automix restart transcode errors"
 list_sections
 song=${1:-$SONG}
 other=${2:-$OTHER}
@@ -45,6 +45,27 @@ if want transport; then section "transport from outside the app"
   check "the bursts keep coming with the screen off" bursts_continue
   adb shell input keyevent KEYCODE_WAKEUP; adb shell wm dismiss-keyguard >/dev/null 2>&1
   app_up >/dev/null   # back in the foreground: the settings below need the app's own hooks
+fi
+
+if want coldkey; then section "a play key with nori not running"
+  # media3's receiver starts the service as a foreground service, which only playing brings into the
+  # foreground: with nothing saved to play the press must start nothing (MediaButtons).
+  playing_now
+  "$app" do pause >/dev/null; wait_for playing False 10 >/dev/null
+  adb shell am force-stop "$pkg" >/dev/null 2>&1
+  key KEYCODE_MEDIA_PLAY
+  check "resumes the saved queue" sounds 20
+  app_up >/dev/null
+  "$app" do clearqueue >/dev/null
+  check "the emptied queue is saved" wait_until 15 bash -c "'$app' queuesaved 2>/dev/null | grep -qx false"
+  adb shell am force-stop "$pkg" >/dev/null 2>&1
+  adb logcat -c
+  key KEYCODE_MEDIA_PLAY
+  declined() { adb logcat -d -s MediaButtonReceiver:I | grep -q "does not start the media button event target service"; }
+  check "with nothing saved it is declined" wait_until 10 declined
+  check "and starts no service" bash -c "! adb shell dumpsys activity services '$pkg' | grep -q PlaybackService"
+  app_up >/dev/null
+  "$app" play "$song" >/dev/null; sounds 20
 fi
 
 if want processing; then section "offload and the equalizer switched while it plays"

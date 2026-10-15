@@ -391,7 +391,22 @@ pub struct Core {
     saved_queue: Mutex<Option<queue::SavedQueue>>,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct StoredQueue {
+    songs: Vec<Song>,
+    index: u32,
+    position: u64,
+    /// Parsed separately so an unknown origin kind loses only the origin.
+    origin: serde_json::Value,
+}
+
 impl Core {
+    /// The queue as saved; nothing saved, or a save that no longer parses, is an empty one.
+    fn stored_queue(c: &Connection) -> Result<StoredQueue> {
+        Ok(db::kv_get(c, "queue")?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
+    }
+
     /// The queue's songs, origin and place, in one transaction.
     fn write_queue(&self, queue: PlayQueue) -> Result<()> {
         let json = serde_json::json!({ "songs": queue.songs, "index": queue.index, "position": queue.position_ms, "origin": queue.origin });
@@ -523,16 +538,12 @@ impl Core {
         self.write_queue(queue)
     }
 
+    /// Whether the saved queue has songs: what a play button can resume while the app is not running.
+    pub fn queue_saved(&self) -> Result<bool> {
+        Ok(!Self::stored_queue(&self.db.lock())?.songs.is_empty())
+    }
+
     pub fn load_queue(&self) -> Result<PlayQueue> {
-        #[derive(Deserialize, Default)]
-        #[serde(default)]
-        struct Q {
-            songs: Vec<Song>,
-            index: u32,
-            position: u64,
-            /// Parsed separately so an unknown origin kind loses only the origin.
-            origin: serde_json::Value,
-        }
         #[derive(Deserialize)]
         struct Place {
             index: u32,
@@ -540,8 +551,7 @@ impl Core {
         }
         let (mut q, place) = {
             let c = self.db.lock();
-            let q: Q = db::kv_get(&c, "queue")?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
-            (q, db::kv_get(&c, "queue_place")?.and_then(|j| serde_json::from_str::<Place>(&j).ok()))
+            (Self::stored_queue(&c)?, db::kv_get(&c, "queue_place")?.and_then(|j| serde_json::from_str::<Place>(&j).ok()))
         };
         if let Some(p) = place {
             (q.index, q.position) = (p.index, p.position);

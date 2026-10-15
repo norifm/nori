@@ -83,6 +83,20 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_queue_is_saved_only_with_songs() {
+        let core = core(&["qs1"], 0);
+        assert!(!core.queue_saved().unwrap(), "nothing saved yet");
+        core.session.register(vec![crate::Song { id: "qs1".into(), ..Default::default() }]);
+        core.playlist_save(0).unwrap();
+        assert!(core.queue_saved().unwrap());
+        core.session.set(vec![], None, false, None);
+        core.playlist_save(0).unwrap();
+        assert!(!core.queue_saved().unwrap(), "an emptied queue");
+        nori_db::kv_put(&core.db.lock(), "queue", r#"{"songs":"qs1"}"#).unwrap();
+        assert!(!core.queue_saved().unwrap(), "a save load_queue cannot read");
+    }
+
+    #[test]
     fn songs_rewritten_only_when_the_queue_changes() {
         let core = core(&["radio:1", "w1", "w2", "w3"], 1);
         core.session.register(["w1", "w2", "w3"].map(|id| crate::Song { id: id.into(), ..Default::default() }).to_vec());

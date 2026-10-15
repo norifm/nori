@@ -12,7 +12,6 @@ import android.os.SystemClock
 import android.util.LruCache
 import android.view.KeyEvent
 import android.widget.RemoteViews
-import androidx.media3.session.MediaButtonReceiver
 import dev.nori.music.Nori
 import dev.nori.music.app.MainActivity
 import dev.nori.music.app.R
@@ -21,6 +20,7 @@ import dev.nori.music.data.CoverLoader
 import dev.nori.music.ffi.library.PageQueue
 import dev.nori.music.ffi.model.OriginKind
 import dev.nori.music.ffi.model.PageOrigin
+import dev.nori.music.playback.MediaButtons
 import dev.nori.music.playback.PlaybackService
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
@@ -183,7 +183,7 @@ object Widgets {
     /** A media button, as a headset's: it works with the app and the service both gone. */
     fun key(context: Context, code: Int): PendingIntent = PendingIntent.getBroadcast(
         context, code,
-        Intent(Intent.ACTION_MEDIA_BUTTON).setComponent(ComponentName(context, MediaButtonReceiver::class.java)).putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, code)),
+        Intent(Intent.ACTION_MEDIA_BUTTON).setComponent(ComponentName(context, MediaButtons::class.java)).putExtra(Intent.EXTRA_KEY_EVENT, KeyEvent(KeyEvent.ACTION_DOWN, code)),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 

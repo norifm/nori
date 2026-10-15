@@ -64,7 +64,7 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_albums_info" />
         </receiver>
-        <receiver android:name="androidx.media3.session.MediaButtonReceiver" android:exported="true">
+        <receiver android:name="dev.nori.music.playback.MediaButtons" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
