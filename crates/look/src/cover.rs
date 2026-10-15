@@ -39,9 +39,15 @@ pub struct CoverColours {
 const PAGE_LIGHTEST: f32 = 0.34;
 const PAGE_MAX_LUMA: f32 = 0.081;
 
-fn dark_page(hsl: [f32; 3], max_luma: f32) -> u32 {
-    let sat = (hsl[1] * 0.95).min(0.62);
+/// Its chroma is at most `chroma`, the source's: HSL saturation kept while darkening a pastel more than
+/// doubled its colour (Lover's pink F3BBD7 made a wine 8C2157).
+fn dark_page(hsl: [f32; 3], max_luma: f32, chroma: f32, ok: &Oklab) -> u32 {
     let hi = hsl[2].clamp(0.04, PAGE_LIGHTEST);
+    let mut sat = (hsl[1] * 0.95).min(0.62);
+    let colour_at = |s: f32| ok.lightness_chroma(hsl_to_color([hsl[0], s, hi])).1;
+    if colour_at(sat) > chroma {
+        sat = bisect(0.0, sat, |s| colour_at(s) <= chroma);
+    }
     let at = |l: f32| hsl_to_color([hsl[0], sat, l]);
     if luminance(at(hi)) <= max_luma {
         return at(hi);
@@ -72,7 +78,7 @@ fn paper_page(hsl: [f32; 3]) -> u32 {
     at(bisect(0.96, lo, |l| luminance(at(l)) >= PAGE_MIN_LUMA))
 }
 
-/// Binary search between a lightness that is `ok` and one that is not (12 steps, ~0.001): the last `ok`.
+/// Binary search between a value that is `ok` and one that is not (12 steps, ~0.001): the last `ok`.
 fn bisect(mut good: f32, mut bad: f32, ok: impl Fn(f32) -> bool) -> f32 {
     for _ in 0..12 {
         let mid = (good + bad) / 2.0;
@@ -144,7 +150,7 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, dark: bool, amoled: bool) -> C
     let hsl = body_hsl;
     // Over a solid foot much darker than the page, darken the page towards it (keeping the hue) so the
     // strip fades in instead of ending on a lighter colour.
-    let natural = (page_dark && !ink && !paper).then(|| dark_page(hsl, PAGE_MAX_LUMA));
+    let natural = (page_dark && !ink && !paper).then(|| dark_page(hsl, PAGE_MAX_LUMA, body_colour, &ok));
     let foot_max = natural
         .filter(|&n| solid && calculate_contrast(n, edge_raw | 0xFF00_0000) >= FOOT_JUMP && edge_luma < luminance(n))
         .map(|n| edge_luma + (luminance(n) - edge_luma) * FOOT_PULL);
@@ -156,7 +162,7 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, dark: bool, amoled: bool) -> C
         ink_page(if sleeve_paper && black_foot { color_to_hsl(edge_raw) } else { hsl })
     } else if page_dark {
         match foot_max {
-            Some(m) => dark_page(hsl, m),
+            Some(m) => dark_page(hsl, m, body_colour, &ok),
             None => natural.expect("a dark page that is neither ink nor paper"),
         }
     } else {
@@ -188,7 +194,8 @@ pub fn under_white(c: &CoverColours) -> CoverColours {
         return c.clone();
     }
     let page = color_to_hsl(c.background);
-    let background = dark_page(page, PAGE_MAX_LUMA);
+    let ok = Oklab::new();
+    let background = dark_page(page, PAGE_MAX_LUMA, ok.lightness_chroma(c.background).1, &ok);
     let drop = page[2] - color_to_hsl(background)[2];
     let down = |argb: u32| {
         let mut hsl = color_to_hsl(argb);
@@ -788,6 +795,20 @@ mod tests {
             let c = derive(&tinted_paper(), S, S, dark, false);
             assert!(luminance(c.background) > 0.7, "dark={dark}: {:08x}", c.background);
             assert_eq!(c.on, 0xFF0D_0D0D);
+        }
+    }
+
+    #[test]
+    fn dark_page_is_no_more_colourful_than_its_cover() {
+        let ok = Oklab::new();
+        // Lover's pink and a pale lavender; a saturated red keeps its depth.
+        for colour in [0xFFF3_BBD7u32, 0xFFC7_B0F9, 0xFFB0_1818] {
+            let page = dark_page(color_to_hsl(colour), PAGE_MAX_LUMA, ok.lightness_chroma(colour).1, &ok);
+            let (got, cover) = (ok.lightness_chroma(page).1, ok.lightness_chroma(colour).1);
+            assert!(got <= cover + 0.005 && got > cover * 0.5, "{colour:08x} made {page:08x}: chroma {got:.3}, cover {cover:.3}");
+            let hue = |c: u32| color_to_hsl(c)[0];
+            assert!((hue(page) - hue(colour)).abs() < 15.0, "{colour:08x} made {page:08x}");
+            assert!(calculate_contrast(WHITE, page) >= 8.0, "{page:08x}");
         }
     }
 
