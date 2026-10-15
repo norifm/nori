@@ -851,9 +851,11 @@ impl Inner {
         m.state.as_ref().map(|s| (s, self.received.get(id).copied().unwrap_or_else(clock::now_us)))
     }
 
-    /// Whether device `id` is still there to be followed: it serves nearby, or through the relay while it answers.
+    /// Whether device `id` is still there to be followed, as [`Remote::devices`] lists it: heard from nearby,
+    /// or through the relay while it answers.
     fn listed(&self, id: &str) -> bool {
-        self.peers.iter().any(|p| p.member.id == id) || self.rooms.iter().filter(|r| !r.jam && !self.relay_down).flat_map(|r| &r.members).any(|m| m.id == id)
+        let far = self.rooms.iter().filter(|r| !r.jam && !self.relay_down).flat_map(|r| &r.members);
+        self.peers.iter().map(|p| &p.member).chain(far).any(|m| m.id == id && m.state.is_some())
     }
 
     /// Whether device `id` plays, as last heard.
