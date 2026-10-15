@@ -849,8 +849,8 @@ private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?
 } ?: PlayerTitleMeta(null, say.playerIdle(radio), "", "", null, null)
 
 /**
- * Where the sound is going, and one tap to change it. The glyph says which kind of output is carrying
- * the music, the way Apple's AirPlay mark fills in when something is connected.
+ * Where the sound is going, and one tap to change it. The speaker is filled and lit only while
+ * [otherDevice] plays (the core's `Remote::active`); this phone's own outputs leave it an outline.
  *
  * The picker itself is Android's own: `Settings.Panel.ACTION_MEDIA_OUTPUT` is the documented way in
  * and lists Bluetooth, wired, USB and any Cast target the system knows about - far more than this app
@@ -866,11 +866,8 @@ internal fun OutputButton(
     val settings: SettingsViewModel = viewModel()
     val output by settings.currentOutput.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    // Whether the sound has gone elsewhere is the core's (`output_look`).
     val o = remember(output) { dev.nori.music.ffi.devices.outputLook(output) }
-    // One speaker for every output: filled and lit while the sound is elsewhere, an outline while it is here.
-    val elsewhere = o.elsewhere || otherDevice
-    val icon = if (elsewhere) Icons.Filled.Speaker else Icons.Outlined.Speaker
+    val icon = if (otherDevice) Icons.Filled.Speaker else Icons.Outlined.Speaker
     val description = remember(o) { say.outputDescription(o.port, o.name) }
     // With remote control or jams on, the button opens nori's own devices first (RemoteScreens); this
     // phone's outputs are one row of it.
@@ -879,7 +876,7 @@ internal fun OutputButton(
     val openDevices = LocalDevices.current
     val tell = LocalMessages.current
     IconButton({ if (devices) openDevices() else openOutputPicker(context, output, tell) }) {
-        LookIcon(icon, description, Modifier.size(size)) { if (elsewhere) lit() else idle() }
+        LookIcon(icon, description, Modifier.size(size)) { if (otherDevice) lit() else idle() }
     }
 }
 
