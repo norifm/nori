@@ -31,8 +31,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Alignment
@@ -51,6 +49,10 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
@@ -73,8 +75,8 @@ private fun Inset(content: @Composable () -> Unit) = androidx.compose.foundation
  * Navigation as the screens see it; they never touch the NavController. Going anywhere puts the player
  * away first, the way an artist tapped on Apple's player drops it and opens the artist underneath.
  */
-class Nav(private val c: NavHostController, private val sheet: PlayerSheet) {
-    fun go(route: String) { if (sheet.isOpen) sheet.close(); c.navigate(route) }
+class Nav(private val c: NavHostController, private val sheet: PlayerSheet, private val swipe: PageSwipe) {
+    fun go(route: String) { if (sheet.isOpen) sheet.close(); swipe.plain(); c.navigate(route) }
 
     /**
      * What the row that opened an album already knew about it - name, artist, cover - kept for the page
@@ -130,7 +132,7 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet) {
     fun librarySections() = go("library-sections")
     fun librarySection(s: dev.nori.music.ffi.settings.LibrarySection) = go("library/${s.name}")
     fun autoEq() = go("autoeq")
-    fun back() { if (sheet.isOpen) sheet.close() else c.popBackStack() }
+    fun back() { if (sheet.isOpen) sheet.close() else swipe.back() }
     /**
      * A tab always lands on that tab's own page. It used to save the stack it popped and restore it on
      * the way back, which meant tapping Home from an album popped the album and then put it straight
@@ -144,6 +146,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet) {
         // Already there: nothing to go to. Navigating anyway ran the page's arrival again on every tap,
         // so a tab pressed twice redrew the page it was already on.
         if (c.currentBackStackEntry?.destination?.route == route) return
+        PageMotion.tabbedTo = route
+        swipe.plain()
         c.navigate(route) {
             popUpTo(c.graph.startDestinationId)
             launchSingleTop = true
@@ -240,7 +244,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 if (open) { focusManager.clearFocus(force = true); keyboard?.hide() }
             }
         }
-        val nav = remember(controller) { Nav(controller, sheet) }
+        val swipe = rememberPageSwipe(controller)
+        val nav = remember(controller) { Nav(controller, sheet, swipe) }
         // A jam just joined opens on it: the player, turned to the queue with the jam over it.
         if (guest) {
             var arrived by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
@@ -319,6 +324,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
 
         CompositionLocalProvider(
             LocalNav provides nav,
+            LocalPageSwipe provides swipe,
             LocalPlayerSheet provides sheet,
             LocalDownloadMarks provides rememberDownloadMarks(actions),
             LocalSongMenu provides { menuSong = it; menuFromPlayer = false },
@@ -425,7 +431,13 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                   Box(strip.width(pageEnd).align(Alignment.CenterEnd))
               }
               CompositionLocalProvider(LocalStarMarks provides marks, LocalChromeInset provides chromeHeight) {
-              Box(Modifier.fillMaxSize().padding(start = pageStart, end = pageEnd)) {
+              val pageBackground = MaterialTheme.colorScheme.background
+              Box(
+                  Modifier.fillMaxSize().padding(start = pageStart, end = pageEnd)
+                      .onSizeChanged { swipe.width = it.width.toFloat() }
+                      // The page a swipe back brings, under the one it takes away (PageSwipe).
+                      .drawBehind { drawUnder(swipe, pageBackground) },
+              ) {
                 // One transition for the whole app, and the same one in both directions. See PageMotion.
                 val plain = reduceMotion()
                 NavHost(
@@ -434,11 +446,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     exitTransition = { PageMotion.exit(this, plain) },
                     popEnterTransition = { PageMotion.popEnter(this, plain) },
                     popExitTransition = { PageMotion.popExit(this, plain) },
-                    // The back gesture scrubs these with the finger. Left to the library's defaults, the page
-                    // being left shrank to 70 % without fading, over a page that was already fully drawn -
-                    // two pages on top of each other for the whole gesture. See PageMotion.
-                    predictivePopEnterTransition = { _ -> PageMotion.popEnter(this, plain, scrubbed = true) },
-                    predictivePopExitTransition = { _ -> PageMotion.popExit(this, plain, scrubbed = true) },
+                    // The back gesture: the same slide, held under the finger, from either edge. See PageMotion.
+                    predictivePopEnterTransition = { edge -> PageMotion.heldUnder(this, plain, edge) },
+                    predictivePopExitTransition = { edge -> PageMotion.held(this, plain, edge) },
                 ) {
                     page("home") { HomeScreen(actions) }
                     page("search") { SearchScreen(actions) }
@@ -525,6 +535,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                   }
               }
             }
+            EdgeBack(swipe, sheet, controller)
             SheetBack(sheet)
             SelectionBack(actions, sheet, controller)
             }
@@ -575,140 +586,203 @@ private fun SelectionBack(actions: ActionsViewModel, sheet: PlayerSheet, control
 private fun androidx.navigation.NavGraphBuilder.page(
     route: String, inset: Boolean = true,
     content: @Composable (androidx.navigation.NavBackStackEntry) -> Unit,
-) = composable(route) { entry -> Page { if (inset) Inset { content(entry) } else content(entry) } }
+) = composable(route) { entry -> Page(entry) { if (inset) Inset { content(entry) } else content(entry) } }
 
 /**
- * The pages are a stack, and they move the way a stack of cards does - the way iOS pushes a page.
+ * The pages are a stack, and move the way iOS pushes one: a page opened slides in from the right edge,
+ * opaque, over the page that opened it, which slides a third of the way off to the left and darkens, so
+ * it is plainly still there, behind. Going back is the same in reverse, and is [PageSwipe]'s: held under
+ * the finger, or run from rest by the back button or key. The transitions here are what the stack does
+ * when [PageSwipe] cannot take a page back itself (a page deeper than its pictures) - and nothing at all
+ * after it has ([instant]).
  *
- * Push: the new page slides in from the right edge, opaque, the whole width, and lands over the page
- * that opened it; that page slides a third of the way off to the left underneath and darkens a little,
- * so it is plainly still there, behind. Pop - the back button, or the back gesture with the finger
- * doing the scrubbing - is the same in reverse: the page on top slides off to the right and the one
- * underneath comes back to its place and to full light.
+ * A tap on a tab has no stack - Home and Library are siblings - so that change is a plain, short
+ * cross-fade with no direction (Apple Music does not animate it at all).
  *
- * Nothing fades. The pages are opaque and stay opaque; the only alpha here is the scrim on the page
- * underneath. Two earlier versions did fade: a sideways slide with a fade on top, which the owner read
- * as the page flying out of the top left corner, and then a drop from a little above the page's place
- * with both pages fading, which for a few frames left neither page opaque and the window's black
- * showing through - "everything animates from the top of the page". A stack has a direction the eye
- * already knows, and a card that is opaque cannot fly diagonally.
- *
- * Between two tab roots there is no stack - Home and Library are siblings - so that change is a
- * plain, short cross-fade with no direction and no scrim (Apple Music does not animate it at all).
- *
- * The page underneath is dimmed by [Page], which reads the transition it is part of; which side of the
- * stack a page is on during a change is written here, where the direction is known, and read there.
+ * Earlier versions, and why they went: a full-width slide scrubbed by Android's back gesture trailed the
+ * finger (the system smooths the gesture by about 130 ms) and finished at one pace however it was flicked;
+ * a shrinking card for the gesture alone made back two different motions; a short shared-axis drift with
+ * a fade read as cheap and was still blind to a flick.
  */
-private object PageMotion {
-    /** How long a button push or pop takes. The gesture sets its own pace while the finger is down. */
-    const val MS = 200
-    /**
-     * After the back gesture lets go (finish or cancel): only the leftover distance runs, and it
-     * should be gone almost at once. Reusing [MS] made a half-done swipe still coast for a beat.
-     */
-    private const val GESTURE_MS = 140
-    /** The share of the width the page underneath moves. */
-    const val UNDER = 3
-    /** How dark the page underneath goes at the far end of its travel. */
-    const val SCRIM = 0.28f
+internal object PageMotion {
+    /** How long a push, or a pop the stack runs itself, takes: the speed the app always had. */
+    private const val MS = 200
+    /** The back gesture's slide when the stack scrubs it itself. */
+    private const val HELD_MS = 250
     /** A tab change: a cross-fade this long. */
     private const val TAB_MS = 100
 
-    /** Sharp settle for a tap: travel early, short ease into place. */
+    /** Sharp settle: travel early, a short ease into place. */
     val Settle = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
-    private val roots = setOf("home", "search", "library", "settings")
+    /**
+     * The tab last tapped. Only a tap on a tab cross-fades: going back from one tab's page to another's
+     * (the tabs sit on Home in the stack) is a back like any other.
+     */
+    var tabbedTo: String? = null
+
+    /** The pop under way has been shown by [PageSwipe] already: the stack changes with no motion. */
+    var instant = false
 
     /**
-     * True while the change under way is a pop, false for a push, null for a tab change or none. Read
-     * by every page in flight to decide which of the two it is: the entering page of a push and the
-     * leaving page of a pop are on top; the other two are underneath and wear the scrim.
+     * True while the change under way is a pop, false for a push, null for a tab change or none. Read by
+     * each page in flight: the page coming in on a push and the page leaving on a pop are on top; the
+     * other is underneath and darkens.
      */
     var pop: Boolean? by mutableStateOf(null)
         private set
-    /** The pop under way is the back gesture's, so it runs linear in time: the finger sets the pace. */
-    var scrubbed: Boolean by mutableStateOf(false)
-        private set
 
     private fun androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>.tab(): Boolean =
-        initialState.destination.route in roots && targetState.destination.route in roots
+        initialState.destination.route in PageSwipe.ROOTS && targetState.destination.route.let { it in PageSwipe.ROOTS && it == tabbedTo }
 
-    private fun ease(scrubbed: Boolean): androidx.compose.animation.core.FiniteAnimationSpec<androidx.compose.ui.unit.IntOffset> =
-        if (scrubbed) androidx.compose.animation.core.tween(GESTURE_MS, easing = androidx.compose.animation.core.LinearEasing)
-        else androidx.compose.animation.core.tween(MS, easing = Settle)
+    private fun androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>.begin(pop: Boolean): Boolean {
+        val tab = tab()
+        PageMotion.pop = if (tab) null else pop
+        return tab
+    }
+
+    private val travel = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(MS, easing = Settle)
+    private fun heldTravel() = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(HELD_MS, easing = androidx.compose.animation.core.LinearEasing)
+    private fun side(edge: Int) = if (edge == androidx.activity.BackEventCompat.EDGE_RIGHT) -1 else 1
 
     private fun fadeIn(ms: Int) = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(ms))
     private fun fadeOut(ms: Int) = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms))
 
-    private fun androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>.begin(pop: Boolean, scrubbed: Boolean): Boolean {
-        val tab = tab()
-        PageMotion.pop = if (tab) null else pop
-        PageMotion.scrubbed = scrubbed && !tab
-        return tab
-    }
-
     fun enter(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean): androidx.compose.animation.EnterTransition {
-        if (s.begin(pop = false, scrubbed = false)) return fadeIn(if (plain) 90 else TAB_MS)
+        if (s.begin(pop = false)) return fadeIn(if (plain) 90 else TAB_MS)
         if (plain) return fadeIn(90)
-        return androidx.compose.animation.slideInHorizontally(ease(false)) { it }
+        return androidx.compose.animation.slideInHorizontally(travel) { it }
     }
 
     fun exit(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean): androidx.compose.animation.ExitTransition {
-        if (s.begin(pop = false, scrubbed = false)) return fadeOut(if (plain) 90 else TAB_MS)
+        if (s.begin(pop = false)) return fadeOut(if (plain) 90 else TAB_MS)
         if (plain) return fadeOut(90)
-        return androidx.compose.animation.slideOutHorizontally(ease(false)) { -it / UNDER }
+        return androidx.compose.animation.slideOutHorizontally(travel) { -it / PageSwipe.UNDER }
     }
 
-    fun popEnter(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean, scrubbed: Boolean = false): androidx.compose.animation.EnterTransition {
-        if (s.begin(pop = true, scrubbed)) return fadeIn(if (plain) 90 else TAB_MS)
+    fun popEnter(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean): androidx.compose.animation.EnterTransition {
+        if (instant) { pop = null; return androidx.compose.animation.EnterTransition.None }
+        if (s.begin(pop = true)) return fadeIn(if (plain) 90 else TAB_MS)
         if (plain) return fadeIn(90)
-        return androidx.compose.animation.slideInHorizontally(ease(scrubbed)) { -it / UNDER }
+        return androidx.compose.animation.slideInHorizontally(travel) { -it / PageSwipe.UNDER }
     }
 
-    fun popExit(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean, scrubbed: Boolean = false): androidx.compose.animation.ExitTransition {
-        if (s.begin(pop = true, scrubbed)) return fadeOut(if (plain) 90 else TAB_MS)
+    fun popExit(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean): androidx.compose.animation.ExitTransition {
+        if (instant) { pop = null; return androidx.compose.animation.ExitTransition.None }
+        if (s.begin(pop = true)) return fadeOut(if (plain) 90 else TAB_MS)
         if (plain) return fadeOut(90)
-        return androidx.compose.animation.slideOutHorizontally(ease(scrubbed)) { it }
+        return androidx.compose.animation.slideOutHorizontally(travel) { it }
     }
 
-    /** How dark a page in [state] is, given which way the stack is moving: only the page underneath is dimmed. */
+    /** The page coming back under the back gesture when the stack scrubs it, from the side the swipe started on. */
+    fun heldUnder(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean, edge: Int): androidx.compose.animation.EnterTransition {
+        if (s.begin(pop = true)) return fadeIn(if (plain) 90 else TAB_MS)
+        if (plain) return fadeIn(90)
+        return androidx.compose.animation.slideInHorizontally(heldTravel()) { -side(edge) * it / PageSwipe.UNDER }
+    }
+
+    /** The page the back gesture holds when the stack scrubs it, going the finger's way. */
+    fun held(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean, edge: Int): androidx.compose.animation.ExitTransition {
+        if (s.begin(pop = true)) return fadeOut(if (plain) 90 else TAB_MS)
+        if (plain) return fadeOut(90)
+        return androidx.compose.animation.slideOutHorizontally(heldTravel()) { side(edge) * it }
+    }
+
+    /** How dark a page in [state] is: only the page underneath, covered on a push or uncovered on a pop. */
     fun dim(state: androidx.compose.animation.EnterExitState, pop: Boolean?): Float = when {
         pop == null || state == androidx.compose.animation.EnterExitState.Visible -> 0f
-        // Leaving during a push: being covered. Entering during a pop: being uncovered.
-        state == androidx.compose.animation.EnterExitState.PostExit && !pop -> SCRIM
-        state == androidx.compose.animation.EnterExitState.PreEnter && pop -> SCRIM
+        state == androidx.compose.animation.EnterExitState.PostExit && !pop -> PageSwipe.SCRIM
+        state == androidx.compose.animation.EnterExitState.PreEnter && pop -> PageSwipe.SCRIM
         else -> 0f
     }
 
-    fun dimSpec(plain: Boolean, scrubbed: Boolean): androidx.compose.animation.core.FiniteAnimationSpec<Float> = when {
-        plain -> androidx.compose.animation.core.tween(90)
-        scrubbed -> androidx.compose.animation.core.tween(GESTURE_MS, easing = androidx.compose.animation.core.LinearEasing)
-        else -> androidx.compose.animation.core.tween(MS, easing = Settle)
-    }
+    fun dimSpec(plain: Boolean): androidx.compose.animation.core.FiniteAnimationSpec<Float> =
+        if (plain) androidx.compose.animation.core.tween(90) else androidx.compose.animation.core.tween(MS, easing = Settle)
+
+    /** The shadow the page on top casts on the one under it while it moves. */
+    val EDGE_SHADOW = 16.dp
 }
 
 /**
- * A page as [PageMotion] needs it: opaque while it moves, and dimmed when it is the one underneath.
- *
- * Opaque because the screens themselves paint no background - the app's one Surface does - so a page
- * sliding in would otherwise show the page it is covering through itself. The background is drawn
- * only while the page is in a transition; at rest the Surface's is the one that shows, as before.
- * The scrim is a child of the page's own transition, so the back gesture scrubs it with the slide and
- * it runs back if the gesture is called off.
+ * A page as [PageMotion] and [PageSwipe] need it. Opaque while it moves - the screens paint no background,
+ * the app's one Surface does - and darkened when it is the one underneath. Drawn through a layer of its
+ * own so a picture of it can be kept as a page opened over it covers it: what a swipe back shows under
+ * the page on top. The page a swipe is taking away wears the swipe's offset and a shadow on its edge, and
+ * is what the swipe on the page itself starts from.
  */
 @Composable
-private fun androidx.compose.animation.AnimatedVisibilityScope.Page(content: @Composable () -> Unit) {
+private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: androidx.navigation.NavBackStackEntry, content: @Composable () -> Unit) {
     val plain = reduceMotion()
-    val dim by transition.animateFloat(
-        transitionSpec = { PageMotion.dimSpec(plain, PageMotion.scrubbed) },
-        label = "dim",
-    ) { state -> PageMotion.dim(state, PageMotion.pop) }
+    val swipe = LocalPageSwipe.current!!
+    val dim by transition.animateFloat(transitionSpec = { PageMotion.dimSpec(plain) }, label = "dim") { state -> PageMotion.dim(state, PageMotion.pop) }
     val background = MaterialTheme.colorScheme.background
+    val layer = androidx.compose.ui.graphics.rememberGraphicsLayer()
+    val moving = transition.currentState != transition.targetState
+    // Covered by a page opened over it, or by a tab tapped (the tabs sit on Home): pictured now, as it was last drawn.
+    val covered = transition.targetState == androidx.compose.animation.EnterExitState.PostExit && PageMotion.pop != true
+    LaunchedEffect(covered) { if (covered) swipe.keep(entry.id, layer.toImageBitmap()) }
+    androidx.compose.runtime.DisposableEffect(entry.id) { onDispose { swipe.left(entry.id) } }
+    val swiped = swipe.moving == entry.id
+    val onTop = swiped || moving && !plain && when (PageMotion.pop) {
+        true -> transition.targetState == androidx.compose.animation.EnterExitState.PostExit
+        false -> transition.targetState == androidx.compose.animation.EnterExitState.Visible
+        null -> false
+    }
+    val top = entry.destination.route !in PageSwipe.ROOTS && transition.targetState == androidx.compose.animation.EnterExitState.Visible
     Box(
         Modifier.fillMaxSize()
-            .drawBehind { if (transition.currentState != transition.targetState) drawRect(background) }
-            .drawWithContent { drawContent(); if (dim > 0.002f) drawRect(androidx.compose.ui.graphics.Color.Black.copy(alpha = dim)) },
+            .graphicsLayer {
+                translationX = if (swiped) swipe.offset else 0f
+                shadowElevation = if (onTop) PageMotion.EDGE_SHADOW.toPx() else 0f
+            }
+            .drawBehind { if (moving || swiped) drawRect(background) }
+            .drawWithContent {
+                layer.record { this@drawWithContent.drawContent() }
+                drawLayer(layer)
+                if (dim > 0.002f) drawRect(androidx.compose.ui.graphics.Color.Black.copy(alpha = dim))
+            }
+            .swipeBack(swipe, enabled = top),
     ) { content() }
+}
+
+/**
+ * Android's back gesture, from either edge, and the back key, taken by [PageSwipe] while it can take the
+ * page back itself: the page follows the gesture's raw finger position (its progress is smoothed), and goes
+ * at the speed measured from it. Registered after the stack's own, so it is asked first; the player's and
+ * the selection's, registered after it, come before it while they are up.
+ */
+@Composable
+private fun EdgeBack(swipe: PageSwipe, sheet: PlayerSheet, controller: androidx.navigation.NavHostController) {
+    // Read so it is asked again as the stack changes.
+    controller.currentBackStackEntryAsState().value
+    androidx.activity.compose.PredictiveBackHandler(!sheet.isOpen && swipe.canGoBack(edge = true)) { events ->
+        if (!swipe.begin(edge = true)) {
+            // The gesture's events have to be taken whatever happens (the handler throws otherwise): a
+            // second quick swipe, while the first page is still leaving, is a back of its own, run after it.
+            events.collect {}
+            swipe.back()
+            return@PredictiveBackHandler
+        }
+        val speed = EdgeSpeed()
+        var start = Float.NaN
+        var side = 1f
+        try {
+            events.collect { e ->
+                if (start.isNaN()) {
+                    start = e.touchX
+                    side = if (e.swipeEdge == androidx.activity.BackEventCompat.EDGE_RIGHT) -1f else 1f
+                }
+                val x = e.touchX - start
+                swipe.dragTo(if (side > 0f) x.coerceAtLeast(0f) else x.coerceAtMost(0f))
+                speed.add(e.touchX)
+            }
+            // A gesture the system took as back goes at a flick's speed at least; the key, with no gesture, eases.
+            swipe.release(if (start.isNaN()) 0f else speed.velocity(), commit = true, flung = !start.isNaN())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            swipe.release(0f, commit = false)
+            throw e
+        }
+    }
 }
 
 /**
