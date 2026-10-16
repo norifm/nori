@@ -944,7 +944,7 @@ tools/with-resource.py build tools/host-release.sh --native --platform linux-x86
 tools/with-resource.py build tools/host-release.sh --docker-macos --allow-untested-macos --platform macos-aarch64
 ```
 
-Standalone packages land under `build/host-release/<platform>/`. Docker keeps separate Cargo,
+The builders run in `build/release-python`, a Python environment made from `tools/host-release/requirements.txt` on first use; with `uv` installed it downloads its own Python, otherwise it needs `python3` 3.10 or later. Standalone packages land under `build/host-release/<platform>/`. Docker keeps separate Cargo,
 sccache, and Flatpak caches per architecture in named volumes. AppImage checks run temporary ELF
 copies with the format marker cleared for emulator compatibility; distributed AppImages keep their
 original headers. Emulated Flatpak checks keep the runtime and namespace isolation while omitting
