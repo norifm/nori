@@ -85,8 +85,6 @@ class Say(private val r: Resources) {
     val notInLibraryYet: String = r.getString(R.string.not_in_library_yet)
     val nothingMatches: String = r.getString(R.string.nothing_matches)
     val listenNow: String = r.getString(R.string.listen_now)
-    val shuffleSongs: String = r.getString(R.string.shuffle_songs)
-    val shuffleAlbums: String = r.getString(R.string.shuffle_albums)
     /** Who left the queue the Home page offers. */
     fun continueFrom(by: dev.nori.music.ffi.library.QueueBy): String = when (by) {
         is dev.nori.music.ffi.library.QueueBy.Nori -> r.getString(R.string.continue_from_nori)

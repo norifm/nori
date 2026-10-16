@@ -26,7 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Text
@@ -35,8 +35,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
@@ -84,20 +82,11 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             indicator = { RefreshMark(pull, refreshing) },
         ) {
         LazyColumn(Modifier.pageToEdges(), contentPadding = pagePadding(LocalChromeInset.current)) {
-            // Shuffling the whole library and picking the server's queue back up are things you do
-            // occasionally, so they live behind the title's menu rather than as two buttons across the
-            // top of the page: what belongs at the top of this screen is music.
+            // The page's one control of its own, in the round plate Apple puts its account picture in. Shuffling
+            // the whole library lives in Library, over its songs and albums.
             item(key = "title") {
-                var menu by remember { mutableStateOf(false) }
                 LargeTitle(say.listenNow, Modifier.arriving(arrival, 0, rise)) {
-                    if (account) Box {
-                        IconButton({ menu = true }) { Icon(Icons.Filled.MoreHoriz, say.more, Modifier.size(22.dp)) }
-                        DropdownMenu(menu, { menu = false }) {
-                            DropdownMenuItem({ Text(say.shuffleSongs) }, { actions.shuffleAll(); menu = false })
-                            DropdownMenuItem({ Text(say.shuffleAlbums) }, { actions.shuffleAlbums(); menu = false })
-                            DropdownMenuItem({ Text(say.rearrangeRows) }, { rearranging = true; menu = false })
-                        }
-                    }
+                    if (account) CircleButton(Icons.Rounded.SwapVert, say.rearrangeRows, Modifier.padding(end = Space.gutter - Space.tight).size(36.dp)) { rearranging = true }
                 }
             }
             offer?.let { o -> item(key = "offer") { QueueOfferCard(o, actions, vm::takeOffer, vm::dismissOffer) } }
