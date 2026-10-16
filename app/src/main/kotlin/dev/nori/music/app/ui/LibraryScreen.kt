@@ -6,6 +6,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
@@ -97,6 +98,18 @@ private fun <T> SortMenu(options: List<Pair<T, String>>, value: T, onChange: (T)
     }
 }
 
+/** Plays the whole of a list in random order, worded and drawn like [SortMenu] across from it. */
+@Composable
+private fun ShuffleLink(onClick: () -> Unit) {
+    Row(
+        Modifier.padding(end = Space.gutter - 4.dp, top = 2.dp).clip(PillShape).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.Shuffle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+        Text(say.shuffle, Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+    }
+}
+
 @Composable
 fun LibraryScreen(actions: ActionsViewModel) {
     // The library's sections, in the order their pills run (the core's `ProfileRules`).
@@ -111,7 +124,7 @@ fun LibraryScreen(actions: ActionsViewModel) {
         }
         // Only the visible section is composed, so only its view model loads anything.
         when (sections[tab]) {
-            dev.nori.music.ffi.library.LibrarySection.ALBUMS -> Albums()
+            dev.nori.music.ffi.library.LibrarySection.ALBUMS -> Albums(actions)
             dev.nori.music.ffi.library.LibrarySection.ARTISTS -> Artists()
             dev.nori.music.ffi.library.LibrarySection.SONGS -> SongsScreen(actions, null)
             dev.nori.music.ffi.library.LibrarySection.PLAYLISTS -> Playlists(actions)
@@ -128,12 +141,17 @@ fun LibraryScreen(actions: ActionsViewModel) {
 }
 
 @Composable
-private fun Albums(vm: AlbumsViewModel = viewModel()) {
+private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel = viewModel()) {
     val albums by vm.albums.collectAsStateWithLifecycle()
     val sort by vm.sort.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     Column {
-        SortMenu(remember { dev.nori.music.ffi.library.albumSorts().map { it to say.albumSort(it) } }, sort, vm::setSort)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            SortMenu(remember { dev.nori.music.ffi.library.albumSorts().map { it to say.albumSort(it) } }, sort, vm::setSort)
+            Spacer(Modifier.weight(1f))
+            // Random albums, each whole and in its own order; the account's own library only.
+            if (LocalRules.current.account) ShuffleLink(actions::shuffleAlbums)
+        }
         // Ask for the covers just past the fold while the ones on screen are still arriving. The first row
         // is read by a snapshot observer, not here: read in composition, it recomposed the whole grid on
         // every row scrolled.
@@ -221,6 +239,8 @@ fun SongsScreen(actions: ActionsViewModel, decade: Int?, vm: SongsViewModel = vi
     LaunchedEffect(list, songs.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= songs.size - 40 }.collect { if (it) vm.loadMore() } }
     Column {
         if (decade != null) SectionTitle(remember(decade) { say.decade(decade) })
+        // The whole library's songs in random order: above the list, where Apple puts its Shuffle.
+        else if (LocalRules.current.account) Row(Modifier.fillMaxWidth()) { Spacer(Modifier.weight(1f)); ShuffleLink(actions::shuffleAll) }
         val indexed = LocalRules.current.indexed
         if (indexed) LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             item { Chip(say.starredFavourites, starred) { vm.setStarredOnly(!starred) } }
