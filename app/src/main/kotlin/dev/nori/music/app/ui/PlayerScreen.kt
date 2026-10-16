@@ -60,8 +60,8 @@ import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.outlined.Speaker
 import dev.nori.music.app.R
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -717,11 +717,11 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             if (rewinds || !slide.ask(1)) vm.previous()
                         },
                         Modifier.size(72.dp),
-                    ) { LookIcon(Icons.Filled.FastRewind, say.previous, Modifier.size(55.dp), ink) }
+                    ) { LookIcon(Icons.Rounded.FastRewind, say.previous, Modifier.size(55.dp), ink) }
                     if (state.offersPlayPause) IconButton(vm::toggle, Modifier.size(84.dp)) {
                         PlayPauseGlyph(state.playing, state.buffering, 70.dp, 28.dp, ink)
                     }
-                    if (state.offersSkip) IconButton({ if (!slide.ask(-1)) vm.next() }, Modifier.size(72.dp)) { LookIcon(Icons.Filled.FastForward, say.next, Modifier.size(55.dp), ink) }
+                    if (state.offersSkip) IconButton({ if (!slide.ask(-1)) vm.next() }, Modifier.size(72.dp)) { LookIcon(Icons.Rounded.FastForward, say.next, Modifier.size(55.dp), ink) }
                 }
                 // Paused here while the jam plays on: play joins it again where it is.
                 if (state.jam?.pausedHere == true) LookText(
