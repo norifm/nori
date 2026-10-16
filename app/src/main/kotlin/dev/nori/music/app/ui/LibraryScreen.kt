@@ -8,6 +8,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Arrangement
@@ -64,7 +65,7 @@ import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Category
-import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.History
@@ -140,9 +141,13 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
     val nav = LocalNav.current
     LazyColumn(contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current)) {
         item(key = "title") {
+            // What was played and what is kept on the phone: places rather than kinds of music, so buttons
+            // in the corner rather than rows of the list.
             LargeTitle(say.library) {
-                if (LibrarySection.HISTORY in rules.sections) {
-                    CircleButton(Icons.Rounded.History, say.history, Modifier.padding(end = Space.gutter - Space.tight).size(36.dp)) { nav.librarySection(LibrarySection.HISTORY) }
+                Row(Modifier.padding(end = Space.gutter - Space.tight), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    for (s in listOf(LibrarySection.DOWNLOADS, LibrarySection.HISTORY)) {
+                        if (s in rules.sections) OutlineCircleButton(sectionIcon(s), say.librarySection(s)) { nav.librarySection(s) }
+                    }
                 }
             }
         }
@@ -164,7 +169,15 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
     }
 }
 
-/** What each section is drawn with in the list. */
+/** A round button drawn as its outline alone: the page's own places, quieter than the plates on a record's page. */
+@Composable
+private fun OutlineCircleButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) =
+    androidx.compose.material3.Surface(
+        onClick = onClick, shape = androidx.compose.foundation.shape.CircleShape, color = androidx.compose.ui.graphics.Color.Transparent,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.size(38.dp),
+    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, description, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface) } }
+
+/** What each section is drawn with. */
 private fun sectionIcon(s: LibrarySection): androidx.compose.ui.graphics.vector.ImageVector = when (s) {
     LibrarySection.ALBUMS -> Icons.Rounded.Album
     LibrarySection.FAVOURITES -> Icons.Rounded.FavoriteBorder
@@ -177,7 +190,7 @@ private fun sectionIcon(s: LibrarySection): androidx.compose.ui.graphics.vector.
     LibrarySection.DECADES -> Icons.Rounded.CalendarMonth
     LibrarySection.FOLDERS -> Icons.Rounded.Folder
     LibrarySection.RADIO -> Icons.Rounded.Radio
-    LibrarySection.DOWNLOADS -> Icons.Rounded.DownloadDone
+    LibrarySection.DOWNLOADS -> Icons.Rounded.Download
 }
 
 /** One section of the library, a page of its own. Only it is composed, so only its view model loads anything. */

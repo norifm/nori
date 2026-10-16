@@ -250,10 +250,10 @@ pub enum LibrarySection {
 
 impl LibrarySection {
     /// The sections the Library page lists, in the order a new install lists them: smart playlists are
-    /// found under Playlists, and History is the page's own button.
-    pub const LISTED: [LibrarySection; 10] = {
+    /// found under Playlists, and History and Downloads are the page's own buttons.
+    pub const LISTED: [LibrarySection; 9] = {
         use LibrarySection::*;
-        [Albums, Favourites, Artists, Songs, Playlists, Genres, Decades, Folders, Radio, Downloads]
+        [Albums, Favourites, Artists, Songs, Playlists, Genres, Decades, Folders, Radio]
     };
 }
 
