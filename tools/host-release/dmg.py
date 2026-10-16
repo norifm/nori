@@ -26,7 +26,7 @@ def package(binary, output, version, arch):
         environment = Path(temporary) / "python"
         subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
         python = str(environment / "bin/python")
-        subprocess.run([python, "-m", "pip", "install", "--disable-pip-version-check", "dmgbuild==1.6.7", "Pillow==11.3.0"], check=True)
+        subprocess.run([python, "-m", "pip", "install", "--disable-pip-version-check", "dmgbuild==1.6.5", "Pillow==11.3.0"], check=True)
         layout = str(ROOT / "tools/host-release/dmg-layout.py")
         subprocess.run([python, layout, "build", str(stage), str(artifact)], check=True)
         subprocess.run([python, layout, "verify", str(artifact)], check=True)
