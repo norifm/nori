@@ -57,7 +57,8 @@ sealed interface SettingRow {
     data class Slider(val name: String, val label: String, val value: Float, val min: Float, val max: Float, val centred: Boolean, val level: EqLevel?) : SettingRow
     /** Colour swatches, ARGB; the chosen one is drawn larger. */
     data class Palette(val name: String, val colours: List<Long>, val chosen: Long) : SettingRow
-    data class Server(val id: String, val label: String, val detail: String, val active: Boolean) : SettingRow
+    /** A saved server; the one in use carries its [libraries] when it has more than one, under [note]. */
+    data class Server(val id: String, val label: String, val detail: String, val active: Boolean, val libraries: List<Pick> = emptyList(), val note: String = "") : SettingRow
     data class Button(val title: String, val action: String) : SettingRow
     /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. */
     data class Ranked(val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean) : SettingRow
@@ -926,24 +927,24 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     }
 
     fun servers(): List<SettingsSection> {
+        // The libraries are the server in use's: it is the only one asked for them.
+        val libraries = if (f.folders.size > 1) {
+            val switches = dev.nori.music.ffi.settings.folderSwitches(p.server?.musicFolderIds.orEmpty(), f.folders.map { it.id })
+            f.folders.zip(switches) { m, s -> Pick("musicFolders", m.name, s.on, s.tapped) }
+        } else emptyList()
         val accounts = p.servers.map { sv ->
             val active = sv.id == p.activeServerId
-            SettingRow.Server(sv.id, sv.label, serverDetail(sv.user, active, sv.wifiOnly, sv.altUrl.isNotBlank()), active)
+            SettingRow.Server(
+                sv.id, sv.label, serverDetail(sv.user, active, sv.wifiOnly, sv.altUrl.isNotBlank()), active,
+                if (active) libraries else emptyList(), str(R.string.settings_music_folder_detail),
+            )
         }.toMutableList<SettingRow>()
         if (SettingsPart.SERVER_OPTIONS !in parts) return listOf(section(R.string.settings_section_accounts, accounts))
         accounts += SettingRow.Button(str(R.string.settings_add_server), "add-server")
         val out = mutableListOf(section(R.string.settings_section_accounts, accounts))
         val server = p.server
-        val folderRow = f.folders.size > 1
-        val altRow = server != null && server.altUrl.isNotBlank()
-        if (folderRow || altRow) {
-            val rows = mutableListOf<SettingRow>()
-            if (folderRow) {
-                val t = str(R.string.settings_music_folder)
-                val switches = dev.nori.music.ffi.settings.folderSwitches(server?.musicFolderIds.orEmpty(), f.folders.map { it.id })
-                rows += SettingRow.Picks(settingKey(t), t, str(R.string.settings_music_folder_detail), f.folders.zip(switches) { m, s -> Pick("musicFolders", m.name, s.on, s.tapped) })
-            }
-            if (altRow) rows += choice("altMaxBitRate", R.string.settings_alt_bitrate) { if (it == "0") str(R.string.settings_alt_bitrate_none) else str(R.string.settings_kbps, it.toInt()) }
+        if (server != null && server.altUrl.isNotBlank()) {
+            val rows = listOf(choice("altMaxBitRate", R.string.settings_alt_bitrate) { if (it == "0") str(R.string.settings_alt_bitrate_none) else str(R.string.settings_kbps, it.toInt()) })
             out += section(R.string.settings_section_this_server, rows)
         }
         return out

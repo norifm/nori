@@ -501,6 +501,14 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                             TextButton({ vm.removeServer(row.id) }) { Text(say.remove) }
                         }
                     }
+                    // The server's own libraries, under it: which of them the app shows.
+                    if (row.libraries.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp)) {
+                        Text(row.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        androidx.compose.foundation.layout.FlowRow(
+                            Modifier.padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) { row.libraries.forEach { l -> Chip(l.label, l.on) { vm.set(l.name, l.tapped) } } }
+                    }
                     Hairline(startIndent = 16.dp)
                 }
                 is SettingRow.Button -> TextButton({ act(row.action) }, Modifier.padding(horizontal = 8.dp)) { Text(row.title) }
