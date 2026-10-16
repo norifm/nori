@@ -54,7 +54,8 @@
     <string name="listen_now">Listen now</string>
     <string name="shuffle_songs">Shuffle songs</string>
     <string name="shuffle_albums">Shuffle albums</string>
-    <string name="resume_from_server">Resume from server</string>
+    <string name="continue_from_app">Continue from %1$s</string>
+    <string name="continue_from_nori">Continue from your other device</string>
     <string name="rearrange_rows">Rearrange rows</string>
     <string name="for_you">For you</string>
     <string name="rows">Rows</string>
@@ -253,7 +254,6 @@
     <string name="said_excluded_from_mixes">Excluded from mixes</string>
     <string name="said_added_to_playlist">Added to %1$s</string>
     <string name="said_playlist_created">Created %1$s</string>
-    <string name="said_no_server_queue">No queue saved on the server</string>
     <string name="said_server_downloading">The server is downloading it into your library</string>
     <string name="said_failed">Failed</string>
     <string name="said_favourite_added">Added to favorites</string>

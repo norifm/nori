@@ -18,8 +18,13 @@ impl Core {
 impl Client {
     /// Saves the queue as the server's play queue ([`nori_queue::Session::to_push`]), at `current` and `position_ms`.
     pub async fn playlist_push(&self, current: Option<String>, position_ms: i64) -> NetResult<()> {
+        let place = current.clone().map(|song| crate::library::QueuePlace { song, position_ms: position_ms.max(0) as u64 });
         match self.core.session.push_write(current, position_ms) {
-            Some(w) => self.write(w).await,
+            Some(w) => {
+                self.write(w).await?;
+                *self.queue_pushed.lock() = place;
+                Ok(())
+            }
             None => Ok(()),
         }
     }

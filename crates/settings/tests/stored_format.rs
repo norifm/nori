@@ -60,6 +60,7 @@ fn sample() -> StoredPrefs {
         hi_res: true,
         max_rate: MaxRate::Khz96,
         scrobble: false,
+        queue_offer: false,
         playlist_descriptions: false,
         hide_import_notes: false,
         auto_fill: false,

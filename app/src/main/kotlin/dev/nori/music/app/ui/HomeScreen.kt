@@ -27,6 +27,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
@@ -67,6 +69,9 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
     // host's shelves.
     val account = LocalRules.current.account
     val closed by vm.closedToGuests.collectAsStateWithLifecycle()
+    val offer by vm.offer.collectAsStateWithLifecycle()
+    // Each time the page comes into sight: back from another app, or the phone unlocked.
+    androidx.lifecycle.compose.LifecycleStartEffect(Unit) { vm.lookForOffer(); onStopOrDispose {} }
     LoadBox(load) { ui ->
         val arrival = rememberArrival()
         val rise = with(LocalDensity.current) { Arrival.RISE.toPx() }
@@ -90,12 +95,12 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                         DropdownMenu(menu, { menu = false }) {
                             DropdownMenuItem({ Text(say.shuffleSongs) }, { actions.shuffleAll(); menu = false })
                             DropdownMenuItem({ Text(say.shuffleAlbums) }, { actions.shuffleAlbums(); menu = false })
-                            DropdownMenuItem({ Text(say.resumeFromServer) }, { actions.resumeFromServer(); menu = false })
                             DropdownMenuItem({ Text(say.rearrangeRows) }, { rearranging = true; menu = false })
                         }
                     }
                 }
             }
+            offer?.let { o -> item(key = "offer") { QueueOfferCard(o, actions, vm::takeOffer, vm::dismissOffer) } }
             if (closed && ui.rows.all { it.isEmpty }) item(key = "closed") {
                 Text(say.homeClosedToGuests, Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -391,3 +396,29 @@ private fun RowOrder(settings: dev.nori.music.app.vm.SettingsViewModel, onDone: 
     }
 }
 
+
+/**
+ * The queue another device or app left on the server, offered at the top of Home the way Spotify offers
+ * to carry on here: who left it, the song it stands on, play and dismiss.
+ */
+@Composable
+private fun QueueOfferCard(offer: dev.nori.music.ffi.library.QueueOffer, actions: ActionsViewModel, onPlay: () -> Unit, onDismiss: () -> Unit) {
+    val song = offer.songs.getOrNull(offer.index.toInt()) ?: return
+    androidx.compose.material3.Surface(
+        onClick = onPlay, shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, bottom = 8.dp),
+    ) {
+        Row(Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Cover(actions.cover(song.coverArt, CoverSize.ROW), 48.dp, radius = 8.dp)
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(say.continueFrom(offer.by), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                Text(
+                    remember(song) { say.songLine(song.title, song.artist) }, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onPlay) { Icon(androidx.compose.material.icons.Icons.Rounded.PlayArrow, say.play, Modifier.size(28.dp)) }
+            IconButton(onDismiss) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, say.close, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+}
