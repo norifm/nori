@@ -259,8 +259,15 @@ class Library(
     /** Draws whichever mixes are missing or from the last period. True when any tile changed. */
     suspend fun mixWarm(): Boolean = withContext(Dispatchers.IO) { client.mixWarmAll() }
 
-    /** What picking the server's saved queue back up plays (the core's `resume_from_server`). */
-    suspend fun resumeFromServer(): dev.nori.music.ffi.library.ResumePlan = withContext(Dispatchers.IO) { lifted { client.resumeFromServer() } }
+    /**
+     * The queue another device or app left on the server, when it is worth offering to this one while it is
+     * [playing] or not; whether it is, is the core's (`queue_offer`).
+     */
+    suspend fun queueOffer(playing: Boolean): dev.nori.music.ffi.library.QueueOffer? =
+        withContext(Dispatchers.IO) { lifted { client.queueOffer(playing) } }
+
+    /** [offer] was taken or turned down: the same queue is not offered again. */
+    fun queueOfferDone(offer: dev.nori.music.ffi.library.QueueOffer) = client.queueOfferDone(offer)
 
     suspend fun song(id: String): Song? = call(Read.SongById(id)) { (it as Page.OneSong).v }
 

@@ -225,6 +225,9 @@ struct QueueWire {
     entry: Vec<Song>,
     current: Option<serde_json::Value>,
     position: u64,
+    /// The app that saved it, by the name it gave the server.
+    #[serde(rename = "changedBy")]
+    changed_by: String,
 }
 
 #[derive(Deserialize, Default)]

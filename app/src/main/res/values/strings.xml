@@ -404,6 +404,8 @@
     <string name="settings_scrobble_detail">Sends your plays to your server (scrobbling).</string>
     <string name="settings_scrobble_after">Count a play after</string>
     <string name="settings_scrobble_whole">the whole song</string>
+    <string name="settings_queue_offer">Continue from other devices</string>
+    <string name="settings_queue_offer_detail">When nothing plays, Home offers the queue another device or app left on your server.</string>
     <string name="settings_lookups">Look things up online</string>
     <string name="settings_lookups_detail">Missing lyrics (sends the artist, song and album name), the AutoEQ headphone list and moving covers, each with its own switch. Off, nothing is asked.</string>
 

@@ -88,7 +88,7 @@ fn said(p: &Page) -> String {
         Page::Folders { v } => format!("folders {}", ids(v, |f| &f.name)),
         Page::Status { v } => format!("status {} {} {} {}", v.version, v.server_type, v.server_version, v.open_subsonic),
         Page::ShareUrl { v } => format!("share {v}"),
-        Page::Queue { v } => format!("queue {} at {} {} ms", ids(&v.songs, song), v.index, v.position_ms),
+        Page::Queue { v, .. } => format!("queue {} at {} {} ms", ids(&v.songs, song), v.index, v.position_ms),
     }
 }
 
