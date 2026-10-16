@@ -422,7 +422,13 @@ CAR
   check "the phone opens the downloaded album" tapnode text "Long Album"
   check "the album uses its downloaded page" wait_for route "downloaded/{id}" 8
   check "its saved tracks appear on the phone" wait_until 10 on_screen 'text="Long Track 01"'
-  check "unsaved tracks are absent on the phone" off_screen 'text="Long Track 02"'
+  # The song an earlier section left playing is named in the now playing bar; only a row of the page counts.
+  unsaved_absent() {
+    local rows; rows=$(ui | grep -o 'text="Long Track 02"' | wc -l)
+    [ "$(field title)" = "Long Track 02" ] && rows=$((rows - 1))
+    [ "$rows" -le 0 ]
+  }
+  check "unsaved tracks are absent on the phone" unsaved_absent
   offline
   check "a saved album track can be tapped offline" tapnode text "Long Track 01"
   check "a saved album track plays offline" sounds 10
