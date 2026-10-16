@@ -672,14 +672,18 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) = SectionHeader(te
  * screen - and they share this one clock, started when [ready] turns true: each item reads it in its draw
  * phase ([arriving]), so the run redraws the rows on screen and recomposes none of them, and a row
  * composed later (scrolled to mid-run) joins wherever the block is. Once run it stays at 1: rows scrolled
- * to afterwards are simply there.
+ * to afterwards are simply there - and so is the whole body when the page is come back to, which composes
+ * it again: run a second time, it showed as the page changing once more after a swipe back had already
+ * brought it.
  */
 @Composable
 fun rememberArrival(ready: Boolean): State<Float> {
+    var arrived by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     // With movement reduced there is no run: the body is simply there on its first frame.
-    val progress = remember { Animatable(if (AppMotion.reduce) 1f else 0f) }
+    val progress = remember { Animatable(if (AppMotion.reduce || arrived) 1f else 0f) }
     LaunchedEffect(ready) {
         if (!ready || progress.value >= 1f) return@LaunchedEffect
+        arrived = true
         if (AppMotion.reduce) progress.snapTo(1f)
         else progress.animateTo(1f, tween(ARRIVE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
     }
