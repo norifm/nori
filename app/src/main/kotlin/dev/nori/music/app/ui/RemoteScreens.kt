@@ -126,15 +126,8 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                // The phone's own speaker, headphones or Bluetooth: Android's picker, a quiet row of its own.
-                Row(
-                    Modifier.fillMaxWidth().clickable(onClick = onOutput).padding(horizontal = Space.gutter, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Filled.Speaker, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(words(R.string.devices_output), Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Hairline(startIndent = Space.gutter)
+                // The phone's own speaker, headphones or Bluetooth: Android's picker, a row like the devices'.
+                SheetRow(words(R.string.devices_output), Icons.Filled.Speaker, onOutput)
                 val start by vm.jamStarting.collectAsStateWithLifecycle()
                 when {
                     !jams -> {}
@@ -149,8 +142,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                         words(R.string.jam_starting), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    start == dev.nori.music.ffi.JamStart.OFFERED ->
-                        ActionRow(words(R.string.jam_start), Icons.Filled.Groups, vm::jamStart, divider = false)
+                    start == dev.nori.music.ffi.JamStart.OFFERED -> SheetRow(words(R.string.jam_start), Icons.Filled.Groups, vm::jamStart)
                 }
                 val ms = if (reduceMotion()) 0 else 220
                 AnimatedVisibility(jams && hosted != null, enter = fadeIn(tween(ms)) + expandVertically(tween(ms)), exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms))) {
@@ -190,6 +182,11 @@ private fun YourJam(listening: Int, onOpen: () -> Unit, onEnd: () -> Unit) {
         },
     )
 }
+
+/** A row of the sheet that is not a device, drawn as the devices are: the same icon, size and words. */
+@Composable
+private fun SheetRow(name: String, icon: ImageVector, onClick: () -> Unit) =
+    NavRow(name, onClick, leading = { Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface) })
 
 /** A place the music can play, ticked while it plays there. */
 @Composable
