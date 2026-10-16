@@ -34,7 +34,7 @@ import java.io.File
  */
 class CoverLoader private constructor(context: Context) {
     /** A picture kept for an address; [whole] when it is the file's own size, so no view can want it bigger. */
-    class Kept(val bitmap: Bitmap, val whole: Boolean) {
+    class Kept(val url: String, val bitmap: Bitmap, val whole: Boolean) {
         /** Whether it is enough for a view [width] x [height] pixels. */
         fun fits(width: Int, height: Int): Boolean = whole || bitmap.width >= width && bitmap.height >= height
     }
@@ -45,8 +45,9 @@ class CoverLoader private constructor(context: Context) {
     /** Cheap to open: the core reads its directory on the loader's first thread, not here. */
     private val loader = CoverPixels.open(dev.nori.music.Nori.get(app).coverNet.uniffiCloneHandle(), File(app.cacheDir, DIR).path, Covers.rules.diskBytes.toLong(), Build.VERSION.SDK_INT >= 28, true)
 
-    private val memory = object : LruCache<String, Kept>(memoryBytes(app)) {
-        override fun sizeOf(key: String, value: Kept): Int = value.bitmap.allocationByteCount
+    /** By [key], so a cover asked for through the server's other address is the one already kept. */
+    private val memory = object : LruCache<Long, Kept>(memoryBytes(app)) {
+        override fun sizeOf(key: Long, value: Kept): Int = value.bitmap.allocationByteCount
     }
 
     init {
@@ -102,14 +103,17 @@ class CoverLoader private constructor(context: Context) {
     }
 
     /** What is kept for [url], at whatever size. */
-    fun kept(url: String): Kept? = memory.get(url)
+    fun kept(url: String): Kept? = memory.get(key(url))
+
+    /** What the cover at [url] is kept under: the same through either of its server's addresses and any token. */
+    fun key(url: String): Long = CoverPixels.key(loader, url)
 
     /** Bytes of the Bitmaps kept in memory, and how many there are: for the perf report's memory line. */
     fun keptBytes(): Long = memory.size().toLong()
     fun keptCount(): Int = memory.snapshot().size
 
     /** The addresses of the covers kept in memory: covers the app has shown, for the benchmark to load again. */
-    fun keptAddresses(): List<String> = memory.snapshot().keys.toList()
+    fun keptAddresses(): List<String> = memory.snapshot().values.map { it.url }
 
     /**
      * Asks for the cover at [url] for a view [width] x [height] pixels (0 x 0: at the file's own size, at
@@ -132,7 +136,7 @@ class CoverLoader private constructor(context: Context) {
      * are simply there when their views appear. Main thread.
      */
     fun prefetch(url: String) {
-        if (Covers.isProvider(url) || memory.get(url)?.whole == true || !prefetching.add(url)) return
+        if (Covers.isProvider(url) || kept(url)?.whole == true || !prefetching.add(url)) return
         load(url, 0, 0) { prefetching.remove(url) }
     }
 
@@ -204,8 +208,9 @@ class CoverLoader private constructor(context: Context) {
 
     /** Keeps [bitmap] for [url] unless a larger picture of it is kept already. */
     private fun keep(url: String, bitmap: Bitmap, whole: Boolean) {
-        val old = memory.get(url)
-        if (old == null || whole && !old.whole || bitmap.width * bitmap.height > old.bitmap.width * old.bitmap.height) memory.put(url, Kept(bitmap, whole))
+        val key = key(url)
+        val old = memory.get(key)
+        if (old == null || whole && !old.whole || bitmap.width * bitmap.height > old.bitmap.width * old.bitmap.height) memory.put(key, Kept(url, bitmap, whole))
     }
 
     /**

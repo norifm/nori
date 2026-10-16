@@ -321,6 +321,12 @@ impl<P: Paint> Loader<P> {
         Ticket { inner: Some(inner.clone()), key, id }
     }
 
+    /// What the cover at `url` is kept under: the same through either of its server's addresses and under
+    /// any token, so a view keeping covers by it still has one after the address in use changes.
+    pub fn key(&self, url: &str) -> Key {
+        Key::of(&self.inner.net, url)
+    }
+
     /// Prefetches `url` to disk without decoding (e.g. for a downloaded song). Queued behind every view
     /// request. No-op for provider covers, which are never kept.
     pub fn warm(&self, url: &str) {

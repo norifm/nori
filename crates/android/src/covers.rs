@@ -39,6 +39,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"colours", c"(JLjava/lang/String;I[ILandroid/graphics/Bitmap;[I)I", colours),
         native!(c"decodeFile", c"(Ljava/lang/String;Landroid/graphics/Bitmap;Z)I", decode_file),
         native!(c"isProvider", c"(Ljava/lang/String;)Z", is_provider),
+        native!(c"key", c"(JLjava/lang/String;)J", key),
     ],
 };
 
@@ -390,6 +391,16 @@ extern "system" fn warm(env: JNIEnv, _: JClass, h: jlong, url: JString) {
     if let Some(loader) = loader(h) {
         with_str(&env, &url, |url| loader.warm(url));
     }
+}
+
+/// The first eight bytes of `Loader::key`: one cover through any address or token, for the app's memory
+/// caches. `@FastNative`; without a loader, the key of the URL as it is.
+extern "system" fn key(env: JNIEnv, _: JClass, h: jlong, url: JString) -> jlong {
+    let key = with_str(&env, &url, |url| match loader(h) {
+        Some(loader) => loader.key(url),
+        None => nori_covers::Key::of(&nori_core::covers::CoverNet::default(), url),
+    });
+    key.map_or(0, |k| i64::from_be_bytes(k.0[..8].try_into().expect("16 bytes")))
 }
 
 /// `Loader::rest`: idle threads end and reused Bitmaps and buffers are freed (low memory).

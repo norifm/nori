@@ -273,6 +273,10 @@ fn disk_keys() {
         assert_eq!(loader.load(&url, 8, 8).map(|p| p.width), Ok(8), "{url}");
     }
     assert_eq!(down.calls(), 0);
+    for url in [at("http://lan.test:4533", "tok2", "salt2", 320), at("https://wan.test", "tok1", "salt1", 320)] {
+        assert_eq!(loader.key(&url), loader.key(&first), "{url}");
+    }
+    assert_ne!(loader.key(&at("http://lan.test:4533", "tok1", "salt1", 800)), loader.key(&first));
     assert!(loader.load(&at("http://lan.test:4533", "tok1", "salt1", 800), 8, 8).is_err(), "another size is another file");
     assert!(loader.load(&at("http://elsewhere.test", "tok1", "salt1", 320), 8, 8).is_err(), "another server's is its own");
     // Provider playlists are never kept.
