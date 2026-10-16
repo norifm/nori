@@ -60,16 +60,33 @@ Status is one of: **todo**, **doing**, **done (commit)**, **leave** (looked at, 
 
 ### 2. The back gesture — `App.kt` `PredictiveBack`, `NavHost` predictivePop*
 
-- Now: a linear fade-through scrubbed by the finger: the page leaving fades out and lifts a tenth of
-  the height; the one underneath fades in and drops from above over the second half.
-- Should: the pop of item 1, scrubbed: the page follows the finger to the right, the page underneath
-  slides from a third left back to place and its scrim lifts. Let go, it finishes; cancelled, it runs
-  back. Nothing fades.
-- Check: album → swipe from the left edge slowly and hold: the album should sit part way off to the
-  right with home visible and shifted under it. Release: it completes. Swipe and swipe back: cancels.
-- Done as: the pop of item 1 with `LinearEasing` over 140 ms (`PageMotion.popEnter/popExit(scrubbed = true)`);
-  `PageMotion.scrubbed` tells `Page` to run the scrim linear too. Finger scrub seeks; 140 ms is only
-  the leftover after release / cancel.
+- Was, in turn: a full-width slide scrubbed by Android's back gesture (trailed the finger: the system
+  smooths its progress by ~130 ms), a shrinking card for the gesture only (two motions for one back), and
+  a short shared-axis drift with a fade (read as cheap). All finished at one pace however they were
+  flicked: the system's back gesture carries no speed, and after release the app only gets a fixed finish.
+- Should: iOS/Telegram. The page follows the finger exactly; the page under it comes back from a third
+  of the way left, out of a 0.28 dark; let go, it keeps the finger's momentum - straight on at its speed
+  (2500 px/s at least, 60-200 ms) until it is off the screen; a spring from that speed braked it visibly.
+  A flick goes back however short (over 1000 px/s), a slow drag past 35 % of the width, else it springs
+  back (critically damped, stiffness 800). An edge gesture the system took as back goes at a flick's speed
+  at least (a quick one can end on too few finger positions to measure). Same motion for: a swipe right anywhere on a page (drives it from the touches), the edge
+  gesture from either edge (from its raw finger position, not its smoothed progress; speed measured from
+  it), the back button and key (from rest, 200 ms, the app's original speed and curve). Push: the iOS
+  slide, 200 ms, the covered page a third left and dimmed, a 16 dp shadow on the page on top. The pop that
+  follows is instant until the stack next moves, and the page taken away keeps its offset until it leaves
+  the composition (both used to end two frames later: on a slow phone the stack ran its own pop after the
+  swipe's - a second switch). A page come back to does not run its arrival again (`rememberArrival` keeps
+  that it ran).
+  A tab's own page (Library, Search, Settings) goes back to Home the same way by the edge gesture or the
+  key; a swipe on its content does not (as iOS). Home is pictured as a tab tap covers it.
+- Check: album → hold a swipe mid-page: its edge at the finger, home's picture under it. Drag back and
+  let go: stays. A quick 220 px flick: gone ~100 ms after release (measured), home there with no flash.
+  Edge gesture held: the page at the finger minus where the system starts it (~40 px). Vertical scroll on
+  the page scrolls.
+- Done as: `PageSwipe` (PageSwipe.kt): pictures of covered pages (`Page` draws through a GraphicsLayer,
+  kept as the page is covered, the last four), `swipeBack` on the top page, `EdgeBack` in App.kt for the
+  system gesture and key, `drawUnder` behind the NavHost; the pop that follows is instant
+  (`PageMotion.instant`). A page deeper than the pictures goes back with the stack's own slide.
 - Status: **done**
 
 ### 3. Tab switches — `Nav.tab`, same `NavHost` transitions
