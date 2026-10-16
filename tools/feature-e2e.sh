@@ -417,12 +417,7 @@ ids=re.findall(r': in\|downloaded:[^|]+\|([^ ]+) \|',text)
 assert ids == sys.argv[2:], ids
 CAR
   "$app" open library >/dev/null
-  downloads_tab() {
-    if on_screen 'text="Downloads"'; then tapnode text Downloads; return; fi
-    adb shell input swipe 950 265 100 265 250
-    return 1
-  }
-  check "the library's Downloads tab opens" wait_until 10 downloads_tab
+  check "the library's Downloads section opens" wait_until 10 tapnode text Downloads
   check "the phone lists the saved album" wait_until 10 on_screen 'text="Long Album"'
   check "the phone opens the downloaded album" tapnode text "Long Album"
   check "the album uses its downloaded page" wait_for route "downloaded/{id}" 8

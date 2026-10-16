@@ -59,6 +59,20 @@ import dev.nori.music.app.vm.AlbumsViewModel
 import dev.nori.music.app.vm.ArtistsViewModel
 import dev.nori.music.app.vm.DecadesViewModel
 import dev.nori.music.app.vm.FoldersViewModel
+import dev.nori.music.ffi.settings.LibrarySection
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Category
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import dev.nori.music.app.vm.LibraryHomeViewModel
 import dev.nori.music.app.vm.SongSort
 import dev.nori.music.app.vm.SongsViewModel
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -110,32 +124,80 @@ private fun ShuffleLink(onClick: () -> Unit) {
     }
 }
 
+/**
+ * The library as Apple's: a list of its sections, each a page of its own, and the albums added last under
+ * it. Which sections, and their order, are the user's (Settings, Appearance, Library sections) among those
+ * the profile offers (`library_sections_shown`); smart playlists are under Playlists, and History is the
+ * page's own button. A list rather than a strip of pills: a dozen pills ran off the screen sideways.
+ */
 @Composable
-fun LibraryScreen(actions: ActionsViewModel) {
-    // The library's sections, in the order their pills run (the core's `ProfileRules`).
-    val sections = LocalRules.current.sections
-    var tab by rememberSaveable { mutableIntStateOf(0) }
-    Column {
-        LargeTitle(say.library)
-        // A scrolling row of pills, not a tab strip with an underline: twelve sections in a Material tab
-        // row reads as a toolbar, and the library is a place to browse.
-        LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(sections, key = { _, s -> s.ordinal }) { i, s -> Chip(say.librarySection(s), tab == i) { tab = i } }
+fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewModel()) {
+    val rules = LocalRules.current
+    val settings: dev.nori.music.app.vm.SettingsViewModel = viewModel()
+    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val sections = remember(prefs.librarySections, rules.sections) { dev.nori.music.ffi.library.librarySectionsShown(prefs.librarySections, rules.sections) }
+    val recent by vm.recent.collectAsStateWithLifecycle()
+    val nav = LocalNav.current
+    LazyColumn(contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current)) {
+        item(key = "title") {
+            LargeTitle(say.library) {
+                if (LibrarySection.HISTORY in rules.sections) {
+                    CircleButton(Icons.Rounded.History, say.history, Modifier.padding(end = Space.gutter - Space.tight).size(36.dp)) { nav.librarySection(LibrarySection.HISTORY) }
+                }
+            }
         }
-        // Only the visible section is composed, so only its view model loads anything.
-        when (sections[tab]) {
-            dev.nori.music.ffi.library.LibrarySection.ALBUMS -> Albums(actions)
-            dev.nori.music.ffi.library.LibrarySection.ARTISTS -> Artists()
-            dev.nori.music.ffi.library.LibrarySection.SONGS -> SongsScreen(actions, null)
-            dev.nori.music.ffi.library.LibrarySection.PLAYLISTS -> Playlists(actions)
-            dev.nori.music.ffi.library.LibrarySection.SMART -> SmartList()
-            dev.nori.music.ffi.library.LibrarySection.HISTORY -> HistoryList(actions)
-            dev.nori.music.ffi.library.LibrarySection.FAVOURITES -> Favourites(actions)
-            dev.nori.music.ffi.library.LibrarySection.GENRES -> Genres()
-            dev.nori.music.ffi.library.LibrarySection.DECADES -> Decades()
-            dev.nori.music.ffi.library.LibrarySection.FOLDERS -> Folders()
-            dev.nori.music.ffi.library.LibrarySection.RADIO -> Radio()
-            dev.nori.music.ffi.library.LibrarySection.DOWNLOADS -> Downloads(actions)
+        items(sections, key = { it.name }) { s ->
+            NavRow(
+                say.librarySection(s), { nav.librarySection(s) }, chevron = true,
+                leading = { Icon(sectionIcon(s), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary) },
+            )
+        }
+        if (recent.isNotEmpty()) {
+            item(key = "recent") { SectionTitle(say.recentlyAdded) }
+            items(recent.chunked(2), key = { row -> row.first().id }) { row ->
+                Row(Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.weight(1f), fill = true) }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+/** What each section is drawn with in the list. */
+private fun sectionIcon(s: LibrarySection): androidx.compose.ui.graphics.vector.ImageVector = when (s) {
+    LibrarySection.ALBUMS -> Icons.Rounded.Album
+    LibrarySection.FAVOURITES -> Icons.Rounded.FavoriteBorder
+    LibrarySection.ARTISTS -> Icons.Rounded.Person
+    LibrarySection.SONGS -> Icons.Rounded.MusicNote
+    LibrarySection.PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic
+    LibrarySection.SMART -> Icons.Rounded.AutoAwesome
+    LibrarySection.HISTORY -> Icons.Rounded.History
+    LibrarySection.GENRES -> Icons.Rounded.Category
+    LibrarySection.DECADES -> Icons.Rounded.CalendarMonth
+    LibrarySection.FOLDERS -> Icons.Rounded.Folder
+    LibrarySection.RADIO -> Icons.Rounded.Radio
+    LibrarySection.DOWNLOADS -> Icons.Rounded.DownloadDone
+}
+
+/** One section of the library, a page of its own. Only it is composed, so only its view model loads anything. */
+@Composable
+fun LibrarySectionScreen(section: LibrarySection, actions: ActionsViewModel) {
+    Column {
+        BackTitle(say.librarySection(section))
+        when (section) {
+            LibrarySection.ALBUMS -> Albums(actions)
+            LibrarySection.ARTISTS -> Artists()
+            LibrarySection.SONGS -> SongsScreen(actions, null)
+            LibrarySection.PLAYLISTS -> Playlists(actions)
+            LibrarySection.SMART -> SmartList()
+            LibrarySection.HISTORY -> HistoryList(actions)
+            LibrarySection.FAVOURITES -> Favourites(actions)
+            LibrarySection.GENRES -> Genres()
+            LibrarySection.DECADES -> Decades()
+            LibrarySection.FOLDERS -> Folders()
+            LibrarySection.RADIO -> Radio()
+            LibrarySection.DOWNLOADS -> Downloads(actions)
         }
     }
 }
@@ -300,8 +362,13 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
             confirmButton = { TextButton({ vm.create(name.trim()); creating = false }, enabled = name.isNotBlank()) { Text(say.create) } },
         )
     }
+    val smart = LibrarySection.SMART in LocalRules.current.sections
     LoadBox(load) { playlists ->
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+            // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
+            if (smart) item {
+                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary) })
+            }
             item { ActionRow(say.newPlaylist, Icons.Filled.Add, { name = ""; creating = true }) }
             item { ActionRow(say.importPlaylistFile, Icons.Filled.FileDownload, { pickM3u.launch(arrayOf("*/*")) }) }
             if (playlists.isEmpty()) item { EmptyNote(Note.NO_PLAYLISTS) }

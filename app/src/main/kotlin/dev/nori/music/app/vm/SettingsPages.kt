@@ -225,6 +225,7 @@ private val INDEX: List<Triple<String, Int, Int>> = listOf(
     Triple("look", R.string.settings_theme, R.string.settings_hint_theme),
     Triple("look", R.string.settings_amoled, R.string.settings_hint_amoled),
     Triple("look", R.string.settings_home_rows, 0),
+    Triple("look", R.string.settings_library_sections, 0),
     Triple("look", R.string.settings_keep_colours, R.string.settings_hint_keep_colours),
     Triple("look", R.string.settings_wallpaper, R.string.settings_hint_wallpaper),
     Triple("look", R.string.settings_cover_colours, R.string.settings_hint_cover_colours),
@@ -737,7 +738,10 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             ).takeIf { res.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK == android.content.res.Configuration.UI_MODE_TYPE_CAR },
         )
         // Which shelves Home has, and in what order: set once or twice, so here rather than on Home itself.
-        val home = listOf(link(R.string.settings_home_rows, "", false, "home-rows", divider = false))
+        val home = listOf(
+            link(R.string.settings_home_rows, "", false, "home-rows", divider = true),
+            link(R.string.settings_library_sections, "", false, "library-sections", divider = false),
+        )
         return listOf(
             section(R.string.settings_section_theme, theme), section(R.string.settings_section_cover, cover),
             section(R.string.settings_section_home, home), section(R.string.settings_section_screen, screen),

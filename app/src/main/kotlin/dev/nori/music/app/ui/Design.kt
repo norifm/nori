@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -455,6 +456,16 @@ fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composabl
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         trailing?.invoke(this)
+    }
+}
+
+/** A page opened from another: back, and its name. */
+@Composable
+fun BackTitle(text: String) {
+    val nav = LocalNav.current
+    Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.IconButton(nav::back) { Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
