@@ -66,6 +66,12 @@ object CoverPixels {
     @JvmStatic @FastNative external fun isProvider(url: String): Boolean
 
     /**
+     * What the cover at [url] is kept under (the disk's key, in part): the same through either of the
+     * server's addresses and under any token, so covers kept in memory by it survive a change of address.
+     */
+    @JvmStatic @FastNative external fun key(loader: Long, url: String): Long
+
+    /**
      * Lets go of what the loader keeps for covers to come: its threads end once they have nothing to do,
      * with their buffers and the software Bitmaps kept for GPU copies. For memory running short; the next
      * cover starts a thread again.
