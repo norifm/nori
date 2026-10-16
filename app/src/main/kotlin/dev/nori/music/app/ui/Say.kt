@@ -90,9 +90,8 @@ class Say(private val r: Resources) {
         is dev.nori.music.ffi.library.QueueBy.Nori -> r.getString(R.string.continue_from_nori)
         is dev.nori.music.ffi.library.QueueBy.App -> r.getString(R.string.continue_from_app, by.name)
     }
-    val rearrangeRows: String = r.getString(R.string.rearrange_rows)
+    val homeRowsTitle: String = r.getString(R.string.settings_home_rows)
     val forYou: String = r.getString(R.string.for_you)
-    val rows: String = r.getString(R.string.rows)
     val holdARowToMoveIt: String = r.getString(R.string.hold_a_row_to_move_it)
     val notShown: String = r.getString(R.string.not_shown)
     val searchHint: String = r.getString(R.string.search_hint)
