@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Text
@@ -60,10 +59,7 @@ import dev.nori.music.ffi.model.Album
 fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
     val load by vm.ui.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    val settings: dev.nori.music.app.vm.SettingsViewModel = viewModel()
-    var rearranging by remember { mutableStateOf(false) }
-    if (rearranging) { RowOrder(settings) { rearranging = false }; return }
-    // The mixes, the favourites and the page's own settings are the account's: a jam guest's Home is the
+    // The mixes and the favourites are the account's: a jam guest's Home is the
     // host's shelves.
     val account = LocalRules.current.account
     val closed by vm.closedToGuests.collectAsStateWithLifecycle()
@@ -82,13 +78,9 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             indicator = { RefreshMark(pull, refreshing) },
         ) {
         LazyColumn(Modifier.pageToEdges(), contentPadding = pagePadding(LocalChromeInset.current)) {
-            // The page's one control of its own, in the round plate Apple puts its account picture in. Shuffling
-            // the whole library lives in Library, over its songs and albums.
-            item(key = "title") {
-                LargeTitle(say.listenNow, Modifier.arriving(arrival, 0, rise)) {
-                    if (account) CircleButton(Icons.Rounded.SwapVert, say.rearrangeRows, Modifier.padding(end = Space.gutter - Space.tight).size(36.dp)) { rearranging = true }
-                }
-            }
+            // Only the title, as Apple's: shuffling the library lives in Library, and which rows this page has
+            // in Settings, Appearance.
+            item(key = "title") { LargeTitle(say.listenNow, Modifier.arriving(arrival, 0, rise)) }
             offer?.let { o -> item(key = "offer") { QueueOfferCard(o, actions, vm::takeOffer, vm::dismissOffer) } }
             if (closed && ui.rows.all { it.isEmpty }) item(key = "closed") {
                 Text(say.homeClosedToGuests, Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -291,16 +283,14 @@ private fun Modifier.arriving(arrival: State<Float>, place: Int, rise: Float) = 
 
 
 /**
- * Which shelves the home page has, and in what order. Both live here rather than half here and half in
- * Settings: the rows are one thing, and hunting through a settings page for a switch that belongs to a
- * page you are looking at is the sort of thing this app is trying not to do.
+ * Which shelves the home page has, and in what order, both on one page (Settings, Appearance, Home rows).
  *
  * A row is picked up by holding it anywhere, not by a handle at its edge - there is nothing else to do
  * to a row here, so the whole row may as well be the grip. A long press is what starts it, because the
  * list itself scrolls and a plain drag could not mean both.
  */
 @Composable
-private fun RowOrder(settings: dev.nori.music.app.vm.SettingsViewModel, onDone: () -> Unit) {
+fun HomeRows(settings: dev.nori.music.app.vm.SettingsViewModel, onDone: () -> Unit) {
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     val shown = prefs.homeRows
     // Which rows are left out, and where one switched on or off goes, are the core's (browse.rs).
@@ -318,7 +308,7 @@ private fun RowOrder(settings: dev.nori.music.app.vm.SettingsViewModel, onDone: 
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
 
     Column(Modifier.fillMaxSize()) {
-        LargeTitle(say.rows) {
+        LargeTitle(say.homeRowsTitle) {
             androidx.compose.material3.TextButton(onDone) { Text(say.done, style = MaterialTheme.typography.titleSmall) }
         }
         Caption(say.holdARowToMoveIt, Modifier.padding(start = Space.gutter, bottom = 8.dp))

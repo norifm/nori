@@ -56,9 +56,7 @@
     <string name="shuffle_albums">Shuffle albums</string>
     <string name="continue_from_app">Continue from %1$s</string>
     <string name="continue_from_nori">Continue from your other device</string>
-    <string name="rearrange_rows">Rearrange rows</string>
     <string name="for_you">For you</string>
-    <string name="rows">Rows</string>
     <string name="hold_a_row_to_move_it">Hold a row to move it</string>
     <string name="not_shown">Not shown</string>
     <string name="search_hint">Songs, albums, artists</string>
