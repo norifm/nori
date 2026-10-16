@@ -14,8 +14,8 @@ pub struct NetProfile {
     pub url: String,
     /// A second address of the same server, tried when `url` does not answer.
     pub alt_url: String,
-    /// Restricts browsing and search to this music folder; empty means all.
-    pub music_folder_id: String,
+    /// Restricts browsing and search to these music folders; empty means all.
+    pub music_folder_ids: Vec<String>,
     /// Bitrate ceiling while connected through `alt_url`; 0 means none.
     pub alt_max_bit_rate: u32,
 }

@@ -2437,7 +2437,7 @@ impl App {
                 self.card_covers = !self.card_covers;
                 self.cmds.push(Cmd::CardCovers(self.card_covers));
             }
-            Switch::Setting(_) => {}
+            Switch::Setting(_) | Switch::Stores(..) => {}
         }
         self.settings.invalidate();
     }

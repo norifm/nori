@@ -444,7 +444,7 @@ mod tests {
     }
 
     fn setup() -> (Arc<Client>, Arc<Fake>) {
-        client(NetProfile { url: "h".into(), music_folder_id: "7".into(), ..Default::default() })
+        client(NetProfile { url: "h".into(), music_folder_ids: vec!["7".into()], ..Default::default() })
     }
 
     #[test]
