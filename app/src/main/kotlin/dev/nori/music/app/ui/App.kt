@@ -126,6 +126,7 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet) {
     /** Opens the player, on [panel] if one is asked for. */
     fun player(panel: Panel? = null) { sheet.panelAsked = panel; sheet.open() }
     fun equalizer() = go("equalizer")
+    fun homeRows() = go("home-rows")
     fun autoEq() = go("autoeq")
     fun back() { if (sheet.isOpen) sheet.close() else c.popBackStack() }
     /**
@@ -445,6 +446,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
+                    page("home-rows") { HomeRows(settings) { nav.back() } }
                     page("autoeq") { AutoEqScreen(settings) }
                     page("album/{id}", inset = false) { AlbumScreen(it.arguments!!.getString("id")!!, actions) }
                     page("downloaded/{id}", inset = false) {

@@ -399,6 +399,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     val act: (String) -> Unit = { action ->
         when (action) {
             "equalizer" -> nav.equalizer()
+            "home-rows" -> nav.homeRows()
             "system-effects" -> runCatching {
                 context.startActivity(
                     Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
