@@ -42,14 +42,15 @@ private object CoverPalette {
         synchronized(locks) { locks.get(key) ?: kotlinx.coroutines.sync.Mutex().also { locks.put(key, it) } }.withLock { block() }
 }
 
-private fun paletteKey(url: String, amoled: Boolean) = "$url|$amoled"
+/** By the cover's [CoverLoader.key], so its colours outlast a change of the server's address. */
+private fun paletteKey(context: android.content.Context, url: String, amoled: Boolean) = "${CoverLoader.get(context).key(url)}|$amoled"
 
 /**
  * Fetches the cover and works its colours out, unless that has been done before. Slow the first time
  * (a read of the disk, or the network, and a decode) and a map lookup every time after.
  */
 private suspend fun paletteOf(context: android.content.Context, url: String, amoled: Boolean): PagePalette? {
-    val key = paletteKey(url, amoled)
+    val key = paletteKey(context, url, amoled)
     CoverPalette.cache.get(key)?.let { return it }
     measure(context, url, black = amoled, plain = !amoled)
     return CoverPalette.cache.get(key)
@@ -60,11 +61,11 @@ private suspend fun paletteOf(context: android.content.Context, url: String, amo
  * known yet, from one decode: the bar and the player can want both for the same record.
  */
 private suspend fun measure(context: android.content.Context, url: String, black: Boolean, plain: Boolean) {
-    fun wanted(amoled: Boolean) = (if (amoled) black else plain) && CoverPalette.cache.get(paletteKey(url, amoled)) == null
+    fun wanted(amoled: Boolean) = (if (amoled) black else plain) && CoverPalette.cache.get(paletteKey(context, url, amoled)) == null
     if (!wanted(true) && !wanted(false)) return
     // One cover is only ever worked out once, even when the bar, the player and the warm-up below all
     // ask for it in the same frame: the others wait here and then find it in the cache.
-    CoverPalette.once(url) {
+    CoverPalette.once(paletteKey(context, url, false)) {
         val onBlack = wanted(true)
         val onPlain = wanted(false)
         if (!onBlack && !onPlain) return@once
@@ -73,8 +74,8 @@ private suspend fun measure(context: android.content.Context, url: String, black
         // pixels any other app on nori-look would hand in, so the same record gets the same page
         // everywhere.
         val pages = withContext(Dispatchers.IO) { CoverLoader.get(context).colours(url, CoverSize.ROW, onPlain, onBlack) } ?: return@once
-        pages.plain?.let { CoverPalette.cache.put(paletteKey(url, false), PagePalette(it.look, wash = it.wash?.asImageBitmap())) }
-        pages.black?.let { CoverPalette.cache.put(paletteKey(url, true), PagePalette(it.look, wash = null)) }
+        pages.plain?.let { CoverPalette.cache.put(paletteKey(context, url, false), PagePalette(it.look, wash = it.wash?.asImageBitmap())) }
+        pages.black?.let { CoverPalette.cache.put(paletteKey(context, url, true), PagePalette(it.look, wash = null)) }
     }
 }
 
@@ -101,7 +102,7 @@ data class CoverTint(val url: String?, val palette: PagePalette?)
 fun rememberCoverTint(url: String?, amoled: Boolean): CoverTint {
     val context = LocalContext.current
     // Built once per cover, not on every recomposition.
-    val key = remember(url, amoled) { url?.let { paletteKey(it, amoled) } }
+    val key = remember(url, amoled) { url?.let { paletteKey(context, it, amoled) } }
     // Straight out of the cache, here in composition. It used to come from `produceState`, whose block
     // is a coroutine that runs *after* the frame the cover changed on: a cover measured long ago still
     // arrived a frame or two late, and until it did, everything drawn from it - the page, the soft
