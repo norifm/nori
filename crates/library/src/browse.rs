@@ -565,9 +565,9 @@ mod tests {
         use LibrarySection::*;
         let account = profile_rules(false).sections;
         assert_eq!(library_sections_shown(LibrarySection::LISTED.to_vec(), account.clone()), LibrarySection::LISTED, "a new install lists them all");
-        assert_eq!(library_sections_shown(vec![Smart, Radio, History, Albums], account), [Radio, Albums], "smart and history are not rows");
+        assert_eq!(library_sections_shown(vec![Smart, Radio, History, Downloads, Albums], account), [Radio, Albums], "smart, history and downloads are not rows");
         assert_eq!(library_sections_shown(vec![Radio, Songs, Albums], profile_rules(true).sections), [Songs, Albums], "only what a guest is offered");
-        assert_eq!(library_sections_hidden(vec![Albums, Songs, Radio]), [Favourites, Artists, Playlists, Genres, Decades, Folders, Downloads]);
+        assert_eq!(library_sections_hidden(vec![Albums, Songs, Radio]), [Favourites, Artists, Playlists, Genres, Decades, Folders]);
         assert_eq!(library_sections_toggled(vec![Albums, Songs], Radio, true), [Albums, Songs, Radio]);
         assert_eq!(library_sections_toggled(vec![Albums, Songs], Albums, false), [Songs]);
         assert_eq!(library_sections_moved(vec![Albums, Songs, Radio], 2, 0), [Radio, Albums, Songs]);
