@@ -470,8 +470,8 @@
     <string name="settings_server_second_address">second address</string>
     <string name="settings_server_separator">" · "</string>
     <string name="settings_add_server">Add server</string>
-    <string name="settings_music_folder">Music folder</string>
-    <string name="settings_music_folder_all">All</string>
+    <string name="settings_music_folder">Music folders</string>
+    <string name="settings_music_folder_detail">The library shows the folders lit. At least one stays on.</string>
     <string name="settings_alt_bitrate">Bitrate limit on the second address</string>
     <string name="settings_alt_bitrate_none">No limit</string>
 

@@ -28,7 +28,7 @@ fn sample() -> StoredPrefs {
             client_cert: "c.p12".into(),
             client_cert_password: "cp".into(),
             wifi_only: true,
-            music_folder_id: "3".into(),
+            music_folder_ids: vec!["3".into(), "5".into()],
             alt_max_bit_rate: 192,
         }],
         active_server_id: "a1".into(),

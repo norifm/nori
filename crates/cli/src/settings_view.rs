@@ -27,6 +27,8 @@ pub enum Opened {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Switch {
     Setting(String),
+    /// A setting and the value switching the row stores.
+    Stores(String, String),
     Mouse,
     Images,
     CardCovers,
@@ -237,6 +239,7 @@ impl SettingsView {
                 }
                 Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())])
             }
+            Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
             Row::Toggle { switch, .. } => Opened::Own(switch),
             Row::Choice { target, title, options, shown, enabled: true } => {
                 let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
@@ -287,7 +290,8 @@ impl SettingsView {
                 }
                 match switch {
                     Switch::Setting(name) if enabled => vec![Cmd::Setting(name, up.to_string())],
-                    Switch::Setting(_) => Vec::new(),
+                    Switch::Stores(name, value) if enabled => vec![Cmd::Setting(name, value)],
+                    Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
                     Switch::Mouse => vec![Cmd::Mouse(up)],
                     Switch::Images => vec![Cmd::Images(up)],
                     Switch::CardCovers => vec![Cmd::CardCovers(up)],
@@ -695,14 +699,17 @@ fn server(b: &Build, f: &Facts) -> Vec<Section> {
     }
     accounts.push(Row::Button { title: "Add a server".into(), action: Act::AddServer });
     let mut out = vec![section("Accounts", accounts)];
-    let mut this = Vec::new();
     if f.folders.len() > 1 {
-        let mut o = vec![("all".to_string(), String::new())];
-        o.extend(f.folders.iter().map(|m| (m.name.clone(), m.id.clone())));
-        this.push(b.choice_of("musicFolder", "Music folder", o, true));
-    }
-    if !this.is_empty() {
-        out.push(section("This server", this));
+        let shown = p.servers.iter().find(|s| s.id == p.active_server_id).map(|s| s.music_folder_ids.clone()).unwrap_or_default();
+        let switches = nori_core::settings::folder_switches(shown, f.folders.iter().map(|m| m.id.clone()).collect());
+        let rows = f.folders.iter().zip(switches).map(|(m, s)| Row::Toggle {
+            switch: Switch::Stores("musicFolders".into(), s.tapped),
+            title: m.name.clone(),
+            detail: String::new(),
+            on: s.on,
+            enabled: true,
+        });
+        out.push(section("Music folders", rows.collect()));
     }
     out
 }
@@ -1050,7 +1057,7 @@ mod tests {
         for kept in ["Accounts", "Streaming quality", "Stream cache", "Colors from the cover"] {
             assert!(account.iter().any(|t| t == kept) && guest.iter().any(|t| t == kept), "{kept}");
         }
-        for gone in ["Music folder", "Download quality", "Downloads"] {
+        for gone in ["Music folders", "Download quality", "Downloads"] {
             assert!(account.iter().any(|t| t == gone) && !guest.iter().any(|t| t == gone), "{gone}");
         }
         assert!(guest.len() < account.len());
@@ -1141,6 +1148,21 @@ mod tests {
         for phone in ["swipeLeft", "swipeRight", "tapAction", "offload", "bitPerfect", "motionArtwork", "amoled", "dynamicColor", "softSleeve", "lyricsKeepScreenOn", "uiScale", "soundBypass", "coversAhead", "altMaxBitRate", "liveSearchDelayMs"] {
             assert!(!names.iter().any(|n| n == phone), "{phone} offered in a terminal");
         }
+    }
+
+    #[test]
+    fn music_folders_switch_from_all() {
+        let server = nori_core::settings::SavedServer { id: "a".into(), ..Default::default() };
+        let prefs = StoredPrefs { servers: vec![server], active_server_id: "a".into(), ..StoredPrefs::default() };
+        let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
+        let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], ..Facts::default() };
+        let page = page("server", &prefs, &state, &facts, &Own::default());
+        let folders = page.sections.iter().find(|s| s.title == "Music folders").unwrap();
+        let switches: Vec<_> = folders.rows.iter().map(|r| match r {
+            Row::Toggle { switch: Switch::Stores(name, value), title, on, .. } => (name.as_str(), value.as_str(), title.as_str(), *on),
+            other => panic!("{other:?}"),
+        }).collect();
+        assert_eq!(switches, [("musicFolders", "2", "A", true), ("musicFolders", "1", "B", true)]);
     }
 
     #[test]

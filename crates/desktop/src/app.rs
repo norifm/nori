@@ -672,7 +672,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.ui().set_settings_tab(t);
         a.settings_shown();
     });
-    on!(ui.on_setting_toggled, h, |a, name, on| a.setting(&name, if on { "true" } else { "false" }));
+    on!(ui.on_setting_toggled, h, |a, name, on| {
+        let (name, value) = crate::settings::toggled(&name, on);
+        a.setting(name, &value);
+    });
     on!(ui.on_setting_chosen, h, |a, name, i| a.setting_chosen(&name, i.max(0) as usize));
     on!(ui.on_setting_action, h, |a, name| a.setting_action(&name));
     on!(ui.on_setting_slid, h, |a, name, v, last| a.slid(&name, v, last));

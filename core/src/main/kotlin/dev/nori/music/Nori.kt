@@ -156,7 +156,7 @@ class Nori private constructor(private val context: Context) {
         Core(File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path, id, session).also { c -> profile?.let { c.configure(it.config()) } }
 
     private fun SavedServer.config() = ServerConfig(url, user, password, apiKey.ifEmpty { null }, legacyAuth)
-    private fun SavedServer.net() = NetProfile(url, altUrl, musicFolderId, altMaxBitRate.coerceAtLeast(0).toUInt())
+    private fun SavedServer.net() = NetProfile(url, altUrl, musicFolderIds, altMaxBitRate.coerceAtLeast(0).toUInt())
 
     /** Called off the main thread at process start. */
     fun warmUp() {

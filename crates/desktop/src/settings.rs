@@ -60,6 +60,13 @@ impl<'a> Target<'a> {
 
 const EQUALIZER: &str = "equalizer";
 const ADD_SERVER: &str = "add-server";
+/// A folder's toggle is named `musicFolders=<the value it stores>`.
+const MUSIC_FOLDERS: &str = "musicFolders";
+
+/// The setting and value a toggle row stores: its own `true`/`false`, or the value its name carries.
+pub fn toggled(name: &str, on: bool) -> (&str, String) {
+    name.split_once('=').map_or((name, on.to_string()), |(name, value)| (name, value.to_string()))
+}
 
 /// A link or button on the settings page.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,10 +181,6 @@ impl Build<'_> {
     fn choice_if(&self, name: &str, title: &str, enabled: bool, label: impl Fn(&str) -> String) -> Row {
         let options = options(name).into_iter().map(|v| (label(&v), v)).collect();
         Row { kind: CHOICE, name: name.into(), title: title.into(), options, enabled, ..Default::default() }
-    }
-
-    fn choice_of(&self, name: &str, title: &str, options: Vec<(String, String)>) -> Row {
-        Row { kind: CHOICE, name: name.into(), title: title.into(), options, enabled: true, ..Default::default() }
     }
 
     /// An enum setting with one label per option, in option order.
@@ -519,9 +522,17 @@ impl Build<'_> {
         }
         let mut out = vec![("Accounts", accounts)];
         if self.f.folders.len() > 1 {
-            let mut o = vec![("All".to_string(), String::new())];
-            o.extend(self.f.folders.iter().cloned());
-            out.push(("This server", vec![self.choice_of("musicFolder", "Music folder", o)]));
+            let shown = p.servers.iter().find(|s| s.id == p.active_server_id).map(|s| s.music_folder_ids.clone()).unwrap_or_default();
+            let switches = nori_core::settings::folder_switches(shown, self.f.folders.iter().map(|(_, id)| id.clone()).collect());
+            let rows = self.f.folders.iter().zip(switches).map(|((name, _), s)| Row {
+                kind: TOGGLE,
+                name: format!("{MUSIC_FOLDERS}={}", s.tapped),
+                title: name.clone(),
+                on: s.on,
+                enabled: true,
+                ..Default::default()
+            });
+            out.push(("Music folders", rows.collect()));
         }
         out
     }
@@ -626,13 +637,6 @@ pub fn option_value(target: Target, index: usize, f: &Facts) -> Option<String> {
                 f.devices.get(index - 1).cloned()
             }
         }
-        Target::Setting("musicFolder") => {
-            if index == 0 {
-                Some(String::new())
-            } else {
-                f.folders.get(index - 1).map(|x| x.1.clone())
-            }
-        }
         Target::Setting(name) => options(name).into_iter().nth(index),
     }
 }
@@ -666,6 +670,13 @@ pub fn level_of(name: &str) -> Option<EqLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_toggle_stores_its_state_or_the_value_its_name_carries() {
+        assert_eq!(toggled("mono", true), ("mono", "true".to_string()));
+        assert_eq!(toggled("musicFolders=1,3", false), ("musicFolders", "1,3".to_string()));
+        assert_eq!(toggled("musicFolders=", true), ("musicFolders", String::new()));
+    }
 
     #[test]
     fn row_names_resolve() {

@@ -33,7 +33,7 @@ data class SettingsGroup(val id: String, val title: String, val summary: String)
 data class SettingsHit(val group: String, val key: String, val title: String, val detail: String)
 
 /** One switch of a [SettingRow.Picks]: the setting it turns on and off, and what it says. */
-data class Pick(val name: String, val label: String, val on: Boolean)
+data class Pick(val name: String, val label: String, val on: Boolean, val tapped: String = (!on).toString())
 
 /** One choice in a list of options: what it says, and the value the core takes for it. */
 data class SettingOption(val label: String, val value: String)
@@ -937,8 +937,9 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         if (folderRow || altRow) {
             val rows = mutableListOf<SettingRow>()
             if (folderRow) {
-                val options = listOf(SettingOption(str(R.string.settings_music_folder_all), "")) + f.folders.map { SettingOption(it.name, it.id) }
-                rows += choiceOf("musicFolder", R.string.settings_music_folder, options)
+                val t = str(R.string.settings_music_folder)
+                val switches = dev.nori.music.ffi.settings.folderSwitches(server?.musicFolderIds.orEmpty(), f.folders.map { it.id })
+                rows += SettingRow.Picks(settingKey(t), t, str(R.string.settings_music_folder_detail), f.folders.zip(switches) { m, s -> Pick("musicFolders", m.name, s.on, s.tapped) })
             }
             if (altRow) rows += choice("altMaxBitRate", R.string.settings_alt_bitrate) { if (it == "0") str(R.string.settings_alt_bitrate_none) else str(R.string.settings_kbps, it.toInt()) }
             out += section(R.string.settings_section_this_server, rows)
