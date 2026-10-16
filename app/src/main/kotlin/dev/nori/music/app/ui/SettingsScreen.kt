@@ -350,10 +350,7 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
     LaunchedEffect(target) { if (target >= 0) scroll.animateScrollTo((scroll.value + target - 400).coerceAtLeast(0)) }
     CompositionLocalProvider(LocalSpotlight provides SettingSpotlight(highlight.ifEmpty { null }) { y -> if (target < 0) target = y }) {
         Column(Modifier.verticalScroll(scroll)) {
-            Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-                Text(page.title, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-            }
+            BackTitle(page.title)
             when (id) {
                 // The build's facts, then the rows the page builder made for About (the update check).
                 "about" -> AboutContent({ title, content -> Section(title, content) }, { nav.settingsGroup("licences") }, vm::reportProblem) {
@@ -400,6 +397,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
         when (action) {
             "equalizer" -> nav.equalizer()
             "home-rows" -> nav.homeRows()
+            "library-sections" -> nav.librarySections()
             "system-effects" -> runCatching {
                 context.startActivity(
                     Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)

@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, ControlsSide, CrossfadeCurve, DownloadBeats, EqMode, GainMode, HideStatusBar, HomeRow, KeepAwake, MaxRate, PrefValue, SavedQuality, SavedServer, StoredPrefs, SwipeAction, TapAction, ThemeMode};
+use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, ControlsSide, CrossfadeCurve, DownloadBeats, EqMode, GainMode, HideStatusBar, HomeRow, KeepAwake, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, StoredPrefs, SwipeAction, TapAction, ThemeMode};
 use nori_settings::settings_model::{specs, value_of};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/stored_format.txt");
@@ -161,6 +161,7 @@ fn sample() -> StoredPrefs {
         swipe_left: SwipeAction::PlayNext,
         skip_explicit: true,
         home_rows: vec![HomeRow::Random, HomeRow::Pinned, HomeRow::Newest],
+        library_sections: vec![LibrarySection::Radio, LibrarySection::Albums],
         pinned_playlists: vec!["p1".into(), "p2".into()],
         list_prefs: [("albums".to_string(), "grid".to_string())].into(),
     }
