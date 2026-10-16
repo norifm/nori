@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.nori.music.ffi.settings.HomeRow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -240,6 +241,18 @@ class StarredViewModel(app: Application) : NoriViewModel(app) {
 
 class GenresViewModel(app: Application) : NoriViewModel(app) {
     val genres: StateFlow<Load<List<Genre>>> = nori.library.genres().asLoad()
+}
+
+/** The Library page's own: the albums added last, under its list of sections. */
+class LibraryHomeViewModel(app: Application) : NoriViewModel(app) {
+    val recent: StateFlow<List<Album>> = nori.library.albums(AlbumSort.NEWEST, RECENT)
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private companion object {
+        /** Three rows of two. */
+        const val RECENT = 6
+    }
 }
 
 class RadioViewModel(app: Application) : NoriViewModel(app) {

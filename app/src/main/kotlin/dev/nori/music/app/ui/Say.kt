@@ -11,7 +11,7 @@ import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.devices.OutputPort
 import dev.nori.music.ffi.library.AlbumSort
 import dev.nori.music.ffi.library.DownloadAct
-import dev.nori.music.ffi.library.LibrarySection
+import dev.nori.music.ffi.settings.LibrarySection
 import dev.nori.music.ffi.library.MixName
 import dev.nori.music.ffi.library.ReleaseGroup
 import dev.nori.music.ffi.library.ReleaseKind
@@ -91,6 +91,9 @@ class Say(private val r: Resources) {
         is dev.nori.music.ffi.library.QueueBy.App -> r.getString(R.string.continue_from_app, by.name)
     }
     val homeRowsTitle: String = r.getString(R.string.settings_home_rows)
+    val librarySectionsTitle: String = r.getString(R.string.settings_library_sections)
+    val recentlyAdded: String = r.getString(R.string.library_recently_added)
+    val smartPlaylists: String = r.getString(R.string.smart_playlists)
     val forYou: String = r.getString(R.string.for_you)
     val holdARowToMoveIt: String = r.getString(R.string.hold_a_row_to_move_it)
     val notShown: String = r.getString(R.string.not_shown)

@@ -229,6 +229,34 @@ impl HomeRow {
     }
 }
 
+/// One of the library's sections; the client names it. Stored by name, in the order the Library page lists them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, nori_settings_derive::Choice)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+#[repr(u8)]
+pub enum LibrarySection {
+    Albums,
+    Favourites,
+    Artists,
+    Songs,
+    Playlists,
+    Smart,
+    History,
+    Genres,
+    Decades,
+    Folders,
+    Radio,
+    Downloads,
+}
+
+impl LibrarySection {
+    /// The sections the Library page lists, in the order a new install lists them: smart playlists are
+    /// found under Playlists, and History is the page's own button.
+    pub const LISTED: [LibrarySection; 10] = {
+        use LibrarySection::*;
+        [Albums, Favourites, Artists, Songs, Playlists, Genres, Decades, Folders, Radio, Downloads]
+    };
+}
+
 /// One saved server profile. Each has its own rows in the index database.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -558,6 +586,8 @@ pub struct StoredPrefs {
     /// The home page's rows, in order; unlisted rows are hidden.
     #[setting("homeRows", Picks, default = HomeRow::ALL.to_vec(), hidden)]
     pub home_rows: Vec<HomeRow>,
+    #[setting("librarySections", Picks, default = LibrarySection::LISTED.to_vec(), hidden)]
+    pub library_sections: Vec<LibrarySection>,
     #[setting("pinnedPlaylists", LINES, default = Vec::new(), hidden)]
     pub pinned_playlists: Vec<String>,
     #[setting("listPrefs", LIST_PREFS, default = HashMap::new(), hidden)]

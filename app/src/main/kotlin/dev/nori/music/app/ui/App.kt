@@ -127,6 +127,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet) {
     fun player(panel: Panel? = null) { sheet.panelAsked = panel; sheet.open() }
     fun equalizer() = go("equalizer")
     fun homeRows() = go("home-rows")
+    fun librarySections() = go("library-sections")
+    fun librarySection(s: dev.nori.music.ffi.settings.LibrarySection) = go("library/${s.name}")
     fun autoEq() = go("autoeq")
     fun back() { if (sheet.isOpen) sheet.close() else c.popBackStack() }
     /**
@@ -446,7 +448,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                         SettingsGroupScreen(settings, e.arguments!!.getString("id")!!, e.arguments?.getString("key").orEmpty(), actions)
                     }
                     page("equalizer") { EqualizerScreen(settings) }
-                    page("home-rows") { HomeRows(settings) { nav.back() } }
+                    page("home-rows") { HomeRows(settings) }
+                    page("library-sections") { LibrarySections(settings) }
+                    page("library/{section}") { LibrarySectionScreen(dev.nori.music.ffi.settings.LibrarySection.valueOf(it.arguments!!.getString("section")!!), actions) }
                     page("autoeq") { AutoEqScreen(settings) }
                     page("album/{id}", inset = false) { AlbumScreen(it.arguments!!.getString("id")!!, actions) }
                     page("downloaded/{id}", inset = false) {

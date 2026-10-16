@@ -226,8 +226,9 @@
     <string name="settings_section_messages">Messages</string>
     <string name="settings_section_size">Size and motion</string>
     <string name="settings_section_screen">Screen</string>
-    <string name="settings_section_home">Home</string>
+    <string name="settings_section_home">Layout</string>
     <string name="settings_home_rows">Home rows</string>
+    <string name="settings_library_sections">Library sections</string>
     <string name="settings_hide_status_bar">Hide the status bar</string>
     <string name="settings_hide_status_bar_detail">The clock, battery and notification icons at the top. Swipe down from the top edge to see them for a moment.</string>
     <string name="settings_hide_status_bar_never">Never</string>
