@@ -6,6 +6,25 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-10-17
+
+### Added
+
+- Pick several music folders per server (#64)
+- Play, pause and skip buttons have softly rounded corners
+- Home offers to continue the queue another device left on the server
+- Shuffle lives in library and home's corner rearranges its rows
+- A server's libraries are picked under it in the servers list
+- Home rows are set in settings, appearance
+- Library lists its sections as pages, with history in its corner
+- Library's corner keeps downloads and history as outline buttons
+- Going back follows the finger and leaves at its speed, swiped anywhere on a page
+
+### Fixed
+
+- The player keeps its colours when the server's address changes
+- Audio output and start a jam look like the other rows of play on
+
 ## [0.6.1] - 2026-10-16
 
 ### Added
