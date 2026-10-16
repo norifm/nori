@@ -1,5 +1,5 @@
-//! Library client calls: cached screen reads, starring, favourites for mixes, mix draws and resuming
-//! the server's queue. Decisions are nori-library's.
+//! Library client calls: cached screen reads, starring, favourites for mixes, mix draws and offering
+//! the queue left on the server. Decisions are nori-library's.
 
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
@@ -85,12 +85,24 @@ impl Client {
         changed
     }
 
-    /// The play queue another device saved on the server.
-    pub async fn resume_from_server(&self) -> NetResult<ResumePlan> {
-        match self.read_now(Read::PullQueue).await? {
-            Page::Queue { v } => Ok(resume_plan(v)),
-            _ => Ok(ResumePlan::Nothing),
+    /// The queue another device or app left on the server, when it is worth offering to this device while
+    /// it is `playing` or not (`queue_offer`). Its own song is the queue's, or the one saved for the next
+    /// start when the player has not taken that up yet. Never asked with the offer switched off.
+    pub async fn queue_offer(&self, playing: bool) -> NetResult<Option<QueueOffer>> {
+        if playing || !self.settings().prefs(|p| p.queue_offer) {
+            return Ok(None);
         }
+        let here = self.core.session.snapshot().0.or_else(|| {
+            let saved = self.core.load_queue().ok()?;
+            saved.songs.get(saved.index as usize).map(|s| s.id.clone())
+        });
+        let Page::Queue { v, by } = self.read_now(Read::PullQueue).await? else { return Ok(None) };
+        Ok(queue_offer(v, &by, here.as_deref(), playing, self.queue_pushed.lock().as_ref(), self.queue_seen.lock().as_ref()))
+    }
+
+    /// `offer` was taken or turned down: that queue is not offered again.
+    pub fn queue_offer_done(&self, offer: QueueOffer) {
+        *self.queue_seen.lock() = offer.place();
     }
 }
 
@@ -178,6 +190,48 @@ pub(crate) mod tests {
         fn marks(&self, m: crate::stars::StarMarks) {
             self.0.lock().push(m.songs.get("lib-refused").copied());
         }
+    }
+
+    #[test]
+    fn the_server_queue_is_offered_until_taken_or_pushed_from_here() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        let saved = |by: &str, position: u64| {
+            let songs = r#"[{"id":"a","title":"A","isDir":false},{"id":"b","title":"B","isDir":false}]"#;
+            fake.answer(&format!(r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"current":"b","position":{position},"changedBy":"{by}","entry":{songs}}}}}}}"#));
+        };
+        saved("NavidromeUI", 1200);
+        let offer = block(c.queue_offer(false)).unwrap().unwrap();
+        assert_eq!((offer.by.clone(), offer.index, offer.position_ms), (QueueBy::App { name: "NavidromeUI".into() }, 1, 1200));
+        c.queue_offer_done(offer);
+        saved("NavidromeUI", 1200);
+        assert_eq!(block(c.queue_offer(false)).unwrap(), None, "taken or turned down");
+
+        // What this device handed the server comes back as its own.
+        c.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
+        fake.answer(r#"{"subsonic-response":{"status":"ok"}}"#);
+        block(c.playlist_push(Some("b".into()), 3000)).unwrap();
+        saved("nori", 3000);
+        assert_eq!(block(c.queue_offer(false)).unwrap(), None, "pushed from here");
+        saved("nori", 9000);
+        assert_eq!(block(c.queue_offer(false)).unwrap().map(|o| o.by), Some(QueueBy::Nori), "moved on elsewhere");
+        c.core.session.set(vec!["a".into(), "b".into()], Some(1), false, None);
+        saved("nori", 9000);
+        assert_eq!(block(c.queue_offer(false)).unwrap(), None, "its song is the one here");
+
+        // Before the player has taken up the queue saved for this start, that queue is what is here.
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        let songs: Vec<Song> = ["a", "b"].iter().map(|id| Song { id: id.to_string(), ..Default::default() }).collect();
+        c.core.save_queue(crate::PlayQueue { songs, index: 1, position_ms: 0, origin: None }).unwrap();
+        fake.answer(r#"{"subsonic-response":{"status":"ok","playQueue":{"current":"b","position":5,"changedBy":"web","entry":[{"id":"a","isDir":false},{"id":"b","isDir":false}]}}}"#);
+        assert_eq!(block(c.queue_offer(false)).unwrap(), None, "saved here for the next start");
+
+        // Switched off, the server is not asked.
+        let dir = nori_testdir::TempDir::new("queue-offer");
+        c.session().settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
+        c.session().settings.edit_by_name("queueOffer", "false").unwrap();
+        let asked = fake.asked().len();
+        assert_eq!(block(c.queue_offer(false)).unwrap(), None);
+        assert_eq!(fake.asked().len(), asked);
     }
 
     #[test]

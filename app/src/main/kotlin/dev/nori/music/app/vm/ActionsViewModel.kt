@@ -150,15 +150,6 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     /** An endless-ish mix seeded from one song. */
     fun startRadio(song: Song) = attempt(null) { start(nori.library.radio(song)) }
 
-    /** Picks up the queue another device (or the web player) left on the server. */
-    fun resumeFromServer() = attempt(null) {
-        // What to do with what the server kept is the core's (`resume_from_server`).
-        when (val plan = nori.library.resumeFromServer()) {
-            is dev.nori.music.ffi.library.ResumePlan.Nothing -> _messages.send(say.noServerQueue)
-            is dev.nori.music.ffi.library.ResumePlan.Play -> { nori.player.play(plan.songs, plan.index.toInt()); nori.player.seekTo(plan.positionMs.toLong()) }
-        }
-    }
-
     /**
      * octo-fiesta downloads a provider item into the library when it is starred: a song on its own, an album
      * or playlist in full, on the server, without streaming it to the phone.

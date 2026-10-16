@@ -85,7 +85,8 @@ pub enum Page {
     Folders { v: Vec<MusicFolder> },
     Status { v: ServerInfo },
     ShareUrl { v: String },
-    Queue { v: PlayQueue },
+    /// The queue saved on the server, and the app that saved it (`by`).
+    Queue { v: PlayQueue, by: String },
 }
 
 impl Page {
@@ -305,7 +306,11 @@ impl Client {
                 let url = r.shares.and_then(|s| s.share.into_iter().next()).map(|s| s.url).filter(|u| !u.is_empty());
                 Page::ShareUrl { v: url.ok_or(crate::CoreError::Parse { reason: "no share in response".into() })? }
             }
-            Parser::Queue => Page::Queue { v: r.play_queue.unwrap_or_default().into() },
+            Parser::Queue => {
+                let q = r.play_queue.unwrap_or_default();
+                let by = q.changed_by.clone();
+                Page::Queue { v: q.into(), by }
+            }
         })
     }
 

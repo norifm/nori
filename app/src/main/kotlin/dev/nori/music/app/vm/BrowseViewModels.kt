@@ -73,6 +73,35 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
     // The app was opened: a good moment to replay whatever was starred, rated or played while offline.
     init { viewModelScope.launch { runCatching { nori.library.flushPending() } } }
 
+    private val _offer = MutableStateFlow<dev.nori.music.ffi.library.QueueOffer?>(null)
+    /** The queue another device or app left on the server, offered at the top of the page; null for none. */
+    val offer: StateFlow<dev.nori.music.ffi.library.QueueOffer?> = _offer
+
+    init {
+        // Music started here: the page lets the offer go.
+        viewModelScope.launch { nori.player.state.collect { if (it.playing) _offer.value = null } }
+    }
+
+    /** Asked each time the page comes into sight; a jam guest's Home is the host's, and offers nothing. */
+    fun lookForOffer() {
+        if (!nori.rules.account) return
+        val playing = nori.player.state.value.playing
+        viewModelScope.launch { _offer.value = runCatching { nori.library.queueOffer(playing) }.getOrNull() }
+    }
+
+    /** Plays the offered queue where it was left. */
+    fun takeOffer() = closeOffer()?.let { o ->
+        nori.player.play(o.songs, o.index.toInt())
+        nori.player.seekTo(o.positionMs.toLong())
+    }
+
+    fun dismissOffer() { closeOffer() }
+
+    private fun closeOffer(): dev.nori.music.ffi.library.QueueOffer? = _offer.value?.also {
+        _offer.value = null
+        nori.library.queueOfferDone(it)
+    }
+
     /**
      * Bumped by [refresh]. Every shelf hangs off it rather than the page hanging off it as a whole, so
      * a re-query replaces each shelf's contents where they are instead of emptying the page first and

@@ -95,22 +95,52 @@ pub fn lyrics_none() -> nori_model::Lyrics {
     nori_model::Lyrics::default()
 }
 
-/// What "Resume from server" does with the server's queue.
+/// Who left a queue on the server: nori on another device, or another app, by the name it gave.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum ResumePlan {
-    /// Nothing was saved: the client says so.
-    Nothing,
-    /// Play `songs` from `index`, then seek to `position_ms`.
-    Play { songs: Vec<Song>, index: u32, position_ms: u64 },
+pub enum QueueBy {
+    Nori,
+    App { name: String },
 }
 
-pub fn resume_plan(q: PlayQueue) -> ResumePlan {
-    if q.songs.is_empty() {
-        ResumePlan::Nothing
-    } else {
-        ResumePlan::Play { songs: q.songs, index: q.index, position_ms: q.position_ms }
+/// The queue another device left on the server, offered here: `songs` from `index`, `position_ms` in.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct QueueOffer {
+    pub by: QueueBy,
+    pub songs: Vec<Song>,
+    pub index: u32,
+    pub position_ms: u64,
+}
+
+impl QueueOffer {
+    /// Where the offered queue stands.
+    pub fn place(&self) -> Option<QueuePlace> {
+        place(&self.songs, self.index, self.position_ms)
     }
+}
+
+/// A song in a queue and how far into it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuePlace {
+    pub song: String,
+    pub position_ms: u64,
+}
+
+fn place(songs: &[Song], index: u32, position_ms: u64) -> Option<QueuePlace> {
+    songs.get(index as usize).map(|s| QueuePlace { song: s.id.clone(), position_ms })
+}
+
+/// The queue `saved` on the server by the app named `by`, offered to a device playing its song `here`
+/// (or nothing) unless something plays, its song is the one here already, it stands where this device
+/// left it (`ours`), or it was offered before (`seen`).
+pub fn queue_offer(saved: PlayQueue, by: &str, here: Option<&str>, playing: bool, ours: Option<&QueuePlace>, seen: Option<&QueuePlace>) -> Option<QueueOffer> {
+    let at = place(&saved.songs, saved.index, saved.position_ms)?;
+    if playing || here == Some(at.song.as_str()) || ours == Some(&at) || seen == Some(&at) {
+        return None;
+    }
+    let by = if by == nori_net::api::CLIENT { QueueBy::Nori } else { QueueBy::App { name: by.to_string() } };
+    Some(QueueOffer { by, songs: saved.songs, index: saved.index, position_ms: saved.position_ms })
 }
 
 /// The favourites handed to the mixes from the stored answer, and what `mix_favourites_refresh` needs.
@@ -151,11 +181,29 @@ mod tests {
     }
 
     #[test]
-    fn library_answers() {
-        assert_eq!(resume_plan(PlayQueue { songs: vec![], index: 3, position_ms: 9, origin: None }), ResumePlan::Nothing);
-        let s = Song { id: "a".into(), ..Default::default() };
-        assert_eq!(resume_plan(PlayQueue { songs: vec![s.clone()], index: 0, position_ms: 1200, origin: None }), ResumePlan::Play { songs: vec![s], index: 0, position_ms: 1200 });
+    fn a_queue_left_elsewhere_is_offered_once() {
+        let songs: Vec<Song> = ["a", "b"].iter().map(|id| Song { id: id.to_string(), ..Default::default() }).collect();
+        let saved = PlayQueue { songs: songs.clone(), index: 1, position_ms: 1200, origin: None };
+        let at = QueuePlace { song: "b".into(), position_ms: 1200 };
+        let elsewhere = QueuePlace { song: "b".into(), position_ms: 900 };
+        let offer = |by: &str, here, playing, ours, seen| queue_offer(saved.clone(), by, here, playing, ours, seen);
+        let web = offer("NavidromeUI", None, false, None, None).unwrap();
+        assert_eq!((web.by.clone(), web.index, web.position_ms), (QueueBy::App { name: "NavidromeUI".into() }, 1, 1200));
+        assert_eq!(web.place(), Some(at.clone()));
+        assert_eq!(offer("nori", Some("a"), false, Some(&elsewhere), None).map(|o| o.by), Some(QueueBy::Nori), "another nori, further on");
+        for (why, here, playing, ours, seen) in [
+            ("something plays", None, true, None, None),
+            ("its song is here", Some("b"), false, None, None),
+            ("this device left it", None, false, Some(&at), None),
+            ("offered before", None, false, None, Some(&at)),
+        ] {
+            assert_eq!(offer("nori", here, playing, ours, seen), None, "{why}");
+        }
+        assert_eq!(queue_offer(PlayQueue { songs: vec![], index: 0, position_ms: 0, origin: None }, "x", None, false, None, None), None, "nothing saved");
+    }
 
+    #[test]
+    fn library_answers() {
         // The local day is near utcs.
         let utc = nori_db::now_ms() / 86_400_000;
         assert!((local_epoch_day() - utc).abs() <= 1);

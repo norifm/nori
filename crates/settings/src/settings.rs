@@ -538,6 +538,9 @@ pub struct StoredPrefs {
     pub taste_model: bool,
     #[setting("scrobble", FLAG, default = true, show = K::Switch)]
     pub scrobble: bool,
+    /// Offers the queue another device or app left on the server when nothing plays here.
+    #[setting("queueOffer", FLAG, default = true, show = K::Switch)]
+    pub queue_offer: bool,
     #[setting("scrobblePercent", INT, default = 50, show = K::Choice(&["25", "50", "75", "90", "100"]))]
     pub scrobble_percent: i32,
     /// Master switch over third-party lookups (lyrics, AutoEQ, motion artwork), each with its own switch.

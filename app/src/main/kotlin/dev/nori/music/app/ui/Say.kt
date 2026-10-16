@@ -87,7 +87,11 @@ class Say(private val r: Resources) {
     val listenNow: String = r.getString(R.string.listen_now)
     val shuffleSongs: String = r.getString(R.string.shuffle_songs)
     val shuffleAlbums: String = r.getString(R.string.shuffle_albums)
-    val resumeFromServer: String = r.getString(R.string.resume_from_server)
+    /** Who left the queue the Home page offers. */
+    fun continueFrom(by: dev.nori.music.ffi.library.QueueBy): String = when (by) {
+        is dev.nori.music.ffi.library.QueueBy.Nori -> r.getString(R.string.continue_from_nori)
+        is dev.nori.music.ffi.library.QueueBy.App -> r.getString(R.string.continue_from_app, by.name)
+    }
     val rearrangeRows: String = r.getString(R.string.rearrange_rows)
     val forYou: String = r.getString(R.string.for_you)
     val rows: String = r.getString(R.string.rows)
@@ -715,7 +719,6 @@ class Say(private val r: Resources) {
     val homeClosedToGuests: String get() = r.getString(R.string.home_closed_to_guests)
     fun jamEnded(host: String?): String = host?.let { r.getString(R.string.jam_ended_by, it) } ?: r.getString(R.string.jam_ended)
     val excludedFromMixes: String get() = r.getString(R.string.said_excluded_from_mixes)
-    val noServerQueue: String get() = r.getString(R.string.said_no_server_queue)
     val serverDownloading: String get() = r.getString(R.string.said_server_downloading)
     val saidFailed: String get() = r.getString(R.string.said_failed)
     fun favourite(on: Boolean): String = r.getString(if (on) R.string.said_favourite_added else R.string.said_favourite_removed)
