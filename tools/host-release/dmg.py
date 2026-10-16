@@ -23,13 +23,9 @@ def package(binary, output, version, arch):
         if platform.system() != "Darwin":
             subprocess.run([sys.executable, str(ROOT / "tools/host-release/dmg-layout.py"), "build-linux", str(stage), str(artifact)], check=True)
             return artifact
-        environment = Path(temporary) / "python"
-        subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
-        python = str(environment / "bin/python")
-        subprocess.run([python, "-m", "pip", "install", "--disable-pip-version-check", "dmgbuild==1.6.5", "Pillow==11.3.0"], check=True)
         layout = str(ROOT / "tools/host-release/dmg-layout.py")
-        subprocess.run([python, layout, "build", str(stage), str(artifact)], check=True)
-        subprocess.run([python, layout, "verify", str(artifact)], check=True)
+        subprocess.run([sys.executable, layout, "build", str(stage), str(artifact)], check=True)
+        subprocess.run([sys.executable, layout, "verify", str(artifact)], check=True)
     verify(artifact)
     return artifact
 
