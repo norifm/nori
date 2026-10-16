@@ -246,7 +246,8 @@ pub struct SavedServer {
     pub client_cert: String,
     pub client_cert_password: String,
     pub wifi_only: bool,
-    pub music_folder_id: String,
+    /// The music folders the library shows; empty for all of them.
+    pub music_folder_ids: Vec<String>,
     pub alt_max_bit_rate: i32,
 }
 
@@ -587,7 +588,6 @@ pub struct StoredPrefs {
 /// [`set_special`].
 pub(crate) const SPECIAL_SPECS: &[(&str, K)] = &[
     ("motionArtworkMobile", K::Switch),
-    ("musicFolder", K::Choice(&[])),
     ("altMaxBitRate", K::Choice(&["0", "320", "192", "128", "96"])),
     ("compressorPreset", K::Choice(&COMPRESSOR_PRESETS)),
     ("crossfeedPreset", K::Choice(&CROSSFEED_PRESETS)),
@@ -1064,9 +1064,17 @@ fn server_from(v: &Value) -> Option<SavedServer> {
         client_cert: opt_string(o, "clientCert"),
         client_cert_password: opt_string(o, "clientCertPassword"),
         wifi_only: opt_bool(o, "wifiOnly"),
-        music_folder_id: opt_string(o, "musicFolderId"),
+        music_folder_ids: folder_ids(o),
         alt_max_bit_rate: opt_i32(o, "altMaxBitRate"),
     })
+}
+
+/// `musicFolderIds`, or the one `musicFolderId` stored before a server could show several.
+fn folder_ids(o: &Map<String, Value>) -> Vec<String> {
+    match o.get("musicFolderIds").and_then(Value::as_array) {
+        Some(ids) => ids.iter().map(text).collect(),
+        None => Some(opt_string(o, "musicFolderId")).filter(|id| !id.is_empty()).into_iter().collect(),
+    }
 }
 
 fn server_json(s: &SavedServer) -> Value {
@@ -1074,7 +1082,7 @@ fn server_json(s: &SavedServer) -> Value {
         "id": s.id, "name": s.name, "url": s.url, "altUrl": s.alt_url, "user": s.user, "password": s.password,
         "apiKey": s.api_key, "legacyAuth": s.legacy_auth, "headers": s.headers, "allowSelfSigned": s.allow_self_signed,
         "clientCert": s.client_cert, "clientCertPassword": s.client_cert_password, "wifiOnly": s.wifi_only,
-        "musicFolderId": s.music_folder_id, "altMaxBitRate": s.alt_max_bit_rate,
+        "musicFolderIds": s.music_folder_ids, "altMaxBitRate": s.alt_max_bit_rate,
     })
 }
 
@@ -1212,9 +1220,10 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
         // The inverse of `motionArtworkWifiOnly`.
         "motionArtworkMobile" => Some(n.motion_artwork_wifi_only = !on(value)),
         // The active server profile's own settings.
-        "musicFolder" | "altMaxBitRate" => n.servers.iter_mut().find(|s| s.id == p.active_server_id).map(|s| {
-            if name == "musicFolder" {
-                s.music_folder_id = value.to_string();
+        // The active server profile's own settings; `musicFolders` is a value of [`folder_switches`].
+        "musicFolders" | "altMaxBitRate" => n.servers.iter_mut().find(|s| s.id == p.active_server_id).map(|s| {
+            if name == "musicFolders" {
+                s.music_folder_ids = value.split(',').filter(|id| !id.is_empty()).map(str::to_string).collect();
             } else {
                 s.alt_max_bit_rate = value.trim().parse::<i32>().map_or(s.alt_max_bit_rate, |v| v.max(0));
             }
@@ -1234,10 +1243,33 @@ pub(crate) fn value_of_special(p: &StoredPrefs, name: &str) -> Option<String> {
         // "" is a custom crossfeed.
         "crossfeedPreset" if p.crossfeed_db <= 0.0 => "OFF".to_string(),
         "crossfeedPreset" => crossfeed_preset(p.crossfeed_hz, p.crossfeed_db).map_or("", |c| preset_name(&nori_player::dsp::CrossfeedPreset::ALL, &CROSSFEED_PRESETS[1..], c)).to_string(),
-        "musicFolder" => server().map(|s| s.music_folder_id.clone()).unwrap_or_default(),
         "altMaxBitRate" => server().map_or(0, |s| s.alt_max_bit_rate).to_string(),
         _ => return None,
     })
+}
+
+/// One music folder's switch: whether the library shows it, and the `musicFolders` value a tap sets.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct FolderSwitch {
+    pub on: bool,
+    pub tapped: String,
+}
+
+/// The switches of a server's `folders` (ids, in its order) for a profile that shows `shown`. Every
+/// folder on is stored as none picked, so folders added later show too; the last one on stays on.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn folder_switches(shown: Vec<String>, folders: Vec<String>) -> Vec<FolderSwitch> {
+    let on = |id: &String| shown.is_empty() || shown.contains(id);
+    let value = |ids: Vec<&String>| if ids.len() == folders.len() { String::new() } else { ids.iter().map(|id| id.as_str()).collect::<Vec<_>>().join(",") };
+    let now: Vec<&String> = folders.iter().filter(|id| on(id)).collect();
+    folders
+        .iter()
+        .map(|id| {
+            let after: Vec<&String> = folders.iter().filter(|x| on(x) != (*x == id)).collect();
+            FolderSwitch { on: on(id), tapped: value(if after.is_empty() { now.clone() } else { after }) }
+        })
+        .collect()
 }
 
 /// A server's display name: its name, or else its address's host.
@@ -1721,7 +1753,7 @@ pub fn server_for_login(list: ServerList, profile: SavedServer) -> SavedServer {
         Some(saved) => SavedServer {
             id: saved.id.clone(),
             name: if profile.name.trim().is_empty() { saved.name.clone() } else { profile.name },
-            music_folder_id: saved.music_folder_id.clone(),
+            music_folder_ids: saved.music_folder_ids.clone(),
             alt_max_bit_rate: saved.alt_max_bit_rate,
             ..profile
         },
@@ -2098,11 +2130,12 @@ mod tests {
         let a = SavedServer { id: "a".into(), ..SavedServer::default() };
         let b = SavedServer { id: "b".into(), ..SavedServer::default() };
         let p = StoredPrefs { servers: vec![a, b], active_server_id: "b".into(), ..StoredPrefs::default() };
-        let c = set_by_name(&p, "musicFolder", "7").unwrap();
+        let c = set_by_name(&p, "musicFolders", "7,9").unwrap();
         assert!(c.server);
-        assert_eq!((c.prefs.servers[0].music_folder_id.as_str(), c.prefs.servers[1].music_folder_id.as_str()), ("", "7"));
+        assert_eq!((c.prefs.servers[0].music_folder_ids.clone(), c.prefs.servers[1].music_folder_ids.clone()), (vec![], vec!["7".to_string(), "9".to_string()]));
+        assert!(set_by_name(&c.prefs, "musicFolders", "").unwrap().prefs.servers[1].music_folder_ids.is_empty(), "all");
         assert_eq!(set_by_name(&p, "altMaxBitRate", "128").unwrap().prefs.servers[1].alt_max_bit_rate, 128);
-        assert_eq!(set_by_name(&StoredPrefs::default(), "musicFolder", "7"), None, "no server in use");
+        assert_eq!(set_by_name(&StoredPrefs::default(), "musicFolders", "7"), None, "no server in use");
         assert!(!set_by_name(&p, "mono", "1").unwrap().server);
 
         // Lyrics services by name.
@@ -2265,6 +2298,21 @@ mod tests {
     }
 
     #[test]
+    fn folder_switches_start_from_all() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let switches = |shown: &[&str]| folder_switches(ids(shown), ids(&["1", "2", "3"])).into_iter().map(|f| (f.on, f.tapped)).collect::<Vec<_>>();
+        let sw = |on, tapped: &str| (on, tapped.to_string());
+        // All shown: each tap hides that one.
+        assert_eq!(switches(&[]), [sw(true, "2,3"), sw(true, "1,3"), sw(true, "1,2")]);
+        // Two shown: the third's tap is all again, the others' leave one.
+        assert_eq!(switches(&["1", "2"]), [sw(true, "2"), sw(true, "1"), sw(false, "")]);
+        // The last one on stays on.
+        assert_eq!(switches(&["2"]), [sw(false, "1,2"), sw(true, "2"), sw(false, "2,3")]);
+        // A folder the server no longer has is dropped by the next tap.
+        assert_eq!(switches(&["2", "9"])[0], sw(false, "1,2"));
+    }
+
+    #[test]
     fn servers() {
         let s = |id: &str, name: &str| SavedServer { id: id.into(), name: name.into(), ..SavedServer::default() };
         let list = ServerList { servers: vec![s("a", "A"), s("b", "B")], active_server_id: "b".into() };
@@ -2293,13 +2341,19 @@ mod tests {
         assert_eq!(label("", "music.example.com/x"), "music.example.com");
         assert_eq!(label("", ""), "");
 
+        // A folder stored alone, before a server could show several.
+        let folders = |json: Value| server_from(&json).unwrap().music_folder_ids;
+        assert_eq!(folders(serde_json::json!({"id": "a", "musicFolderId": "3"})), ["3"]);
+        assert_eq!(folders(serde_json::json!({"id": "a", "musicFolderId": ""})), Vec::<String>::new());
+        assert_eq!(folders(serde_json::json!({"id": "a", "musicFolderIds": ["3", "5"], "musicFolderId": "3"})), ["3", "5"]);
+
         // Login reuses saved profile.
-        let saved = SavedServer { id: "a1".into(), name: "Home".into(), url: "http://10.0.2.2:4534/".into(), user: "admin".into(), password: "old".into(), music_folder_id: "3".into(), ..SavedServer::default() };
+        let saved = SavedServer { id: "a1".into(), name: "Home".into(), url: "http://10.0.2.2:4534/".into(), user: "admin".into(), password: "old".into(), music_folder_ids: vec!["3".into()], ..SavedServer::default() };
         let other = SavedServer { id: "b2".into(), url: "http://10.0.2.2:4534".into(), user: "guest".into(), ..SavedServer::default() };
         let list = ServerList { servers: vec![saved.clone(), other], active_server_id: "b2".into() };
         let form = SavedServer { id: new_server_id(), url: " HTTP://10.0.2.2:4534 ".into(), user: "Admin".into(), password: "new".into(), ..SavedServer::default() };
         let kept = server_for_login(list.clone(), form.clone());
-        assert_eq!((kept.id.as_str(), kept.password.as_str(), kept.name.as_str(), kept.music_folder_id.as_str()), ("a1", "new", "Home", "3"), "{kept:?}");
+        assert_eq!((kept.id.as_str(), kept.password.as_str(), kept.name.as_str(), kept.music_folder_ids.as_slice()), ("a1", "new", "Home", &["3".to_string()][..]), "{kept:?}");
         let l = servers_activated(list.clone(), kept);
         assert_eq!((l.servers.len(), l.active_server_id.as_str()), (2, "a1"), "activated, not copied");
         // Another user of the same server, or another server, is a profile of its own.

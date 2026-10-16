@@ -502,9 +502,9 @@ mod tests {
         // The active server's own settings are returned, not kept.
         let with_server = StoredPrefs { servers: vec![SavedServer { id: "s1".into(), ..Default::default() }], active_server_id: "s1".into(), ..s.prefs.clone() };
         s.edit(|_| with_server.clone());
-        let c = s.edit_by_name("musicFolder", "7").unwrap();
+        let c = s.edit_by_name("musicFolders", "7").unwrap();
         assert!(c.server);
-        assert_eq!(c.prefs.servers[0].music_folder_id, "7");
+        assert_eq!(c.prefs.servers[0].music_folder_ids, ["7"]);
         assert_eq!(s.prefs, with_server);
         assert_eq!(c.effect, 0);
 

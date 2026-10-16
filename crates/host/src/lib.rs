@@ -34,7 +34,7 @@ pub fn config(p: &SavedServer) -> ServerConfig {
 }
 
 pub fn net(p: &SavedServer) -> NetProfile {
-    NetProfile { url: p.url.clone(), alt_url: p.alt_url.clone(), music_folder_id: p.music_folder_id.clone(), alt_max_bit_rate: p.alt_max_bit_rate.max(0) as u32 }
+    NetProfile { url: p.url.clone(), alt_url: p.alt_url.clone(), music_folder_ids: p.music_folder_ids.clone(), alt_max_bit_rate: p.alt_max_bit_rate.max(0) as u32 }
 }
 
 /// This computer's name, as the account's other devices list it (remote control).

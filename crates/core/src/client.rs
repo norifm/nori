@@ -115,11 +115,10 @@ impl Client {
         self.transport.network() == transport::Network::Metered
     }
 
-    /// `params` plus the music folder, for endpoints that take one.
+    /// `params` plus the music folders, for endpoints that take them.
     pub(crate) fn scoped(&self, endpoint: &str, mut params: Vec<(String, String)>) -> Vec<(String, String)> {
-        let p = self.profile.read();
-        if !p.music_folder_id.is_empty() && FOLDERED.contains(&endpoint) {
-            params.push(("musicFolderId".into(), p.music_folder_id.clone()));
+        if FOLDERED.contains(&endpoint) {
+            params.extend(self.profile.read().music_folder_ids.iter().map(|id| ("musicFolderId".to_string(), id.clone())));
         }
         params
     }
@@ -399,8 +398,9 @@ pub(crate) mod tests {
 
     #[test]
     fn music_folder_where_foldered() {
-        let (c, _) = client(NetProfile { url: "h".into(), music_folder_id: "3".into(), ..Default::default() });
-        assert_eq!(c.scoped("search3", vec![]), vec![("musicFolderId".to_string(), "3".to_string())]);
+        let (c, _) = client(NetProfile { url: "h".into(), music_folder_ids: vec!["3".into(), "5".into()], ..Default::default() });
+        let folder = |id: &str| ("musicFolderId".to_string(), id.to_string());
+        assert_eq!(c.scoped("search3", vec![]), vec![folder("3"), folder("5")]);
         assert!(c.scoped("getAlbum", vec![]).is_empty());
         let (c, _) = client(NetProfile { url: "h".into(), ..Default::default() });
         assert!(c.scoped("search3", vec![]).is_empty());

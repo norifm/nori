@@ -36,7 +36,7 @@ val EqKind.slope: Boolean get() = EQ.bandKinds[ordinal].slope
 /** A new server profile: only its id, everything else empty. */
 fun newServer(id: String) = SavedServer(
     id = id, name = "", url = "", altUrl = "", user = "", password = "", apiKey = "", legacyAuth = false, headers = emptyMap(),
-    allowSelfSigned = false, clientCert = "", clientCertPassword = "", wifiOnly = false, musicFolderId = "", altMaxBitRate = 0,
+    allowSelfSigned = false, clientCert = "", clientCertPassword = "", wifiOnly = false, musicFolderIds = emptyList(), altMaxBitRate = 0,
 )
 
 /** Its name, or else the host of its address (the core's `settings::label`). */
