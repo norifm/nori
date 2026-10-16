@@ -3,8 +3,8 @@ package dev.nori.music.app.ui
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.layout.layout
 import androidx.compose.runtime.setValue
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.IconButton
@@ -1154,10 +1154,10 @@ fun PlayPauseGlyph(
         Box(Modifier.size(size), Alignment.Center) {
             when (g) {
                 dev.nori.music.ffi.TransportGlyph.SPINNER -> androidx.compose.material3.CircularProgressIndicator(Modifier.size(spinner), color = tint?.invoke() ?: androidx.compose.material3.LocalContentColor.current, strokeWidth = 2.dp)
-                dev.nori.music.ffi.TransportGlyph.PAUSE -> if (tint != null) LookIcon(Icons.Filled.Pause, say.pause, Modifier.fillMaxSize(), tint)
-                    else androidx.compose.material3.Icon(Icons.Filled.Pause, say.pause, Modifier.fillMaxSize())
-                else -> if (tint != null) LookIcon(Icons.Filled.PlayArrow, say.play, Modifier.fillMaxSize(), tint)
-                    else androidx.compose.material3.Icon(Icons.Filled.PlayArrow, say.play, Modifier.fillMaxSize())
+                dev.nori.music.ffi.TransportGlyph.PAUSE -> if (tint != null) LookIcon(Icons.Rounded.Pause, say.pause, Modifier.fillMaxSize(), tint)
+                    else androidx.compose.material3.Icon(Icons.Rounded.Pause, say.pause, Modifier.fillMaxSize())
+                else -> if (tint != null) LookIcon(Icons.Rounded.PlayArrow, say.play, Modifier.fillMaxSize(), tint)
+                    else androidx.compose.material3.Icon(Icons.Rounded.PlayArrow, say.play, Modifier.fillMaxSize())
             }
         }
     }
