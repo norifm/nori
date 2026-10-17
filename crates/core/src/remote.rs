@@ -14,7 +14,8 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::ops::Range;
 use std::sync::Arc;
-use nori_tasks::{first, Either, Notify, Tasks};
+use futures_util::future::{select, Either};
+use nori_tasks::{Notify, Tasks};
 use nori_time::{Duration, Instant};
 
 use nori_remote::clock::{self, ClockSync};
@@ -1738,7 +1739,7 @@ impl Remote {
             }
         };
         #[cfg(not(target_arch = "wasm32"))]
-        transport::block_on(first(sent, self.tasks.sleep(Duration::from_millis(SENT_WAIT_MS))));
+        transport::block_on(select(std::pin::pin!(sent), self.tasks.sleep(Duration::from_millis(SENT_WAIT_MS))));
         // A browser cannot wait: its tasks end and its sends go on their own.
         #[cfg(target_arch = "wasm32")]
         drop(sent);
@@ -2099,7 +2100,7 @@ impl Remote {
                     };
                     Duration::from_micros((until - clock::now_us()).max(0) as u64)
                 };
-                if let Either::Right(()) = first(me.tasks.sleep(wait), timing).await {
+                if let Either::Right(_) = select(me.tasks.sleep(wait), timing).await {
                     continue;
                 }
                 let changed = me.inner.lock().mirror.as_mut().is_some_and(|m| m.forget(None, clock::now_us()));
@@ -2191,7 +2192,7 @@ impl Remote {
             if done(&self.inner.lock()) {
                 return;
             }
-            if let Either::Left(()) = first(&mut sleep, timing).await {
+            if let Either::Left(_) = select(&mut sleep, timing).await {
                 return;
             }
         }
@@ -2200,9 +2201,9 @@ impl Remote {
     /// A GET through the client; None when the remote stopped or the request is no longer `current`
     /// meanwhile (it is cancelled).
     async fn get(&self, url: String, timeout_ms: u32, current: impl Fn(&Inner) -> bool) -> Option<Result<Vec<u8>, NetError>> {
-        match first(self.given_up(current), transport::get(&*self.client.transport, url, timeout_ms)).await {
-            Either::Left(()) => None,
-            Either::Right(got) => Some(got),
+        match select(std::pin::pin!(self.given_up(current)), std::pin::pin!(transport::get(&*self.client.transport, url, timeout_ms))).await {
+            Either::Left(_) => None,
+            Either::Right((got, _)) => Some(got),
         }
     }
 
@@ -2405,17 +2406,17 @@ impl Remote {
                 said_serving = i.serving;
                 url
             };
-            let mut poll = std::pin::pin!(transport::get(&*self.client.transport, url, POLL_TIMEOUT_MS));
-            let got = match first(self.given_up(|i| i.generation == generation), &mut poll).await {
-                Either::Left(()) => {
+            let poll = std::pin::pin!(transport::get(&*self.client.transport, url, POLL_TIMEOUT_MS));
+            let got = match select(std::pin::pin!(self.given_up(|i| i.generation == generation)), poll).await {
+                Either::Left(((), poll)) => {
                     // A poll saying this device serves may reach the relay after its leave: the leave goes
                     // again once the relay answered it (or the remote stopped).
                     if said_serving && !self.inner.lock().serving {
-                        first(self.given_up(|_| true), poll).await;
+                        select(std::pin::pin!(self.given_up(|_| true)), poll).await;
                     }
                     return said_serving;
                 }
-                Either::Right(got) => got,
+                Either::Right((got, _)) => got,
             };
             let received = clock::now_us();
             {
@@ -2448,7 +2449,7 @@ impl Remote {
                     }
                     let retry = self.retry.notified();
                     if self.inner.lock().generation == generation {
-                        first(self.tasks.sleep(Duration::from_millis(RETRY_MS)), retry).await;
+                        select(self.tasks.sleep(Duration::from_millis(RETRY_MS)), retry).await;
                     }
                 }
             }
