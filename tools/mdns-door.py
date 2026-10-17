@@ -78,7 +78,7 @@ def records(device, deadline):
 
 def resolve(database, timeout=15):
     with sqlite3.connect(database) as db:
-        row = db.execute("SELECT value FROM app_kv WHERE key='remoteDeviceId'").fetchone()
+        row = db.execute("SELECT value FROM app_kv WHERE key='remoteDeviceId.terminal.0'").fetchone()
     if not row:
         raise RuntimeError("the CLI peer has not created a remote device")
     device = row[0]

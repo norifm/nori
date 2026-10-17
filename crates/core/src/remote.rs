@@ -1019,6 +1019,8 @@ impl Inner {
 pub struct Remote {
     client: Arc<Client>,
     id: String,
+    /// Keeps `id` this remote's until it stops.
+    id_lock: Mutex<IdLock>,
     instance: Option<u64>,
     me: RemoteMe,
     player: Arc<dyn RemotePlayer>,
@@ -1041,8 +1043,83 @@ pub struct Remote {
     follower: Mutex<Option<Arc<dyn Follower>>>,
 }
 
-/// The app's key for this device's id.
-const DEVICE_ID: &str = "remoteDeviceId";
+/// The app's key for the one id every client over an app database had before each kind of client had
+/// its own: the first account client to claim an id takes it over.
+const SHARED_DEVICE_ID: &str = "remoteDeviceId";
+
+/// The lock file a remote holds for its device id while it runs (none in a browser).
+#[cfg(not(target_arch = "wasm32"))]
+type IdLock = Option<std::fs::File>;
+#[cfg(target_arch = "wasm32")]
+type IdLock = Option<()>;
+
+/// `kind` as the wire names it ("desktop").
+fn kind_name(kind: DeviceKind) -> String {
+    serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+}
+
+/// Device ids kept in the app database, one for each copy of a kind of client running at once.
+struct DeviceId;
+
+impl DeviceId {
+    /// The id of the first copy of `kind` over `settings`' app database that no running remote holds
+    /// (`remoteDeviceId.desktop.0`, `.1`, ...), made the first time, and its lock. A fresh id while the
+    /// database is not open; the first copy's when no lock file can be made.
+    fn claim(settings: &Settings, kind: DeviceKind) -> (String, IdLock) {
+        let Some(db) = settings.app_db() else { return (nori_remote::new_id(), None) };
+        let name = kind_name(kind);
+        let path = db.lock().path().filter(|p| !p.is_empty()).map(str::to_string);
+        let (key, lock) = (0..)
+            .map(|copy| format!("{SHARED_DEVICE_ID}.{name}.{copy}"))
+            .find_map(|key| DeviceId::free(path.as_deref(), &key).map(|lock| (key, lock)))
+            .expect("a copy no remote holds");
+        let id = DeviceId::kept(&db.lock(), &key, kind != DeviceKind::Guest).unwrap_or_else(|e| {
+            crate::alog::info(&format!("remote: could not keep the device id: {e}"));
+            nori_remote::new_id()
+        });
+        (id, lock)
+    }
+
+    /// The lock of id `key` next to the app database at `db`; None while another remote holds it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn free(db: Option<&str>, key: &str) -> Option<IdLock> {
+        let Some(db) = db else { return Some(None) };
+        let opened = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(format!("{db}.{key}.lock"));
+        let locked = opened.and_then(|file| match file.try_lock() {
+            Ok(()) => Ok(Some(file)),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(std::fs::TryLockError::Error(e)) => Err(e),
+        });
+        match locked {
+            Ok(None) => None,
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                crate::alog::info(&format!("remote: no lock for the device id: {e}"));
+                Some(None)
+            }
+        }
+    }
+
+    /// A browser runs one copy of a client over its database.
+    #[cfg(target_arch = "wasm32")]
+    fn free(_: Option<&str>, _: &str) -> Option<IdLock> {
+        Some(None)
+    }
+
+    /// The id kept at `key`: made the first time, or the shared one taken over when `shared` allows.
+    fn kept(c: &rusqlite::Connection, key: &str, shared: bool) -> rusqlite::Result<String> {
+        use rusqlite::OptionalExtension;
+        let tx = c.unchecked_transaction()?;
+        if let Some(id) = tx.query_row("SELECT value FROM app_kv WHERE key=?1 AND value<>''", [key], |r| r.get::<_, String>(0)).optional()? {
+            return Ok(id);
+        }
+        let taken = if shared { tx.query_row("DELETE FROM app_kv WHERE key=?1 AND value<>'' RETURNING value", [SHARED_DEVICE_ID], |r| r.get::<_, String>(0)).optional()? } else { None };
+        let id = taken.unwrap_or_else(nori_remote::new_id);
+        tx.execute("INSERT OR REPLACE INTO app_kv(key, value) VALUES(?1, ?2)", [key, id.as_str()])?;
+        tx.commit()?;
+        Ok(id)
+    }
+}
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Remote {
@@ -1661,6 +1738,7 @@ impl Remote {
         #[cfg(target_arch = "wasm32")]
         drop(sent);
         self.out.lock().take();
+        self.id_lock.lock().take();
         self.shown.changed();
     }
 
@@ -1962,11 +2040,7 @@ impl Remote {
     /// A remote whose work runs on `tasks`.
     pub fn with_tasks(client: Arc<Client>, me: RemoteMe, player: Arc<dyn RemotePlayer>, shown: Arc<dyn RemoteShown>, discovery: Option<Arc<dyn Discovery>>, tasks: Arc<dyn Tasks>) -> Arc<Remote> {
         let settings = &client.core.session.settings;
-        let id = settings.app_value(DEVICE_ID).filter(|v| !v.is_empty()).unwrap_or_else(|| {
-            let id = nori_remote::new_id();
-            settings.keep_app_value(DEVICE_ID, id.clone());
-            id
-        });
+        let (id, id_lock) = DeviceId::claim(settings, me.kind);
         // Persist once per process so delayed states stay ordered across restarts.
         let instance = settings.app_db().and_then(|db| {
             db.lock().query_row(
@@ -1975,7 +2049,7 @@ impl Remote {
             ).map_err(|e| crate::alog::info(&format!("remote: could not keep instance: {e}"))).ok()?.parse().ok()
         });
         let sends = Arc::new(Sends::default());
-        let remote = Arc::new(Remote { client, id, instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
+        let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
         remote.tasks.spawn(Box::pin(send_all(sends, remote.client.clone(), remote.who())));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
         remote.probe();
@@ -2154,7 +2228,7 @@ impl Remote {
 
     /// This device's id, name and kind, as the relay is told them (the device id first).
     fn who(&self) -> Vec<(String, String)> {
-        let kind = serde_json::to_value(self.me.kind).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+        let kind = kind_name(self.me.kind);
         vec![("dev".into(), self.id.clone()), ("name".into(), self.me.name.clone()), ("kind".into(), kind)]
     }
 
