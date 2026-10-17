@@ -236,7 +236,7 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     init {
         viewModelScope.launch {
             for (f in remoteVolume) {
-                nori.remotes.command(dev.nori.music.ffi.remote.Op.Volume(kotlin.math.round(f.coerceIn(0f, 1f) * 100).toInt().toUByte()))
+                nori.remotes.mirror.value?.let { m -> dev.nori.music.ffi.mirrorOp(m, dev.nori.music.ffi.Press.Volume(f))?.let(nori.remotes::command) }
                 kotlinx.coroutines.delay(REMOTE_VOLUME_MS)
             }
         }

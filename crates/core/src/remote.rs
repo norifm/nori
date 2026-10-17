@@ -222,6 +222,61 @@ impl Mirror {
     pub fn heard_ago_ms(&self) -> i64 {
         (clock::now_us() - self.at_us) / 1000
     }
+
+    /// `press` as a command for the device; None when there is nothing to ask.
+    pub fn op(&self, press: Press) -> Option<Op> {
+        Some(match press {
+            Press::Play => Op::Play,
+            Press::Pause => Op::Pause,
+            Press::Toggle if self.playing => Op::Pause,
+            Press::Toggle => Op::Play,
+            Press::Next => Op::Next,
+            Press::Previous => Op::Previous,
+            Press::Seek { ms } => Op::Seek { ms: ms.max(0) },
+            Press::Jump { index } => Op::Jump { index, rev: self.rev },
+            Press::Remove { index } => Op::Remove { index, rev: self.rev },
+            Press::Move { from, to } => Op::Move { from, to, rev: self.rev },
+            Press::Clear => Op::Clear,
+            Press::Shuffle { on } => Op::Shuffle { on },
+            Press::Repeat { mode } => Op::Repeat { mode },
+            Press::Volume { level } => {
+                let percent = (level.clamp(0.0, 1.0) * 100.0).round() as u8;
+                self.volume.filter(|&now| now != percent)?;
+                Op::Volume { percent }
+            }
+        })
+    }
+}
+
+/// [`Mirror::op`]: what a press of the player's controls asks of the mirrored device.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn mirror_op(mirror: Mirror, press: Press) -> Option<Op> {
+    mirror.op(press)
+}
+
+/// What a client's player asks of the music.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Press {
+    Play,
+    Pause,
+    Toggle,
+    Next,
+    Previous,
+    Seek { ms: i64 },
+    /// The song at this list index (a queue row's).
+    Jump { index: u32 },
+    Shuffle { on: bool },
+    /// Off 0, one 1, all 2 (`nori_player::playlist`).
+    Repeat { mode: u8 },
+    /// 0 to 1.
+    Volume { level: f32 },
+    /// The song at this list index leaves the queue.
+    Remove { index: u32 },
+    /// The song at list index `from` moves to `to`.
+    Move { from: u32, to: u32 },
+    /// Everything after the song playing leaves the queue.
+    Clear,
 }
 
 /// A song of a mirrored queue, and the list index commands name it by.
@@ -3246,6 +3301,30 @@ mod tests {
         fn changed(&self) {}
         fn marks_changed(&self) {}
         fn jam_ended(&self, _: Option<String>) {}
+    }
+
+    #[test]
+    fn the_players_controls_become_the_devices_commands() {
+        let mut m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 3, rev: 7, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, volume: Some(40), refused: None };
+        let pressed = [
+            (Press::Toggle, Some(Op::Pause)),
+            (Press::Play, Some(Op::Play)),
+            (Press::Seek { ms: -40 }, Some(Op::Seek { ms: 0 })),
+            (Press::Jump { index: 1 }, Some(Op::Jump { index: 1, rev: 7 })),
+            (Press::Repeat { mode: 2 }, Some(Op::Repeat { mode: 2 })),
+            (Press::Remove { index: 2 }, Some(Op::Remove { index: 2, rev: 7 })),
+            (Press::Move { from: 2, to: 0 }, Some(Op::Move { from: 2, to: 0, rev: 7 })),
+            (Press::Clear, Some(Op::Clear)),
+            (Press::Volume { level: 0.254 }, Some(Op::Volume { percent: 25 })),
+            (Press::Volume { level: 0.4 }, None),
+        ];
+        for (press, op) in pressed {
+            assert_eq!(m.op(press), op, "{press:?}");
+        }
+        m.playing = false;
+        assert_eq!(m.op(Press::Toggle), Some(Op::Play));
+        m.volume = None;
+        assert_eq!(m.op(Press::Volume { level: 0.9 }), None, "a volume the device does not offer");
     }
 
     #[test]

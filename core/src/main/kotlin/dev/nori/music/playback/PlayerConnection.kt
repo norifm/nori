@@ -24,6 +24,8 @@ import dev.nori.music.ffi.model.PageOrigin
 import dev.nori.music.ffi.model.RadioStation
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.Mirror
+import dev.nori.music.ffi.Press
+import dev.nori.music.ffi.mirrorOp
 import dev.nori.music.ffi.remote.Op
 import dev.nori.music.ffi.remote.Reach
 import kotlinx.coroutines.CoroutineScope
@@ -169,6 +171,11 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     private fun remote(op: Op) {
         if (!jamGuest) return run { nori.remotes.command(op) }
         nori.remotes.jamPress(op) { with { c -> if (op is Op.Pause) c.pause() else if (op is Op.Play) c.play() } }
+    }
+
+    /** [press] as the core asks it of the mirrored device [m] (`Mirror::op`). */
+    private fun press(m: Mirror, press: Press) {
+        mirrorOp(m, press)?.let(::remote)
     }
 
     /** The mirrored device's list index for the page's row [row]. */
@@ -532,11 +539,11 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     fun connected(action: () -> Unit) = with { action() }
 
     fun skipTo(index: Int) = with { c ->
-        mirror?.let { m -> remoteIndex(m, index)?.let { remote(Op.Jump(it, m.rev)) }; return@with }
+        mirror?.let { m -> remoteIndex(m, index)?.let { press(m, Press.Jump(it)) }; return@with }
         c.seekToDefaultPosition(index); if (c.playbackState == Player.STATE_IDLE) c.prepare(); c.play()
     }
     fun remove(index: Int) = with { c ->
-        mirror?.let { m -> remoteIndex(m, index)?.let { remote(Op.Remove(it, m.rev)) }; return@with }
+        mirror?.let { m -> remoteIndex(m, index)?.let { press(m, Press.Remove(it)) }; return@with }
         c.removeMediaItem(index)
     }
     /** Undo of [remove]: [song] back where it was (the core's `playlist_restore`, or the mirrored device's), or at [index] if the core no longer has it. */
@@ -549,7 +556,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         mirror?.let { m ->
             val a = remoteIndex(m, from)
             val b = remoteIndex(m, to)
-            if (a != null && b != null) remote(Op.Move(a, b, m.rev))
+            if (a != null && b != null) press(m, Press.Move(a, b))
             return@with
         }
         c.moveMediaItem(from, to)
@@ -560,11 +567,11 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
 
     /** Also prepares a queue that was restored but never loaded. */
     fun toggle() = with { c ->
-        mirror?.let { remote(if (_state.value.playing) Op.Pause else Op.Play); return@with }
+        mirror?.let { m -> press(m, if (_state.value.playing) Press.Pause else Press.Play); return@with }
         Util.handlePlayPauseButtonAction(c)
     }
     fun next() = with { c ->
-        if (mirror != null) return@with run { remote(Op.Next) }
+        mirror?.let { m -> press(m, Press.Next); return@with }
         _pendingSeek.value = null
         // With nothing after, the service refills the queue and takes the skip when songs land
         // (nori_queue's next_action).
@@ -575,21 +582,21 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     }
     /** A rewind is a seek to the top, not a skip; the rule mirrors the service's (media3 rewinds past three seconds). */
     fun previous() = with { c ->
-        if (mirror != null) return@with run { remote(Op.Previous) }
+        mirror?.let { m -> press(m, Press.Previous); return@with }
         // Restart here, or let the player's own previous decide: nori_player::queue::previous_restarts.
         if (nori.session.queuePreviousRestarts(c.currentPosition, c.hasPreviousMediaItem())) { seekTo(0); if (!c.playWhenReady) c.play() }
         else { _pendingSeek.value = null; c.seekToPrevious() }
     }
     /** The song before, even well into this one - a swipe is a request for the other record, not a restart. */
     fun previousItem() = with { c ->
-        mirror?.let { m -> _state.value.previousIndex.takeIf { it >= 0 }?.let { remoteIndex(m, it) }?.let { remote(Op.Jump(it, m.rev)) }; return@with }
+        mirror?.let { m -> _state.value.previousIndex.takeIf { it >= 0 }?.let { remoteIndex(m, it) }?.let { press(m, Press.Jump(it)) }; return@with }
         _pendingSeek.value = null
         c.seekToPreviousMediaItem()
     }
 
     /** A seek. The bar holds its place ([pendingSeek]) until the engine says it landed there ([followSeek]). */
     fun seekTo(ms: Long) = with { c ->
-        if (mirror != null) return@with run { remote(Op.Seek(ms.coerceAtLeast(0))) }
+        mirror?.let { m -> press(m, Press.Seek(ms)); return@with }
         // Asked for: the bar and the lyrics go there as they are, even a moment back (heard.rs Playhead).
         PlayheadJni.jumped(clock)
         seekAfter = engine()?.let { it to it.jumpsSent }
@@ -623,14 +630,14 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     }
 
     fun setShuffle(on: Boolean) = with {
-        if (mirror != null) return@with run { remote(Op.Shuffle(on)) }
+        mirror?.let { m -> press(m, Press.Shuffle(on)); return@with }
         nori.session.playlistShowShuffle(on)
         it.shuffleModeEnabled = on
         _state.value = _state.value.copy(shuffle = on || it.shuffleModeEnabled)
     }
 
     fun cycleRepeat() = with { c ->
-        mirror?.let { m -> remote(Op.Repeat(dev.nori.music.ffi.queue.queueNextRepeat(m.repeat))); return@with }
+        mirror?.let { m -> press(m, Press.Repeat(dev.nori.music.ffi.queue.queueNextRepeat(m.repeat))); return@with }
         c.repeatMode = dev.nori.music.ffi.queue.queueNextRepeat(c.repeatMode.toUByte()).toInt()
     }
 
