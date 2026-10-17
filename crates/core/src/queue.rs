@@ -8,19 +8,21 @@ pub use nori_queue::Session;
 impl Core {
     /// Saves the known songs of `ids` (radio streams dropped), the current `index` remapped to the kept
     /// songs, and the page it came from. The songs are written only when `ids` or `origin` changed since
-    /// the last save; otherwise only the place.
+    /// the last save, or another app over the database saved its own; otherwise only the place.
     pub(crate) fn queue_save(&self, ids: Vec<String>, index: u32, position_ms: u64, origin: Option<crate::PageOrigin>) -> crate::Result<()> {
         let mut saved = self.saved_queue.lock();
         if let Some(s) = saved.as_ref().filter(|s| s.ids == ids && s.origin == origin) {
-            return self.save_place(s.place(index), position_ms);
+            if self.save_place(s.place(index), position_ms, &s.stamp)? {
+                return Ok(());
+            }
         }
         let (songs, kept) = self.session.store(|s| {
             let mut songs = Vec::with_capacity(ids.len());
             let kept = ids.iter().map(|id| s.songs.get(id).filter(|_| !is_radio(id)).map(|(song, _)| songs.push(song.clone())).is_some()).collect();
             (songs, kept)
         });
-        let s = SavedQueue { ids, origin, kept };
-        self.write_queue(crate::PlayQueue { index: s.place(index), songs, position_ms, origin: s.origin.clone() })?;
+        let mut s = SavedQueue { ids, origin, kept, stamp: String::new() };
+        s.stamp = self.write_queue(crate::PlayQueue { index: s.place(index), songs, position_ms, origin: s.origin.clone() })?;
         *saved = Some(s);
         Ok(())
     }
@@ -31,6 +33,8 @@ pub(crate) struct SavedQueue {
     ids: Vec<String>,
     origin: Option<crate::PageOrigin>,
     kept: Vec<bool>,
+    /// The stamp written with them.
+    stamp: String,
 }
 
 impl SavedQueue {

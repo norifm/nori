@@ -120,4 +120,30 @@ pub(crate) mod tests {
         assert_eq!((q.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), q.index, q.position_ms), (vec!["w2", "w1"], 0, 10));
     }
 
+    #[test]
+    fn two_apps_over_one_database_never_pair_a_place_with_the_other_queue() {
+        let dir = nori_testdir::TempDir::new("shared-queue");
+        let path = dir.join("nori.db").to_string_lossy().to_string();
+        let app = |ids: &[&str], start: u32| {
+            let core = crate::Core::new(path.clone(), "t".into(), Arc::default()).unwrap();
+            core.session.register(ids.iter().map(|id| crate::Song { id: id.to_string(), ..Default::default() }).collect());
+            core.session.set(ids.iter().map(|s| s.to_string()).collect(), Some(start), false, None);
+            core
+        };
+        let restored = || {
+            let q = app(&[], 0).load_queue().unwrap();
+            (q.songs.iter().map(|s| s.id.clone()).collect::<Vec<_>>(), q.index, q.position_ms)
+        };
+        let ids = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (a, b) = (app(&["a1", "a2", "a3"], 0), app(&["b1", "b2"], 0));
+        a.playlist_save(0).unwrap();
+        b.playlist_save(0).unwrap();
+        a.session.moved_to(2);
+        a.playlist_save(500).unwrap();
+        assert_eq!(restored(), (ids(&["a1", "a2", "a3"]), 2, 500));
+        b.session.moved_to(1);
+        b.playlist_save(700).unwrap();
+        assert_eq!(restored(), (ids(&["b1", "b2"]), 1, 700));
+    }
+
 }
