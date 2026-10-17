@@ -337,7 +337,8 @@ pub(crate) struct Keys {
     pub(crate) cover: NowCover,
 }
 
-/// The cover of the song the media controls show, as its file (macOS's Now Playing draws it).
+/// The cover of the song the media controls show: its file for macOS's Now Playing to draw, and for MPRIS
+/// where the cover cache keeps it, never the signed server address.
 #[cfg(feature = "desktop")]
 pub(crate) struct NowCover {
     pub(crate) covers: Option<Arc<nori_covers::loader::Loader>>,
@@ -353,7 +354,17 @@ pub(crate) struct NowCover {
 struct CoverShown {
     id: String,
     /// Its file, once read.
-    file: Option<Arc<[u8]>>,
+    file: Option<CoverFile>,
+}
+
+/// A cover read for the media controls.
+#[cfg(feature = "desktop")]
+#[derive(Clone)]
+struct CoverFile {
+    /// Its bytes, kept only where Now Playing draws them (macOS).
+    bytes: Option<Arc<[u8]>>,
+    /// Its file in the cover cache; none for a cover the cache does not keep (a provider's).
+    path: Option<std::path::PathBuf>,
 }
 
 #[cfg(feature = "desktop")]
@@ -364,7 +375,7 @@ impl NowCover {
 
     /// Cover `id`'s file once read; asked for another cover, it is read on a thread of its own and the
     /// media controls are told when it is in.
-    fn of(&self, id: &str) -> Option<Arc<[u8]>> {
+    fn of(&self, id: &str) -> Option<CoverFile> {
         let covers = self.covers.clone()?;
         let mut shown = self.shown.lock();
         if shown.id == id {
@@ -374,16 +385,13 @@ impl NowCover {
         let url = self.core.cover_address(id.to_string(), nori_core::covers::cover_rendition(NOW_COVER_PX));
         let (slot, media, id) = (self.shown.clone(), self.media.clone(), id.to_string());
         crate::spawn("nori-now-cover", move || {
-            let mut file = Vec::new();
-            if covers.read(&url, &mut file).is_err() {
-                return;
-            }
+            let Some(file) = read_cover(&covers, &url) else { return };
             {
                 let mut shown = slot.lock();
                 if shown.id != id {
                     return;
                 }
-                shown.file = Some(file.into());
+                shown.file = Some(file);
             }
             if let Some(m) = media.upgrade() {
                 m.changed();
@@ -391,6 +399,16 @@ impl NowCover {
         });
         None
     }
+}
+
+/// Reads the cover at `url` on this thread, fetching it into the cover cache if it is not there.
+#[cfg(feature = "desktop")]
+fn read_cover(covers: &nori_covers::loader::Loader, url: &str) -> Option<CoverFile> {
+    let mut file = Vec::new();
+    covers.read(url, &mut file).ok()?;
+    let key = covers.key(url);
+    let path = covers.disk().filter(|d| d.contains(key)).map(|d| d.path(key));
+    Some(CoverFile { bytes: cfg!(target_os = "macos").then(|| file.into()), path })
 }
 
 /// Now Playing's cover size, in pixels.
@@ -467,13 +485,13 @@ impl nori_mpris::Controls for Keys {
                     album: song.album.clone(),
                     starred: song.starred,
                     art: None,
+                    art_file: None,
                 };
                 (now, row.map(|_| song))
             }
         };
-        // Only Now Playing draws the cover.
-        if cfg!(target_os = "macos") {
-            now.art = song.and_then(|s| s.cover_art).and_then(|id| self.cover.of(&id));
+        if let Some(cover) = song.and_then(|s| s.cover_art).and_then(|id| self.cover.of(&id)) {
+            (now.art, now.art_file) = (cover.bytes, cover.path);
         }
         now
     }
@@ -553,6 +571,46 @@ impl Discovery for Mdns {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A server whose every answer is one small PNG.
+    #[cfg(feature = "desktop")]
+    struct Png;
+
+    #[cfg(feature = "desktop")]
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot much more";
+
+    #[cfg(feature = "desktop")]
+    #[async_trait::async_trait]
+    impl nori_core::transport::Transport for Png {
+        async fn get(&self, _: String, _: u32) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
+            Ok(nori_core::transport::TransportResponse { status: 200, body: PNG.to_vec() })
+        }
+        async fn send(&self, e: nori_core::transport::Exchange) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
+            self.get(e.url, e.timeout_ms).await
+        }
+        fn address_changed(&self) {}
+        fn network(&self) -> nori_core::transport::Network {
+            nori_core::transport::Network::Unmetered
+        }
+    }
+
+    /// The media controls get the cover's file in the cache, named without the signed address's
+    /// credentials; a provider's cover, which the cache does not keep, gets none.
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn a_cover_read_points_at_its_cached_file() {
+        let dir = nori_testdir::TempDir::new("host-now-cover");
+        let covers = nori_covers::loader::Loader::new(nori_covers::loader::Config::new(dir.path()), nori_core::covers::CoverNet::over(Arc::new(Png)));
+        let url = "http://music.example/rest/getCoverArt?u=ann&t=token123&s=salt456&id=al-1&size=600";
+        let path = read_cover(&covers, url).unwrap().path.unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), PNG);
+        let name = path.to_string_lossy();
+        assert!(!name.contains("token123") && !name.contains("salt456") && !name.contains("ann"), "{name}");
+        assert!(path.starts_with(dir.path()));
+
+        let provider = "http://music.example/rest/getCoverArt?u=ann&t=token123&s=salt456&id=ext-deezer-song-1&size=600";
+        assert!(read_cover(&covers, provider).unwrap().path.is_none());
+    }
 
     #[test]
     fn other_devices_see_and_set_the_volume() {

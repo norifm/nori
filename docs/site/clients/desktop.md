@@ -8,7 +8,7 @@ sidebar:
 Applies to nori 0.6 on Linux and macOS.
 
 The desktop client is a window over the same core, drawn with Slint. It plays through the system's sound
-(PipeWire or ALSA on Linux, CoreAudio on macOS), shows its controls to the desktop (MPRIS on Linux), and
+(PipeWire or ALSA on Linux, CoreAudio on macOS), shows its controls, the song's cover and its seeks to the desktop (MPRIS on Linux), and
 has the library, search, the queue, lyrics, the equalizer, settings, [remote control](../connected/remote-control.md)
 and [jams](../connected/jams.md).
 

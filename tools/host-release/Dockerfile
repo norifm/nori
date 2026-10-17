@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl ca-certificates python3 git pkg-config clang file squashfs-tools zstd \
-    libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev libdbus-1-dev \
+    libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev \
     libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev \
     dpkg-dev flatpak librsvg2-bin imagemagick pulseaudio dbus-user-session \
     && rm -rf /var/lib/apt/lists/*

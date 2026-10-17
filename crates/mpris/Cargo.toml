@@ -8,10 +8,16 @@ description = "nori in the desktop's media controls: MPRIS over D-Bus on Linux, 
 [lib]
 name = "nori_mpris"
 
+# Pure Rust D-Bus on async-io, its executor driven by the crate's one thread: no libdbus, no tokio.
 [target.'cfg(target_os = "linux")'.dependencies]
-# Thin libdbus bindings; zbus would bring its own async runtime.
-dbus = "0.9"
-dbus-crossroads = "0.5"
+zbus = { version = "5.19", default-features = false, features = ["async-io"] }
+futures-lite = "2.6"
+
+# The bus code's tests run over a peer-to-peer socket pair, on any Unix.
+[target.'cfg(unix)'.dev-dependencies]
+zbus = { version = "5.19", default-features = false, features = ["async-io", "p2p"] }
+futures-lite = "2.6"
+nori-testdir = { path = "../testdir" }
 
 # Now Playing and the media keys: MediaPlayer's info and command centers.
 [target.'cfg(target_os = "macos")'.dependencies]

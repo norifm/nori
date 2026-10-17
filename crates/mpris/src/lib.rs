@@ -1,8 +1,9 @@
-//! The system's media controls: MPRIS (`org.mpris.MediaPlayer2`) on the Linux session bus, served on one
-//! thread, its position read on request; on macOS, Now Playing and the media keys (MediaPlayer's info and
+//! The system's media controls: MPRIS (`org.mpris.MediaPlayer2`) on the Linux session bus (zbus), served on
+//! one thread with async-io's poller beside it, its position read on request; on macOS, Now Playing and the media keys (MediaPlayer's info and
 //! command centers), told the position and rate at each change and running on from there by themselves.
 //! Nothing ticks.
 
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 /// Client callbacks, called on the bus thread.
@@ -33,158 +34,466 @@ pub struct Now {
     pub length_ms: i64,
     pub position_ms: i64,
     pub starred: bool,
-    /// The cover's file (JPEG, PNG, WebP), once read.
+    /// The cover's file (JPEG, PNG, WebP), once read; Now Playing draws it.
     pub art: Option<Arc<[u8]>>,
+    /// Where the cover's file lies on disk, once read; MPRIS hands it out as `mpris:artUrl`.
+    pub art_file: Option<PathBuf>,
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
+#[cfg(any(target_os = "linux", all(test, unix)))]
+mod bus {
     use std::collections::HashMap;
-    use std::sync::Arc;
-    use std::time::Duration;
+    use std::fmt::Write;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+    use std::sync::{mpsc, Arc};
 
-    use dbus::arg::{PropMap, RefArg, Variant};
-    use dbus::blocking::stdintf::org_freedesktop_dbus::PropertiesPropertiesChanged;
-    use dbus::blocking::SyncConnection;
-    use dbus::channel::{MatchingReceiver, Sender};
-    use dbus::message::{MatchRule, SignalArgs};
-    use dbus::Path;
-    use dbus_crossroads::Crossroads;
+    use futures_lite::future::block_on;
+    use zbus::connection::Builder;
+    use zbus::interface;
+    use zbus::names::BusName;
+    use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
+    use zbus::Connection;
 
     use super::{Controls, Now};
 
     const OBJECT: &str = "/org/mpris/MediaPlayer2";
     const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 
-    fn status(n: &Now) -> String {
+    fn status(n: &Now) -> &'static str {
         match (n.playing, n.loaded) {
             (true, _) => "Playing",
             (false, true) => "Paused",
             _ => "Stopped",
         }
-        .to_string()
     }
 
-    fn track_id(n: &Now) -> Path<'static> {
-        match n.index {
-            Some(i) => Path::new(format!("/org/nori/track/{i}")).expect("a valid path"),
-            None => Path::new("/org/mpris/MediaPlayer2/TrackList/NoTrack").expect("a valid path"),
-        }
-    }
-
-    fn metadata(n: &Now) -> PropMap {
-        let mut m: PropMap = HashMap::new();
-        let mut put = |k: &str, v: Box<dyn RefArg>| {
-            m.insert(k.to_string(), Variant(v));
+    fn track_path(n: &Now) -> OwnedObjectPath {
+        let path = match n.index {
+            Some(i) => format!("/org/nori/track/{i}"),
+            None => "/org/mpris/MediaPlayer2/TrackList/NoTrack".into(),
         };
-        put("mpris:trackid", Box::new(track_id(n)));
+        OwnedObjectPath::try_from(path).expect("a valid path")
+    }
+
+    fn metadata(n: &Now) -> HashMap<&'static str, Value<'static>> {
+        let mut m = HashMap::from([("mpris:trackid", Value::from(track_path(n).into_inner()))]);
         if n.index.is_some() {
-            put("mpris:length", Box::new(n.length_ms * 1000));
-            put("xesam:title", Box::new(n.title.clone()));
-            put("xesam:artist", Box::new(vec![n.artist.clone()]));
-            put("xesam:album", Box::new(n.album.clone()));
+            m.insert("mpris:length", Value::from(n.length_ms * 1000));
+            m.insert("xesam:title", Value::from(n.title.clone()));
+            m.insert("xesam:artist", Value::from(vec![n.artist.clone()]));
+            m.insert("xesam:album", Value::from(n.album.clone()));
+            if let Some(file) = &n.art_file {
+                m.insert("mpris:artUrl", Value::from(file_url(file)));
+            }
         }
         m
     }
 
+    /// `path` as a `file://` URL, its bytes outside the unreserved set percent-encoded.
+    fn file_url(path: &Path) -> String {
+        let mut url = String::from("file://");
+        for &b in path.as_os_str().as_bytes() {
+            if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+                url.push(b as char);
+            } else {
+                let _ = write!(url, "%{b:02X}");
+            }
+        }
+        url
+    }
+
+    struct Root {
+        identity: String,
+    }
+
+    #[interface(name = "org.mpris.MediaPlayer2")]
+    impl Root {
+        fn raise(&self) {}
+        fn quit(&self) {}
+        #[zbus(property)]
+        fn identity(&self) -> String {
+            self.identity.clone()
+        }
+        #[zbus(property)]
+        fn can_quit(&self) -> bool {
+            false
+        }
+        #[zbus(property)]
+        fn can_raise(&self) -> bool {
+            false
+        }
+        #[zbus(property)]
+        fn has_track_list(&self) -> bool {
+            false
+        }
+        #[zbus(property)]
+        fn supported_uri_schemes(&self) -> Vec<String> {
+            Vec::new()
+        }
+        #[zbus(property)]
+        fn supported_mime_types(&self) -> Vec<String> {
+            Vec::new()
+        }
+    }
+
+    struct Player(Arc<dyn Controls>);
+
+    #[interface(name = "org.mpris.MediaPlayer2.Player")]
+    impl Player {
+        fn play(&self) {
+            self.0.play();
+        }
+        fn pause(&self) {
+            self.0.pause();
+        }
+        fn play_pause(&self) {
+            self.0.toggle();
+        }
+        fn stop(&self) {
+            self.0.pause();
+        }
+        fn next(&self) {
+            self.0.next();
+        }
+        fn previous(&self) {
+            self.0.previous();
+        }
+        fn seek(&self, offset: i64) {
+            let at = self.0.now().position_ms + offset / 1000;
+            self.0.seek(at.max(0));
+        }
+        fn set_position(&self, track_id: ObjectPath<'_>, position: i64) {
+            // Ignored for a stale track id.
+            if track_id == *track_path(&self.0.now()) {
+                self.0.seek(position / 1000);
+            }
+        }
+        #[zbus(property)]
+        fn playback_status(&self) -> String {
+            status(&self.0.now()).into()
+        }
+        #[zbus(property)]
+        fn metadata(&self) -> HashMap<&'static str, Value<'static>> {
+            metadata(&self.0.now())
+        }
+        #[zbus(property(emits_changed_signal = "false"))]
+        fn position(&self) -> i64 {
+            self.0.now().position_ms * 1000
+        }
+        #[zbus(property)]
+        fn rate(&self) -> f64 {
+            1.0
+        }
+        #[zbus(property)]
+        fn minimum_rate(&self) -> f64 {
+            1.0
+        }
+        #[zbus(property)]
+        fn maximum_rate(&self) -> f64 {
+            1.0
+        }
+        #[zbus(property)]
+        fn volume(&self) -> f64 {
+            1.0
+        }
+        #[zbus(property)]
+        fn can_go_next(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn can_go_previous(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn can_play(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn can_pause(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn can_seek(&self) -> bool {
+            true
+        }
+        #[zbus(property)]
+        fn can_control(&self) -> bool {
+            true
+        }
+    }
+
+    /// The session bus. Its Unix socket is connected here: zbus would connect it on the `blocking` crate's
+    /// pool, whose thread then stays and wakes twice a second.
+    #[cfg(target_os = "linux")]
+    fn session() -> zbus::Result<Builder<'static>> {
+        use std::os::linux::net::SocketAddrExt;
+        use std::os::unix::net::{SocketAddr, UnixStream};
+        use zbus::address::transport::{Transport, UnixSocket};
+
+        let address = zbus::Address::session()?;
+        let Transport::Unix(unix) = address.transport() else { return Builder::address(address) };
+        let stream = match unix.path() {
+            UnixSocket::File(path) => UnixStream::connect(path)?,
+            UnixSocket::Abstract(name) => UnixStream::connect_addr(&SocketAddr::from_abstract_name(name.as_encoded_bytes())?)?,
+            _ => return Builder::address(address),
+        };
+        Ok(Builder::async_io_unix_stream(stream))
+    }
+
+    /// The objects on a connection whose executor runs on the "nori-mpris" thread, where the controls are called.
     pub struct Served {
-        conn: Arc<SyncConnection>,
+        conn: Connection,
         controls: Arc<dyn Controls>,
     }
 
     impl Served {
+        #[cfg(target_os = "linux")]
         pub fn start(name: &str, controls: Arc<dyn Controls>) -> Result<Served, String> {
-            let conn = Arc::new(SyncConnection::new_session().map_err(|e| e.to_string())?);
-            conn.request_name(format!("org.mpris.MediaPlayer2.{name}"), false, true, false).map_err(|e| e.to_string())?;
-            let mut cr = Crossroads::new();
-            let identity = name.to_string();
-            let root = cr.register("org.mpris.MediaPlayer2", move |b| {
-                let id = identity.clone();
-                b.property("Identity").get(move |_, _: &mut Arc<dyn Controls>| Ok(id.clone()));
-                b.property("CanQuit").get(|_, _: &mut Arc<dyn Controls>| Ok(false));
-                b.property("CanRaise").get(|_, _: &mut Arc<dyn Controls>| Ok(false));
-                b.property("HasTrackList").get(|_, _: &mut Arc<dyn Controls>| Ok(false));
-                b.property("SupportedUriSchemes").get(|_, _: &mut Arc<dyn Controls>| Ok(Vec::<String>::new()));
-                b.property("SupportedMimeTypes").get(|_, _: &mut Arc<dyn Controls>| Ok(Vec::<String>::new()));
-                b.method("Raise", (), (), |_, _: &mut Arc<dyn Controls>, _: ()| Ok(()));
-                b.method("Quit", (), (), |_, _: &mut Arc<dyn Controls>, _: ()| Ok(()));
-            });
-            let player = cr.register(PLAYER, |b| {
-                b.property("PlaybackStatus").get(|_, c: &mut Arc<dyn Controls>| Ok(status(&c.now())));
-                b.property("Metadata").get(|_, c: &mut Arc<dyn Controls>| Ok(metadata(&c.now())));
-                b.property("Position").emits_changed_false().get(|_, c: &mut Arc<dyn Controls>| Ok(c.now().position_ms * 1000));
-                b.property("Rate").get(|_, _: &mut Arc<dyn Controls>| Ok(1.0f64));
-                b.property("MinimumRate").get(|_, _: &mut Arc<dyn Controls>| Ok(1.0f64));
-                b.property("MaximumRate").get(|_, _: &mut Arc<dyn Controls>| Ok(1.0f64));
-                b.property("Volume").get(|_, _: &mut Arc<dyn Controls>| Ok(1.0f64));
-                for name in ["CanGoNext", "CanGoPrevious", "CanPlay", "CanPause", "CanSeek", "CanControl"] {
-                    b.property(name).get(|_, _: &mut Arc<dyn Controls>| Ok(true));
-                }
-                b.method("Play", (), (), |_, c: &mut Arc<dyn Controls>, _: ()| {
-                    c.play();
-                    Ok(())
-                });
-                b.method("Pause", (), (), |_, c: &mut Arc<dyn Controls>, _: ()| {
-                    c.pause();
-                    Ok(())
-                });
-                b.method("PlayPause", (), (), |_, c: &mut Arc<dyn Controls>, _: ()| {
-                    c.toggle();
-                    Ok(())
-                });
-                b.method("Stop", (), (), |_, c: &mut Arc<dyn Controls>, _: ()| {
-                    c.pause();
-                    Ok(())
-                });
-                b.method("Next", (), (), |_, c: &mut Arc<dyn Controls>, _: ()| {
-                    c.next();
-                    Ok(())
-                });
-                b.method("Previous", (), (), |_, c: &mut Arc<dyn Controls>, _: ()| {
-                    c.previous();
-                    Ok(())
-                });
-                b.method("Seek", ("Offset",), (), |_, c: &mut Arc<dyn Controls>, (offset,): (i64,)| {
-                    let at = c.now().position_ms + offset / 1000;
-                    c.seek(at.max(0));
-                    Ok(())
-                });
-                b.method("SetPosition", ("TrackId", "Position"), (), |_, c: &mut Arc<dyn Controls>, (track, at): (Path<'static>, i64)| {
-                    // Ignored for a stale track id.
-                    if track == track_id(&c.now()) {
-                        c.seek(at / 1000);
-                    }
-                    Ok(())
-                });
-            });
-            cr.insert(OBJECT, &[root, player], controls.clone());
-            let served = conn.clone();
+            let served = Served::on(session().map_err(|e| e.to_string())?, name, controls)?;
+            // Without DoNotQueue: waits in line behind an owner that keeps the name.
+            let flags = zbus::fdo::RequestNameFlags::ReplaceExisting.into();
+            block_on(served.conn.request_name_with_flags(format!("org.mpris.MediaPlayer2.{name}"), flags)).map_err(|e| e.to_string())?;
+            Ok(served)
+        }
+
+        fn on(builder: Builder<'static>, identity: &str, controls: Arc<dyn Controls>) -> Result<Served, String> {
+            let builder = builder
+                .internal_executor(false)
+                .serve_at(OBJECT, Root { identity: identity.to_string() })
+                .and_then(|b| b.serve_at(OBJECT, Player(controls.clone())))
+                .map_err(|e| e.to_string())?;
+            let (tx, rx) = mpsc::sync_channel(1);
             std::thread::Builder::new()
                 .name("nori-mpris".into())
                 .spawn(move || {
-                    let cr = std::sync::Mutex::new(cr);
-                    served.start_receive(
-                        MatchRule::new_method_call(),
-                        Box::new(move |msg, conn| {
-                            if let Ok(mut cr) = cr.lock() {
-                                let _ = cr.handle_message(msg, conn);
-                            }
-                            true
-                        }),
-                    );
-                    while served.process(Duration::from_secs(3600)).is_ok() {}
+                    // futures-lite's block_on leaves the socket to async-io's thread, which sleeps in the
+                    // poller between messages; async-io's own block_on would have it nap in a backoff loop.
+                    block_on(async move {
+                        let conn = match builder.build().await {
+                            Ok(conn) => conn,
+                            Err(e) => return drop(tx.send(Err(e.to_string()))),
+                        };
+                        let executor = conn.executor().clone();
+                        let _ = tx.send(Ok(conn));
+                        while !executor.is_empty() {
+                            executor.tick().await;
+                        }
+                    })
                 })
                 .map_err(|e| e.to_string())?;
+            let conn = rx.recv().map_err(|e| e.to_string())??;
             Ok(Served { conn, controls })
         }
 
         pub fn changed(&self) {
             let n = self.controls.now();
-            let mut changed: PropMap = HashMap::new();
-            changed.insert("PlaybackStatus".into(), Variant(Box::new(status(&n))));
-            changed.insert("Metadata".into(), Variant(Box::new(metadata(&n))));
-            let sig = PropertiesPropertiesChanged { interface_name: PLAYER.into(), changed_properties: changed, invalidated_properties: Vec::new() };
-            let _ = self.conn.send(sig.to_emit_message(&Path::new(OBJECT).expect("a valid path")));
+            let changed = HashMap::from([("PlaybackStatus", Value::from(status(&n))), ("Metadata", Value::from(metadata(&n)))]);
+            let body = (PLAYER, changed, Vec::<&str>::new());
+            let _ = block_on(self.conn.emit_signal(None::<BusName>, OBJECT, "org.freedesktop.DBus.Properties", "PropertiesChanged", &body));
+        }
+
+        /// Emits Seeked with the position now, µs.
+        pub fn seeked(&self) {
+            let us = self.controls.now().position_ms * 1000;
+            let _ = block_on(self.conn.emit_signal(None::<BusName>, OBJECT, PLAYER, "Seeked", &us));
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::os::unix::net::UnixStream;
+        use std::sync::Mutex;
+
+        use futures_lite::StreamExt;
+        use zbus::message::Type;
+        use zbus::zvariant::OwnedValue;
+        use zbus::{Guid, Message, MessageStream};
+
+        #[derive(Default)]
+        struct Asked {
+            now: Mutex<Now>,
+            asked: Mutex<Vec<String>>,
+        }
+
+        impl Asked {
+            fn ask(&self, what: String) {
+                self.asked.lock().unwrap().push(what);
+            }
+        }
+
+        impl Controls for Asked {
+            fn play(&self) {
+                self.ask("play".into());
+            }
+            fn pause(&self) {
+                self.ask("pause".into());
+            }
+            fn toggle(&self) {
+                self.ask("toggle".into());
+            }
+            fn next(&self) {
+                self.ask("next".into());
+            }
+            fn previous(&self) {
+                self.ask("previous".into());
+            }
+            fn seek(&self, ms: i64) {
+                self.ask(format!("seek {ms}"));
+            }
+            fn now(&self) -> Now {
+                self.now.lock().unwrap().clone()
+            }
+        }
+
+        fn song() -> Now {
+            Now { playing: true, loaded: true, index: Some(2), title: "T".into(), artist: "A".into(), album: "B".into(), length_ms: 200_000, position_ms: 30_000, ..Now::default() }
+        }
+
+        /// `controls` served over a socket pair, and the client on its other end.
+        fn served(controls: Arc<Asked>) -> (Served, Connection) {
+            let (server, client) = UnixStream::pair().unwrap();
+            let guid = Guid::generate();
+            let served = std::thread::spawn(move || Served::on(Builder::async_io_unix_stream(server).server(guid).unwrap().p2p(), "nori", controls));
+            let client = block_on(Builder::async_io_unix_stream(client).p2p().build()).unwrap();
+            (served.join().unwrap().unwrap(), client)
+        }
+
+        fn call<B: zbus::export::serde::Serialize + zbus::zvariant::DynamicType>(client: &Connection, interface: &str, method: &str, body: &B) -> zbus::Result<Message> {
+            block_on(client.call_method(None::<BusName>, OBJECT, Some(interface), method, body))
+        }
+
+        fn get(client: &Connection, interface: &str, property: &str) -> OwnedValue {
+            call(client, "org.freedesktop.DBus.Properties", "Get", &(interface, property)).unwrap().body().deserialize().unwrap()
+        }
+
+        fn metadata_of(value: OwnedValue) -> HashMap<String, OwnedValue> {
+            value.try_into().unwrap()
+        }
+
+        fn path(p: &str) -> ObjectPath<'_> {
+            ObjectPath::try_from(p).unwrap()
+        }
+
+        #[test]
+        fn calls_reach_the_controls() {
+            let asked = Arc::new(Asked { now: Mutex::new(song()), ..Asked::default() });
+            let (_served, client) = served(asked.clone());
+            for method in ["Play", "Pause", "PlayPause", "Stop", "Next", "Previous"] {
+                call(&client, PLAYER, method, &()).unwrap();
+            }
+            call(&client, PLAYER, "Seek", &5_000_000i64).unwrap();
+            call(&client, PLAYER, "Seek", &-60_000_000i64).unwrap();
+            call(&client, PLAYER, "SetPosition", &(path("/org/nori/track/2"), 90_000_000i64)).unwrap();
+            call(&client, PLAYER, "SetPosition", &(path("/org/nori/track/1"), 10_000_000i64)).unwrap();
+            call(&client, "org.mpris.MediaPlayer2", "Raise", &()).unwrap();
+            call(&client, "org.mpris.MediaPlayer2", "Quit", &()).unwrap();
+            let asked = asked.asked.lock().unwrap().clone();
+            assert_eq!(asked, ["play", "pause", "toggle", "pause", "next", "previous", "seek 35000", "seek 0", "seek 90000"]);
+        }
+
+        #[test]
+        fn properties_read_the_song_now() {
+            let asked = Arc::new(Asked { now: Mutex::new(song()), ..Asked::default() });
+            let (_served, client) = served(asked.clone());
+            assert_eq!(String::try_from(get(&client, "org.mpris.MediaPlayer2", "Identity")).unwrap(), "nori");
+            assert_eq!(i64::try_from(get(&client, PLAYER, "Position")).unwrap(), 30_000_000, "µs");
+            let m = metadata_of(get(&client, PLAYER, "Metadata"));
+            assert_eq!(ObjectPath::try_from(m["mpris:trackid"].clone()).unwrap().as_str(), "/org/nori/track/2");
+            assert_eq!(i64::try_from(m["mpris:length"].clone()).unwrap(), 200_000_000);
+            assert_eq!(String::try_from(m["xesam:title"].clone()).unwrap(), "T");
+            assert_eq!(Vec::<String>::try_from(m["xesam:artist"].clone()).unwrap(), ["A"]);
+            assert_eq!(String::try_from(m["xesam:album"].clone()).unwrap(), "B");
+            for (playing, loaded, index, status) in [(true, true, Some(2), "Playing"), (false, true, Some(2), "Paused"), (false, false, None, "Stopped")] {
+                *asked.now.lock().unwrap() = Now { playing, loaded, index, ..song() };
+                assert_eq!(String::try_from(get(&client, PLAYER, "PlaybackStatus")).unwrap(), status);
+            }
+            let m = metadata_of(get(&client, PLAYER, "Metadata"));
+            assert_eq!(m.keys().collect::<Vec<_>>(), ["mpris:trackid"], "no song, no tags");
+            assert_eq!(ObjectPath::try_from(m["mpris:trackid"].clone()).unwrap().as_str(), "/org/mpris/MediaPlayer2/TrackList/NoTrack");
+        }
+
+        #[test]
+        fn changed_signals_status_and_metadata() {
+            let asked = Arc::new(Asked { now: Mutex::new(Now { playing: false, ..song() }), ..Asked::default() });
+            let (served, client) = served(asked);
+            let mut stream = MessageStream::from(&client);
+            served.changed();
+            let signal = block_on(stream.find(|m| m.as_ref().is_ok_and(|m| m.message_type() == Type::Signal))).unwrap().unwrap();
+            let header = signal.header();
+            assert_eq!((header.path().unwrap().as_str(), header.member().unwrap().as_str()), (OBJECT, "PropertiesChanged"));
+            let (interface, changed, invalidated): (String, HashMap<String, OwnedValue>, Vec<String>) = signal.body().deserialize().unwrap();
+            assert_eq!((interface.as_str(), invalidated.len()), (PLAYER, 0));
+            assert_eq!(String::try_from(changed["PlaybackStatus"].clone()).unwrap(), "Paused");
+            let m = metadata_of(changed["Metadata"].clone());
+            assert_eq!(String::try_from(m["xesam:title"].clone()).unwrap(), "T");
+            assert_eq!(changed.len(), 2);
+        }
+
+        fn next_signal(stream: &mut MessageStream) -> Message {
+            block_on(stream.find(|m| m.as_ref().is_ok_and(|m| m.message_type() == Type::Signal))).unwrap().unwrap()
+        }
+
+        /// `url`'s path with its percent escapes decoded.
+        fn path_of(url: &str) -> std::path::PathBuf {
+            let bytes = url.strip_prefix("file://").expect("a file URL").as_bytes();
+            let (mut out, mut i) = (Vec::new(), 0);
+            while i < bytes.len() {
+                if bytes[i] == b'%' {
+                    out.push(u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap(), 16).unwrap());
+                    i += 3;
+                } else {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            }
+            std::path::PathBuf::from(String::from_utf8(out).unwrap())
+        }
+
+        #[test]
+        fn art_url_is_the_cover_file_and_follows_the_song() {
+            let dir = nori_testdir::TempDir::new("mpris-art");
+            let (first, second) = (dir.path().join("cover one%.jpg"), dir.path().join("two.png"));
+            std::fs::write(&first, b"jpeg").unwrap();
+            std::fs::write(&second, b"png").unwrap();
+            let asked = Arc::new(Asked { now: Mutex::new(Now { art_file: Some(first.clone()), ..song() }), ..Asked::default() });
+            let (served, client) = served(asked.clone());
+            let url = String::try_from(metadata_of(get(&client, PLAYER, "Metadata"))["mpris:artUrl"].clone()).unwrap();
+            assert!(!url.contains(' '), "{url}");
+            assert_eq!(std::fs::read(path_of(&url)).unwrap(), b"jpeg");
+
+            let mut stream = MessageStream::from(&client);
+            *asked.now.lock().unwrap() = Now { index: Some(3), art_file: Some(second), ..song() };
+            served.changed();
+            let (_, changed, _): (String, HashMap<String, OwnedValue>, Vec<String>) = next_signal(&mut stream).body().deserialize().unwrap();
+            let url = String::try_from(metadata_of(changed["Metadata"].clone())["mpris:artUrl"].clone()).unwrap();
+            assert_eq!(std::fs::read(path_of(&url)).unwrap(), b"png");
+
+            *asked.now.lock().unwrap() = Now { index: Some(4), ..song() };
+            assert!(!metadata_of(get(&client, PLAYER, "Metadata")).contains_key("mpris:artUrl"), "a song whose cover is not read yet");
+        }
+
+        #[test]
+        fn seeked_signals_each_jump_in_microseconds() {
+            let asked = Arc::new(Asked { now: Mutex::new(song()), ..Asked::default() });
+            let (served, client) = served(asked.clone());
+            let mut stream = MessageStream::from(&client);
+            served.seeked();
+            asked.now.lock().unwrap().position_ms = 0;
+            served.changed();
+            served.seeked();
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                let signal = next_signal(&mut stream);
+                let header = signal.header();
+                let member = header.member().unwrap().to_string();
+                let us = (member == "Seeked").then(|| signal.body().deserialize::<i64>().unwrap());
+                assert_eq!(header.interface().unwrap().as_str(), if us.is_some() { PLAYER } else { "org.freedesktop.DBus.Properties" });
+                seen.push((member, us));
+            }
+            let seeked = |us| ("Seeked".to_string(), Some(us));
+            assert_eq!(seen, [seeked(30_000_000), ("PropertiesChanged".into(), None), seeked(0)]);
         }
     }
 }
@@ -348,7 +657,7 @@ impl Controls for Current {
 pub struct Mpris {
     current: Arc<Current>,
     #[cfg(target_os = "linux")]
-    served: linux::Served,
+    served: bus::Served,
 }
 
 impl Mpris {
@@ -356,7 +665,7 @@ impl Mpris {
     pub fn start(name: &str) -> Result<Mpris, String> {
         let current = Arc::new(Current::default());
         #[cfg(target_os = "linux")]
-        return Ok(Mpris { served: linux::Served::start(name, current.clone())?, current });
+        return Ok(Mpris { served: bus::Served::start(name, current.clone())?, current });
         #[cfg(not(target_os = "linux"))]
         {
             let _ = (name, current);
@@ -389,6 +698,14 @@ impl Mpris {
     pub fn changed(&self) {
         #[cfg(target_os = "linux")]
         self.served.changed();
+        #[cfg(target_os = "macos")]
+        mac::show(self.current.clone());
+    }
+
+    /// The position jumped: emits Seeked (Linux), or tells Now Playing the place (macOS).
+    pub fn seeked(&self) {
+        #[cfg(target_os = "linux")]
+        self.served.seeked();
         #[cfg(target_os = "macos")]
         mac::show(self.current.clone());
     }
@@ -436,59 +753,37 @@ mod current_tests {
 mod tests {
     use super::*;
     use std::sync::Mutex;
-    use std::time::Duration;
 
-    use dbus::blocking::stdintf::org_freedesktop_dbus::Properties;
-    use dbus::blocking::Connection;
+    use futures_lite::future::block_on;
+    use zbus::names::BusName;
 
     #[derive(Default)]
     struct Asked(Mutex<Vec<String>>);
 
     impl Controls for Asked {
-        fn play(&self) {
-            self.0.lock().unwrap().push("play".into());
-        }
-        fn pause(&self) {
-            self.0.lock().unwrap().push("pause".into());
-        }
+        fn play(&self) {}
+        fn pause(&self) {}
         fn toggle(&self) {
             self.0.lock().unwrap().push("toggle".into());
         }
-        fn next(&self) {
-            self.0.lock().unwrap().push("next".into());
-        }
-        fn previous(&self) {
-            self.0.lock().unwrap().push("previous".into());
-        }
-        fn seek(&self, ms: i64) {
-            self.0.lock().unwrap().push(format!("seek {ms}"));
-        }
+        fn next(&self) {}
+        fn previous(&self) {}
+        fn seek(&self, _: i64) {}
         fn now(&self) -> Now {
-            Now { playing: true, loaded: true, index: Some(2), title: "T".into(), artist: "A".into(), album: "B".into(), length_ms: 200_000, position_ms: 30_000, ..Now::default() }
+            Now { playing: true, loaded: true, index: Some(2), ..Now::default() }
         }
     }
 
     #[test]
     #[ignore = "needs a D-Bus session bus"]
-    fn controls_and_properties_over_dbus() {
-        let client = Connection::new_session().unwrap();
+    fn owns_its_name_on_the_session_bus() {
+        let client = block_on(zbus::Connection::session()).unwrap();
         let name = format!("nori_test_{}", std::process::id());
         let asked = Arc::new(Asked::default());
         let m = Mpris::start(&name).unwrap();
         m.serve(Some(asked.clone()));
-        let p = client.with_proxy(format!("org.mpris.MediaPlayer2.{name}"), "/org/mpris/MediaPlayer2", Duration::from_secs(5));
-        let status: String = p.get("org.mpris.MediaPlayer2.Player", "PlaybackStatus").unwrap();
-        assert_eq!(status, "Playing");
-        let position: i64 = p.get("org.mpris.MediaPlayer2.Player", "Position").unwrap();
-        assert_eq!(position, 30_000_000, "µs");
-        let _: () = p.method_call("org.mpris.MediaPlayer2.Player", "PlayPause", ()).unwrap();
-        let _: () = p.method_call("org.mpris.MediaPlayer2.Player", "Next", ()).unwrap();
-        let _: () = p.method_call("org.mpris.MediaPlayer2.Player", "Seek", (5_000_000i64,)).unwrap();
-        let track = dbus::Path::new("/org/nori/track/2").unwrap();
-        let _: () = p.method_call("org.mpris.MediaPlayer2.Player", "SetPosition", (track, 90_000_000i64)).unwrap();
-        let stale = dbus::Path::new("/org/nori/track/1").unwrap();
-        let _: () = p.method_call("org.mpris.MediaPlayer2.Player", "SetPosition", (stale, 10_000_000i64)).unwrap();
-        assert_eq!(*asked.0.lock().unwrap(), ["toggle", "next", "seek 35000", "seek 90000"]);
-        m.changed();
+        let to = BusName::try_from(format!("org.mpris.MediaPlayer2.{name}")).unwrap();
+        block_on(client.call_method(Some(to), "/org/mpris/MediaPlayer2", Some("org.mpris.MediaPlayer2.Player"), "PlayPause", &())).unwrap();
+        assert_eq!(*asked.0.lock().unwrap(), ["toggle"]);
     }
 }
