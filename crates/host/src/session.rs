@@ -24,7 +24,9 @@ use nori_tasks::Tasks;
 use nori_core::{Core, CoreError, IngestStats, PageOrigin, Song};
 use nori_covers::loader::{Config as CoverConfig, Loader, Ticket};
 use nori_covers::memory::Image;
-use nori_engine::core::{settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer, Resolving};
+#[cfg(feature = "youtube")]
+use nori_engine::core::Resolving;
+use nori_engine::core::{settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer};
 use nori_engine::{AudioOutput, Body, ByteSource, Cancel, Config, Engine, Event, Filling, OpenError, State, Store};
 use nori_look::cover::CoverColours;
 
@@ -330,7 +332,10 @@ impl Session {
         let core = Core::new(db.clone(), nori_core::settings::server_db_id(&o.profile.id), o.queue.clone()).map_err(|e| format!("the database: {e}"))?;
         match o.profile.kind {
             ServerKind::Subsonic => core.configure(config(&o.profile)).map(|_| ()),
+            #[cfg(feature = "youtube")]
             ServerKind::YouTubeMusic => core.configure_youtube_music(!o.profile.user.is_empty()),
+            #[cfg(not(feature = "youtube"))]
+            ServerKind::YouTubeMusic => return Err("the server: this build has no YouTube Music".into()),
         }
         .map_err(|e| format!("the server: {e}"))?;
         let transport: Arc<dyn Transport> = if o.offline { Arc::new(Offline) } else { o.http.clone() };
@@ -347,6 +352,7 @@ impl Session {
             false => None,
         };
         let audio: Arc<dyn ByteSource> = Arc::new(Audio::new(o.http.clone(), o.offline));
+        #[cfg(feature = "youtube")]
         let audio: Arc<dyn ByteSource> = match o.profile.kind {
             ServerKind::Subsonic => audio,
             ServerKind::YouTubeMusic => Arc::new(Resolving { bytes: audio, client: client.clone() }),
@@ -1452,6 +1458,7 @@ mod tests {
         s.close();
     }
 
+    #[cfg(feature = "youtube")]
     /// A YouTube Music profile opens with no server: its own rules, and no remote control even when it
     /// is switched on; a server's profile with it on serves.
     #[test]

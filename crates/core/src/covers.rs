@@ -114,6 +114,7 @@ impl Core {
 
     /// The URL of cover `id` at `size` px ([`cover_url_into`]).
     pub fn cover_address(&self, id: String, size: u32) -> String {
+        #[cfg(feature = "youtube")]
         if self.kind() == crate::settings::ServerKind::YouTubeMusic {
             return crate::youtube::cover_address(&id, size);
         }

@@ -9,7 +9,9 @@ description = "What the terminal, desktop and iOS clients share around an open s
 name = "nori_host"
 
 [features]
-default = ["desktop"]
+default = ["desktop", "youtube"]
+# YouTube Music profiles. Off in the web client.
+youtube = ["nori-engine/youtube"]
 # MPRIS media controls. The iOS client leaves the default features off.
 desktop = ["dep:nori-mpris", "dep:mdns-sd"]
 

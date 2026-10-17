@@ -151,13 +151,14 @@ A browser plays the library through the same session and engine as the other cli
 
 | file | raw | brotli |
 |---|---|---|
-| core.wasm (core and db) | 1 513 644 | 539 287 |
-| player.wasm (core, db, host, engine; WebCodecs) | 4 242 786 | 1 377 128 |
-| player-codecs.wasm (the same with Vorbis, ALAC, Opus in Rust, and `Codecs`) | 4 474 727 | 1 458 214 |
+| core.wasm (core and db) | 1 575 174 | 552 698 |
+| player.wasm (core, db, host, engine; WebCodecs) | 4 439 304 | 1 429 559 |
+| player-codecs.wasm (the same with Vorbis, ALAC, Opus in Rust, and `Codecs`) | 4 674 527 | 1 511 002 |
 | core.js / player.js (glue) | 33 605 / 46 361 | 6 238 / 7 872 |
 | the shell: HTML, CSS, 9 scripts | 68 533 | 19 301 (17 347 as one stream) |
 
-core.wasm was 578 624 br before SQLite was built as the core uses it (no R-tree, sessions, introspection
+The web builds nori-core without its `youtube` feature: no YouTube Music profile, and with it core.wasm
+was 583 KB br. core.wasm was 578 624 br before SQLite was built as the core uses it (no R-tree, sessions, introspection
 tables, UTF-16, column metadata, math functions; `-Oz`): 39 KB less. Rust at `opt-level = "z"` made it
 5 KB larger compressed. player.wasm grew from the spike's 1 102 048 br by the host session (remote, covers'
 URLs, the index sync, settings effects); WebCodecs took 79 KB br off it (vorbis, alac, opus-rs).

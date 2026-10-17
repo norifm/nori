@@ -351,12 +351,14 @@ impl Client {
         Ok(())
     }
 
+    #[cfg(feature = "youtube")]
     /// The page a read of `read` answers when there is nothing to answer: what the server would give for
     /// an empty answer (a YouTube Music profile's reads without an InnerTube match, youtube.rs).
     pub(crate) fn nothing(&self, read: Read) -> NetResult<Page> {
         self.parse(spec(read).parser, br#"{"subsonic-response":{"status":"ok"}}"#.to_vec())
     }
 
+    #[cfg(feature = "youtube")]
     /// A YouTube Music profile's `read`, indexed as a server's answer would be.
     async fn youtube_fresh(&self, read: Read) -> NetResult<Page> {
         let parser = spec(read.clone()).parser;
@@ -370,6 +372,7 @@ impl Client {
 impl Client {
     /// Asks the server, bypassing the cache.
     pub async fn read_now(&self, read: Read) -> NetResult<Page> {
+        #[cfg(feature = "youtube")]
         if self.youtube() {
             return self.youtube_fresh(read).await;
         }
@@ -418,6 +421,7 @@ impl Client {
     /// Asks the server; returns the page only if it differs from `stored_digest`, and re-caches it either
     /// way (restarting the window). Uncached reads always return their page.
     pub(crate) async fn read_fetch(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
+        #[cfg(feature = "youtube")]
         if self.youtube() {
             return Ok(Some(self.youtube_fresh(read).await?));
         }

@@ -27,6 +27,7 @@ pub mod library;
 pub mod stage;
 pub mod update;
 pub mod remote;
+#[cfg(feature = "youtube")]
 pub mod youtube;
 #[cfg(feature = "neural-beats")]
 pub mod model_download;
@@ -513,6 +514,7 @@ impl Core {
         Ok(base)
     }
 
+    #[cfg(feature = "youtube")]
     /// Makes the profile a YouTube Music one: no server and no Subsonic account (youtube.rs); `signed_in`
     /// when the profile names a YouTube account. Clears the library when the profile was a server's.
     pub fn configure_youtube_music(&self, signed_in: bool) -> Result<()> {

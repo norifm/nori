@@ -13,7 +13,6 @@ use innertube_music as yt;
 
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
-use crate::settings::ServerKind;
 use crate::stream::StreamTarget;
 use crate::transport::{block_on, Exchange, NetError, Transport};
 use crate::{Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, ArtistRef, FeedShelf, Playlist, PlaylistDetail, SearchResult, Song, Starred};
@@ -237,11 +236,6 @@ pub(crate) struct YouTube {
 }
 
 impl Client {
-    /// Whether this is a YouTube Music profile's client.
-    pub(crate) fn youtube(&self) -> bool {
-        self.core.kind() == ServerKind::YouTubeMusic
-    }
-
     /// `read` answered by YouTube Music; reads it has nothing for get the empty page. Signed in, the
     /// library's reads are the account's: its saved albums (one page), its playlists and its liked songs
     /// as the favorites.
