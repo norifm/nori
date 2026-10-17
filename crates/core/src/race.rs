@@ -1,4 +1,4 @@
-//! Lyrics calls: the server's lyrics, then the enabled lyrics services, through the client's transport
+//! Lyrics calls: the server and enabled lyrics services together, through the client's transport
 //! and the response cache. Service logic and ranking are nori-lyrics'.
 
 use std::sync::Arc;
@@ -69,6 +69,9 @@ impl LyricsShown for Screen {
     fn show(&self, mut pick: LyricsPick) {
         pick.lyrics.timing = nori_lyrics::timing::with_yours(pick.lyrics.timing, self.core.lyrics_yours(&self.song_id, &pick));
         let mut last = self.last.lock();
+        if last.as_ref().is_some_and(|p| !p.lyrics.lines.is_empty() && pick.lyrics.lines.is_empty()) {
+            return;
+        }
         if lyrics_replaces(last.as_ref(), &pick) {
             *last = Some(pick.clone());
             drop(last);
@@ -129,7 +132,7 @@ impl Client {
         };
         let stored = self.read_stored(read()).ok();
         let digest = stored.as_ref().and_then(|s| s.digest);
-        let mut server: Option<crate::Lyrics> = match stored.as_ref().and_then(|s| s.page.clone()) {
+        let server: Option<crate::Lyrics> = match stored.as_ref().and_then(|s| s.page.clone()) {
             Some(Page::LyricsPage { v }) => Some(v),
             _ => None,
         };
@@ -149,18 +152,29 @@ impl Client {
         let fresh = stored.as_ref().is_some_and(|s| s.fresh);
         let downloaded = server.is_some() && !fresh && self.core.download_song(&id).is_some();
         let refresh_after = downloaded && self.read_stored_within(read(), DOWNLOADED_SERVER_KEPT_MS).is_ok_and(|s| !s.fresh);
-        if !fresh && !downloaded {
-            // A server failure just means no server lyrics.
-            if let Ok(Some(Page::LyricsPage { v })) = self.read_refresh(read(), digest).await {
-                show_server(&v);
-                server = Some(v);
-            }
-        }
         let has_lines = server.as_ref().is_some_and(|l| !l.lines.is_empty());
         let synced = server.as_ref().is_some_and(|l| l.synced);
-        let song = match song { Some(song) => song, None => self.song_of(id.clone()).await? };
-        if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics).await {
-            nori_perf::perf_log::note_core("lyrics", line.trim_start_matches("lyrics: "));
+        let refresh = async {
+            if !fresh && !downloaded {
+                if let Ok(Some(Page::LyricsPage { v })) = self.read_refresh(read(), digest).await {
+                    show_server(&v);
+                    return v.synced;
+                }
+            }
+            synced
+        };
+        let services = async {
+            let song = match song { Some(song) => song, None => self.song_of(id.clone()).await? };
+            if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics).await {
+                nori_perf::perf_log::note_core("lyrics", line.trim_start_matches("lyrics: "));
+            }
+            Ok::<(), crate::transport::NetError>(())
+        };
+        // Timed server lyrics finish the lookup; otherwise both sources can publish as they arrive.
+        use futures_util::future::{select, Either};
+        match select(Box::pin(refresh), Box::pin(services)).await {
+            Either::Left((timed, services)) => { if !timed { services.await?; } }
+            Either::Right((result, refresh)) => { result?; refresh.await; }
         }
         if refresh_after {
             // Newly timed server lyrics win; anything else is used next time.
@@ -290,6 +304,36 @@ pub(crate) mod tests {
     const NONE: &str = r#"{"subsonic-response":{"status":"ok","lyricsList":{}}}"#;
 
     #[test]
+    fn services_show_while_the_server_is_pending() {
+        use crate::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
+        use std::future::Future;
+        use std::task::{Context, Waker};
+
+        struct SlowServer(Arc<Fake>);
+        #[async_trait::async_trait]
+        impl Transport for SlowServer {
+            async fn get(&self, url: String, timeout: u32) -> Result<TransportResponse, TransportError> {
+                if url.contains("getLyricsBySongId") { std::future::pending().await } else { self.0.get(url, timeout).await }
+            }
+            async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> { self.0.send(request).await }
+            fn address_changed(&self) {}
+            fn network(&self) -> Network { Network::Unmetered }
+        }
+        let (original, fake) = setup();
+        let c = Client::new(original.core.clone(), Arc::new(SlowServer(fake.clone())), Default::default());
+        c.set_profile(NetProfile { url: "h".into(), ..Default::default() });
+        let s = song();
+        c.core.session.register(vec![s.clone()]);
+        fake.answer(r#"{"statusCode":404}"#);
+        fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
+        let screen = Arc::new(Screen::default());
+        let asked = lrclib();
+        let mut lookup = Box::pin(c.lyrics_for_with(s.id, &asked, screen.clone()));
+        assert!(lookup.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+        assert_eq!(screen.0.lock().last().map(|p| p.origin), Some(LyricsOrigin::Lrclib));
+    }
+
+    #[test]
     fn prefetch_warms_only_the_next_library_song() {
         for next in ["ahead", "ext-ahead"] {
             let (c, fake) = setup();
@@ -342,6 +386,9 @@ pub(crate) mod tests {
         let active = Arc::new(AtomicUsize::new(0));
         let c = Client::new(original.core.clone(), Arc::new(Gate { fake: fake.clone(), active: active.clone() }), Default::default());
         c.set_profile(NetProfile { url: "h".into(), ..Default::default() });
+        let dir = nori_testdir::TempDir::new("lyrics-prefetch-cancel");
+        c.settings().open(&dir.join("settings.db").to_string_lossy()).unwrap();
+        c.settings().edit_by_name("lyricsOnline", "false");
         c.core.session.register(vec![Song { id: "first".into(), ..song() }, Song { id: "second".into(), ..song() }]);
         c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
         let mut first = Box::pin(c.lyrics_prefetch());

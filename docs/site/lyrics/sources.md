@@ -8,12 +8,15 @@ sidebar:
 Applies to nori 0.6.3 and later on every client. The list of sources and its order are edited on Android, the
 desktop and the terminal.
 
-## Your server first
+## Your server's lyrics
 
-Your server's own lyrics always come first. Navidrome and other OpenSubsonic servers can serve them
-timed by line or by word. When the server has timed lyrics, no other source is asked.
+Navidrome and other OpenSubsonic servers can serve lyrics timed by line or by word. Cached words
+appear immediately. The server and online services are asked together, so a slow server does not
+hold back the words. Timed server lyrics take priority and stop the remaining service requests.
 
-## SourWhen the server has no timed lyrics, **Find missing lyrics online** asks the lyrics services below. It is
+## Online sources
+
+**Find missing lyrics online** asks the lyrics services below. It is
 on by default and sits under **Look things up online**; turning either off means nothing is asked. A lookup
 sends the artist, song and album name, and the song's length, and happens only when you open the lyrics.
 Provider songs from octo-fiesta are never looked up.
@@ -44,15 +47,17 @@ nori 0.6.3 removed SimpMusic, YouTube captions, Megalobiz, BetterLyrics Portato 
 some three hundred songs, they answered nothing, or nothing the others did not answer better. A list you
 reordered keeps its order without them; a list left as it came takes the new default.
 
-ntimed | |
-
 ## How the best answer is chosen
 
-The first sources are asked together; the second only when those find nothing good. Every
+The first sources are asked together; the second start when the available answers are not good
+enough, even while a slow first source is still pending. Every
 answer is scored on how well it matches the song (title, artist, album and length), how finely it is
 timed, whether its times make sense, and whether the other sources agree with it. The best one is shown,
 and an answer that scores too low is never shown. With **Prefer word-by-word lyrics** on (the default),
 nori keeps looking past lyrics timed line by line.
+
+A strong answer can appear early when it names the song, agrees with another source, or reports a
+length within two seconds of the song with timing spanning it.
 
 The lyrics chosen are kept on the device with their source, so a song played again asks nobody. Settings,
 Storage, Lyrics shows their size and clears them.

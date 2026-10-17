@@ -30,7 +30,7 @@ pub enum Lookup {
 }
 
 /// Longest one request may take...
-const REQUEST_MS: u32 = 6_000;
+const REQUEST_MS: u32 = 3_000;
 /// ...except PaxSenix's keyed routes, which ask Spotify or Musixmatch before answering.
 const PAXSENIX_REQUEST_MS: u32 = 15_000;
 /// A request is not started with less than this left of the service's time.
@@ -40,7 +40,7 @@ const LEAST_MS: u64 = 250;
 pub(crate) fn deadline_ms(service: LyricsService) -> u64 {
     match service {
         LyricsService::PaxsenixSpotify | LyricsService::PaxsenixMusixmatch => 2 * PAXSENIX_REQUEST_MS as u64,
-        _ => 12_000,
+        _ => 4_500,
     }
 }
 

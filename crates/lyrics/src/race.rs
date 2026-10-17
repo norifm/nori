@@ -293,11 +293,17 @@ impl Race {
         self.answers[leader].as_ref().map(|a| (leader, self.to_screen(leader, a.0.clone())))
     }
 
-    /// Whether `rank`'s answer is backed by more than its service: it names this title, or another
-    /// answer has the same words.
+    /// Whether the answer names this title, agrees with another, or matches the length with timing
+    /// across the song.
     fn evidenced(&self, rank: usize) -> bool {
-        let Some((_, named)) = self.answers[rank].as_ref() else { return false };
-        named.title.as_deref().is_some_and(|t| name_alike(t, &self.song.title) >= 0.85) || self.agree[rank].iter().any(|&a| a)
+        let Some((lyrics, named)) = self.answers[rank].as_ref() else { return false };
+        let duration = self.song.duration as f64;
+        let length = duration > 0.0 && named.duration_s.is_some_and(|s| (Named::seconds(s) - duration).abs() <= 2.0);
+        let times = || lyrics.lines.iter().filter(|l| l.start_ms >= 0 && !l.text.trim().is_empty()).map(|l| l.start_ms);
+        let spans = lyrics.synced && times().min().zip(times().max()).is_some_and(|(first, last)| {
+            first as f64 <= duration * 300.0 && last as f64 >= duration * 750.0 && (last - first) as f64 >= duration * 600.0
+        });
+        named.title.as_deref().is_some_and(|t| name_alike(t, &self.song.title) >= 0.85) || self.agree[rank].iter().any(|&a| a) || (length && spans)
     }
 
     /// What is on screen, with its score and what its service named.
@@ -754,6 +760,20 @@ mod tests {
         assert_eq!((l.lines.len(), l.lines[0].text.as_str(), l.lines[0].start_ms), (18, OURS[0], 10_000));
         let kept = read_kept(&cache.get(&cache_key(LyricsService::Unison, &s, &asked(&[LyricsService::Unison]))).unwrap()).unwrap();
         assert_eq!(kept.lyrics.lines.len(), 18, "the cached copy is already clean");
+    }
+
+    #[test]
+    fn matching_length_and_full_timing_show_early() {
+        for (length, short, early) in [(180.0, false, true), (182.0, false, true), (178_000.0, false, true), (183.0, false, false), (0.0, false, false), (180.0, true, false)] {
+            let mut r = Race::new(&tune(), vec![entry(0.85, true, W); 3], true, Timing::Empty);
+            r.next(0, 6);
+            let mut lyrics = words(&OURS, true);
+            if short {
+                for line in &mut lyrics.lines { line.start_ms /= 4; }
+            }
+            r.answer(1, Some((lyrics, Named::new("", "", "", length))));
+            assert_eq!(r.to_show(false).is_some(), early, "length {length}, short {short}");
+        }
     }
 
     #[test]
