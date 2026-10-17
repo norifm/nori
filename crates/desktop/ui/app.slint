@@ -2792,6 +2792,16 @@ component SettingLine inherits VerticalLayout {
                 }
                 if root.item.kind == 6: HorizontalLayout {
                     spacing: 4px;
+                    // A service that needs a key: typed here, it is kept and the service switched on;
+                    // emptied, it is cleared and every service that needs it switched off.
+                    if root.item.centred: Field {
+                        y: (parent.height - self.height) / 2;
+                        width: 130px;
+                        height: 28px;
+                        secret: true;
+                        placeholder: root.item.button;
+                        accepted => { root.typed("lyricsKey:" + root.item.name, self.text); }
+                    }
                     IconButton {
                         y: (parent.height - self.height) / 2;
                         path: "M6 14.5 L12 8.5 L18 14.5";
@@ -2811,6 +2821,7 @@ component SettingLine inherits VerticalLayout {
                     Toggle {
                         y: (parent.height - self.height) / 2;
                         on: root.item.on;
+                        enabled: root.item.enabled;
                         toggled(v) => { root.source(root.item.name, v); }
                     }
                 }

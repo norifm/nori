@@ -67,8 +67,12 @@ sealed interface SettingRow {
     /** A saved server; the one in use carries its [libraries] when it has more than one, under [note]. */
     data class Server(val id: String, val label: String, val detail: String, val active: Boolean, val libraries: List<Pick> = emptyList(), val note: String = "") : SettingRow
     data class Button(val title: String, val action: String) : SettingRow
-    /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. */
-    data class Ranked(val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean) : SettingRow
+    /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. [keyed]: it
+     *  is switched on only with a key, typed under [keyName]; [keySet]: that key is given. */
+    data class Ranked(
+        val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean,
+        val keyed: Boolean = false, val keySet: Boolean = false, val keyName: String = "",
+    ) : SettingRow
     /** The compressor's gain reduction, read from the player only while the page is on screen. */
     data class CompressionMeter(val key: String) : SettingRow
     /** One setting with a few values, all on view as chips, the one it has lit. */
@@ -210,7 +214,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "lyricsKeepScreenOn" to (R.string.settings_lyrics_screen_on to R.string.settings_hint_lyrics_screen_on),
     "lyricsOnline" to (R.string.settings_lyrics_online to R.string.settings_hint_lyrics_online),
     "lyricsPreferWords" to (R.string.settings_lyrics_words to R.string.settings_hint_lyrics_words),
-    "paxSenixKey" to (R.string.settings_paxsenix_key to R.string.settings_hint_paxsenix_key),
     "betterLyricsKey" to (R.string.settings_betterlyrics_key to R.string.settings_hint_betterlyrics_key),
     "tapAction" to (R.string.settings_tap_action to R.string.settings_hint_tap_action),
     "swipeRight" to (R.string.settings_swipe_right to 0),
@@ -556,7 +559,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         "lyricsKeepScreenOn" -> str(R.string.settings_lyrics_screen_on_detail)
         "lyricsOnline" -> str(R.string.settings_lyrics_online_detail)
         "lyricsPreferWords" -> str(R.string.settings_lyrics_words_detail)
-        "paxSenixKey" -> str(R.string.settings_paxsenix_key_detail)
         "betterLyricsKey" -> str(R.string.settings_betterlyrics_key_detail)
         "tapAction" -> str(R.string.settings_hint_tap_action)
         "playlistNotes" -> str(R.string.settings_playlist_notes_detail)
@@ -600,7 +602,8 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         is RowItem.LyricsSource -> s.lyricsSources.getOrNull(item.index.toInt())?.let { src ->
             val (title, about) = SERVICES[src.id] ?: return null
             val t = str(title)
-            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, str(about), src.on)
+            val detail = if (src.keySet) str(R.string.settings_lyrics_key_set, str(about)) else str(about)
+            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, detail, src.on, src.needsKey, src.keySet, "lyricsKey:${src.id}")
         }
         is RowItem.CompressionMeter -> SettingRow.CompressionMeter("compression-meter")
         is RowItem.MusicFolder -> null

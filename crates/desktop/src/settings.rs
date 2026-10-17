@@ -231,7 +231,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "lyricsTranslation" => ("Show translations", "When your server has them."),
         "lyricsOnline" => ("Find missing lyrics online", "When your server has no timed lyrics. Sends the artist, song and album name to the lyrics sources."),
         "lyricsPreferWords" => ("Prefer word-by-word lyrics", "Keeps looking past lyrics timed line by line."),
-        "paxSenixKey" => ("PaxSenix key", "Your own key, for its Spotify and Musixmatch lyrics."),
         "betterLyricsKey" => ("BetterLyrics key", "Without one it answers only for songs it has already stored."),
         "tasteModel" => ("Keep listening history", "Stored on this Mac. Powers mixes and stats."),
         "scrobble" => ("Tell the server what you play", "Sends your plays to your server once you've heard half a song or four minutes of it."),
@@ -420,7 +419,9 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         RowItem::LyricsSource { index } => {
             let src = s.lyrics_sources.get(index as usize)?;
             let (title, about) = service(&src.id)?;
-            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: true, ..Default::default() }
+            // A service that needs a key has its key's field beside its switch (`centred`), which turns it on.
+            let button = if src.key_set { "Key set" } else { "PaxSenix key" };
+            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: !src.needs_key || src.key_set, centred: src.needs_key, button: button.into(), ..Default::default() }
         }
     })
 }

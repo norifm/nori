@@ -423,7 +423,7 @@ impl Page<'_> {
     fn lyrics_sources(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let mut ranked: Vec<SettingsRow> = (0..self.s.lyrics_sources.len() as u32).map(|index| row(RowItem::LyricsSource { index })).collect();
         ranked.push(row(RowItem::Note { note: SettingsNote::LyricsSources }));
-        vec![(SectionId::AskedOrder, ranked), (SectionId::Keys, vec![self.setting("paxSenixKey"), self.setting("betterLyricsKey")])]
+        vec![(SectionId::AskedOrder, ranked), (SectionId::Keys, vec![self.setting("betterLyricsKey")])]
     }
 
     fn library(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {

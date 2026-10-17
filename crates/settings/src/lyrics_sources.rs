@@ -107,7 +107,7 @@ impl LyricsService {
         ABOUT[self as usize].1
     }
 
-    /// Needs the PaxSenix key; skipped without it.
+    /// Needs the PaxSenix key; never on without it.
     pub(crate) fn needs_key(self) -> bool {
         matches!(self, LyricsService::PaxsenixMusixmatch | LyricsService::PaxsenixSpotify)
     }
@@ -185,6 +185,11 @@ fn distinct(services: impl Iterator<Item = LyricsService>) -> Vec<LyricsService>
         }
     }
     out
+}
+
+/// Whether `service` may be switched on: one that needs a key only once the key is given.
+pub(crate) fn can_be_on(p: &StoredPrefs, service: LyricsService) -> bool {
+    !service.needs_key() || !p.paxsenix_key.trim().is_empty()
 }
 
 /// The services switched on, in rank order.
@@ -272,6 +277,28 @@ mod tests {
         // Stored as 0.6.2 shipped them: the new default.
         let old = raw(DEFAULT_BEFORE_063, DEFAULT_BEFORE_063);
         assert_eq!((old.lyrics_order, old.lyrics_on), (default_order(), default_on()));
+    }
+
+    #[test]
+    fn a_key_is_given_where_its_service_is_switched_on() {
+        use crate::settings::set_by_name;
+        let p = StoredPrefs::default();
+        assert!(set_by_name(&p, "lyricsService:PAXSENIX_SPOTIFY", "true").is_none(), "not on without its key");
+        assert!(set_by_name(&p, "lyricsKey:LRCLIB", "k").is_none(), "LRCLIB takes no key");
+        let keyed = set_by_name(&p, "lyricsKey:PAXSENIX_SPOTIFY", " k1 ").unwrap().prefs;
+        assert_eq!(keyed.paxsenix_key, "k1");
+        assert!(keyed.lyrics_on.contains(&LyricsService::PaxsenixSpotify) && !keyed.lyrics_on.contains(&LyricsService::PaxsenixMusixmatch), "the one it was given for, on");
+        let both = set_by_name(&keyed, "lyricsService:PAXSENIX_MUSIXMATCH", "true").unwrap().prefs;
+        assert!(both.lyrics_on.contains(&LyricsService::PaxsenixMusixmatch), "the same key serves the other");
+        let changed = set_by_name(&both, "lyricsKey:PAXSENIX_MUSIXMATCH", "k2").unwrap().prefs;
+        assert_eq!((changed.paxsenix_key.as_str(), changed.lyrics_on.len()), ("k2", both.lyrics_on.len()), "a new key, nothing else moved");
+        let cleared = set_by_name(&changed, "lyricsKey:PAXSENIX_SPOTIFY", "").unwrap().prefs;
+        assert!(cleared.paxsenix_key.is_empty() && !cleared.lyrics_on.iter().any(|s| s.needs_key()), "cleared: both off");
+        assert!(set_by_name(&cleared, "lyricsService:PAXSENIX_SPOTIFY", "false").is_some(), "off is always taken");
+        let state = crate::settings_model::state(&changed, crate::settings_model::Output::default(), &nori_automix::beat_model::ModelFile::default());
+        let spotify = state.lyrics_sources.iter().find(|s| s.id == "PAXSENIX_SPOTIFY").unwrap();
+        assert!(spotify.needs_key && spotify.key_set);
+        assert!(!state.values.contains_key("paxSenixKey"), "the key is never a value shown or reported");
     }
 
     #[test]
