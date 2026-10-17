@@ -1,6 +1,6 @@
 //! One open server profile: core, client, the engine on the client's output, store, downloader, cover
-//! loader and search. Work that waits on the network runs on its own thread and reports through the
-//! client's [`Out`], as facts the client words.
+//! loader and search. Work that waits on the network runs among the session's tasks and reports through
+//! the client's [`Out`], as facts the client words.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -49,9 +49,9 @@ pub enum Said {
     /// Another device set the volume (0 to 1).
     Volume(f32),
     /// The AutoEQ curve of the device music moved to was offered or applied; the client says so, and
-    /// answers through [`Session::curve_answer`].
+    /// answers through [`Handle::curve_answer`].
     Curve(CurveNotice),
-    /// A heart changed (pressed here, or by another device): hearts are read again ([`Session::starred`]), or drawn from the core's marks
+    /// A heart changed (pressed here, or by another device): hearts are read again ([`Handle::starred`]), or drawn from the core's marks
     /// carried here.
     Starred(nori_core::stars::StarMarks),
 }
@@ -228,7 +228,7 @@ pub struct Open<'a> {
     pub profile: SavedServer,
     /// The sound card. The client built it and owns its device volume.
     pub output: Box<dyn AudioOutput>,
-    /// The volume, set through [`Session::set_volume`] (or followed with [`Session::volume_followed`] where
+    /// The volume, set through [`Handle::set_volume`] (or followed with [`Handle::volume_followed`] where
     /// the system keeps it).
     pub volume: Arc<Level>,
     /// Bytes the engine may hold for songs ahead. 256 on the desktop, less on a phone.
@@ -243,7 +243,7 @@ pub struct Open<'a> {
     /// The platform's mDNS for remote control (Bonjour on iOS). None: with `desktop`, the session's own
     /// (mdns-sd); without, no nearby devices.
     pub discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
-    /// Where work that waits on the network runs ([`crate::Threads`] natively).
+    /// Where work that waits on the network runs ([`crate::tasks`] natively).
     pub tasks: Arc<dyn Tasks>,
     /// Songs are kept as files under `data`: the stream cache and downloads. A browser keeps none.
     pub keeps_music: bool,

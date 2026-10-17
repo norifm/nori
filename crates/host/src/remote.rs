@@ -42,7 +42,7 @@ impl Remotes {
         Some(Elsewhere { mirror, remote })
     }
 
-    /// The jam this device is a guest in, as [`crate::session::Session::jam_playing`] shows it.
+    /// The jam this device is a guest in, as [`crate::session::Handle::jam_playing`] shows it.
     pub(crate) fn jam_playing(&self) -> Option<Elsewhere> {
         let remote = self.get()?;
         let mirror = remote.jam_playing()?;
