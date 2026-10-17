@@ -9,7 +9,7 @@ import dev.nori.music.ffi.model.MusicFolder
 import dev.nori.music.ffi.settings.BeatModel
 import dev.nori.music.ffi.settings.EqLevel
 import dev.nori.music.ffi.settings.SavedServer
-import dev.nori.music.ffi.settings.ServerKind
+import dev.nori.music.app.ui.providerStrings
 import dev.nori.music.ffi.settings.SettingKind
 import dev.nori.music.ffi.settings.SettingsState
 import dev.nori.music.ffi.settings.settingSpecs
@@ -924,15 +924,11 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     }
 
     /** The line under a saved server: who signs in, whether it is in use, and what is special about it. */
-    /** A YouTube Music profile without a name of its own is called by its kind. */
-    private fun serverLabel(sv: SavedServer): String =
-        if (sv.kind == ServerKind.YOU_TUBE_MUSIC && sv.name.isBlank()) str(R.string.youtube_music) else sv.label
+    /** A profile without a name or an address is called by its kind. */
+    private fun serverLabel(sv: SavedServer): String = sv.label.ifBlank { str(providerStrings(sv.kind).name) }
 
     private fun serverDetail(sv: SavedServer, active: Boolean): String {
-        val who = when (sv.kind) {
-            ServerKind.SUBSONIC -> sv.user.ifEmpty { str(R.string.settings_server_api_key) }
-            ServerKind.YOU_TUBE_MUSIC -> sv.user.ifEmpty { str(R.string.settings_server_best_effort) }
-        }
+        val who = sv.user.ifEmpty { str(providerStrings(sv.kind).noUser) }
         val parts = mutableListOf(who, str(if (active) R.string.settings_server_in_use else R.string.settings_server_not_in_use))
         if (sv.wifiOnly) parts += str(R.string.settings_server_wifi_only)
         if (sv.altUrl.isNotBlank()) parts += str(R.string.settings_server_second_address)

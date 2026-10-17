@@ -11,7 +11,6 @@ import dev.nori.music.ffi.CoverNet
 import dev.nori.music.ffi.CurrentClient
 import dev.nori.music.ffi.queue.Session
 import dev.nori.music.ffi.net.NetProfile
-import dev.nori.music.ffi.ServerConfig
 import dev.nori.music.net.Http
 import dev.nori.music.net.lifted
 import dev.nori.music.playback.BitPerfect
@@ -19,7 +18,6 @@ import dev.nori.music.playback.Outputs
 import dev.nori.music.playback.MediaSources
 import dev.nori.music.playback.PlayerConnection
 import dev.nori.music.ffi.settings.SavedServer
-import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.settings.Settings
 import dev.nori.music.settings.serverList
 import dev.nori.music.settings.withServers
@@ -115,10 +113,10 @@ class Nori private constructor(private val context: Context) {
     val remotes = dev.nori.music.remote.Remotes(context, this)
 
     /**
-     * What the app offers over the profile in use (the core's `rules_of`): a jam guest's browses its host's
-     * library and asks for songs, and does none of the account's work; a YouTube Music profile has no account.
+     * What the app offers over the profile in use (the core's `rules_of`, its provider's): a jam guest's
+     * browses its host's library and asks for songs, and does none of the account's work.
      */
-    val rules: dev.nori.music.ffi.library.ProfileRules get() = dev.nori.music.ffi.library.rulesOf(settings.value.server ?: dev.nori.music.settings.newServer(""), remotes.isGuest())
+    val rules: dev.nori.music.ffi.library.ProfileRules get() = dev.nori.music.ffi.rulesOf(settings.value.server ?: dev.nori.music.settings.newServer(""), remotes.isGuest())
     val player = PlayerConnection(context, this)
 
     /**
@@ -154,15 +152,8 @@ class Nori private constructor(private val context: Context) {
     val updates = dev.nori.music.update.Updates(context, { http }, { client })
 
     private fun open(id: String, profile: SavedServer?): Core =
-        Core(File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path, id, session).also { c ->
-            when (profile?.kind) {
-                ServerKind.SUBSONIC -> c.configure(profile.config())
-                ServerKind.YOU_TUBE_MUSIC -> c.configureYoutubeMusic(profile.user.isNotEmpty())
-                null -> {}
-            }
-        }
+        Core(File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path, id, session).also { c -> profile?.let(c::configureProfile) }
 
-    private fun SavedServer.config() = ServerConfig(url, user, password, apiKey.ifEmpty { null }, legacyAuth)
     private fun SavedServer.net() = NetProfile(url, altUrl, musicFolderIds, altMaxBitRate.coerceAtLeast(0).toUInt())
 
     /** Called off the main thread at process start. */
@@ -195,20 +186,18 @@ class Nori private constructor(private val context: Context) {
     }
 
     /**
-     * Checks the profile against the server before keeping it; the core tries the second address and, for
-     * servers without token auth (error 41), legacy auth, which is then remembered.
+     * Checks the profile with its provider before keeping it (the core's `check_profile`): a server is
+     * tried through its second address and, without token auth (error 41), with legacy auth, which is
+     * then remembered.
      */
     suspend fun login(form: SavedServer): SavedServer = withContext(Dispatchers.IO) {
         // A server and user already saved is that profile logged in to again, not a copy with an empty
-        // library and no downloads (the core's `servers_login`).
-        val draft = dev.nori.music.ffi.settings.serverForLogin(settings.value.serverList(), form)
-        // YouTube Music has no server to check.
-        if (draft.kind == ServerKind.YOU_TUBE_MUSIC) return@withContext draft.also(::activate)
+        // library and no downloads (the core's `server_for_login`).
+        val draft = dev.nori.music.ffi.serverForLogin(settings.value.serverList(), form)
         val old = settings.value.server
         val accepted = try {
             http.configure(draft)
-            val legacy = lifted { dev.nori.music.ffi.loginCheck(transport, draft.config(), draft.altUrl) }
-            if (legacy) draft.copy(legacyAuth = true) else draft
+            lifted { dev.nori.music.ffi.checkProfile(transport, draft) }
         } catch (e: Exception) {
             http.configure(old)
             throw e
@@ -259,22 +248,22 @@ class Nori private constructor(private val context: Context) {
     fun logout() = settings.value.server?.let { removeServer(it.id) }
 
     /**
-     * Signs the YouTube Music profile in use in with a browser session's cookies (the core's
-     * `youtube_sign_in`); signed in, the profile keeps the account's name, which brings its library and hearts.
+     * Signs the profile in use's account in with [answer] (the core's `Client::sign_in`, its provider's):
+     * signed in, the profile keeps the account's name, which brings its library and hearts.
      */
-    suspend fun youtubeSignIn(cookies: String): dev.nori.music.ffi.YouTubeSignIn {
-        val r = withContext(Dispatchers.IO) { client.youtubeSignIn(cookies) }
-        if (r is dev.nori.music.ffi.YouTubeSignIn.SignedIn) settings.value.server?.let { updateServer(it.copy(user = r.name)) }
+    suspend fun signIn(answer: String): dev.nori.music.ffi.SignInResult {
+        val r = withContext(Dispatchers.IO) { client.signIn(answer) }
+        if (r is dev.nori.music.ffi.SignInResult.SignedIn) settings.value.server?.let { updateServer(it.copy(user = r.name)) }
         return r
     }
 
-    /** Signs the YouTube Music profile in use out: its cookies are forgotten. Main thread. */
-    fun youtubeSignOut() {
-        client.youtubeSignOut()
+    /** Signs the profile in use's account out here. Main thread. */
+    fun signOut() {
+        client.signOut()
         settings.value.server?.let { updateServer(it.copy(user = "")) }
     }
 
-    suspend fun youtubeAccount(): dev.nori.music.ffi.YouTubeAccount = withContext(Dispatchers.IO) { client.youtubeAccount() }
+    suspend fun account(): dev.nori.music.ffi.AccountState = withContext(Dispatchers.IO) { client.account() }
 
     companion object {
         @Volatile private var instance: Nori? = null

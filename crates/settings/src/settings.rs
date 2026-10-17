@@ -278,15 +278,33 @@ impl LibrarySection {
     };
 }
 
-/// What a saved profile plays from.
+/// What a saved profile plays from: the provider it opens with (nori-core's providers/).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum ServerKind {
     /// A Subsonic server (Navidrome, octo-fiesta).
     #[default]
     Subsonic,
-    /// YouTube Music: no server, no account, best effort (docs/research/youtube-music.md).
+    /// YouTube Music: no server, best effort (docs/research/youtube-music.md).
     YouTubeMusic,
+}
+
+impl ServerKind {
+    /// Every kind, in the order they are offered.
+    pub const ALL: [ServerKind; 2] = [ServerKind::Subsonic, ServerKind::YouTubeMusic];
+
+    /// The name a profile's kind is stored under.
+    pub fn id(self) -> &'static str {
+        match self {
+            ServerKind::Subsonic => "subsonic",
+            ServerKind::YouTubeMusic => "youtubeMusic",
+        }
+    }
+
+    /// The kind stored as `id`.
+    pub fn from_id(id: &str) -> Option<ServerKind> {
+        Self::ALL.into_iter().find(|k| k.id() == id)
+    }
 }
 
 /// One saved server profile. Each has its own rows in the index database.
@@ -1128,7 +1146,7 @@ fn server_from(v: &Value) -> Option<SavedServer> {
     Some(SavedServer {
         id: text(o.get("id")?),
         // Absent in profiles saved before there were kinds.
-        kind: if o.get("kind").and_then(Value::as_str) == Some("youtubeMusic") { ServerKind::YouTubeMusic } else { ServerKind::Subsonic },
+        kind: o.get("kind").and_then(Value::as_str).and_then(ServerKind::from_id).unwrap_or_default(),
         name: opt_string(o, "name"),
         url: opt_string(o, "url"),
         alt_url: opt_string(o, "altUrl"),
@@ -1155,12 +1173,8 @@ fn folder_ids(o: &Map<String, Value>) -> Vec<String> {
 }
 
 fn server_json(s: &SavedServer) -> Value {
-    let kind = match s.kind {
-        ServerKind::Subsonic => "subsonic",
-        ServerKind::YouTubeMusic => "youtubeMusic",
-    };
     serde_json::json!({
-        "id": s.id, "kind": kind, "name": s.name, "url": s.url, "altUrl": s.alt_url, "user": s.user, "password": s.password,
+        "id": s.id, "kind": s.kind.id(), "name": s.name, "url": s.url, "altUrl": s.alt_url, "user": s.user, "password": s.password,
         "apiKey": s.api_key, "legacyAuth": s.legacy_auth, "headers": s.headers, "allowSelfSigned": s.allow_self_signed,
         "clientCert": s.client_cert, "clientCertPassword": s.client_cert_password, "wifiOnly": s.wifi_only,
         "musicFolderIds": s.music_folder_ids, "altMaxBitRate": s.alt_max_bit_rate,
@@ -1820,36 +1834,6 @@ pub fn servers_activated(list: ServerList, profile: SavedServer) -> ServerList {
     ServerList { servers, active_server_id: id }
 }
 
-/// The profile a login saves. A new profile for an already saved address and user takes over that
-/// profile's id (and its library and downloads), music folder, bitrate cap and, if the form's is empty,
-/// name; a YouTube Music profile added again is the one saved, still signed in to its account (`user`).
-/// A profile already saved is returned as it is.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn server_for_login(list: ServerList, profile: SavedServer) -> SavedServer {
-    if list.servers.iter().any(|s| s.id == profile.id) {
-        return profile;
-    }
-    let address = |url: &str| url.trim().trim_end_matches('/').to_ascii_lowercase();
-    let same = |s: &&SavedServer| {
-        s.kind == profile.kind
-            && match profile.kind {
-                ServerKind::Subsonic => address(&s.url) == address(&profile.url) && s.user.trim().eq_ignore_ascii_case(profile.user.trim()),
-                ServerKind::YouTubeMusic => true,
-            }
-    };
-    match list.servers.iter().find(same) {
-        Some(saved) => SavedServer {
-            id: saved.id.clone(),
-            name: if profile.name.trim().is_empty() { saved.name.clone() } else { profile.name },
-            user: if profile.kind == ServerKind::YouTubeMusic { saved.user.clone() } else { profile.user },
-            music_folder_ids: saved.music_folder_ids.clone(),
-            alt_max_bit_rate: saved.alt_max_bit_rate,
-            ..profile
-        },
-        None => profile,
-    }
-}
-
 /// A saved profile changed in place; an unknown one is not added.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn servers_updated(list: ServerList, profile: SavedServer) -> ServerList {
@@ -1917,15 +1901,6 @@ pub fn server_headers_text(headers: HashMap<String, String>) -> String {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn server_url_schemes(url: String) -> Vec<String> {
     if url.is_empty() || url.contains("://") { Vec::new() } else { vec!["https://".into(), "http://".into()] }
-}
-
-/// Whether the login form can be sent: an address, and a user or an API key; YouTube Music needs neither.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn server_ready(profile: SavedServer) -> bool {
-    match profile.kind {
-        ServerKind::Subsonic => !profile.url.trim().is_empty() && (!profile.user.trim().is_empty() || !profile.api_key.trim().is_empty()),
-        ServerKind::YouTubeMusic => true,
-    }
 }
 
 /// The profile as the form sends it: addresses trimmed, headers parsed.
@@ -2439,23 +2414,12 @@ mod tests {
         assert_eq!(folders(serde_json::json!({"id": "a", "musicFolderId": ""})), Vec::<String>::new());
         assert_eq!(folders(serde_json::json!({"id": "a", "musicFolderIds": ["3", "5"], "musicFolderId": "3"})), ["3", "5"]);
 
-        // Login reuses saved profile.
-        let saved = SavedServer { id: "a1".into(), name: "Home".into(), url: "http://10.0.2.2:4534/".into(), user: "admin".into(), password: "old".into(), music_folder_ids: vec!["3".into()], ..SavedServer::default() };
-        let other = SavedServer { id: "b2".into(), url: "http://10.0.2.2:4534".into(), user: "guest".into(), ..SavedServer::default() };
+        // A saved profile activated again is moved, not copied.
+        let saved = SavedServer { id: "a1".into(), password: "old".into(), ..SavedServer::default() };
+        let other = SavedServer { id: "b2".into(), ..SavedServer::default() };
         let list = ServerList { servers: vec![saved.clone(), other], active_server_id: "b2".into() };
-        let form = SavedServer { id: new_server_id(), url: " HTTP://10.0.2.2:4534 ".into(), user: "Admin".into(), password: "new".into(), ..SavedServer::default() };
-        let kept = server_for_login(list.clone(), form.clone());
-        assert_eq!((kept.id.as_str(), kept.password.as_str(), kept.name.as_str(), kept.music_folder_ids.as_slice()), ("a1", "new", "Home", &["3".to_string()][..]), "{kept:?}");
-        let l = servers_activated(list.clone(), kept);
-        assert_eq!((l.servers.len(), l.active_server_id.as_str()), (2, "a1"), "activated, not copied");
-        // Another user of the same server, or another server, is a profile of its own.
-        let stranger = SavedServer { user: "someone".into(), ..form.clone() };
-        assert_eq!(server_for_login(list.clone(), stranger.clone()), stranger);
-        let elsewhere = SavedServer { url: "https://music.example".into(), ..form.clone() };
-        assert_eq!(server_for_login(list.clone(), elsewhere.clone()), elsewhere);
-        // A saved profile edited keeps its own id, whatever the others are.
-        let edited = SavedServer { id: "b2".into(), ..form };
-        assert_eq!(server_for_login(list.clone(), edited.clone()), edited);
+        let l = servers_activated(list, SavedServer { password: "new".into(), ..saved });
+        assert_eq!((l.servers.len(), l.active_server_id.as_str(), l.servers[1].password.as_str()), (2, "a1", "new"), "activated, not copied");
 
         // Login form.
         let h = parse_headers("X-Auth: a:b\n: nope\nno colon\n  CF-Id :  x  \nX-Auth: c");
@@ -2466,32 +2430,20 @@ mod tests {
         assert_eq!(server_url_schemes("music.local".into()), ["https://", "http://"]);
         assert!(server_url_schemes("".into()).is_empty() && server_url_schemes("http://x".into()).is_empty());
         let p = SavedServer { url: " https://x ".into(), alt_url: " y ".into(), ..SavedServer::default() };
-        assert!(!server_ready(p.clone()), "a user or a key");
-        assert!(server_ready(SavedServer { user: "u".into(), ..p.clone() }));
-        assert!(server_ready(SavedServer { api_key: "k".into(), ..p.clone() }));
-        assert!(!server_ready(SavedServer { url: "  ".into(), user: "u".into(), ..p.clone() }));
         let f = server_from_form(p, "A: 1".into());
         assert_eq!((f.url.as_str(), f.alt_url.as_str(), f.headers["A"].as_str()), ("https://x", "y", "1"));
     }
 
-    /// A YouTube Music profile keeps its kind, needs no address or user, and a second one added takes
-    /// over the first, never a server's.
+    /// Every kind is stored under its own name and read back; a profile saved before there were kinds,
+    /// or with a kind this build does not know, is a server's.
     #[test]
-    fn youtube_music_profiles() {
-        let yt = SavedServer { id: "y1".into(), kind: ServerKind::YouTubeMusic, ..SavedServer::default() };
-        assert_eq!(server_from(&server_json(&yt)), Some(yt.clone()));
+    fn kinds_are_stored_by_name() {
+        for kind in ServerKind::ALL {
+            let p = SavedServer { id: "p".into(), kind, ..SavedServer::default() };
+            assert_eq!(server_from(&server_json(&p)), Some(p));
+        }
         assert_eq!(server_from(&serde_json::json!({"id": "a", "url": "https://x"})).unwrap().kind, ServerKind::Subsonic, "saved before kinds");
-        assert!(server_ready(yt.clone()));
-        assert!(!server_ready(SavedServer { kind: ServerKind::Subsonic, ..yt.clone() }));
-        let blank_server = SavedServer { id: "s1".into(), ..SavedServer::default() };
-        let list = ServerList { servers: vec![blank_server, yt], active_server_id: "s1".into() };
-        let again = SavedServer { id: new_server_id(), kind: ServerKind::YouTubeMusic, ..SavedServer::default() };
-        assert_eq!(server_for_login(list.clone(), again.clone()).id, "y1");
-        let mut signed_in = list.clone();
-        signed_in.servers[1].user = "Ann".into();
-        assert_eq!(server_for_login(signed_in, again).user, "Ann", "still signed in");
-        let server = SavedServer { id: new_server_id(), ..SavedServer::default() };
-        assert_eq!(server_for_login(list, server).id, "s1", "the server's, not YouTube's");
+        assert_eq!(server_from(&serde_json::json!({"id": "a", "kind": "later"})).unwrap().kind, ServerKind::Subsonic);
     }
 
     fn sound() -> SoundSettings {

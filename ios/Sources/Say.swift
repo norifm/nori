@@ -232,11 +232,28 @@ enum Say {
     static let password = "Password"
     static let connect = "Connect"
     static let connecting = "Connecting…"
-    static let serverKinds = "Navidrome, octo-fiesta or any Subsonic server"
-    static let yourServer = "Your server"
-    static let youtubeMusic = "YouTube Music"
-    static let youtubeMusicHint = "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Favorites, playlists, downloads, scrobbling, remote control and jams are off."
-    static let youtubeMusicAdd = "Add YouTube Music"
+    /// A kind of profile's words (the core's providers, by the name the settings store them under):
+    /// what it is called, what adding one does, and the login page's button. The only words a provider
+    /// needs here.
+    struct ProviderWords {
+        let name: String
+        let note: String
+        let add: String
+    }
+
+    static func provider(_ kind: String) -> ProviderWords {
+        switch kind {
+        case "subsonic":
+            return ProviderWords(name: "Your server", note: "Navidrome, octo-fiesta or any Subsonic server", add: connect)
+        case "youtubeMusic":
+            return ProviderWords(
+                name: "YouTube Music",
+                note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Favorites, playlists, downloads, scrobbling, remote control and jams are off.",
+                add: "Add YouTube Music")
+        default:
+            return ProviderWords(name: kind, note: "", add: connect)
+        }
+    }
     static let serverUrl = "Server URL"
     static let advanced = "Advanced"
     static let hideAdvanced = "Hide advanced"

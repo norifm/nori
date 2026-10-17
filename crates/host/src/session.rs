@@ -17,16 +17,14 @@ use nori_core::playlist::{Hand, QueueEdit};
 use nori_core::race::{LyricsPick, LyricsShown};
 use nori_core::rules::{queue_keep, BridgeStep, QueueMoment};
 use nori_core::search::{SearchSession, SearchView};
-use nori_core::settings::{SavedServer, ServerKind, SettingChange, StoredPrefs};
+use nori_core::settings::{SavedServer, SettingChange, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 use nori_core::transport::{block_on, Exchange, FailureKind, NetError, Transport, TransportError, TransportResponse};
 use nori_tasks::Tasks;
 use nori_core::{Core, CoreError, IngestStats, PageOrigin, Song};
 use nori_covers::loader::{Config as CoverConfig, Loader, Ticket};
 use nori_covers::memory::Image;
-#[cfg(feature = "youtube")]
-use nori_engine::core::Resolving;
-use nori_engine::core::{settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer};
+use nori_engine::core::{resolving, settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer};
 use nori_engine::{AudioOutput, Body, ByteSource, Cancel, Config, Engine, Event, Filling, OpenError, State, Store};
 use nori_look::cover::CoverColours;
 
@@ -34,7 +32,7 @@ use nori_look::cover::CoverColours;
 use crate::Controls;
 use crate::remote::Press;
 use nori_core::remote::Reach;
-use crate::{config, db_path, derive, net, save, Fetch, Keeper, Level};
+use crate::{db_path, derive, net, save, Fetch, Keeper, Level};
 use nori_remote::wire::Op;
 
 /// What a session reports from any thread.
@@ -330,14 +328,7 @@ impl Session {
     fn open_with(o: Open, turns: bool, start: impl FnOnce(CoreLibrary, CoreApp, CoreQueue, Box<dyn AudioOutput>, Config, Events) -> Engine) -> Result<Session, String> {
         let db = db_path(o.data);
         let core = Core::new(db.clone(), nori_core::settings::server_db_id(&o.profile.id), o.queue.clone()).map_err(|e| format!("the database: {e}"))?;
-        match o.profile.kind {
-            ServerKind::Subsonic => core.configure(config(&o.profile)).map(|_| ()),
-            #[cfg(feature = "youtube")]
-            ServerKind::YouTubeMusic => core.configure_youtube_music(!o.profile.user.is_empty()),
-            #[cfg(not(feature = "youtube"))]
-            ServerKind::YouTubeMusic => return Err("the server: this build has no YouTube Music".into()),
-        }
-        .map_err(|e| format!("the server: {e}"))?;
+        core.configure_profile(o.profile.clone()).map_err(|e| format!("the server: {e}"))?;
         let transport: Arc<dyn Transport> = if o.offline { Arc::new(Offline) } else { o.http.clone() };
         let cover_net = CoverNet::over(o.http.clone());
         let client = Client::new(core.clone(), transport, cover_net.clone());
@@ -351,12 +342,7 @@ impl Session {
             true => Some(Store::open(o.data.join("music"), prefs.cache_mb.max(0) as u64 * 1024 * 1024).map_err(|e| format!("the music directory: {e}"))?),
             false => None,
         };
-        let audio: Arc<dyn ByteSource> = Arc::new(Audio::new(o.http.clone(), o.offline));
-        #[cfg(feature = "youtube")]
-        let audio: Arc<dyn ByteSource> = match o.profile.kind {
-            ServerKind::Subsonic => audio,
-            ServerKind::YouTubeMusic => Arc::new(Resolving { bytes: audio, client: client.clone() }),
-        };
+        let audio = resolving(&client, Arc::new(Audio::new(o.http.clone(), o.offline)));
         let analyses = if turns { Analyses::on_turns(client.clone()) } else { Analyses::of(client.clone()) };
         let downloader = store.as_ref().map(|store| Downloader::new(client.clone(), audio.clone(), store.clone(), analyses.clone()));
         // `bridging`: a song the network cannot bring raises `Event::Bridge` (see `Session::bridge`).
@@ -1458,12 +1444,11 @@ mod tests {
         s.close();
     }
 
-    #[cfg(feature = "youtube")]
-    /// A YouTube Music profile opens with no server: its own rules, and no remote control even when it
-    /// is switched on; a server's profile with it on serves.
+    /// A profile of a provider without remote control opens with its own rules, and no remote control
+    /// even when it is switched on; a server's profile with it on serves.
     #[test]
-    fn a_youtube_music_profile_opens_without_a_server_or_remote() {
-        let dir = nori_testdir::TempDir::new("host-youtube");
+    fn a_profile_without_remote_opens_without_one() {
+        let dir = nori_testdir::TempDir::new("host-no-remote");
         let settings = nori_core::settings_store::Settings::new();
         let mut prefs = settings.open(&db_path(dir.path())).unwrap();
         prefs.remote_control = true;
@@ -1491,10 +1476,11 @@ mod tests {
             })
             .unwrap()
         };
-        let s = open(SavedServer { id: "yt".into(), kind: ServerKind::YouTubeMusic, ..Default::default() });
-        assert_eq!(s.rules, nori_core::browse::youtube_rules(false));
+        let kind = nori_core::providers::providers().into_iter().map(|p| p.kind).find(|&kind| !nori_core::providers::rules_of(SavedServer { kind, ..Default::default() }, false).remote).expect("a provider without remote control");
+        let profile = SavedServer { id: "own".into(), kind, ..Default::default() };
+        let s = open(profile.clone());
+        assert_eq!(s.rules, nori_core::providers::rules_of(profile, false));
         assert!(s.remote().is_none());
-        assert_eq!(s.client.resolve("yt-dQw4w9WgXcQ".into(), false, false).url, "youtube:dQw4w9WgXcQ");
         s.close();
         let s = open(SavedServer { id: "own".into(), url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() });
         assert!(s.remote().is_some(), "a server's profile still serves");

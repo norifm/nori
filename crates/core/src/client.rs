@@ -41,9 +41,6 @@ pub struct Client {
     /// here: neither is offered (`queue_offer`).
     pub(crate) queue_pushed: parking_lot::Mutex<Option<crate::library::QueuePlace>>,
     pub(crate) queue_seen: parking_lot::Mutex<Option<crate::library::QueuePlace>>,
-    /// A YouTube Music profile's visitor id and streams resolved so far (youtube.rs).
-    #[cfg(feature = "youtube")]
-    pub(crate) innertube: crate::youtube::YouTube,
 }
 
 /// The client of the server profile in use, as the platform switches profiles: where what outlives one
@@ -130,15 +127,9 @@ impl Client {
         params
     }
 
-    /// Whether this is a YouTube Music profile's client.
-    pub(crate) fn youtube(&self) -> bool {
-        self.core.kind() == crate::settings::ServerKind::YouTubeMusic
-    }
-
     pub(crate) async fn get(&self, endpoint: &str, params: &[(String, String)]) -> NetResult<Vec<u8>> {
-        #[cfg(feature = "youtube")]
-        if self.youtube() {
-            return Err(crate::youtube::no_subsonic(endpoint));
+        if !self.core.provider().subsonic_api() {
+            return Err(crate::providers::nowhere(endpoint));
         }
         let url = self.core.server.read().url(endpoint, params);
         transport::get(&*self.transport, url, 0).await
@@ -170,7 +161,7 @@ impl Client {
 impl Client {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(core: Arc<Core>, transport: Arc<dyn Transport>, covers: Arc<crate::covers::CoverNet>) -> Arc<Self> {
-        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), queue_pushed: Default::default(), queue_seen: Default::default(), #[cfg(feature = "youtube")] innertube: Default::default() })
+        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), queue_pushed: Default::default(), queue_seen: Default::default() })
     }
 
     /// Sets the profile's addresses, folder and bitrate cap.
@@ -287,15 +278,18 @@ pub use nori_db::{db_file_name, db_forget_server, DB_FILE};
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// Sends one change, or queues it (reported as success) while the server is unreachable. Behind
-    /// queued changes it is queued too, so the server gets them in order. A change that must not reach
-    /// the server twice is queued only when the failure shows nothing was sent. Evicts the change's stale
-    /// cache prefixes when sent or queued.
+    /// Sends one change to the profile's provider.
     pub async fn write(&self, w: Write) -> NetResult<()> {
-        #[cfg(feature = "youtube")]
-        if self.youtube() {
-            return self.youtube_write(w).await;
-        }
+        self.core.provider().write(self, w).await
+    }
+}
+
+impl Client {
+    /// Sends one change to a Subsonic server, or queues it (reported as success) while the server is
+    /// unreachable. Behind queued changes it is queued too, so the server gets them in order. A change
+    /// that must not reach the server twice is queued only when the failure shows nothing was sent.
+    /// Evicts the change's stale cache prefixes when sent or queued.
+    pub(crate) async fn subsonic_write(&self, w: Write) -> NetResult<()> {
         let repeatable = w.repeatable();
         let (endpoint, params, stale) = request(w);
         if self.core.pending_any()? {

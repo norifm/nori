@@ -2,8 +2,34 @@
 
 use nori_core::numbers;
 use nori_core::profiles::CurveNotice;
+use nori_core::settings::ServerKind;
 use nori_core::transport::{FailureKind, NetError};
 use nori_core::Song;
+
+/// What the desktop says of a kind of profile (nori-core's providers): the only words a provider needs
+/// here.
+pub struct ProviderWords {
+    /// The kind's name, and what a profile of it is called without a name of its own.
+    pub name: &'static str,
+    /// What adding one does, under the login page's choice.
+    pub note: &'static str,
+    /// The login page's button.
+    pub add: &'static str,
+    /// Under a profile that names no user.
+    pub no_user: &'static str,
+}
+
+pub fn provider(kind: ServerKind) -> ProviderWords {
+    match kind {
+        ServerKind::Subsonic => ProviderWords { name: "Your server", note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In", no_user: "API key" },
+        ServerKind::YouTubeMusic => ProviderWords {
+            name: "YouTube Music",
+            note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Favorites, playlists, downloads, scrobbling, remote control and jams are off.",
+            add: "Add YouTube Music",
+            no_user: "best effort",
+        },
+    }
+}
 
 pub const SHOW_ALL: &str = "Show all";
 pub const LYRICS_PREFETCH: &str = "Prepare next song’s lyrics";

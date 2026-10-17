@@ -23,6 +23,7 @@ platform opens and re-exports every crate below it by its module name (`nori_cor
 
 | Area | Crate / module |
 |---|---|
+| Where a profile's music comes from: a Subsonic server or YouTube Music, each a plug-in that describes its add form and sign-in, answers the reads and writes, and says where songs and covers are ([Providers](providers.md)) | `nori-core::providers` (`Provider`, `providers`, `server_for_login`, `check_profile`, `Core::configure_profile`); `nori-engine::core::resolving` |
 | Server API, sync, the one app database (`nori.db`), the settings model and effects | `nori-net`: `api`, `transport`, `requests`, `stream`; `nori-core`: `Core`, `Client`, `cache_policy`; `nori-db`; `nori-settings`: `settings`, `settings_store`, `settings_model`, `lyrics_sources`, `dsp` |
 | The records the server sends and the app shows, the core's error and log | `nori-model` |
 | Library, search, browse, mixes, smart lists, stats, history, favorites, playlists, M3U | `nori-library`: `library`, `search`, `browse`, `mixes`, `smart`, `history`, `stars`, `m3u` |

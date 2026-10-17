@@ -131,6 +131,17 @@ export struct SettingRow {
     last: bool,
 }
 
+// A kind of profile the login page adds (the core's providers): its words, and the fields its form asks.
+export struct LoginKind {
+    name: string,
+    note: string,
+    add: string,
+    asks-name: bool,
+    asks-address: bool,
+    asks-user: bool,
+    asks-password: bool,
+}
+
 // A band of the equalizer page: its label, its gain, and what its value reads.
 export struct EqBandRow {
     label: string,
@@ -3708,14 +3719,16 @@ export component AppWindow inherits Window {
     in-out property <int> settings-tab;
     callback settings-tab-chosen(int);
 
+    in-out property <string> login-name;
     in-out property <string> login-url: "https://";
     in-out property <string> login-user;
     in-out property <string> login-password;
     in property <string> login-error;
     in property <bool> login-busy;
     in property <bool> can-cancel-login;
-    // The profile being added is YouTube Music's (no server, no account) rather than a server's.
-    in-out property <bool> login-youtube;
+    // The kinds of profile offered, and the one being added.
+    in property <[LoginKind]> login-kinds;
+    in-out property <int> login-kind;
 
     callback go(int);
     callback open-album(string);
@@ -3815,26 +3828,18 @@ export component AppWindow inherits Window {
                                 image-fit: contain;
                             }
                         }
-                        HorizontalLayout {
+                        if root.login-kinds.length > 1: HorizontalLayout {
                             spacing: 10px;
                             alignment: center;
-                            Capsule {
-                                text: "Your server";
-                                ink: root.login-youtube ? Theme.fill : Theme.accent;
-                                label: root.login-youtube ? Theme.text : white;
-                                clicked => { root.login-youtube = false; }
-                            }
-                            Capsule {
-                                text: "YouTube Music";
-                                ink: root.login-youtube ? Theme.accent : Theme.fill;
-                                label: root.login-youtube ? white : Theme.text;
-                                clicked => { root.login-youtube = true; }
+                            for k[i] in root.login-kinds: Capsule {
+                                text: k.name;
+                                ink: i == root.login-kind ? Theme.accent : Theme.fill;
+                                label: i == root.login-kind ? white : Theme.text;
+                                clicked => { root.login-kind = i; }
                             }
                         }
                         Text {
-                            text: root.login-youtube
-                                ? "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Favorites, playlists, downloads, scrobbling, remote control and jams are off."
-                                : "Sign in to your Navidrome or Subsonic server.";
+                            text: root.login-kinds[root.login-kind].note;
                             color: Theme.dim;
                             horizontal-alignment: center;
                             wrap: word-wrap;
@@ -3842,17 +3847,22 @@ export component AppWindow inherits Window {
                         Rectangle {
                             height: 10px;
                         }
-                        if !root.login-youtube: Field {
+                        if root.login-kinds[root.login-kind].asks-name: Field {
+                            icon: Icons.person;
+                            placeholder: "Name (optional)";
+                            text <=> root.login-name;
+                        }
+                        if root.login-kinds[root.login-kind].asks-address: Field {
                             icon: Icons.server;
                             placeholder: "Server address";
                             text <=> root.login-url;
                         }
-                        if !root.login-youtube: Field {
+                        if root.login-kinds[root.login-kind].asks-user: Field {
                             icon: Icons.person;
                             placeholder: "User name";
                             text <=> root.login-user;
                         }
-                        if !root.login-youtube: Field {
+                        if root.login-kinds[root.login-kind].asks-password: Field {
                             icon: Icons.key;
                             placeholder: "Password";
                             secret: true;
@@ -3882,7 +3892,7 @@ export component AppWindow inherits Window {
                                 clicked => { root.cancel-login(); }
                             }
                             Capsule {
-                                text: root.login-youtube ? "Add YouTube Music" : root.login-busy ? "Signing In…" : "Sign In";
+                                text: root.login-busy ? "Signing In…" : root.login-kinds[root.login-kind].add;
                                 clicked => {
                                     if !root.login-busy {
                                         root.login();

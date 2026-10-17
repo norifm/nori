@@ -532,38 +532,34 @@ fn a_guest_queues_the_host_songs_once() {
     assert!(!s.song_arrived().fill, "nothing fetched for it here");
 }
 
-/// InnerTube answering every player request with the recorded visionOS answer.
+/// Addresses `addr:<name>` resolve to the URL `https://served/<name>?<n>`, `n` counting the resolves
+/// since the last refusal; refusals counted.
 #[derive(Default)]
-struct Player {
-    asked: Mutex<u32>,
+struct Resolver {
+    resolved: Mutex<u32>,
+    refused: Mutex<Vec<String>>,
 }
 
-#[async_trait::async_trait]
-impl nori_core::transport::Transport for Player {
-    async fn get(&self, url: String, _: u32) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
-        panic!("a Subsonic request in a YouTube Music profile: {url}");
+impl nori_core::providers::ResolveStream for Resolver {
+    fn resolve(&self, address: &str, _: u64) -> Option<nori_core::client::NetResult<String>> {
+        let name = address.strip_prefix("addr:")?;
+        let mut n = self.resolved.lock();
+        *n += 1;
+        Some(Ok(format!("https://served/{name}?{n}")))
     }
 
-    async fn send(&self, _: nori_core::transport::Exchange) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
-        *self.asked.lock() += 1;
-        let body = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../youtube/tests/fixtures/player.json")).unwrap();
-        Ok(nori_core::transport::TransportResponse { status: 200, body, set_cookies: Vec::new() })
-    }
-
-    fn address_changed(&self) {}
-
-    fn network(&self) -> nori_core::transport::Network {
-        nori_core::transport::Network::Unmetered
+    fn refused(&self, address: &str) {
+        self.refused.lock().push(address.to_string());
     }
 }
 
-/// The googlevideo bytes: refuses the first URL as an expired one would be, then serves.
+/// The served bytes: refuses the first URL as an expired one would be, then serves.
 #[derive(Default)]
-struct Googlevideo {
+struct Served {
     opened: Mutex<Vec<(String, u64)>>,
 }
 
-impl ByteSource for Googlevideo {
+impl ByteSource for Served {
     fn open(&self, url: &str, from: u64) -> Result<Body, nori_engine::OpenError> {
         let mut opened = self.opened.lock();
         opened.push((url.to_string(), from));
@@ -574,25 +570,26 @@ impl ByteSource for Googlevideo {
     }
 }
 
-/// A YouTube song's address opens at the URL YouTube serves; a refused URL is asked for again on the
-/// next try, a served one is kept; a server's URL passes through untouched.
+/// A provider's stream address opens at the URL it resolves to, from the byte asked; a refused URL is
+/// reported, so the next try resolves anew; a URL passes through untouched.
 #[test]
-fn youtube_addresses_open_at_the_served_url() {
-    let core = Core::new(String::new(), "yt".into(), Default::default()).unwrap();
-    core.configure_youtube_music(false).unwrap();
-    let innertube = Arc::new(Player::default());
-    let client = Client::new(core, innertube.clone(), Default::default());
-    let bytes = Arc::new(Googlevideo::default());
-    let resolving = nori_engine::core::Resolving { bytes: bytes.clone(), client };
-    let address = "youtube:dQw4w9WgXcQ";
-    assert!(matches!(resolving.open(address, 0), Err(nori_engine::OpenError::Status(403))));
-    assert!(resolving.open(address, 0).is_ok());
-    assert!(resolving.open(address, 1000).is_ok());
-    assert_eq!(*innertube.asked.lock(), 2, "asked again after the refusal, then kept");
-    let opened = bytes.opened.lock().clone();
-    assert!(opened.iter().all(|(u, _)| u.starts_with("https://rr1---sn-fixture.googlevideo.com/videoplayback?") && u.contains("itag=251")), "{opened:?}");
-    assert!(opened[1].0.ends_with("&range=0-3433754") && !opened[2].0.contains("&range="));
-    assert_eq!(opened.iter().map(|o| o.1).collect::<Vec<_>>(), [0, 0, 1000]);
+fn addresses_open_at_the_resolved_url() {
+    let (bytes, resolver) = (Arc::new(Served::default()), Arc::new(Resolver::default()));
+    let resolving = nori_engine::core::Resolving { bytes: bytes.clone(), resolver: resolver.clone() };
+    assert!(matches!(resolving.open("addr:song", 0), Err(nori_engine::OpenError::Status(403))));
+    assert_eq!(*resolver.refused.lock(), ["addr:song"]);
+    assert!(resolving.open("addr:song", 1000).is_ok());
     assert!(resolving.open("http://nas/rest/stream?id=1", 0).is_ok());
-    assert_eq!(bytes.opened.lock().last().unwrap().0, "http://nas/rest/stream?id=1");
+    assert_eq!(*bytes.opened.lock(), [("https://served/song?1".to_string(), 0), ("https://served/song?2".to_string(), 1000), ("http://nas/rest/stream?id=1".to_string(), 0)]);
+    assert_eq!(resolver.refused.lock().len(), 1, "a served URL is not refused");
+}
+
+/// A profile whose addresses are URLs gets its byte source as it is.
+#[test]
+fn a_servers_profile_resolves_nothing() {
+    let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+    core.configure(ServerConfig { url: "http://music.test".into(), user: "u".into(), password: "p".into(), ..Default::default() }).unwrap();
+    let client = Client::new(core, Arc::new(NoApi::default()), Default::default());
+    let bytes: Arc<dyn ByteSource> = Arc::new(Served::default());
+    assert!(Arc::ptr_eq(&nori_engine::core::resolving(&client, bytes.clone()), &bytes));
 }

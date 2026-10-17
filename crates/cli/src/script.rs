@@ -4,8 +4,8 @@
 //! ```text
 //! nori-cli --script --url http://localhost:4533 --user admin --password admin --play "noise" --crossfade 6
 //! nori-cli --script ... --search "noise" --songs 2 --start 570 --crossfade 6 --mix-albums --wav out.wav
-//! nori-cli --script --youtube-music --play "daft punk" --songs 1 --wav out.wav
-//! nori-cli --script --youtube-music --sign-in cookies.txt --home
+//! nori-cli --script --provider youtubeMusic --play "daft punk" --songs 1 --wav out.wav
+//! nori-cli --script --provider youtubeMusic --sign-in cookies.txt --home
 //! ```
 //!
 //! Without `--wav` it plays on the sound card and reads commands from stdin (see `HELP`). With `--wav`
@@ -20,12 +20,11 @@ use std::time::Duration;
 
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Client, NetProfile};
-use nori_core::settings::{GainMode, ServerKind, StoredPrefs};
-use nori_core::transport::Transport;
+use nori_core::settings::{GainMode, SavedServer, ServerKind, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, REPLAN, SOUND};
-use nori_core::{Core, Param, ServerConfig, Song};
-use nori_engine::core::{settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer, Resolving};
-use nori_engine::{AudioOutput, ByteSource, Config, Engine, Event, State, Store, WavOutput};
+use nori_core::{Core, Song};
+use nori_engine::core::{resolving, settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer};
+use nori_engine::{AudioOutput, Config, Engine, Event, State, Store, WavOutput};
 use nori_http::Http;
 use nori_output_cpal::CpalOutput;
 
@@ -35,11 +34,11 @@ use crate::text::clock;
 const HELP: &str = "play, pause, next, prev, seek <s>, crossfade <s>|off, automix on|off, gain off|track|album|auto, pos, positions on|off, set <name> <value>, tuning on|off, band <i> <dB>, search <q>, queue, quit";
 
 struct Args {
-    /// YouTube Music instead of a server: no url, user or password.
-    youtube_music: bool,
-    /// A file of a browser session's cookies to sign the YouTube Music profile in with.
+    /// The kind of profile: a server's unless another is named.
+    kind: ServerKind,
+    /// A file of what the profile's account signs in with (a browser session's cookies).
     sign_in: Option<PathBuf>,
-    /// Print the YouTube Music Home's shelves.
+    /// Print the source's own Home's shelves.
     home: bool,
     url: String,
     user: String,
@@ -71,9 +70,10 @@ fn usage() -> ! {
          \x20               [--crossfade SECONDS] [--automix] [--mix-albums] [--replay-gain off|track|album|auto] [--hi-res]\n\
          \x20               [--download] [--offline] [--mpris]\n\
          \x20               [--wav OUT.wav [--pace X]] [--device NAME] [--devices]\n\
-         \x20      nori-cli --script --youtube-music [the same, without the server] [--sign-in COOKIES_FILE] [--home]\n\
+         \x20      nori-cli --script --provider KIND [the same, without the server] [--sign-in FILE] [--home]\n\
          \x20               [--data DIR]\n\
-         The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD."
+         The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD.\n\
+         KIND is a profile kind as the settings store it (youtubeMusic)."
     );
     std::process::exit(2)
 }
@@ -85,7 +85,7 @@ fn gain_mode(v: &str) -> Option<GainMode> {
 fn args(argv: Vec<String>) -> Args {
     let env = |k: &str| std::env::var(k).ok();
     let mut a = Args {
-        youtube_music: false,
+        kind: ServerKind::Subsonic,
         sign_in: None,
         home: false,
         url: env("NORI_URL").unwrap_or_default(),
@@ -111,7 +111,7 @@ fn args(argv: Vec<String>) -> Args {
     while let Some(k) = it.next() {
         let mut v = || it.next().unwrap_or_else(|| usage());
         match k.as_str() {
-            "--youtube-music" => a.youtube_music = true,
+            "--provider" => a.kind = ServerKind::from_id(&v()).unwrap_or_else(|| usage()),
             "--sign-in" => a.sign_in = Some(v().into()),
             "--home" => a.home = true,
             "--url" => a.url = v(),
@@ -141,16 +141,22 @@ fn args(argv: Vec<String>) -> Args {
             _ => usage(),
         }
     }
-    if !a.youtube_music && (a.url.is_empty() || a.user.is_empty() || a.sign_in.is_some() || a.home) {
+    if !nori_core::providers::server_ready(a.profile()) {
         usage();
     }
     a
 }
 
+impl Args {
+    /// The profile the options name.
+    fn profile(&self) -> SavedServer {
+        SavedServer { kind: self.kind, url: self.url.clone(), user: self.user.clone(), password: self.password.clone(), ..Default::default() }
+    }
+}
+
 struct Cli {
     core: Arc<Core>,
     client: Arc<Client>,
-    http: Arc<Http>,
     prefs: StoredPrefs,
     engine: Arc<Engine>,
     /// The queue as last set, shared with the event printer and MPRIS for titles.
@@ -160,22 +166,13 @@ struct Cli {
 
 impl Cli {
     fn search(&self, query: &str) -> Result<Vec<Song>, String> {
-        if self.core.kind() == ServerKind::YouTubeMusic {
-            let read = Read::Search { query: query.into(), songs: 50, albums: 0, artists: 0 };
-            return match block_on(self.client.read_now(read)) {
-                Ok(page) => Ok(match page {
-                    Page::Found { v } => v.songs,
-                    _ => Vec::new(),
-                }),
-                Err(e) => Err(e.to_string()),
-            };
-        }
-        let p = |k: &str, v: &str| Param { key: k.into(), value: v.into() };
-        let url = self.core.url("search3".into(), vec![p("query", query), p("songCount", "50"), p("albumCount", "0"), p("artistCount", "0")]);
-        let r = block_on(self.http.get(url, 0)).map_err(|e| e.to_string())?;
-        let found = self.core.parse_search(r.body).map_err(|e| e.to_string())?;
+        let read = Read::Search { query: query.into(), songs: 50, albums: 0, artists: 0 };
+        let songs = match block_on(self.client.read_now(read)).map_err(|e| e.to_string())? {
+            Page::Found { v } => v.songs,
+            _ => Vec::new(),
+        };
         // Provider songs (octo-fiesta) are downloaded by the server when requested: never queued from a search.
-        Ok(found.songs.into_iter().filter(|s| !s.is_provider()).collect())
+        Ok(songs.into_iter().filter(|s| !s.is_provider()).collect())
     }
 
     fn queue(&mut self, songs: Vec<Song>, start_ms: i64) {
@@ -233,24 +230,20 @@ pub fn main(argv: Vec<String>) {
     std::fs::create_dir_all(&a.data).unwrap_or_else(|e| panic!("{}: {e}", a.data.display()));
     let db = a.data.join("nori.db").to_string_lossy().into_owned();
     let core = Core::new(db.clone(), "cli".into(), crate::backend::app().clone()).unwrap_or_else(|e| panic!("the database: {e}"));
-    let config = ServerConfig { url: a.url.clone(), user: a.user.clone(), password: a.password.clone(), api_key: None, legacy_auth: false };
-    match a.youtube_music {
-        true => core.configure_youtube_music(false),
-        false => core.configure(config.clone()).map(|_| ()),
-    }
-    .unwrap_or_else(|e| panic!("the server: {e}"));
     let http = Http::new();
+    let profile = match a.offline {
+        true => a.profile(),
+        false => block_on(nori_core::providers::check_profile(http.clone(), a.profile())).unwrap_or_else(|e| {
+            eprintln!("login failed: {e}");
+            std::process::exit(1)
+        }),
+    };
+    core.configure_profile(profile).unwrap_or_else(|e| panic!("the server: {e}"));
     let client = Client::new(core.clone(), http.clone(), Default::default());
     client.set_profile(NetProfile { url: a.url.clone(), ..Default::default() });
-    if !a.offline && !a.youtube_music {
-        if let Err(e) = block_on(nori_core::client::login_check(http.clone(), config, String::new())) {
-            eprintln!("login failed: {e}");
-            std::process::exit(1);
-        }
-    }
     if let Some(path) = &a.sign_in {
-        let cookies = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        println!("{}", crate::text::youtube_sign_in(&block_on(client.youtube_sign_in(cookies))));
+        let answer = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        println!("{}", crate::text::sign_in(a.kind, &block_on(client.sign_in(answer))));
     }
     if a.home {
         match block_on(client.read_now(Read::HomeFeed)) {
@@ -279,10 +272,7 @@ pub fn main(argv: Vec<String>) {
     let (tx, events): (_, Receiver<Event>) = channel();
     let store = Store::open(a.data.join("music"), prefs.cache_mb.max(0) as u64 * 1024 * 1024).unwrap_or_else(|e| panic!("the music directory: {e}"));
     let audio = Arc::new(Audio::new(http.clone(), a.offline));
-    let bytes: Arc<dyn ByteSource> = match a.youtube_music {
-        true => Arc::new(Resolving { bytes: audio.clone(), client: client.clone() }),
-        false => audio.clone(),
-    };
+    let bytes = resolving(&client, audio.clone());
     let analyses = Analyses::of(client.clone());
     let downloader = Downloader::new(client.clone(), bytes.clone(), store.clone(), analyses.clone());
     let app = CoreApp::new(core.session.clone()).measuring(Measurer::new(analyses.clone(), store.clone())).per_device(core.clone());
@@ -290,9 +280,9 @@ pub fn main(argv: Vec<String>) {
     let engine = Engine::start(library, app, CoreQueue(core.session.clone()), output, None, Config { memory_mb: 256, settings: settings(&prefs, 0.0), ..Config::default() }, move |e| {
         let _ = tx.send(e);
     });
-    let mut cli = Cli { core, client, http, prefs, engine: Arc::new(engine), songs: Arc::default(), downloader };
+    let mut cli = Cli { core, client, prefs, engine: Arc::new(engine), songs: Arc::default(), downloader };
     let how = if a.offline { "offline" } else { "logged in" };
-    let to = if a.youtube_music { crate::text::YOUTUBE_MUSIC.to_string() } else { format!("{} as {}", a.url, a.user) };
+    let to = if a.url.is_empty() { crate::text::provider(a.kind).name.to_string() } else { format!("{} as {}", a.url, a.user) };
     println!("{how} to {to}; crossfade {} s, AutoMix {}", cli.prefs.crossfade_sec, if cli.prefs.auto_mix { "on" } else { "off" });
 
     let found = match (&a.search, a.offline) {

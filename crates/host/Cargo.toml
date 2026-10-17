@@ -9,9 +9,7 @@ description = "What the terminal, desktop and iOS clients share around an open s
 name = "nori_host"
 
 [features]
-default = ["desktop", "youtube"]
-# YouTube Music profiles. Off in the web client.
-youtube = ["nori-engine/youtube"]
+default = ["desktop"]
 # MPRIS media controls. The iOS client leaves the default features off.
 desktop = ["dep:nori-mpris", "dep:mdns-sd"]
 
@@ -37,6 +35,8 @@ async-trait = "0.1"
 libc = "0.2"
 
 [dev-dependencies]
+# A profile of a provider without remote control, for the session's tests.
+nori-core = { path = "../core", default-features = false, features = ["youtube"] }
 nori-http = { path = "../http" }
 nori-engine = { path = "../engine", features = ["testing"] }
 nori-testdir = { path = "../testdir" }
