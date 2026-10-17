@@ -273,12 +273,12 @@ pub struct Config {
     pub idle_release_ms: i64,
     pub watch: Option<crate::watch::Watcher>,
     /// The platform's HE-AAC decoder (symphonia decodes only the core).
-    pub platform_aac: Option<nori_player::decode::PlatformAac>,
+    pub platform: nori_player::decode::Platform,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { memory_mb: 256, settings: Settings::default(), idle_release_ms: IDLE_RELEASE_MS, watch: None, platform_aac: None }
+        Config { memory_mb: 256, settings: Settings::default(), idle_release_ms: IDLE_RELEASE_MS, watch: None, platform: nori_player::decode::Platform::default() }
     }
 }
 
@@ -749,7 +749,7 @@ where
             woken();
         }
     }));
-    let songs = Sources::new(library, load_control(config.memory_mb), config.platform_aac, clock.waits(), std::thread::current(), fetching);
+    let songs = Sources::new(library, load_control(config.memory_mb), config.platform, clock.waits(), std::thread::current(), fetching);
     let player = Player::build(songs, queue, app, RingTrack::new(output));
     Worker::new(player, offload.map(Offload::new), rx, events, status, config, clock)
 }

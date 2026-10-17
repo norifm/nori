@@ -56,6 +56,9 @@ pub enum Write {
     CreatePlaylist { name: String, song_ids: Vec<String> },
     AddToPlaylist { id: String, song_ids: Vec<String> },
     RemoveFromPlaylist { id: String, index: i32 },
+    RenamePlaylist { id: String, name: String },
+    /// The playlist's songs in a new order (or a new set): they replace what it held.
+    ReplacePlaylist { id: String, song_ids: Vec<String> },
     DeletePlaylist { id: String },
     CreateRadio { name: String, stream_url: String },
     DeleteRadio { id: String },
@@ -97,6 +100,13 @@ pub fn request(w: Write) -> (&'static str, Vec<(String, String)>, &'static [&'st
         Write::RemoveFromPlaylist { id, index } => {
             ("updatePlaylist", pairs(&[("playlistId", id), ("songIndexToRemove", index.to_string())]), &PLAYLIST_STALE)
         }
+        Write::RenamePlaylist { id, name } => ("updatePlaylist", pairs(&[("playlistId", id), ("name", name)]), &PLAYLIST_STALE),
+        // `createPlaylist` with a playlist's id replaces its songs.
+        Write::ReplacePlaylist { id, song_ids } => {
+            let mut p = one("playlistId", id);
+            p.extend(many("songId", song_ids));
+            ("createPlaylist", p, &PLAYLIST_STALE)
+        }
         Write::DeletePlaylist { id } => ("deletePlaylist", one("id", id), &PLAYLIST_STALE),
         Write::CreateRadio { name, stream_url } => {
             ("createInternetRadioStation", pairs(&[("name", name), ("streamUrl", stream_url)]), &["getInternetRadioStations"])
@@ -134,5 +144,11 @@ mod tests {
         assert_eq!(s, &STAR_STALE);
         let (e, p, _) = request(Write::Scrobble { id: "s".into(), submission: false, time_ms: None });
         assert_eq!((e, p), ("scrobble", pairs(&[("id", "s".into()), ("submission", "false".into())])));
+        let (e, p, s) = request(Write::RenamePlaylist { id: "1".into(), name: "Road".into() });
+        assert_eq!((e, p), ("updatePlaylist", pairs(&[("playlistId", "1".into()), ("name", "Road".into())])));
+        assert_eq!(s, &PLAYLIST_STALE);
+        let (e, p, s) = request(Write::ReplacePlaylist { id: "1".into(), song_ids: vec!["b".into(), "a".into()] });
+        assert_eq!((e, p), ("createPlaylist", pairs(&[("playlistId", "1".into()), ("songId", "b".into()), ("songId", "a".into())])));
+        assert_eq!(s, &PLAYLIST_STALE, "the playlist's page is read again in its new order");
     }
 }

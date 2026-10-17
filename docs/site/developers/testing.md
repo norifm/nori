@@ -448,6 +448,15 @@ line that starts the thread (the start-up NPE of 2026-09-25).
 - A table of cases that each take seconds runs its cases on threads of their own (`each` in
   automix/tests.rs) or is split into one test per row, so they run side by side.
 
+## The web client
+
+What the web client plays and how is the engine's and the session's, tested in Rust like every other
+client's: songs whose bytes the platform pushes (`crates/engine/tests/pushed.rs`, `driven.rs`), songs
+decoded by a decoder that answers later as WebCodecs does (`later.rs`), and the host's tasks
+(`crates/host`). `web/check/check.mjs` checks only what Rust cannot reach: the worker, the AudioWorklet
+fed over its port, the browser's own decoders, OPFS, `fetch` streaming through `web/serve.py`, and the
+pages. How to run it is in [Building](building.md#checking-it-in-a-browser).
+
 ## The iPod
 
 `IosOutput` (crates/ios/src/output.rs) is tested in Rust on a simulated sink: the format the session

@@ -20,18 +20,19 @@ use nori_core::search::{SearchSession, SearchView};
 use nori_core::settings::{SavedServer, ServerKind, SettingChange, StoredPrefs};
 use nori_core::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 use nori_core::transport::{block_on, Exchange, FailureKind, NetError, Transport, TransportError, TransportResponse};
+use nori_tasks::Tasks;
 use nori_core::{Core, CoreError, IngestStats, PageOrigin, Song};
 use nori_covers::loader::{Config as CoverConfig, Loader, Ticket};
 use nori_covers::memory::Image;
 use nori_engine::core::{settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer, Resolving};
-use nori_engine::{AudioOutput, Body, ByteSource, Cancel, Config, Engine, Event, OpenError, State, Store};
+use nori_engine::{AudioOutput, Body, ByteSource, Cancel, Config, Engine, Event, Filling, OpenError, State, Store};
 use nori_look::cover::CoverColours;
 
 #[cfg(feature = "desktop")]
 use crate::Controls;
 use crate::remote::Press;
 use nori_core::remote::Reach;
-use crate::{config, db_path, derive, net, save, spawn, Fetch, Keeper, Level};
+use crate::{config, db_path, derive, net, save, Fetch, Keeper, Level};
 use nori_remote::wire::Op;
 
 /// What a session reports from any thread.
@@ -92,6 +93,34 @@ pub enum Chore {
 /// Where a session's reports go.
 pub type Out = Arc<dyn Fn(Said) + Send + Sync>;
 
+/// The engine's events, as the session hands them on.
+pub type Events = Box<dyn FnMut(Event) + Send>;
+
+/// The engine of [`Session::open_driven`], turned by its caller, and the songs measured as they arrive
+/// on its turns.
+pub struct Driven {
+    engine: nori_engine::Driven<CoreLibrary, CoreApp, CoreQueue, Events, nori_engine::Monotonic>,
+    player: Arc<Engine>,
+    analyses: Arc<Analyses>,
+    /// Songs measured as they arrived, as last seen: a new one replans the transition.
+    measured: u64,
+}
+
+impl Driven {
+    /// [`nori_engine::Driven::turn`], then a slice of measuring if one is due: ms until the next turn is
+    /// due (`None`: when woken), or `None` once the engine stopped.
+    pub fn turn(&mut self) -> Option<Option<i64>> {
+        let next = self.engine.turn()?;
+        let measuring = self.analyses.turn();
+        let measured = self.analyses.measured_as_they_came();
+        if measured != self.measured {
+            self.measured = measured;
+            self.player.replan();
+        }
+        Some([next, measuring].into_iter().flatten().min())
+    }
+}
+
 /// The platform's HTTP: the core's API and covers, and the engine's audio, over one connection pool
 /// (nori-http's ureq agent natively).
 pub trait Net: Transport + ByteSource {}
@@ -129,6 +158,18 @@ impl ByteSource for Audio {
             return Err("offline".into());
         }
         self.http.open_live(url)
+    }
+
+    /// The platform's HTTP fetches on its own events where nothing may block (the web).
+    fn push(&self, fill: Filling) -> Option<Filling> {
+        if self.offline {
+            return Some(fill);
+        }
+        let given = self.http.push(fill);
+        if given.is_none() {
+            self.requests.fetch_add(1, Ordering::Relaxed);
+        }
+        given
     }
 }
 
@@ -205,6 +246,15 @@ pub struct Open<'a> {
     /// The platform's mDNS for remote control (Bonjour on iOS). None: with `desktop`, the session's own
     /// (mdns-sd); without, no nearby devices.
     pub discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
+    /// Where work that waits on the network runs ([`crate::Threads`] natively).
+    pub tasks: Arc<dyn Tasks>,
+    /// Songs are kept as files under `data`: the stream cache and downloads. A browser keeps none.
+    pub keeps_music: bool,
+    /// The platform's own decoders, preferred to those here.
+    pub decoders: nori_engine::Platform,
+    /// Looks for the account's playing device at the start and has its controls reach it (remote
+    /// control). Off where this client controls no other device (the web, for now): it plays here.
+    pub finds_active: bool,
     pub out: Out,
 }
 
@@ -218,8 +268,9 @@ pub struct Session {
     pub core: Arc<Core>,
     pub client: Arc<Client>,
     pub engine: Arc<Engine>,
-    pub store: Arc<Store>,
-    downloader: Arc<Downloader>,
+    /// The stream cache and downloads, where the platform keeps music files.
+    pub store: Option<Arc<Store>>,
+    downloader: Option<Arc<Downloader>>,
     pub covers: Option<Arc<Loader>>,
     level: Arc<Level>,
     search: Arc<SearchSession>,
@@ -241,6 +292,8 @@ pub struct Session {
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
     /// The AutoEQ notice said last, waiting for an answer.
     curve: Arc<parking_lot::Mutex<Option<CurveNotice>>>,
+    tasks: Arc<dyn Tasks>,
+    finds_active: bool,
     out: Out,
 }
 
@@ -248,10 +301,31 @@ impl Session {
     /// Opens the profile without touching the network, so an unreachable server still opens with what
     /// is stored; [`Session::check`] reports reachability.
     pub fn open(o: Open) -> Result<Session, String> {
-        Self::open_on(o, None::<nori_engine::Monotonic>)
+        Self::open_with(o, false, |library, app, queue, output, config, events| Engine::start(library, app, queue, output, None, config, events))
     }
 
-    fn open_on<C: nori_engine::Clock + Sync>(o: Open, clock: Option<C>) -> Result<Session, String> {
+    /// [`Session::open`] with the engine on the caller's thread, for a platform without threads (the web):
+    /// the caller turns the [`Driven`] whenever `wake` is called and once the time it asks for has passed.
+    pub fn open_driven(o: Open, wake: impl Fn() + Send + Sync + Clone + 'static) -> Result<(Session, Driven), String> {
+        let mut driven = None;
+        let s = Self::open_with(o, true, |library, app, queue, output, config, events| {
+            let analyses = library.analyses.clone();
+            let (engine, d) = Engine::driven(library, app, queue, output, config, nori_engine::Monotonic::new(), wake, events);
+            driven = Some((d, analyses));
+            engine
+        })?;
+        let (engine, analyses) = driven.expect("the engine was made");
+        let player = s.engine.clone();
+        Ok((s, Driven { engine, player, analyses, measured: 0 }))
+    }
+
+    #[cfg(test)]
+    fn open_on<C: nori_engine::Clock + Sync>(o: Open, clock: C) -> Result<Session, String> {
+        Self::open_with(o, false, |library, app, queue, output, config, events| Engine::start_on(library, app, queue, output, None, config, clock, events))
+    }
+
+    /// `turns`: the caller drives the engine, so songs are measured on its turns, not threads.
+    fn open_with(o: Open, turns: bool, start: impl FnOnce(CoreLibrary, CoreApp, CoreQueue, Box<dyn AudioOutput>, Config, Events) -> Engine) -> Result<Session, String> {
         let db = db_path(o.data);
         let core = Core::new(db.clone(), nori_core::settings::server_db_id(&o.profile.id), o.queue.clone()).map_err(|e| format!("the database: {e}"))?;
         match o.profile.kind {
@@ -268,34 +342,38 @@ impl Session {
         let level = o.volume;
         let loudness = level.loudness.clone();
         let output = o.output;
-        let store = Store::open(o.data.join("music"), prefs.cache_mb.max(0) as u64 * 1024 * 1024).map_err(|e| format!("the music directory: {e}"))?;
+        let store = match o.keeps_music {
+            true => Some(Store::open(o.data.join("music"), prefs.cache_mb.max(0) as u64 * 1024 * 1024).map_err(|e| format!("the music directory: {e}"))?),
+            false => None,
+        };
         let audio: Arc<dyn ByteSource> = Arc::new(Audio::new(o.http.clone(), o.offline));
         let audio: Arc<dyn ByteSource> = match o.profile.kind {
             ServerKind::Subsonic => audio,
             ServerKind::YouTubeMusic => Arc::new(Resolving { bytes: audio, client: client.clone() }),
         };
-        let analyses = Analyses::of(client.clone());
-        let downloader = Downloader::new(client.clone(), audio.clone(), store.clone(), analyses.clone());
+        let analyses = if turns { Analyses::on_turns(client.clone()) } else { Analyses::of(client.clone()) };
+        let downloader = store.as_ref().map(|store| Downloader::new(client.clone(), audio.clone(), store.clone(), analyses.clone()));
         // `bridging`: a song the network cannot bring raises `Event::Bridge` (see `Session::bridge`).
         let guest = nori_remote::is_guest_key(&o.profile.api_key);
         let rules = core.rules();
         let app = CoreApp::new(core.session.clone()).per_device(core.clone()).bridging().volume(loudness.clone());
         // A guest plays its host's transitions.
-        let app = if rules.measures { app.measuring(Measurer::new(analyses.clone(), store.clone())) } else { app };
-        let library = CoreLibrary { client: client.clone(), bytes: audio, store: Some(store.clone()), analyses };
+        let app = match &store {
+            Some(store) if rules.measures => app.measuring(Measurer::new(analyses.clone(), store.clone())),
+            _ => app,
+        };
+        let library = CoreLibrary { client: client.clone(), bytes: audio, store: store.clone(), analyses };
         let events = o.out.clone();
-        let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs, loudness.db()), ..Config::default() };
-        let events = move |e| events(Said::Engine(e));
-        let engine = Arc::new(match clock {
-            Some(clock) => Engine::start_on(library, app, CoreQueue(core.session.clone()), output, None, config, clock, events),
-            None => Engine::start(library, app, CoreQueue(core.session.clone()), output, None, config, events),
-        });
+        let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs, loudness.db()), platform: o.decoders, ..Config::default() };
+        let events: Events = Box::new(move |e| events(Said::Engine(e)));
+        let engine = Arc::new(start(library, app, CoreQueue(core.session.clone()), output, config, events));
         let covers = o.covers.map(|config| Arc::new(Loader::new(config, cover_net)));
         let remotes = Arc::new(crate::remote::Remotes::new(level.clone()));
-        let keeper = Keeper::start(core.clone(), engine.clone());
+        let (saved, playing) = (core.clone(), engine.clone());
+        let keeper = Keeper::start(move || save(&saved, &playing), o.tasks.clone());
         // A jam guest is no device of the account's: the jam lists it as a guest.
         let device = if guest { nori_core::remote::RemoteMe { kind: nori_remote::wire::DeviceKind::Guest, ..o.device } } else { o.device };
-        let s = Session { core, client, engine, store, downloader, covers, level, search: SearchSession::new(), offline: o.offline, #[cfg(feature = "desktop")] mpris: o.mpris, #[cfg(feature = "desktop")] seen: Default::default(), keeper, db: PathBuf::from(db), remotes, device, guest, rules, discovery: o.discovery, curve: Arc::default(), out: o.out };
+        let s = Session { core, client, engine, store, downloader, covers, level, search: SearchSession::new(), offline: o.offline, #[cfg(feature = "desktop")] mpris: o.mpris, #[cfg(feature = "desktop")] seen: Default::default(), keeper, db: PathBuf::from(db), remotes, device, guest, rules, discovery: o.discovery, curve: Arc::default(), tasks: o.tasks, finds_active: o.finds_active, out: o.out };
         #[cfg(feature = "desktop")]
         if let Some(m) = &s.mpris {
             let cover = crate::remote::NowCover::new(s.covers.clone(), s.core.clone(), Arc::downgrade(m));
@@ -311,6 +389,11 @@ impl Session {
 
     fn note(&self, n: Note) {
         (self.out)(Said::Note(n));
+    }
+
+    /// Runs `work` among the session's tasks.
+    fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
+        self.tasks.spawn(Box::pin(work));
     }
 
     /// Tells the media controls the song or state changed.
@@ -341,22 +424,22 @@ impl Session {
             return;
         }
         let (client, core, out, indexed) = (self.client.clone(), self.core.clone(), self.out.clone(), self.rules.indexed);
-        spawn("nori-check", move || {
-            let r = block_on(client.read_now(Read::Ping)).map(|_| ());
+        self.run(async move {
+            let r = client.read_now(Read::Ping).await.map(|_| ());
             let ok = r.is_ok();
             out(Said::Reachable(r));
             // Search and the songs list read the offline index, where the profile keeps one.
             if ok && indexed && core.index_size().map_or(true, |s| s.songs == 0) {
-                sync(&client, &out);
+                sync(&client, &out).await;
             }
-            let _ = block_on(client.flush_pending());
+            let _ = client.flush_pending().await;
         });
     }
 
     /// Fills the offline index from the server in the background.
     pub fn sync(&self) {
         let (client, out) = (self.client.clone(), self.out.clone());
-        spawn("nori-sync", move || sync(&client, &out));
+        self.run(async move { sync(&client, &out).await });
     }
 
     /// Restores the saved queue, paused at its position; with none saved the queue is empty (the one
@@ -382,8 +465,8 @@ impl Session {
         }
         if k.push && self.rules.account {
             let (client, st) = (self.client.clone(), self.engine.status());
-            spawn("nori-push", move || {
-                let _ = block_on(client.playlist_push(st.id.clone(), st.position_now().max(0)));
+            self.run(async move {
+                let _ = client.playlist_push(st.id.clone(), st.position_now().max(0)).await;
             });
         }
     }
@@ -409,10 +492,12 @@ impl Session {
     pub fn play_later(&self, what: Fetch, shuffle: bool) {
         let (client, me) = (self.client.clone(), self.handle());
         let origin = what.origin();
-        spawn("nori-play", move || match what.songs(&client) {
-            Ok(songs) if !songs.is_empty() => me.play(songs, 0, shuffle, Some(origin)),
-            Ok(_) => me.note(Note::NothingToPlay),
-            Err(e) => me.note(Note::SongsFailed(e)),
+        self.run(async move {
+            match what.songs(&client).await {
+                Ok(songs) if !songs.is_empty() => me.play(songs, 0, shuffle, Some(origin)),
+                Ok(_) => me.note(Note::NothingToPlay),
+                Err(e) => me.note(Note::SongsFailed(e)),
+            }
         });
     }
 
@@ -424,9 +509,11 @@ impl Session {
     /// Enqueues an album, playlist or artist once fetched.
     pub fn enqueue_later(&self, what: Fetch, next: bool) {
         let (client, me) = (self.client.clone(), self.handle());
-        spawn("nori-enqueue", move || match what.songs(&client) {
-            Ok(songs) => me.add(songs, next),
-            Err(e) => me.note(Note::SongsFailed(e)),
+        self.run(async move {
+            match what.songs(&client).await {
+                Ok(songs) => me.add(songs, next),
+                Err(e) => me.note(Note::SongsFailed(e)),
+            }
         });
     }
 
@@ -491,7 +578,7 @@ impl Session {
     }
 
     fn handle(&self) -> Handle {
-        Handle { engine: self.engine.clone(), queue: self.core.session.clone(), client: self.client.clone(), keeper: self.keeper.clone(), remotes: self.remotes.clone(), level: self.level.clone(), guest: self.guest, curve: self.curve.clone(), out: self.out.clone() }
+        Handle { engine: self.engine.clone(), queue: self.core.session.clone(), client: self.client.clone(), keeper: self.keeper.clone(), remotes: self.remotes.clone(), level: self.level.clone(), guest: self.guest, curve: self.curve.clone(), tasks: self.tasks.clone(), out: self.out.clone() }
     }
 
     /// The remote control and jams, while switched on: other devices to control, the jam hosted.
@@ -525,7 +612,7 @@ impl Session {
             }
             self.remotes.set(Some(r.clone()));
             self.remotes.played(&self.engine);
-            if prefs.remote_control && !self.guest {
+            if prefs.remote_control && !self.guest && self.finds_active {
                 r.clone().discover_active(true);
             }
             r
@@ -593,7 +680,9 @@ impl Session {
     }
 
     fn start_downloads(&self) {
-        self.downloader.start(self.core.session.settings.prefs(|p| p.parallel_downloads).max(1) as usize);
+        if let Some(d) = &self.downloader {
+            d.start(self.core.session.settings.prefs(|p| p.parallel_downloads).max(1) as usize);
+        }
     }
 
     /// Queues `songs` for download (their covers fetched to disk too) and starts the downloader.
@@ -605,19 +694,25 @@ impl Session {
     /// [`Session::download`] of what `what` names, asked of the server on a thread of its own.
     pub fn download_later(&self, what: Fetch) {
         let (client, core, downloader, out, covers) = (self.client.clone(), self.core.clone(), self.downloader.clone(), self.out.clone(), self.covers.clone());
-        spawn("nori-download-ask", move || match what.songs(&client) {
-            Ok(songs) => {
-                out(Said::Note(queue_downloads(&core, covers.as_ref(), songs)));
-                downloader.start(core.session.settings.prefs(|p| p.parallel_downloads).max(1) as usize);
+        self.run(async move {
+            match what.songs(&client).await {
+                Ok(songs) => {
+                    out(Said::Note(queue_downloads(&core, covers.as_ref(), songs)));
+                    if let Some(d) = downloader {
+                        d.start(core.session.settings.prefs(|p| p.parallel_downloads).max(1) as usize);
+                    }
+                }
+                Err(e) => out(Said::Note(Note::SongsFailed(e))),
             }
-            Err(e) => out(Said::Note(Note::SongsFailed(e))),
         });
     }
 
     /// Deletes a download from disk.
     pub fn download_remove(&self, id: &str) {
         let _ = self.core.download_remove(id.to_string());
-        let _ = std::fs::remove_file(self.store.download_path(id));
+        if let Some(store) = &self.store {
+            let _ = std::fs::remove_file(store.download_path(id));
+        }
     }
 
     /// Sets a setting by name and applies its effects, as Android's player does. None if no such setting.
@@ -626,13 +721,13 @@ impl Session {
         self.apply(change.effect, &change.prefs);
         if name == "lyricsPrefetch" {
             let client = self.client.clone();
-            spawn("nori-lyrics-ahead", move || block_on(client.lyrics_prefetch()));
+            self.run(async move { client.lyrics_prefetch().await });
         }
         if matches!(name, "remoteControl" | "jam") {
             self.follow_remote();
         }
-        if change.effect & CACHE_LIMIT != 0 {
-            self.store.set_limit(change.prefs.cache_mb.max(0) as u64 * 1024 * 1024);
+        if let Some(store) = self.store.as_ref().filter(|_| change.effect & CACHE_LIMIT != 0) {
+            store.set_limit(change.prefs.cache_mb.max(0) as u64 * 1024 * 1024);
         }
         if change.server {
             // Per-server settings (music folder, second address bitrate) live on the profile.
@@ -679,9 +774,11 @@ impl Session {
         let Some(notice) = self.curve.lock().take() else { return };
         let me = self.handle();
         match notice {
-            CurveNotice::Offer { output, entry } => spawn("nori-autoeq", move || match block_on(me.client.device_accept(output.clone(), entry)) {
-                Ok(c) => me.device_curve_done(&output, c),
-                Err(e) => me.note(Note::CurveFailed(e)),
+            CurveNotice::Offer { output, entry } => self.run(async move {
+                match me.client.device_accept(output.clone(), entry).await {
+                    Ok(c) => me.device_curve_done(&output, c),
+                    Err(e) => me.note(Note::CurveFailed(e)),
+                }
             }),
             CurveNotice::Applied { output, curve, before, created } => {
                 let effect = self.core.device_undo(output.clone(), curve, created, before);
@@ -700,8 +797,8 @@ impl Session {
     /// Fetches lyrics for `song`; each better answer arrives as [`Said::Lyrics`].
     pub fn lyrics(&self, song: String) {
         let (client, out) = (self.client.clone(), self.out.clone());
-        spawn("nori-lyrics", move || {
-            let _ = block_on(client.lyrics_for(song.clone(), Arc::new(Shown { song, out })));
+        self.run(async move {
+            let _ = client.lyrics_for(song.clone(), Arc::new(Shown { song, out })).await;
         });
     }
 
@@ -733,12 +830,14 @@ impl Session {
         }
         let _ = self.core.search_remember_recent(query.clone());
         let (search, client, out) = (self.search.clone(), self.client.clone(), self.out.clone());
-        spawn("nori-search", move || match block_on(search.ask(client, query.clone())) {
-            Ok(Some(v)) => out(Said::Search(v)),
-            Ok(None) => {}
-            Err(e) => {
-                if let Some(v) = search.failed(query, Some(error(&e))) {
-                    out(Said::Search(v));
+        self.run(async move {
+            match search.ask(client, query.clone()).await {
+                Ok(Some(v)) => out(Said::Search(v)),
+                Ok(None) => {}
+                Err(e) => {
+                    if let Some(v) = search.failed(query, Some(error(&e))) {
+                        out(Said::Search(v));
+                    }
                 }
             }
         });
@@ -751,8 +850,8 @@ impl Session {
             return;
         }
         let (client, out, notice, hearts) = (self.client.clone(), self.out.clone(), self.core.favourite_notice(), self.handle().hearts());
-        spawn("nori-star", move || {
-            let said = match block_on(client.star(kind, id, on, hearts)) {
+        self.run(async move {
+            let said = match client.star(kind, id, on, hearts).await {
                 Ok(()) if !notice => return,
                 Ok(()) => Note::Starred(on),
                 Err(e) => Note::StarFailed(e),
@@ -787,7 +886,11 @@ impl Session {
                     Err(e) => self.note(Note::DownloadFailed(e)),
                 };
             }
-            Chore::ClearStream => self.store.clear_cache(),
+            Chore::ClearStream => {
+                if let Some(store) = &self.store {
+                    store.clear_cache();
+                }
+            }
             Chore::ClearLyrics => self.core.lyrics_cache_clear(),
             Chore::ClearCovers => {
                 if let Some(d) = self.covers.as_ref().and_then(|l| l.disk()) {
@@ -822,13 +925,13 @@ impl Session {
         };
         if let Some(send) = send.filter(|s| self.rules.account && (s.submit_id.is_some() || s.now_playing_id.is_some())) {
             let client = self.client.clone();
-            spawn("nori-scrobble", move || {
+            self.run(async move {
                 // Offline, writes wait in the pending queue with their original time.
                 if let Some(id) = send.submit_id {
-                    let _ = block_on(client.write(nori_core::client::Write::Scrobble { id, submission: true, time_ms: Some(send.submit_at) }));
+                    let _ = client.write(nori_core::client::Write::Scrobble { id, submission: true, time_ms: Some(send.submit_at) }).await;
                 }
                 if let Some(id) = send.now_playing_id {
-                    let _ = block_on(client.write(nori_core::client::Write::Scrobble { id, submission: false, time_ms: None }));
+                    let _ = client.write(nori_core::client::Write::Scrobble { id, submission: false, time_ms: None }).await;
                 }
             });
         }
@@ -854,7 +957,7 @@ impl Session {
         self.keeper.later(steps.save_after_ms);
         if steps.lyrics_ahead {
             let client = self.client.clone();
-            spawn("nori-lyrics-ahead", move || block_on(client.lyrics_prefetch()));
+            self.run(async move { client.lyrics_prefetch().await });
         }
         if steps.fill {
             self.refill();
@@ -862,8 +965,8 @@ impl Session {
         if steps.bridge == BridgeStep::Parked {
             // Back to the parked song if the server answers, else bridged further.
             let (client, me) = (self.client.clone(), self.handle());
-            spawn("nori-bridge", move || {
-                if let Some(edit) = block_on(client.bridge_parked()) {
+            self.run(async move {
+                if let Some(edit) = client.bridge_parked().await {
                     me.apply(&edit);
                 }
             });
@@ -891,8 +994,8 @@ impl Session {
     /// Appends autofill songs; a next pressed while fetching is applied when they land.
     fn refill(&self) {
         let (client, me) = (self.client.clone(), self.handle());
-        spawn("nori-autofill", move || {
-            let fresh = block_on(client.autofill());
+        self.run(async move {
+            let fresh = client.autofill().await;
             me.filled(fresh);
         });
     }
@@ -939,10 +1042,16 @@ pub(crate) struct Handle {
     level: Arc<Level>,
     guest: bool,
     curve: Arc<parking_lot::Mutex<Option<CurveNotice>>>,
+    tasks: Arc<dyn Tasks>,
     out: Out,
 }
 
 impl Handle {
+    /// Runs `work` among the session's tasks.
+    fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
+        self.tasks.spawn(Box::pin(work));
+    }
+
     fn filled(&self, fresh: nori_core::autofill::Refill) {
         let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
         if !self.client.autofill_arrived(fresh) || ids.is_empty() {
@@ -989,12 +1098,12 @@ impl Handle {
         }
     }
 
-    /// The AutoEQ step of `output`'s arrival (`Client::device_curve`), on a thread of its own.
+    /// The AutoEQ step of `output`'s arrival (`Client::device_curve`), among the session's tasks.
     fn device_curve(&self, output: String) {
         let me = self.clone();
         // Unmetered: the AutoEQ list waits for no network these clients can tell apart.
-        spawn("nori-autoeq", move || {
-            let c = block_on(me.client.device_curve(output.clone(), false));
+        self.run(async move {
+            let c = me.client.device_curve(output.clone(), false).await;
             me.device_curve_done(&output, c);
         });
     }
@@ -1043,8 +1152,8 @@ impl Handle {
     /// devices see it once marked.
     pub(crate) fn star(&self, id: String, on: bool) {
         let (client, hearts) = (self.client.clone(), self.hearts());
-        spawn("nori-star", move || {
-            if let Err(e) = block_on(client.star(Starrable::Song, id, on, hearts)) {
+        self.run(async move {
+            if let Err(e) = client.star(Starrable::Song, id, on, hearts).await {
                 nori_core::alog::info(&format!("remote: star not kept: {e}"));
             }
         });
@@ -1056,7 +1165,7 @@ impl Handle {
         self.keeper.later(queue_keep(QueueMoment::Edited).save_after_ms);
         if self.queue.lyrics_prefetch_ready() {
             let client = self.client.clone();
-            spawn("nori-lyrics-ahead", move || block_on(client.lyrics_prefetch()));
+            self.run(async move { client.lyrics_prefetch().await });
         }
         self.remotes.played(&self.engine);
     }
@@ -1261,9 +1370,9 @@ fn warm_covers(core: &Core, covers: Option<&Arc<Loader>>, songs: &[Song]) {
     }
 }
 
-fn sync(client: &Client, out: &Out) {
+async fn sync(client: &Client, out: &Out) {
     out(Said::Note(Note::Indexing));
-    out(Said::Note(match crate::sync(client) {
+    out(Said::Note(match client.sync_library().await {
         Ok(total) => Note::Indexed(total),
         Err(e) => Note::IndexStopped(e),
     }));
@@ -1332,6 +1441,10 @@ mod tests {
             mpris: None,
             device: nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop },
             discovery: None,
+            tasks: crate::Threads::new(),
+            keeps_music: true,
+            decoders: Default::default(),
+            finds_active: true,
             out: Arc::new(|_| {}),
         })
         .unwrap();
@@ -1363,6 +1476,10 @@ mod tests {
                 mpris: None,
                 device: nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop },
                 discovery: None,
+                tasks: crate::Threads::new(),
+                keeps_music: true,
+                decoders: Default::default(),
+                finds_active: true,
                 out: Arc::new(|_| {}),
             })
             .unwrap()

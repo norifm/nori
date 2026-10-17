@@ -126,7 +126,7 @@ fn buffer_paths_allocate_nothing() {
 /// Allocations per buffer read from `source` after the first 16, in `encoding`.
 fn per_read(source: Box<dyn symphonia::core::io::MediaSource>, hint: &str, encoding: Encoding) -> f64 {
     use nori_player::pipeline::Reading;
-    let mut d = crate::demux::Demuxed::open(source, Some(hint), 0, None, encoding, None).expect("opens");
+    let mut d = crate::demux::Demuxed::open(source, Some(hint), 0, None, encoding, Default::default()).expect("opens");
     for _ in 0..16 {
         assert!(d.fill(), "longer than the warm-up");
     }

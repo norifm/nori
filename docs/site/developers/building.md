@@ -1,6 +1,6 @@
 ---
 title: Building
-description: Building nori's apps and checks, keeping them fast across parallel work, and the perf build.
+description: Building nori's apps and checks, keeping them fast across parallel work, the perf build, and the web client.
 sidebar:
   order: 3
 ---
@@ -883,6 +883,73 @@ Final artifacts: `build/development-timings/smoke-hardware/`, `audio-final/`,
 `feature-passing/`, `kotlin-edit-final/` and `bazel-rust-edit/`. The Bazel command's
 process-tree CPU excludes its persistent server; its near-zero driver CPU must
 not be used as the compilation cost. Sampled compiler CPU includes that work.
+
+## The web client
+
+Applies to the `web-v1` development branch (not in a release yet). The web client is `crates/web`
+(nori-web, built for `wasm32-unknown-unknown` with wasm-bindgen; natively an empty library, so the
+workspace's tests and clippy do not see it) and `web/` (plain TypeScript, HTML and CSS, no framework).
+`docs/research/web-client.md` has how it works and what remains.
+
+### What it needs
+
+- the `wasm32-unknown-unknown` Rust target: `rustup target add wasm32-unknown-unknown`;
+- `wasm-bindgen-cli` at the version in `Cargo.lock`: `cargo install wasm-bindgen-cli --version 0.2.128`;
+- `wasm-opt` (binaryen), `brotli` and node (`npx` fetches TypeScript 5.6.3);
+- a clang that targets wasm32 for SQLite's C: Homebrew LLVM (`brew install llvm`) or the Android NDK's
+  clang, which `web/build.sh` finds by itself. Apple's clang has no wasm32 backend.
+
+### Building and serving
+
+```sh
+web/build.sh                                  # web/dist: three wasm modules, the shell, a size table
+tools/dev-server.sh                           # the local Navidrome, admin/admin
+python3 web/serve.py                          # http://localhost:8080, /rest/ passed on to localhost:4533
+python3 web/serve.py --log --kbps 400         # each API request printed, its answers at most 400 kbit/s
+                                              # (--files-kbps: the client's own files too)
+```
+
+`web/build.sh` builds `core.wasm` (sign-in and the library), `player.wasm` (the shared session and the
+engine, decoding with the browser's WebCodecs) and `player-codecs.wasm` (the same with Vorbis, ALAC and
+Opus decoded in Rust, for a browser without them), each run through `wasm-opt -Oz`, compiles the
+TypeScript, copies the static files and prints every piece's size raw and brotli-compressed. SQLite is
+built without the extras the core never uses (`CFLAGS_wasm32_unknown_unknown` in the script).
+
+A service worker keeps the shell and modules of the build it came with: after a rebuild, a page loaded
+once more picks up the new build (it loads twice). `web/dist` is static: any server that serves it from the same origin as the Subsonic API works (the
+page signs requests itself; there are no CORS headers to set). `web/serve.py` is for development only.
+Serve `.wasm` as `application/wasm` and, in production, precompressed with brotli.
+
+To check only that it compiles:
+
+```sh
+cargo check -j4 --target wasm32-unknown-unknown -p nori-web                        # the player module
+cargo check -j4 --target wasm32-unknown-unknown -p nori-web --no-default-features  # the core module
+```
+
+(`CC_wasm32_unknown_unknown` must name a clang with a wasm32 target, as for the build.)
+
+### Checking it in a browser
+
+```sh
+npm --prefix web/check install
+node web/check/check.mjs http://localhost:8080/          # every phase; or add one: browse, play, lyrics,
+                                                         # skip, automix, crossfade, codecs, speed, edit,
+                                                         # crash, tabs, offline, slowstart, early
+```
+
+`web/check/jam.mjs` checks a jam between two browser profiles over a server with the relay
+(`tools/jam-server.sh`, then `python3 web/serve.py --port 8081 --server http://localhost:5274` and
+`node web/check/jam.mjs http://localhost:8081/`). `web/check/check.mjs` drives headless Chrome (`CHROME` names another browser) against `web/serve.py` and
+the local Navidrome: sign-in, the library pages and search, a song streamed and played for ten seconds
+without the AudioWorklet running dry, next and previous, synced lyrics moving on, an AutoMix transition
+planned from both songs' measurements and a crossfade with no silence over 20 ms, an Apple Lossless song
+(the Rust decoders loaded beside the player), and speed and pitch at their pace. With
+`THROTTLED_URL=http://localhost:8082/` and `python3 web/serve.py --port 8082 --kbps 400` running, it also
+times a song's first sound at 400 kbit/s and listens for running dry after it. It prints what it saw
+and exits non-zero when something is off. Headless Chrome is muted: it checks what the AudioWorklet
+played, not what a speaker would. It cannot check background audio with a locked screen (iOS Safari
+suspends an AudioContext when the page is hidden), Safari's or Firefox's codecs, or real latency.
 
 ## Local and workflow releases
 

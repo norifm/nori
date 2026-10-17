@@ -1,2 +1,4 @@
 dist/
 src/pkg/
+check/node_modules/
+check/package-lock.json

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use nori_engine::demux::Demuxed;
-use nori_player::decode::{Codec, Decoder, Fault, PlatformAac, PlatformDecoder};
+use nori_player::decode::{Codec, Decoder, Fault, Platform, PlatformAac, PlatformDecoder};
 use nori_player::pcm::Encoding;
 use nori_player::pipeline::Reading;
 
@@ -37,7 +37,7 @@ fn made(dir: &Path) -> (PathBuf, Vec<i16>) {
 fn decode(path: &Path, from_ms: i64, aac: Option<PlatformAac>) -> Vec<i16> {
     let file = std::fs::File::open(path).unwrap();
     let hint = path.extension().unwrap().to_str().unwrap();
-    let mut d = Demuxed::open(Box::new(file), Some(hint), from_ms, None, Encoding::Pcm16, aac).unwrap();
+    let mut d = Demuxed::open(Box::new(file), Some(hint), from_ms, None, Encoding::Pcm16, Platform { aac, later: None }).unwrap();
     assert!(d.ready());
     let mut out = Vec::new();
     while d.fill() {

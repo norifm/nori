@@ -106,6 +106,7 @@ const OPUS_SEEK_PREROLL: usize = 3840;
 /// The decoding backend.
 enum Engine {
     Symphonia(Box<dyn Inner>),
+    #[cfg(feature = "rust-codecs")]
     Opus { dec: opus_rs::OpusDecoder, channels: usize, pre_skip: usize, pre_roll: usize, gain: f32 },
     Platform(Box<dyn PlatformDecoder>),
 }
@@ -133,6 +134,45 @@ pub struct AacSetup<'a> {
 
 /// Makes a platform decoder for an HE-AAC stream, `None` if it cannot.
 pub type PlatformAac = fn(&AacSetup) -> Option<Box<dyn PlatformDecoder>>;
+
+/// A platform decoder that answers later (WebCodecs, in a browser, where nothing may block): fed packets
+/// in order, it hands back each one's samples once they are decoded, in the same order, with the shape
+/// it decoded them in. The platform drops a codec's own priming (Opus pre-skip) as it decodes; the MP3
+/// decoder's delay is kept, as here.
+pub trait LaterDecoder: Send {
+    /// Takes the next packet, which starts `at_us` into the song (by its stamp).
+    fn feed(&mut self, unit: &[u8], at_us: i64);
+    /// The oldest packet fed is decoded (or failed): [`LaterDecoder::take`] has it.
+    fn ready(&self) -> bool;
+    /// The oldest packet's samples, appended to `out` as interleaved float, with (channels, rate); None
+    /// while it is still decoding.
+    fn take(&mut self, out: &mut Vec<f32>) -> Option<Result<(usize, u32), Fault>>;
+    /// No more packets: those fed are decoded to their end.
+    fn finish(&mut self);
+    /// A seek: what was fed is dropped.
+    fn reset(&mut self);
+}
+
+/// A stream a platform decoder is asked for: its codec, stated rate and channels, and the container's
+/// codec setup (STREAMINFO, AudioSpecificConfig, Vorbis headers, OpusHead).
+#[derive(Debug, Clone, Copy)]
+pub struct Setup<'a> {
+    pub codec: Codec,
+    pub rate: u32,
+    pub channels: usize,
+    pub config: Option<&'a [u8]>,
+}
+
+/// Makes a platform decoder that answers later for a stream, `None` if it cannot decode it.
+pub type PlatformLater = fn(&Setup) -> Option<Box<dyn LaterDecoder>>;
+
+/// The platform's own decoders: for HE-AAC, decoding packet by packet (Android's MediaCodec); and for
+/// whatever it can decode, answering later (a browser's WebCodecs), which comes first.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Platform {
+    pub aac: Option<PlatformAac>,
+    pub later: Option<PlatformLater>,
+}
 
 /// Whether an AAC stream is HE-AAC: object type 5 (SBR) or 29 (PS), an explicit SBR extension in the
 /// config, or AAC-LC at 24 kHz or less (implicit signalling, as radio AAC+ does).
@@ -210,6 +250,17 @@ fn opus_setup(extra: Option<&[u8]>) -> Option<(usize, usize, usize, f32)> {
     Some((channels, pre_skip, pre_roll, gain))
 }
 
+/// Frames a reader drops after a seek in a stream a [`LaterDecoder`] decodes, which starts afresh then (an
+/// Opus stream's pre-skip dropped, and the MP3 decoder's delay kept) where a decoder here drops a seek's
+/// pre-roll and its delay.
+pub fn later_seek_skip(codec: Codec, extra: Option<&[u8]>) -> usize {
+    match codec {
+        Codec::Mp3 => MP3_DECODER_DELAY,
+        Codec::Opus => opus_setup(extra).map_or(0, |(_, pre_skip, pre_roll, _)| pre_roll.saturating_sub(pre_skip)),
+        _ => 0,
+    }
+}
+
 /// One packet's samples borrowed from [`Decoder::decode_lent`].
 pub struct Lent<'a> {
     pub samples: &'a [f32],
@@ -239,6 +290,11 @@ impl Decoder {
     /// `extra` is the extractor's codec setup (STREAMINFO, AudioSpecificConfig, Vorbis headers, ALAC
     /// cookie, OpusHead). `delay_known`: an MP3 LAME header lets the platform trim the decoder delay.
     pub fn new(codec: Codec, rate: u32, channels: usize, extra: Option<&[u8]>, delay_known: bool) -> Result<Decoder, String> {
+        #[cfg(not(feature = "rust-codecs"))]
+        if codec == Codec::Opus {
+            return Err("Opus is decoded by the platform here".into());
+        }
+        #[cfg(feature = "rust-codecs")]
         if codec == Codec::Opus {
             let (channels, pre_skip, pre_roll, gain) = opus_setup(extra).ok_or("not a mono or stereo Opus stream")?;
             let dec = opus_rs::OpusDecoder::new(OPUS_RATE as i32, channels).map_err(str::to_string)?;
@@ -365,6 +421,7 @@ impl Decoder {
         self.held = 0;
         let mut fresh = std::mem::take(&mut self.fresh);
         let frames = match &mut self.inner {
+            #[cfg(feature = "rust-codecs")]
             Engine::Opus { dec, channels, gain, .. } => {
                 let n = dec.decode(packet, OPUS_MAX_FRAMES, &mut self.scratch).map_err(|_| Fault::BadPacket)?;
                 if *gain != 1.0 {
@@ -448,6 +505,7 @@ impl Decoder {
 
     /// Discontinuity (a seek; `at_start` at the very beginning). MP3 drops its decoder delay again;
     /// Opus skips its pre-skip at the start, its pre-roll elsewhere.
+    #[cfg_attr(not(feature = "rust-codecs"), allow(unused_variables, reason = "only Opus tells the start apart"))]
     pub fn reset(&mut self, at_start: bool) {
         self.held = 0;
         self.fresh = true;
@@ -459,6 +517,7 @@ impl Decoder {
                 }
             }
             Engine::Platform(dec) => dec.reset(),
+            #[cfg(feature = "rust-codecs")]
             Engine::Opus { dec, channels, pre_skip, pre_roll, .. } => {
                 // opus-rs has no reset: replace it.
                 if let Ok(d) = opus_rs::OpusDecoder::new(OPUS_RATE as i32, *channels) {
