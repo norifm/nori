@@ -939,7 +939,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         self.watch(now);
         self.follow_awake();
         // A flush made this turn reaches the device now, with the music after it in the ring.
-        self.p.sink.track.told();
+        self.p.sink.track.tell_flush();
         Some(self.wake_in(now))
     }
 

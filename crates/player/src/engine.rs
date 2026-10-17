@@ -749,7 +749,7 @@ impl TransitionEngine {
         let before = start_frame.max(0) as usize * fb;
         if before > 0 {
             let head = self.copy_of(&buf[..before]);
-            self.enqueue(head, pts_us, Some(self.offset_us), gain);
+            self.enqueue(head, pts_us, Some(self.offset_us), 1.0, gain);
         }
         self.flight.late_us = mix_phase.unwrap_or_else(|| {
             if late { -start_frame * 1_000_000 / out.rate as i64 } else { 0 }
@@ -796,7 +796,7 @@ impl TransitionEngine {
         };
         if !taken {
             let c = self.copy_of(buffer);
-            self.enqueue(c, pts_us, Some(self.offset_us), gain);
+            self.enqueue(c, pts_us, Some(self.offset_us), 1.0, gain);
             match self.queue.back_mut() {
                 // The output just said it is full.
                 Some(c) if direct => c.pos = used,
@@ -1054,7 +1054,7 @@ impl TransitionEngine {
                 let at = self.stamp(first_us, frames, pace, out);
                 let c = self.copy_of(&chunk);
                 self.loop_buf = chunk;
-                self.enqueue_paced(c, at, None, pace);
+                self.enqueue(c, at, None, pace, 1.0);
                 self.flight.mixed_end_us = Some(at + span_us(frames, pace, out));
                 self.mix_out_frame += frames;
             } else {
@@ -1065,7 +1065,7 @@ impl TransitionEngine {
                 let at = self.stamp(first_us, frames, pace, out);
                 let mut c = self.take_pooled(bytes);
                 c.extend_from_slice(&self.tail[r..r + bytes]);
-                self.enqueue_paced(c, at, None, pace);
+                self.enqueue(c, at, None, pace, 1.0);
                 self.flight.mixed_end_us = Some(at + span_us(frames, pace, out));
                 self.flight.tail_read += bytes;
             }
@@ -1075,7 +1075,7 @@ impl TransitionEngine {
             let rest = &src[used..];
             let at = self.stamp(first_us + out.us(used), rest.len() / fb, pace, out);
             let c = self.copy_of(rest);
-            self.enqueue_paced(c, at, Some(self.offset_us), pace);
+            self.enqueue(c, at, Some(self.offset_us), pace, 1.0);
             self.flight.mixed_end_us = Some(at + span_us(rest.len() / fb, pace, out));
         }
         if let Some(b) = converted {
@@ -1210,7 +1210,7 @@ impl TransitionEngine {
         let pace = self.stretch_pace;
         // Finished: the resync belongs to the buffer after this one, back on real timestamps.
         let resync = self.flight.stretch.is_none() && std::mem::take(&mut self.flight.resync_next);
-        self.enqueue_paced(o, at, Some(self.offset_us), pace);
+        self.enqueue(o, at, Some(self.offset_us), pace, 1.0);
         self.flight.resync_next |= resync;
         if let Some(at) = self.flight.synthetic_pts_us.as_mut() {
             *at += span_us(frames, pace, out);
@@ -1252,7 +1252,7 @@ impl TransitionEngine {
                 };
                 let mut c = self.take_pooled(end - from);
                 c.extend_from_slice(&self.tail[from..end]);
-                self.enqueue(c, at, Some(self.held_offset_us), 1.0);
+                self.enqueue(c, at, Some(self.held_offset_us), 1.0, 1.0);
             }
         }
         if self.flight.phase != Phase::Pass {
@@ -1311,17 +1311,9 @@ impl TransitionEngine {
 
     // ---- output queue ----
 
-    /// Queues `data` at `pts_us`, with `gain` still to be applied by the output; `stream_us` is its
-    /// song's stream offset (`None` for a mix).
-    fn enqueue(&mut self, data: Vec<u8>, pts_us: i64, stream_us: Option<i64>, gain: f32) {
-        self.push_chunk(data, pts_us, stream_us, 1.0, gain);
-    }
-
-    fn enqueue_paced(&mut self, data: Vec<u8>, pts_us: i64, stream_us: Option<i64>, pace: f64) {
-        self.push_chunk(data, pts_us, stream_us, pace, 1.0);
-    }
-
-    fn push_chunk(&mut self, data: Vec<u8>, pts_us: i64, stream_us: Option<i64>, pace: f64, gain: f32) {
+    /// Queues `data` at `pts_us`, at `pace` song frames a frame and with `gain` still to be applied by the
+    /// output; `stream_us` is its song's stream offset (`None` for a mix).
+    fn enqueue(&mut self, data: Vec<u8>, pts_us: i64, stream_us: Option<i64>, pace: f64, gain: f32) {
         if data.is_empty() {
             self.recycle(data);
             return;

@@ -656,18 +656,13 @@ impl RingTrack {
         Slipped { heard_ms: now.back_ms, ahead_ms: self.written.back_ms - now.back_ms, owed_ms: self.slipper.owed * self.frame_ms, written_ms: ms(self.written.ring.saturating_sub(now.ring) as f64) }
     }
 
-    /// Tells the device of a pending flush, with the fade asked for since.
-    fn tell_flush(&mut self) {
+    /// Tells the device of a pending flush, with the fade asked for since (at the end of the engine's turn).
+    pub(crate) fn tell_flush(&mut self) {
         let Some(untold) = self.untold.take() else { return };
         self.output.flush();
         if let Some((from, target, ms)) = untold.ramp {
             self.ramp_now(from, target, ms);
         }
-    }
-
-    /// End of the engine's turn: a pending flush is told now.
-    pub(crate) fn told(&mut self) {
-        self.tell_flush();
     }
 
     /// High quality output on or off, from the device's next opening ([`Track::must_reopen`]).
@@ -1452,7 +1447,7 @@ mod tests {
         t.flush();
         t.write(&pcm(&[8192; 100]), 100.0);
         t.ramp(None, 1.0, 0);
-        t.told();
+        t.tell_flush();
         assert_eq!(f.pull(&mut out), 100);
         assert!((out[0] - 0.25).abs() < 1e-6, "the new music, at once: {}", out[0]);
         // A pause's fade that comes back up plays on from its bottom.

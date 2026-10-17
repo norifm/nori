@@ -40,11 +40,6 @@ pub type Lookup<'a> = &'a dyn Fn(StreamAt) -> Option<(usize, i64)>;
 #[derive(Debug, Default)]
 pub struct HeardTracker {
     queue: Vec<(String, i64)>,
-    ear: Ear,
-}
-
-#[derive(Debug, Default)]
-struct Ear {
     /// (serial mixed out of, ms, at ms, the player's stream then): the stream after it stays shown after
     /// the engine lets go.
     carry: Option<(u64, i64, i64, Option<u64>)>,
@@ -78,11 +73,6 @@ impl HeardTracker {
     pub fn set_queue<I: IntoIterator<Item = (String, i64)>>(&mut self, songs: I) {
         self.queue.clear();
         self.queue.extend(songs);
-    }
-
-    /// The audible stream given the engine's `h` and the player's `p`; `find` places streams in the queue.
-    pub fn at(&mut self, h: &Heard, p: PlayerNow, find: Lookup) -> Seen {
-        self.ear.at(find, h, p)
     }
 
     /// Whether queue entries `heard` and `shown` are different songs (false if `shown` is out of range).
@@ -209,13 +199,14 @@ pub fn shown_duration_ms(heard_s: Option<i64>, player_ms: i64, tagged_ms: i64) -
     }
 }
 
-impl Ear {
+impl HeardTracker {
     /// Already crossed this takeover: a fresh reading landing slightly behind must not switch back.
     fn over(&self, h: &Heard, until_us: i64) -> bool {
         self.crossed == Some((until_us, h.next_from_us))
     }
 
-    fn at(&mut self, q: Lookup, h: &Heard, p: PlayerNow) -> Seen {
+    /// The audible stream given the engine's `h` and the player's `p`; `q` places streams in the queue.
+    pub fn at(&mut self, h: &Heard, p: PlayerNow, q: Lookup) -> Seen {
         let next = h.from.map(StreamAt::After);
         let result: Option<(StreamAt, i64)> = if let Some(id) = h.id {
             let held = StreamAt::Serial(id);

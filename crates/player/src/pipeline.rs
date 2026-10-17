@@ -403,10 +403,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// The serial of song `i`'s latest stream, or a new one.
     fn serial_for(&mut self, i: usize) -> u64 {
-        match self.periods.iter().rev().find(|p| p.index == i) {
-            Some(p) => p.serial,
-            None => self.new_serial(),
-        }
+        self.serial_at(i).unwrap_or_else(|| self.new_serial())
     }
 
     /// The serial of song `i`'s latest stream.
