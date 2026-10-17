@@ -621,9 +621,9 @@ impl Nori {
 /// Moving the music between the account's devices ("Play on"), through the relay.
 #[wasm_bindgen]
 impl Nori {
-    /// The account's other devices: `{ on, active, list: [{ id, name, kind, playing, nearby }] }`; `on`
-    /// while the music can move (remote control on, not a jam guest), `active` the id of the device
-    /// playing while it is another one. `kinds` (JSON `{ phone, desktop, terminal, guest }`) words the
+    /// The account's other devices: `{ on, me, active, list: [{ id, name, kind, playing, nearby }] }`; `on`
+    /// while the music can move (remote control on, not a jam guest), `me` this browser's id as the
+    /// others know it, `active` the id of the device playing while it is another one. `kinds` (JSON `{ phone, desktop, terminal, guest }`) words the
     /// kinds that tell devices of one name apart.
     pub fn devices(&self, kinds: String) -> String {
         let words: Kinds = serde_json::from_str(&kinds).unwrap_or_default();
@@ -638,7 +638,7 @@ impl Nori {
                 .zip(names)
                 .map(|(d, name)| json!({ "id": d.id, "name": name, "kind": format!("{:?}", d.kind), "playing": d.state.as_ref().is_some_and(|s| s.playing), "nearby": d.nearby }))
                 .collect();
-            json!({ "on": true, "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
+            json!({ "on": true, "me": r.id(), "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
         })
         .unwrap_or_else(|| json!({ "on": false, "active": null, "list": [] }).to_string())
     }

@@ -167,7 +167,17 @@ impl Nori {
     pub fn settings_page(&self, name: String) -> Result<String, JsValue> {
         let page = SettingsPage::ALL.into_iter().find(|p| format!("{p:?}") == name).ok_or_else(|| error(format!("no settings page {name}")))?;
         let prefs = self.app.settings.current().unwrap_or_default();
-        let state = nori_core::settings_model::state(&prefs, Default::default(), &Default::default());
+        // What the pages read of the device: a browser has no DAC, no offload and no beat model, and its
+        // pages list no lyrics services (`settings_model::state` would bring the player's policy in).
+        let state = nori_core::settings_model::SettingsState {
+            values: Default::default(),
+            untouched: false,
+            sound_chain_on: prefs.sound_chain_on(),
+            offload_paused: false,
+            lyrics_sources: Vec::new(),
+            beat_model: nori_core::settings_model::BeatModel::Unavailable,
+            beat_model_mb: 0,
+        };
         let facts = settings_pages::PageFacts { parts: self.rules().settings, ..Default::default() };
         let sections: Vec<Value> = settings_pages::page(page, SettingsClient::Web, &prefs, &state, &facts)
             .into_iter()
