@@ -106,7 +106,7 @@ impl App for Planned {
 }
 
 struct Rig {
-    engine: Engine,
+    engine: common::Running,
     time: Stepper<Pull>,
     card: Card,
 }
@@ -120,7 +120,7 @@ impl Rig {
         let clock = Virtual::default();
         let mut app = sim::App::new();
         app.prefs = sim::prefs_off();
-        let engine = Engine::start_on(Songs::new(), Planned(app), queue, Box::new(card.clone()), None, Config::default(), clock.clone(), |_| {});
+        let engine = common::Running(Engine::start_on(Songs::new(), Planned(app), queue, Box::new(card.clone()), None, Config::default(), clock.clone(), |_| {}));
         engine.queue_changed();
         engine.play_at(0, 0);
         let rig = Rig { engine, time: Stepper::new(clock, card.pull.clone()), card };
@@ -139,12 +139,6 @@ impl Rig {
     fn assert_own_pitch(&self, what: &str) {
         let hz = self.card.last_second_hz();
         assert!((hz - HZ).abs() < 3.0, "{what}: the song plays at {hz} Hz, not {HZ} (x{:.4})", hz / HZ);
-    }
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        self.engine.stop();
     }
 }
 

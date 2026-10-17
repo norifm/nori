@@ -70,7 +70,7 @@ enum Measured {
 }
 
 struct Rig {
-    engine: Engine,
+    engine: common::Running,
     time: Stepper<Pull>,
     card: Card,
     core: Arc<Core>,
@@ -147,7 +147,7 @@ impl Rig {
         };
         let card = Card::new();
         let clock = Virtual::default();
-        let engine = Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs, 0.0), ..Config::default() }, clock.clone(), |_| {});
+        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs, 0.0), ..Config::default() }, clock.clone(), |_| {}));
         engine.queue_changed();
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), card, core, store, analyses, measurer, songs: made, _dir: dir }
     }
@@ -277,12 +277,6 @@ const DIP_SLIP: usize = RATE * 40 / 1000;
 
 /// The longest remake dip, frames (30 ms down and up, plus overlap).
 const DIP_MAX: usize = RATE * 15 / 100;
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        self.engine.stop();
-    }
-}
 
 /// Tagging beyond the defaults (as an imperfect library does), and how songs were queued.
 struct Tags {

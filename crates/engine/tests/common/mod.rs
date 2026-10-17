@@ -11,6 +11,23 @@ use parking_lot::{Condvar, Mutex};
 
 pub use nori_engine::testing::{Delivery, Device, Stepper, Virtual};
 
+/// An engine stopped when dropped.
+pub struct Running(pub nori_engine::Engine);
+
+impl std::ops::Deref for Running {
+    type Target = nori_engine::Engine;
+
+    fn deref(&self) -> &nori_engine::Engine {
+        &self.0
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.0.stop();
+    }
+}
+
 /// A server's answer held until the test opens the gate.
 #[derive(Default)]
 pub struct Gate(Mutex<bool>, Condvar);
@@ -43,9 +60,13 @@ pub fn beat(hz: f64) -> Vec<i16> {
     }).collect()
 }
 
-/// Whether ffmpeg is installed (tests that need encoded songs pass without it).
+/// Whether ffmpeg is installed; says so when not (tests that need encoded songs pass without it).
 pub fn ffmpeg() -> bool {
-    std::process::Command::new("ffmpeg").arg("-version").output().is_ok_and(|o| o.status.success())
+    let there = std::process::Command::new("ffmpeg").arg("-version").output().is_ok_and(|o| o.status.success());
+    if !there {
+        eprintln!("ffmpeg is not installed: skipped");
+    }
+    there
 }
 
 /// A core transport that answers every API call with a 500: resolving songs needs none.

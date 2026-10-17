@@ -138,7 +138,7 @@ impl App for Planned {
 }
 
 struct Rig {
-    engine: Engine,
+    engine: common::Running,
     events: Arc<Mutex<Vec<Event>>>,
     time: Stepper<Pull>,
     card: Card,
@@ -157,7 +157,7 @@ impl Rig {
         let settings = Settings { speed, pitch: speed, ..Settings::default() };
         let events: Arc<Mutex<Vec<Event>>> = Arc::default();
         let told = events.clone();
-        let engine = Engine::start_on(Songs::new(), Planned(app), queue, Box::new(card.clone()), None, Config { settings, ..Config::default() }, clock.clone(), move |e| told.lock().push(e));
+        let engine = common::Running(Engine::start_on(Songs::new(), Planned(app), queue, Box::new(card.clone()), None, Config { settings, ..Config::default() }, clock.clone(), move |e| told.lock().push(e)));
         engine.queue_changed();
         engine.play_at(0, from_ms);
         Rig { engine, events, time: Stepper::new(clock, card.pull.clone()), card }
@@ -215,12 +215,6 @@ impl Rig {
             return None;
         }
         Some(last + moved / 2.0)
-    }
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        self.engine.stop();
     }
 }
 

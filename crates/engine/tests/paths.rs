@@ -59,6 +59,11 @@ fn dir() -> nori_testdir::TempDir {
     nori_testdir::TempDir::new("paths")
 }
 
+/// A temporary directory for songs ffmpeg encodes; None without ffmpeg.
+fn encoder() -> Option<nori_testdir::TempDir> {
+    ffmpeg().then(dir)
+}
+
 fn mp3(dir: &Path, name: &str, secs: u32, hz: u32) -> Vec<u8> {
     made(dir, name, secs, hz, &["-c:a", "libmp3lame", "-b:a", "128k"], "mp3")
 }
@@ -818,11 +823,7 @@ fn after_last_open(calls: &[Call]) -> Vec<&Call> {
 
 #[test]
 fn offload_joins_songs_on_one_track() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 20, 440), mp3(&d, "b", 20, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b)]);
@@ -862,11 +863,7 @@ fn offload_joins_songs_on_one_track() {
 
 #[test]
 fn torn_down_track_hands_to_cpu() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 20, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -886,11 +883,7 @@ fn torn_down_track_hands_to_cpu() {
 
 #[test]
 fn offload_follows_settings_both_ways() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 120, 440), mp3(&d, "b", 60, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b)]);
@@ -930,11 +923,7 @@ fn offload_follows_settings_both_ways() {
 
 #[test]
 fn cpu_song_between_offloaded() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b, c) = (mp3(&d, "a", 10, 440), flac(&d, "b", 30, 550), mp3(&d, "c", 10, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b), ("c", &c)]);
@@ -956,10 +945,6 @@ fn cpu_song_between_offloaded() {
     rig.engine.stop();
 
     // Boosted song plays on cpu between.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
     let d = dir();
     let (a, b, c) = (mp3(&d, "a", 10, 440), mp3(&d, "b", 20, 550), mp3(&d, "c", 10, 660));
     let server = Arc::new(Server::default());
@@ -995,11 +980,7 @@ fn cpu_song_between_offloaded() {
 fn offload_volume_restored() {
     // Regression (0.4.6, "muted mid-track"): after a pause offloaded and a CPU song, the next offloaded song
     // played at the pause's silence.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b, c) = (mp3(&d, "a", 10, 440), flac(&d, "b", 10, 550), mp3(&d, "c", 10, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b), ("c", &c)]);
@@ -1066,11 +1047,7 @@ fn offload_volume_restored() {
 
 #[test]
 fn offloaded_song_boosted_moves_to_cpu() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 20, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -1097,11 +1074,7 @@ fn offloaded_song_boosted_moves_to_cpu() {
 
 #[test]
 fn offload_seek_restarts_at_packet() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 30, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -1128,11 +1101,7 @@ fn offload_seek_restarts_at_packet() {
 
 #[test]
 fn offload_follows_queue_edits() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b, c, x) = (mp3(&d, "a", 5, 440), mp3(&d, "b", 5, 550), mp3(&d, "c", 5, 660), mp3(&d, "x", 5, 770));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b), ("c", &c), ("x", &x)]);
@@ -1166,11 +1135,7 @@ fn offload_follows_queue_edits() {
 
 #[test]
 fn offload_sleep_timer() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 10, 440), mp3(&d, "b", 10, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b)]);
@@ -1196,10 +1161,6 @@ fn offload_sleep_timer() {
     rig.engine.stop();
 
     // Offload sleep timer follows its song through an edit.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
     let d = dir();
     let (a, b) = (mp3(&d, "a", 10, 440), mp3(&d, "b", 10, 660));
     let server = Arc::new(Server::default());
@@ -1223,11 +1184,7 @@ fn offload_sleep_timer() {
 
 #[test]
 fn offload_heard_song_taken_out() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 5, 440), mp3(&d, "b", 5, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b)]);
@@ -1248,11 +1205,7 @@ fn offload_heard_song_taken_out() {
 
 #[test]
 fn offload_opus_in_ogg_pages() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = made(&d, "a", 3, 440, &["-c:a", "libopus", "-b:a", "96k"], "opus");
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -1286,11 +1239,7 @@ fn offload_opus_in_ogg_pages() {
 
 #[test]
 fn offload_mp4_edit_list() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = made(&d, "a", 3, 440, &["-c:a", "aac", "-b:a", "128k"], "m4a");
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -1534,11 +1483,7 @@ fn repeat_one_reports_loops() {
     rig.engine.stop();
 
     // Offload repeat one reports loops.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 5, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -1559,11 +1504,7 @@ fn repeat_one_reports_loops() {
 
 #[test]
 fn cpu_song_reports_why_not_offloaded() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (lame, fl) = (mp3(&d, "lame", 10, 440), flac(&d, "fl", 10, 550));
     let cases: [(&[u8], &str, &[(Coding, Support)], Settings, &str); 3] = [
         (&fl, "flac", MP3_ONLY, offload(), "FLAC is not a compression the output decodes"),
@@ -1585,11 +1526,7 @@ fn cpu_song_reports_why_not_offloaded() {
 
 #[test]
 fn plain_offload_takes_songs() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     // No LAME tag: no gap to cut.
     let a = made(&d, "a", 10, 440, &["-c:a", "libmp3lame", "-b:a", "128k", "-write_xing", "0"], "mp3");
     let server = Arc::new(Server::default());
@@ -1603,10 +1540,6 @@ fn plain_offload_takes_songs() {
     rig.engine.stop();
 
     // Plain offload takes unrelated songs.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
     let d = dir();
     let server = Arc::new(Server::default());
     let songs = lame_songs(&d, &server, &["x", "y", "z"]);
@@ -1652,11 +1585,7 @@ fn on(albums: &[(&str, &str, i32)]) -> Vec<(String, String, i32)> {
 
 #[test]
 fn album_stays_on_cpu() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let server = Arc::new(Server::default());
     let songs = lame_songs(&d, &server, &["a1", "a2"]);
     let fake = Fake::new(PLAIN_MP3);
@@ -1670,10 +1599,6 @@ fn album_stays_on_cpu() {
     rig.engine.stop();
 
     // Automix off keeps album on cpu.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
     let d = dir();
     let server = Arc::new(Server::default());
     let songs = lame_songs(&d, &server, &["a1", "a2"]);
@@ -1695,11 +1620,7 @@ fn album_stays_on_cpu() {
 
 #[test]
 fn plain_offload_album_handover() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let server = Arc::new(Server::default());
     let songs = lame_songs(&d, &server, &["x", "a1", "a2", "y"]);
     let fake = Fake::new(PLAIN_MP3);
@@ -1729,7 +1650,6 @@ fn two_on_the_chip(d: &Path, secs: u32) -> Option<(Rig, Fake)> {
 
 fn two_on_the_chip_with(d: &Path, secs: u32, app: impl App + Send + 'static) -> Option<(Rig, Fake)> {
     if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
         return None;
     }
     let (a, b) = (mp3(d, "a", secs, 440), mp3(d, "b", secs, 660));
@@ -1864,11 +1784,7 @@ fn bad_chip_hands_to_cpu() {
     rig.engine.stop();
 
     // Refused end of stream hands to cpu.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 10, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -1885,11 +1801,7 @@ fn bad_chip_hands_to_cpu() {
 
 #[test]
 fn late_presented_ends_no_song() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 20, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -1921,11 +1833,7 @@ fn late_presented_ends_no_song() {
 
 #[test]
 fn track_holds_at_most_four_minutes() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 300, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -1993,7 +1901,6 @@ fn two_on_a_phone(d: &Path, secs: u32, stamps: bool, head_stuck: bool) -> Option
 /// [`two_on_a_phone`], with [`Fake::jittery`] timestamps if `jittery`.
 fn two_on_a_phone_with(d: &Path, secs: u32, stamps: bool, head_stuck: bool, jittery: bool) -> Option<(Rig, Fake)> {
     if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
         return None;
     }
     let (a, b) = (mp3(d, "a", secs, 440), mp3(d, "b", secs, 660));
@@ -2120,11 +2027,7 @@ fn jittery_timestamp_keeps_place() {
 
 #[test]
 fn offload_next_one_song_per_press() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let ids = ["a", "b", "c", "d", "e"];
     let files: Vec<Vec<u8>> = ids.iter().enumerate().map(|(k, id)| mp3(&d, id, 10, 440 + 110 * k as u32)).collect();
     for gap in [0u64, 150] {
@@ -2216,11 +2119,7 @@ fn automix() -> Settings {
 
 #[test]
 fn automix_toggles_offload() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 40, 440), mp3(&d, "b", 30, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b)]);
@@ -2247,10 +2146,6 @@ fn automix_toggles_offload() {
     rig.engine.stop();
 
     // Automix off returns to offload.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
     let d = dir();
     let (a, b) = (mp3(&d, "a", 60, 440), mp3(&d, "b", 30, 660));
     let server = Arc::new(Server::default());
@@ -2275,11 +2170,7 @@ fn automix_toggles_offload() {
 /// Offloaded with AutoMix off; the equalizer goes on (CPU takeover), then AutoMix a few seconds later.
 #[test]
 fn automix_on_after_equalizer_mixes() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 40, 440), mp3(&d, "b", 30, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b)]);
@@ -2308,11 +2199,7 @@ fn automix_on_after_equalizer_mixes() {
 
 #[test]
 fn offload_setting_moves_song() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 60, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -2524,7 +2411,6 @@ impl Library for UnsizedSongs {
 /// Two songs of `secs` from [`Unsized`], nine tenths sent before the gate. None without ffmpeg.
 fn unsized_rig(d: &Path, secs: u32, fake: Option<Fake>, settings: Settings) -> Option<(Rig, Arc<common::Gate>)> {
     if !ffmpeg() {
-        eprintln!("ffmpeg is not installed");
         return None;
     }
     let (a, b) = (mp3(d, "a", secs, 440), mp3(d, "b", secs, 660));
@@ -2639,11 +2525,7 @@ fn equalizer_toggles_cleanly() {
     rig.engine.stop();
 
     // On the CPU with AutoMix: the equalizer takes effect at once, and rapid toggling never runs dry.
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 60, 440);
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a)]);
@@ -2709,11 +2591,7 @@ fn offload_seeks() {
 /// Through a mix, every read gives the position of the song reported, never the other song's.
 #[test]
 fn place_matches_song_through_mix() {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 40, 440), mp3(&d, "b", 30, 660));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b)]);
@@ -2776,11 +2654,7 @@ fn place_after_mix() {
 }
 
 fn mixed_into_b_its_place_is_what_was_played(silent_s: u32) {
-    if !ffmpeg() {
-        eprintln!("ffmpeg is not installed");
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let a = mp3(&d, "a", 40, 440);
     let b = if silent_s == 0 { mp3(&d, "b", 30, 660) } else { quiet_start(&d, "b", silent_s, 30, 660) };
     let server = Arc::new(Server::default());
@@ -2840,7 +2714,6 @@ const DSP: usize = 256 * 1024;
 /// timestamps and head.
 fn two_on_a_small_grant(d: &Path, secs: u32, grant: usize, dsp: usize) -> Option<(Rig, Fake)> {
     if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
         return None;
     }
     let (a, b) = (mp3_320(d, "a", secs, 440), mp3_320(d, "b", secs, 660));
@@ -2863,10 +2736,7 @@ fn two_on_a_small_grant(d: &Path, secs: u32, grant: usize, dsp: usize) -> Option
 /// waiting for bytes: awake and waking every second until the song ended.
 #[test]
 fn sleeps_before_unjoinable_next() {
-    if !ffmpeg() {
-        return;
-    }
-    let d = dir();
+    let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 10, 440), flac(&d, "b", 5, 550));
     let server = Arc::new(Server::default());
     serve(&server, &[("a", &a), ("b", &b)]);
@@ -3094,7 +2964,6 @@ fn new_queue_around_current() {
 #[ignore]
 fn offload_perf_report() {
     if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: nothing to offload");
         return;
     }
     crate::perf_alloc::exclude_this_thread();

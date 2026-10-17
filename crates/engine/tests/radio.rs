@@ -187,7 +187,7 @@ fn app() -> sim::App {
 }
 
 struct Rig {
-    engine: Engine,
+    engine: common::Running,
     time: Stepper<Pull>,
     card: Card,
 }
@@ -205,7 +205,7 @@ impl Rig {
         queue.0.lock().set(stations.iter().map(|s| s.0.to_string()).collect(), Some(0), false, 0);
         let card = Card::new();
         let radio = Radio(stations.into_iter().map(|(id, b)| (id.to_string(), b)).collect());
-        let engine = Engine::start_on(radio, app(), queue, Box::new(card.clone()), None, config, clock.clone(), |_| {});
+        let engine = common::Running(Engine::start_on(radio, app(), queue, Box::new(card.clone()), None, config, clock.clone(), |_| {}));
         engine.queue_changed();
         engine.play_at(0, 0);
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), card }
@@ -216,12 +216,6 @@ impl Rig {
         let played = self.time.until(Duration::from_secs(600), || self.card.secs() >= secs);
         assert!(played, "{secs} s reached the card: {} s did", self.card.secs());
         (self.card.format().expect("opened"), self.card.heard.lock().clone())
-    }
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        self.engine.stop();
     }
 }
 
@@ -295,7 +289,6 @@ fn likeness(ours: &[f32], theirs: &[f32], max_lag: usize) -> f64 {
 #[test]
 fn station_pitch_at_any_format() {
     if !ffmpeg() {
-        eprintln!("no ffmpeg: skipped");
         return;
     }
     let aac = ["-c:a", "aac", "-b:a", "64k"];
@@ -330,7 +323,6 @@ fn station_pitch_at_any_format() {
 #[test]
 fn mp3_stations() {
     if !ffmpeg() {
-        eprintln!("no ffmpeg: skipped");
         return;
     }
     // A station starts mid-frame.
@@ -340,10 +332,6 @@ fn mp3_stations() {
     assert_pitch("joined mid-frame", &heard, f, 1000.0);
 
     // Mp3 station format change.
-    if !ffmpeg() {
-        eprintln!("no ffmpeg: skipped");
-        return;
-    }
     // Three songs of different formats, each its own tone, joined mid-frame with noise between. The card
     // keeps the first format; the others are converted at their own pitch.
     within(120, || {
@@ -366,10 +354,6 @@ fn mp3_stations() {
     });
 
     // Noisy mp3 station never hangs.
-    if !ffmpeg() {
-        eprintln!("no ffmpeg: skipped");
-        return;
-    }
     // Long noise, a cut frame, a second song at another rate, and a mid-frame end: plays what music
     // there is within the real time allowed.
     within(120, || {
@@ -394,7 +378,6 @@ fn mp3_stations() {
 #[test]
 fn station_without_icy_blocks_starts_soon() {
     if !ffmpeg() {
-        eprintln!("no ffmpeg: skipped");
         return;
     }
     // 96 kbps for a minute, sent in real time.
@@ -409,7 +392,6 @@ fn station_without_icy_blocks_starts_soon() {
 #[test]
 fn chained_ogg_station_plays_on() {
     if !ffmpeg() || !encodes("libvorbis") {
-        eprintln!("no ffmpeg with libvorbis: skipped");
         return;
     }
     // A chained Ogg station: each song a new logical stream, possibly another format.
@@ -428,7 +410,6 @@ fn chained_ogg_station_plays_on() {
 #[test]
 fn next_station_at_other_rate() {
     if !ffmpeg() {
-        eprintln!("no ffmpeg: skipped");
         return;
     }
     let rig = Rig::new(vec![("radio:1", mp3(1000, 6.0, 44_100, 2)), ("radio:2", mp3(1000, 6.0, 48_000, 1))]);
@@ -522,7 +503,6 @@ fn he_aac_station_decoding() {
     let (f, heard) = play(bytes.clone(), 4.0);
     assert_eq!((f.rate, f.channels), (22_050, 2), "opened at the core's rate, which is what comes out");
     if !ffmpeg() {
-        eprintln!("no ffmpeg: the pitch is not compared, the platform's decoder not stood in for");
         return;
     }
     // Downsampled, ffmpeg's SBR decode matches.
