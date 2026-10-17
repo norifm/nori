@@ -1,6 +1,6 @@
 //! The sound chain end to end: limiter, equalizer, live setting changes.
 
-use nori_player::automix::synth::Rng;
+use nori_player::automix::eval::Rng;
 use nori_player::compressor::CompressorPreset;
 use nori_player::dsp::{Band, Effects, Equalizer, HIGH_SHELF, LOW_SHELF, PEAKING};
 use nori_player::sim::{Player, Sound};
@@ -60,7 +60,7 @@ fn limiter_holds_ceiling() {
                     eq.configure(&[], preamp, 0.0);
                     eq.configure_output(0.0, false, threshold, release, lookahead);
                     let mut r = Rng(42);
-                    let x: Vec<f32> = (0..12_000).map(|_| r.next() as f32).collect();
+                    let x: Vec<f32> = (0..12_000).map(|_| r.signed() as f32).collect();
                     let mut y = vec![0f32; x.len()];
                     eq.process_f32(&x, &mut y);
                     let peak = y.iter().fold(0f64, |m, v| m.max(v.abs() as f64));

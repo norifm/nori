@@ -4,6 +4,7 @@ use super::structure::camelot;
 use super::*;
 use super::eval::{grid, precision, Song, Style, DRUMS, FULL, KEYS};
 use super::synth::*;
+use super::eval::Rng;
 use crate::pcm::Encoding;
 
 fn octave_ok(got: f64, want: f64, tol: f64) -> bool {
@@ -103,7 +104,7 @@ fn downbeats_follow_the_kick() {
 fn non_music_is_measured() {
     let rate = 44100;
     let mut rng = Rng(12345);
-    let x: Vec<f32> = (0..rate * 60).map(|_| (0.3 * rng.next()) as f32).collect();
+    let x: Vec<f32> = (0..rate * 60).map(|_| (0.3 * rng.signed()) as f32).collect();
     let t = analyse("n", &x, rate as u32).track;
     println!("noise: bpm {:.1} conf {:.2} stab {:.2} key {} ({:.2}) downbeat conf {:.2}", t.bpm, t.bpm_confidence, t.stability, t.key, t.key_confidence, t.downbeat_confidence);
     assert!(t.bpm_confidence < 0.3, "noise got a confident tempo: {}", t.bpm_confidence);
@@ -115,7 +116,7 @@ fn non_music_is_measured() {
     let mut y = 0f64;
     let x: Vec<f32> = (0..rate * 60)
         .map(|i| {
-            y = 0.995 * y + 0.05 * rng.next();
+            y = 0.995 * y + 0.05 * rng.signed();
             (y * (0.6 + 0.4 * (i as f64 / rate as f64 * 0.37).sin())) as f32
         })
         .collect();

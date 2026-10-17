@@ -18,7 +18,7 @@ use common::{Stepper, Virtual};
 use nori_engine::{AudioOutput, Body, ByteSource, Config, Engine, Event, Feed, Followed, Lead, Library, Located, OpenError, OutputFormat, Settings, SharedQueue, Source};
 use nori_player::automix::analysis::Analyzer;
 use nori_player::automix::plan;
-use nori_player::automix::synth::Rng;
+use nori_player::automix::eval::Rng;
 use nori_player::engine::{Host, Plan};
 use nori_player::pipeline::App;
 use nori_player::playlist::Playlist;
@@ -48,7 +48,7 @@ fn song(secs: f64, seed: u64, quiet: Option<(i64, i64)>) -> Vec<i16> {
         }
         let tone = (std::f64::consts::TAU * 220.0 * (1.0 + seed as f64 * 0.01) * t).sin() * 0.2 + (std::f64::consts::TAU * 1250.0 * t).sin() * 0.1;
         let phase = (i as f64 * 1000.0 / RATE as f64 % SAW_MS as f64) / SAW_MS as f64;
-        out.push(((tone + 0.1 * r.next()) * 32767.0) as i16);
+        out.push(((tone + 0.1 * r.signed()) * 32767.0) as i16);
         out.push((-SAW + 2.0 * SAW * phase) as i16);
     }
     out

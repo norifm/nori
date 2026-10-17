@@ -297,9 +297,9 @@ mod tests {
     fn curve_levels_mid_fade() {
         use crate::automix::mixer::Mixer;
         let n = 48_000usize;
-        let mut rng = crate::automix::synth::Rng(0x9E37_79B9_7F4A_7C15);
-        let a: Vec<f32> = (0..n).map(|_| rng.next() as f32 * 0.25).collect();
-        let b: Vec<f32> = (0..n).map(|_| rng.next() as f32 * 0.25).collect();
+        let mut rng = crate::automix::eval::Rng(0x9E37_79B9_7F4A_7C15);
+        let a: Vec<f32> = (0..n).map(|_| rng.signed() as f32 * 0.25).collect();
+        let b: Vec<f32> = (0..n).map(|_| rng.signed() as f32 * 0.25).collect();
         let rms = |x: &[f32]| (x.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / x.len() as f64).sqrt();
         let middle = |curve: FadeCurve| {
             let plain = TransitionPrefs { auto_mix: false, crossfade_s: 1, fade_curve: curve, ..prefs() };

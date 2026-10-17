@@ -257,13 +257,8 @@ mod tests {
         let rate = 44_100.0;
         let len = (secs * rate) as usize;
         let (mut l, mut r) = (vec![0f64; len], vec![0f64; len]);
-        let mut seed = 0x2545_f491_4f6c_dd1du64;
-        let mut rnd = move || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed >> 11) as f64 / (1u64 << 53) as f64
-        };
+        let mut rng = crate::automix::eval::Rng(0x2545_f491_4f6c_dd1d);
+        let mut rnd = move || rng.unit();
         let semis = |f: f64, s: f64| f * 2f64.powf(s / 12.0);
         // Eighths at 150 BPM, E2 power chords, every other note bent up, the last quarter held with vibrato.
         let eighth = 0.2;

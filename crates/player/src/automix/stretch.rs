@@ -487,8 +487,8 @@ mod tests {
         let rate = 44100;
         let mut s = Stretcher::new(rate, 2, keep);
         s.configure(ratio, (hold * rate as f64) as u64, (ramp * rate as f64) as u64);
-        let mut r = crate::automix::synth::Rng(5);
-        let x: Vec<f32> = (0..((hold + ramp + 3.0) * rate as f64) as usize * 2).map(|_| (r.next() * 0.3) as f32).collect();
+        let mut r = crate::automix::eval::Rng(5);
+        let x: Vec<f32> = (0..((hold + ramp + 3.0) * rate as f64) as usize * 2).map(|_| (r.signed() * 0.3) as f32).collect();
         let mut out = Vec::new();
         let mut buf = vec![0f32; 2048 * 2];
         let mut pos = 0;

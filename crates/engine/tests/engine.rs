@@ -12,7 +12,7 @@ use std::time::Duration;
 use common::{Signal, Stepper, Virtual};
 use nori_engine::{App, AudioOutput, Body, ByteSource, Config, Device, DeviceWatch, Engine, Event, Feed, Library, Located, OutputFacts, OutputFormat, OutputKind, Settings, Source, State, Store};
 use nori_player::automix::analysis::Analyzer;
-use nori_player::automix::synth::Rng;
+use nori_player::automix::eval::Rng;
 use nori_player::automix::ANALYSIS_VERSION;
 use nori_player::engine::{Host, Plan};
 use nori_player::playlist::Playlist;
@@ -51,8 +51,8 @@ fn make_music(secs: f64, seed: u64) -> Vec<i16> {
         for (k, h) in hz.iter().enumerate() {
             v += (std::f64::consts::TAU * h * t).sin() * 0.2 / (k + 1) as f64;
         }
-        out.push(((v + 0.02 * r.next()) * 32767.0) as i16);
-        out.push(((v * 0.8 - 0.02 * r.next()) * 32767.0) as i16);
+        out.push(((v + 0.02 * r.signed()) * 32767.0) as i16);
+        out.push(((v * 0.8 - 0.02 * r.signed()) * 32767.0) as i16);
     }
     out
 }
@@ -2770,7 +2770,7 @@ fn next_spam_keeps_playing() {
     let ms = (SECS * 1000.0) as i64;
     for round in 0..4u64 {
         let mut rng = Rng(0x9E37_79B9 + round * 7919);
-        let mut roll = |max: u64| ((rng.next() + 1.0) / 2.0 * max as f64) as u64;
+        let mut roll = |max: u64| ((rng.signed() + 1.0) / 2.0 * max as f64) as u64;
         let dir = nori_testdir::TempDir::new("skips");
         let store = Store::open(dir.path(), 256 << 20).unwrap();
         let extra = Extra { store: Some(store.clone()), ..Extra::default() };

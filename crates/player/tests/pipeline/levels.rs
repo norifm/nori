@@ -19,14 +19,14 @@ fn steady(secs: f64, seed: u64, amp: f64) -> Vec<i16> {
 fn make_steady(secs: f64, seed: u64, amp: f64) -> Vec<i16> {
     let detune = 1.0 + (seed % 7) as f64 * 0.13;
     let parts = [(110.0, 0.5), (220.0, 0.3), (330.0, 0.25), (523.0, 0.2), (1250.0, 0.12), (2900.0, 0.08)];
-    let mut r = nori_player::automix::synth::Rng(seed);
+    let mut r = nori_player::automix::eval::Rng(seed);
     let norm: f64 = parts.iter().map(|(_, a)| a).sum::<f64>() + 0.1;
     (0..frames(secs))
         .flat_map(|i| {
             let t = i as f64 / RATE as f64;
             let tone: f64 = parts.iter().enumerate().map(|(k, (hz, a))| a * (std::f64::consts::TAU * hz * detune * t + k as f64).sin()).sum();
-            let l = amp * (tone + 0.1 * r.next()) / norm;
-            let rr = amp * (0.9 * tone + 0.1 * r.next()) / norm;
+            let l = amp * (tone + 0.1 * r.signed()) / norm;
+            let rr = amp * (0.9 * tone + 0.1 * r.signed()) / norm;
             [(l * 32767.0).round() as i16, (rr * 32767.0).round() as i16]
         })
         .collect()
