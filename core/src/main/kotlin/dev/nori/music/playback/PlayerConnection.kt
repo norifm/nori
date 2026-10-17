@@ -567,7 +567,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         if (mirror != null) return@with run { remote(Op.Next) }
         _pendingSeek.value = null
         // With nothing after, the service refills the queue and takes the skip when songs land
-        // (nori_player::transport::next_action).
+        // (nori_queue's next_action).
         when (dev.nori.music.ffi.queue.nextAction(c.hasNextMediaItem())) {
             NextAction.SKIP -> c.seekToNextMediaItem()
             NextAction.FILL_THEN_SKIP -> c.sendCustomCommand(SessionCommand(PlaybackService.CMD_FILL_NEXT, Bundle.EMPTY), Bundle.EMPTY)

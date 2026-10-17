@@ -59,27 +59,6 @@ pub fn fade_step(from: f32, to: f32, start_ms: i64, now_ms: i64, ms: i32) -> (f3
     (from + (to - from) * t, t >= 1.0)
 }
 
-/// A user skip while paused starts playback (the player's own skips keep it paused).
-pub fn skip_plays(play_when_ready: bool) -> bool {
-    !play_when_ready
-}
-
-/// What the next button does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NextAction {
-    Skip,
-    /// Nothing next yet: remember the press until the queue refill lands.
-    FillThenSkip,
-}
-
-pub fn next_action(has_next: bool) -> NextAction {
-    if has_next {
-        NextAction::Skip
-    } else {
-        NextAction::FillThenSkip
-    }
-}
-
 /// Prefetch the following songs this far into a song.
 pub const PRECACHE_AFTER_MS: i64 = 6_000;
 /// Measure the new next song this long after a queue edit (debounce).
@@ -93,11 +72,6 @@ pub const SAVE_AFTER_MS: i64 = 1_500;
 /// "End of track" equals one song.
 pub fn sleep_after(songs: u32, end_of_track: bool) -> (bool, u32) {
     (end_of_track || songs == 1, songs.saturating_sub(1))
-}
-
-/// The equalizer screen wants the shallow buffer: visible, touched, equalizer on.
-pub fn tuning_wanted(in_sight: bool, touched: bool, eq_on: bool) -> bool {
-    in_sight && touched && eq_on
 }
 
 /// A song change with `left` changes to go: (remaining, pause at the end of this song).

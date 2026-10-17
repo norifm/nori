@@ -619,7 +619,7 @@ class PlaybackService : MediaLibraryService() {
         override fun seekToDefaultPosition(mediaItemIndex: Int) = jump(mediaItemIndex) { super.seekToDefaultPosition(mediaItemIndex) }
 
         /**
-         * A skip the user asked for while the music is paused starts it (nori_player::transport::
+         * A skip the user asked for while the music is paused starts it (nori_queue's
          * skip_plays). Only the buttons go through here - the service's own skips (an explicit track, a
          * track that will not play) call the player underneath, so a queue that was paused stays paused
          * while it steps over them.

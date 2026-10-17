@@ -10,7 +10,6 @@ use crate::Session;
 // Public so the uniffi scaffolding can name them.
 pub use nori_model::model::PlaybackError;
 pub use nori_player::queue::OnError;
-pub use nori_player::transport::NextAction;
 
 #[cfg(feature = "ffi")]
 #[uniffi::remote(Enum)]
@@ -21,10 +20,12 @@ pub enum OnError {
     Stop,
 }
 
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Enum)]
+/// What the next button does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum NextAction {
     Skip,
+    /// Nothing next yet: remember the press until the queue refill lands.
     FillThenSkip,
 }
 
@@ -174,13 +175,17 @@ pub fn queue_next_repeat(mode: u8) -> u8 {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn next_action(has_next: bool) -> NextAction {
-    t::next_action(has_next)
+    if has_next {
+        NextAction::Skip
+    } else {
+        NextAction::FillThenSkip
+    }
 }
 
-/// Whether a user skip starts playback.
+/// Whether a user skip starts playback (the player's own skips keep it paused).
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn skip_plays(play_when_ready: bool) -> bool {
-    t::skip_plays(play_when_ready)
+    !play_when_ready
 }
 
 /// The sleep timer for `minutes` as [delay ms, slack ms].
@@ -304,7 +309,7 @@ pub struct SongSteps {
 /// changed on it, equalizer on.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn equalizer_tuning(in_sight: bool, touched: bool, eq_on: bool) -> bool {
-    t::tuning_wanted(in_sight, touched, eq_on)
+    in_sight && touched && eq_on
 }
 
 /// The volume step for slider `fraction` on an output with steps 0..=`max`, rounded half to even like
