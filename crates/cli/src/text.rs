@@ -109,7 +109,7 @@ pub fn album_caption(d: &AlbumDetail) -> String {
     if let Some(q) = d.songs.first().and_then(quality) {
         parts.push(q);
     }
-    if d.album.explicit_status == "explicit" {
+    if d.album.explicit_status == nori_core::model::ExplicitStatus::Explicit {
         parts.push("explicit".into());
     }
     parts.join(" · ")

@@ -515,7 +515,7 @@ pub(crate) mod tests {
 
     #[test]
     fn explicit_songs_skipped_when_asked() {
-        let explicit = |id: &str| Song { explicit_status: "explicit".into(), ..Song::only_id(id.to_string()) };
+        let explicit = |id: &str| Song { explicit_status: nori_model::ExplicitStatus::Explicit, ..Song::only_id(id.to_string()) };
         let (_dir, s) = opened(|p| p.skip_explicit = true);
         s.register(vec![explicit("e1"), Song::only_id("c".into()), explicit("e2")]);
         s.set(ids(&["e1", "c", "e2"]), Some(1), false, None);

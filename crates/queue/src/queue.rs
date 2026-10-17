@@ -120,7 +120,7 @@ impl Session {
 
     /// Whether registered song `id` is marked explicit; false if unknown.
     pub fn explicit(&self, id: &str) -> bool {
-        self.store(|s| s.songs.get(id).is_some_and(|(song, _)| song.explicit_status == "explicit"))
+        self.store(|s| s.songs.get(id).is_some_and(|(song, _)| song.explicit_status == nori_model::ExplicitStatus::Explicit))
     }
 
     /// The distinct album ids of `ids`.
