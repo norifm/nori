@@ -278,6 +278,7 @@ impl Library for CoreLibrary {
     }
 }
 
+#[cfg(feature = "youtube")]
 /// A YouTube Music profile's byte source: a song's stream address opens at the URL YouTube serves it at
 /// now ([`Client::playable`], resolved on the opening thread). A refused URL is forgotten, so the
 /// loader's next try asks YouTube again. Other URLs pass through.
@@ -286,6 +287,7 @@ pub struct Resolving {
     pub client: Arc<Client>,
 }
 
+#[cfg(feature = "youtube")]
 impl ByteSource for Resolving {
     fn open(&self, url: &str, from: u64) -> Result<crate::source::Body, OpenError> {
         self.open_cancellable(url, None, from, &crate::source::Cancel::new())

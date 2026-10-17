@@ -83,6 +83,7 @@ impl Client {
 impl Client {
     /// The URL and cache key to stream `id`.
     pub(crate) fn stream_target(&self, id: String, metered: bool, wifi: StreamQuality, mobile: StreamQuality) -> StreamTarget {
+        #[cfg(feature = "youtube")]
         if self.youtube() {
             return crate::youtube::stream_target(id);
         }
@@ -95,12 +96,16 @@ impl Client {
     /// with URL and key.
     pub fn precache_targets(&self, metered: bool) -> Vec<Fetch> {
         let (wifi, mobile, _) = self.saved_qualities();
-        let mut ids = self.core.session.precache(metered);
+        let ids = self.core.session.precache(metered);
         // Beyond the next song (which the player fetches itself), nothing of YouTube's is fetched ahead.
-        if self.youtube() {
-            let near = self.core.session.upcoming(1 + crate::youtube::AHEAD as u32);
-            ids.retain(|id| near.iter().skip(1).any(|n| n == id));
-        }
+        #[cfg(feature = "youtube")]
+        let ids = match self.youtube() {
+            true => {
+                let near = self.core.session.upcoming(1 + crate::youtube::AHEAD as u32);
+                ids.into_iter().filter(|id| near.iter().skip(1).any(|n| n == id)).collect()
+            }
+            false => ids,
+        };
         self.fetches(ids, metered, &wifi, &mobile, |id| self.core.transfers().held().state(id))
     }
 }
