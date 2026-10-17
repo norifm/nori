@@ -199,6 +199,10 @@ Smaller notes:
 
 - The worklet counts running dry while the session plays; a jump to another song shows as one, since the
   new song's first bytes come while the state is still Playing.
+- The worker pulls 4096 frames at a time, up to 93 ms ahead of the engine's clock. A fade to silence (the
+  dip before another song, a pause) waits at its bottom in the ring rather than being pulled on as
+  silence: before, picking an album while one played left up to a pull's worth of silence after the
+  dip's bottom (66 ms in about half of the check's runs under load).
 - Opus after a seek in Chrome is placed by `later_seek_skip`; Firefox's decoder may differ (not measured).
 - Covers are the server's `getCoverArt` addresses loaded by the page; nothing is cached beyond the
   browser's HTTP cache.

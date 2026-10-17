@@ -238,6 +238,9 @@ pub struct Feed {
     target: f32,
     step: f32,
     gen: u32,
+    /// The fade is one down to silence: the music after its bottom waits there for what replaces it (a
+    /// switch, a pause), so a device pulling ahead of the engine's clock takes no silence meanwhile.
+    rests: bool,
     /// The last flush seen, and whether one happened since [`Feed::flushed`] was asked.
     seen: u64,
     flushed: bool,
@@ -245,7 +248,7 @@ pub struct Feed {
 
 impl Feed {
     fn new(ring: Arc<Ring>) -> Feed {
-        Feed { ring, gain: 1.0, target: 1.0, step: 0.0, gen: 0, seen: 0, flushed: false }
+        Feed { ring, gain: 1.0, target: 1.0, step: 0.0, gen: 0, rests: false, seen: 0, flushed: false }
     }
 
     /// Whether a pull found a flush since last asked: the last pull's frames are new music, and what the
@@ -284,6 +287,7 @@ impl Feed {
         if flushes != self.seen {
             self.seen = flushes;
             self.flushed = true;
+            self.rests = false;
         }
         let at = r.read.load(Ordering::Acquire).max(r.discard.load(Ordering::Acquire));
         let n = w.saturating_sub(at).min(limit.saturating_sub(at));
@@ -297,6 +301,7 @@ impl Feed {
             self.target = f32::from_bits(r.gain_target.load(Ordering::Relaxed));
             let frames = r.ramp_frames.load(Ordering::Relaxed);
             self.step = if frames == 0 { self.target - self.gain } else { (self.target - self.gain) / frames as f32 };
+            self.rests = self.target == 0.0 && frames > 0;
         }
         let slot = |f: u64| (f % r.frames) as usize * ch;
         let mut i = 0;
@@ -313,6 +318,8 @@ impl Feed {
             }
             i += 1;
         }
+        let resting = self.rests && self.gain == 0.0;
+        let n = if resting { i } else { n };
         // Then at one level, up to the ring's end and from its start.
         let g = self.gain;
         while i < n {
@@ -329,7 +336,7 @@ impl Feed {
         r.read.store(at + n, Ordering::Release);
         r.limit.store(at + n, Ordering::Release);
         r.pulling.store(false, Ordering::Release);
-        if n < want && !r.ended.load(Ordering::Relaxed) && w > 0 {
+        if n < want && !resting && !r.ended.load(Ordering::Relaxed) && w > 0 {
             r.underruns.fetch_add(1, Ordering::Relaxed);
         }
         // At the low mark: wake the engine for the next burst, once.
@@ -1426,5 +1433,33 @@ mod tests {
         assert!((out[0] - 0.5 * 0.99).abs() < 1e-3, "{}", out[0]);
         assert!((out[49] - 0.25).abs() < 1e-2, "half way down: {}", out[49]);
         assert!(out[100..].iter().all(|&v| v == 0.0), "down and staying down");
+    }
+
+    /// A device pulling ahead of the engine's clock stops at the bottom of a fade to silence: the music
+    /// after it waits for the switch that replaces it, so no silence is taken past the fade.
+    #[test]
+    fn a_fade_to_silence_waits_at_its_bottom() {
+        let (mut t, mut f, _) = by_hand();
+        t.write(&pcm(&[16384; 300]), 300.0);
+        t.ramp(None, 0.0, 100);
+        let mut out = vec![1f32; 200];
+        let down = f.pull(&mut out);
+        assert!((100..=101).contains(&down), "the fade, then nothing: {down}");
+        assert!(out[100..].iter().all(|&v| v == 0.0));
+        assert_eq!(f.pull(&mut out), 0, "still at the bottom");
+        assert_eq!(t.underruns(), 0, "waiting at the bottom is no underrun");
+        // The switch: new music, and up again.
+        t.flush();
+        t.write(&pcm(&[8192; 100]), 100.0);
+        t.ramp(None, 1.0, 0);
+        t.told();
+        assert_eq!(f.pull(&mut out), 100);
+        assert!((out[0] - 0.25).abs() < 1e-6, "the new music, at once: {}", out[0]);
+        // A pause's fade that comes back up plays on from its bottom.
+        t.write(&pcm(&[16384; 200]), 200.0);
+        t.ramp(None, 0.0, 50);
+        let down = f.pull(&mut out);
+        t.ramp(None, 1.0, 0);
+        assert_eq!(f.pull(&mut out), 200 - down, "nothing of the music after the bottom was lost");
     }
 }
