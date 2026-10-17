@@ -93,9 +93,6 @@ class PlaybackService : MediaLibraryService() {
         /** The player while the service runs; read by the test bridge and the perf build. */
         @Volatile var rustPlayer: EnginePlayer? = null
             private set
-        /** The player the running service built, "rust"; null with no service. For the perf recorder's timeline. */
-        @Volatile var engine: String? = null
-            private set
         /** The AudioTrack the player last opened, and what was asked of it; null with no service. For the perf recorder. */
         @Volatile var track: OpenedTrack? = null
             internal set(value) {
@@ -193,8 +190,7 @@ class PlaybackService : MediaLibraryService() {
         meteredNow(nori.http.metered)
         runCatching { connectivity.registerDefaultNetworkCallback(network, main) }
         player = EnginePlayer(this, nori).also { rustPlayer = it; it.onRemoteStateChanged = ::remoteState }
-        engine = "rust"
-        observer?.engine(engine)
+        observer?.service(true)
         // A song that has become whole on the device is measured then, whoever fetched it (see AutoMixPrefetch).
         analyser = AutoMixPrefetch(nori.sources, nori.analyses) { player.replan() }
         // Nothing is watched until a bridge starts (see OfflineBridge). The player says itself when the
@@ -342,9 +338,8 @@ class PlaybackService : MediaLibraryService() {
         nori.widgets.onPlaced = null
         sessionPlayer = null
         rustPlayer = null
-        engine = null
         track = null
-        observer?.engine(null)
+        observer?.service(false)
         keepQueue(dev.nori.music.ffi.queue.QueueMoment.CLOSING)
         getSystemService(AlarmManager::class.java).cancel(sleepAlarm)
         main.removeCallbacks(measure)
@@ -1117,8 +1112,8 @@ interface PlaybackObserver {
     /** The ear arrived on the song [id] (a media id). */
     fun song(id: String)
 
-    /** The service started with [engine] ("rust"), or ended (null). */
-    fun engine(engine: String?)
+    /** The service started, or ended. */
+    fun service(running: Boolean)
 
     /** A player opened an output, or the service let it go (null). */
     fun track(opened: OpenedTrack?)
