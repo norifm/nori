@@ -67,7 +67,7 @@ sealed interface Shelf {
     }
 }
 
-/** The home page: the library's shelves, or ([feed]) the service's own shelves (YouTube Music's). */
+/** The home page: the library's shelves, or ([feed]) the source's own shelves (`ProfileRules.feed`). */
 data class HomeUi(val rows: List<Shelf> = emptyList(), val pinned: List<Playlist> = emptyList(), val feed: List<dev.nori.music.ffi.model.FeedShelf> = emptyList())
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -159,7 +159,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
 
     /** Only the rows the user kept are requested at all; a hidden shelf costs no request. */
     val ui: StateFlow<Load<HomeUi>> = nori.settings.prefs.map { Triple(it.homeRows, it.pinnedPlaylists, nori.rules) }.distinctUntilChanged().flatMapLatest { (rows, pins, rules) ->
-        // A service's own Home (YouTube Music's) is its feed, asked again on a refresh.
+        // A source's own Home is its feed, asked again on a refresh.
         if (rules.feed) return@flatMapLatest refreshes.flatMapLatest { nori.library.homeFeed() }
             .catch { failed(it); emit(emptyList()) }.map { HomeUi(feed = it) }
         val shown = homeRowsShown(rows, rules.account)

@@ -36,57 +36,62 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
+import dev.nori.music.ffi.SignIn
+import dev.nori.music.ffi.settings.ServerKind
 
 /**
- * Signing a YouTube Music profile in with Google: the offer a just-added profile makes, and Google's
- * sign-in page. Shown over everything while the view model says so.
+ * Signing the account of a [kind] profile in on its provider's own page (the core's `SignIn::WebPage`):
+ * the offer a just-added profile makes, and the page. Shown over everything while the view model says
+ * so; nothing for a kind without such a page.
  */
 @Composable
-fun YouTubeSignInFlow(vm: SettingsViewModel) {
-    val yt by vm.youtube.collectAsStateWithLifecycle()
-    NoriDialog(yt.offer, vm::skipYoutubeSignIn) {
+fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
+    val ui by vm.account.collectAsStateWithLifecycle()
+    val start = vm.provider(kind)?.signIn?.firstNotNullOfOrNull { (it as? SignIn.WebPage)?.startUrl } ?: return
+    val words = providerStrings(kind).account ?: return
+    NoriDialog(ui.offer, vm::skipSignIn) {
         AlertCard(
-            confirmButton = { TextButton(vm::openYoutubeSignIn, Modifier.testTag("youtube-offer-sign-in")) { Text(say.youtubeSignInGoogle) } },
-            dismissButton = { TextButton(vm::skipYoutubeSignIn, Modifier.testTag("youtube-offer-skip")) { Text(say.youtubeNotNow) } },
-            title = { Text(say.youtubeOfferTitle) },
+            confirmButton = { TextButton(vm::openSignInPage, Modifier.testTag("offer-sign-in")) { Text(say.word(words.pageButton)) } },
+            dismissButton = { TextButton(vm::skipSignIn, Modifier.testTag("offer-skip")) { Text(say.notNow) } },
+            title = { Text(say.word(words.offerTitle)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(say.youtubeOfferText)
-                    Text(say.youtubeAccountRisk, style = MaterialTheme.typography.bodySmall)
+                    Text(say.word(words.offerText))
+                    Text(say.word(words.risk), style = MaterialTheme.typography.bodySmall)
                 }
             },
         )
     }
-    NoriDialog(yt.page, vm::closeYoutubeSignIn, DialogStyle.Page) { SignInPage(vm) }
+    NoriDialog(ui.page, vm::closeSignInPage, DialogStyle.Page) { SignInSheet(vm, kind, start, words) }
 }
 
-/** The sign-in page as a sheet: Cancel and the title over Google's page, then the core's answer. */
+/** The sign-in page as a sheet: Cancel and the title over the provider's page, then the core's answer. */
 @Composable
-private fun SignInPage(vm: SettingsViewModel) {
-    val yt by vm.youtube.collectAsStateWithLifecycle()
+private fun SignInSheet(vm: SettingsViewModel, kind: ServerKind, start: String, words: AccountStrings) {
+    val ui by vm.account.collectAsStateWithLifecycle()
     var loading by remember { mutableStateOf(true) }
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding()) {
             Box(Modifier.fillMaxWidth().height(52.dp)) {
-                TextButton(vm::closeYoutubeSignIn, Modifier.align(Alignment.CenterStart).padding(start = 4.dp).testTag("youtube-sign-in-cancel")) { Text(say.cancel) }
+                TextButton(vm::closeSignInPage, Modifier.align(Alignment.CenterStart).padding(start = 4.dp).testTag("sign-in-cancel")) { Text(say.cancel) }
                 Text(
-                    say.youtubeSignInTitle, Modifier.align(Alignment.Center),
+                    say.word(words.pageTitle), Modifier.align(Alignment.Center),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1,
                 )
-                if (loading && !yt.busy && yt.failed == null) LoadingDots(Modifier.align(Alignment.CenterEnd).padding(end = Space.gutter), dot = 5.dp)
+                if (loading && !ui.busy && ui.failed == null) LoadingDots(Modifier.align(Alignment.CenterEnd).padding(end = Space.gutter), dot = 5.dp)
             }
             Hairline(0.dp)
-            val failed = yt.failed
+            val failed = ui.failed
             when {
-                yt.busy -> Centered {
+                ui.busy -> Centered {
                     LoadingDots()
-                    Text(say.youtubeSigningIn, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(say.signingIn, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 failed != null -> Centered {
-                    Text(say.youtubeSignInPage(failed), textAlign = TextAlign.Center, modifier = Modifier.testTag("youtube-page-failed"))
-                    PillButton(say.youtubeTryAgain, null, vm::retryYoutubeSignIn, prominent = true)
+                    Text(say.signInPage(kind, failed), textAlign = TextAlign.Center, modifier = Modifier.testTag("page-failed"))
+                    PillButton(say.tryAgain, null, vm::retrySignIn, prominent = true)
                 }
-                else -> GoogleSignIn({ loading = it }, vm::youtubeSignIn, Modifier.weight(1f).fillMaxWidth())
+                else -> WebSignIn(kind, start, { loading = it }, vm::signIn, Modifier.weight(1f).fillMaxWidth())
             }
         }
     }
@@ -101,15 +106,16 @@ private fun ColumnScope.Centered(content: @Composable ColumnScope.() -> Unit) {
 }
 
 /**
- * Google's sign-in page in a WebView of its own: no JavaScript bridge, nothing but https, no other
- * WebView in the app to share its cookies with. Once the page is back on music.youtube.com signed in
- * (the core's `youtube_sign_in_done`), its Cookie header goes to [signedIn]. Every cookie and all
- * storage are cleared before it opens, as soon as the cookies are taken, and when it leaves (Cancel
- * included): a WebView keeping the session would rotate it behind nori's back and end nori's copy.
+ * A provider's sign-in page, opened at [start], in a WebView of its own: no JavaScript bridge, nothing
+ * but https, no other WebView in the app to share its cookies with. Once the core says the page is done
+ * (`sign_in_done`, from the address shown and its cookies), its Cookie header goes to [signedIn]. Every
+ * cookie and all storage are cleared before it opens, as soon as the cookies are taken, and when it
+ * leaves (Cancel included): a WebView keeping the session could rotate it behind nori's back and end
+ * nori's copy.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun GoogleSignIn(loading: (Boolean) -> Unit, signedIn: (String) -> Unit, modifier: Modifier) {
+private fun WebSignIn(kind: ServerKind, start: String, loading: (Boolean) -> Unit, signedIn: (String) -> Unit, modifier: Modifier) {
     val onLoading by rememberUpdatedState(loading)
     val onSignedIn by rememberUpdatedState(signedIn)
     DisposableEffect(Unit) { onDispose { forgetWebSession() } }
@@ -125,7 +131,7 @@ private fun GoogleSignIn(loading: (Boolean) -> Unit, signedIn: (String) -> Unit,
                 webViewClient = object : WebViewClient() {
                     var taken = false
 
-                    // Google's pages only: an intent:// or app link opens nothing.
+                    // Web pages only: an intent:// or app link opens nothing.
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) = request.url.scheme != "https"
 
                     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) = onLoading(true)
@@ -140,14 +146,14 @@ private fun GoogleSignIn(loading: (Boolean) -> Unit, signedIn: (String) -> Unit,
                     fun look(view: WebView, url: String) {
                         if (taken) return
                         val cookies = CookieManager.getInstance().getCookie(url) ?: return
-                        if (!dev.nori.music.ffi.youtubeSignInDone(url, cookies)) return
+                        if (!dev.nori.music.ffi.signInDone(kind, url, cookies)) return
                         taken = true
                         view.stopLoading()
                         forgetWebSession()
                         onSignedIn(cookies)
                     }
                 }
-                forgetWebSession { loadUrl(dev.nori.music.ffi.youtubeSignInPage()) }
+                forgetWebSession { loadUrl(start) }
             }
         },
         modifier = modifier,

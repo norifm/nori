@@ -17,7 +17,6 @@ use nori_core::{AlbumDetail, ArtistDetail, PlaylistDetail, Song};
 use nori_covers::loader::Ticket;
 use nori_covers::memory::Image;
 use nori_engine::Event;
-use nori_host::config;
 use nori_host::session::{read_pages, Chore, Note, Said};
 pub use nori_host::Fetch;
 use nori_http::Http;
@@ -112,7 +111,7 @@ pub enum Data {
     /// Home's "Top Picks": the favourites tile, then the mixes.
     Picks(Vec<MixTile>),
     HomeRow(usize, Vec<nori_core::Album>),
-    /// A service's own Home (YouTube Music's), as titled shelves of albums.
+    /// A source's own Home (`ProfileRules::feed`), as titled shelves of albums.
     Feed(Vec<(String, Vec<nori_core::Album>)>),
     Albums(Vec<nori_core::Album>),
     Artists(Vec<nori_core::Artist>),
@@ -161,10 +160,9 @@ pub mod own {
     }
 }
 
-/// Logs `draft` in against its server (blocking).
+/// Checks `draft` with its provider before it is kept (blocking).
 pub fn check_login(http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    let legacy = block_on(nori_core::client::login_check(http, config(&draft), draft.alt_url.clone())).map_err(|e| net_error(&e))?;
-    Ok(SavedServer { legacy_auth: legacy || draft.legacy_auth, ..draft })
+    block_on(nori_core::providers::check_profile(http, draft)).map_err(|e| net_error(&e))
 }
 
 /// The cpal device at `volume` (0 to 1).

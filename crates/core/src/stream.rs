@@ -23,7 +23,7 @@ impl Client {
     }
 }
 
-fn stream_cache_key(id: &str, q: &StreamQuality) -> String {
+pub(crate) fn stream_cache_key(id: &str, q: &StreamQuality) -> String {
     format!("{id}:{}{}", q.bit_rate, q.format)
 }
 
@@ -83,13 +83,7 @@ impl Client {
 impl Client {
     /// The URL and cache key to stream `id`.
     pub(crate) fn stream_target(&self, id: String, metered: bool, wifi: StreamQuality, mobile: StreamQuality) -> StreamTarget {
-        #[cfg(feature = "youtube")]
-        if self.youtube() {
-            return crate::youtube::stream_target(id);
-        }
-        let q = self.quality(metered, wifi, mobile);
-        let key = stream_cache_key(&id, &q);
-        StreamTarget { url: self.core.stream_url(id, q.bit_rate, q.format), key }
+        self.core.provider().stream(self, id, self.quality(metered, wifi, mobile))
     }
 
     /// The songs to prefetch now ([`nori_queue::Session::precache`], minus downloaded or queued downloads),
@@ -97,14 +91,13 @@ impl Client {
     pub fn precache_targets(&self, metered: bool) -> Vec<Fetch> {
         let (wifi, mobile, _) = self.saved_qualities();
         let ids = self.core.session.precache(metered);
-        // Beyond the next song (which the player fetches itself), nothing of YouTube's is fetched ahead.
-        #[cfg(feature = "youtube")]
-        let ids = match self.youtube() {
-            true => {
-                let near = self.core.session.upcoming(1 + crate::youtube::AHEAD as u32);
+        // Past the next song (which the player fetches itself), a provider may take fewer than the settings.
+        let ids = match self.core.provider().ahead() {
+            Some(ahead) => {
+                let near = self.core.session.upcoming(1 + ahead as u32);
                 ids.into_iter().filter(|id| near.iter().skip(1).any(|n| n == id)).collect()
             }
-            false => ids,
+            None => ids,
         };
         self.fetches(ids, metered, &wifi, &mobile, |id| self.core.transfers().held().state(id))
     }

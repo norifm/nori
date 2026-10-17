@@ -223,9 +223,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LoginScreen(settings)
             return@Crossfade
         }
-        // A YouTube Music profile's account (its `user`) brings its library and hearts.
+        // A provider account's name (its `user`) brings its library and hearts.
         val account = prefs.server?.user.orEmpty()
-        val rules = remember(guest, kind, account) { dev.nori.music.ffi.library.rulesOf(prefs.server ?: dev.nori.music.settings.newServer(""), guest) }
+        val rules = remember(guest, kind, account) { dev.nori.music.ffi.rulesOf(prefs.server ?: dev.nori.music.settings.newServer(""), guest) }
         val home = "home"
         // A guest follows the host while the app is in sight: what plays, the queue, its requests.
         val remote: dev.nori.music.app.vm.RemoteViewModel = viewModel()
@@ -299,7 +299,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             }
         }
 
-        if (kind == dev.nori.music.ffi.settings.ServerKind.YOU_TUBE_MUSIC && !guest) YouTubeSignInFlow(settings)
+        if (!guest) SignInFlow(settings, kind)
 
         // The debug build's test bridge drives the app through this (src/debug TestDriver.kt); every
         // other build has an empty one (src/noTest), so a release carries none of it.

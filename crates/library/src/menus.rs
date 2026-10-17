@@ -64,9 +64,9 @@ pub enum SongDownload {
 
 /// The menu of `song`, most used first. `starred` as shown; `player`: opened from the player, which adds
 /// the sleep timer. `stars`: songs carry hearts ([`crate::browse::ProfileRules::stars`]). `account`: the
-/// profile has an account's playlists, downloads, radio, mixes and shares (not a jam guest's or YouTube
-/// Music's). A provider's song has no mix or share actions: those need it on the server. `jam`: what a
-/// jam adds.
+/// profile has an account's playlists, downloads, radio, mixes and shares (not a jam guest's, nor a
+/// profile without a Subsonic account). A provider's song has no mix or share actions: those need it
+/// on the server. `jam`: what a jam adds.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool, stars: bool, account: bool, jam: Option<JamOffer>) -> Vec<SongMenuItem> {
     let mut out = Vec::with_capacity(16);
@@ -215,7 +215,7 @@ pub enum RowSwipeAct {
 
 /// The swipe `setting` on a song whose heart is `starred`; none when it does nothing. Without hearts
 /// (`ProfileRules::stars`) a song is not hearted; without the `account`'s things (a jam guest's profile,
-/// YouTube Music's, `ProfileRules::account`) it is not kept.
+/// a profile without a Subsonic account, `ProfileRules::account`) it is not kept.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn row_swipe(setting: SwipeAction, starred: bool, stars: bool, account: bool) -> Option<RowSwipeAct> {
     match setting {
@@ -321,12 +321,12 @@ mod tests {
         assert_eq!(
             actions(&song_menu(s.clone(), false, SongDownload::None, true, false, false, None)),
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (SleepTimer, false), (Details, true)],
-            "without an account (YouTube Music) only the queue, the pages and what plays here"
+            "without an account only the queue, the pages and what plays here"
         );
         assert_eq!(
             actions(&song_menu(s, true, SongDownload::None, false, true, false, None))[..3],
             [(Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false)],
-            "signed in to YouTube Music: a heart, still no playlists or downloads"
+            "hearts without an account: still no playlists or downloads"
         );
         assert_eq!(
             actions(&m),
@@ -399,7 +399,7 @@ mod tests {
         // A jam guest's swipes ask for songs; hearts and downloads are the account's.
         let guest: Vec<_> = [SwipeAction::Queue, SwipeAction::PlayNext, SwipeAction::Favourite, SwipeAction::Download].map(|s| row_swipe(s, false, false, false)).into();
         assert_eq!(guest, [Some(RowSwipeAct::Queue), Some(RowSwipeAct::PlayNext), None, None]);
-        // Signed in to YouTube Music: hearts, no downloads.
+        // Hearts without an account: no downloads.
         assert_eq!(row_swipe(SwipeAction::Favourite, false, true, false), Some(RowSwipeAct::Favourite { on: true }));
         assert_eq!(row_swipe(SwipeAction::Download, false, true, false), None);
 

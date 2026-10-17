@@ -686,12 +686,13 @@ fn server(b: &Build, f: &Facts) -> Vec<Section> {
         .iter()
         .map(|s| {
             let active = s.id == p.active_server_id;
-            let youtube = s.kind == nori_core::settings::ServerKind::YouTubeMusic;
-            let mut detail = if youtube { "best effort".to_string() } else { format!("{} · {}", if s.user.is_empty() { "API key" } else { s.user.as_str() }, s.url) };
+            let words = crate::text::provider(s.kind);
+            let who = if s.user.is_empty() { words.no_user } else { s.user.as_str() };
+            let mut detail = if s.url.is_empty() { who.to_string() } else { format!("{who} · {}", s.url) };
             if s.wifi_only {
                 detail.push_str(" · Wi-Fi only");
             }
-            let label = if youtube && s.name.trim().is_empty() { "YouTube Music".into() } else { nori_core::settings::label(&s.name, &s.url) };
+            let label = Some(nori_core::settings::label(&s.name, &s.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
             Row::Server { id: s.id.clone(), label, detail, active }
         })
         .collect();

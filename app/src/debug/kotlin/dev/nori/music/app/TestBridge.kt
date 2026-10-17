@@ -99,9 +99,8 @@ class TestBridge : BroadcastReceiver() {
                 "gc" -> "gc ${android.os.Debug.getRuntimeStat("art.gc.gc-count")} blocking ${android.os.Debug.getRuntimeStat("art.gc.blocking-gc-count")}"
                 // What a crossing into the core costs, by kind, against the same work done in Kotlin.
                 "bench" -> Bench.calls()
-                // How many cookies the sign-in WebView holds for Google and YouTube; no name or value leaves.
-                "webcookies" -> "cookies " + listOf("https://music.youtube.com", "https://www.youtube.com", "https://accounts.google.com", "https://www.google.com")
-                    .sumOf { u -> android.webkit.CookieManager.getInstance().getCookie(u)?.split(";")?.count { it.isNotBlank() } ?: 0 }
+                // Whether the sign-in WebView, the app's only one, holds any cookie; no name or value leaves.
+                "webcookies" -> "cookies " + if (android.webkit.CookieManager.getInstance().hasCookies()) 1 else 0
                 // Whether the core holds a saved queue a play button can resume (MediaButtons).
                 "queuesaved" -> dev.nori.music.Nori.get(context).core.queueSaved().toString()
                 else -> "unknown command $cmd"

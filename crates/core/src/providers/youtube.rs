@@ -4,21 +4,23 @@
 
 mod account;
 
-pub use account::{youtube_sign_in_done, youtube_sign_in_page, YouTubeAccount, YouTubeSignIn};
-
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use innertube_music as yt;
 
+use super::{AccountState, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use crate::browse::{LibrarySection, ProfileRules, SettingsPart};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
-use crate::stream::StreamTarget;
+use crate::settings::{SavedServer, ServerKind};
+use crate::stream::{StreamQuality, StreamTarget};
 use crate::transport::{block_on, Exchange, NetError, Transport};
-use crate::{Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, ArtistRef, FeedShelf, Playlist, PlaylistDetail, SearchResult, Song, Starred};
+use crate::{Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, ArtistRef, Core, FeedShelf, Playlist, PlaylistDetail, SearchResult, Song, Starred};
 
 /// What a YouTube Music profile's library is kept under (a server's is its address and user).
-pub(crate) const IDENT: &str = "youtube-music";
+const IDENT: &str = "youtube-music";
 
 /// Prefix of every YouTube id in nori (songs, albums, artists, playlists): the stream store and cover
 /// cache are shared by all profiles.
@@ -28,7 +30,7 @@ const ID_PREFIX: &str = "yt-";
 const ADDRESS: &str = "youtube:";
 
 /// Songs fetched ahead of the one playing: each costs a player request and a whole download.
-pub(crate) const AHEAD: usize = 1;
+const AHEAD: usize = 1;
 
 /// nori's id for a YouTube id.
 fn id(raw: &str) -> String {
@@ -50,22 +52,27 @@ fn address_video(address: &str) -> Option<&str> {
     address.strip_prefix(ADDRESS).filter(|v| !v.is_empty())
 }
 
-/// Every Subsonic call of a YouTube Music profile: there is no server to send it to. Not an I/O failure,
-/// so writes are dropped, not queued.
-pub(crate) fn no_subsonic(endpoint: &str) -> NetError {
-    NetError::Api { code: 0, reason: format!("YouTube Music has no {endpoint}") }
-}
-
 /// Where song `id` streams from and the key its bytes are kept under. The quality settings do not
 /// apply: YouTube's file is played as it is.
-pub(crate) fn stream_target(id: String) -> StreamTarget {
+fn stream_target(id: String) -> StreamTarget {
     let url = raw_id(&id).map(|v| format!("{ADDRESS}{v}")).unwrap_or_default();
     StreamTarget { url, key: format!("{id}:0") }
 }
 
 /// The URL of thumbnail `cover` at `size` px.
-pub(crate) fn cover_address(cover: &str, size: u32) -> String {
+fn cover_address(cover: &str, size: u32) -> String {
     yt::thumbnail_url(cover, size)
+}
+
+/// The rules of a YouTube Music profile: Home is YouTube's feed, songs play and mix here, and nothing is
+/// offered to other devices. Signed out there is no library, so search is the way in; `signed_in`, the
+/// account's albums, liked songs and playlists are its library, and songs carry its likes as hearts.
+/// The rest of an account's work (downloads, scrobbles, history, mixes) stays off.
+fn rules(signed_in: bool) -> ProfileRules {
+    use SettingsPart::*;
+    let settings = vec![Profiles, ServerOptions, Look, Playback, Sound, Lyrics, Storage, About];
+    let sections = if signed_in { vec![LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists] } else { Vec::new() };
+    ProfileRules { asks: false, account: false, indexed: false, sections, settings, remote: false, measures: true, stars: signed_in, feed: true }
 }
 
 /// The platform's transport as innertube-music's HTTP client.
@@ -229,62 +236,148 @@ impl Streams {
 /// What a profile's requests share: innertube-music's session (the visitor id, the account's cookies),
 /// the session as kept, and the streams resolved so far.
 #[derive(Default)]
-pub(crate) struct YouTube {
+struct State {
     api: yt::InnerTube,
     session: account::Session,
     streams: Streams,
 }
 
-impl Client {
-    /// `read` answered by YouTube Music; reads it has nothing for get the empty page. Signed in, the
+/// The YouTube Music provider, over the profile's [`State`].
+#[derive(Default)]
+pub(crate) struct YouTube(Arc<State>);
+
+impl State {
+    /// `read` answered by YouTube Music; None for the reads it has nothing for. Signed in, the
     /// library's reads are the account's: its saved albums (one page), its playlists and its liked songs
     /// as the favorites.
-    pub(crate) async fn youtube_read(&self, read: Read) -> NetResult<Page> {
-        let (api, t) = (&self.innertube.api, &Wire(&*self.transport));
+    async fn read(&self, c: &Client, read: Read) -> NetResult<Option<Page>> {
+        let (api, t) = (&self.api, &Wire(&*c.transport));
         let n = |count: i32| count.max(0) as usize;
-        self.youtube_fresh_session(account::unix_now()).await;
-        let signed_in = self.youtube_signed_in();
-        Ok(match read {
-            Read::Search { query, songs, albums, artists } => Page::Found { v: found(self.youtube_after(api.search(t, &query).await)?, n(songs), n(albums), n(artists)) },
-            Read::AlbumById { id } => Page::AlbumPage { v: album_detail(self.youtube_after(api.album(t, raw(&id)?).await)?) },
-            Read::AlbumSongs { id } => Page::Songs { v: album_detail(self.youtube_after(api.album(t, raw(&id)?).await)?).songs },
-            Read::ArtistById { id } => Page::ArtistPage { v: artist_detail(self.youtube_after(api.artist(t, raw(&id)?).await)?).0 },
-            Read::ArtistAbout { id } => Page::About { v: artist_detail(self.youtube_after(api.artist(t, raw(&id)?).await)?).1 },
-            Read::PlaylistById { id } => Page::PlaylistPage { v: playlist_detail(self.youtube_after(api.playlist(t, raw(&id)?).await)?) },
-            Read::PlaylistSongs { id } => Page::Songs { v: playlist_detail(self.youtube_after(api.playlist(t, raw(&id)?).await)?).songs },
-            Read::HomeFeed => Page::Feed { v: self.youtube_after(api.home(t).await)?.into_iter().map(shelf).collect() },
-            Read::PlaylistList if signed_in => Page::Playlists { v: self.youtube_after(api.library_playlists(t).await)?.into_iter().map(|p| playlist(p, &[])).collect() },
-            Read::AlbumList { offset: 0, .. } if signed_in => Page::Albums { v: self.youtube_after(api.library_albums(t).await)?.into_iter().map(album).collect() },
+        self.fresh_session(c, account::unix_now()).await;
+        let signed_in = self.signed_in(c);
+        Ok(Some(match read {
+            Read::Search { query, songs, albums, artists } => Page::Found { v: found(self.after(c, api.search(t, &query).await)?, n(songs), n(albums), n(artists)) },
+            Read::AlbumById { id } => Page::AlbumPage { v: album_detail(self.after(c, api.album(t, raw(&id)?).await)?) },
+            Read::AlbumSongs { id } => Page::Songs { v: album_detail(self.after(c, api.album(t, raw(&id)?).await)?).songs },
+            Read::ArtistById { id } => Page::ArtistPage { v: artist_detail(self.after(c, api.artist(t, raw(&id)?).await)?).0 },
+            Read::ArtistAbout { id } => Page::About { v: artist_detail(self.after(c, api.artist(t, raw(&id)?).await)?).1 },
+            Read::PlaylistById { id } => Page::PlaylistPage { v: playlist_detail(self.after(c, api.playlist(t, raw(&id)?).await)?) },
+            Read::PlaylistSongs { id } => Page::Songs { v: playlist_detail(self.after(c, api.playlist(t, raw(&id)?).await)?).songs },
+            Read::HomeFeed => Page::Feed { v: self.after(c, api.home(t).await)?.into_iter().map(shelf).collect() },
+            Read::PlaylistList if signed_in => Page::Playlists { v: self.after(c, api.library_playlists(t).await)?.into_iter().map(|p| playlist(p, &[])).collect() },
+            Read::AlbumList { offset: 0, .. } if signed_in => Page::Albums { v: self.after(c, api.library_albums(t).await)?.into_iter().map(album).collect() },
             Read::StarredItems if signed_in => {
-                let liked = self.youtube_after(api.liked_songs(t).await)?.into_iter().map(|s| Song { starred: true, ..song(s) }).collect();
-                Page::StarredPage { v: self.core.stars.lock().overlay(Starred::new(Vec::new(), Vec::new(), liked)) }
+                let liked = self.after(c, api.liked_songs(t).await)?.into_iter().map(|s| Song { starred: true, ..song(s) }).collect();
+                Page::StarredPage { v: c.core.stars.lock().overlay(Starred::new(Vec::new(), Vec::new(), liked)) }
             }
-            other => return self.nothing(other),
-        })
+            _ => return Ok(None),
+        }))
     }
 
     /// `w` for YouTube Music: a song's heart is the account's like; nothing else has anywhere to go.
     /// Never queued: a like that fails is taken back.
-    pub(crate) async fn youtube_write(&self, w: Write) -> NetResult<()> {
+    async fn write(&self, c: &Client, w: Write) -> NetResult<()> {
         match w {
-            Write::Star { kind: Starrable::Song, id, on } if self.youtube_signed_in() => {
-                self.youtube_fresh_session(account::unix_now()).await;
-                self.youtube_after(self.innertube.api.like(&Wire(&*self.transport), raw(&id)?, on).await)
+            Write::Star { kind: Starrable::Song, id, on } if self.signed_in(c) => {
+                self.fresh_session(c, account::unix_now()).await;
+                self.after(c, self.api.like(&Wire(&*c.transport), raw(&id)?, on).await)
             }
-            _ => Err(no_subsonic("write")),
+            _ => Err(super::nowhere("write")),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for YouTube {
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo {
+            kind: ServerKind::YouTubeMusic,
+            fields: vec![FieldSpec { what: FormField::Name, advanced: false }],
+            sign_in: vec![SignIn::WebPage { start_url: yt::auth::SIGN_IN_PAGE.to_string() }, SignIn::Paste],
         }
     }
 
-    /// The URL to open stream `address` at from byte `from`; None when it is no YouTube song's (a URL
-    /// already). Asks YouTube for the stream unless one is kept, blocking the caller (a loader's thread,
-    /// never the engine's).
-    pub fn playable(&self, address: &str, from: u64) -> Option<NetResult<String>> {
-        let video = address_video(address).filter(|_| self.youtube())?;
+    fn ready(&self, _: &SavedServer) -> bool {
+        true
+    }
+
+    /// No server to check.
+    async fn check(&self, _: Arc<dyn Transport>, profile: SavedServer) -> NetResult<SavedServer> {
+        Ok(profile)
+    }
+
+    /// Signed in when the profile names its account (`user`, kept at sign-in); never a jam guest's.
+    fn rules(&self, profile: &SavedServer, _guest: bool) -> ProfileRules {
+        rules(!profile.user.is_empty())
+    }
+
+    /// No server and no Subsonic account. Clears the library when the profile was a server's.
+    fn configure(&self, core: &Core, profile: &SavedServer) -> nori_model::Result<()> {
+        core.serves(IDENT)?;
+        *core.server.write() = crate::api::Server::default();
+        *core.rules.write() = rules(!profile.user.is_empty());
+        *core.native_login.write() = None;
+        *core.account.write() = None;
+        Ok(())
+    }
+
+    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Page>> {
+        self.0.read(client, read).await
+    }
+
+    async fn write(&self, client: &Client, w: Write) -> NetResult<()> {
+        self.0.write(client, w).await
+    }
+
+    fn stream(&self, _: &Client, id: String, _: StreamQuality) -> StreamTarget {
+        stream_target(id)
+    }
+
+    fn ahead(&self) -> Option<usize> {
+        Some(AHEAD)
+    }
+
+    fn cover_address(&self, _: &Core, cover: &str, size: u32) -> String {
+        cover_address(cover, size)
+    }
+
+    fn resolver(&self, client: &Arc<Client>) -> Option<Arc<dyn ResolveStream>> {
+        Some(Arc::new(Resolver { state: self.0.clone(), transport: client.transport.clone() }))
+    }
+
+    fn sign_in_done(&self, address: &str, cookies: &str) -> bool {
+        yt::auth::signed_in_at(address, cookies)
+    }
+
+    async fn sign_in(&self, client: &Client, answer: String) -> SignInResult {
+        self.0.sign_in(client, answer).await
+    }
+
+    fn sign_out(&self, client: &Client) {
+        self.0.sign_out(client)
+    }
+
+    fn account(&self, client: &Client) -> AccountState {
+        self.0.account(client)
+    }
+}
+
+/// A song's stream address opens at the URL YouTube serves it at now, asked of YouTube unless one is
+/// kept; a refused one is asked again.
+struct Resolver {
+    state: Arc<State>,
+    transport: Arc<dyn Transport>,
+}
+
+impl ResolveStream for Resolver {
+    /// Blocks the caller while YouTube is asked.
+    fn resolve(&self, address: &str, from: u64) -> Option<NetResult<String>> {
+        let video = address_video(address)?;
         let now = Instant::now();
-        let streams = &self.innertube.streams;
+        let streams = &self.state.streams;
         let stream = match streams.get(video, now) {
             Some(s) => s,
-            None => match block_on(self.innertube.api.player(&Wire(&*self.transport), video)) {
+            None => match block_on(self.state.api.player(&Wire(&*self.transport), video)) {
                 Ok(s) => {
                     crate::alog::info(&format!("YouTube stream of {video}: itag {}, {}", s.format.itag, s.format.mime));
                     streams.keep(video, s.clone(), now);
@@ -296,10 +389,9 @@ impl Client {
         Some(Ok(stream.url_from(from)))
     }
 
-    /// YouTube refused the URL `address` was opened at: the next open asks for the stream again.
-    pub fn playable_refused(&self, address: &str) {
+    fn refused(&self, address: &str) {
         if let Some(video) = address_video(address) {
-            self.innertube.streams.forget(video);
+            self.state.streams.forget(video);
         }
     }
 }
@@ -310,7 +402,6 @@ mod tests {
     use crate::client::tests::{block, client};
     use crate::client::NetProfile;
     use crate::transport::{FailureKind, Network, TransportError, TransportResponse};
-    use std::sync::Arc;
 
     /// Answers InnerTube calls with queued answers and keeps what was asked; with none left the network
     /// is down. A GET (Subsonic) is a test failure.
@@ -353,7 +444,7 @@ mod tests {
 
     fn youtube_answering(answers: Vec<TransportResponse>) -> (Arc<Client>, Arc<InnerTube>) {
         let core = crate::Core::new(String::new(), "yt".into(), Default::default()).unwrap();
-        core.configure_youtube_music(false).unwrap();
+        core.configure_profile(SavedServer { kind: ServerKind::YouTubeMusic, ..Default::default() }).unwrap();
         let t = Arc::new(InnerTube { answers: parking_lot::Mutex::new(answers.into_iter().rev().collect()), ..Default::default() });
         (Client::new(core, t.clone(), Default::default()), t)
     }
@@ -369,6 +460,10 @@ mod tests {
         let (c, t) = youtube_answering(answers);
         account::tests::store(&c, &account::tests::session(SESSION, ago));
         (c, t)
+    }
+
+    fn resolver(c: &Arc<Client>) -> Arc<dyn ResolveStream> {
+        c.stream_resolver().expect("a YouTube Music profile resolves its addresses")
     }
 
     const ROTATE: &str = "https://accounts.youtube.com/RotateCookies";
@@ -446,6 +541,7 @@ mod tests {
         let star = block(c.write(crate::client::Write::Star { kind: crate::client::Starrable::Song, id: "yt-x".into(), on: true }));
         assert!(matches!(star, Err(NetError::Api { .. })), "{star:?}");
         assert!(!c.core.pending_any().unwrap(), "nothing queued for later");
+        assert!(matches!(block(c.sync_library()), Err(NetError::Api { .. })), "no server to sync");
         assert!(t.asked.lock().is_empty());
         let rules = c.core.rules();
         assert!(!rules.account && !rules.remote && rules.measures);
@@ -465,6 +561,7 @@ mod tests {
         assert_eq!(c.session().precache(false), ["yt-c"], "the settings would fetch the song after next");
         assert!(c.precache_targets(false).is_empty());
         assert_eq!(c.core.cover_address("https://yt3.googleusercontent.com/abc".into(), 320), "https://yt3.googleusercontent.com/abc=w320-h320-l90-rj");
+        assert_eq!(c.core.cover_prefix(), None, "each cover's address is its own");
     }
 
     /// A stream is asked once and kept; refused, it is asked again. The first open asks the whole file
@@ -473,23 +570,24 @@ mod tests {
     fn a_stream_is_resolved_once_until_refused() {
         let player = fixture("player");
         let (c, t) = youtube(&[&player, &player]);
-        let first = c.playable("youtube:dQw4w9WgXcQ", 0).unwrap().unwrap();
+        let r = resolver(&c);
+        let first = r.resolve("youtube:dQw4w9WgXcQ", 0).unwrap().unwrap();
         assert!(first.contains("itag=251") && first.ends_with("&range=0-3433754"), "{first}");
-        let later = c.playable("youtube:dQw4w9WgXcQ", 2_000_000).unwrap().unwrap();
+        let later = r.resolve("youtube:dQw4w9WgXcQ", 2_000_000).unwrap().unwrap();
         assert!(!later.contains("&range="));
         assert_eq!(t.asked.lock().len(), 1);
-        c.playable_refused("youtube:dQw4w9WgXcQ");
-        assert!(c.playable("youtube:dQw4w9WgXcQ", 0).unwrap().is_ok());
+        r.refused("youtube:dQw4w9WgXcQ");
+        assert!(r.resolve("youtube:dQw4w9WgXcQ", 0).unwrap().is_ok());
         assert_eq!(t.asked.lock().len(), 2);
-        assert!(c.playable("https://nas/rest/stream?id=1", 0).is_none(), "a server's URL is opened as it is");
-        assert!(c.playable("youtube:gone", 0).unwrap().is_err(), "a failed request fails the open");
+        assert!(r.resolve("https://nas/rest/stream?id=1", 0).is_none(), "a server's URL is opened as it is");
+        assert!(r.resolve("youtube:gone", 0).unwrap().is_err(), "a failed request fails the open");
     }
 
     /// An unplayable video's error carries YouTube's reason.
     #[test]
     fn an_unplayable_video_says_why() {
         let (c, _) = youtube(&[&fixture("unplayable")]);
-        match c.playable("youtube:x", 0) {
+        match resolver(&c).resolve("youtube:x", 0) {
             Some(Err(NetError::Api { reason, .. })) => assert_eq!(reason, "YouTube will not play it: This video is unavailable"),
             other => panic!("{other:?}"),
         }
@@ -516,8 +614,7 @@ mod tests {
     #[test]
     fn a_subsonic_profile_is_untouched() {
         let (c, _) = client(NetProfile { url: "h".into(), ..Default::default() });
-        assert!(!c.youtube());
-        assert!(c.playable("youtube:x", 0).is_none());
+        assert!(c.stream_resolver().is_none());
         assert!(c.resolve("yt-x".into(), false, false).url.contains("/rest/stream?"));
     }
 
@@ -526,16 +623,16 @@ mod tests {
     #[test]
     fn signing_in_keeps_the_session() {
         let (c, t) = youtube_answering(vec![answer(200, "account_menu", &["SIDCC=cc; Domain=.youtube.com"])]);
-        assert_eq!(c.youtube_account(), YouTubeAccount::SignedOut);
-        assert_eq!(block(c.youtube_sign_in(format!("Cookie: {SESSION}"))), YouTubeSignIn::SignedIn { name: "Ann Example".into() });
+        assert_eq!(c.account(), AccountState::SignedOut);
+        assert_eq!(block(c.sign_in(format!("Cookie: {SESSION}"))), SignInResult::SignedIn { name: "Ann Example".into() });
         assert_eq!(t.asked.lock()[0].headers["Cookie"], SESSION);
         let kept = account::tests::stored(&c).unwrap();
         assert_eq!(kept.cookies(), format!("{SESSION}; SIDCC=cc"));
         assert!(kept.rotated_ago() < 5, "fresh from the browser");
-        assert_eq!(c.youtube_account(), YouTubeAccount::SignedIn);
+        assert_eq!(c.account(), AccountState::SignedIn);
         assert!(c.core.rules().stars && !c.core.rules().sections.is_empty());
-        c.youtube_sign_out();
-        assert_eq!((c.youtube_account(), account::tests::stored(&c)), (YouTubeAccount::SignedOut, None));
+        c.sign_out();
+        assert_eq!((c.account(), account::tests::stored(&c)), (AccountState::SignedOut, None));
         assert!(!c.core.rules().stars);
     }
 
@@ -543,12 +640,21 @@ mod tests {
     #[test]
     fn a_failed_sign_in_changes_nothing() {
         let (c, t) = youtube_answering(vec![answer(200, "signed_out", &[]), answer(429, "", &[]), answer(200, "signed_out", &[])]);
-        assert_eq!(block(c.youtube_sign_in("VISITOR_INFO1_LIVE=v".into())), YouTubeSignIn::NoSession);
+        assert_eq!(block(c.sign_in("VISITOR_INFO1_LIVE=v".into())), SignInResult::NoSession);
         assert!(t.asked.lock().is_empty());
-        assert_eq!(block(c.youtube_sign_in(SESSION.into())), YouTubeSignIn::Refused);
+        assert_eq!(block(c.sign_in(SESSION.into())), SignInResult::Refused);
         assert_eq!(t.urls()[1], ROTATE, "asked again after a rotation");
-        assert!(matches!(block(c.youtube_sign_in(SESSION.into())), YouTubeSignIn::Unreachable { .. }), "the network is down");
-        assert_eq!((c.youtube_account(), account::tests::stored(&c)), (YouTubeAccount::SignedOut, None));
+        assert!(matches!(block(c.sign_in(SESSION.into())), SignInResult::Unreachable { .. }), "the network is down");
+        assert_eq!((c.account(), account::tests::stored(&c)), (AccountState::SignedOut, None));
+    }
+
+    /// Google's page is done once it is back on YouTube Music holding a session.
+    #[test]
+    fn the_sign_in_page_is_googles_and_done_on_youtube_music() {
+        let info = YouTube::default().info();
+        assert!(matches!(&info.sign_in[0], SignIn::WebPage { start_url } if start_url.starts_with("https://accounts.google.com/")));
+        assert!(super::super::sign_in_done(ServerKind::YouTubeMusic, "https://music.youtube.com/".into(), SESSION.into()));
+        assert!(!super::super::sign_in_done(ServerKind::YouTubeMusic, "https://accounts.google.com/x".into(), SESSION.into()));
     }
 
     /// A session last rotated ten minutes ago or more is rotated before the next call, and the new
@@ -586,12 +692,12 @@ mod tests {
         assert_eq!(t.urls(), [ROTATE, BROWSE]);
         let kept = account::tests::stored(&c).unwrap();
         assert!(!kept.ended() && kept.rotated_ago() >= 601, "still due: asked again next time");
-        assert_eq!(c.youtube_account(), YouTubeAccount::SignedIn);
+        assert_eq!(c.account(), AccountState::SignedIn);
 
         let (c, t) = signed_in(30, vec![answer(401, "", &[]), answer(200, "", &["__Secure-1PSIDTS=ts2"]), answer(200, "library_playlists", &[])]);
         assert!(matches!(block(c.read_now(Read::PlaylistList)), Ok(Page::Playlists { v }) if v.len() == 2));
         assert_eq!(t.urls(), [BROWSE, ROTATE, BROWSE], "one refusal: rotated and asked again");
-        assert_eq!(c.youtube_account(), YouTubeAccount::SignedIn);
+        assert_eq!(c.account(), AccountState::SignedIn);
         assert!(account::tests::stored(&c).unwrap().cookies().contains("ts2"));
     }
 
@@ -602,7 +708,7 @@ mod tests {
         let (c, t) = signed_in(601, vec![answer(401, "", &[]), answer(200, "home", &[]), answer(200, "home_more", &[])]);
         let Page::Feed { v } = block(c.read_now(Read::HomeFeed)).unwrap() else { panic!() };
         assert_eq!(v.len(), 4, "everyone's feed");
-        assert_eq!(c.youtube_account(), YouTubeAccount::Ended);
+        assert_eq!(c.account(), AccountState::Ended);
         let kept = account::tests::stored(&c).unwrap();
         assert!(kept.ended() && kept.cookies() == SESSION);
         assert!(!t.asked.lock()[1].headers.contains_key("Cookie"), "asked as a visitor");
@@ -615,7 +721,7 @@ mod tests {
     fn refused_twice_the_session_ends() {
         let (c, _) = signed_in(30, vec![answer(200, "signed_out", &[]), answer(200, "", &[]), answer(200, "signed_out", &[])]);
         assert!(block(c.read_now(Read::PlaylistList)).is_err());
-        assert_eq!(c.youtube_account(), YouTubeAccount::Ended);
+        assert_eq!(c.account(), AccountState::Ended);
     }
 
     /// Signed in, a song's heart is the account's like; signed out it has nowhere to go and is not queued.
@@ -646,5 +752,41 @@ mod tests {
         assert!(v[3].albums.iter().all(|a| a.id.starts_with("yt-MPREb_")));
         assert!(t.asked.lock().iter().all(|e| !e.headers.contains_key("Cookie")), "signed out, a visitor's feed");
         assert!(matches!(block(c.read_now(Read::StarredItems)), Ok(Page::StarredPage { v }) if v.songs.is_empty()));
+    }
+
+    /// Home is YouTube's feed, signed in or not; signed out there is no library, nor an account's
+    /// work, settings for the library, downloads or streaming, or remote control.
+    #[test]
+    fn its_rules_follow_the_account() {
+        let (out, signed) = (rules(false), rules(true));
+        assert!(out.feed && signed.feed && out.measures && !out.remote && !out.account && !out.indexed);
+        assert!(out.sections.is_empty() && !out.stars);
+        assert!(!out.settings.iter().any(|p| matches!(p, SettingsPart::Library | SettingsPart::Downloads | SettingsPart::Streaming)));
+        assert!(signed.stars && signed.sections == [LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists]);
+        assert!(!signed.account && !signed.remote, "still no account's work");
+        let of = |user: &str, guest| super::super::rules_of(SavedServer { kind: ServerKind::YouTubeMusic, user: user.into(), ..Default::default() }, guest);
+        assert_eq!(of("", true), out);
+        assert_eq!(of("Ann", false), signed, "signed in as Ann");
+        assert!(of("", false).settings.contains(&SettingsPart::ServerOptions), "profiles are added from it");
+    }
+
+    /// The profile asks only for a name, keeps its kind, and a second one added takes over the first,
+    /// still signed in, never a server's.
+    #[test]
+    fn a_second_profile_is_the_first() {
+        use super::super::{server_for_login, server_ready};
+        use crate::settings::ServerList;
+        let yt = SavedServer { id: "y1".into(), kind: ServerKind::YouTubeMusic, ..SavedServer::default() };
+        assert!(server_ready(yt.clone()));
+        assert!(!server_ready(SavedServer { kind: ServerKind::Subsonic, ..yt.clone() }));
+        let blank_server = SavedServer { id: "s1".into(), ..SavedServer::default() };
+        let list = ServerList { servers: vec![blank_server, yt], active_server_id: "s1".into() };
+        let again = SavedServer { id: crate::settings::new_server_id(), kind: ServerKind::YouTubeMusic, ..SavedServer::default() };
+        assert_eq!(server_for_login(list.clone(), again.clone()).id, "y1");
+        let mut signed_in = list.clone();
+        signed_in.servers[1].user = "Ann".into();
+        assert_eq!(server_for_login(signed_in, again).user, "Ann", "still signed in");
+        let server = SavedServer { id: crate::settings::new_server_id(), ..SavedServer::default() };
+        assert_eq!(server_for_login(list, server).id, "s1", "the server's, not YouTube's");
     }
 }

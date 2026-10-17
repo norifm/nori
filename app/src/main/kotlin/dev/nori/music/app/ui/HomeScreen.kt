@@ -86,7 +86,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             if (closed && ui.rows.all { it.isEmpty }) item(key = "closed") {
                 Text(say.homeClosedToGuests, Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            // A profile with no library and nothing in its feed (YouTube Music's, offline) is found through search.
+            // A profile with no library and nothing in its feed (a provider's, offline) is found through search.
             if (noLibrary && ui.feed.isEmpty()) item(key = "search") {
                 Text(say.searchIsTheWayIn, Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -95,7 +95,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             // The shelves carry on the count the sections above started, so each one arrives a moment
             // after the one over it; an empty shelf is not drawn and does not take a place in the order.
             var place = 2
-            // A service's own shelves (YouTube Music's), titled as it titles them; each kind drawn as the
+            // A source's own shelves (`ProfileRules.feed`), titled as it titles them; each kind drawn as the
             // library's shelves of that kind are.
             ui.feed.forEachIndexed { i, f ->
                 val key = "feed-$i"

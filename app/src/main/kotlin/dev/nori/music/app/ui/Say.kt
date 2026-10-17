@@ -28,7 +28,35 @@ import dev.nori.music.ffi.settings.LyricsOrigin
 import dev.nori.music.ffi.settings.BandChannel
 import dev.nori.music.ffi.model.EqKind
 import dev.nori.music.ffi.settings.HomeRow
+import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.text.Fmt
+
+/**
+ * A kind of profile's words (the core's providers) as string resources: what it is called, what adding
+ * one does and its button, and what is said under a profile that names no user. The only part of the
+ * app that is a provider's own; a provider added in the core needs one entry here.
+ */
+class ProviderStrings(val name: Int, val hint: Int, val add: Int, val noUser: Int, val account: AccountStrings? = null)
+
+/** The words of a provider whose account signs in apart from its form (`ProviderInfo.sign_in`). */
+class AccountStrings(
+    val signInHint: Int, val pageButton: Int, val pageTitle: Int, val pageRefused: Int, val pasteInstead: Int, val pasteHint: Int,
+    val pasteLabel: Int, val risk: Int, val offerTitle: Int, val offerText: Int, val signedOutAgain: Int, val noSession: Int,
+    val refused: Int, val unreachable: Int,
+)
+
+fun providerStrings(kind: ServerKind): ProviderStrings = when (kind) {
+    ServerKind.SUBSONIC -> ProviderStrings(R.string.profile_kind_server, R.string.server_hint, R.string.connect, R.string.settings_server_api_key)
+    ServerKind.YOU_TUBE_MUSIC -> ProviderStrings(
+        R.string.youtube_music, R.string.youtube_music_hint, R.string.youtube_music_add, R.string.settings_server_best_effort,
+        AccountStrings(
+            R.string.youtube_sign_in_hint, R.string.youtube_sign_in_google, R.string.youtube_sign_in_title, R.string.youtube_page_refused,
+            R.string.youtube_paste_instead, R.string.youtube_paste_hint, R.string.youtube_cookies, R.string.youtube_account_risk,
+            R.string.youtube_offer_title, R.string.youtube_offer_text, R.string.youtube_signed_out_again, R.string.youtube_no_session,
+            R.string.youtube_refused, R.string.youtube_unreachable,
+        ),
+    )
+}
 
 /**
  * Every word the screens say, from the app's string resources (res/values/strings.xml), so the app can
@@ -243,38 +271,32 @@ class Say(private val r: Resources) {
     val server: String = r.getString(R.string.server)
     val serverHint: String = r.getString(R.string.server_hint)
     val serverUrl: String = r.getString(R.string.server_url)
-    val profileKindServer: String = r.getString(R.string.profile_kind_server)
-    val youtubeMusic: String = r.getString(R.string.youtube_music)
-    val youtubeMusicHint: String = r.getString(R.string.youtube_music_hint)
-    val youtubeMusicAdd: String = r.getString(R.string.youtube_music_add)
-    val youtubeAccount: String get() = r.getString(R.string.youtube_account)
-    fun youtubeSignedInAs(name: String): String = r.getString(R.string.youtube_signed_in_as, name)
-    val youtubeSignOut: String get() = r.getString(R.string.youtube_sign_out)
-    val youtubeSignedOutAgain: String get() = r.getString(R.string.youtube_signed_out_again)
-    val youtubeSignInHint: String get() = r.getString(R.string.youtube_sign_in_hint)
-    val youtubeCookies: String get() = r.getString(R.string.youtube_cookies)
-    val youtubeSignInAction: String get() = r.getString(R.string.youtube_sign_in)
-    val youtubeAccountRisk: String get() = r.getString(R.string.youtube_account_risk)
-    val youtubeSignInGoogle: String get() = r.getString(R.string.youtube_sign_in_google)
-    val youtubePasteInstead: String get() = r.getString(R.string.youtube_paste_instead)
-    val youtubePasteHint: String get() = r.getString(R.string.youtube_paste_hint)
-    val youtubeSignInTitle: String get() = r.getString(R.string.youtube_sign_in_title)
-    val youtubeSigningIn: String get() = r.getString(R.string.youtube_signing_in)
-    val youtubeTryAgain: String get() = r.getString(R.string.youtube_try_again)
-    val youtubeOfferTitle: String get() = r.getString(R.string.youtube_offer_title)
-    val youtubeOfferText: String get() = r.getString(R.string.youtube_offer_text)
-    val youtubeNotNow: String get() = r.getString(R.string.youtube_not_now)
-    /** Why the sign-in page's session did not sign in: it always holds a session, so only YouTube's refusal or the network is left. */
-    fun youtubeSignInPage(result: dev.nori.music.ffi.YouTubeSignIn): String = when (result) {
-        is dev.nori.music.ffi.YouTubeSignIn.Unreachable -> r.getString(R.string.youtube_unreachable)
-        else -> r.getString(R.string.youtube_page_refused)
+    /** One of [providerStrings]' words. */
+    fun word(id: Int): String = r.getString(id)
+    val account: String get() = r.getString(R.string.account)
+    fun signedInAs(name: String): String = r.getString(R.string.signed_in_as, name)
+    val signOut: String get() = r.getString(R.string.sign_out)
+    val signInAction: String get() = r.getString(R.string.sign_in_action)
+    val signingIn: String get() = r.getString(R.string.signing_in)
+    val tryAgain: String get() = r.getString(R.string.try_again)
+    val notNow: String get() = r.getString(R.string.not_now)
+    /** Why a sign-in page's session did not sign in a [kind] profile: it always holds a session, so only the provider's refusal or the network is left. */
+    fun signInPage(kind: ServerKind, result: dev.nori.music.ffi.SignInResult): String = providerStrings(kind).account.let { w ->
+        when {
+            w == null -> ""
+            result is dev.nori.music.ffi.SignInResult.Unreachable -> r.getString(w.unreachable)
+            else -> r.getString(w.pageRefused)
+        }
     }
-    /** Why a sign-in did not sign in. */
-    fun youtubeSignIn(result: dev.nori.music.ffi.YouTubeSignIn): String = when (result) {
-        is dev.nori.music.ffi.YouTubeSignIn.SignedIn -> youtubeSignedInAs(result.name)
-        dev.nori.music.ffi.YouTubeSignIn.NoSession -> r.getString(R.string.youtube_no_session)
-        dev.nori.music.ffi.YouTubeSignIn.Refused -> r.getString(R.string.youtube_refused)
-        is dev.nori.music.ffi.YouTubeSignIn.Unreachable -> r.getString(R.string.youtube_unreachable)
+    /** How a sign-in of a [kind] profile went. */
+    fun signIn(kind: ServerKind, result: dev.nori.music.ffi.SignInResult): String {
+        val w = providerStrings(kind).account
+        return when (result) {
+            is dev.nori.music.ffi.SignInResult.SignedIn -> signedInAs(result.name)
+            dev.nori.music.ffi.SignInResult.NoSession -> w?.let { r.getString(it.noSession) }.orEmpty()
+            dev.nori.music.ffi.SignInResult.Refused -> w?.let { r.getString(it.refused) }.orEmpty()
+            is dev.nori.music.ffi.SignInResult.Unreachable -> w?.let { r.getString(it.unreachable) }.orEmpty()
+        }
     }
     val user: String = r.getString(R.string.user)
     val password: String = r.getString(R.string.password)
