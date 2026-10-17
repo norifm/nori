@@ -38,7 +38,7 @@ android {
         val lock = rootProject.file("Cargo.lock").takeIf { it.exists() }?.readText().orEmpty()
         fun locked(crate: String): String =
             Regex("name = \"" + Regex.escape(crate) + "\"\nversion = \"([^\"]+)\"").find(lock)?.groupValues?.get(1) ?: ""
-        val rust = listOf("uniffi", "rusqlite", "rustfft", "signalsmith-stretch", "serde", "jni")
+        val rust = listOf("uniffi", "rusqlite", "rustfft", "serde", "jni")
             .joinToString(";") { "$it=${locked(it)}" }
         val catalog = rootProject.file("gradle/libs.versions.toml").takeIf { it.exists() }?.readText().orEmpty()
         fun cat(key: String): String = Regex("(?m)^" + Regex.escape(key) + "\\s*=\\s*\"([^\"]+)\"").find(catalog)?.groupValues?.get(1) ?: ""

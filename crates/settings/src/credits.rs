@@ -27,7 +27,7 @@ const CORE_CREDITS: [(&str, &str, &str, &str, Option<&str>); 19] = [
     (
         "Signalsmith Stretch",
         "Time-stretching for beat-matched mixes",
-        "Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd.; Rust binding Copyright 2024 Colin Marc",
+        "Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd.; Signalsmith Linear Copyright (c) 2025 Signalsmith Audio; ported to Rust in nori",
         "MIT",
         Some("MIT"),
     ),

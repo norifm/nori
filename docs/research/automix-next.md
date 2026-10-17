@@ -25,7 +25,7 @@ What the planner (`crates/player/src/automix/plan.rs`) can already do:
   - MixRampFade: overlap from loudness ramps and trimmed silence, with an optional filter sweep;
   - BeatMatched: tempo-locked and bar-aligned, with an optional bass swap;
   - EchoOut: the outgoing song exits into a beat-synced echo.
-- **Tempo:** stretch with pitch kept (`stretch.rs`; Signalsmith Stretch, MIT, through the `signalsmith-stretch` crate, with varispeed as the other engine; an earlier version of this line said Sonic, which was out of date). Only the incoming song is stretched: it holds a ratio for the overlap, then ramps back to native tempo over a few bars. Users report Apple moves the outgoing side too (`automix.md` §1a).
+- **Tempo:** stretch with pitch kept (`stretch.rs`; Signalsmith Stretch, MIT, ported to Rust in `crates/stretch`, with varispeed as the other engine; an earlier version of this line said Sonic, which was out of date). Only the incoming song is stretched: it holds a ratio for the overlap, then ramps back to native tempo over a few bars. Users report Apple moves the outgoing side too (`automix.md` §1a).
 - **Key:** Camelot distance chooses a soft or classic filter shape (`apply_fade_filter`).
 - **Structure:** phrase lines and downbeats (`structure.rs`), "on a phrase line" and "4-bar run-up" choices.
 - **Loudness:** LUFS matching with a gentle release.

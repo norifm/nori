@@ -841,7 +841,7 @@ class Say(private val r: Resources) {
         )
         val playback = r.getString(R.string.about_playback, v("media3"), v("okhttp"))
         val library = r.getString(R.string.about_library, v("rusqlite"), v("uniffi"))
-        val automix = r.getString(R.string.about_automix, v("rustfft"), v("signalsmith-stretch"))
+        val automix = r.getString(R.string.about_automix, v("rustfft"))
         val ui = r.getString(R.string.about_ui, v("composeBom"))
         val title = r.getString(R.string.about_title, version)
         return AboutFacts(title, build, playback, library, automix, ui, r.getString(R.string.about_report, title, build, playback, library, automix, ui))
