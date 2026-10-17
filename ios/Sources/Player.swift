@@ -363,7 +363,7 @@ final class PlayerCard: UIViewController {
         heart.setImage(on ? Glyph.heartFilled : Glyph.heart, for: .normal)
         heart.accessibilityLabel = Say.favorite
         heart.accessibilityTraits = on ? [.button, .selected] : .button
-        heart.isHidden = song.external || !Core.shared.rules.account
+        heart.isHidden = song.external || !Core.shared.rules.stars
     }
 
     @objc private func heartTapped() {

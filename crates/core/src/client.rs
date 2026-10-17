@@ -41,6 +41,8 @@ pub struct Client {
     /// here: neither is offered (`queue_offer`).
     pub(crate) queue_pushed: parking_lot::Mutex<Option<crate::library::QueuePlace>>,
     pub(crate) queue_seen: parking_lot::Mutex<Option<crate::library::QueuePlace>>,
+    /// A YouTube Music profile's visitor id and streams resolved so far (youtube.rs).
+    pub(crate) innertube: crate::youtube::YouTube,
 }
 
 /// The client of the server profile in use, as the platform switches profiles: where what outlives one
@@ -128,6 +130,9 @@ impl Client {
     }
 
     pub(crate) async fn get(&self, endpoint: &str, params: &[(String, String)]) -> NetResult<Vec<u8>> {
+        if self.youtube() {
+            return Err(crate::youtube::no_subsonic(endpoint));
+        }
         let url = self.core.server.read().url(endpoint, params);
         transport::get(&*self.transport, url, 0).await
     }
@@ -158,7 +163,7 @@ impl Client {
 impl Client {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(core: Arc<Core>, transport: Arc<dyn Transport>, covers: Arc<crate::covers::CoverNet>) -> Arc<Self> {
-        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), queue_pushed: Default::default(), queue_seen: Default::default() })
+        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), queue_pushed: Default::default(), queue_seen: Default::default(), innertube: Default::default() })
     }
 
     /// Sets the profile's addresses, folder and bitrate cap.
@@ -280,6 +285,9 @@ impl Client {
     /// the server twice is queued only when the failure shows nothing was sent. Evicts the change's stale
     /// cache prefixes when sent or queued.
     pub async fn write(&self, w: Write) -> NetResult<()> {
+        if self.youtube() {
+            return self.youtube_write(w).await;
+        }
         let repeatable = w.repeatable();
         let (endpoint, params, stale) = request(w);
         if self.core.pending_any()? {
@@ -360,7 +368,7 @@ pub(crate) mod tests {
                 .await;
             }
             match self.answers.lock().pop_front().unwrap_or(Err(FailureKind::Connect)) {
-                Ok((status, body)) => Ok(TransportResponse { status, body }),
+                Ok((status, body)) => Ok(TransportResponse { status, body, set_cookies: Vec::new() }),
                 Err(kind) => Err(TransportError::Failed { kind, detail: Some(format!("{kind:?}")) }),
             }
         }

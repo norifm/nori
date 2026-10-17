@@ -27,7 +27,7 @@ pub const JOIN_ENDED: i32 = 4;
 fn rules_json(r: &ProfileRules) -> Value {
     let sections: Vec<u8> = r.sections.iter().map(|s| *s as u8).collect();
     let settings: Vec<u8> = r.settings.iter().map(|s| *s as u8).collect();
-    json!({ "asks": r.asks, "account": r.account, "sections": sections, "settings": settings })
+    json!({ "asks": r.asks, "account": r.account, "stars": r.stars, "feed": r.feed, "sections": sections, "settings": settings })
 }
 
 /// What the open profile offers (a jam guest's: the host's library, its picks asked of the host), as JSON
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn a_guest_has_the_hosts_library_and_no_account() {
         let guest = rules_json(&nori_core::browse::profile_rules(true));
-        assert_eq!(guest, json!({ "asks": true, "account": false, "sections": [0, 2, 3, 7], "settings": [0, 2, 3, 4, 5, 7, 9, 10] }));
+        assert_eq!(guest, json!({ "asks": true, "account": false, "stars": false, "feed": false, "sections": [0, 2, 3, 7], "settings": [0, 2, 3, 4, 5, 7, 9, 10] }));
         let account = rules_json(&nori_core::browse::profile_rules(false));
         assert_eq!((account["asks"].clone(), account["account"].clone(), account["sections"].as_array().map(Vec::len)), (json!(false), json!(true), Some(12)));
     }

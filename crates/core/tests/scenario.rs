@@ -129,7 +129,7 @@ impl Transport for Server {
         let (path, query) = url.split_once('?').unwrap_or((&url, ""));
         let endpoint = path.rsplit('/').next().unwrap_or_default();
         let params = query.split('&').filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_string(), decode(v))).collect();
-        Ok(TransportResponse { status: 200, body: self.answer(endpoint, &params) })
+        Ok(TransportResponse { status: 200, body: self.answer(endpoint, &params), set_cookies: Vec::new() })
     }
 
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {

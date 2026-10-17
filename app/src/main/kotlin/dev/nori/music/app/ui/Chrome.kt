@@ -508,7 +508,8 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                     state.playingOn != null, 24.dp,
                     idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { content },
                 )
-                song?.let { s ->
+                // Hearts where songs carry them (YouTube Music's only signed in).
+                if (LocalRules.current.stars) song?.let { s ->
                     val starred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
                     FavoriteHeart(starred, tint = content, muted = look.color(CoverLook.CHROME_CONTENT_75)) { actions.star(s, !starred) }
                 }

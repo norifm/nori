@@ -1,0 +1,23 @@
+{
+ "actions": [
+  {
+   "openPopupAction": {
+    "popup": {
+     "multiPageMenuRenderer": {
+      "header": {
+       "activeAccountHeaderRenderer": {
+        "accountName": {
+         "runs": [
+          {
+           "text": "Ann Example"
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ ]
+}

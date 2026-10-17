@@ -794,7 +794,7 @@ pub(crate) mod tests {
             self.sent.lock().push(request.clone());
             let pages = self.pages.lock();
             match pages.iter().find(|(p, _, _)| request.url.starts_with(p.as_str())) {
-                Some((_, status, body)) => Ok(TransportResponse { status: *status, body: body.as_bytes().to_vec() }),
+                Some((_, status, body)) => Ok(TransportResponse { status: *status, body: body.as_bytes().to_vec(), set_cookies: Vec::new() }),
                 None => Err(TransportError::Failed { kind: nori_net::transport::FailureKind::Connect, detail: None }),
             }
         }

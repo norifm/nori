@@ -278,6 +278,37 @@ impl Library for CoreLibrary {
     }
 }
 
+/// A YouTube Music profile's byte source: a song's stream address opens at the URL YouTube serves it at
+/// now ([`Client::playable`], resolved on the opening thread). A refused URL is forgotten, so the
+/// loader's next try asks YouTube again. Other URLs pass through.
+pub struct Resolving {
+    pub bytes: Arc<dyn ByteSource>,
+    pub client: Arc<Client>,
+}
+
+impl ByteSource for Resolving {
+    fn open(&self, url: &str, from: u64) -> Result<crate::source::Body, OpenError> {
+        self.open_cancellable(url, None, from, &crate::source::Cancel::new())
+    }
+
+    fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
+        let Some(served) = self.client.playable(url, from) else { return self.bytes.open_cancellable(url, key, from, cancel) };
+        let opened = self.bytes.open_cancellable(&served.map_err(|e| OpenError::Failed(e.to_string()))?, key, from, cancel);
+        if matches!(opened, Err(OpenError::Status(403))) {
+            self.client.playable_refused(url);
+        }
+        opened
+    }
+
+    fn open_live(&self, url: &str) -> Result<(crate::source::Body, Option<usize>), String> {
+        self.bytes.open_live(url)
+    }
+
+    fn forget(&self, url: &str) -> bool {
+        self.bytes.forget(url)
+    }
+}
+
 /// The songs of `fetch` to fetch ahead, less `next` (the engine's loader fetches it).
 pub fn ahead_songs(fetch: Vec<nori_core::stream::Fetch>, next: &str) -> Vec<AheadSong> {
     fetch.into_iter().filter(|f| f.id != next).map(|f| AheadSong { id: f.id, url: f.url, key: f.key }).collect()

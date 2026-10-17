@@ -62,6 +62,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
     // The mixes and the favourites are the account's: a jam guest's Home is the
     // host's shelves.
     val account = LocalRules.current.account
+    val noLibrary = LocalRules.current.sections.isEmpty()
     val closed by vm.closedToGuests.collectAsStateWithLifecycle()
     val offer by vm.offer.collectAsStateWithLifecycle()
     // Each time the page comes into sight: back from another app, or the phone unlocked.
@@ -85,11 +86,23 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             if (closed && ui.rows.all { it.isEmpty }) item(key = "closed") {
                 Text(say.homeClosedToGuests, Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            // A profile with no library and nothing in its feed (YouTube Music's, offline) is found through search.
+            if (noLibrary && ui.feed.isEmpty()) item(key = "search") {
+                Text(say.searchIsTheWayIn, Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             // Favourites are always here; the mixes join them when the taste model is on (MixesViewModel).
             if (account) item(key = "mixes") { Column(Modifier.arriving(arrival, 1, rise)) { SectionTitle(say.forYou); MixTiles() } }
             // The shelves carry on the count the sections above started, so each one arrives a moment
             // after the one over it; an empty shelf is not drawn and does not take a place in the order.
             var place = 2
+            // A service's own shelves (YouTube Music's), titled as it titles them; each kind drawn as the
+            // library's shelves of that kind are.
+            ui.feed.forEachIndexed { i, f ->
+                val key = "feed-$i"
+                if (f.songs.isNotEmpty()) songShelf(f.title, f.songs, vm, actions, arrival, place++, rise, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, f.title), "$key-songs")
+                if (f.albums.isNotEmpty()) shelf(f.title, f.albums, vm, arrival, place++, rise, "$key-albums")
+                if (f.playlists.isNotEmpty()) playlistShelf(f.title, f.playlists, vm, arrival, place++, rise, "$key-playlists")
+            }
             ui.rows.forEach { shelf ->
                 // The favourite playlists are a selection of something the page fetches once for all of
                 // it, so their shelf is filled from there - but it stands where the user put it in the
@@ -146,8 +159,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.shelf(
     arrival: State<Float>,
     place: Int,
     rise: Float,
+    key: String = title,
 ) {
-    item(key = title, contentType = "shelf") {
+    item(key = key, contentType = "shelf") {
         val nav = LocalNav.current
         Column(Modifier.arriving(arrival, place, rise)) {
             SectionTitle(title)
@@ -166,14 +180,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistShelf(
     arrival: State<Float>,
     place: Int,
     rise: Float,
+    key: String = title,
 ) {
-    item(key = title, contentType = "shelf") {
+    item(key = key, contentType = "shelf") {
         val nav = LocalNav.current
         Column(Modifier.arriving(arrival, place, rise)) {
             SectionTitle(title)
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(playlists, key = { it.id }, contentType = { "playlist" }) { p ->
-                    CoverCard(p.name, remember(p.songCount) { say.songs(p.songCount.toInt()) }, vm.cover(p.coverArt, CoverSize.CARD), 150.dp, { nav.playlist(p.id, p) })
+                    // A feed's playlist is not counted until opened: its own line (who is in it) instead.
+                    val line = remember(p.songCount, p.comment) { if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty() }
+                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 150.dp, { nav.playlist(p.id, p) })
                 }
             }
         }
@@ -207,8 +224,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songShelf(
     rise: Float,
     /** The shelf: the songs played from it are its queue. */
     from: dev.nori.music.ffi.model.PageOrigin,
+    key: String = title,
 ) {
-    item(key = title, contentType = "shelf") {
+    item(key = key, contentType = "shelf") {
         Column(Modifier.arriving(arrival, place, rise)) {
             SectionTitle(title)
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(songs.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

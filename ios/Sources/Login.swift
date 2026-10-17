@@ -1,7 +1,9 @@
 import UIKit
 
-/// Adds a server: checks the address, saves the profile as the active one and opens it.
+/// Adds a server, or YouTube Music: checks the address, saves the profile as the active one and opens it.
 final class LoginPage: UIViewController, UITextFieldDelegate {
+    private let kind = UISegmentedControl(items: [Say.yourServer, Say.youtubeMusic])
+    private let hint = UILabel()
     private let address = UITextField()
     private let user = UITextField()
     private let password = UITextField()
@@ -45,7 +47,8 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         spinner.hidesWhenStopped = true
         spinner.color = Theme.label
 
-        let hint = UILabel()
+        kind.selectedSegmentIndex = 0
+        kind.addTarget(self, action: #selector(kindChanged), for: .valueChanged)
         hint.text = Say.serverKinds
         hint.textColor = Theme.secondary
         hint.font = UIFont.preferredFont(forTextStyle: .footnote)
@@ -65,7 +68,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
             f.isHidden = true
             f.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
-        let stack = UIStackView(arrangedSubviews: [address, user, password, more, name, second, key, connect, spinner, status, hint])
+        let stack = UIStackView(arrangedSubviews: [kind, address, user, password, more, name, second, key, connect, spinner, status, hint])
         stack.axis = .vertical
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -126,9 +129,22 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         more.setTitle(show ? Say.hideAdvanced : Say.advanced, for: .normal)
     }
 
+    private var youtube: Bool { kind.selectedSegmentIndex == 1 }
+
+    /// YouTube Music has no server, so only its name is asked.
+    @objc private func kindChanged() {
+        for f in [address, user, password, more, second, key] { f.isHidden = youtube }
+        name.isHidden = !youtube
+        more.setTitle(Say.advanced, for: .normal)
+        hint.text = youtube ? Say.youtubeMusicHint : Say.serverKinds
+        connect.setTitle(youtube ? Say.youtubeMusicAdd : Say.connect, for: .normal)
+        status.text = ""
+    }
+
     @objc private func submit() {
         view.endEditing(true)
         let fields: [String: String] = [
+            "kind": youtube ? "youtubeMusic" : "subsonic",
             "url": address.text ?? "", "user": user.text ?? "", "password": password.text ?? "",
             "name": name.text ?? "", "alt": second.text ?? "", "key": key.text ?? "",
         ]
@@ -157,7 +173,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
                     }
                 }
                 self.status.text = opened ?? Say.failure(code, extra)
-                self.connect.setTitle(Say.connect, for: .normal)
+                self.connect.setTitle(self.youtube ? Say.youtubeMusicAdd : Say.connect, for: .normal)
                 self.connect.isEnabled = true
             }
         }

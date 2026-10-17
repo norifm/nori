@@ -43,6 +43,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 "player" -> sheet.open()
                 "queue" -> nav.player(dev.nori.music.app.ui.Panel.QUEUE)
                 "devices" -> devices()
+                "youtube-sign-in" -> settings.openYoutubeSignIn()
                 else -> nav.go(route)
             }
         }
@@ -51,7 +52,9 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
         TestHooks.play = { what -> TestActions.playByRef(context, actions, what) }
         TestHooks.login = { spec ->
             val (url, user, pass) = spec.split("|").let { Triple(it[0], it.getOrElse(1) { "" }, it.getOrElse(2) { "" }) }
-            val profile = settings.newProfile().copy(url = url, user = user, password = pass)
+            // "youtube-music" adds a YouTube Music profile instead of a server's.
+            val profile = if (spec == "youtube-music") settings.newProfile().copy(kind = dev.nori.music.ffi.settings.ServerKind.YOU_TUBE_MUSIC)
+                else settings.newProfile().copy(url = url, user = user, password = pass)
             // Logins come back to back (the app's start, then a section's): one still busy would drop the next.
             scope.launch {
                 settings.login.first { !it.busy }
@@ -110,7 +113,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 settings.update.value.let { u ->
                     """"update":"${u::class.simpleName}","updateLine":"${dev.nori.music.app.vm.updateWords(context.resources, u, BuildConfig.VERSION_NAME, settings.installsUpdates).replace("\"", "'")}","""
                 } +
-                """"loggedIn":${p.loggedIn},"server":"${p.server?.url.orEmpty()}","loginError":"${settings.login.value.error.orEmpty().replace("\"", "'")}"}"""
+                """"loggedIn":${p.loggedIn},"server":"${p.server?.url.orEmpty()}","kind":"${p.server?.kind ?: ""}","youtubeOffer":${settings.youtube.value.offer},"youtubeSignInPage":${settings.youtube.value.page},"loginError":"${settings.login.value.error.orEmpty().replace("\"", "'")}"}"""
         }
         // An app crossfading out (a jam joined or left) goes after the one coming in took the hooks over.
         onDispose {

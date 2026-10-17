@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, ControlsSide, CrossfadeCurve, DimIdle, DimLevel, DownloadBeats, EqMode, GainMode, HideBar, HomeRow, KeepAwake, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, StoredPrefs, SwipeAction, TapAction, ThemeMode};
+use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, ControlsSide, CrossfadeCurve, DimIdle, DimLevel, DownloadBeats, EqMode, GainMode, HideBar, HomeRow, KeepAwake, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode};
 use nori_settings::settings_model::{specs, value_of};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/stored_format.txt");
@@ -16,6 +16,7 @@ fn sample() -> StoredPrefs {
     StoredPrefs {
         servers: vec![SavedServer {
             id: "a1".into(),
+            kind: ServerKind::YouTubeMusic,
             name: "Home".into(),
             url: "https://music.example.com".into(),
             alt_url: "http://10.0.0.2:4533".into(),

@@ -1,0 +1,64 @@
+{
+ "playabilityStatus": {
+  "status": "OK",
+  "playableInEmbed": true
+ },
+ "streamingData": {
+  "expiresInSeconds": "21540",
+  "adaptiveFormats": [
+   {
+    "itag": 137,
+    "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?expire=1792215113&itag=137&mime=video%2Fmp4&clen=80911999&sig=FIXTURE",
+    "mimeType": "video/mp4; codecs=\"avc1.640028\"",
+    "bitrate": 4334157,
+    "contentLength": "80911999",
+    "qualityOrdinal": "QUALITY_ORDINAL_1080P"
+   },
+   {
+    "itag": 140,
+    "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?expire=1792215113&itag=140&mime=audio%2Fmp4&clen=3449447&sig=FIXTURE",
+    "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"",
+    "bitrate": 130677,
+    "contentLength": "3449447",
+    "trackAbsoluteLoudnessLkfs": -13.01,
+    "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+   },
+   {
+    "itag": 249,
+    "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?expire=1792215113&itag=249&mime=audio%2Fwebm&clen=1231355&sig=FIXTURE",
+    "mimeType": "audio/webm; codecs=\"opus\"",
+    "bitrate": 49496,
+    "contentLength": "1231355",
+    "trackAbsoluteLoudnessLkfs": -13.02,
+    "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+   },
+   {
+    "itag": 251,
+    "url": "https://rr1---sn-fixture.googlevideo.com/videoplayback?expire=1792215113&itag=251&mime=audio%2Fwebm&clen=3433755&sig=FIXTURE",
+    "mimeType": "audio/webm; codecs=\"opus\"",
+    "bitrate": 136544,
+    "contentLength": "3433755",
+    "trackAbsoluteLoudnessLkfs": -13.02,
+    "qualityOrdinal": "QUALITY_ORDINAL_UNKNOWN"
+   }
+  ]
+ },
+ "videoDetails": {
+  "videoId": "dQw4w9WgXcQ",
+  "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
+  "lengthSeconds": "213",
+  "channelId": "UCuAXFkgsw1L7xaCfnd5JJOw",
+  "thumbnail": {
+   "thumbnails": [
+    {
+     "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg"
+    },
+    {
+     "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hq720.jpg"
+    }
+   ]
+  },
+  "author": "Rick Astley",
+  "isTvfilmVideo": false
+ }
+}

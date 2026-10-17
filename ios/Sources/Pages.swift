@@ -1043,7 +1043,8 @@ class PageController: UITableViewController {
         let key = rows[section].section.key
         if rows.count == 1 && answer?.head.isEmpty == false { return nil }
         if rows.count == 1 && kind != NORI_PAGE_HOME && kind != NORI_PAGE_DOWNLOADS { return nil }
-        let words = Say.shelf(key)
+        let given = rows[section].section.title
+        let words = given.isEmpty ? Say.shelf(key) : given
         return words.isEmpty ? nil : words
     }
 

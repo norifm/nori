@@ -157,6 +157,14 @@ pub fn run(o: Options) -> Result<(), String> {
         prefs.active_server_id = id;
         crate::backend::app().settings.put(prefs.clone());
     }
+    if o.youtube_music {
+        use nori_core::settings::{server_for_login, servers_activated, ServerKind, ServerList};
+        let list = ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
+        let form = SavedServer { id: nori_core::settings::new_server_id(), kind: ServerKind::YouTubeMusic, name: crate::text::YOUTUBE_MUSIC.into(), ..Default::default() };
+        let list = servers_activated(list.clone(), server_for_login(list, form));
+        (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
+        crate::backend::app().settings.put(prefs.clone());
+    }
     let mouse = o.mouse.unwrap_or_else(|| own::flag(own::MOUSE, true));
     let images = o.images.unwrap_or_else(|| own::flag(own::IMAGES, true));
     let mut terminal = crate::term::enter(mouse).map_err(|e| e.to_string())?;

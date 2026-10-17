@@ -292,6 +292,17 @@ pub struct Genre {
     pub album_count: u32,
 }
 
+/// One row of a service's own home feed (YouTube Music's), titled as the service titles it.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct FeedShelf {
+    pub title: String,
+    pub songs: Vec<Song>,
+    pub albums: Vec<Album>,
+    pub playlists: Vec<Playlist>,
+    pub artists: Vec<Artist>,
+}
+
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SearchResult {

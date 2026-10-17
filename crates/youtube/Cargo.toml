@@ -1,0 +1,16 @@
+[package]
+name = "innertube-music"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "YouTube Music over InnerTube without JavaScript: requests and parsers for search, browse, the home feed, a signed-in library and audio streams, with no HTTP client of its own"
+readme = "README.md"
+exclude = ["BUILD.bazel"]
+keywords = ["youtube-music", "innertube", "music"]
+categories = ["api-bindings", "multimedia::audio"]
+
+[dependencies]
+serde_json = "1"
+# SAPISIDHASH, the signed-in requests' Authorization.
+sha1_smol = "1"

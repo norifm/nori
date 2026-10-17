@@ -151,6 +151,10 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
                 }
             }
         }
+        // A profile with no library (YouTube Music) is found through search.
+        if (rules.sections.isEmpty()) item(key = "search") {
+            Text(say.searchIsTheWayIn, Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         items(sections, key = { it.name }) { s ->
             NavRow(
                 say.librarySection(s), { nav.librarySection(s) }, chevron = true,

@@ -145,7 +145,7 @@ struct Spec<'a> {
     duration_ms: Option<i64>,
     encoding: Encoding,
     mode: Mode,
-    /// Every byte is here: MP4 gapless boxes are read wherever they are.
+    /// Every byte is here: MP4 gapless boxes and WebM's padding are read wherever they are.
     whole: bool,
     /// The source's length is the song's; otherwise it is read in order as of unknown length ([`Unsized`]).
     sized: bool,
@@ -379,6 +379,9 @@ struct Stream {
     /// An MP4's encoder delay and music end, in decoder frames, from `iTunSMPB` or the edit list
     /// (symphonia reads neither).
     mp4: Option<(i64, i64)>,
+    /// A WebM block's padding, by packet timestamp ([`crate::webm::Discards::frames`]; symphonia
+    /// drops it).
+    discards: Vec<(i64, u32)>,
     /// Stored bits per sample (0 unknown).
     bits: u32,
     /// The compression's name, for reports.
@@ -434,6 +437,7 @@ impl Stream {
         let Spec { hint, from_ms, duration_ms, encoding, mode, whole, sized, platform_aac } = spec;
         let packets = mode == Mode::Packets;
         let gapless = if whole { crate::mp4::gapless(&mut source).ok().flatten() } else { None };
+        let padded = if whole && gapless.is_none() { crate::webm::discards(&mut source).ok().flatten() } else { None };
         source.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
         let source = past_id3(source).map_err(|e| e.to_string())?;
         // Asked once the first bytes are read: a song still arriving learns its length with them.
@@ -463,6 +467,10 @@ impl Stream {
             _ => return Err(format!("{:?} is not decoded here", params.codec)),
         };
         let (track_delay, track_padding) = (track.delay, track.padding);
+        let discards = match (padded, track.time_base) {
+            (Some(d), Some(tb)) => d.frames(tb.numer.get(), tb.denom.get(), rate),
+            _ => Vec::new(),
+        };
         let cut_short = sized && byte_len.is_some() && matches!(codec, Some(Codec::Opus | Codec::Vorbis)) && track.num_frames.is_none();
         let setup = params.extra_data.clone();
         let bits = params.bits_per_sample.or(params.bits_per_coded_sample).unwrap_or(0);
@@ -532,6 +540,7 @@ impl Stream {
             ended: false,
             primed: false,
             mp4,
+            discards,
             bits,
             compression,
             coded,
@@ -625,7 +634,8 @@ impl Stream {
                     (from - delay, (to - from).max(0))
                 }
                 None => {
-                    let (trim_start, trim_end) = (packet.trim_start.get() as i64, packet.trim_end.get() as i64);
+                    let trim_end = packet.trim_end.get() as i64 + crate::webm::discarded(&self.discards, pts) as i64;
+                    let trim_start = packet.trim_start.get() as i64;
                     (pts + trim_start, (dur - trim_start - trim_end).max(0))
                 }
             };
@@ -694,7 +704,8 @@ impl Stream {
                 continue;
             }
             // Encoder delay and padding as the container states them (Opus drops its own pre-skip).
-            let (mut trim_start, mut trim_end) = if self.codec == Some(Codec::Opus) || self.frame.is_none() { (0, packet.trim_end as usize) } else { (packet.trim_start as usize, packet.trim_end as usize) };
+            let packet_end = packet.trim_end as usize + crate::webm::discarded(&self.discards, packet.pts);
+            let (mut trim_start, mut trim_end) = if self.codec == Some(Codec::Opus) || self.frame.is_none() { (0, packet_end) } else { (packet.trim_start as usize, packet_end) };
             if let Some((delay, end)) = self.mp4 {
                 // An MP4 stamp counts decoder frames, delay included.
                 let raw = packet.pts;
@@ -1281,5 +1292,16 @@ mod tests {
         assert!(decoded(arriving) == decoded(file), "the same samples, its encoder delay and padding cut");
         opened(&mut packets);
         assert!(packets.coded().is_some_and(|c| c.bitrate > 0), "its bitrate sizes an offload track: {:?}", packets.coded());
+    }
+
+    /// Opus in WebM (YouTube's itag 251) decodes as the same Opus in Ogg does: pre-skip dropped, and the
+    /// last packet's padding (`DiscardPadding`) cut.
+    #[test]
+    fn webm_opus_plays_as_ogg_opus() {
+        let open = |bytes: &'static [u8], hint| Demuxed::open(Box::new(io::Cursor::new(bytes)), Some(hint), 0, None, Encoding::Pcm16, None).unwrap();
+        let webm = decoded(open(include_bytes!("../testdata/tone440.webm"), "webm"));
+        let ogg = decoded(open(include_bytes!("../../player/testdata/tone440.opus"), "opus"));
+        assert!(!ogg.is_empty());
+        assert!(webm == ogg, "{} bytes from WebM, {} from Ogg", webm.len(), ogg.len());
     }
 }

@@ -112,6 +112,8 @@ pub enum Data {
     /// Home's "Top Picks": the favourites tile, then the mixes.
     Picks(Vec<MixTile>),
     HomeRow(usize, Vec<nori_core::Album>),
+    /// A service's own Home (YouTube Music's), as titled shelves of albums.
+    Feed(Vec<(String, Vec<nori_core::Album>)>),
     Albums(Vec<nori_core::Album>),
     Artists(Vec<nori_core::Artist>),
     Playlists(Vec<nori_core::Playlist>),
@@ -246,6 +248,7 @@ impl Session {
                 }
             };
             match &req {
+                Req::Home if core.rules().feed => pages(Read::HomeFeed, &|p| if let Page::Feed { v } = p { Some(Data::Feed(nori_core::browse::feed_album_shelves(v))) } else { None }),
                 Req::Home => {
                     // The mixes and the favourites are the account's: a jam guest's Home is the shelves.
                     let account = core.rules().account;

@@ -1,0 +1,181 @@
+{
+ "responseContext": {
+  "serviceTrackingParams": [
+   {
+    "service": "GFEEDBACK",
+    "params": [
+     {
+      "key": "logged_in",
+      "value": "1"
+     }
+    ]
+   }
+  ]
+ },
+ "contents": {
+  "singleColumnBrowseResultsRenderer": {
+   "tabs": [
+    {
+     "tabRenderer": {
+      "content": {
+       "sectionListRenderer": {
+        "contents": [
+         {
+          "itemSectionRenderer": {
+           "contents": [
+            {
+             "gridRenderer": {
+              "items": [
+               {
+                "musicTwoRowItemRenderer": {
+                 "title": {
+                  "runs": [
+                   {
+                    "text": "New playlist"
+                   }
+                  ]
+                 },
+                 "navigationEndpoint": {
+                  "createPlaylistEndpoint": {}
+                 }
+                }
+               },
+               {
+                "musicTwoRowItemRenderer": {
+                 "thumbnailRenderer": {
+                  "musicThumbnailRenderer": {
+                   "thumbnail": {
+                    "thumbnails": [
+                     {
+                      "url": "https://lh3.googleusercontent.com/fixture-liked=w226-h226-l90-rj",
+                      "width": 226,
+                      "height": 226
+                     },
+                     {
+                      "url": "https://lh3.googleusercontent.com/fixture-liked=w544-h544-l90-rj",
+                      "width": 544,
+                      "height": 544
+                     }
+                    ]
+                   }
+                  }
+                 },
+                 "title": {
+                  "runs": [
+                   {
+                    "text": "Liked music",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "VLLM",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                       }
+                      }
+                     }
+                    }
+                   }
+                  ]
+                 },
+                 "subtitle": {
+                  "runs": [
+                   {
+                    "text": "Auto playlist"
+                   }
+                  ]
+                 },
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLLM",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               },
+               {
+                "musicTwoRowItemRenderer": {
+                 "thumbnailRenderer": {
+                  "musicThumbnailRenderer": {
+                   "thumbnail": {
+                    "thumbnails": [
+                     {
+                      "url": "https://lh3.googleusercontent.com/fixture-top-songs=w226-h226-l90-rj",
+                      "width": 226,
+                      "height": 226
+                     },
+                     {
+                      "url": "https://lh3.googleusercontent.com/fixture-top-songs=w544-h544-l90-rj",
+                      "width": 544,
+                      "height": 544
+                     }
+                    ]
+                   }
+                  }
+                 },
+                 "title": {
+                  "runs": [
+                   {
+                    "text": "Top songs",
+                    "navigationEndpoint": {
+                     "browseEndpoint": {
+                      "browseId": "VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs",
+                      "browseEndpointContextSupportedConfigs": {
+                       "browseEndpointContextMusicConfig": {
+                        "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                       }
+                      }
+                     }
+                    }
+                   }
+                  ]
+                 },
+                 "subtitle": {
+                  "runs": [
+                   {
+                    "text": "Playlist"
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "Daft Punk"
+                   },
+                   {
+                    "text": " • "
+                   },
+                   {
+                    "text": "150 songs"
+                   }
+                  ]
+                 },
+                 "navigationEndpoint": {
+                  "browseEndpoint": {
+                   "browseId": "VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs",
+                   "browseEndpointContextSupportedConfigs": {
+                    "browseEndpointContextMusicConfig": {
+                     "pageType": "MUSIC_PAGE_TYPE_PLAYLIST"
+                    }
+                   }
+                  }
+                 }
+                }
+               }
+              ]
+             }
+            }
+           ]
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   ]
+  }
+ }
+}

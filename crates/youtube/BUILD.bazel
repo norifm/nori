@@ -1,0 +1,21 @@
+# Generated from Cargo manifests by tools/bazel/generate.py.
+load("//tools/bazel:workspace.bzl", "workspace_crate")
+
+workspace_crate({'name': 'innertube-music',
+ 'edition': '2021',
+ 'version': '0.1.0',
+ 'targets': [{'name': 'innertube_music', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
+ 'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
+ 'local': [],
+ 'registry': [{'label': '@crates//:serde_json-1.0.151',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']},
+              {'label': '@crates//:sha1_smol-1.0.1',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']}],
+ 'resources': [],
+ 'aliases': {}})

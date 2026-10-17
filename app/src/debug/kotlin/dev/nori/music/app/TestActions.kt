@@ -87,11 +87,18 @@ object TestActions {
     }
 
     /**
-     * "song:<id>", "album:<id>", "search:<text>" (first song hit) or "downloaded:<n>". An album is played
+     * "song:<id>", "album:<id>", "search:<text>" (first song hit), "downloaded:<n>", or "home" (the first
+     * song shelf of the service's own Home, YouTube Music's, read as its page reads it). An album is played
      * as its page's Play plays it, so the page answers for it.
      */
     fun playByRef(context: Context, actions: ActionsViewModel, ref: String) = actions.attempt(null) {
         val nori = Nori.get(context)
+        if (ref == "home") {
+            val shelf = nori.library.homeFeed().first().firstOrNull { it.songs.isNotEmpty() } ?: return@attempt
+            dev.nori.music.NoriLog.i("test home: ${shelf.title}, ${shelf.songs.size} songs")
+            nori.player.play(shelf.songs, 0)
+            return@attempt
+        }
         val r = testRef(ref)
         val songs = songsOf(nori, r)
         val from = (r as? TestRef.Album)?.let { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.ALBUM, it.id) }
