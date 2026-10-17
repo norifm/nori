@@ -118,7 +118,12 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean)
     // When the screen stays on is the core's (`lyrics_keep_screen_on`).
     if (prefs.lyricsKeepScreenOn && shown) {
         val view = LocalView.current
-        DisposableEffect(playing) { view.keepScreenOn = dev.nori.music.ffi.lyricsKeepScreenOn(true, true, playing); onDispose { view.keepScreenOn = false } }
+        val keptOn = LocalLyricsKeepOn.current
+        DisposableEffect(playing) {
+            view.keepScreenOn = dev.nori.music.ffi.lyricsKeepScreenOn(true, true, playing)
+            keptOn.value = view.keepScreenOn
+            onDispose { view.keepScreenOn = false; keptOn.value = false }
+        }
     }
     Column(Modifier.fillMaxSize()) {
         // On its side the title, the heart and the menu stay in the controls' half, where they are in every

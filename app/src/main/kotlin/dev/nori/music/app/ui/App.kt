@@ -3,12 +3,13 @@ package dev.nori.music.app.ui
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.collectAsState
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -66,10 +67,11 @@ import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.settings.loggedIn
 import dev.nori.music.settings.server
+import androidx.compose.foundation.layout.windowInsetsPadding
 
 /** Plain screens sit below the status bar; album, artist and playlist pages draw under it. */
 @Composable
-private fun Inset(content: @Composable () -> Unit) = androidx.compose.foundation.layout.Box(Modifier.statusBarsPadding()) { content() }
+private fun Inset(content: @Composable () -> Unit) = androidx.compose.foundation.layout.Box(Modifier.windowInsetsPadding(statusBarRoom)) { content() }
 
 /**
  * Navigation as the screens see it; they never touch the NavController. Going anywhere puts the player
@@ -184,6 +186,9 @@ val LocalRules = staticCompositionLocalOf { dev.nori.music.ffi.library.profileRu
  * by the rows, so a request changes them and nothing else.
  */
 val LocalAsked = staticCompositionLocalOf<androidx.compose.runtime.State<Set<String>>> { androidx.compose.runtime.mutableStateOf(emptySet()) }
+
+/** Whether the lyrics keep the screen on (LyricsView), so burn-in protection covers them too. */
+val LocalLyricsKeepOn = staticCompositionLocalOf<androidx.compose.runtime.MutableState<Boolean>> { androidx.compose.runtime.mutableStateOf(false) }
 
 private val tabs = listOf(
     Tab("home", say.home, Icons.Filled.Home),
@@ -322,8 +327,11 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             }
         }
 
+        val lyricsKeepOn = remember { mutableStateOf(false) }
         CompositionLocalProvider(
             LocalNav provides nav,
+            LocalLyricsKeepOn provides lyricsKeepOn,
+            LocalStatusRoomKept provides dev.nori.music.ffi.settings.barRoomKept(prefs.hideStatusBar),
             LocalPageSwipe provides swipe,
             LocalPlayerSheet provides sheet,
             LocalDownloadMarks provides rememberDownloadMarks(actions),
@@ -369,13 +377,48 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 if (awake) window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
             }
-            val hideBar = remember(prefs.hideStatusBar, wide) { dev.nori.music.ffi.settings.statusBarHidden(prefs.hideStatusBar, wide) }
-            LaunchedEffect(hideBar) {
+            // Burn-in protection while nori keeps the screen on: everything drifts a few dp once a minute (the
+            // core's `burn_in_drift`) and after a while untouched the screen dims. Either bar can be put away
+            // while it is at work (the core's `bar_hidden`).
+            val protecting = prefs.burnInProtection && (awake || lyricsKeepOn.value)
+            val hideBar = remember(prefs.hideStatusBar, wide, protecting) { dev.nori.music.ffi.settings.barHidden(prefs.hideStatusBar, wide, protecting) }
+            // From Android 11, where the bar's room reads the same while it is away (gestureBarRoom).
+            val hideGestureBar = remember(prefs.hideGestureBar, wide, protecting) {
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && dev.nori.music.ffi.settings.barHidden(prefs.hideGestureBar, wide, protecting)
+            }
+            LaunchedEffect(hideBar, hideGestureBar) {
                 val window = (barsView.context as? android.app.Activity)?.window ?: return@LaunchedEffect
                 val bars = androidx.core.view.WindowCompat.getInsetsController(window, barsView)
                 bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 if (hideBar) bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
                 else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+                if (hideGestureBar) bars.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+                else bars.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+            }
+            val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+            // Read only where the layer and the dimming draw, so a move or a dim redraws and recomposes nothing.
+            var drift by remember { mutableStateOf<dev.nori.music.ffi.BurnInDrift?>(null) }
+            LaunchedEffect(protecting) {
+                if (!protecting) { drift = null; return@LaunchedEffect }
+                val since = System.currentTimeMillis()
+                lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                    while (true) {
+                        val now = System.currentTimeMillis()
+                        drift = dev.nori.music.ffi.burnInDrift(now, since)
+                        kotlinx.coroutines.delay(dev.nori.music.ffi.burnInNextMoveMs(now))
+                    }
+                }
+            }
+            val touches = remember { kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST) }
+            var dim by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+            LaunchedEffect(protecting, prefs.dimWhenIdle, prefs.dimLevel) {
+                dim = 0f
+                val after = dev.nori.music.ffi.settings.dimAfterMs(prefs.dimWhenIdle)
+                if (!protecting || after == null) return@LaunchedEffect
+                val amount = dev.nori.music.ffi.settings.dimAmount(prefs.dimLevel)
+                lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+                    touches.onStart { emit(Unit) }.collectLatest { dim = 0f; kotlinx.coroutines.delay(after); dim = amount }
+                }
             }
             // Which way round: the edge the bar stood on is on the right turned one way, on the left the other
             // (TabRail), and the camera on the opposite side.
@@ -413,7 +456,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             // showing the window's default grey, lighter than our own cards) and a content colour for
             // text that does not name one (which left titles rendering almost black).
             Surface(color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
-            Box(Modifier.fillMaxSize().onGloballyPositioned { sheet.rootHeight = it.size.height.toFloat() }) {
+            Box(Modifier.fillMaxSize().onGloballyPositioned { sheet.rootHeight = it.size.height.toFloat() }.then(if (protecting) Modifier.burnInProtection(touches, { drift }, { dim }) else Modifier)) {
               // Everything under the player. Once the player covers it completely it is not drawn at all (a
               // layer at zero alpha is skipped), and what ticks on the page stops (LocalPageCovered).
               val covered by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value >= 1f } }
@@ -506,7 +549,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
               // Top: less in the way of the now-playing bar; swipe or the X dismisses.
               SnackbarHost(
                   snackbar,
-                  Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, start = 12.dp, end = 12.dp),
+                  Modifier.align(Alignment.TopCenter).windowInsetsPadding(statusBarRoom).padding(top = 8.dp, start = 12.dp, end = 12.dp),
               ) { data ->
                   val dismiss = androidx.compose.material3.rememberSwipeToDismissBoxState(
                       confirmValueChange = {
@@ -858,3 +901,35 @@ private fun rememberCharging(watch: Boolean): Boolean {
     }
     return charging
 }
+
+/**
+ * Burn-in protection over the whole app: what is drawn moves by [drift] and is enlarged by its reach on each
+ * side, so no edge comes into view; [dim] darkens it, and every touch or lift is told to [touches] without
+ * being taken from what it lands on.
+ */
+private fun Modifier.burnInProtection(
+    touches: kotlinx.coroutines.flow.MutableSharedFlow<Unit>,
+    drift: () -> dev.nori.music.ffi.BurnInDrift?,
+    dim: () -> Float,
+): Modifier = this
+    .pointerInput(touches) {
+        awaitPointerEventScope {
+            while (true) {
+                val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                if (e.type == androidx.compose.ui.input.pointer.PointerEventType.Press || e.type == androidx.compose.ui.input.pointer.PointerEventType.Release) touches.tryEmit(Unit)
+            }
+        }
+    }
+    .drawWithContent {
+        drawContent()
+        val d = dim()
+        if (d > 0f) drawRect(Color.Black, alpha = d)
+    }
+    .graphicsLayer {
+        val d = drift() ?: return@graphicsLayer
+        val reach = d.reachDp.dp.toPx()
+        scaleX = 1f + 2f * reach / size.width
+        scaleY = 1f + 2f * reach / size.height
+        translationX = d.xDp.dp.toPx()
+        translationY = d.yDp.dp.toPx()
+    }

@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -58,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.PlayerViewModel
 import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.ffi.settings.ThemeMode
+import androidx.compose.foundation.layout.windowInsetsPadding
 
 /**
  * An album, artist or playlist page, built the way Apple Music builds one: the artwork runs edge to
@@ -166,7 +166,7 @@ fun HeroPage(
             // On its side the cover is a card standing in its half, as on a shelf, not a sleeve bleeding to the
             // screen's edges: nothing for it to dissolve into above or beside it.
             if (picture != null && coverSide != null) Box(
-                Modifier.fillMaxWidth().statusBarsPadding().padding(top = WIDE_TOP, bottom = 14.dp),
+                Modifier.fillMaxWidth().windowInsetsPadding(statusBarRoom).padding(top = WIDE_TOP, bottom = 14.dp),
                 Alignment.Center,
             ) { picture(Modifier.size(coverSide).clip(androidx.compose.foundation.shape.RoundedCornerShape(Radius.card))) }
             else if (picture != null) Box(
@@ -208,7 +208,7 @@ fun HeroPage(
                     },
                 )
             } else if (art != null) Box(
-                Modifier.fillMaxWidth().statusBarsPadding().padding(top = if (coverSide != null) WIDE_TOP else 64.dp, bottom = if (coverSide != null) 14.dp else 18.dp)
+                Modifier.fillMaxWidth().windowInsetsPadding(statusBarRoom).padding(top = if (coverSide != null) WIDE_TOP else 64.dp, bottom = if (coverSide != null) 14.dp else 18.dp)
                     // The page's own artwork is drawn at one size; on its side it is scaled to fit its place.
                     .then(if (coverSide != null) Modifier.height(coverSide) else Modifier),
                 Alignment.Center,
@@ -218,7 +218,7 @@ fun HeroPage(
                     val k = coverSide.toPx() / MIX_ART.toPx()
                     scaleX = k; scaleY = k
                 }) { art() }
-            } else Spacer(Modifier.statusBarsPadding().height(72.dp))
+            } else Spacer(Modifier.windowInsetsPadding(statusBarRoom).height(72.dp))
             }
 
             // Nothing is painted here: the artwork above has already dissolved onto the page
@@ -339,7 +339,7 @@ fun HeroPage(
                         androidx.compose.runtime.CompositionLocalProvider(if (atEnd) LocalPageEnd provides 0.dp else LocalPageStart provides 0.dp) {
                         LazyColumn(Modifier.weight(1f).fillMaxHeight(), state = list) {
                             // The first song level with the top of the cover beside it.
-                            item(key = "hero-wide-top") { Spacer(Modifier.statusBarsPadding().height(WIDE_TOP)) }
+                            item(key = "hero-wide-top") { Spacer(Modifier.windowInsetsPadding(statusBarRoom).height(WIDE_TOP)) }
                             item(key = "hero-wide-head", contentType = "hero") { Column(Modifier.padding(bottom = 8.dp)) { hero(null, false) } }
                             content()
                             item(key = "tail") { Spacer(Modifier.height(Space.section + LocalChromeInset.current)) }

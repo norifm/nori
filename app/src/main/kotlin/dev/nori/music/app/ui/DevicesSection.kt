@@ -16,9 +16,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -163,7 +163,7 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
     val pick = { c: DeviceSound.Choice -> vm.assignDevice(d.output, c, onDone) }
     val ms = motion()
 
-    LazyColumn(Modifier.navigationBarsPadding()) {
+    LazyColumn(Modifier.windowInsetsPadding(gestureBarRoom)) {
         item("head") {
             Column(Modifier.padding(bottom = 4.dp)) {
                 LargeTitle(d.name)

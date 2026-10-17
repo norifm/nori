@@ -213,16 +213,24 @@ pub fn theme_is_dark(theme: crate::settings::ThemeMode, system_dark: bool) -> bo
     }
 }
 
-/// Whether the status bar is hidden; `wide` is sideways.
+/// Whether a system bar is hidden; `wide` is sideways, `protecting` is burn-in protection at work.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn status_bar_hidden(hide: crate::settings::HideStatusBar, wide: bool) -> bool {
-    use crate::settings::HideStatusBar::*;
+pub fn bar_hidden(hide: crate::settings::HideBar, wide: bool, protecting: bool) -> bool {
+    use crate::settings::HideBar::*;
     match hide {
         Never => false,
         Sideways => wide,
         Upright => !wide,
         Always => true,
+        Protected => protecting,
     }
+}
+
+/// Whether the page keeps a bar's room while the bar is away: where it comes and goes in front of the
+/// page rather than with a turn of the phone, so nothing on the page moves when it does.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn bar_room_kept(hide: crate::settings::HideBar) -> bool {
+    matches!(hide, crate::settings::HideBar::Protected)
 }
 
 /// Whether the screen is kept on; `wide` is sideways.
@@ -235,6 +243,29 @@ pub fn keep_awake(keep: crate::settings::KeepAwake, wide: bool, charging: bool) 
         Charging => charging,
         SidewaysCharging => wide && charging,
         Always => true,
+    }
+}
+
+/// How long burn-in protection waits for a touch before dimming; `None`: it never dims.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn dim_after_ms(idle: crate::settings::DimIdle) -> Option<i64> {
+    use crate::settings::DimIdle::*;
+    match idle {
+        Never => None,
+        HalfMinute => Some(30_000),
+        Minute => Some(60_000),
+        FiveMinutes => Some(300_000),
+    }
+}
+
+/// The share of light burn-in protection takes off an untouched screen.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn dim_amount(level: crate::settings::DimLevel) -> f32 {
+    use crate::settings::DimLevel::*;
+    match level {
+        Light => 0.3,
+        Medium => 0.5,
+        Strong => 0.7,
     }
 }
 
@@ -281,10 +312,14 @@ mod tests {
         assert_eq!([controls_on_left(Driver, true), controls_on_left(Driver, false)], [true, false]);
         assert_eq!([controls_on_left(Left, false), controls_on_left(Right, true)], [true, false]);
 
-        // Status bar rules.
-        use crate::settings::HideStatusBar::*;
-        let both = |h| (status_bar_hidden(h, false), status_bar_hidden(h, true));
-        assert_eq!([both(Never), both(Sideways), both(Upright), both(Always)], [(false, false), (false, true), (true, false), (true, true)]);
+        // Bar rules: (upright, sideways) without protection, then with it.
+        use crate::settings::HideBar::*;
+        let all = |h| [bar_hidden(h, false, false), bar_hidden(h, true, false), bar_hidden(h, false, true), bar_hidden(h, true, true)];
+        assert_eq!(
+            [all(Never), all(Sideways), all(Upright), all(Always), all(Protected)],
+            [[false; 4], [false, true, false, true], [true, false, true, false], [true; 4], [false, false, true, true]],
+        );
+        assert_eq!([Never, Sideways, Upright, Always, Protected].map(bar_room_kept), [false, false, false, false, true]);
     }
 
     #[test]
@@ -301,6 +336,16 @@ mod tests {
             [Never, Sideways, Charging, SidewaysCharging, Always].map(keep_awake_watches_charging),
             [false, false, true, true, false],
         );
+    }
+
+    #[test]
+    fn dimming_rules() {
+        use crate::settings::DimIdle::*;
+        use crate::settings::DimLevel::*;
+        let waits = [HalfMinute, Minute, FiveMinutes].map(|i| dim_after_ms(i).unwrap());
+        assert!(dim_after_ms(Never).is_none() && waits.windows(2).all(|w| w[0] < w[1]), "{waits:?}");
+        let amounts = [Light, Medium, Strong].map(dim_amount);
+        assert!(amounts.windows(2).all(|w| w[0] < w[1]) && amounts.iter().all(|a| (0.0..1.0).contains(a)), "{amounts:?}");
     }
 
     #[test]
