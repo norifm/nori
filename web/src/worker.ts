@@ -34,6 +34,11 @@ function tell(said: string) {
   scope.postMessage({ said: JSON.parse(said) });
 }
 
+/** A module's glue in dist/pkg, from this worker's place in dist/assets. */
+function pkg(name: string): string {
+  return new URL(`../pkg/${name}.js`, self.location.href).href;
+}
+
 /** The player module as the page compiled it while it downloaded, and its build's name. */
 type Handed = { module: WebAssembly.Module; file: string };
 let hand: (h: Handed) => void = () => {};
@@ -42,9 +47,10 @@ const handed = new Promise<Handed>((r) => (hand = r));
 const ready = (async () => {
   const t0 = performance.now();
   // The browser's own decoders, asked before the player starts: it decodes with them what they can.
-  const codecs = player ? await (await import("./decoder.js")).probe(wake) : [];
+  // dist/decoder.js, the very module the player's glue imports (so the codecs probed are its).
+  const codecs = player ? await ((await import(/* @vite-ignore */ new URL("../decoder.js", self.location.href).href)) as typeof import("./decoder")).probe(wake) : [];
   const given = player ? await handed : undefined;
-  const m = (await import(`./pkg/${given?.file ?? "core"}.js`)) as Module;
+  const m = (await import(/* @vite-ignore */ pkg(given?.file ?? "core"))) as Module;
   await m.default(given && { module_or_path: given.module });
   nori = await m.Nori.open(tell, wake);
   scope.postMessage({ ready: { ms: Math.round(performance.now() - t0), stored: nori.stored, player, codecs } });

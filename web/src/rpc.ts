@@ -4,7 +4,6 @@
 // databases. Only one worker may hold them, so only one tab runs nori at a time (a Web Lock), and a
 // worker that crashed is started again over the saved session.
 
-import { playerFile, probe } from "./decoder.js";
 
 export type Said = { kind: string; [k: string]: unknown };
 export type Heard = { played: number; dry: number; dryAt: number[]; peak: number; silences: [number, number][]; lastLoud: number; soundAt: number; freshAt: number };
@@ -23,6 +22,7 @@ let gate: Promise<void>;
 export let player = false;
 
 const listeners: ((s: Said) => void)[] = [];
+const up: (() => void)[] = [];
 const hearers: ((h: Heard) => void)[] = [];
 const restarted: (() => void)[] = [];
 
@@ -32,6 +32,11 @@ export function onSaid(f: (s: Said) => void) {
 
 export function onHeard(f: (h: Heard) => void) {
   hearers.push(f);
+}
+
+/** `f` runs once the player worker answers (the first time, and after a crash). */
+export function onPlayerUp(f: () => void) {
+  up.push(f);
 }
 
 /** `f` runs once a crashed worker is up again over the saved session. */
@@ -48,7 +53,7 @@ function settled(): Promise<void> {
 
 /** Starts a worker over `b`; resolves once it is up. */
 function start(b: Build): Promise<void> {
-  const w = new Worker(new URL("./worker.js", import.meta.url), { type: "module", name: b.kind });
+  const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: b.kind });
   worker = w;
   build = b;
   if (b.kind === "player") w.postMessage({ handed: { module: b.module, file: b.file } });
@@ -126,6 +131,7 @@ async function replace(b: Build, answered: boolean) {
     worker.postMessage({ id: ++calls, call: "audio", args: [port, rate, ear] }, [port]);
   }
   open();
+  if (player) up.forEach((f) => f());
 }
 
 let restarting = false;
@@ -151,8 +157,10 @@ export function playerUp(): Promise<void> {
   if (switching) return switching;
   switching = (async () => {
     const t0 = performance.now();
+    // dist/decoder.js, built on its own for the player's glue; asked here which build decodes what.
+    const { playerFile, probe } = (await import(/* @vite-ignore */ new URL("decoder.js", document.baseURI).href)) as typeof import("./decoder");
     const file = playerFile(await probe(() => {}));
-    const module = await WebAssembly.compileStreaming(fetch(new URL(`./pkg/${file}.wasm`, import.meta.url)));
+    const module = await WebAssembly.compileStreaming(fetch(new URL(`pkg/${file}.wasm`, document.baseURI)));
     facts.playerCompiledMs = Math.round(performance.now() - t0);
     const t1 = performance.now();
     await replace({ kind: "player", module, file }, true);
