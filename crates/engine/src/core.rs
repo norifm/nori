@@ -1300,6 +1300,24 @@ pub fn follow(engine: &crate::Engine, session: &Session, lead: Option<nori_core:
         mix_place}));
 }
 
+/// The playback the account's other devices see, from the engine's status `s` run on to now; held while
+/// `buffering`, at `volume` (0 to 100) where it can be set.
+pub fn playing(s: &crate::Status, buffering: bool, volume: Option<u8>) -> nori_core::remote::Playing {
+    let (position_ms, mix_position_ms) = s.positions_at(nori_time::Instant::now(), buffering);
+    nori_core::remote::Playing {
+        playing: s.state == crate::State::Playing,
+        buffering,
+        mixing: s.mixing,
+        mix_from: s.mix_from.map(|i| i as u32),
+        mix_position_ms,
+        mix_rate: s.speed,
+        position_ms: position_ms.max(0),
+        rate: s.pace,
+        index: s.index.map(|i| i as u32),
+        volume,
+    }
+}
+
 /// Where the host's song is in this session's queue, followed by the one after it there, and whether
 /// the queue was set to the host's songs for it. The queue is set anew only when those two are not in it
 /// in a row already, so the song playing here and the one read ahead stay as they are.

@@ -518,7 +518,7 @@ class PlaybackService : MediaLibraryService() {
 
     /** Tells the remote control (if it is on) the player changed; a null check otherwise. */
     private fun remoteState() {
-        if (nori.remotes.peek() != null) nori.remotes.played(player.remotePlaying())
+        nori.remotes.played(player::remotePlayed)
     }
 
     /** What another device asks of this one through the remote control, done to the player as the session's controllers would. */
