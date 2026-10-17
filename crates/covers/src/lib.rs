@@ -14,5 +14,4 @@ pub use decode::{format, header, Decoder, Error as DecodeError, Format, Header};
 pub use disk::{DiskCache, Key};
 pub use loader::{Config, Error, Loader, Paint, Rgba, Ticket};
 pub use memory::{Image, MemoryCache, Sized};
-pub use nori_core::covers::{cover_url_into, is_provider_cover};
 pub use scale::{Alpha, Target};

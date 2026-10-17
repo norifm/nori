@@ -1438,12 +1438,6 @@ impl Remote {
         true
     }
 
-    /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
-    pub fn hand_over(self: Arc<Self>, to: String) {
-        let me = self.id.clone();
-        self.transfer(&Via::Relay(None), &me, to, None, false);
-    }
-
     /// A door the platform's discovery found: service `service` at `host`:`port` with TXT `txt`.
     pub fn lan_found(self: Arc<Self>, service: String, host: String, port: u16, txt: Vec<Param>) {
         let get = |k: &str| txt.iter().find(|p| p.key == k).map(|p| p.value.clone()).unwrap_or_default();
@@ -2043,6 +2037,12 @@ async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
 }
 
 impl Remote {
+    /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
+    pub fn hand_over(self: Arc<Self>, to: String) {
+        let me = self.id.clone();
+        self.transfer(&Via::Relay(None), &me, to, None, false);
+    }
+
     /// A remote whose work runs on `tasks`.
     pub fn with_tasks(client: Arc<Client>, me: RemoteMe, player: Arc<dyn RemotePlayer>, shown: Arc<dyn RemoteShown>, discovery: Option<Arc<dyn Discovery>>, tasks: Arc<dyn Tasks>) -> Arc<Remote> {
         let settings = &client.core.session.settings;

@@ -9,7 +9,7 @@ use crate::wire::{Entry, JamMember, JamState, Member, Op, Pending, Refusal, Role
 
 /// Requests one member may have waiting at once: a guest cannot fill the list (each provider song
 /// accepted is a download).
-pub const MAX_WAITING: usize = 5;
+const MAX_WAITING: usize = 5;
 
 /// Who applies a jam op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

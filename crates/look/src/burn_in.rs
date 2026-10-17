@@ -10,7 +10,7 @@ const PERIOD_Y: i64 = 521;
 const RAMP: i64 = 4;
 /// How far the drift reaches either way. A text or icon stroke is far thinner, so it wears in as a
 /// faint smear instead of its shape.
-pub const REACH_DP: f32 = 6.0;
+const REACH_DP: f32 = 6.0;
 
 /// Where the screen is drawn: offsets within ±`reach_dp`, the reach growing over the first minutes.
 /// The client enlarges what it draws by `reach_dp` on each side so no edge comes into view.
