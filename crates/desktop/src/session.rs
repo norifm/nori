@@ -218,6 +218,10 @@ impl Session {
             mpris,
             device: nori_core::remote::RemoteMe { name: nori_host::device_name(), kind: DeviceKind::Desktop },
             discovery: None,
+            tasks: nori_host::Threads::new(),
+            keeps_music: true,
+            decoders: Default::default(),
+            finds_active: true,
             out,
         };
         Ok(Session { id, host: nori_host::session::Session::open(o)?, tx })
@@ -345,7 +349,7 @@ impl Session {
             send(Msg::Facts(Box::new(crate::settings::Facts {
                 analysed: core.analysis_count().unwrap_or(0),
                 indexed: (index.songs, index.albums, index.artists),
-                stream_bytes: store.cache_bytes(),
+                stream_bytes: store.as_ref().map_or(0, |s| s.cache_bytes()),
                 cover_bytes,
                 lyrics_bytes: core.lyrics_cache_bytes().max(0) as u64,
                 download_bytes: downloads.iter().map(|s| s.size).sum(),

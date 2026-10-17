@@ -11,12 +11,13 @@ use std::sync::Arc;
 use nori_time::{Duration, Instant};
 
 use nori_core::cache_policy::{Page, Read};
-use nori_core::client::{Client, NetProfile};
+use nori_core::client::Client;
 use nori_core::remote::JamPass;
 use nori_core::settings::SavedServer;
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, NetError};
-use nori_core::{Core, IngestStats, OriginKind, PageOrigin, ServerConfig, Song};
+use nori_core::{Core, OriginKind, PageOrigin, Song};
+use nori_tasks::Tasks;
 use nori_covers::memory::Image;
 #[cfg(feature = "desktop")]
 use nori_engine::State;
@@ -29,13 +30,7 @@ pub fn db_path(data: &Path) -> String {
     data.join(nori_core::db::DB_FILE).to_string_lossy().into_owned()
 }
 
-pub fn config(p: &SavedServer) -> ServerConfig {
-    ServerConfig { url: p.url.clone(), user: p.user.clone(), password: p.password.clone(), api_key: (!p.api_key.is_empty()).then(|| p.api_key.clone()), legacy_auth: p.legacy_auth }
-}
-
-pub fn net(p: &SavedServer) -> NetProfile {
-    NetProfile { url: p.url.clone(), alt_url: p.alt_url.clone(), music_folder_ids: p.music_folder_ids.clone(), alt_max_bit_rate: p.alt_max_bit_rate.max(0) as u32 }
-}
+pub use nori_core::{net_profile as net, server_config as config};
 
 /// This computer's name, as the account's other devices list it (remote control). A browser has none.
 #[cfg(unix)]
@@ -180,32 +175,51 @@ impl Fetch {
     }
 
     /// The collection's songs, from the server.
-    pub fn songs(self, client: &Client) -> Result<Vec<Song>, NetError> {
-        let now = |r: Read| block_on(client.read_now(r));
+    pub async fn songs(self, client: &Client) -> Result<Vec<Song>, NetError> {
         Ok(match self {
             Fetch::DownloadedAlbum(id) => client.core().downloaded_album(id)?.map(|a| a.songs).unwrap_or_default(),
-            Fetch::Album(id) => match now(Read::AlbumSongs { id })? {
+            Fetch::Album(id) => match client.read_now(Read::AlbumSongs { id }).await? {
                 Page::Songs { v } => v,
                 Page::AlbumPage { v } => v.songs,
                 _ => Vec::new(),
             },
-            Fetch::Playlist(id) => match now(Read::PlaylistSongs { id })? {
+            Fetch::Playlist(id) => match client.read_now(Read::PlaylistSongs { id }).await? {
                 Page::Songs { v } => v,
                 Page::PlaylistPage { v } => v.songs,
                 _ => Vec::new(),
             },
-            Fetch::Artist(id) => match now(Read::ArtistById { id })? {
-                Page::ArtistPage { v } => block_on(client.artist_songs(v.albums)),
+            Fetch::Artist(id) => match client.read_now(Read::ArtistById { id }).await? {
+                Page::ArtistPage { v } => client.artist_songs(v.albums).await,
                 _ => Vec::new(),
             },
-            Fetch::Mix(id) => block_on(client.mix_songs(id))?,
+            Fetch::Mix(id) => client.mix_songs(id).await?,
         })
     }
 }
 
-/// Fills the offline index from the server, page by page; the totals indexed.
-pub fn sync(client: &Client) -> Result<IngestStats, NetError> {
-    block_on(client.sync_library())
+/// Natively, each task on a thread of its own as before, since the platform's HTTP (ureq) blocks the
+/// thread a request is made on; timers on one [`nori_tasks::Native`] thread, parked while none is due.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub struct Threads {
+    timers: nori_tasks::Native,
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+impl Threads {
+    pub fn new() -> Arc<Threads> {
+        Arc::new(Threads { timers: nori_tasks::Native::new("nori-timers").expect("a thread for timers") })
+    }
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+impl Tasks for Threads {
+    fn spawn(&self, task: nori_tasks::Task) {
+        spawn("nori-task", move || block_on(task));
+    }
+
+    fn sleep(&self, after: Duration) -> nori_tasks::Sleep {
+        self.timers.sleep(after)
+    }
 }
 
 /// Saves the queue and playback position.
@@ -213,45 +227,66 @@ pub fn save(core: &Core, engine: &Engine) {
     let _ = core.playlist_save(engine.status_with(|s| s.position_now()).max(0) as u64);
 }
 
-/// Debounced queue saves (`rules::queue_keep`) on a thread that sleeps until a save is due.
+/// Debounced queue saves (`rules::queue_keep`): a task that sleeps until a save is due, alive while one
+/// is.
 pub struct Keeper {
-    /// Next save time, and whether the session closed.
-    due: parking_lot::Mutex<(Option<Instant>, bool)>,
-    wake: parking_lot::Condvar,
+    save: Box<dyn Fn() + Send + Sync>,
+    tasks: Arc<dyn Tasks>,
+    due: parking_lot::Mutex<Due>,
+}
+
+#[derive(Default)]
+struct Due {
+    at: Option<Instant>,
+    /// The task that saves runs.
+    running: bool,
+    stopped: bool,
 }
 
 impl Keeper {
-    pub fn start(core: Arc<Core>, engine: Arc<Engine>) -> Arc<Keeper> {
-        let k = Arc::new(Keeper { due: parking_lot::Mutex::new((None, false)), wake: parking_lot::Condvar::new() });
-        let me = k.clone();
-        spawn("nori-keep", move || {
-            let mut due = me.due.lock();
-            while !due.1 {
-                match due.0 {
-                    None => me.wake.wait(&mut due),
-                    Some(at) if Instant::now() < at => {
-                        me.wake.wait_for(&mut due, at.saturating_duration_since(Instant::now()));
-                    }
-                    Some(_) => {
-                        due.0 = None;
-                        parking_lot::MutexGuard::unlocked(&mut due, || save(&core, &engine));
-                    }
-                }
-            }
-        });
-        k
+    /// Saves with `save` when due, waiting among `tasks`.
+    pub fn start(save: impl Fn() + Send + Sync + 'static, tasks: Arc<dyn Tasks>) -> Arc<Keeper> {
+        Arc::new(Keeper { save: Box::new(save), tasks, due: parking_lot::Mutex::default() })
     }
 
     /// Schedules a save `ms` from now, replacing any pending one.
-    pub fn later(&self, ms: i64) {
+    pub fn later(self: &Arc<Self>, ms: i64) {
         let mut due = self.due.lock();
-        due.0 = Some(Instant::now() + Duration::from_millis(ms.max(0) as u64));
-        self.wake.notify_one();
+        if due.stopped {
+            return;
+        }
+        due.at = Some(Instant::now() + Duration::from_millis(ms.max(0) as u64));
+        if std::mem::replace(&mut due.running, true) {
+            return;
+        }
+        let me = self.clone();
+        self.tasks.spawn(Box::pin(async move {
+            loop {
+                let wait = {
+                    let mut due = me.due.lock();
+                    match due.at {
+                        Some(at) if !due.stopped && Instant::now() < at => at.saturating_duration_since(Instant::now()),
+                        Some(_) if !due.stopped => {
+                            due.at = None;
+                            Duration::ZERO
+                        }
+                        _ => {
+                            due.running = false;
+                            return;
+                        }
+                    }
+                };
+                if wait.is_zero() {
+                    (me.save)();
+                } else {
+                    me.tasks.sleep(wait).await;
+                }
+            }
+        }));
     }
 
     pub fn stop(&self) {
-        self.due.lock().1 = true;
-        self.wake.notify_one();
+        self.due.lock().stopped = true;
     }
 }
 
@@ -351,6 +386,29 @@ impl PlaceSeen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Saves are put off until the last one asked for is due; none after the stop.
+    #[test]
+    fn queue_saves_wait_for_the_last_one_asked() {
+        let saves = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let (seen, started) = (saves.clone(), Instant::now());
+        let keeper = Keeper::start(move || seen.lock().push(started.elapsed()), Threads::new());
+        keeper.later(150);
+        std::thread::sleep(Duration::from_millis(50));
+        keeper.later(150);
+        let until = Instant::now() + Duration::from_secs(10);
+        while saves.lock().is_empty() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        let at = saves.lock().clone();
+        assert_eq!(at.len(), 1, "one save for both: {at:?}");
+        assert!(at[0] >= Duration::from_millis(200), "150 ms after the second ask: {:?}", at[0]);
+        keeper.stop();
+        keeper.later(0);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(saves.lock().len(), 1, "nothing saved once stopped");
+    }
 
     /// A guest profile takes the active one's place while in a jam; leaving drops it and opens the
     /// account's again, also after a second jam joined from the first.

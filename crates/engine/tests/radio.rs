@@ -536,7 +536,7 @@ fn he_aac_station_decoding() {
     REFERENCE.set((adts_units(&bytes), whole.clone())).unwrap();
     let lent: PlatformAac = |setup| ((setup.rate, setup.channels) == (22_050, 2)).then(|| Box::new(Reference { next: None }) as Box<dyn PlatformDecoder>);
     let station = Arc::new(Station(Arc::new(bytes.clone())));
-    let (f, heard) = Rig::on(Virtual::default(), vec![("radio:1", station)], Config { platform_aac: Some(lent), ..Config::default() }).hear(4.0);
+    let (f, heard) = Rig::on(Virtual::default(), vec![("radio:1", station)], Config { platform: nori_player::decode::Platform { aac: Some(lent), later: None }, ..Config::default() }).hear(4.0);
     assert!(!STRAY_UNIT.load(Ordering::Relaxed), "every unit handed over was the stream's next");
     assert_eq!((f.rate, f.channels), (44_100, 2), "opened at the rate the platform's decoder plays at");
     let ours = mono(&heard, 2);

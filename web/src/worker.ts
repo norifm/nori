@@ -1,7 +1,11 @@
-// The core in a Dedicated Worker: nori-core and the engine (core.wasm), answering the page's messages,
-// and feeding the AudioWorklet over its own port.
+// The core in a Dedicated Worker: answers the page's calls (`{ id, call, args }` -> `{ id, value }` or
+// `{ id, error }`), hands on the session's reports (`{ said }`), and feeds the AudioWorklet over its own
+// port. Which module it runs (core or player) is the page's choice, in the worker's URL.
 
-import init, { Nori } from "./pkg/core.js";
+type Module = {
+  default: (init?: { module_or_path: WebAssembly.Module }) => Promise<unknown>;
+  Nori: { open(tell: (said: string) => void, wake: () => void): Promise<Record<string, (...a: unknown[]) => unknown>> };
+};
 
 const scope = self as unknown as Worker;
 /** Interleaved frames pulled per message to the worklet. */
@@ -9,84 +13,103 @@ const CHUNK = 4096;
 /** How far ahead of the ear the worklet is kept fed, s. */
 const AHEAD_S = 0.5;
 
-let nori: Nori | undefined;
+let nori: Record<string, (...a: unknown[]) => unknown> | undefined;
 let worklet: MessagePort | undefined;
 let rate = 48000;
 /** Frames sent to the worklet and frames it played. */
 let sent = 0;
 let played = 0;
 let timer: number | undefined;
+let woken = false;
+/** What the worklet was last told: the player holds (paused or stopped). */
+let held = true;
+// The worker's name says which module it runs (its address is the same for both, so it can be kept).
+const player = self.name === "player";
+
+/** The engine asked for a turn (a command, or a song's bytes arrived): one turn soon, however many asks. */
+function wake() {
+  if (woken) return;
+  woken = true;
+  queueMicrotask(() => {
+    woken = false;
+    pump();
+  });
+}
+
+function tell(said: string) {
+  scope.postMessage({ said: JSON.parse(said) });
+}
+
+/** The player module as the page compiled it while it downloaded, and its build's name. */
+type Handed = { module: WebAssembly.Module; file: string };
+let hand: (h: Handed) => void = () => {};
+const handed = new Promise<Handed>((r) => (hand = r));
 
 const ready = (async () => {
   const t0 = performance.now();
-  await init();
-  nori = await Nori.open();
-  scope.postMessage({ op: "ready", ms: Math.round(performance.now() - t0), stored: nori.stored });
+  // The browser's own decoders, asked before the player starts: it decodes with them what they can.
+  const codecs = player ? await (await import("./decoder.js")).probe(wake) : [];
+  const given = player ? await handed : undefined;
+  const m = (await import(`./pkg/${given?.file ?? "core"}.js`)) as Module;
+  await m.default(given && { module_or_path: given.module });
+  nori = await m.Nori.open(tell, wake);
+  scope.postMessage({ ready: { ms: Math.round(performance.now() - t0), stored: nori.stored, player, codecs } });
 })();
 
 /** Runs the engine, tops the worklet up, and comes back when the engine asks to. */
 function pump() {
-  if (!nori) return;
+  if (!nori || !player) return;
   if (timer !== undefined) clearTimeout(timer);
   timer = undefined;
-  let wake = nori.turn();
-  const channels = nori.channels();
+  let next = nori.turn() as number;
+  const channels = nori.channels() as number;
   while (worklet && channels > 0 && sent - played < AHEAD_S * rate) {
     const out = new Float32Array(CHUNK * channels);
-    const frames = nori.pull(out);
+    const frames = nori.pull(out) as number;
     if (frames === 0) break;
     const pcm = frames === CHUNK ? out : out.slice(0, frames * channels);
     worklet.postMessage({ pcm, channels }, [pcm.buffer]);
     sent += frames;
-    wake = nori.turn();
+    next = nori.turn() as number;
+  }
+  const nowHeld = !(nori.playing() as boolean);
+  if (worklet && nowHeld !== held) {
+    held = nowHeld;
+    worklet.postMessage({ held });
   }
   // Fed and idle: the worklet's next report brings the next turn.
-  if (wake >= 0) timer = setTimeout(pump, Math.max(wake, 1)) as unknown as number;
+  if (next >= 0) timer = setTimeout(pump, Math.max(next, 1)) as unknown as number;
+}
+
+/** The sound card's port and rate, from the page on the first Play. */
+function audio(port: MessagePort, r: number) {
+  rate = r;
+  nori!.set_rate(r);
+  worklet = port;
+  worklet.onmessage = (w: MessageEvent) => {
+    played = w.data.played;
+    scope.postMessage({ heard: w.data });
+    pump();
+  };
 }
 
 scope.onmessage = async (e: MessageEvent) => {
+  if (e.data.handed) return hand(e.data.handed);
   await ready;
-  const m = e.data;
-  const n = nori!;
+  const { id, call, args } = e.data as { id: number; call: string; args: unknown[] };
   try {
-    switch (m.op) {
-      case "login": {
-        const t0 = performance.now();
-        await n.login(m.url, m.user, m.password);
-        scope.postMessage({ op: "login", ok: true, ms: Math.round(performance.now() - t0) });
-        break;
-      }
-      case "albums": {
-        const t0 = performance.now();
-        const list = JSON.parse(await n.albums(m.size));
-        scope.postMessage({ op: "albums", list, ms: Math.round(performance.now() - t0) });
-        break;
-      }
-      case "album":
-        scope.postMessage({ op: "album", id: m.id, songs: JSON.parse(await n.album(m.id)) });
-        break;
-      case "play": {
-        if (m.port) {
-          worklet = m.port as MessagePort;
-          worklet.onmessage = (w: MessageEvent) => {
-            played = w.data.played;
-            scope.postMessage({ op: "heard", ...w.data, status: JSON.parse(n.status()) });
-            pump();
-          };
-        }
-        rate = m.rate;
-        const t0 = performance.now();
-        await n.play(m.id, m.rate);
-        scope.postMessage({ op: "playing", id: m.id, ms: Math.round(performance.now() - t0) });
-        pump();
-        break;
-      }
-      case "pause":
-        n.pause();
-        pump();
-        break;
+    let value: unknown;
+    if (call === "audio") audio(args[0] as MessagePort, args[1] as number);
+    else {
+      const f = nori![call];
+      if (typeof f !== "function") throw new Error(`no call ${call}`);
+      value = await f.apply(nori, args);
     }
+    scope.postMessage({ id, value });
   } catch (err) {
-    scope.postMessage({ op: m.op, ok: false, error: String(err) });
+    scope.postMessage({ id, error: String(err) });
+    // A panic in Rust aborts the module: nothing it holds can be used any more.
+    if (err instanceof WebAssembly.RuntimeError) scope.postMessage({ crashed: String(err) });
   }
+  pump();
 };

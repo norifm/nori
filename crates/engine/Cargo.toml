@@ -24,6 +24,9 @@ name = "one_fetch"
 path = "tests/one_fetch.rs"
 
 [features]
+default = ["rust-codecs"]
+# Vorbis, ALAC and Opus decoded here (nori-player's feature).
+rust-codecs = ["nori-player/rust-codecs", "symphonia/vorbis", "symphonia/alac"]
 # The core's queue, transition planner, settings and stream addresses, for a client that links the core.
 core = ["dep:nori-core"]
 # The optional neural beat tracker: the measurer runs Beat This! over the ends of the songs coming up when
@@ -35,10 +38,10 @@ testing = []
 [dependencies]
 # Time, read the same way natively and in a browser.
 nori-time = { path = "../time" }
-nori-player = { path = "../player" }
+nori-player = { path = "../player", default-features = false }
 parking_lot = "0.12"
 # Containers: the format readers only. Decoding is nori-player's, so every platform hears the same samples.
-symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "aac", "isomp4", "ogg", "mkv", "wav", "pcm", "vorbis", "alac"] }
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "aac", "isomp4", "ogg", "mkv", "wav", "pcm"] }
 nori-core = { path = "../core", default-features = false, optional = true }
 
 [dev-dependencies]

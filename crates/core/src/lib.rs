@@ -65,6 +65,16 @@ pub struct ServerConfig {
     pub legacy_auth: bool,
 }
 
+/// The sign-in a saved profile keeps.
+pub fn server_config(p: &settings::SavedServer) -> ServerConfig {
+    ServerConfig { url: p.url.clone(), user: p.user.clone(), password: p.password.clone(), api_key: (!p.api_key.is_empty()).then(|| p.api_key.clone()), legacy_auth: p.legacy_auth }
+}
+
+/// The addresses, folders and second address's bitrate a saved profile keeps.
+pub fn net_profile(p: &settings::SavedServer) -> client::NetProfile {
+    client::NetProfile { url: p.url.clone(), alt_url: p.alt_url.clone(), music_folder_ids: p.music_folder_ids.clone(), alt_max_bit_rate: p.alt_max_bit_rate.max(0) as u32 }
+}
+
 impl ServerConfig {
     /// The server these settings sign requests for.
     fn server(&self) -> api::Server {

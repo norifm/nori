@@ -1464,7 +1464,7 @@ pub extern "C" fn nori_ios_facts() -> *mut c_char {
         owned(&json!({
             "songs": index.songs, "albums": index.albums, "artists": index.artists,
             "downloaded": counts.done, "pending": counts.pending,
-            "stream": s.store.cache_bytes(),
+            "stream": s.store.as_ref().map_or(0, |st| st.cache_bytes()),
             "db": std::fs::metadata(&s.db).map(|m| m.len()).unwrap_or(0),
         }))
     })

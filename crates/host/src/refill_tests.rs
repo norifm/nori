@@ -32,15 +32,19 @@ fn late_autofill_respects_playback_and_new_queues() {
             mpris: None,
             device: nori_core::remote::RemoteMe { name: "iPod".into(), kind: nori_remote::wire::DeviceKind::Phone },
             discovery: None,
+            tasks: crate::Threads::new(),
+            keeps_music: true,
+            decoders: Default::default(),
+            finds_active: true,
             out: Arc::new(|_| {}),
-        }, Some(clock)).unwrap();
+        }, clock).unwrap();
         let songs: Vec<_> = ["a", "b", "c", "d"].into_iter().enumerate().map(|(i, id)| Song {
             id: id.into(), title: id.into(), duration: 1, suffix: "wav".into(), album_id: Some(if i < 2 { "album" } else { id }.into()), ..Default::default()
         }).collect();
         s.core.download_queue(songs.clone()).unwrap();
         s.core.download_settle(songs.iter().map(|s| s.id.clone()).collect(), vec![true; songs.len()]).unwrap();
         for (i, song) in songs.iter().enumerate() {
-            let path = s.store.download_path(&song.id);
+            let path = s.store.as_ref().expect("a store").download_path(&song.id);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, wav(44_100, &sine(44_100, 220.0 * (i + 1) as f64, 1.0, 16_000.0))).unwrap();
         }

@@ -1,221 +1,222 @@
-# The web client: phase one spike
+# The web client
 
-Internal planning note, not published. Issue #25.
+Internal planning note, not published. Issue #25. Branch `web-v1` (on the spike branch, with the Rust
+Signalsmith port merged in). How to build, serve and check it: `docs/site/developers/building.md`, "The
+web client".
 
-Labels: **[measured]** = measured for this note, with how; **[verified]** = run in a browser (headless
-Chrome over `web/serve.py` and the local Navidrome); **[inferred]** = reasoning or an estimate.
+Labels: **[measured]** = measured for this note, with how; **[verified]** = run in headless Chrome over
+`web/serve.py` and the local Navidrome (`web/check/check.mjs`); **[inferred]** = reasoning or an
+estimate.
 
-## What the spike proves
+## Where it stands
 
-- **The core runs in a browser** [verified]: nori-core, nori-db (rusqlite on sqlite-wasm-rs) and the
-  engine compile for `wasm32-unknown-unknown` and run in a Dedicated Worker. The databases live in OPFS
-  through the sync-access-handle pool VFS (`sqlite-wasm-vfs` 0.2; `stored: true` in the check), with
-  memory as the fallback.
-- **Login and albums** [verified]: the page signs in to the local Navidrome through the core's own
-  `login_check` and `Client::read_each(Read::AlbumList)` over a `fetch` Transport, lists 19 albums with
-  covers (signed `getCoverArt` URLs from the core), opens an album (`Read::AlbumById`).
-- **One song through the real engine** [verified]: the song is fetched whole, then played by the engine
-  (`Engine::driven`): demux and decode (symphonia/nori-player), the sound chain and transition engine,
-  the ring, `Feed::pull` into chunks sent to an AudioWorklet. A 10-minute FLAC played 10 s in headless
-  Chrome with no underrun in the engine and no dry worklet quantum; the engine's status says Playing at
-  the right position, the worklet's peak is the song's level.
-- Not verified: Firefox and Safari; real speakers (headless runs muted, the samples are checked instead);
-  a song longer than the check; reload persistence of OPFS (headless starts a new profile each run).
+A browser plays the library through the same session and engine as the other clients:
 
-Timings, headless Chrome on this Mac, server on localhost, two runs [measured]:
+- **Sign-in, library, search** [verified]: Listen Now (newest, recently played, most played, random
+  albums), the library's sections (playlists, artists, albums with their sort orders, songs, genres,
+  favorites), album, artist, playlist and genre pages, and search over the server. Profiles are kept in the
+  settings database; a reload opens the last one without signing in again.
+- **Streaming** [verified]: songs play as their bytes arrive (one `fetch` per burst, read chunk by chunk);
+  a 10-minute FLAC played 40 s through a proxy held to 400 kbit/s without the AudioWorklet running dry.
+  First sound 275 ms after the click on localhost (the player module is already up, below).
+  A song starts once the music at hand and still to come lasts as long as the rest takes to arrive at
+  the rate measured (`arrives_in_time` in `crates/engine/src/source.rs`: at least 1 s of music and 16 KB,
+  the rest counted 1.25 times slower, the rate known after 250 ms), or at 256 KB as before: through a
+  proxy held to 400 kbit/s, a 124 kbit/s FLAC sounds 1.0 s after the click instead of 5.2 s and plays 20 s
+  without running dry. A song arriving slower than it plays still starts at 256 KB (natively nothing
+  changed: a loader on its own thread waits for 256 KB as ever).
+- **AutoMix measured ahead** [verified]: with no stream cache, songs are measured as their loaders fetch
+  them (the playing song from its first byte, and the next), decoded on the worker's turns
+  (`nori_engine::arriving::Steps`, driven by `nori_host::session::Driven`): slices of 8 ms at most half the
+  time, a song opened once 4 MB (or all of it) waited and read on while 256 KB do, so a read never runs
+  dry inside a packet; at most 64 MB wait. A stored measurement replans the transition. In the check the
+  plan out of a 52 s MP3 into the next album's first song was a measured `MixRampFade` 256 ms after Play
+  (before: `EqualPowerFade`, "not analysed").
 
-| step | ms |
-|---|---|
-| core.wasm fetched, compiled, OPFS installed, databases opened | 196-345 |
-| login (ping, token auth) | 18-55 |
-| 24 newest albums (getAlbumList2, parsed, stored) | 15-41 |
-| a song fetched whole and started (10-min test FLAC) | 106-167 |
+- **WebCodecs decoding** [verified]: Chrome decodes MP3, AAC, FLAC, Vorbis and Opus itself; the engine
+  feeds it packets ahead and takes each one's samples back with its own stamps. A codec the browser lacks
+  and `player.wasm` does not decode (ALAC everywhere; Vorbis or Opus in some browsers) is decoded by
+  `player-codecs.wasm`'s Rust decoders (`Codecs`), the module loaded beside the player the first time a
+  song needs it and kept: the same answers as WebCodecs through `decoder.ts`'s `RustDecoding`, so the
+  queue, the session and the position are untouched. A 20 s ALAC song plays in Chrome (peak 0.20, no dry
+  quantum).
+- **The shared session** [verified]: nori-host's session runs in the worker: queue saves, scrobbles, lyrics
+  prefetch, autofill, the index sync, reachability.
+- **Player** [verified]: mini bar and Now Playing sheet (seek, previous/next, shuffle, repeat), the queue
+  (jump, remove), synced lyrics lit line by line from the core's lyric clock, speed and pitch (the Rust
+  Signalsmith port: 1.5x and 0.75x keep pace, pitch 1.1 plays), AutoMix and crossfade transitions heard
+  with no silence over 20 ms, Media Session metadata and keys.
+- **Jams, host and guest** [verified, `web/check/jam.mjs`]: `async-remote` is merged; the remote runs on
+  `nori_tasks::Local` in the player worker. The sheet's Jam tab and Settings show the same panel: start a
+  jam (the invite link, copy), requests accepted or declined, guests listening along or not, members, end;
+  or join with a link and a name, the guest's profile opening in place (the library is then the host's),
+  the player showing the host's song and queue, picks going to the host as requests, listening along, and
+  leaving (also when the host ends it). Checked with two headless Chrome profiles over octo-fiesta's relay
+  (tools/jam-server.sh, port 5274) through `web/serve.py --server http://localhost:5274`: link made, guest
+  sees the host's song, a guest's pick arrives as a request and, accepted, lands in the host's queue, the
+  guest listening along hears it (3.4 s heard in its first 6 s, not running dry), the guest is back on its
+  own profile when the host ends the jam. A guest's profile signs in at the invite's server, which must be
+  the page's origin (no CORS); invites to another server need that server to serve the client.
+- **One tab, and crashes** [verified]: a Web Lock (`nori-databases`) gives the databases to one tab; a
+  second tab says nori is open in another tab, and "Use Here" asks the first (BroadcastChannel) to save
+  and close its session and stop its worker, then starts in its place with the databases in OPFS. A worker
+  that crashes (a Rust panic aborts the module: `WebAssembly.RuntimeError` from a call, or the worker's
+  error event) is started again over the saved session; the page seeks to the song and place it saw last
+  and plays on if it played, and says so. Checked by throwing a `RuntimeError` in the player worker while
+  playing: back on the same song at 2.8 s, playing on (4.4 s 1.5 s later).
+- **Service worker** [verified]: `web/src/sw.ts` keeps one build's shell and modules (the Rust-codecs
+  player once fetched) under the hash of them all (`web/build.sh` fills it in); never the API or audio. A
+  reload took 115 ms, a start without the network the same, the library from the databases. A new build
+  installs beside the running one; at the next load the page finds it waiting, has it take over and loads
+  again, the old build's files deleted (checked by changing the hash in `web/dist/sw.js`). Workers are
+  told their module by name, since a kept answer carries no query string.
+- **Playlists and hearts** [verified]: a new playlist from Playlists, songs added from each song's menu
+  (Play Next, Play Later, Add to Playlist, Favorite), a playlist renamed, reordered (Move Up, Move Down),
+  a song removed and the playlist deleted from its page's menu; hearts on the playing song, albums and
+  artists, and the Favorites page with artists, albums and songs. Each is a core `Write` (two new ones:
+  `RenamePlaylist`, `updatePlaylist` with a name; `ReplacePlaylist`, `createPlaylist` with the playlist's id,
+  which replaces its songs in their new order), kept for later when offline; hearts through
+  `Client::star`, the pages drawing the core's marks over what they were read with.
+- Looks: big titles and cover grids as the Android app and Apple Music have them; a tab bar on a phone, a
+  sidebar from 900 px; light and dark as the system is. Words are the web client's (`web/src/words.ts`).
+
+## What changed in the shared code (every platform, behaviour kept, all tests green)
+
+1. **The loader's decisions apart from its I/O** (`crates/engine/src/source.rs`): `Filling` holds what the
+   loader decides (which range to ask for, a body's bytes, its end, failures and rests, a rangeless answer
+   skipped to the byte asked for); natively the loader's thread drives it over `ByteSource::open` exactly
+   as before. A platform where nothing may block takes it in `ByteSource::push` and drives it from its own
+   events (`Filling::poll_next` wakes it when the next step may change). A pushed loader's readers never
+   block: a read with no bytes is `WouldBlock`.
+2. **Opening a pushed song on the engine's turns** (`crates/engine/src/demux.rs`, `Pushed`): tried once,
+   and again from where a try ran out of bytes; reads after the first that found nothing fail, so a try
+   stops there. While a song opens on a pushed loader, the windows it read before a restart are kept
+   ("pieces"), so a header read at the start and a seek's target far away (FLAC's bisection, Ogg's last
+   page) are both at hand on the next try; they go once the reader reads the window again. Tested with
+   FLAC, MP3 and Ogg Opus, from the start and half way into a five-minute song with a small window
+   (`tests/pushed.rs`); without the pieces the half-way open never finishes.
+3. **Decoders that answer later** (`nori_player::decode::LaterDecoder`, `Platform`): fed packets in order,
+   each packet's samples come back later with its stamps (`Later` in demux.rs), so encoder delay, padding
+   and seeks are cut exactly as with a decoder on the spot. `Platform` bundles Android's HE-AAC decoder and
+   this one. Tested against the Rust decoders for MP3, FLAC, Vorbis, Opus and AAC in MP4, from the start
+   and after a seek (`tests/later.rs`, a decoder that answers three packets late).
+   What Chrome does, measured with a JS harness: one output per packet; MP3's 529-frame decoder delay
+   kept (as symphonia keeps it); Opus's pre-skip dropped when given the OpusHead, and again after a reset,
+   so the reader drops `pre-roll - pre-skip` after a seek (`later_seek_skip`); output stamps not always the
+   input's (FLAC's are recomputed), so packets are matched by order with the stamps as a check.
+4. **Rust codecs as a feature**: `rust-codecs` (nori-engine's default) decodes Vorbis, ALAC and Opus here;
+   MP3, FLAC and AAC always are, their decoders coming with their readers. The web's player module leaves
+   it off; `player-codecs.wasm` has it, loaded where WebCodecs lacks a codec.
+5. **Host on tasks** (`nori-tasks`, cherry-picked from `async-remote`: `Tasks::spawn`, `Tasks::sleep`): the
+   session's network work (check, sync, play/enqueue later, search, lyrics, stars, scrobbles, autofill, the
+   offline bridge, AutoEQ, queue pushes) are futures on `Open::tasks`. Natively `nori_host::Threads` runs
+   each on a thread of its own with `block_on` as before (ureq blocks), timers on one parked thread; on the
+   web `nori_tasks::Local`. The queue saver is a task alive while a save is due (tested). `Session::
+   open_driven` gives the engine to the caller (the worker) instead of a thread; `Open::keeps_music`
+   (false on the web: no stream cache, downloads or measuring from disk) and `Open::decoders`.
+6. `nori_core::server_config` and `net_profile` (a saved profile's sign-in and addresses) moved from host to
+   the core, so the core module needs no host.
+7. `Source::Memory` (the spike's whole-song source) is gone: the web streams.
 
 ## How it is built
 
-- `crates/web` (nori-web): a `cdylib` for `wasm32-unknown-unknown` with wasm-bindgen. Natively it is an
-  empty library, so `cargo test --workspace` and clippy are unchanged. It holds the core's `Transport` over
-  the worker's `fetch` (`fetch.rs`), the `Nori` object the worker calls (`lib.rs`: open, login, albums,
-  album, play, pause, turn, pull, status; every answer JSON), and the engine as the web runs it (`play.rs`).
-- `web/`: plain TypeScript, HTML and CSS. `app.ts` is the page (it only draws and asks), `worker.ts` the
-  Dedicated Worker holding core.wasm, `worklet.ts` the AudioWorklet. The worklet is joined to the worker by
-  a `MessageChannel` port, so audio never passes through the page's thread; chunks of interleaved float
-  are transferred (`postMessage(pcm, [pcm.buffer])`), no SharedArrayBuffer, so no COOP/COEP.
-- `web/build.sh`: cargo (`--profile web`: release, `opt-level = "s"`, `panic = "abort"`), wasm-bindgen
-  `--target web`, `wasm-opt -Oz`, `tsc`, and a size table. `web/serve.py`: the static files and `/rest/`
-  forwarded to a Subsonic server on one origin (development only; any same-origin server works).
-
-To run it: `tools/dev-server.sh`, `web/build.sh`, `python3 web/serve.py` (port 8080, API from
-localhost:4533), open http://localhost:8080 and sign in as admin/admin.
-
-`sqlite-wasm-vfs` 0.2 is the release that matches rusqlite 0.40's sqlite-wasm-rs 0.5; it brings
-`tokio` (sync only) and `indexed_db_futures` along. 0.3 needs sqlite-wasm-rs 0.6, i.e. a newer rusqlite.
-
-Toolchain: `wasm32-unknown-unknown` was already installed. Installed for the spike: `wasm-bindgen-cli
-0.2.128` (the version in Cargo.lock) and `twiggy 0.8` (cargo install). Present already: `wasm-opt` 133,
-`brotli`, node 26 (`npx` fetches `typescript@5.6.3`). SQLite's C needs a clang with a wasm32 backend:
-Apple's clang has none and Homebrew LLVM is not installed here, but the Android NDK's clang (30.0) has
-it; `web/build.sh` finds either.
-
-## Shared core changes (every platform, behaviour kept, all tests green)
-
-1. **One clock**: `crates/time` (nori-time) re-exports `Instant`/`SystemTime`/`Duration` from std natively
-   and from `web-time` on the web (`performance.now()`, `Date.now()`), plus `since_epoch()`/`unix_ms()`.
-   Every `std::time::Instant`/`SystemTime::now` in the core crates (player, model, db, settings, queue,
-   lyrics, library, transfers, core, engine, remote, host) goes through it. parking_lot's `wait_until`
-   takes std's `Instant`, so those four waits became `wait_for(until - now)`, the same wait. Not done: a
-   virtual-clock hook in it. The engine already has its own `Clock` trait (tests move it); the other
-   clocks (remote timing, freshness windows) would need the hook to be tested on a virtual clock, which
-   is a global and so wants its own decision.
-2. **Host takes the platform's HTTP as a trait**: `nori_host::session::Net` (`Transport + ByteSource`,
-   implemented for anything that is both). nori-http (ureq, rustls, ring) is now only the clients' and
-   host's tests' dependency; cli, desktop and the iPod pass `nori_http::Http::new()` as before, so their
-   builds are unchanged without a feature. `device_name` (gethostname) and its libc are unix only. Host
-   compiles for wasm32 (`cargo check --target wasm32-unknown-unknown -p nori-host
-   --no-default-features`), but does not run there: it is built on blocking threads (below).
-3. **Signalsmith Stretch** (C++) is a native-only dependency; on wasm32 AutoMix's tempo changes take the
-   varispeed path (`Engine::Vari` in `automix/stretch.rs`, pitch moves). Speed/pitch on the web waits for
-   the pure Rust port being done in parallel. (User-facing speed/pitch is Sonic, pure Rust, and works.)
-4. **The engine on its caller's thread**: `Engine::driven(...) -> (Engine, Driven)`. The engine thread's
-   body was already one `Worker::turn()` returning how long to sleep; the thread now runs `Worker::step()`
-   in a loop, and `Driven::turn()` runs one step for a caller with no threads. Same commands, same
-   `Engine` handle. Tested on the virtual clock (`tests/driven.rs`: a song heard sample-exact, whole).
-5. **`Source::Memory`**: a song whose bytes are all in memory, demuxed and decoded from a `Cursor` by the
-   same `Demuxed::open` a file uses. The web fetches the song whole for now (below).
-6. Single-threaded fallbacks on wasm32 only: the database's background writer runs a job at once, and the
-   planner finishes an analysis at once instead of on its thread.
+- `crates/web` (nori-web): `lib.rs` the `Nori` the worker calls (open, login/resume/logout, `read` a page,
+  covers, settings); `pages.rs` the page reads as JSON; `play.rs` (player build) the host session, the
+  AudioWorklet's card, the session's reports to the page, the lyric clock; `stream.rs` each loader's
+  fetching as a task over `fetch` (an `AbortController` per request); `later.rs` WebCodecs through
+  `web/src/decoder.ts`.
+- `web/`: `app.ts` sign-in and routing, `views.ts` the pages, `player.ts` the mini bar, sheet, lyrics and
+  queue, `rpc.ts` the worker (calls by promise, reports), `worker.ts` the Dedicated Worker (runs a module,
+  feeds the worklet, turns the engine when it asks), `worklet.ts` the AudioWorklet (a 4096-frame start
+  threshold, counts running dry and silences), `decoder.ts` WebCodecs, `words.ts` every word.
+- Loading in pieces: the shell (19 KB br); `core.wasm` in a worker for sign-in and the library, so the
+  first page is quick; then, once that page has drawn and the browser is idle (`requestIdleCallback`,
+  `setTimeout` where Safari has none), the page downloads and compiles the player build
+  (`WebAssembly.compileStreaming`, the build chosen by the same WebCodecs probe the worker makes) while
+  the core worker keeps answering; then calls wait, the core worker answers what it was asked and goes
+  (an OPFS file has one owner), and a worker over the compiled module opens the profile. Play never loads
+  anything; a Play pressed during the load waits for that same load. With `navigator.connection.saveData`
+  the player is loaded on the first Play instead. The AudioContext is still made on the first Play (it
+  needs the click) and handed to the player worker then.
+  [verified] Player worker up 370 ms after navigation on localhost, before any Play; the switch itself
+  40 ms; first Play to sound 275 ms. Through `web/serve.py --kbps 4000 --files-kbps 4000` (4 Mbit/s, files sent
+  uncompressed: player.wasm is 4.2 MB raw), the background load took 8.6 s after the first page; a Play
+  pressed 0.1 s after that page waited 8.5 s for it and played the album once (queue 4 of 4 songs).
+  With brotli on a real server that is 1.38 MB, about 2.8 s at 4 Mbit/s [inferred].
 
 ## Measured sizes
 
-`web/build.sh` (`--profile web`, wasm-bindgen 0.2.128, `wasm-opt -Oz`, `brotli -q 11`) [measured]:
+`web/build.sh` (`--profile web`: release, `opt-level = "s"`, `panic = "abort"`; wasm-bindgen 0.2.128;
+`wasm-opt -Oz`; `brotli -q 11`), October 17, 2026 [measured]:
 
 | file | raw | brotli |
 |---|---|---|
-| core.wasm, as built (core, db, engine, decoders) | 3 225 221 | 1 102 048 |
-| core.wasm without the engine (`NORI_WEB_CORE_ONLY=1`: core and db) | 1 572 757 | 551 677 |
-| so the engine and the decoders | about 1 652 000 | about 550 000 |
-| core.js (wasm-bindgen glue) | 32 799 | 6 252 |
-| worker.js | 3 264 | 978 |
-| worklet.js | 1 972 | 660 |
-| app.js + index.html + style.css (the shell) | 6 588 | 2 155 |
+| core.wasm (core and db) | 1 513 644 | 539 287 |
+| player.wasm (core, db, host, engine; WebCodecs) | 4 242 786 | 1 377 128 |
+| player-codecs.wasm (the same with Vorbis, ALAC, Opus in Rust, and `Codecs`) | 4 474 727 | 1 458 214 |
+| core.js / player.js (glue) | 33 605 / 46 361 | 6 238 / 7 872 |
+| the shell: HTML, CSS, 9 scripts | 68 533 | 19 301 (17 347 as one stream) |
 
-Against the targets: the shell is far under 50 KB; core is 540 KB brotli against ~300 KB for core and
-~350 KB for db, so core+db together are within the two targets' sum (650 KB); the audio module is about
-540 KB brotli.
+core.wasm was 578 624 br before SQLite was built as the core uses it (no R-tree, sessions, introspection
+tables, UTF-16, column metadata, math functions; `-Oz`): 39 KB less. Rust at `opt-level = "z"` made it
+5 KB larger compressed. player.wasm grew from the spike's 1 102 048 br by the host session (remote, covers'
+URLs, the index sync, settings effects); WebCodecs took 79 KB br off it (vorbis, alac, opus-rs).
 
-Biggest contributors (twiggy over the unstripped build before wasm-opt, 3.55 MB of code and data):
+Where core.wasm's 2.2 MB of code and data go before wasm-opt (twiggy over a build with names): SQLite and
+libc 1 062 000 (48 %), data 176 000, nori-model 134 000 (serde for every record), nori-core 110 000,
+nori-settings 107 000, Rust's core/alloc 140 000, serde_json 67 000, nori-lyrics 51 000.
 
-| what | bytes | share |
+## Verified in headless Chrome
+
+`node web/check/check.mjs` against the local Navidrome, all phases passing [verified]: library 6 sections,
+19 albums, 11 artists, 4 genres, 78 songs; search "light" 4 albums and 19 songs; 10 s of FLAC with no dry
+quantum and no engine underrun; lyrics lit lines -1, 0, 1 over 15 s; next to index 1, previous back to 0;
+crossfade (6 s, two albums) mixing for 6 s, AutoMix (a measured `MixRampFade`, 5 s) mixing for 5 s, both
+without a silence over 20 ms or
+running dry; an ALAC song 8 s without running dry; speed 1.5 and 0.75 at 1.50 and 0.75 song-seconds per
+second, pitch 1.1 at 1.00; with `THROTTLED_URL` (`web/serve.py --port 8082 --kbps 400`), first sound 1.0 s
+after the click and 20 s without running dry or an engine underrun.
+
+Not verifiable headless: iOS Safari (background audio and a locked screen; its WebCodecs set), Firefox,
+what a speaker plays (headless is muted: the worklet's samples are checked), mobile networks, a second tab.
+
+## What remains for v1
+
+| piece | notes | days [inferred] |
 |---|---|---|
-| SQLite (C) | ~826 000 | 23 % |
-| Rust's core/alloc/std (formatting, collections, generic code) | ~570 000 | 16 % |
-| .rodata (strings, tables: SQLite's, the codecs', the settings') | 369 000 | 10 % |
-| symphonia: formats (MP4 127 K, Ogg 40 K, RIFF 14 K, metadata 36 K, core 80 K) | ~300 000 | 8 % |
-| symphonia codecs (MP3 44 K, AAC 42 K, FLAC 31 K, Vorbis 29 K, ALAC 11 K, common 29 K) | ~190 000 | 5 % |
-| nori-player (sound chain, transitions, AutoMix analysis) | 224 000 | 6 % |
-| serde_json (the Subsonic answers, the settings) | 201 000 | 6 % |
-| rustfft (AutoMix's analysis) | 156 000 | 4 % |
-| nori-engine | 139 000 | 4 % |
-| opus-rs | 126 000 | 4 % |
-| nori-settings | 73 000 | 2 % |
-| rusqlite, regex-lite, ebur128 | 82 000 | 2 % |
+| iOS Safari | an `<audio>` element fed from the worklet (`MediaStreamAudioDestinationNode`) for lock-screen playback, tried on a device; Safari's WebCodecs set | 2 |
+| More pages | artist top songs, the queue and playlists reordered by dragging, more settings | 2 |
 
-What would shrink it [inferred]: WebCodecs takes the codecs and opus-rs out of the first audio load
-(~320 K raw, ~100 K br); a hand-written decoder for the Subsonic answers instead of serde_json's derive
-on every model struct; SQLite compiled with `SQLITE_OMIT_*` options for what the core never uses (it
-uses FTS5, so not that); the settings' derive generates per-field code that a table would not.
+Smaller notes:
 
-## What blocks the full engine and the host, and the restructuring
+- Measuring ahead: the next song is measured only if it fits what the playing one leaves of the loaders'
+  32 MB (`memory_mb` 128): a FLAC after a FLAC mostly does not, and is measured as it plays instead (the
+  native stream cache has no such limit). A song started mid-way, or still held from a recent play, is
+  not measured as it comes. The playing song is measured twice the first time (as it comes and as it
+  plays); MP4s are not measured as they come (their index may be at the end), nor Vorbis or Opus in
+  `player.wasm` (decoded by the browser only).
 
-The engine runs about ten threads natively. On the web, after this spike:
-
-- **Done**: the engine thread itself (`Driven`, stepped by the worker). In the browser the worker turns
-  it after every command, after every chunk pulled for the worklet, and when the timer it asked for
-  fires (`setTimeout`). With `AudioOutput::bursts()` false the engine wakes on its own timer.
-- **Song bytes (`Loader`)**: one blocking thread per song reading a `ByteSource` body. Proposed: split
-  `Loader::run`'s loop into its decisions (what range to open next, bytes arrived, ended, failed, rest
-  before retrying) and its I/O; natively a thread does the I/O as now, on the web the worker's `fetch`
-  reader pushes each chunk (`ReadableStream`) and asks the loader what to open next. The window (low,
-  high, cap) logic stays one implementation. Until then the web uses `Source::Memory` (whole song, then
-  play: about a second for a 5 MB MP3 on a LAN, too slow on mobile data).
-- **Opening while bytes arrive** (`Demuxed::load`, the `nori-open` thread): symphonia's readers block on
-  `Read`. With the push loader the open is retried on the engine's turn when more bytes arrived
-  (`Reading::ready()` already lets the pipeline wait), or the probe is made incremental for MP3/FLAC/Ogg,
-  whose headers are at the start; MP4 already waits for the whole song.
-- **The stall watch, the measurer, fetch ahead, the stream cache (`Store`, std::fs)**: the stall watch
-  becomes a timer the worker owns; measuring ahead runs in turns between the engine's (or in a second
-  worker); the stream cache is out of v1 (no offline), or later on OPFS.
-- **Decoding by WebCodecs**: the engine demuxes already; `Demuxed::open_packets` gives packets and the
-  codec config (the offload path). A `Reading` that hands packets to an `AudioDecoder` in the worker and
-  takes back `AudioData` (copied out as f32, interleaved) keeps the chain, mixer and ring as they are;
-  `ready()` is false until decoded audio is there. Saves the decoders' code (below) at the cost of an
-  async hop per packet. ALAC (no WebCodecs codec string) and browsers without AudioDecoder take the Rust
-  decoders, as a lazily loaded module. The spike decodes in Rust (symphonia, opus-rs), which works.
-- **Host**: 32 `block_on`/`spawn` sites in `session.rs`; each is "run this network call off the UI
-  thread and report through `Out`". On the web that is `wasm_bindgen_futures::spawn_local` of the same
-  future. Proposed: host takes `nori_tasks::Tasks` (spawn a future, sleep; below), natively a thread per
-  task with `block_on` as now or the remote's `Native`, on the web `Local` (`spawn_local`, `setTimeout`). The rest of host (queue saves, the
-  index sync, jams' rules) is then shared with the web as the brief wants.
-
-## The async remote and jam client (done, branch `async-remote`)
-
-`crates/core/src/remote.rs` ran on threads: a sender (`nori-remote-out`), the relay poller (`RETRY_MS`
-rests on a `Condvar`), one poller per LAN peer, the clock keeper (`timing` condvar) and the foreseen-state
-timer, with `Remote::get` a `block_on` whose waker sat in `Inner.waiting`. Now one implementation for all:
-
-- `nori-tasks` (crates/tasks) holds the `Tasks` trait: `spawn(Task)` and `sleep(Duration) -> Sleep`, both
-  boxed `Send` futures. `Native` is one thread per executor that parks until a task is woken or its next
-  timer is due; `Local` (wasm32) is `spawn_local` and `setTimeout`. With it `Notify` (a notice reaches
-  every `notified()` made before it, so make, check, await misses nothing) and `first(a, b)`.
-- each thread body is an `async fn` with the same loop; `Condvar::wait_for(d)` is `first(sleep(d),
-  notified())`; `Remote::get` races the transport's future with a `given_up` loop on the `cancel` notify;
-  the sender is one task over a queue (order kept); `Remote::stop` waits (natively, `block_on`) for the
-  tasks and the queued sends, up to 3 s.
-- `Remote::new` makes its own `Native` (`Local` on wasm), so the uniffi surface and Kotlin are unchanged;
-  `Remote::with_tasks` takes any `Tasks` (the tests hand one whose timers run on a virtual clock).
-- the LAN door (`nori_remote::lan::Door`) is native only; signing a request to another door stays shared.
-- a transport future must not block its thread (all three platform transports answer from their own
-  threads or the event loop); the in-memory relay of tests/remote.rs waits off-thread to match.
-
-Host's `Tasks` should be this trait, so the session and the remote share one executor per platform.
-
-## Plan to v1, with estimates [inferred]
-
-| piece | days |
-|---|---|
-| Push loader and incremental open (play while it downloads, seek by range) | 3 |
-| Host on `Tasks`, the web on host's session (queue saves, sync, errors, scrobbles) | 3 |
-| WebCodecs `Reading`, Rust decoders as a lazy module | 3 |
-| Split loading: shell, core.wasm, audio module on first Play (two wasm modules or one with lazy init) | 2-3 |
-| Library, search, album/artist/playlist pages, queue UI (TypeScript, Apple Music shapes) | 6-8 |
-| Synced lyrics (core has them; worker clock to the page each frame while visible) | 2 |
-| AutoMix on the web (analysis between turns or a second worker; plans already shared) | 2 |
-| Async remote and jams, host and guest | done |
-| Speed/pitch with the Rust Stretch port | 1 once the port lands |
-| Media Session API, OPFS settings and profiles, service worker for the static files | 2 |
-| Headless browser checks in CI (the spike's script) | 1 |
-
-About five to six weeks of one person.
+- The worklet counts running dry while the session plays; a jump to another song shows as one, since the
+  new song's first bytes come while the state is still Playing.
+- Opus after a seek in Chrome is placed by `later_seek_skip`; Firefox's decoder may differ (not measured).
+- Covers are the server's `getCoverArt` addresses loaded by the page; nothing is cached beyond the
+  browser's HTTP cache.
+- Stalls: a pushed loader has no stall watch (`fetch` reports its own failures); a server that never
+  answers keeps the song loading.
 
 ## Open risks
 
 - **iOS Safari background audio**: an AudioContext is suspended when the page is hidden or the screen
-  locks, unless audio comes from a media element. Lock screen playback on iPhone likely needs the
-  worklet's output routed into an `<audio>` element (`MediaStreamAudioDestinationNode` to `srcObject`),
-  and whether that keeps playing locked has to be tried on a device. Desktop browsers and Android Chrome
-  keep a playing AudioContext alive.
-- **Codecs**: WebCodecs AudioDecoder: Chrome/Edge and Firefox have AAC, MP3, FLAC, Opus, Vorbis; Safari's
-  set is smaller and newer (AAC, MP3, FLAC, Opus [inferred, to verify]); ALAC nowhere. The Rust decoders
-  stay needed as the fallback, which is why they are a separate lazy module rather than gone.
-- **Size**: SQLite is the largest single piece and is needed before the library shows anything stored.
-  Splitting it into its own module needs a database interface across modules (it is called synchronously
-  everywhere today), so the realistic first split is core+db and audio, not core, db and audio.
-- **OPFS sync access handles** exist only in Dedicated Workers (fine here) and allow one connection per
-  file: a second tab of the client cannot open the same databases. Needs a lock (Web Locks) and a "the
-  app is open in another tab" state.
-- **Panics abort the worker** (`panic = "abort"`; wasm has no unwinding on stable): the engine's
-  catch-and-recover does not run on the web. The worker must be restartable from the page with the queue
-  restored from the database.
-- **Memory**: whole songs in memory until the push loader lands; a lossless album would be hundreds of MB.
-- **CORS**: the page must be served from the server's origin (octo-fiesta or a reverse proxy), as
-  decided; covers and streams use the same signed URLs, so caches hit.
+  locks, unless audio comes from a media element. Lock-screen playback on iPhone likely needs the
+  worklet's output routed into an `<audio>` element, and whether that keeps playing locked has to be tried
+  on a device. Desktop browsers and Android Chrome keep a playing AudioContext alive.
+- **Codecs**: Chrome has MP3, AAC, FLAC, Vorbis and Opus [measured]; Safari's set is smaller [inferred];
+  ALAC nowhere [measured in Chrome].
+- **OPFS sync access handles** exist only in Dedicated Workers (fine here) and allow one connection per file.
+- **CORS**: the page must be served from the server's origin (octo-fiesta or a reverse proxy), as decided.
+
+## The async remote and jam client
+
+Being built on `async-remote`: `crates/core/src/remote.rs` as tasks on `nori-tasks` (one native thread for
+all of them; `spawn_local` and `setTimeout` on the web). This branch took its `nori-tasks` crate unchanged
+and runs the host's work on it; the remote's rewrite merges separately.

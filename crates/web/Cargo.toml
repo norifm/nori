@@ -13,16 +13,22 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["engine"]
-# Playback: the engine and the sound chain. Off, the module is the core alone (measured for the split).
-engine = ["dep:nori-engine", "dep:nori-player"]
+# The player: the shared session (nori-host), the engine and the sound chain. Off, the module is the
+# core alone, which reads the library (core.wasm).
+# The player with Vorbis, ALAC and Opus decoded here: for a browser whose WebCodecs lacks them.
+rust-codecs = ["engine", "nori-engine/rust-codecs"]
+engine = ["dep:nori-engine", "dep:nori-host", "dep:nori-look", "dep:nori-player", "dep:nori-tasks", "dep:parking_lot"]
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 nori-core = { path = "../core", default-features = false }
-nori-engine = { path = "../engine", features = ["core"], optional = true }
+nori-engine = { path = "../engine", default-features = false, features = ["core"], optional = true }
+nori-host = { path = "../host", default-features = false, optional = true }
+nori-look = { path = "../look", optional = true }
 nori-player = { path = "../player", optional = true }
-parking_lot = "0.12"
-nori-time = { path = "../time" }
+nori-tasks = { path = "../tasks", optional = true }
+parking_lot = { version = "0.12", optional = true }
 async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The databases in the origin's private file system (rusqlite's SQLite is sqlite-wasm-rs's on wasm).
 sqlite-wasm-rs = "0.5"
@@ -30,4 +36,4 @@ sqlite-wasm-vfs = "0.2"
 wasm-bindgen = "=0.2.128"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["AbortSignal", "Headers", "Request", "RequestInit", "Response", "WorkerGlobalScope", "console"] }
+web-sys = { version = "0.3", features = ["AbortController", "AbortSignal", "Headers", "ReadableStream", "ReadableStreamDefaultReader", "ReadableStreamReadResult", "Request", "RequestInit", "Response", "WorkerGlobalScope", "console"] }

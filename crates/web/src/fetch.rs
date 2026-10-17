@@ -52,7 +52,8 @@ pub async fn fetch(x: Exchange) -> Result<TransportResponse, TransportError> {
     let answer: Response = answer.unchecked_into();
     let status = answer.status();
     let body = JsFuture::from(answer.array_buffer().map_err(|e| failed(FailureKind::Other, e))?).await.map_err(|e| failed(FailureKind::Other, e))?;
-    Ok(TransportResponse { status, body: js_sys::Uint8Array::new(&body).to_vec() })
+    // A browser keeps cookies itself and never shows them to a page.
+    Ok(TransportResponse { status, body: js_sys::Uint8Array::new(&body).to_vec(), set_cookies: Vec::new() })
 }
 
 #[async_trait::async_trait]

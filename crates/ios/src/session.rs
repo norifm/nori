@@ -495,6 +495,10 @@ fn start_queue(
         mpris: None,
         device: nori_core::remote::RemoteMe { name: DEVICE_NAME.into(), kind: nori_core::remote::wire::DeviceKind::Phone },
         discovery,
+        tasks: nori_host::Threads::new(),
+        keeps_music: true,
+        decoders: Default::default(),
+        finds_active: true,
         out,
     })?;
     if !offline {
@@ -916,7 +920,7 @@ mod tests {
             .download_settle(songs.iter().map(|s| s.id.clone()).collect(), vec![true; songs.len()])
             .unwrap();
         for song in songs {
-            let path = s.store.download_path(&song.id);
+            let path = s.store.as_ref().expect("a store").download_path(&song.id);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &bytes).unwrap();
         }

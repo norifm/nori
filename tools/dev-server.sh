@@ -10,6 +10,8 @@
 #   Nori E2E / Long Album       twelve songs of 75-130 s, every third one FLAC (the bridge, album pages)
 #   Nori E2E Two / Far Side     three songs of 150-190 s off another album (crossfades are not gapless
 #                               album joins), "Far Song One" the one transcoded to Opus in the checks
+#   Nori Codecs / Lossless      one Apple Lossless song of 20 s (no browser decodes ALAC: the web client's
+#                               Rust decoders)
 #   Nori Bench 1000 (playlist)  a thousand songs, for opening a long page (tools/open-bench.sh)
 set -euo pipefail
 common=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
@@ -37,14 +39,15 @@ fi
 
 # Something like music for the e2e checks: a chord that moves, a beat, a little noise - so AutoMix has
 # something to measure, and a transcode is not all silence.
-song() { # song <file> <title> <artist> <album> <track> <seconds> <seed>
-  local f="$1" s="$7"
+song() { # song <file> <title> <artist> <album> <track> <seconds> <seed> [codec]
+  local f="$1" s="$7" codec=()
+  [ -n "${8:-}" ] && codec=(-c:a "$8")
   [ -s "$f" ] && return 0
   ffmpeg -loglevel error -f lavfi -i "sine=frequency=$((110+s*7)):duration=$6" -f lavfi -i "sine=frequency=$((330+s*11)):duration=$6" \
     -f lavfi -i "anoisesrc=d=$6:c=pink:a=0.05" \
     -filter_complex "[0][1][2]amix=inputs=3,volume=2,apulsator=hz=2:amount=0.6[a]" -map "[a]" -ac 2 -ar 44100 \
     -metadata title="$2" -metadata artist="$3" -metadata album_artist="$3" -metadata album="$4" \
-    -metadata track="$5" -metadata date=2024 -metadata genre="Test" "$f"
+    -metadata track="$5" -metadata date=2024 -metadata genre="Test" ${codec[@]+"${codec[@]}"} "$f"
 }
 seeded=0
 d="$music/Nori E2E/Long Album"
@@ -64,6 +67,13 @@ if [ ! -f "$d/.done" ]; then
   song "$d/01 - Far Song One.mp3" "Far Song One" "Nori E2E Two" "Far Side" 1 190 21
   song "$d/02 - Far Song Two.mp3" "Far Song Two" "Nori E2E Two" "Far Side" 2 170 22
   song "$d/03 - Far Song Three.flac" "Far Song Three" "Nori E2E Two" "Far Side" 3 150 23
+  touch "$d/.done"; seeded=1
+fi
+d="$music/Nori Codecs/Lossless"
+if [ ! -f "$d/.done" ]; then
+  mkdir -p "$d"
+  ffmpeg -loglevel error -y -f lavfi -i "color=c=0x608040:s=600x600" -frames:v 1 "$d/cover.jpg"
+  song "$d/01 - Lossless Song.m4a" "Lossless Song" "Nori Codecs" "Lossless" 1 20 31 alac
   touch "$d/.done"; seeded=1
 fi
 
