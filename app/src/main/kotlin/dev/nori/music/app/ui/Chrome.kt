@@ -1,7 +1,6 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +11,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.only
@@ -21,7 +23,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -109,7 +110,7 @@ fun BottomChrome(player: PlayerViewModel, actions: ActionsViewModel, onOpenPlaye
         Spacer(Modifier.height(tabsHeight))
         // On its side there is no bar under it: its foot stands where the rail's ends (BAR_END off the
         // bottom), clear of the gesture bar only when there is one there.
-        if (wide) Spacer(Modifier.height(BAR_END)) else Spacer(Modifier.navigationBarsPadding())
+        if (wide) Spacer(Modifier.height(BAR_END)) else Spacer(Modifier.windowInsetsPadding(gestureBarRoom))
     }
 }
 
@@ -150,7 +151,7 @@ fun TabBar(route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look,
             }
             if (search != null) SearchCircle(search, route == search.route, slab, content, edge, accent) { onTab(search.route) }
         }
-        Spacer(Modifier.navigationBarsPadding())
+        Spacer(Modifier.windowInsetsPadding(gestureBarRoom))
     }
 }
 
@@ -214,8 +215,8 @@ fun TabRail(
     var reach by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     // Off the edge by what the bar is off the bottom upright: its own gap and the gesture bar's height,
     // which is the same strip of the screen on its side as it was upright.
-    val off = with(density) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() } + BAR_OFF
-    val status = with(density) { androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(this).toDp() }
+    val off = with(density) { gestureBarRoom.getBottom(this).toDp() } + BAR_OFF
+    val status = with(density) { statusBarRoom.getTop(this).toDp() }
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxHeight()) {
         // Upright the pill is the screen's short side less the margins, the gap and Search - the screen's
         // height here - and no longer than what is left under the status bar.
@@ -257,7 +258,7 @@ fun TabRail(
 @Composable
 fun tabRailWidth(): androidx.compose.ui.unit.Dp {
     val d = androidx.compose.ui.platform.LocalDensity.current
-    return BAR_THICK + 4.dp + BAR_OFF + with(d) { androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(this).toDp() }
+    return BAR_THICK + 4.dp + BAR_OFF + with(d) { gestureBarRoom.getBottom(this).toDp() }
 }
 
 /** The tab bar's measures, shared by the bar and the rail so a turn changes neither. */
@@ -682,3 +683,23 @@ private class Last<T> {
     var item: T? = null
     var set = false
 }
+
+/**
+ * The gesture bar's room, the same while the bar is put away: what stands clear of it keeps its place
+ * whether the bar is there or not.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+val gestureBarRoom: androidx.compose.foundation.layout.WindowInsets
+    @Composable get() = androidx.compose.foundation.layout.WindowInsets.navigationBarsIgnoringVisibility
+
+/** Whether the status bar's room is kept while it is away (the core's `bar_room_kept`). */
+val LocalStatusRoomKept = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/**
+ * The status bar's room: kept while the bar is away where it comes and goes in front of the page (burn-in
+ * protection), given up where it goes with a turn of the phone, so the page then reaches the top edge.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+val statusBarRoom: androidx.compose.foundation.layout.WindowInsets
+    @Composable get() = if (LocalStatusRoomKept.current) androidx.compose.foundation.layout.WindowInsets.statusBarsIgnoringVisibility
+    else androidx.compose.foundation.layout.WindowInsets.statusBars

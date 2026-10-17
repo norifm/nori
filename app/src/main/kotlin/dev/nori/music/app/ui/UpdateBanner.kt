@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +33,7 @@ import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.app.vm.updateButton
 import dev.nori.music.app.vm.updateWords
 import dev.nori.music.update.Updates
+import androidx.compose.foundation.layout.windowInsetsPadding
 
 /**
  * A newer release, said quietly at the top of the page: its version, the start of its notes (a tap shows
@@ -51,7 +51,7 @@ fun UpdateBanner(vm: SettingsViewModel, modifier: Modifier = Modifier) {
         else -> false
     }
     // It comes and goes without animating: nothing moves that the user did not touch.
-    if (shown) androidx.compose.foundation.layout.Box(modifier.statusBarsPadding().padding(top = 8.dp, start = 12.dp, end = 12.dp).widthIn(max = 560.dp)) { BannerCard(vm, s) }
+    if (shown) androidx.compose.foundation.layout.Box(modifier.windowInsetsPadding(statusBarRoom).padding(top = 8.dp, start = 12.dp, end = 12.dp).widthIn(max = 560.dp)) { BannerCard(vm, s) }
 }
 
 @Composable

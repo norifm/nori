@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, ControlsSide, CrossfadeCurve, DownloadBeats, EqMode, GainMode, HideStatusBar, HomeRow, KeepAwake, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, StoredPrefs, SwipeAction, TapAction, ThemeMode};
+use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, ControlsSide, CrossfadeCurve, DimIdle, DimLevel, DownloadBeats, EqMode, GainMode, HideBar, HomeRow, KeepAwake, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, StoredPrefs, SwipeAction, TapAction, ThemeMode};
 use nori_settings::settings_model::{specs, value_of};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/stored_format.txt");
@@ -141,9 +141,13 @@ fn sample() -> StoredPrefs {
         paxsenix_key: "pax".into(),
         better_lyrics_key: "better".into(),
         theme: ThemeMode::Dark,
-        hide_status_bar: HideStatusBar::Always,
+        hide_status_bar: HideBar::Always,
+        hide_gesture_bar: HideBar::Sideways,
         lyrics_timing_button: false,
         keep_awake: KeepAwake::SidewaysCharging,
+        burn_in_protection: false,
+        dim_when_idle: DimIdle::FiveMinutes,
+        dim_level: DimLevel::Strong,
         controls_side: ControlsSide::Left,
         amoled: true,
         player_colours: false,

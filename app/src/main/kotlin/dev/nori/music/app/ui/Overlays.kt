@@ -10,12 +10,13 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalContentColor
@@ -135,7 +136,7 @@ fun <T : Any> NoriDialog(
             contentAlignment = Alignment.Center,
         ) {
             val card = when (style) {
-                DialogStyle.Card -> Modifier.systemBarsPadding().imePadding().padding(horizontal = 24.dp, vertical = 24.dp).widthIn(max = 560.dp)
+                DialogStyle.Card -> Modifier.windowInsetsPadding(statusBarRoom.union(gestureBarRoom)).imePadding().padding(horizontal = 24.dp, vertical = 24.dp).widthIn(max = 560.dp)
                     // The card's own taps stay the card's.
                     .pointerInput(Unit) { detectTapGestures { } }
                 DialogStyle.Page -> Modifier.fillMaxSize()

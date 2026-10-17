@@ -10,10 +10,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -308,7 +308,7 @@ internal fun InviteBody(link: String) {
     val context = LocalContext.current
     val copied = words(R.string.jam_link_copied)
     Column(
-        Modifier.fillMaxWidth().navigationBarsPadding().padding(start = Space.gutter, end = Space.gutter, bottom = 24.dp),
+        Modifier.fillMaxWidth().windowInsetsPadding(gestureBarRoom).padding(start = Space.gutter, end = Space.gutter, bottom = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(words(R.string.jam_invite_title), style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold))
@@ -430,7 +430,7 @@ internal fun JamSettings(j: JamView) {
 @Composable
 private fun PeopleSheet(open: Boolean, j: JamView, onDismiss: () -> Unit) {
     NoriSheet(open, onDismiss) {
-        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(bottom = 16.dp)) { JamControls(j) }
+        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom).padding(bottom = 16.dp)) { JamControls(j) }
     }
 }
 

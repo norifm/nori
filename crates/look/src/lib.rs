@@ -1,6 +1,7 @@
 //! Platform-independent visuals: colours derived from a cover, seeded theme tones, and lyrics timing
 //! (lyrics.rs). Colours are `u32` ARGB throughout.
 
+pub mod burn_in;
 pub mod color;
 pub mod compose;
 pub mod cover;
