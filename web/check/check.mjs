@@ -248,7 +248,7 @@ if (!only || only.includes("instant")) {
     const t = window.nori.audioTime;
     const seek = document.querySelector("#bar .seek input");
     seek.value = String(to);
-    seek.dispatchEvent(new Event("change"));
+    seek.dispatchEvent(new Event("change", { bubbles: true }));
     return t;
   }, seekTo);
   await settle(150);

@@ -67,9 +67,10 @@ await until(host, () => (window.nori.heard?.seconds ?? 0) > 1).catch(async (e) =
 if (!only || only.includes("playon")) {
   // The other browser shows in the devices pane once the relay has it; a click moves the music there.
   await pane(host, "devices");
-  await host.waitForSelector("#devices [data-device]:not([data-device=''])", { timeout: 60000 });
+  // The other browser by its id (the relay may still list browsers of earlier runs).
+  const there = (await json(guest, "devices", "{}")).me;
+  await host.waitForSelector(`#devices [data-device="${there}"]`, { timeout: 60000 });
   const song = (await json(host, "now")).song.title;
-  const there = await host.$eval("#devices [data-device]:not([data-device=''])", (b) => b.getAttribute("data-device"));
   const guestHeard = await heard(guest);
   const t0 = Date.now();
   await host.click(`#devices [data-device="${there}"]`);
@@ -92,10 +93,14 @@ if (!only || only.includes("playon")) {
   await until(host, async () => { const n = JSON.parse(await window.ask("now")); return n.state === "Playing" && !n.device; }, null, 30000).catch(() => {});
   await until(host, (h) => (window.nori.heard?.seconds ?? 0) > h + 2, back, 30000).catch(() => {});
   const home = await json(host, "now");
-  await until(guest, async () => JSON.parse(await window.ask("now"))?.state !== "Playing", null, 15000).catch(() => {});
+  // The other browser shows it playing here, and plays nothing itself.
+  await until(guest, async () => !!JSON.parse(await window.ask("now"))?.device, null, 15000).catch(() => {});
   const left = await json(guest, "now");
-  report.playOnBack = { song: home.song?.title, state: home.state, heardS: (await heard(host)) - back, guestState: left.state };
-  expect(home.song?.title === song && home.state === "Playing" && report.playOnBack.heardS > 2 && left.state !== "Playing", "music moved back plays here again, and not there");
+  const guestBefore = await heard(guest);
+  await new Promise((r) => setTimeout(r, 1500));
+  report.playOnBack = { song: home.song?.title, state: home.state, device: home.device, heardS: (await heard(host)) - back, guestShows: left.device, guestHeardS: (await heard(guest)) - guestBefore };
+  expect(home.song?.title === song && home.state === "Playing" && !home.device && report.playOnBack.heardS > 2, "music moved back plays here again");
+  expect(!!left.device && report.playOnBack.guestHeardS < 0.2, "the other browser shows it playing here and plays nothing");
 }
 
 if (!only || only.includes("jam")) {
