@@ -427,7 +427,7 @@ impl Discovery for Mdns {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use nori_engine::State;
 
@@ -502,7 +502,7 @@ mod tests {
     }
 
     /// The desk mirrored playing the second of three songs (200 s each) 10 s in, at volume 40.
-    fn desk() -> Elsewhere {
+    pub(crate) fn desk() -> Elsewhere {
         let core = nori_core::Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let client = nori_core::client::Client::new(core, Arc::new(crate::session::Offline), Default::default());
         let me = nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop };

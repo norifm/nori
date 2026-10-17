@@ -8,8 +8,6 @@ use std::rc::{Rc, Weak};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use nori_core::playlist::PlaylistView;
-use nori_core::remote::wire::DeviceState;
 use nori_core::search::SearchView;
 use nori_core::settings::SavedServer;
 use nori_core::Song;
@@ -25,6 +23,7 @@ use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPix
 use crate::compositor::{Compositor, Focus};
 use crate::session::{self, CoverKey, CoverSize, Data, Fetch, Msg, Req, Session, Tx};
 use nori_host::pages::{HomePart, PageAsk, PageGot, ShelfItems};
+use nori_host::player::{Playback, QueueShown};
 use crate::settings::{Act, Target};
 use crate::words;
 use crate::{AppWindow, ArtistLink, Card, Credits, LoginKind, LyricPiece, Pick, PlayerBar, Shelf, SidebarWindow, SongGo, SongRow};
@@ -274,7 +273,7 @@ pub struct App {
     /// Id and record of the song being heard.
     heard: Option<String>,
     song: Option<Song>,
-    queue: Option<PlaylistView>,
+    queue: Option<QueueShown>,
     /// Songs behind the clickable lists: the page's, the Songs view's, the search's.
     page_songs: Vec<Song>,
     page_fetch: Option<Fetch>,
@@ -316,10 +315,8 @@ pub struct App {
     /// The hosted jam's invite link its QR code was drawn for, and whether a jam is hosted.
     jam_link: String,
     jam_hosting: bool,
-    /// The device playing while it is another one: the player shows and controls it.
-    elsewhere: Option<Elsewhere>,
-    /// A jam guest's: the host's playback as last published, and when it was right.
-    jam_now: Option<(DeviceState, Instant)>,
+    /// Whose playback the player shows and controls, as last read.
+    playback: Playback,
     /// A jam guest's controls by its role: what the player offers, and whether it paused here.
     jam_controls: Option<nori_core::remote::JamControls>,
     /// The songs this guest asked for that wait for the host.
@@ -474,8 +471,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             search: Timer::default(),
             jam_link: String::new(),
             jam_hosting: false,
-            elsewhere: None,
-            jam_now: None,
+            playback: Playback::Here,
             jam_controls: None,
             asked: HashSet::new(),
         })
@@ -836,7 +832,7 @@ impl App {
                 self.shelves.set_vec(Vec::new());
                 ui.set_picks(ModelRc::default());
                 ui.set_picks_loaded(false);
-                self.jam_now = None;
+                self.playback = Playback::Here;
                 self.follow();
                 self.jam_shown();
                 self.go(HOME);
@@ -1309,24 +1305,31 @@ impl App {
         self.lyrics_step(true);
     }
 
+    /// The account's device playing while it is another one, which the controls reach.
+    fn there(&self) -> Option<&Elsewhere> {
+        match &self.playback {
+            Playback::There(e) => Some(e),
+            _ => None,
+        }
+    }
+
     /// Whether `s` shows starred: as the device playing shows it, while that is another one.
     fn starred(&self, s: &Song) -> bool {
-        self.session.as_ref().is_some_and(|x| x.starred(s, self.elsewhere.as_ref()))
+        self.session.as_ref().is_some_and(|x| x.starred(s, self.there()))
     }
 
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
     fn star(&self, s: &Song) {
         let on = !self.starred(s);
-        self.on_session(|x| x.star_song(s.id.clone(), on, self.elsewhere.as_ref()));
+        self.on_session(|x| x.star_song(s.id.clone(), on, self.there()));
     }
 
-    /// Where the song playing is now, here or on the device playing.
+    /// Where the song shown is now: here, on the device playing or in the jam.
     fn position_now(&self) -> i64 {
-        match (&self.elsewhere, &self.jam_now, &self.session) {
-            (Some(e), _, _) => e.position_ms(),
-            (None, Some((st, at)), _) => nori_core::remote::position_now(st, at.elapsed().as_millis() as i64),
-            (None, None, Some(s)) => s.engine.status_with(|st| st.position_now()),
-            (None, None, None) => 0,
+        match (&self.playback, &self.session) {
+            (Playback::There(e) | Playback::Jam(Some(e)), _) => e.position_ms(),
+            (Playback::Here, Some(s)) => s.engine.status_with(|st| st.position_now()),
+            _ => 0,
         }
     }
 
@@ -1388,7 +1391,7 @@ impl App {
     /// The guest profile is dropped, and the user's own opened again; `said` says why.
     fn left(&mut self, said: &str) {
         let back = nori_host::jam_left(&session::app().settings);
-        self.jam_now = None;
+        self.playback = Playback::Here;
         self.asked.clear();
         match back {
             Some(p) => self.open(p),
@@ -1408,7 +1411,7 @@ impl App {
                 match &e {
                     // A seek landed: the lyrics follow from the new place.
                     Event::Position { .. } => self.lyrics_step(true),
-                    Event::Buffering(b) if self.elsewhere.is_none() => self.ui().set_buffering(*b),
+                    Event::Buffering(b) if matches!(self.playback, Playback::Here) => self.ui().set_buffering(*b),
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     _ => {}
                 }
@@ -1444,7 +1447,7 @@ impl App {
             Msg::Reachable(Err(e)) => self.say(&e, true),
             Msg::Reachable(Ok(())) | Msg::From(..) => {}
             Msg::Remote => {
-                self.elsewhere_read();
+                self.playback_read();
                 self.devices_shown();
                 self.jam_shown();
                 // Another device or the jam may have changed the queue (a song accepted, added from afar).
@@ -1478,7 +1481,7 @@ impl App {
                     self.data(home, Ok(Data::Home(HomePart::Mixes(core.mix_cards(taste)))));
                 }
             }
-            Msg::Volume(v) if self.elsewhere.is_none() => self.ui().set_volume(v),
+            Msg::Volume(v) if self.there().is_none() => self.ui().set_volume(v),
             Msg::Volume(_) => {}
             Msg::LoggedIn(r) => {
                 let ui = self.ui();
@@ -1671,10 +1674,7 @@ impl App {
     /// Takes the song at list index `index` out of the queue shown (here, or on the device playing), and
     /// offers its undo for a few seconds.
     fn remove_queued(&mut self, index: usize) {
-        let song = match &self.elsewhere {
-            Some(e) => e.mirror.rows.iter().find(|r| r.index as usize == index).map(|r| r.song.clone()),
-            None => self.queue.as_ref().and_then(|q| q.songs.get(index).cloned()),
-        };
+        let song = self.queue.as_ref().and_then(|q| q.view.songs.get(index).cloned());
         let Some(song) = song else { return };
         self.on_session(|s| s.remove(index));
         self.ui().set_queue_undo(words::removed(&song.title).into());
@@ -1709,7 +1709,7 @@ impl App {
         // A jam guest's music is the jam's; it moves to no other device.
         ui.set_devices_on(remote.is_some() && !self.guest());
         let Some(r) = remote.filter(|_| ui.get_inspector() == 3) else { return };
-        let active = self.elsewhere.as_ref().map(|e| e.mirror.id.as_str());
+        let active = self.there().map(|e| e.mirror.id.as_str());
         let here = std::iter::once(words::device_row(None, active.is_none()));
         let mut devices = r.devices();
         let names = nori_core::remote::device_names(devices.clone(), r.me(), words::kind_words());
@@ -1725,28 +1725,29 @@ impl App {
         }
     }
 
-    /// Reads the device playing while it is another one. Coming or going, the player starts over from
-    /// what it then shows.
-    fn elsewhere_read(&mut self) {
+    /// Reads whose playback the player shows: this computer's, the device playing while it is another
+    /// one, or the jam. Moving to another device or back, the player starts over from what it then shows.
+    fn playback_read(&mut self) {
         let Some(s) = &self.session else { return };
-        let e = s.elsewhere();
+        let playback = s.playback();
         let ui = self.ui();
-        ui.set_playing_on(e.as_ref().map_or_else(String::new, |e| words::playing_on(&e.mirror.name)).into());
-        let moved = e.is_some() != self.elsewhere.is_some();
-        self.elsewhere = e;
+        let there = match &playback {
+            Playback::There(e) => Some(e.mirror.name.clone()),
+            _ => None,
+        };
+        ui.set_playing_on(there.as_deref().map_or_else(String::new, words::playing_on).into());
+        let moved = there.is_some() != self.there().is_some();
+        self.playback = playback;
         if moved {
             self.queue = None;
             ui.set_buffering(false);
-            let id = match &self.elsewhere {
-                Some(e) => e.song().map(|s| s.id.clone()),
-                None => {
-                    ui.set_volume(s.volume());
-                    s.engine.status_with(|st| st.id.clone())
-                }
-            };
-            self.song_shown(id);
+            if self.there().is_none() {
+                ui.set_volume(s.volume());
+            }
+            let song = s.now().song;
+            self.song_shown(song);
         }
-        if moved || self.elsewhere.is_some() {
+        if moved || self.there().is_some() {
             self.on_session(|s| s.mpris_changed());
         }
     }
@@ -1795,13 +1796,10 @@ impl App {
         let listening = view.as_ref().filter(|_| guest).map_or(nori_core::remote::Listening::Watching, |v| v.listening);
         g.set_here(listening != nori_core::remote::Listening::Watching);
         g.set_along_note(words::jam_along(listening).into());
-        // A guest follows the host's playback, its place run on from when the host heard it.
-        let heard = remote.as_ref().and_then(|r| r.jam_playing()).map(|m| Instant::now() - Duration::from_millis(m.heard_ago_ms().max(0) as u64));
         self.jam_controls = remote.as_ref().filter(|_| guest).and_then(|r| r.jam_controls());
         g.set_can_play(self.offers(|c| c.play_pause));
         g.set_can_skip(self.offers(|c| c.skip));
         g.set_can_seek(self.offers(|c| c.seek));
-        self.jam_now = view.as_ref().filter(|_| guest).and_then(|v| v.queue.clone().map(|q| (q, heard.unwrap_or_else(|| Instant::now() - Duration::from_millis(v.age_ms.max(0) as u64)))));
         let link = view.as_ref().and_then(|v| v.link.clone()).unwrap_or_default();
         if link != self.jam_link {
             g.set_qr(if link.is_empty() { Image::default() } else { crate::jam::qr(&link) });
@@ -1941,15 +1939,11 @@ impl App {
         }
     }
 
-    /// Shows song `id` as the one playing, and asks for its lyrics.
-    fn song_shown(&mut self, id: Option<String>) {
+    /// Shows `song` as the one playing, and asks for its lyrics.
+    fn song_shown(&mut self, song: Option<Song>) {
         let ui = self.ui();
-        self.heard = id.clone();
-        self.song = match (&self.elsewhere, &self.jam_now) {
-            (Some(e), _) => e.song().cloned(),
-            (None, Some((st, _))) => crate::jam::playing(st).map(|e| e.song()),
-            (None, None) => id.and_then(|id| crate::session::app().song(&id)),
-        };
+        self.heard = song.as_ref().map(|s| s.id.clone());
+        self.song = song;
         let song = self.song.clone().unwrap_or_default();
         ui.set_has_song(self.song.is_some());
         ui.set_now_title(song.title.as_str().into());
@@ -1977,66 +1971,35 @@ impl App {
         }
     }
 
-    /// Syncs the window with the device playing: this computer's engine status and queue, or the device's
-    /// it shows instead.
+    /// Syncs the window with what the player shows: this computer's playback and queue, the device's
+    /// playing elsewhere, or the jam's.
     fn follow(&mut self) {
         let Some(s) = &self.session else { return };
         let ui = self.ui();
-        let guest = s.guest;
-        let (id, playing) = match (&self.elsewhere, &self.jam_now) {
-            (Some(e), _) => (e.song().map(|s| s.id.clone()), e.mirror.playing),
-            // A guest's play button says what its controls say: paused here while the jam plays on.
-            (None, Some((st, _))) => (crate::jam::playing(st).map(|e| e.id.clone()), self.jam_controls.map_or(st.playing, |c| c.playing)),
-            (None, None) if guest => (None, false),
-            (None, None) => s.engine.status_with(|st| (st.id.clone(), st.state == State::Playing)),
-        };
+        let now = s.now();
+        // Copy the queue only when it changed.
+        let queue = s.queue_stale(self.queue.as_ref()).then(|| s.queue_shown(self.queue.as_ref().map(|q| &q.view)));
+        let playing = now.playing;
         ui.set_playing(playing);
-        let mixing = match (&self.elsewhere, &self.jam_now) {(Some(e) , _) => e.mirror.playing &&  e.mirror.mixing,
-            (None, Some((st, _))) => st.playing && st.mixing,
-            (None, None) => s.engine.status_with(|st| st.state == State::Playing && st.mixing),
-        };
-        ui.set_mixing(mixing);
-        position_shown(&ui, self.player.as_ref(), self.position_now() as i32);
-        if id != self.heard {
-            self.song_shown(id);
+        ui.set_mixing(now.mixing && now.state == State::Playing);
+        position_shown(&ui, self.player.as_ref(), now.position_now() as i32);
+        if now.song.as_ref().map(|s| &s.id) != self.heard.as_ref() {
+            self.song_shown(now.song.clone());
         }
         ui.set_now_starred(self.song.as_ref().is_some_and(|s| self.starred(s)));
-        if let Some(e) = &self.elsewhere {
-            let m = &e.mirror;
-            ui.set_shuffle(m.shuffle);
-            ui.set_repeat(m.repeat as i32);
-            ui.set_buffering(m.buffering && m.playing);
-            if let Some(v) = e.volume() {
+        if !matches!(self.playback, Playback::Here) {
+            ui.set_buffering(now.buffering);
+            if let Some(v) = now.volume {
                 ui.set_volume(v);
             }
-            let rows = e.upcoming().iter().map(|r| row(&r.song, r.index as usize, false, self.heart(&r.song))).collect();
-            ui.set_queue_from(queue_from(e.upcoming().iter().map(|r| &r.song)).into());
-            self.queue_shown(rows);
         }
-        if let Some((st, _)) = &self.jam_now {
-            let next: Vec<(u32, Song, Option<String>)> = crate::jam::upcoming(st).map(|e| (e.index, e.song(), e.by.clone())).collect();
-            let rows = next.iter().map(|(i, s, by)| SongRow { by: by.clone().unwrap_or_default().into(), ..row(s, *i as usize, false, None) }).collect();
-            ui.set_queue_from(queue_from(next.iter().map(|(_, s, _)| s)).into());
+        if let Some(q) = queue {
+            ui.set_shuffle(q.view.shuffle);
+            ui.set_repeat(q.view.repeat as i32);
+            let rows = q.upcoming().map(|(i, s)| SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), ..row(s, i as usize, false, self.heart(s)) }).collect();
             self.queue_shown(rows);
-        }
-        // Copy the queue only when it changed.
-        let (rev, repeat, index) = crate::session::app().playlist(|p| (p.rev(), p.repeat(), p.current().map_or(-1, |c| c as i32)));
-        if self.elsewhere.is_none() && !guest && self.queue.as_ref().is_none_or(|q| q.rev != rev || q.repeat != repeat || q.index != index) {
-            let held = self.queue.as_ref().map_or(u64::MAX, |q| q.list_rev);
-            let mut v = crate::session::app().view(held);
-            if v.songs.is_empty() && v.len > 0 {
-                if let Some(q) = &self.queue {
-                    v.songs = q.songs.clone();
-                }
-            }
-            ui.set_shuffle(v.shuffle);
-            ui.set_repeat(v.repeat as i32);
-            let jam = self.session.as_ref().and_then(|s| s.remote()).filter(|_| self.jam_hosting);
-            let added = jam.map(|r| r.jam_added()).unwrap_or_default();
-            let rows = queue_rows(&v, |id| added.get(id).cloned(), |s| self.heart(s));
-            self.queue_shown(rows);
-            ui.set_queue_from(queue_from(upcoming(&v).map(|(_, s)| s)).into());
-            self.queue = Some(v);
+            ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
+            self.queue = Some(q);
         }
         // Seek bar timer: only while playing, quarter-pixel steps of the widest bar.
         let step = pixel_ms(ui.get_duration_ms() as i64);
@@ -2131,17 +2094,6 @@ fn song_menu(s: &Song, starred: Option<bool>) -> ModelRc<SongGo> {
         })
         .collect();
     ModelRc::new(VecModel::from(lines))
-}
-
-/// Upcoming songs in play order; each row carries its list index, and who asked for it in the jam (`by`).
-fn queue_rows(v: &PlaylistView, by: impl Fn(&str) -> Option<String>, starred: impl Fn(&Song) -> Option<bool>) -> Vec<SongRow> {
-    upcoming(v).map(|(i, s)| SongRow { by: by(&s.id).unwrap_or_default().into(), ..row(s, i as usize, false, starred(s)) }).collect()
-}
-
-/// The songs after the current one in play order, with their list indexes.
-fn upcoming(v: &PlaylistView) -> impl Iterator<Item = (u32, &Song)> {
-    let from = v.order.iter().position(|&i| i as i32 == v.index).map_or(0, |p| p + 1);
-    v.order[from.min(v.order.len())..].iter().filter_map(|&i| v.songs.get(i as usize).map(|s| (i, s)))
 }
 
 /// Sets `m` to `rows`, updating in place when the length matches.
