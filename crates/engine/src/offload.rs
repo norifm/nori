@@ -61,13 +61,9 @@ pub trait OffloadOutput: Send {
     /// Frames presented now by the platform's timestamp (Android's `getTimestamp`), extrapolated while
     /// playing as media3 does; counted like [`OffloadOutput::head`]. Preferred to the play head, which
     /// never moves on some phones.
-    fn timestamp(&mut self) -> Option<u64> {
-        None
-    }
+    fn timestamp(&mut self) -> Option<u64>;
     /// The platform asked for more since last asked (`onDataRequest`): the track has room.
-    fn data_requested(&mut self) -> bool {
-        false
-    }
+    fn data_requested(&mut self) -> bool;
     /// Everything written up to the last end of stream was played.
     fn presented(&mut self) -> bool;
     /// The track was torn down since last asked (the output moved where offload cannot follow).
@@ -78,7 +74,7 @@ pub trait OffloadOutput: Send {
         None
     }
     /// A note for the perf report (why a song ended, a bad play head).
-    fn note(&mut self, _what: &str) {}
+    fn note(&mut self, what: &str);
     /// How much faster than real time the track may present: 1 for a real device, more for a simulation.
     fn pace(&self) -> f64 {
         1.0
