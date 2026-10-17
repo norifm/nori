@@ -169,7 +169,11 @@ impl ByteSource for Server {
             if self.ignores_offsets.load(Ordering::Relaxed) {
                 let mut c = Cursor::new(Bytes(file.clone()));
                 c.set_position(from);
-                return Ok(Body { start: from, len: Some(file.len() as u64), reader: Box::new(c) });
+                let len = Some(file.len() as u64);
+                if let (Some(steps), Some(clock)) = (self.paced.lock().iter().find(|(u, _)| u == id).map(|p| p.1.clone()), self.clock.lock().clone()) {
+                    return Ok(Body { start: from, len, reader: Box::new(Paced { inner: c, delivery: clock.delivery(), steps, at_ns: clock.now_ns() }) });
+                }
+                return Ok(Body { start: from, len, reader: Box::new(c) });
             }
             let skip = secs.parse::<usize>().map_err(|e| e.to_string())? * RATE as usize * 4;
             let samples: Vec<i16> = file[44 + skip..].as_chunks::<2>().0.iter().map(|&b| i16::from_le_bytes(b)).collect();
@@ -732,6 +736,8 @@ fn transcode_opened_mid_way_streams_from_there() {
         let extra = Extra::default();
         extra.server.transcodes.lock().push("a".into());
         extra.server.ignores_offsets.store(ignored, Ordering::Relaxed);
+        // The whole file comes on the clock, so the reader's seek always finds its place still to come.
+        extra.server.paced.lock().push(("a".into(), vec![(0, 2_000_000)]));
         let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
         rig.engine.play_at(0, 40_500);
         assert!(rig.wait_for(10, |r| r.heard.lock().len() > 2 * RATE as usize * 2));
