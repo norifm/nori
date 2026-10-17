@@ -105,6 +105,7 @@ pub fn line_strength(synced: bool, line: i32, active: i32) -> f32 {
 }
 
 /// Whether the lyrics keep the screen on.
+#[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn keeps_screen_on(asked: bool, shown: bool, playing: bool) -> bool {
     asked && shown && playing
 }

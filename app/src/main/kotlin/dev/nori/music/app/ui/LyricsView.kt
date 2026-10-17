@@ -120,7 +120,7 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean)
         val view = LocalView.current
         val keptOn = LocalLyricsKeepOn.current
         DisposableEffect(playing) {
-            view.keepScreenOn = dev.nori.music.ffi.lyricsKeepScreenOn(true, true, playing)
+            view.keepScreenOn = dev.nori.music.ffi.look.keepsScreenOn(true, true, playing)
             keptOn.value = view.keepScreenOn
             onDispose { view.keepScreenOn = false; keptOn.value = false }
         }

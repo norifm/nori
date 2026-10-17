@@ -4104,6 +4104,9 @@ dependencies = [
 [[package]]
 name = "nori-look"
 version = "0.6.2"
+dependencies = [
+ "uniffi",
+]
 
 [[package]]
 name = "nori-lyrics"

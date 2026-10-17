@@ -252,7 +252,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // AMOLED black everywhere else, but the player keeps the cover's colours unless asked not to: in
     // black, the page under the sleeve was pure black and the picture looked cut off, where Apple's
     // carries the record's colour down the whole screen.
-    val black = remember(dark, prefs.amoled, prefs.playerColours) { dev.nori.music.ffi.pageBlack(dark, prefs.amoled, prefs.playerColours) }
+    val black = remember(dark, prefs.amoled, prefs.playerColours) { dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, prefs.playerColours) }
     // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
     val rowUrl = vm.cover(state.current?.coverArt, CoverSize.ROW)
     val tint = if (prefs.coverColors) rememberCoverTint(rowUrl, black) else CoverTint(rowUrl, null)
@@ -1951,7 +1951,7 @@ private class BandEffect(blurPx: Float) {
         val key = (q(s) shl 30) or (q(kr) shl 20) or (q(kg) shl 10) or q(kb)
         return made[key] ?: run {
             // The matrix is nori-look's (`sleeve::band_matrix`), asked once per tint.
-            val m = android.graphics.ColorMatrix(dev.nori.music.ffi.bandMatrix(s, kr, kg, kb).toFloatArray())
+            val m = android.graphics.ColorMatrix(dev.nori.music.ffi.look.bandMatrix(s, kr, kg, kb).toFloatArray())
             android.graphics.RenderEffect.createColorFilterEffect(android.graphics.ColorMatrixColorFilter(m), blur).asComposeRenderEffect()
         }.also { made[key] = it }
     }

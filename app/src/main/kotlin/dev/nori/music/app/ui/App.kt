@@ -406,15 +406,15 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             }
             val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
             // Read only where the layer and the dimming draw, so a move or a dim redraws and recomposes nothing.
-            var drift by remember { mutableStateOf<dev.nori.music.ffi.BurnInDrift?>(null) }
+            var drift by remember { mutableStateOf<dev.nori.music.ffi.look.Drift?>(null) }
             LaunchedEffect(protecting) {
                 if (!protecting) { drift = null; return@LaunchedEffect }
                 val since = System.currentTimeMillis()
                 lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
                     while (true) {
                         val now = System.currentTimeMillis()
-                        drift = dev.nori.music.ffi.burnInDrift(now, since)
-                        kotlinx.coroutines.delay(dev.nori.music.ffi.burnInNextMoveMs(now))
+                        drift = dev.nori.music.ffi.look.drift(now, since)
+                        kotlinx.coroutines.delay(dev.nori.music.ffi.look.nextMoveMs(now))
                     }
                 }
             }
@@ -918,7 +918,7 @@ private fun rememberCharging(watch: Boolean): Boolean {
  */
 private fun Modifier.burnInProtection(
     touches: kotlinx.coroutines.flow.MutableSharedFlow<Unit>,
-    drift: () -> dev.nori.music.ffi.BurnInDrift?,
+    drift: () -> dev.nori.music.ffi.look.Drift?,
     dim: () -> Float,
 ): Modifier = this
     .pointerInput(touches) {

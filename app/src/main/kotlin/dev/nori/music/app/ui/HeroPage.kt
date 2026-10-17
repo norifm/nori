@@ -117,7 +117,7 @@ fun HeroPage(
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     val dark = when (prefs.theme) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.DARK -> true; ThemeMode.LIGHT -> false }
     val keeps = keepsColours(prefs)
-    val black = remember(dark, prefs.amoled, keeps) { dev.nori.music.ffi.pageBlack(dark, prefs.amoled, keeps) }
+    val black = remember(dark, prefs.amoled, keeps) { dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, keeps) }
     // A provider's page too: its cover is on screen already, so measuring it asks the provider for
     // nothing more, and the cover loader never keeps it (only the colours stay, in memory).
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.

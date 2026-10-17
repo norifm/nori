@@ -409,7 +409,7 @@ val MELT: Float get() = stage.melt
  * A gradient of [color] at the core's [stops], from [startY] to [endY] - or, [across], from x [startY] to
  * [endY]. Made once per size, never per frame.
  */
-fun alphaGradient(stops: List<dev.nori.music.ffi.GradientStop>, color: Color, startY: Float, endY: Float, across: Boolean = false): Brush {
+fun alphaGradient(stops: List<dev.nori.music.ffi.look.Stop>, color: Color, startY: Float, endY: Float, across: Boolean = false): Brush {
     val at = Array(stops.size) { stops[it].at to color.copy(alpha = stops[it].alpha) }
     return if (across) Brush.horizontalGradient(*at, startX = startY, endX = endY) else Brush.verticalGradient(*at, startY = startY, endY = endY)
 }
