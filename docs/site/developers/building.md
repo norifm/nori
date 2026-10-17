@@ -942,7 +942,7 @@ node web/check/check.mjs http://localhost:8080/          # every phase; or add o
 (`tools/jam-server.sh`, then `python3 web/serve.py --port 8081 --server http://localhost:5274` and
 `node web/check/jam.mjs http://localhost:8081/`). `web/check/check.mjs` drives headless Chrome (`CHROME` names another browser) against `web/serve.py` and
 the local Navidrome: sign-in, the library pages and search, a song streamed and played for ten seconds
-without the AudioWorklet running dry, next and previous, synced lyrics moving on, pause, play, seek and
+without the AudioWorklet running dry, next and previous, synced lyrics moving on and a line clicked (or entered) heard from where it is sung, pause, play, seek and
 next heard at once on the sound card's clock (silent within 50 ms of a pause, a seek heard from its
 place within 100 ms) with the place following the music across a pause, the seek bar and its times
 moving with the core's place while playing and still while paused, an AutoMix transition

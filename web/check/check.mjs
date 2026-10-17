@@ -144,6 +144,28 @@ if (!only || only.includes("lyrics")) {
   const lit = await page.evaluate(() => [...window.litLines]);
   report.lyrics = { lyrics: (await facts()).lyrics, lit };
   expect(report.lyrics.lit.filter((l) => l >= 0).length >= 2, "synced lyrics move on line by line");
+  // A later line clicked lights at once and plays from where it is sung (the lyrics' timing applied);
+  // Enter on a focused line does the same.
+  const lines = report.lyrics.lyrics.lines;
+  const later = Math.min(Math.max(...lit) + 4, lines - 2);
+  const tapped = await page.evaluate((k) => {
+    const [t, at] = [window.nori.audioTime, performance.now()];
+    document.querySelector(`.lyrics .line[data-i="${k}"]`).click();
+    return { t, at };
+  }, later);
+  await page.waitForFunction((k) => window.nori.lyricLine === k, { timeout: 2000, polling: "raf" }, later).catch(() => {});
+  const litMs = Math.round((await page.evaluate(() => performance.now())) - tapped.at);
+  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, tapped.t).catch(() => {});
+  const tapHeard = (await facts()).heard.freshAt;
+  await new Promise((r) => setTimeout(r, 1000));
+  const [landed, at, sought] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.audioTime, window.nori.tapped?.ms]);
+  const enter = later + 1;
+  await page.focus(`.lyrics .line[data-i="${enter}"]`);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((k) => window.nori.lyricLine === k, { timeout: 2000, polling: 50 }, enter).catch(() => {});
+  report.lyrics.tap = { line: later, litMs, heardMs: Math.round((tapHeard - tapped.t) * 1000), soughtMs: sought, placeMs: Math.round(landed - (sought + (at - tapHeard) * 1000)), enterLit: (await facts()).lyricLine === enter };
+  const tap = report.lyrics.tap;
+  expect(tap.litMs < 100 && tap.heardMs >= 0 && tap.heardMs < 100 && Math.abs(tap.placeMs) < 100 && tap.enterLit, "a lyric line clicked or entered lights at once and is heard from where it is sung");
   await page.click(".grabber");
 }
 

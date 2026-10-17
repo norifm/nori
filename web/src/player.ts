@@ -290,9 +290,23 @@ function lyricLines(): HTMLElement[] {
   if (!lyrics || lyrics.song !== now?.song?.id) return [h("p", { class: "lyrics-none" }, W.lyricsLoading)];
   const lines = lyrics.lyrics.lines ?? [];
   if (lines.length === 0) return [h("p", { class: "lyrics-none" }, W.noLyrics)];
+  if (!lyrics.lyrics.synced) return lines.map((l) => h("p", { class: "line plain" }, l.text || "♪"));
   return lines.map((l, i) =>
-    h("p", { class: lyrics!.lyrics.synced ? "line" : "line plain", "data-i": i, on: { click: () => lyrics!.lyrics.synced && void control("seek", l.startMs) } }, l.text || "♪"),
+    h(
+      "p",
+      { class: i === lit ? "line on" : "line", "data-i": i, tabindex: 0, role: "button", on: { click: () => void tapLine(i), keydown: (e) => (e as KeyboardEvent).key === "Enter" && void tapLine(i) } },
+      l.text || "♪",
+    ),
   );
+}
+
+/** Plays from line `i`, lit at once. */
+async function tapLine(i: number) {
+  const tap = JSON.parse(await ask<string>("lyrics_tap", i));
+  if (!tap) return;
+  facts.tapped = tap;
+  light(tap.active);
+  await refresh();
 }
 
 let seekDragging = false;

@@ -320,6 +320,18 @@ impl Nori {
         json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "sung": step.frame.sung, "wait": step.wait }).to_string()
     }
 
+    /// A tap on lyric line `line`: shows it at once and plays from where it is sung, the lyrics' timing
+    /// applied. `{ active, ms }`: the line lit and the place sought, or null without lyrics.
+    pub fn lyrics_tap(&self, line: usize) -> String {
+        let lyrics = self.live.lyrics.borrow();
+        let Some((_, clock)) = lyrics.as_ref() else { return "null".into() };
+        let ms = clock.tap(line);
+        let active = clock.shown().active;
+        drop(lyrics);
+        self.seek(ms as f64);
+        json!({ "active": active, "ms": ms }).to_string()
+    }
+
     /// What plays: `{ state, index, id, positionMs, mixing, song, queue, current, shuffle, repeat,
     /// underruns, transition }` (`transition`: the plan out of the song, `{ kind, into, reason }`); for a
     /// jam guest, the host's (`jam: true`).
