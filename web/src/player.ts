@@ -51,12 +51,14 @@ export function soundCard(): Promise<void> {
     const node = new AudioWorkletNode(ctx, "nori-out", { outputChannelCount: [2] });
     node.connect(ctx.destination);
     facts.rate = ctx.sampleRate;
+    // The sound card's clock, which the worklet's times are on.
+    Object.defineProperty(facts, "audioTime", { get: () => ctx.currentTime, enumerable: true });
     if (!player) say(W.loadingPlayer);
     // A new line each time the player worker starts (again, after a crash).
     await soundTo(() => {
       const line = new MessageChannel();
       node.port.postMessage(line.port1, [line.port1]);
-      return { port: line.port2, rate: ctx.sampleRate };
+      return { port: line.port2, rate: ctx.sampleRate, ear: ctx.baseLatency + (ctx.outputLatency || 0) };
     });
     say("");
   })();
@@ -373,7 +375,7 @@ export function setup() {
     } else if (s.kind === "reachable" && !s.ok) say(W.offline);
   });
   onHeard((heard) => {
-    facts.heard = { seconds: heard.played / (audio?.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences };
+    facts.heard = { seconds: heard.played / (audio?.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
   });
   if ("mediaSession" in navigator) {
     navigator.mediaSession.setActionHandler("play", () => void control("toggle"));

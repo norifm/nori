@@ -199,10 +199,13 @@ Smaller notes:
 
 - The worklet counts running dry while the session plays; a jump to another song shows as one, since the
   new song's first bytes come while the state is still Playing.
-- The worker pulls 4096 frames at a time, up to 93 ms ahead of the engine's clock. A fade to silence (the
-  dip before another song, a pause) waits at its bottom in the ring rather than being pulled on as
-  silence: before, picking an album while one played left up to a pull's worth of silence after the
-  dip's bottom (66 ms in about half of the check's runs under load).
+- The worker pulls 4096 frames at a time, keeping the worklet 0.5 s ahead (`AHEAD_MS` in `play.rs`). The
+  engine's output tells the worklet at once what the engine does: a pause stops it where it is with a
+  15 ms fade, keeping what it holds; a flush (seek, skip, another queue) drops what it holds, the frames
+  given back to the ring (`Feed::rewind`) before anything new is pulled; the engine's fades run on the
+  worklet's level. Its latency is what the worklet holds plus the AudioContext's, so the place heard is
+  exact. Measured in the check: silent 15 ms after a pause (523 ms before), a seek heard after 23 ms
+  (511 ms before).
 - Opus after a seek in Chrome is placed by `later_seek_skip`; Firefox's decoder may differ (not measured).
 - Covers are the server's `getCoverArt` addresses loaded by the page; nothing is cached beyond the
   browser's HTTP cache.

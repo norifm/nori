@@ -20,15 +20,52 @@ use wasm_bindgen::prelude::*;
 use crate::fetch::Fetch;
 use crate::{error, Nori};
 
-/// The AudioWorklet's side: what the page pulls for it.
+/// How far ahead of the ear the worklet is kept fed, ms.
+const AHEAD_MS: u64 = 500;
+
+/// What the worklet is told to do, in order ([`Nori::orders`]).
+enum Order {
+    /// Stop where it is, keeping what it holds.
+    Pause,
+    Resume,
+    /// Drop what it holds, answered with the frames dropped ([`Nori::flushed`]).
+    Flush,
+    /// Fade to `to` over `ms`, from `from` or where it is.
+    Ramp { from: Option<f32>, to: f32, ms: i64 },
+}
+
+/// The AudioWorklet's side: what the worker pulls for it, and what it holds.
 #[derive(Default)]
 struct Card {
     feed: Option<Feed>,
     playing: bool,
     /// The AudioContext's rate.
     rate: u32,
+    /// From the AudioContext to the ear, µs.
+    ear_us: u64,
+    /// Frames pulled for the worklet, and those it had played at its last report, made at `reported_ms`.
+    sent: u64,
+    played: u64,
+    reported_ms: f64,
+    orders: Vec<Order>,
+    /// Flushes the worklet has not answered: nothing is pulled until it has given back what it dropped.
+    flushing: u32,
 }
 
+impl Card {
+    /// Frames the worklet holds now: those sent less those played by its last report and since.
+    fn holds(&self) -> u64 {
+        let held = self.sent.saturating_sub(self.played);
+        if !self.playing {
+            return held;
+        }
+        let since = (js_sys::Date::now() - self.reported_ms).max(0.0) * self.rate as f64 / 1000.0;
+        held.saturating_sub(since as u64)
+    }
+}
+
+/// The engine's output: the worklet, told at once what the engine does, so a pause, seek or skip is
+/// heard now rather than after the music it holds.
 struct Output(Arc<Mutex<Card>>);
 
 impl AudioOutput for Output {
@@ -43,20 +80,41 @@ impl AudioOutput for Output {
     }
 
     fn pause(&mut self) {
-        self.0.lock().playing = false;
+        let mut card = self.0.lock();
+        card.playing = false;
+        card.orders.push(Order::Pause);
     }
 
     fn resume(&mut self) {
-        self.0.lock().playing = true;
+        let mut card = self.0.lock();
+        card.playing = true;
+        card.orders.push(Order::Resume);
     }
 
-    /// What the worklet holds ahead of the ear: the page keeps about this much queued.
     fn latency_us(&self) -> u64 {
-        200_000
+        let card = self.0.lock();
+        card.holds() * 1_000_000 / card.rate.max(1) as u64 + card.ear_us
     }
 
     fn takes_float(&mut self) -> bool {
         true
+    }
+
+    fn flush(&mut self) {
+        let mut card = self.0.lock();
+        card.flushing += 1;
+        card.orders.push(Order::Flush);
+    }
+
+    /// On the worklet's own level, heard at once.
+    fn ramp(&mut self, from: Option<f32>, target: f32, ms: i64) -> bool {
+        self.0.lock().orders.push(Order::Ramp { from, to: target, ms });
+        true
+    }
+
+    fn holding(&self) -> bool {
+        let card = self.0.lock();
+        card.sent > card.played
     }
 
     fn close(&mut self) {
@@ -183,9 +241,11 @@ impl Nori {
 /// The player.
 #[wasm_bindgen]
 impl Nori {
-    /// The AudioContext's rate, before the first Play.
-    pub fn set_rate(&self, rate: u32) {
-        self.live.card.lock().rate = rate;
+    /// The AudioContext's rate and its latency to the ear, before the first Play.
+    pub fn set_card(&self, rate: u32, ear_ms: f64) {
+        let mut card = self.live.card.lock();
+        card.rate = rate;
+        card.ear_us = (ear_ms.max(0.0) * 1000.0) as u64;
     }
 
     /// Plays `songs` (JSON, as a page read them) from `start`, shuffled with `shuffle`; `kind` and `id`
@@ -321,20 +381,62 @@ impl Nori {
         }
     }
 
-    /// Fills `out` with interleaved samples for the worklet, as many as the engine has made; returns the
-    /// frames written. The worklet holds its own slack, so pulling less is no shortfall.
+    /// Fills `out` with interleaved samples for the worklet, as many as the engine has made up to
+    /// [`AHEAD_MS`] ahead of what it played; returns the frames written. Nothing while paused or while a
+    /// flush is unanswered.
     pub fn pull(&self, out: &mut [f32]) -> usize {
         let mut card = self.live.card.lock();
-        if !card.playing {
+        let room = (card.rate as u64 * AHEAD_MS / 1000).saturating_sub(card.sent.saturating_sub(card.played)) as usize;
+        if !card.playing || card.flushing > 0 {
             return 0;
         }
         let Some(f) = card.feed.as_mut() else { return 0 };
         let ch = f.format().channels.max(1);
-        let n = (out.len() / ch).min(f.available());
+        let n = (out.len() / ch).min(f.available()).min(room);
         if n == 0 {
             return 0;
         }
-        f.pull(&mut out[..n * ch])
+        let got = f.pull(&mut out[..n * ch]);
+        card.sent += got as u64;
+        got
+    }
+
+    /// What the worklet is to do, in order: a JSON list of its messages, empty for none.
+    pub fn orders(&self) -> String {
+        let orders = std::mem::take(&mut self.live.card.lock().orders);
+        if orders.is_empty() {
+            return String::new();
+        }
+        let told: Vec<Value> = orders
+            .into_iter()
+            .map(|o| match o {
+                Order::Pause => json!({ "do": "pause" }),
+                Order::Resume => json!({ "do": "resume" }),
+                Order::Flush => json!({ "do": "flush" }),
+                Order::Ramp { from, to, ms } => json!({ "do": "ramp", "from": from, "to": to, "ms": ms }),
+            })
+            .collect();
+        Value::Array(told).to_string()
+    }
+
+    /// The worklet's report: `played` frames in all.
+    pub fn played(&self, played: f64) {
+        let mut card = self.live.card.lock();
+        card.played = played as u64;
+        card.reported_ms = js_sys::Date::now();
+    }
+
+    /// The worklet answered `flushes` flushes, dropping `dropped` frames it held: they are taken back
+    /// from the ring, as far as the flush kept them, so the place heard stays exact.
+    pub fn flushed(&self, played: f64, dropped: f64, flushes: u32) {
+        self.played(played);
+        let mut card = self.live.card.lock();
+        let dropped = dropped as u64;
+        card.sent = card.sent.saturating_sub(dropped);
+        card.flushing = card.flushing.saturating_sub(flushes);
+        if let Some(f) = card.feed.as_mut() {
+            f.rewind(dropped);
+        }
     }
 
     /// The output's channels once open, else 0.

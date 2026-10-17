@@ -160,6 +160,69 @@ if (!only || only.includes("skip")) {
   expect(a.index === 0 && b.index === 1 && c.index === 0, "next and previous move through the queue");
 }
 
+if (!only || only.includes("instant")) {
+  // Pause, play, seek and next act on what is heard at once, on the sound card's clock: pause is silent
+  // within 50 ms and play sounds again as soon, a seek and a skip are heard from their place, and the
+  // place runs on with the music across a pause (none of it lost or played twice).
+  await playAlbum(album("Second Wind", "Alpha Waves"));
+  await page.click("#mini");
+  await heardFor(3, (await facts()).heard);
+  const press = (sel) => page.evaluate((s) => {
+    const t = window.nori.audioTime;
+    document.querySelector(s).click();
+    return t;
+  }, sel);
+  const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+  // The place less the music heard, ms: the same as long as the place follows the music.
+  const offset = async () => {
+    const all = [];
+    for (let i = 0; i < 5; i++) {
+      const [n, f] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.heard.seconds]);
+      all.push(n - f * 1000);
+      await settle(120);
+    }
+    return all.sort((a, b) => a - b)[2];
+  };
+  const ms = (s) => Math.round(s * 1000);
+  const before = await offset();
+  const paused = await press(".transport button[aria-label='Pause']");
+  await settle(800);
+  const p0 = (await facts()).heard;
+  const held0 = (await now()).positionMs;
+  await settle(500);
+  const held1 = (await now()).positionMs;
+  const pauseMs = ms(p0.lastLoud - paused);
+  const played = await press(".transport button[aria-label='Play']");
+  await page.waitForFunction((t) => (window.nori.heard?.soundAt ?? 0) > t, { timeout: 5000, polling: 20 }, played).catch(() => {});
+  const resumeMs = ms((await facts()).heard.soundAt - played);
+  await heardFor(1.5, (await facts()).heard);
+  const after = await offset();
+  const seekTo = 20000;
+  const sought = await page.evaluate((to) => {
+    const t = window.nori.audioTime;
+    const seek = document.querySelector(".seek");
+    seek.value = String(to);
+    seek.dispatchEvent(new Event("change"));
+    return t;
+  }, seekTo);
+  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, sought).catch(() => {});
+  const seekHeard = (await facts()).heard.freshAt;
+  await settle(1000);
+  const [landed, at] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.audioTime]);
+  const seekPlaceMs = Math.round(landed - (seekTo + (at - seekHeard) * 1000));
+  const skipped = await press(".transport button[aria-label='Next']");
+  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, skipped).catch(() => {});
+  const nextMs = ms((await facts()).heard.freshAt - skipped);
+  const index = (await now()).index;
+  report.instant = { pauseMs, resumeMs, seekMs: ms(seekHeard - sought), nextMs, pausedMovedMs: held1 - held0, offsetMs: [Math.round(before), Math.round(after)], seekPlaceMs, index };
+  expect(pauseMs >= 0 && pauseMs < 50, "a pause is silent within 50 ms");
+  expect(resumeMs >= 0 && resumeMs < 50, "play sounds again within 50 ms");
+  expect(report.instant.seekMs >= 0 && report.instant.seekMs < 100 && Math.abs(seekPlaceMs) < 100, "a seek is heard from its place within 100 ms");
+  expect(nextMs >= 0 && nextMs < 250 && index === 1, "next is heard within 250 ms");
+  expect(held1 === held0 && Math.abs(after - before) < 40, "the place stays still while paused and follows the music across it");
+  await page.click(".grabber");
+}
+
 /** The last song of one album and the first of another (an album's songs play gaplessly), listened to
  * through the transition from 16 s before the first one's end. With `measured`, the seek waits for the
  * plan out of the first song to be made from both songs' measurements (they are measured as they arrive). */

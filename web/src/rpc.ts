@@ -7,7 +7,7 @@
 import { playerFile, probe } from "./decoder.js";
 
 export type Said = { kind: string; [k: string]: unknown };
-export type Heard = { played: number; dry: number; dryAt: number[]; peak: number; silences: [number, number][] };
+export type Heard = { played: number; dry: number; dryAt: number[]; peak: number; silences: [number, number][]; lastLoud: number; soundAt: number; freshAt: number };
 /** A worker's build: the core, or the player with its compiled module. */
 type Build = { kind: "core" } | { kind: "player"; module: WebAssembly.Module; file: string };
 
@@ -122,8 +122,8 @@ async function replace(b: Build, answered: boolean) {
   player = b.kind === "player";
   await send("resume", []);
   if (sound && player) {
-    const { port, rate } = sound();
-    worker.postMessage({ id: ++calls, call: "audio", args: [port, rate] }, [port]);
+    const { port, rate, ear } = sound();
+    worker.postMessage({ id: ++calls, call: "audio", args: [port, rate, ear] }, [port]);
   }
   open();
 }
@@ -162,15 +162,17 @@ export function playerUp(): Promise<void> {
   return switching;
 }
 
-/** Makes a new line to the sound card: its port for the player worker, and the card's rate. */
-let sound: (() => { port: MessagePort; rate: number }) | undefined;
+/** A line to the sound card: its port for the player worker, the card's rate, and its latency to the ear, s. */
+type Line = { port: MessagePort; rate: number; ear: number };
+/** Makes a new line to the sound card. */
+let sound: (() => Line) | undefined;
 
 /** Joins the sound card to the player worker, now and after every restart. */
-export async function soundTo(line: () => { port: MessagePort; rate: number }) {
+export async function soundTo(line: () => Line) {
   await playerUp();
   sound = line;
-  const { port, rate } = line();
-  worker.postMessage({ id: ++calls, call: "audio", args: [port, rate] }, [port]);
+  const { port, rate, ear } = line();
+  worker.postMessage({ id: ++calls, call: "audio", args: [port, rate, ear] }, [port]);
 }
 
 /** Starts the player module when the browser is idle after the first page, unless data is to be saved
