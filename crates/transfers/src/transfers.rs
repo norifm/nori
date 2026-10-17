@@ -175,8 +175,9 @@ pub fn beats_offer(model_on: bool, choice: nori_settings::settings::DownloadBeat
     }
 }
 
-/// The setting a remembered answer sets.
-pub fn beats_remembered(yes: bool) -> nori_settings::settings::DownloadBeats {
+/// The "ML beats for downloads" setting a remembered answer sets.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn download_beats_remembered(yes: bool) -> nori_settings::settings::DownloadBeats {
     use nori_settings::settings::DownloadBeats;
     if yes { DownloadBeats::Always } else { DownloadBeats::Never }
 }

@@ -146,12 +146,8 @@ pub fn library_sections_toggled(chosen: Vec<LibrarySection>, section: LibrarySec
 
 /// The pinned playlists (kept on the device: the server cannot star one) with `id` pinned or not.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn pins_toggled(mut pins: Vec<String>, id: String, on: bool) -> Vec<String> {
-    pins.retain(|p| *p != id);
-    if on {
-        pins.push(id);
-    }
-    pins
+pub fn pins_toggled(pins: Vec<String>, id: String, on: bool) -> Vec<String> {
+    toggled(pins, id, on)
 }
 
 /// The cached answers a manual refresh drops, so it reaches the server.

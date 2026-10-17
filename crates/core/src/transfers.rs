@@ -156,13 +156,6 @@ impl Core {
     }
 }
 
-
-/// The "ML beats for downloads" setting for a remembered answer.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn download_beats_remembered(yes: bool) -> nori_settings::settings::DownloadBeats {
-    beats_remembered(yes)
-}
-
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
     /// Whether Download asks about the beat model ([`beats_offer`]).

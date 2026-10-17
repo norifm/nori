@@ -216,7 +216,7 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         val ask = _beatsAsk.value ?: return
         _beatsAsk.value = null
         if (remember) {
-            nori.settings.core.settingSet("downloadBeats", dev.nori.music.ffi.downloadBeatsRemembered(yes).name)?.let(nori.settings::took)
+            nori.settings.core.settingSet("downloadBeats", dev.nori.music.ffi.transfers.downloadBeatsRemembered(yes).name)?.let(nori.settings::took)
         }
         ask.go(yes)
     }
