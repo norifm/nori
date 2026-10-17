@@ -23,7 +23,7 @@ platform opens and re-exports every crate below it by its module name (`nori_cor
 
 | Area | Crate / module |
 |---|---|
-| Where a profile's music comes from: a Subsonic server or YouTube Music, each a plug-in that describes its add form and sign-in, answers the reads and writes, and says where songs and covers are ([Providers](providers.md)) | `nori-core::providers` (`Provider`, `providers`, `server_for_login`, `check_profile`, `Core::configure_profile`); `nori-engine::core::resolving` |
+| Where a profile's music comes from: a Subsonic server or YouTube Music, each a plug-in that describes its add form and sign-in, answers the reads and writes, and says where songs and covers are ([Providers](providers.md)) | `nori-core::providers` (`Provider`, `providers`, `log_in`, `server_for_login`, `check_profile`, `Core::configure_profile`); `nori-engine::core::resolving` |
 | Server API, sync, the one app database (`nori.db`), the settings model and effects | `nori-net`: `api`, `transport`, `requests`, `stream`; `nori-core`: `Core`, `Client`, `cache_policy`; `nori-db`; `nori-settings`: `settings`, `settings_store`, `settings_model`, `lyrics_sources`, `dsp` |
 | The records the server sends and the app shows, the core's error and log | `nori-model` |
 | Library, search, browse, mixes, smart lists, stats, history, favorites, playlists, M3U | `nori-library`: `library`, `search`, `browse`, `mixes`, `smart`, `history`, `stars`, `m3u` |
@@ -56,7 +56,8 @@ nori-mpris and writes only its interface. What it built itself, item by item, is
 builds:
 
 - **Screens** (ratatui over crossterm, ui.rs): login and server profiles (`check_login` is the core's
-  `Client::login`, profiles are the settings' `servers`), home (the core's album lists), the library
+  `providers::log_in`, profiles are the settings' `servers`), home (nori-host's `read_home`: the album
+  shelves of the rows kept, in the core's order), the library
   (albums, artists, playlists from the stored reads; songs from the offline index), search
   (`SearchSession`: the index at every key, the server once typing pauses, `live_search_delay_ms`),
   album, artist and playlist pages (`AlbumDetail`, `ArtistDetail`, `PlaylistDetail` with their captions),
@@ -307,8 +308,8 @@ that beside the database, the same on every client (`nori-core::model_download`)
 
 ### 3. The operating system around the player
 - Media controls and "now playing": the Android media session and notification, MPRIS on Linux
-  (`nori-mpris`: a client says what the controls do; over nori-host it hands each engine event to
-  `Session::mpris_heard`, which says when the song changed or the place jumped), System Media Transport
+  (`nori-mpris`: over nori-host the controls are the session's own, which also tells them when the song
+  changed or the place jumped), System Media Transport
   Controls on Windows, MPNowPlayingInfoCenter on macOS.
 - Headset buttons, audio focus and ducking, sleep and idle release. The core gives the timings
   (`rules.rs`); the client wires the events.

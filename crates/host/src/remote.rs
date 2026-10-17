@@ -198,12 +198,6 @@ impl Elsewhere {
         self.mirror.position_now()
     }
 
-    /// The songs after the one playing, in play order.
-    pub fn upcoming(&self) -> &[MirrorRow] {
-        let from = self.mirror.at.map_or(0, |a| a as usize + 1);
-        self.mirror.rows.get(from..).unwrap_or_default()
-    }
-
     /// The device's queue as this client reads its own: each song at its list index there (left default
     /// where it is not known here), in play order, the one playing current.
     pub fn view(&self) -> PlaylistView {
@@ -535,7 +529,6 @@ pub(crate) mod tests {
     fn a_device_elsewhere_runs_on_within_its_song() {
         let mut e = desk();
         assert_eq!(e.song().map(|s| s.id.as_str()), Some("b"));
-        assert_eq!(e.upcoming().iter().map(|r| r.index).collect::<Vec<_>>(), [1], "after the song playing, in play order");
         assert_eq!((e.mirror.position_at(2_500_000), e.mirror.position_at(500_000_000)), (12_500, 200_000), "held at the song's end");
         e.mirror.playing = false;
         assert_eq!(e.mirror.position_at(2_500_000), 10_000, "paused");
@@ -547,7 +540,6 @@ pub(crate) mod tests {
         assert_eq!(known.view().songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["b", "c"], "as far as the rows are known");
         e.mirror.at = None;
         assert_eq!(e.view().index, -1);
-        assert_eq!(e.upcoming().len(), 3, "nothing playing: the whole queue is to come");
         assert_eq!(e.volume(), Some(0.4));
         e.mirror.rows[2].song.starred = true;
         assert_eq!((e.starred("c"), e.starred("a"), e.starred("x")), (Some(true), Some(false), None), "hearts of its queue only");

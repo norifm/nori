@@ -550,10 +550,10 @@ through the jack with no underrun for a minute at 93 ms, at 10 ms, and across a 
 `crates/ios/src/session.rs` holds one `nori_host::Session` in a `OnceLock` (the C entry points have no
 handle). `nori_ios_open(data_dir, server_id)` loads the saved server — an empty id is the active one —
 with `IosOutput` on device, `nori_http::Http`, covers on and `memory_mb` 96. No saved server returns an
-error and leaves the slot empty. Every `Said` is queued and delivered on `nori-ios-out`, which calls
-`Session::followed` and then the Swift callback; engine events are a `repr(C)` `NoriReport` (state,
+error and leaves the slot empty. The session follows its engine's events itself; every `Said` is queued
+and delivered on `nori-ios-out` to the Swift callback; engine events are a `repr(C)` `NoriReport` (state,
 index, ms, jumps, and a kind for the rest). The controls (`play_at`, `toggle`, `next`, `previous`,
-`seek`, `go_to`, `set_repeat`, `shuffle`, `remove`, `put_back`, `move`, `clear_upcoming`) are thin
+`seek`, `cycle_repeat`, `shuffle`, `remove`, `put_back`, `move`, `clear_upcoming`) are thin
 wrappers. `nori_ios_background` saves now (`QueueMoment::Closing`, no push). `nori_ios_memory_warning`
 calls `Loader::trim`, which drops the decoded-cover cache and rests the workers.
 
