@@ -65,6 +65,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.R
 import dev.nori.music.app.vm.SettingRow
 import dev.nori.music.app.vm.SettingsSection
@@ -222,14 +223,7 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
  */
 @Composable
 private fun CompressionMeter() {
-    var db by remember { mutableFloatStateOf(0f) }
-    val seen = seen()
-    LaunchedEffect(seen) {
-        while (seen) {
-            db = dev.nori.music.playback.Equalizer.compressionDb
-            kotlinx.coroutines.delay(stage.meterMs)
-        }
-    }
+    val db = meterReading(viewModel<SettingsViewModel>().compressionDb)
     val active = db > 0.05f
     val scheme = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
