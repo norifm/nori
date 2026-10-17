@@ -59,6 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -506,13 +507,28 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
 /** What the bars stand at while the music is paused: a shape, not a flat line. */
 private val RESTING = floatArrayOf(0.35f, 0.8f, 0.5f, 0.65f)
 
+/** What every song list draws its rows with: the song playing, the songs downloaded and selected, and the row's menu. */
+@androidx.compose.runtime.Immutable
+data class SongListState(val playingId: String?, val downloaded: Set<String>, val selected: Set<String>, val menu: (Song) -> Unit)
+
+@Composable
+fun rememberSongListState(actions: ActionsViewModel): SongListState {
+    val player: dev.nori.music.app.vm.PlayerViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val playing by player.currentId.collectAsStateWithLifecycle()
+    val done = actions.downloads.collectAsState().value.doneIds
+    val selection by actions.selection.collectAsStateWithLifecycle()
+    val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
+    val menu = LocalSongMenu.current
+    return remember(playing, done, selected, menu) { SongListState(playing, done, selected, menu) }
+}
+
 /**
  * A song list wired to the configured tap, swipe and selection behaviour; every screen that lists songs uses
  * this. Each row is an item of its own, so only the rows on screen are composed, however long the list:
  * a thousand-song playlist costs a page the same few rows a ten-song album does.
  */
 fun LazyListScope.songRows(
-    songs: List<Song>, actions: ActionsViewModel, playingId: String?, downloaded: Set<String>, selected: Set<String>, menu: (Song) -> Unit,
+    songs: List<Song>, actions: ActionsViewModel, list: SongListState,
     numbered: Boolean = false, cover: (Song) -> String? = { null }, keyPrefix: String = "",
     /**
      * Which of [songs] are listed, in order, as places in it: one disc of an album, a filtered view. All of
@@ -538,6 +554,7 @@ fun LazyListScope.songRows(
     from: dev.nori.music.ffi.model.PageOrigin? = null,
 ) {
     val (onRight, onLeft) = actions.swipes
+    val (playingId, downloaded, selected, menu) = list
     val count = rows?.size ?: songs.size
     items(
         count,

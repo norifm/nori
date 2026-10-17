@@ -156,12 +156,7 @@ fun MixTiles(vm: MixesViewModel = viewModel()) {
 fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewModel()) {
     LaunchedEffect(id) { vm.open(id) }
     val load by vm.ui.collectAsStateWithLifecycle()
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selection by actions.selection.collectAsStateWithLifecycle()
-    val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
-    val player: PlayerViewModel = viewModel()
-    val playing by player.currentId.collectAsStateWithLifecycle()
-    val menu = LocalSongMenu.current
+    val list = rememberSongListState(actions)
     LoadBox(load) { m ->
         HeroPage(
             coverUrl = null,
@@ -177,13 +172,13 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp, large = true) },
             actions = {
                 if (m.refreshable) CircleButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
-                MoreCircle(listOf(say.addToQueue to { actions.enqueue(m.songs) }, downloadEntry(m.songs, done, actions)))
+                MoreCircle(listOf(say.addToQueue to { actions.enqueue(m.songs) }, downloadEntry(m.songs, list.downloaded, actions)))
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {
                 EmptyNote(if (m.favourites) Note.NO_FAVOURITE_SONGS else Note.NOTHING_TO_MIX)
             }
-            songRows(m.songs, actions, playing, done, selected, menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, animated = true, from = m.origin)
+            songRows(m.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, animated = true, from = m.origin)
         }
     }
 }
@@ -220,12 +215,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
     LaunchedEffect(playlist?.json) { playlist?.let { vm.open(it.json) } }
     val load by vm.songs.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    val menu = LocalSongMenu.current
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selection by actions.selection.collectAsStateWithLifecycle()
-    val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
-    val player: PlayerViewModel = viewModel()
-    val playing by player.currentId.collectAsStateWithLifecycle()
+    val list = rememberSongListState(actions)
     val from = remember(id) { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SMART, id) }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -244,7 +234,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
                     }
                     Text(remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) }, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
                 }
-                songRows(songs, actions, playing, done, selected, menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+                songRows(songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
             }
         }
     }
@@ -318,14 +308,14 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
 fun HistoryList(actions: ActionsViewModel, vm: HistoryViewModel = viewModel()) {
     val entries by vm.entries.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    val menu = LocalSongMenu.current
+    val rows = rememberSongListState(actions)
     val list = rememberLazyListState()
     LaunchedEffect(list, entries.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= entries.size - 30 }.collect { if (it) vm.loadMore() } }
     val songs = remember(entries) { entries.map { it.song } }
     LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
         item { Row(Modifier.padding(horizontal = 8.dp)) { TextButton(nav::stats) { Text(say.listeningStats) }; TextButton(vm::clear) { Text(say.clearHistory) } } }
         if (entries.isEmpty()) item { Text(noteText(Note.NO_HISTORY), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        songRows(songs, actions, null, emptySet(), emptySet(), menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "h")
+        songRows(songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "h")
     }
 }
 

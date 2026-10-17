@@ -173,19 +173,6 @@ private fun foldedBiography(
 private fun LazyItemScope.late(arrival: State<Float>): Modifier =
     (if (AppMotion.reduce) Modifier.animateItem(null, null, null) else Modifier.animateItem()).arriving(arrival)
 
-@Composable
-private fun playingId(): String? {
-    val player: PlayerViewModel = viewModel()
-    val id by player.currentId.collectAsStateWithLifecycle()
-    return id
-}
-
-@Composable
-private fun selectedIds(actions: ActionsViewModel): Set<String> {
-    val selection by actions.selection.collectAsStateWithLifecycle()
-    return remember(selection) { selection.mapTo(HashSet()) { it.id } }
-}
-
 /** An artist's releases by kind, as the core grouped them when the artist was read (`pages::release_groups`). */
 private fun groupsOf(d: dev.nori.music.ffi.library.ArtistDetail): List<Pair<String, List<Album>>> =
     d.groups.map { g -> say.releaseShelf(g) to g.albums.map { d.albums[it.toInt()] } }
@@ -275,11 +262,8 @@ fun AlbumScreen(id: String, actions: ActionsViewModel, vm: AlbumViewModel = view
 @Composable
 private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actions: ActionsViewModel, vm: AlbumViewModel) {
     val account = LocalRules.current.account
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selected = selectedIds(actions)
-    val menu = LocalSongMenu.current
+    val list = rememberSongListState(actions)
     val nav = LocalNav.current
-    val playing = playingId()
     val arrival = rememberArrival(detail != null)
     // The album's own caption once it is read; until then what the row that opened it knew.
     val caption = remember(detail, album) { detail?.let(say::albumCaption) ?: say.albumHintCaption(album.year.toInt(), album.songCount.toInt(), album.duration.toLong()) }
@@ -309,7 +293,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
             LateMore(detail != null) {
                 listOfNotNull(
                     say.addToQueue to { actions.enqueue(detail!!.songs) },
-                    downloadEntry(detail!!.songs, done, actions).takeIf { account },
+                    downloadEntry(detail!!.songs, list.downloaded, actions).takeIf { account },
                     jamStartEntry { actions.play(detail!!.songs, from = from) }.takeIf { account },
                 )
             }
@@ -324,7 +308,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
                     // Only an album of several discs heads them (the core leaves the one disc's empty).
                     if (disc.headed) item(key = "disc-$n", contentType = "disc") { SectionTitle(remember(disc) { say.discHeading(disc) }, Modifier.arriving(arrival)) }
                     songRows(
-                        detail.songs, actions, playing, done, selected, menu,
+                        detail.songs, actions, list,
                         numbered = true, rows = disc.songs, lines = disc.lines, arrival = arrival, from = from,
                     )
                 }
@@ -360,11 +344,8 @@ fun ArtistScreen(id: String, actions: ActionsViewModel, vm: ArtistViewModel = vi
 @Composable
 private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: ActionsViewModel, vm: ArtistViewModel, leave: (String) -> Unit) {
     val account = LocalRules.current.account
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selected = selectedIds(actions)
-    val menu = LocalSongMenu.current
+    val list = rememberSongListState(actions)
     val nav = LocalNav.current
-    val playing = playingId()
     val arrival = rememberArrival(ui != null)
     val groups = remember(ui?.detail) { ui?.detail?.let(::groupsOf).orEmpty() }
     val similar = remember(ui?.info) { ui?.info?.similar?.let { dev.nori.music.ffi.library.similarArtists(it) }.orEmpty() }
@@ -420,7 +401,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                     item(key = "top", contentType = "title") { SectionTitle(say.topSongs, late(arrival)) }
                     // The top songs are a list of their own: played from a row they are not the page's Play.
                     songRows(
-                        ui.top, actions, playing, done, selected, menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "top", appear = true,
+                        ui.top, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "top", appear = true,
                         arrival = arrival, from = topFrom,
                     )
                 }
@@ -475,10 +456,7 @@ private fun PlaylistPage(
 ) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selected = selectedIds(actions)
-    val menu = LocalSongMenu.current
-    val playing = playingId()
+    val list = rememberSongListState(actions)
     val arrival = rememberArrival(detail != null)
     val shown = rememberMatching(detail?.songs.orEmpty(), filter)
     val from = rememberOrigin(OriginKind.PLAYLIST, id)
@@ -509,7 +487,7 @@ private fun PlaylistPage(
             LateMore(detail != null) {
                 listOfNotNull(
                     say.addToQueue to { actions.enqueue(detail!!.songs) },
-                    downloadEntry(detail!!.songs, done, actions).takeIf { account },
+                    downloadEntry(detail!!.songs, list.downloaded, actions).takeIf { account },
                     jamStartEntry { actions.play(detail!!.songs, from = from) },
                     say.exportPlaylistFile to { export(playlist.name) },
                 )
@@ -521,7 +499,7 @@ private fun PlaylistPage(
                 item(key = "filter", contentType = "filter") { Box(Modifier.arriving(arrival)) { FilterField(detail.songs.size, filter, onFilter) } }
                 // A row each: a playlist of a thousand songs composes the dozen on screen, not all of them.
                 songRows(
-                    detail.songs, actions, playing, done, selected, menu,
+                    detail.songs, actions, list,
                     cover = { vm.cover(it.coverArt, CoverSize.ROW) }, rows = shown, arrival = arrival, from = from,
                 )
             }
@@ -535,15 +513,12 @@ private fun PlaylistPage(
 fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = viewModel()) {
     LaunchedEffect(name) { vm.open(name) }
     val load by vm.ui.collectAsStateWithLifecycle()
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selected = selectedIds(actions)
-    val menu = LocalSongMenu.current
-    val playing = playingId()
+    val list = rememberSongListState(actions)
     val from = rememberOrigin(OriginKind.GENRE, name)
-    LoadBox(load) { list ->
+    LoadBox(load) { songs ->
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            item(key = "header") { Header(name, remember(list.size) { say.songs(list.size) }, null); PlayButtons(list, actions, from) }
-            songRows(list, actions, playing, done, selected, menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+            item(key = "header") { Header(name, remember(songs.size) { say.songs(songs.size) }, null); PlayButtons(songs, actions, from) }
+            songRows(songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
     }
 }
@@ -553,11 +528,8 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
 fun FolderScreen(id: String, actions: ActionsViewModel, vm: FolderViewModel = viewModel()) {
     LaunchedEffect(id) { vm.open(id) }
     val load by vm.ui.collectAsStateWithLifecycle()
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selected = selectedIds(actions)
-    val menu = LocalSongMenu.current
+    val list = rememberSongListState(actions)
     val nav = LocalNav.current
-    val playing = playingId()
     val from = rememberOrigin(OriginKind.FOLDER, id)
     LoadBox(load) { d ->
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
@@ -569,7 +541,7 @@ fun FolderScreen(id: String, actions: ActionsViewModel, vm: FolderViewModel = vi
                 if (d.songs.isNotEmpty()) PlayButtons(d.songs, actions, from)
             }
             items(d.folders, key = { "f" + it.id }) { f -> Text(remember(f.name) { say.folderRow(f.name) }, Modifier.fillMaxWidth().clickable { nav.folder(f.id) }.padding(horizontal = 16.dp, vertical = 14.dp)) }
-            songRows(d.songs, actions, playing, done, selected, menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
+            songRows(d.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
     }
 }
