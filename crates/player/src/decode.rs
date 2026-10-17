@@ -24,19 +24,6 @@ pub enum Codec {
 }
 
 impl Codec {
-    #[cfg(any(test, feature = "synth"))]
-    pub fn from_mime(mime: &str) -> Option<Codec> {
-        Some(match mime {
-            "audio/mpeg" => Codec::Mp3,
-            "audio/flac" => Codec::Flac,
-            "audio/mp4a-latm" => Codec::Aac,
-            "audio/vorbis" => Codec::Vorbis,
-            "audio/alac" => Codec::Alac,
-            "audio/opus" => Codec::Opus,
-            _ => return None,
-        })
-    }
-
     /// Stable id for the platform boundary.
     pub fn id(self) -> i32 {
         self as i32 + 1
@@ -71,8 +58,6 @@ impl Codec {
 pub enum Fault {
     /// This packet could not be decoded; the next one may be. Skip it.
     BadPacket,
-    /// The caller's buffer needs this many samples; they are kept for `take_*`.
-    NeedRoom(usize),
     /// The stream cannot be decoded any further.
     Broken,
 }
@@ -91,6 +76,11 @@ impl Sample {
             Sample::F32 => 4,
         }
     }
+}
+
+/// A float sample as 16-bit, rounded (symphonia's own conversion truncates).
+pub fn rounded_i16(v: f32) -> i16 {
+    (v * 32768.0).round_ties_even().clamp(-32768.0, 32767.0) as i16
 }
 
 /// The MP3 decoder's filterbank delay. media3 trims it with the encoder delay when a LAME header says
@@ -383,20 +373,7 @@ impl Decoder {
         self.rate
     }
 
-    /// Decodes `packet` into `out`, returning frames written; see [`Fault::NeedRoom`].
-    #[cfg(any(test, feature = "synth"))]
-    pub fn decode_i16(&mut self, packet: &[u8], out: &mut [i16]) -> Result<usize, Fault> {
-        self.decode(packet)?;
-        self.take_i16(out)
-    }
-
-    #[cfg(any(test, feature = "synth"))]
-    pub fn decode_f32(&mut self, packet: &[u8], out: &mut [f32]) -> Result<usize, Fault> {
-        self.decode(packet)?;
-        self.take_f32(out)
-    }
-
-    /// Decodes `packet` and borrows its samples without copying; nothing is kept for `take_*`.
+    /// Decodes `packet` and borrows its samples without copying.
     pub fn decode_lent(&mut self, packet: &[u8]) -> Result<Lent<'_>, Fault> {
         self.decode(packet)?;
         let n = std::mem::take(&mut self.held) * self.channels;
@@ -481,28 +458,6 @@ impl Decoder {
         Ok(())
     }
 
-    /// The last packet's samples as 16-bit, rounded (symphonia's own conversion truncates).
-    pub fn take_i16(&mut self, out: &mut [i16]) -> Result<usize, Fault> {
-        let n = self.held * self.channels;
-        if n > out.len() {
-            return Err(Fault::NeedRoom(n));
-        }
-        let src = &self.scratch[self.from * self.channels..self.from * self.channels + n];
-        for (o, s) in out[..n].iter_mut().zip(src) {
-            *o = (s * 32768.0).round_ties_even().clamp(-32768.0, 32767.0) as i16;
-        }
-        Ok(std::mem::take(&mut self.held))
-    }
-
-    pub fn take_f32(&mut self, out: &mut [f32]) -> Result<usize, Fault> {
-        let n = self.held * self.channels;
-        if n > out.len() {
-            return Err(Fault::NeedRoom(n));
-        }
-        out[..n].copy_from_slice(&self.scratch[self.from * self.channels..self.from * self.channels + n]);
-        Ok(std::mem::take(&mut self.held))
-    }
-
     /// Discontinuity (a seek; `at_start` at the very beginning). MP3 drops its decoder delay again;
     /// Opus skips its pre-skip at the start, its pre-roll elsewhere.
     #[cfg_attr(not(feature = "rust-codecs"), allow(unused_variables, reason = "only Opus tells the start apart"))]
@@ -571,12 +526,6 @@ mod tests {
     }
 
     #[test]
-    fn codec_mimes() {
-        assert_eq!(Codec::from_mime("audio/mpeg"), Some(Codec::Mp3));
-        assert_eq!(Codec::from_mime("audio/ac3"), None, "the platform's decoder takes what this cannot");
-    }
-
-    #[test]
     fn mp3_decodes_tone() {
         let file = tone_mp3();
         let frames = mp3_frames(&file);
@@ -585,7 +534,7 @@ mod tests {
         let mut out = vec![0i16; Codec::Mp3.max_frames() * 2];
         let mut pcm: Vec<i16> = Vec::new();
         for f in &frames {
-            let n = d.decode_i16(f, &mut out).unwrap();
+            let n = decode_i16(&mut d, f, &mut out).unwrap();
             pcm.extend_from_slice(&out[..n * 2]);
         }
         assert_eq!((d.channels(), d.rate()), (2, 44_100));
@@ -604,14 +553,11 @@ mod tests {
         let mut d = Decoder::new(Codec::Mp3, 44_100, 2, None, true).unwrap();
         let mut out = vec![0i16; 1152 * 2];
         for f in &frames[..10] {
-            d.decode_i16(f, &mut out).unwrap();
+            decode_i16(&mut d, f, &mut out).unwrap();
         }
         d.reset(false);
-        let n: usize = frames[20..].iter().map(|f| d.decode_i16(f, &mut out).unwrap_or(0)).sum();
+        let n: usize = frames[20..].iter().map(|f| decode_i16(&mut d, f, &mut out).unwrap_or(0)).sum();
         assert!(n > 1152 * (frames.len() - 22));
-        let mut small = [0i16; 16];
-        assert_eq!(d.decode_i16(frames[5], &mut small), Err(Fault::NeedRoom(2304)));
-        assert_eq!(d.take_i16(&mut out), Ok(1152));
     }
 
     #[test]
@@ -620,30 +566,22 @@ mod tests {
         let frames = mp3_frames(&file);
         let mut out = vec![0i16; 1152 * 2];
         let mut known = Decoder::new(Codec::Mp3, 44_100, 2, None, true).unwrap();
-        assert_eq!(known.decode_i16(frames[0], &mut out), Ok(1152));
+        assert_eq!(decode_i16(&mut known, frames[0], &mut out), Ok(1152));
         let mut unknown = Decoder::new(Codec::Mp3, 44_100, 2, None, false).unwrap();
-        assert_eq!(unknown.decode_i16(frames[0], &mut out), Ok(1152 - MP3_DECODER_DELAY));
-        assert_eq!(unknown.decode_i16(frames[1], &mut out), Ok(1152));
+        assert_eq!(decode_i16(&mut unknown, frames[0], &mut out), Ok(1152 - MP3_DECODER_DELAY));
+        assert_eq!(decode_i16(&mut unknown, frames[1], &mut out), Ok(1152));
         // After a seek, always.
-        known.decode_i16(frames[1], &mut out).unwrap();
+        decode_i16(&mut known, frames[1], &mut out).unwrap();
         known.reset(false);
-        assert_eq!(known.decode_i16(frames[20], &mut out), Ok(1152 - MP3_DECODER_DELAY));
-        assert_eq!(known.decode_i16(frames[21], &mut out), Ok(1152));
+        assert_eq!(decode_i16(&mut known, frames[20], &mut out), Ok(1152 - MP3_DECODER_DELAY));
+        assert_eq!(decode_i16(&mut known, frames[21], &mut out), Ok(1152));
     }
 
-    #[test]
-    fn lent_equals_taken() {
-        let file = tone_mp3();
-        let frames = mp3_frames(&file);
-        let mut taken = Decoder::new(Codec::Mp3, 44_100, 2, None, false).unwrap();
-        let mut lent = Decoder::new(Codec::Mp3, 44_100, 2, None, false).unwrap();
-        let mut out = vec![0f32; 1152 * 2];
-        for f in &frames[..4] {
-            let n = taken.decode_f32(f, &mut out).unwrap();
-            let l = lent.decode_lent(f).unwrap();
-            assert_eq!((l.samples, l.channels, l.rate), (&out[..n * 2], 2, 44_100), "the decoder delay dropped the same way");
-        }
-        assert_eq!(lent.take_f32(&mut out), Ok(0), "nothing kept after a loan");
+    /// Decodes `packet` into `out` as rounded 16-bit, returning frames written.
+    fn decode_i16(d: &mut Decoder, packet: &[u8], out: &mut [i16]) -> Result<usize, Fault> {
+        let l = d.decode_lent(packet)?;
+        out.iter_mut().zip(l.samples).for_each(|(o, &s)| *o = rounded_i16(s));
+        Ok(l.samples.len() / l.channels)
     }
 
     #[test]
@@ -654,7 +592,7 @@ mod tests {
         let mut d = Decoder::new(Codec::Mp3, 44_100, 2, None, true).unwrap();
         let mut out = vec![1i16; 1152 * 2];
         d.reset(false);
-        let n = d.decode_i16(frames[reservoir], &mut out).unwrap();
+        let n = decode_i16(&mut d, frames[reservoir], &mut out).unwrap();
         assert!(out[..n * 2].iter().all(|&s| s == 0));
     }
 
@@ -675,15 +613,14 @@ mod tests {
         let file = tone_mp3();
         let frames = mp3_frames(&file);
         let mut d = Decoder::new(Codec::Mp3, 44_100, 2, None, true).unwrap();
-        let mut out = vec![0f32; 1152 * 2];
-        d.decode_f32(frames[0], &mut out).unwrap();
+        d.decode_lent(frames[0]).unwrap();
         // A 22.05 kHz mono MPEG-2 frame of silence: header, side info, no main data.
         let mut mpeg2 = vec![0u8; 64];
         mpeg2[..4].copy_from_slice(&[0xff, 0xf3, 0x10, 0xc0]);
         mpeg2.truncate(mp3_frame_len(&mpeg2));
-        assert_eq!(d.decode_f32(&mpeg2, &mut out), Ok(576), "a frame of the new shape decodes");
+        assert_eq!(d.decode_lent(&mpeg2).map(|l| l.samples.len() / l.channels), Ok(576), "a frame of the new shape decodes");
         assert_eq!((d.rate(), d.channels()), (22_050, 1));
-        assert!(d.decode_f32(frames[5], &mut out).is_ok(), "and back");
+        assert!(d.decode_lent(frames[5]).is_ok(), "and back");
         assert_eq!((d.rate(), d.channels()), (44_100, 2));
     }
 
@@ -740,13 +677,7 @@ mod tests {
 
     #[test]
     fn i16_rounds_not_truncates() {
-        let mut d = Decoder::new(Codec::Mp3, 44_100, 2, None, true).unwrap();
-        d.scratch[..4].copy_from_slice(&[0.5 / 32768.0, -1.6 / 32768.0, 1.0, -1.0]);
-        d.held = 2;
-        d.from = 0;
-        let mut out = [0i16; 4];
-        d.take_i16(&mut out).unwrap();
-        assert_eq!(out, [0, -2, 32767, -32768], "ties to even, rounded, clamped");
+        assert_eq!([0.5 / 32768.0, -1.6 / 32768.0, 1.0, -1.0].map(rounded_i16), [0, -2, 32767, -32768], "ties to even, rounded, clamped");
     }
 
     #[test]
@@ -766,7 +697,7 @@ mod tests {
         let mut out = vec![0i16; Codec::Opus.max_frames() * 2];
         let mut pcm: Vec<i16> = Vec::new();
         for p in &packets {
-            let n = d.decode_i16(p, &mut out).unwrap();
+            let n = decode_i16(&mut d, p, &mut out).unwrap();
             pcm.extend_from_slice(&out[..n * 2]);
         }
         assert_eq!((d.channels(), d.rate()), (2, 48_000));
@@ -779,7 +710,7 @@ mod tests {
         let crossings = left.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
         assert!((438..=442).contains(&crossings), "{crossings} crossings");
         d.reset(false);
-        assert_eq!(d.decode_i16(&packets[20], &mut out), Ok(0), "the first 20 ms go to the 80 ms pre-roll");
+        assert_eq!(decode_i16(&mut d, &packets[20], &mut out), Ok(0), "the first 20 ms go to the 80 ms pre-roll");
 
         // Surround opus rejected.
         let mut head = b"OpusHead\x01\x06\x38\x01\x80\xbb\x00\x00\x00\x00\x01".to_vec();

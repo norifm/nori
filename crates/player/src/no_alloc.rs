@@ -281,17 +281,12 @@ fn mp3_decoding() {
     let file = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/tone440.mp3")).unwrap();
     let frames = crate::sim::mp3_frames(&file);
     let mut d = Decoder::new(Codec::Mp3, 44_100, 2, None, true).unwrap();
-    let mut out = vec![0i16; 1152 * 2];
-    let mut outf = vec![0f32; 1152 * 2];
     for f in &frames[..4] {
-        d.decode_i16(f, &mut out).unwrap();
+        d.decode_lent(f).unwrap();
     }
     let n = allocations(|| {
         for f in &frames[4..] {
-            d.decode_i16(f, &mut out).unwrap();
-        }
-        for f in &frames[4..] {
-            d.decode_f32(f, &mut outf).unwrap();
+            d.decode_lent(f).unwrap();
         }
     });
     assert_eq!(n, 0);
@@ -303,13 +298,12 @@ fn opus_decoding() {
     let file = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/tone440.opus")).unwrap();
     let (setup, packets) = crate::sim::ogg_opus(&file);
     let mut d = Decoder::new(Codec::Opus, 48_000, 2, Some(&setup), false).unwrap();
-    let mut out = vec![0i16; 5760 * 2];
     for p in &packets[..4] {
-        d.decode_i16(p, &mut out).unwrap();
+        d.decode_lent(p).unwrap();
     }
     let n = allocations(|| {
         for p in &packets[4..] {
-            d.decode_i16(p, &mut out).unwrap();
+            d.decode_lent(p).unwrap();
         }
     });
     assert_eq!(n, 0);

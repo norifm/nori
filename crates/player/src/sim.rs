@@ -262,7 +262,6 @@ pub struct Reading {
     skip_to: i64,
     next_packet: usize,
     decoder: Option<Decoder>,
-    out: Vec<i16>,
     buf: Vec<u8>,
     at_us: i64,
     /// Not ready when first asked (still opening).
@@ -274,7 +273,7 @@ pub struct Reading {
 impl Reading {
     /// Reads from `from_frame`; compressed audio starts at the packet a seek would land on.
     fn new(audio: &Audio, from_frame: i64) -> Reading {
-        let mut r = Reading { audio: audio.clone(), frame: from_frame, skip_to: from_frame, next_packet: 0, decoder: None, out: Vec::new(), buf: Vec::new(), at_us: 0, opening: false, arrived: None };
+        let mut r = Reading { audio: audio.clone(), frame: from_frame, skip_to: from_frame, next_packet: 0, decoder: None, buf: Vec::new(), at_us: 0, opening: false, arrived: None };
         if let Audio::Coded { codec, rate, channels, setup, starts, .. } = audio {
             let mut d = Decoder::new(*codec, *rate, *channels, setup.as_deref().map(|s| s.as_slice()), false).expect("the codec opens");
             // Frames the decoder drops after a reset (MP3 delay, Opus 80 ms pre-roll).
@@ -290,7 +289,6 @@ impl Reading {
                 r.next_packet = k;
                 r.frame = starts[k] + dropped;
             }
-            r.out = vec![0i16; codec.max_frames() * channels];
             r.decoder = Some(d);
         }
         r
@@ -332,11 +330,12 @@ impl pipeline::Reading for Reading {
                 self.frame += n as i64;
                 true
             }
-            Audio::Coded { packets, channels, .. } => loop {
+            Audio::Coded { packets, .. } => loop {
                 let Some(p) = packets.get(self.next_packet) else { return false };
                 self.next_packet += 1;
                 let d = self.decoder.as_mut().expect("a coded track has a decoder");
-                let Ok(n) = d.decode_i16(p, &mut self.out) else { continue };
+                let Ok(lent) = d.decode_lent(p) else { continue };
+                let n = lent.samples.len() / lent.channels;
                 if n == 0 {
                     continue;
                 }
@@ -345,7 +344,7 @@ impl pipeline::Reading for Reading {
                 if self.frame <= self.skip_to && at < self.skip_to {
                     continue;
                 }
-                self.buf.extend_from_slice(&bytes(&self.out[..n * channels]));
+                self.buf.extend(lent.samples.iter().flat_map(|&s| crate::decode::rounded_i16(s).to_le_bytes()));
                 self.at_us = at * 1_000_000 / f.rate as i64;
                 return true;
             },
