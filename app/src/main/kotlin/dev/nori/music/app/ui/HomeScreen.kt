@@ -78,7 +78,9 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             state = pull,
             indicator = { RefreshMark(pull, refreshing) },
         ) {
-        LazyColumn(Modifier.pageToEdges(), contentPadding = pagePadding(LocalChromeInset.current)) {
+        // The page follows the pull down, and stays down while the refresh runs, so the ring has a gap of its
+        // own above the title rather than landing on whatever comes first.
+        LazyColumn(Modifier.pageToEdges().graphicsLayer { translationY = pullGap(pull).toPx() }, contentPadding = pagePadding(LocalChromeInset.current)) {
             // Only the title, as Apple's: shuffling the library lives in Library, and which rows this page has
             // in Settings, Appearance.
             item(key = "title") { LargeTitle(say.listenNow, Modifier.arriving(arrival, 0, rise)) }
@@ -121,13 +123,21 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
     }
 }
 
+/** How far the page has come down under a pull: the gap the ring sits in. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+private fun pullGap(state: PullToRefreshState) = PULL_GAP * state.distanceFraction.coerceIn(0f, 1.3f)
+
+private val PULL_GAP = 56.dp
+private val RING = 18.dp
+
 /**
- * What a pull at the top of the page looks like: a thin ring, no container and nothing behind it. The
- * Material indicator is a filled circle on a raised plate, which on this page reads as a button that
- * has landed in the wrong place. While the finger is down the ring fills as far as the pull has come,
- * which is a static value read in the draw phase; only once the refresh is really running does it turn,
- * and it is gone the moment that is over. At rest it is drawn at zero opacity, so an idle page has
- * nothing at its top and nothing animating there either.
+ * What a pull at the top of the page looks like: a thin ring, no container and nothing behind it, in the
+ * middle of the gap the page leaves as it comes down ([pullGap]). The Material indicator is a filled
+ * circle on a raised plate, which on this page reads as a button that has landed in the wrong place.
+ * While the finger is down the ring fills as far as the pull has come, which is a static value read in
+ * the draw phase; only once the refresh is really running does it turn, and it is gone the moment that
+ * is over. At rest it is drawn at zero opacity, so an idle page has nothing at its top and nothing
+ * animating there either.
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -138,14 +148,13 @@ private fun androidx.compose.foundation.layout.BoxScope.RefreshMark(state: PullT
             .graphicsLayer {
                 val d = state.distanceFraction
                 alpha = if (refreshing) 1f else (d * 1.6f - 0.15f).coerceIn(0f, 1f)
-                translationY = d.coerceIn(0f, 1.3f) * 52.dp.toPx()
-            }
-            .padding(top = 12.dp),
+                translationY = ((pullGap(state) - RING) / 2).coerceAtLeast(0.dp).toPx()
+            },
     ) {
-        if (refreshing) androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), color = tint, strokeWidth = 2.dp)
+        if (refreshing) androidx.compose.material3.CircularProgressIndicator(Modifier.size(RING), color = tint, strokeWidth = 2.dp)
         else androidx.compose.material3.CircularProgressIndicator(
             progress = { state.distanceFraction.coerceIn(0f, 1f) },
-            modifier = Modifier.size(18.dp), color = tint, strokeWidth = 2.dp,
+            modifier = Modifier.size(RING), color = tint, strokeWidth = 2.dp,
             trackColor = androidx.compose.ui.graphics.Color.Transparent,
             gapSize = 0.dp,
         )
