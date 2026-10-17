@@ -333,6 +333,10 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         }
 
         val lyricsKeepOn = remember { mutableStateOf(false) }
+        val config = androidx.compose.ui.platform.LocalConfiguration.current
+        val wide = isWide(config.screenWidthDp, config.screenHeightDp)
+        // The bars the app has put away, set below where they are decided, read by its dialogs' windows.
+        val hiddenBars = remember { mutableStateOf(HiddenBars(status = false, gesture = false)) }
         CompositionLocalProvider(
             LocalNav provides nav,
             LocalLyricsKeepOn provides lyricsKeepOn,
@@ -347,6 +351,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LocalRules provides rules,
             LocalAsked provides asked,
             LocalEinkScreen provides prefs.einkScreen,
+            LocalHiddenBars provides hiddenBars,
         ) {
             val route = controller.currentBackStackEntryAsState().value?.destination?.route
             // The tab the page on screen belongs to, which is the one that stays lit, as Apple's does: a
@@ -366,8 +371,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             var tabsHeight by remember { mutableStateOf(0.dp) }
             // On its side the tabs stand on a rail at the right edge (TabRail), and the page gives it that edge;
             // the left edge is kept clear of the camera's punch hole.
-            val config = androidx.compose.ui.platform.LocalConfiguration.current
-            val wide = isWide(config.screenWidthDp, config.screenHeightDp)
             // The status bar put away where the setting says (the core's `status_bar_hidden`) - on its side out of
             // the box, where the screen is short and the page runs to the top edge. A swipe from the edge brings it
             // back for a moment, as in any full screen app.
@@ -391,6 +394,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             val hideGestureBar = remember(prefs.hideGestureBar, wide, protecting) {
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && dev.nori.music.ffi.settings.barHidden(prefs.hideGestureBar, wide, protecting)
             }
+            androidx.compose.runtime.SideEffect { hiddenBars.value = HiddenBars(hideBar, hideGestureBar) }
             LaunchedEffect(hideBar, hideGestureBar) {
                 val window = (barsView.context as? android.app.Activity)?.window ?: return@LaunchedEffect
                 val bars = androidx.core.view.WindowCompat.getInsetsController(window, barsView)

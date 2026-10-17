@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="lyrics motion notification album-page bridge download-notification downloads car-art foryou dac device-sound remote jam"
+SECTIONS="lyrics motion notification album-page bridge download-notification downloads car-art foryou dac device-sound sheets remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -575,6 +575,33 @@ if want device-sound; then section "a sound per output device"
   "$app" do "dac off" >/dev/null
   check "and the sound from before comes back without it" wait_for eq False 10
   clean   # nothing of the check stays in the device list or the profiles
+fi
+
+if want sheets; then section "a sheet over the sideways player, the shade pulled down and put back"
+  # The focused window decides whether the status bar shows. A sheet is a window of its own: unless it
+  # asks for what the app asked for, the bar comes back over the sideways player, and goes and comes as
+  # the shade takes the focus and gives it back, moving the sheet with the insets.
+  status_bar_away() { adb shell dumpsys window | grep -m1 'InsetsSource.*type=statusBars' | grep -q 'visible=false'; }
+  sheets_up() { [ "$(ui | grep -o 'text="Play on"' | wc -l | tr -d ' ')" = "$1" ]; }
+  sheet_at() { ui | grep -o 'text="Play on"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"'; }
+  "$app" set hideStatusBar SIDEWAYS >/dev/null; "$app" set remoteControl true >/dev/null
+  "$app" play "$PLAIN" >/dev/null; sounds 20
+  "$app" open player >/dev/null
+  adb shell settings put system accelerometer_rotation 0; adb shell settings put system user_rotation 1
+  check "the sideways player puts the status bar away" wait_until 10 status_bar_away
+  "$app" open devices >/dev/null
+  check "Play on comes up" wait_until 10 on_screen 'text="Play on"'
+  before=$(sheet_at)
+  check "and leaves the status bar away" status_bar_away
+  adb shell cmd statusbar expand-settings; wait_until 5 sheets_up 0
+  adb shell cmd statusbar collapse
+  check "Play on is there once after the shade" wait_until 10 sheets_up 1
+  check "the status bar stays away after the shade" status_bar_away
+  check "the sheet has not moved" test "$(sheet_at)" = "$before"
+  adb shell input keyevent KEYCODE_BACK
+  check "back closes the sheet" wait_until 10 off_screen 'text="Play on"'
+  adb shell settings put system user_rotation 0; adb shell settings put system accelerometer_rotation 1
+  "$app" set remoteControl false >/dev/null
 fi
 
 remote_checks() {

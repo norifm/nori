@@ -30,6 +30,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,9 +47,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.withContext
 
 /*
@@ -64,6 +71,30 @@ import kotlinx.coroutines.withContext
  * (or whether) and keep the last of it on screen while it leaves; only then do they drop the window.
  * Closed, each is one remembered state and an early return: no window, no effect, no frame.
  */
+
+/** The system bars the app has put away (App, the core's `bar_hidden`). */
+data class HiddenBars(val status: Boolean, val gesture: Boolean)
+
+val LocalHiddenBars = staticCompositionLocalOf<State<HiddenBars>> { mutableStateOf(HiddenBars(status = false, gesture = false)) }
+
+/**
+ * Asks for the system bars the app asked for, from the window this is composed in. Each window asks for its
+ * own and the focused one is obeyed: a dialog asking for nothing shows the bars over a sideways player, and
+ * as the shade takes the focus and gives it back they come and go, moving the window's insets and
+ * Material's sheet with them.
+ */
+@Composable
+private fun AppStatusBar() {
+    val hidden = LocalHiddenBars.current.value
+    val view = LocalView.current
+    LaunchedEffect(hidden) {
+        val window = (view.parent as? DialogWindowProvider)?.window ?: return@LaunchedEffect
+        val bars = WindowCompat.getInsetsController(window, view)
+        bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (hidden.status) bars.hide(WindowInsetsCompat.Type.statusBars()) else bars.show(WindowInsetsCompat.Type.statusBars())
+        if (hidden.gesture) bars.hide(WindowInsetsCompat.Type.navigationBars()) else bars.show(WindowInsetsCompat.Type.navigationBars())
+    }
+}
 
 /** The app's settle: most of the travel early, no overshoot (PageMotion's). */
 private val Settle = CubicBezierEasing(0.2f, 0f, 0f, 1f)
@@ -111,6 +142,7 @@ fun <T : Any> NoriDialog(
         // are read below rather than by the window.
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false, dismissOnClickOutside = false),
     ) {
+        AppStatusBar()
         val shownAt = remember { Animatable(0f) }
         LaunchedEffect(open) {
             val plain = AppMotion.reduce
@@ -233,7 +265,10 @@ fun <T : Any> NoriSheet(
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
     MaterialTheme(colorScheme = scheme) {
         CompositionLocalProvider(LocalLook provides look) {
-            ModalBottomSheet(onDismissRequest = { if (live) dismiss() }, sheetState = state) { content(shown) }
+            ModalBottomSheet(onDismissRequest = { if (live) dismiss() }, sheetState = state) {
+                AppStatusBar()
+                content(shown)
+            }
         }
     }
 }

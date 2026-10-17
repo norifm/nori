@@ -276,6 +276,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | a device with a profile gets it on connect; the sound from before comes back without it (2) | b | feature-e2e `device-sound` (the platform's output events) |
 | flat turns the equalizer off; on again on the speaker (2) | a | profiles.rs |
 | AutoEQ: asking first leaves the sound; yes applies; automatic applies; undo; not switched again (5) | a | device.rs arrival tests (`CurveStep::Offer` / `Apply`), profiles.rs |
+| (new) a sheet over the sideways player leaves the status bar away; after the shade it is up once, unmoved, the bar still away (7) | b | feature-e2e `sheets` (which window's status bar request Android obeys, and the window insets that follow) |
 
 ### What could not move
 

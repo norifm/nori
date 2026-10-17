@@ -359,6 +359,10 @@ Status is one of: **todo**, **doing**, **done (commit)**, **leave** (looked at, 
   and only then drops the window. `NoriSheet` does the same for Material's bottom sheet (`hide()` before
   it leaves). `AlertCard` is Material's alert card drawn in place (Material 1.4 keeps its own behind its
   window). A leaving dialog takes no taps. Closed, each is one remembered state and an early return.
+  Each window asks for the status bar the app asked for (`LocalStatusBarHidden`): a sheet's window asking
+  for nothing brought the bar back over the sideways player, and as the shade moved the focus the bar
+  came and went and the sheet jumped with the insets. Material's sheet rises on its own spring (about
+  13 frames at 60 fps); its motion scheme is internal in Material 1.4, so it stays.
   Dropdown menus are Material's own popup with its own transition, which already runs on AppMotion.
 - Rule: no screen puts up `AlertDialog`, `ModalBottomSheet` or a raw `Dialog`; `OverlaysTest` fails
   the build's tests if one does.
