@@ -784,8 +784,7 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     jumps: u64,
     plays: u64,
     gain_changed: bool,
-    /// The settings and output allow offload; if not, why.
-    offload: bool,
+    /// Why the settings and output do not allow offload; `None` when they do.
     blocked: Option<&'static str>,
     h: Handover,
     told: Told,
@@ -834,8 +833,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             jumps: 0,
             plays: 0,
             gain_changed: false,
-            offload: false,
-            blocked: None,
+            // Set by the first `apply`, before anything reads it.
+            blocked: Some("the settings are not applied yet"),
             h: Handover::default(),
             told: Told::default(),
             seqs,
@@ -1040,7 +1039,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn jump(&mut self, i: usize, ms: i64) {
         self.jumping = Some((i, ms));
         (self.h.probe, self.h.at_end, self.h.takeover) = (None, None, None);
-        if self.offload && self.off.is_some() {
+        if self.offload_wanted() {
             if !self.offloading() {
                 // Never both outputs open at once.
                 self.p.pause();
@@ -1105,7 +1104,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// Offload wanted while the CPU plays: when the output decodes the next song, the CPU plays the
     /// current one to its end and hands over there (as media3 reconfigures its sink at a boundary).
     fn follow_offload_ahead(&mut self) {
-        if !self.offload || self.off.is_none() || self.h.at_end.is_some() || !self.p.playing() {
+        if !self.offload_wanted() || self.h.at_end.is_some() || !self.p.playing() {
             return;
         }
         let Some(cur) = self.p.current() else { return };
@@ -1142,7 +1141,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// output takes it over where the ear is, behind a dip.
     fn follow_offload_now(&mut self) {
         let Some(i) = self.h.entering.as_ref().map(|e| e.0) else { return };
-        if !self.offload || self.p.current() != Some(i) || !self.p.playing() || self.offloading() {
+        if !self.offload_wanted() || self.p.current() != Some(i) || !self.p.playing() || self.offloading() {
             self.h.entering = None;
             return;
         }
@@ -1721,7 +1720,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let prefs = AudioPrefs { dsp: s.sound.on(), skip_silence, offload, crossfade_s: s.crossfade_s, auto_mix: s.auto_mix, speed, pitch };
         let state = OutputState { hi_res, bit_perfect, usb: self.facts.usb, offload_refused: self.h.refused };
         let policy = audio_policy(&prefs, &state);
-        self.blocked = if self.off.is_some() { offload_blocked(&prefs, &state) } else { Some("the output does not decode songs itself") };
+        let blocked = if self.off.is_some() { offload_blocked(&prefs, &state) } else { Some("the output does not decode songs itself") };
         // Turning up needs float samples and the limiter; the limiter alone does not block offload.
         let boost_db = if s.gain_boost_db > 0.0 { s.gain_boost_db.min(nori_player::gain::BOOST_MAX_DB) } else { 0.0 };
         let gain_max = if policy.untouched || boost_db == 0.0 { 1.0 } else { 10f32.powf(boost_db / 20.0) };
@@ -1754,7 +1753,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         self.applied = Some(now);
         self.settings = s;
         self.follow_chain(self.now());
-        self.follow_offload(policy.offload);
+        self.follow_offload(blocked);
         if replan {
             self.replan();
         }
@@ -1782,10 +1781,16 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         self.p.replan_ending();
     }
 
+    /// The settings and output allow offload.
+    fn offload_wanted(&self) -> bool {
+        self.blocked.is_none()
+    }
+
     /// Offload became allowed or not. Leaving is where the ear is; entering too, once the current song
     /// is known to be decodable there (else at the next song that is).
-    fn follow_offload(&mut self, wanted: bool) {
-        let was = std::mem::replace(&mut self.offload, wanted);
+    fn follow_offload(&mut self, blocked: Option<&'static str>) {
+        let was = std::mem::replace(&mut self.blocked, blocked).is_none();
+        let wanted = blocked.is_none();
         self.status.lock().offload_wanted = wanted;
         if was == wanted {
             return;
@@ -2082,7 +2087,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// still wanted. Returns the level to come back up from, if not the fade's.
     fn hand_to_chip(&mut self) -> Option<f32> {
         let i = self.p.current().filter(|_| !self.offloading())?;
-        if !(self.offload && self.off.is_some() && self.p.playing()) {
+        if !(self.offload_wanted() && self.p.playing()) {
             return None;
         }
         // Where the ear is, read as the CPU stops.
@@ -2310,7 +2315,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn why_on_cpu(&self, w: &mut String) -> std::fmt::Result {
         use std::fmt::Write;
         match self.blocked {
-            Some(b) if !self.offload => w.write_str(b),
+            Some(b) => w.write_str(b),
             _ if self.h.at_end.is_some() => w.write_str("offload takes over at the next song"),
             _ => match self.off.as_ref().and_then(|o| o.on_cpu.as_ref()) {
                 Some(on_cpu) => write!(w, "{on_cpu}"),
