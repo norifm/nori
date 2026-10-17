@@ -18,6 +18,8 @@ system's media controls, notification and lock screen.
   **Keep the screen on** and hiding the status or navigation bar work the same way: each condition
   (sideways, upright, charging, burn-in protection) is a button of its own, and any one lit that holds
   is enough. Text follows Android's font size; with a large display size the layout keeps a phone's proportions.
+  Burn-in pixel shifting and idle dimming are off by default from 0.6.3. Upgrading resets the old
+  automatic pixel shifting and one-minute dimming once; other dimming intervals are kept.
 - **Motion** (from 0.6.3): Full, Reduced (short fades instead of slides and zooms) or E-ink (nothing
   moves, the player redraws only when something changes). nori's choice holds whatever Android's own
   animation setting says; the playing bars move in every mode but E-ink.

@@ -515,9 +515,9 @@ pub struct StoredPrefs {
     #[setting("keepAwakeWhen", Flags, default = Vec::new(), name = "keepAwake", show = K::Flags(AwakeWhen::NAMES))]
     pub keep_awake: Vec<AwakeWhen>,
     /// While nori keeps the screen on, everything drawn drifts a few dp ([`nori_look::burn_in`]).
-    #[setting("burnInProtection", FLAG, default = true, show = K::Switch)]
+    #[setting("burnInShift", FLAG, default = false, name = "burnInProtection", show = K::Switch)]
     pub burn_in_protection: bool,
-    #[setting("dimWhenIdle", PICK, default = DimIdle::Minute, show = K::Choice(DimIdle::NAMES))]
+    #[setting("dimIdle", PICK, default = DimIdle::Never, name = "dimWhenIdle", show = K::Choice(DimIdle::NAMES))]
     pub dim_when_idle: DimIdle,
     #[setting("dimLevel", PICK, default = DimLevel::Medium, show = K::Choice(DimLevel::NAMES))]
     pub dim_level: DimLevel,
@@ -1177,7 +1177,21 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
         migrate(raw, &mut p);
     }
     migrate_picks(raw, &mut p);
+    // Old builds saved the automatic screen defaults without recording a listener's choice.
+    if !raw.contains_key("dimIdle") {
+        if let Some(PrefValue::Number { v }) = raw.get("dimWhenIdle") {
+            p.dim_when_idle = match v {
+                1 => DimIdle::HalfMinute,
+                3 => DimIdle::FiveMinutes,
+                _ => DimIdle::Never,
+            };
+        }
+    }
     p
+}
+
+pub(crate) fn old_screen_defaults(raw: &HashMap<String, PrefValue>) -> bool {
+    raw.contains_key("burnInProtection") || raw.contains_key("dimWhenIdle")
 }
 
 /// Keys of the settings that were one pick of combined conditions before each became a set of them.

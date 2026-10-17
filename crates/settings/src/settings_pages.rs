@@ -583,7 +583,7 @@ mod tests {
         assert!(shown(&d, "loudnessLevel") && !shown(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
         assert!(!shown(&StoredPrefs { auto_fill: false, ..d.clone() }, "autoFillKind"));
         let dimming = |p: &StoredPrefs| shown(p, "dimLevel");
-        assert!(dimming(&d) && !dimming(&StoredPrefs { burn_in_protection: false, ..d.clone() }));
+        assert!(!dimming(&d) && dimming(&StoredPrefs { burn_in_protection: true, dim_when_idle: crate::settings::DimIdle::Minute, ..d.clone() }));
         // A setting's row that is not on the page keeps its place, so the search finds it.
         let all = names(&every_row(SettingsClient::Phone, &StoredPrefs { compressor: false, ..d.clone() }, &facts()), false);
         assert!(all.iter().any(|n| n == "compressorPreset"));

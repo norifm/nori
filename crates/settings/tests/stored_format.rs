@@ -105,7 +105,7 @@ fn sample() -> StoredPrefs {
         hide_gesture_bar: vec![HideBarWhen::Sideways],
         lyrics_timing_button: false,
         keep_awake: vec![AwakeWhen::Sideways, AwakeWhen::Charging],
-        burn_in_protection: false,
+        burn_in_protection: true,
         dim_when_idle: DimIdle::FiveMinutes,
         dim_level: DimLevel::Strong,
         controls_side: ControlsSide::Left,

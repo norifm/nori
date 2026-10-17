@@ -140,7 +140,7 @@ impl SettingsStore {
             prefs.eq_mode = crate::settings::EqMode::Parametric;
         }
         let legacy = crate::settings::legacy(&raw);
-        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
+        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::old_screen_defaults(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
             write(&mut c, &prefs)?;
         }
         if legacy {
@@ -615,6 +615,19 @@ mod tests {
     }
     fn decimal(v: f32) -> PrefValue {
         PrefValue::Decimal { v }
+    }
+
+    #[test]
+    fn screen_defaults_migrate_once() {
+        use crate::settings::DimIdle;
+        for (dim, want) in [(0, DimIdle::Never), (1, DimIdle::HalfMinute), (2, DimIdle::Never), (3, DimIdle::FiveMinutes)] {
+            let raw = old(&[("burnInProtection", flag(true)), ("dimWhenIdle", number(dim))]);
+            let (prefs, stored) = open_old("screen-defaults", &raw);
+            assert_eq!((prefs.burn_in_protection, prefs.dim_when_idle), (false, want));
+            assert!(!stored.contains_key("burnInProtection") && !stored.contains_key("dimWhenIdle"));
+            let chosen = StoredPrefs { burn_in_protection: true, dim_when_idle: DimIdle::Minute, ..prefs };
+            assert_eq!(open_old("screen-chosen", &save(&chosen)).0, chosen);
+        }
     }
 
     #[test]
