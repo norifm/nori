@@ -20,7 +20,7 @@ pub use native::Native;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod web;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::Local;
+pub use web::{Local, OneThread};
 
 /// A spawned piece of work.
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
