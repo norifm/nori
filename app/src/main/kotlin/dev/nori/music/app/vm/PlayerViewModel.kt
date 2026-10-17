@@ -76,9 +76,8 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
      * words, instead of holding the last song's lyrics on screen while the next ones are fetched.
      *
      * Every answer names the song it is for, and the view shows it only under that song
-     * ([dev.nori.music.data.ForSong.of]): the last answer outlives the collecting, and the panel opened
-     * again after the song had changed used to be handed the old song's words first - under the new
-     * title, with the new song's playhead, so nothing lit and nothing scrolled. Because of that tag the
+     * ([dev.nori.music.data.ForSong.of]): the last answer outlives the collecting, and a panel opened
+     * again after the song changed must not be handed the old song's words. Because of that tag the
      * last answer is kept when the panel stops watching: under the same song it is the right one, and
      * the panel opened again shows it at once instead of the loader and a lookup all over again.
      *
@@ -156,9 +155,8 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     val coversNear: StateFlow<List<String>> = _coversNear
 
     init {
-        // The artwork either side of what is playing, fetched before it is asked for. A skip used to
-        // show an empty sleeve for as long as the server took to render the next cover - on a slow one,
-        // seconds. Same sizes and requests as the player and the rows, so a warmed cover is a cache hit.
+        // The artwork either side of what is playing, fetched before it is asked for, so a skip does not
+        // show an empty sleeve while the server renders the next cover. Same sizes and requests as the player and the rows, so a warmed cover is a cache hit.
         // How far ahead is the user's (Settings, "Covers fetched ahead"); already-cached ones cost a
         // memory lookup and nothing else.
         // Which positions, in which order, is the core's (`covers_around`, over the queue it keeps, which

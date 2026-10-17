@@ -136,9 +136,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun autoEq() = go("autoeq")
     fun back() { if (sheet.isOpen) sheet.close() else swipe.back() }
     /**
-     * A tab always lands on that tab's own page. It used to save the stack it popped and restore it on
-     * the way back, which meant tapping Home from an album popped the album and then put it straight
-     * back - the tab looked dead. Nothing above the tab roots survives a tab tap now.
+     * A tab always lands on that tab's own page: nothing above the tab roots survives a tab tap. A saved
+     * and restored stack would put an album straight back after Home popped it, and the tab would look dead.
      */
     fun tab(route: String) {
         if (sheet.isOpen) sheet.close()
@@ -208,8 +207,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     androidx.compose.runtime.SideEffect { AppMotion.force = prefs.ignoreSystemMotion; AppMotion.reduce = prefs.reduceMotion || prefs.einkScreen }
     NoriTheme(prefs) {
-        // Sign-in used to cut straight to the app. One short fade is enough: the screens are different
-        // enough that a direction would invent a relationship they do not have.
+        // Sign-in fades to the app: the screens are different enough that a direction would invent a
+        // relationship they do not have.
         val plain = reduceMotion()
         // A jam guest's profile is the same app over its host's library, started afresh on joining and on leaving.
         val guest = remember(prefs.activeServerId, prefs.server?.apiKey) { prefs.server?.apiKey?.let { dev.nori.music.ffi.remote.isGuestKey(it) } == true }
@@ -867,8 +866,8 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
             translationY = if (parked) sheet.rootHeight * 2f + 1f else sheet.offset()
             // It comes up *through* the now playing bar rather than on top of it: for the first tenth of
             // the rise the player is still part transparent, so the bar shows through its own place in
-            // it. Snapping to full strength on the first frame of a drag - which is what this did - made
-            // a whole dark page appear out of nothing before it had moved anywhere.
+            // it. At full strength on the first frame of a drag, a whole dark page would appear out of
+            // nothing before it had moved anywhere.
             alpha = if (parked) 0f else (sheet.progress.value / 0.1f).coerceIn(0f, 1f)
             val r = radius * (1f - sheet.progress.value).coerceIn(0f, 1f) * 4f
             shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = r.coerceAtMost(radius), topEnd = r.coerceAtMost(radius))

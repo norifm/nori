@@ -88,8 +88,8 @@ fun SongMenu(
     onDismiss: () -> Unit,
     /**
      * Set when the player's own ⋯ opened this. The sleep timer is a property of the evening, not of
-     * the song, so it has no business on a row's menu in a list - but the player needs it somewhere
-     * now that the bottom of that screen belongs to the output switcher, the way Apple's does.
+     * the song, so it has no business on a row's menu in a list - but the player needs it somewhere,
+     * and the bottom of that screen belongs to the output switcher, the way Apple's does.
      */
     player: dev.nori.music.app.vm.PlayerViewModel? = null,
 ) {

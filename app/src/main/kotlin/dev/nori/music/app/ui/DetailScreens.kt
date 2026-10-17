@@ -50,9 +50,8 @@ import dev.nori.music.ffi.model.PageOrigin
 import dev.nori.music.ffi.model.Song
 
 /**
- * Play and shuffle live in the hero now; a long playlist still wants a way to narrow itself. An album
- * does not, which is why its page no longer offers this: nobody reaches for a search box to find a
- * track among ten they can already see.
+ * A long playlist's way to narrow itself (play and shuffle live in the hero). An album's page has none:
+ * nobody reaches for a search box to find a track among ten they can already see.
  */
 @Composable
 private fun FilterField(count: Int, filter: String, onFilter: (String) -> Unit) {
@@ -459,10 +458,8 @@ private fun PlaylistPage(
         actions = {
             val pinned = id in prefs.pinnedPlaylists
             // A favourite, drawn and named as every other favourite in the app is: a heart, filled
-            // when it is one. It was a pin with one look for both states, so there was no telling
-            // from the page whether this playlist was on the home page or not. The server has no
-            // way to star a playlist, so it is kept on this phone, and the home page's shelf of
-            // them reads it.
+            // when it is one. The server has no way to star a playlist, so it is kept on this phone,
+            // and the home page's shelf of them reads it.
             // The home page that shows them is the account's.
             val account = LocalRules.current.account
             if (account) FavoriteCircle(pinned) { settings.pin(id, !pinned); Unit }

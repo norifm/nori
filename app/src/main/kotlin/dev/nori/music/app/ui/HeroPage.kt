@@ -183,14 +183,11 @@ fun HeroPage(
                 Box(
                     Modifier.fillMaxSize().drawWithCache {
                         // The whole dissolve happens inside the artwork, and finishes on the
-                        // page colour rather than on the cover's edge colour. It used to stop
-                        // on the edge colour and leave a second gradient below to carry on -
-                        // but the parallax slides the picture down over that gradient as the
-                        // page scrolls, squeezing it into a few dozen pixels, and a colour
-                        // ramp that steep across the full width is a line. The picture has
-                        // its own height to do this in, and ending on the page colour means
-                        // there is nothing left to hand over to. The stops are the look's
-                        // (nori_look::dress), made into brushes once per size.
+                        // page colour rather than on the cover's edge colour: a second gradient
+                        // below would be squeezed into a few dozen pixels as the parallax slides
+                        // the picture down over it, and a colour ramp that steep across the full
+                        // width is a line. The stops are the look's (nori_look::dress), made
+                        // into brushes once per size.
                         val at = stage.heroStops
                         val dissolve = Brush.verticalGradient(
                             at[0] to Color.Transparent,

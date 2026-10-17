@@ -219,11 +219,9 @@ fun androidx.compose.ui.draw.CacheDrawScope.sleeveWash(
     // even than under the artwork. So the stripes give way, slowly at first, to a deeper page colour,
     // and arrive at it exactly at the bottom edge of the screen, where there is nothing to meet.
     //
-    // The page ends on its own colour, not on a darkened version of it. Taking a third of the way
-    // to black off the bottom was barely visible while every page was dark; now that a bright
-    // record gets a bright page it split the screen in two - the record's colour across the top
-    // and something close to black under the controls. The gradient below still calms the stripes;
-    // it no longer changes how light the page is. Made once per page and sleeve, not per frame.
+    // The page ends on its own colour, not on a darkened version of it: a bright record gets a bright
+    // page, and darkening its bottom would split the screen in two. The gradient below calms the
+    // stripes without changing how light the page is. Made once per page and sleeve, not per frame.
     val look = palette.look
     val floor = if (endY - bottom > 1f) Brush.verticalGradient(
         // The colours stay through the controls and settle into one only towards the bottom:
@@ -892,7 +890,7 @@ fun FavoriteHeart(
         if (!ready) { ready = true; return@LaunchedEffect }
         if (plain) return@LaunchedEffect
         scale.snapTo(1f)
-        // Stiffer springs than they were: same jump, a beat quicker - the old one hung at the top.
+        // Stiff springs: a quick jump that does not hang at the top.
         scale.animateTo(1.28f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 1350f))
         scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 900f))
     }
@@ -916,12 +914,11 @@ fun FavoriteCircle(starred: Boolean, modifier: Modifier = Modifier, onClick: () 
         if (!ready) { ready = true; return@LaunchedEffect }
         if (plain) return@LaunchedEffect
         scale.snapTo(1f)
-        // Stiffer springs than they were: same jump, a beat quicker - the old one hung at the top.
+        // Stiff springs: a quick jump that does not hang at the top.
         scale.animateTo(1.22f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 1350f))
         scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 900f))
     }
-    // The jump is the heart's alone. It used to scale the whole Box, disc included, so the circle
-    // around the heart bulged with it; only the glyph moves now, and the plate holds its place.
+    // The jump is the heart's alone: only the glyph moves, and the plate holds its place.
     CircleButton(
         if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
         if (starred) say.removeFromFavourites else say.favourite,
@@ -1113,8 +1110,8 @@ fun Modifier.loadingSheen(active: Boolean, leaving: Boolean = false): Modifier =
     )
     val look = LocalLook.current
     drawWithCache {
-        // One band, made once per size and colour and slid across by translation: the band used to be a
-        // new gradient on every frame of every loading cover.
+        // One band, made once per size and colour and slid across by translation, not a new gradient on
+        // every frame of every loading cover.
         val color = look.color(dev.nori.music.look.CoverLook.ON)
         val band = size.width * 0.9f
         val sheen = Brush.linearGradient(

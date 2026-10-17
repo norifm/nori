@@ -39,7 +39,7 @@ import dev.nori.music.look.CoverLook
  *
  * A page that sits still has a [FixedLook]. The player's page cross-fades between records, and its
  * [LiveLook] mixes two tables as it goes; read from the draw phase, that mix redraws what shows it and
- * recomposes nothing, which is what the fade used to do to the whole player on every frame.
+ * recomposes nothing.
  */
 @Stable
 interface Look {
@@ -184,7 +184,7 @@ fun LookIcon(icon: ImageVector, description: String?, modifier: Modifier, tint: 
 
 /**
  * Round-cornered shapes by radius, made once each and kept: a layer whose corners change as it moves
- * (a cover flying between two places) used to make a new shape object on every frame. Radii are kept to
+ * (a cover flying between two places) makes no new shape object on every frame. Radii are kept to
  * a quarter pixel, which no eye can tell from exact.
  */
 class CornerShapes(private val topOnly: Boolean = false) {

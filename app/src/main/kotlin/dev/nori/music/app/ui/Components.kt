@@ -157,7 +157,7 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
         if (AppMotion.reduce) fade.snapTo(1f) else fade.animateTo(1f, tween(260, easing = androidx.compose.animation.core.LinearEasing))
     }
     Box(
-        // Without a size it fills what it is given, as the picture it used to hold did.
+        // Without a size it fills what it is given.
         (if (px > 0) modifier.size(size) else modifier.fillMaxSize().onSizeChanged {
             measured[0] = it.width; measured[1] = it.height
             if (it.width > 0 && it.height > 0) cover.want(it.width, it.height)
@@ -711,7 +711,7 @@ fun rememberArrival(ready: Boolean): State<Float> {
 /** How long a page's body takes to arrive, ms. */
 private const val ARRIVE_MS = 320
 
-/** How far a page's body rises as it arrives: what the old whole-body slide (6 % of its height) was for an album. */
+/** How far a page's body rises as it arrives: 6 % of an album page's height. */
 private val ARRIVE_RISE = 36.dp
 
 /**

@@ -165,9 +165,8 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun starArtist(id: String, on: Boolean) = favourite(on) { nori.library.star(StarKind.ARTIST, id, on) }
 
     /**
-     * The heart changes the moment it is pressed (starMarks), so its message does too: it used to wait
-     * for the server, and a quick favourite-unfavourite showed "Added" long after the heart was empty
-     * again. Only a failure comes back afterwards. The message can be switched off in Settings (the core
+     * The heart changes the moment it is pressed (starMarks), so its message does too, rather than
+     * waiting for the server. Only a failure comes back afterwards. The message can be switched off in Settings (the core
      * says nothing then).
      */
     private fun favourite(on: Boolean, block: suspend () -> Unit) {

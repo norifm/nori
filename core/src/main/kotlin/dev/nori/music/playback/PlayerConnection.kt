@@ -193,8 +193,8 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
      * The service's own player, while the controller is not connected and this is the main thread: it
      * lives in this process, on this thread, and answers at once. The controller is let go of while the
      * app is hidden (MainActivity.onStop) and connected again only after the first frame is out, and
-     * connecting takes a moment more: the screen come back used to show the song from before it went,
-     * for half a second, when the music had moved on while it was off.
+     * connecting takes a moment more, in which the screen come back would otherwise show the song from
+     * before it went.
      */
     private fun local(): Player? =
         PlaybackService.sessionPlayer?.takeIf { android.os.Looper.myLooper() == android.os.Looper.getMainLooper() }
@@ -349,8 +349,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
 
         override fun onPlayerError(error: PlaybackException) {
             // The platform only sorts its error into the core's kinds (media3's audio output codes are the
-            // 5000s), and says it in its own words. It used to show the exception's own text, or a
-            // constant's name when the controller had none.
+            // 5000s), and says it in its own words, not the exception's.
             val kind = when {
                 error.errorCode in 5000 until 6000 -> dev.nori.music.ffi.model.PlaybackError.OUTPUT
                 error.isNetworkish() -> dev.nori.music.ffi.model.PlaybackError.NETWORK

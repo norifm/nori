@@ -72,7 +72,7 @@ private fun <T> Pick(value: T, options: List<T>, modifier: Modifier = Modifier, 
  * never changes in one frame. Nothing here moves on its own: it is drawn once and then only redrawn
  * when its covers change.
  */
-/** Mix tiles' colours by mix id, kept across scrolling: a tile scrolled back into view used to ask the core again. */
+/** Mix tiles' colours by mix id, kept across scrolling so a tile scrolled back into view does not ask the core again. */
 private val tileColours = android.util.LruCache<String, List<androidx.compose.ui.graphics.Color>>(64)
 
 @Composable
