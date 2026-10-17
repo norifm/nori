@@ -2265,11 +2265,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             let waiting = self.told.stalled || self.waiting_for_bytes();
             let state = self.words(in_output_ms);
             let quiet_ms = self.stall.as_ref().filter(|q| q.standing).map_or(0, |q| now - q.since);
-            let bytes_coming = self.bytes_coming();
             let output_open = if offloaded { self.off.as_ref().is_some_and(|o| o.track().is_some()) } else { self.p.sink.track.opened() };
             let s = self.status.lock();
             let playing = s.state == State::Playing && !s.switching && !waiting;
-            crate::watch::Seen { now_ms: now, playing, offloaded, index: s.index, id: s.id.clone(), position_ms: s.position_ms, in_output_ms, quiet_ms, bytes_coming, output_open, state }
+            crate::watch::Seen { now_ms: now, playing, offloaded, index: s.index, id: s.id.clone(), position_ms: s.position_ms, in_output_ms, quiet_ms, output_open, state }
         });
     }
 
