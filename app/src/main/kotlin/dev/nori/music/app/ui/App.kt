@@ -394,15 +394,11 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             val hideGestureBar = remember(prefs.hideGestureBar, wide, protecting) {
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && dev.nori.music.ffi.settings.barHidden(prefs.hideGestureBar, wide, protecting)
             }
-            androidx.compose.runtime.SideEffect { hiddenBars.value = HiddenBars(hideBar, hideGestureBar) }
-            LaunchedEffect(hideBar, hideGestureBar) {
+            val bars = remember(hideBar, hideGestureBar) { HiddenBars(hideBar, hideGestureBar) }
+            androidx.compose.runtime.SideEffect { hiddenBars.value = bars }
+            LaunchedEffect(bars) {
                 val window = (barsView.context as? android.app.Activity)?.window ?: return@LaunchedEffect
-                val bars = androidx.core.view.WindowCompat.getInsetsController(window, barsView)
-                bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                if (hideBar) bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                if (hideGestureBar) bars.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
-                else bars.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+                bars.applyTo(window, barsView)
             }
             val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
             // Read only where the layer and the dimming draw, so a move or a dim redraws and recomposes nothing.
