@@ -300,13 +300,6 @@ impl Runner {
         crate::term::debug!("took {}", m.brief());
         let Some(m) = current(self.session.as_ref().map(|s| s.id), m) else { return };
         match &m {
-            Msg::Engine(e) => {
-                if let Some(s) = &self.session {
-                    s.mpris_heard(e);
-                    // Every event: a seek landing or the place moving is news for the account's other devices.
-                    s.followed(e);
-                }
-            }
             Msg::Cover { art, image, .. } => {
                 if let Some(a) = &mut self.art {
                     a.put(art.clone(), image);

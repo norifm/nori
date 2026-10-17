@@ -140,13 +140,8 @@ fn deliver() {
 
 fn deliver_one(said: Said) {
     match &said {
-        Said::Engine(e) => {
-            with_session(|s| {
-                s.followed(e);
-                if let Event::Song { index, .. } = e {
-                    crate::pages::warm_around(s, *index);
-                }
-            });
+        Said::Engine(Event::Song { index, .. }) => {
+            with_session(|s| crate::pages::warm_around(s, *index));
         }
         Said::Lyrics { song, pick } => crate::pages::lyrics_arrived(song, &pick.lyrics),
         Said::JamEnded { host } => return crate::jam::left(Some(host.clone())),
@@ -495,7 +490,7 @@ fn start_queue(
         mpris: None,
         device: nori_core::remote::RemoteMe { name: DEVICE_NAME.into(), kind: nori_core::remote::wire::DeviceKind::Phone },
         discovery,
-        tasks: nori_host::Threads::new(),
+        tasks: nori_host::tasks(),
         keeps_music: true,
         decoders: Default::default(),
         finds_active: true,

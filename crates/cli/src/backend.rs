@@ -15,7 +15,7 @@ use nori_core::{AlbumDetail, ArtistDetail, PlaylistDetail, Song};
 use nori_covers::memory::Image;
 pub use nori_host::session::{Audio, Chore};
 use nori_host::session::{read_pages, Note, Said};
-pub use nori_host::{db_path, Controls, Fetch};
+pub use nori_host::{db_path, Fetch};
 use nori_http::Http;
 use nori_look::cover::CoverColours;
 use nori_engine::AudioOutput;
@@ -248,7 +248,7 @@ impl Session {
             mpris: o.mpris,
             device: nori_core::remote::RemoteMe { name: nori_host::device_name(), kind: nori_core::remote::wire::DeviceKind::Terminal },
             discovery: None,
-            tasks: nori_host::Threads::new(),
+            tasks: nori_host::tasks(),
             keeps_music: true,
             decoders: Default::default(),
             finds_active: true,

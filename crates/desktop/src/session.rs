@@ -53,7 +53,7 @@ pub enum Msg {
     Lyrics { song: String, pick: LyricsPick },
     Facts(Box<crate::settings::Facts>),
     Note { text: String, error: bool },
-    /// A note with a button, answered with [`nori_host::session::Session::curve_answer`].
+    /// A note with a button, answered with [`nori_host::session::Handle::curve_answer`].
     Ask { text: String, action: String },
     LoggedIn(Result<SavedServer, String>),
     Reachable(Result<(), String>),
@@ -216,7 +216,7 @@ impl Session {
             mpris,
             device: nori_core::remote::RemoteMe { name: nori_host::device_name(), kind: DeviceKind::Desktop },
             discovery: None,
-            tasks: nori_host::Threads::new(),
+            tasks: nori_host::tasks(),
             keeps_music: true,
             decoders: Default::default(),
             finds_active: true,

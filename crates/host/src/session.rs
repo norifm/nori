@@ -28,10 +28,7 @@ use nori_engine::core::{resolving, settings, Analyses, CoreApp, CoreLibrary, Cor
 use nori_engine::{AudioOutput, Body, ByteSource, Cancel, Config, Engine, Event, Filling, OpenError, State, Store};
 use nori_look::cover::CoverColours;
 
-#[cfg(feature = "desktop")]
-use crate::Controls;
-use crate::remote::Press;
-use nori_core::remote::Reach;
+use nori_core::remote::{Press, Reach};
 use crate::{db_path, derive, net, save, Fetch, Keeper, Level};
 use nori_remote::wire::Op;
 
@@ -264,7 +261,34 @@ pub type MediaControls = Arc<nori_mpris::Mpris>;
 #[cfg(not(feature = "desktop"))]
 pub enum MediaControls {}
 
+/// One open server profile. Its controls are [`Handle`]'s; closing it saves the queue and stops the
+/// engine.
 pub struct Session {
+    h: Handle,
+}
+
+impl std::ops::Deref for Session {
+    type Target = Handle;
+
+    fn deref(&self) -> &Handle {
+        &self.h
+    }
+}
+
+/// An open session's parts, shared by its tasks, the remote control and the media keys: cloning it is
+/// one reference.
+#[derive(Clone)]
+pub struct Handle(Arc<Parts>);
+
+impl std::ops::Deref for Handle {
+    type Target = Parts;
+
+    fn deref(&self) -> &Parts {
+        &self.0
+    }
+}
+
+pub struct Parts {
     pub core: Arc<Core>,
     pub client: Arc<Client>,
     pub engine: Arc<Engine>,
@@ -275,15 +299,14 @@ pub struct Session {
     level: Arc<Level>,
     search: Arc<SearchSession>,
     pub offline: bool,
+    /// The process's media controls while this session drives them.
     #[cfg(feature = "desktop")]
-    mpris: Option<Arc<nori_mpris::Mpris>>,
-    #[cfg(feature = "desktop")]
-    seen: parking_lot::Mutex<crate::PlaceSeen>,
+    pub(crate) media: Option<crate::remote::Media>,
     keeper: Arc<Keeper>,
     /// The database file, for its size.
     pub db: PathBuf,
     /// Remote control and jams, while switched on.
-    remotes: Arc<crate::remote::Remotes>,
+    pub(crate) remotes: Arc<crate::remote::Remotes>,
     device: nori_core::remote::RemoteMe,
     /// The profile is a jam guest's: songs picked are asked of the jam's host, and nothing else plays.
     pub guest: bool,
@@ -291,7 +314,7 @@ pub struct Session {
     pub rules: ProfileRules,
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
     /// The AutoEQ notice said last, waiting for an answer.
-    curve: Arc<parking_lot::Mutex<Option<CurveNotice>>>,
+    curve: parking_lot::Mutex<Option<CurveNotice>>,
     tasks: Arc<dyn Tasks>,
     finds_active: bool,
     out: Out,
@@ -299,7 +322,7 @@ pub struct Session {
 
 impl Session {
     /// Opens the profile without touching the network, so an unreachable server still opens with what
-    /// is stored; [`Session::check`] reports reachability.
+    /// is stored; [`Handle::check`] reports reachability.
     pub fn open(o: Open) -> Result<Session, String> {
         Self::open_with(o, false, |library, app, queue, output, config, events| Engine::start(library, app, queue, output, None, config, events))
     }
@@ -345,7 +368,7 @@ impl Session {
         let audio = resolving(&client, Arc::new(Audio::new(o.http.clone(), o.offline)));
         let analyses = if turns { Analyses::on_turns(client.clone()) } else { Analyses::of(client.clone()) };
         let downloader = store.as_ref().map(|store| Downloader::new(client.clone(), audio.clone(), store.clone(), analyses.clone()));
-        // `bridging`: a song the network cannot bring raises `Event::Bridge` (see `Session::bridge`).
+        // `bridging`: a song the network cannot bring raises `Event::Bridge` (see `Handle::bridge`).
         let guest = nori_remote::is_guest_key(&o.profile.api_key);
         let rules = core.rules();
         let app = CoreApp::new(core.session.clone()).per_device(core.clone()).bridging().volume(loudness.clone());
@@ -355,9 +378,17 @@ impl Session {
             _ => app,
         };
         let library = CoreLibrary { client: client.clone(), bytes: audio, store: store.clone(), analyses };
-        let events = o.out.clone();
         let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs, loudness.db()), platform: o.decoders, ..Config::default() };
-        let events: Events = Box::new(move |e| events(Said::Engine(e)));
+        // Each event is the session's first (among its tasks, off the engine's thread), then the client's.
+        let heard: Arc<std::sync::OnceLock<std::sync::Weak<Parts>>> = Arc::default();
+        let (to, out, tasks) = (heard.clone(), o.out.clone(), o.tasks.clone());
+        let events: Events = Box::new(move |e| {
+            if let Some(parts) = to.get().and_then(std::sync::Weak::upgrade) {
+                let e = e.clone();
+                tasks.spawn(Box::pin(async move { Handle(parts).heard(&e) }));
+            }
+            out(Said::Engine(e));
+        });
         let engine = Arc::new(start(library, app, CoreQueue(core.session.clone()), output, config, events));
         let covers = o.covers.map(|config| Arc::new(Loader::new(config, cover_net)));
         let remotes = Arc::new(crate::remote::Remotes::new(level.clone()));
@@ -365,20 +396,60 @@ impl Session {
         let keeper = Keeper::start(move || save(&saved, &playing), o.tasks.clone());
         // A jam guest is no device of the account's: the jam lists it as a guest.
         let device = if guest { nori_core::remote::RemoteMe { kind: nori_remote::wire::DeviceKind::Guest, ..o.device } } else { o.device };
-        let s = Session { core, client, engine, store, downloader, covers, level, search: SearchSession::new(), offline: o.offline, #[cfg(feature = "desktop")] mpris: o.mpris, #[cfg(feature = "desktop")] seen: Default::default(), keeper, db: PathBuf::from(db), remotes, device, guest, rules, discovery: o.discovery, curve: Arc::default(), tasks: o.tasks, finds_active: o.finds_active, out: o.out };
         #[cfg(feature = "desktop")]
-        if let Some(m) = &s.mpris {
-            let cover = crate::remote::NowCover::new(s.covers.clone(), s.core.clone(), Arc::downgrade(m));
-            m.serve(Some(Arc::new(crate::remote::Keys { here: Controls::over_queue(s.engine.clone(), s.core.session.clone()), remotes: s.remotes.clone(), hearts: s.handle(), cover })));
+        let media = o.mpris.map(|m| crate::remote::Media::new(m, covers.clone(), core.clone()));
+        let parts = Parts {
+            core,
+            client,
+            engine,
+            store,
+            downloader,
+            covers,
+            level,
+            search: SearchSession::new(),
+            offline: o.offline,
+            #[cfg(feature = "desktop")]
+            media,
+            keeper,
+            db: PathBuf::from(db),
+            remotes,
+            device,
+            guest,
+            rules,
+            discovery: o.discovery,
+            curve: Default::default(),
+            tasks: o.tasks,
+            finds_active: o.finds_active,
+            out: o.out,
+        };
+        let h = Handle(Arc::new(parts));
+        let _ = heard.set(Arc::downgrade(&h.0));
+        #[cfg(feature = "desktop")]
+        if let Some(m) = &h.media {
+            m.mpris.serve(Some(Arc::new(h.clone())));
         }
-        s.restore();
-        s.follow_remote();
-        if !s.offline && s.rules.account && s.core.download_counts().pending > 0 {
-            s.start_downloads();
+        h.restore();
+        h.follow_remote();
+        if !h.offline && h.rules.account && h.core.download_counts().pending > 0 {
+            h.start_downloads();
         }
-        Ok(s)
+        Ok(Session { h })
     }
 
+    /// Saves the queue and stops the engine.
+    pub fn close(&self) {
+        #[cfg(feature = "desktop")]
+        if let Some(m) = &self.media {
+            m.mpris.serve(None);
+        }
+        self.keep(QueueMoment::Closing);
+        self.remotes.set(None);
+        self.keeper.stop();
+        self.engine.stop();
+    }
+}
+
+impl Handle {
     fn note(&self, n: Note) {
         (self.out)(Said::Note(n));
     }
@@ -388,25 +459,32 @@ impl Session {
         self.tasks.spawn(Box::pin(work));
     }
 
+    /// An engine event, as the session takes it before the client does.
+    fn heard(&self, e: &Event) {
+        #[cfg(feature = "desktop")]
+        self.mpris_heard(e);
+        self.followed(e);
+    }
+
     /// Tells the media controls the song or state changed.
     #[cfg(feature = "desktop")]
     pub fn mpris_changed(&self) {
-        if let Some(m) = &self.mpris {
-            m.changed();
+        if let Some(m) = &self.media {
+            m.mpris.changed();
         }
     }
 
     /// Tells the media controls of engine event `e`: the song or state changed, or the place jumped (a
     /// seek, a restart, a song coming in past its start).
     #[cfg(feature = "desktop")]
-    pub fn mpris_heard(&self, e: &Event) {
-        let Some(m) = &self.mpris else { return };
+    fn mpris_heard(&self, e: &Event) {
+        let Some(m) = &self.media else { return };
         if matches!(e, Event::Song { .. } | Event::State(_) | Event::Looped { .. } | Event::Bridge { .. }) {
-            m.changed();
+            m.mpris.changed();
         }
-        let jumped = self.engine.status_with(|s| self.seen.lock().jumped(s));
+        let jumped = self.engine.status_with(|s| m.seen.lock().jumped(s));
         if jumped && self.remotes.elsewhere().is_none() {
-            m.seeked();
+            m.mpris.seeked();
         }
     }
 
@@ -415,23 +493,30 @@ impl Session {
         if self.offline {
             return;
         }
-        let (client, core, out, indexed) = (self.client.clone(), self.core.clone(), self.out.clone(), self.rules.indexed);
+        let me = self.clone();
         self.run(async move {
-            let r = client.read_now(Read::Ping).await.map(|_| ());
+            let r = me.client.read_now(Read::Ping).await.map(|_| ());
             let ok = r.is_ok();
-            out(Said::Reachable(r));
+            (me.out)(Said::Reachable(r));
             // Search and the songs list read the offline index, where the profile keeps one.
-            if ok && indexed && core.index_size().map_or(true, |s| s.songs == 0) {
-                sync(&client, &out).await;
+            if ok && me.rules.indexed && me.core.index_size().map_or(true, |s| s.songs == 0) {
+                me.sync();
             }
-            let _ = client.flush_pending().await;
+            let _ = me.client.flush_pending().await;
         });
     }
 
-    /// Fills the offline index from the server in the background.
+    /// Fills the offline index from the server, on a thread of its own: its pages are written between
+    /// requests, which would hold up the session's other tasks.
     pub fn sync(&self) {
         let (client, out) = (self.client.clone(), self.out.clone());
-        self.run(async move { sync(&client, &out).await });
+        crate::spawn("nori-sync", move || {
+            out(Said::Note(Note::Indexing));
+            out(Said::Note(match block_on(client.sync_library()) {
+                Ok(total) => Note::Indexed(total),
+                Err(e) => Note::IndexStopped(e),
+            }));
+        });
     }
 
     /// Restores the saved queue, paused at its position; with none saved the queue is empty (the one
@@ -467,46 +552,47 @@ impl Session {
     /// Provider songs are dropped unless picked: the server downloads whatever is requested. `from` is the
     /// page the songs are the list of (`playlist_set`).
     pub fn play(&self, songs: Vec<Song>, start: usize, shuffle: bool, from: Option<PageOrigin>) {
-        self.handle().play(songs, start, shuffle, from);
+        self.play_kept(songs, start, shuffle, from, false);
     }
 
     /// `songs` as the queue around the song playing, `songs[at]`: it goes on where it is, playing or
-    /// paused, rather than starting again (a tap on it in a list). Any other song plays as [`Session::play`]
+    /// paused, rather than starting again (a tap on it in a list). Any other song plays as [`Handle::play`]
     /// would. True when it went on.
     pub fn keep_playing(&self, songs: Vec<Song>, at: usize, from: Option<PageOrigin>) -> bool {
         let playing = self.engine.status_with(|s| s.id.clone());
         let keep = playing.is_some() && songs.get(at).map(|s| &s.id) == playing.as_ref() && self.elsewhere().is_none();
-        self.handle().play_kept(songs, at, false, from, keep);
+        self.play_kept(songs, at, false, from, keep);
         keep
+    }
+
+    /// Fetches `what`'s songs among the session's tasks and hands them to `then`; says so when that fails.
+    fn fetched(&self, what: Fetch, then: impl FnOnce(&Handle, Vec<Song>) + Send + 'static) {
+        let me = self.clone();
+        self.run(async move {
+            match what.songs(&me.client).await {
+                Ok(songs) => then(&me, songs),
+                Err(e) => me.note(Note::SongsFailed(e)),
+            }
+        });
     }
 
     /// Plays an album, playlist or artist once its songs are fetched.
     pub fn play_later(&self, what: Fetch, shuffle: bool) {
-        let (client, me) = (self.client.clone(), self.handle());
         let origin = what.origin();
-        self.run(async move {
-            match what.songs(&client).await {
-                Ok(songs) if !songs.is_empty() => me.play(songs, 0, shuffle, Some(origin)),
-                Ok(_) => me.note(Note::NothingToPlay),
-                Err(e) => me.note(Note::SongsFailed(e)),
-            }
+        self.fetched(what, move |me, songs| match songs.is_empty() {
+            false => me.play(songs, 0, shuffle, Some(origin)),
+            true => me.note(Note::NothingToPlay),
         });
     }
 
     /// Adds songs after the current one (`next`) or at the end, on the device playing.
     pub fn enqueue(&self, songs: Vec<Song>, next: bool) {
-        self.handle().add(songs, next);
+        self.add(songs, next);
     }
 
     /// Enqueues an album, playlist or artist once fetched.
     pub fn enqueue_later(&self, what: Fetch, next: bool) {
-        let (client, me) = (self.client.clone(), self.handle());
-        self.run(async move {
-            match what.songs(&client).await {
-                Ok(songs) => me.add(songs, next),
-                Err(e) => me.note(Note::SongsFailed(e)),
-            }
-        });
+        self.fetched(what, move |me, songs| me.add(songs, next));
     }
 
     /// The account's active device while it is another one, which the player shows and every control
@@ -526,14 +612,38 @@ impl Session {
         if self.there(Press::Toggle) {
             return;
         }
-        let st = self.engine.status();
-        let restored = self.core.session.playlist(|p| p.current());
-        match restored.filter(|_| st.state == State::Idle) {
-            Some(at) => {
-                self.engine.play_at(at, st.position_now());
+        match self.restored() {
+            Some((at, ms)) => {
+                self.engine.play_at(at, ms);
             }
             None => self.engine.toggle(),
         }
+    }
+
+    /// Plays; a queue restored but never started starts where it was.
+    #[cfg(feature = "desktop")]
+    pub(crate) fn resume(&self) {
+        if self.there(Press::Play) {
+            return;
+        }
+        match self.restored() {
+            Some((at, ms)) => self.engine.play_at(at, ms),
+            None => self.engine.play(),
+        };
+    }
+
+    /// Pauses, on the device playing.
+    #[cfg(feature = "desktop")]
+    pub(crate) fn halt(&self) {
+        if !self.there(Press::Pause) {
+            self.engine.pause();
+        }
+    }
+
+    /// The song of a queue restored but never started, and where it was.
+    fn restored(&self) -> Option<(usize, i64)> {
+        let st = self.engine.status();
+        self.core.session.playlist(|p| p.current()).filter(|_| st.state == State::Idle).map(|at| (at, st.position_now()))
     }
 
     pub fn previous(&self) {
@@ -543,14 +653,14 @@ impl Session {
     }
 
     pub fn seek(&self, ms: i64) {
-        if !self.there(Press::Seek(ms)) {
+        if !self.there(Press::Seek { ms }) {
             self.engine.seek(ms);
         }
     }
 
     /// Plays the song at list index `index`.
     pub fn jump(&self, index: usize) {
-        if !self.there(Press::Jump(index as u32)) {
+        if !self.there(Press::Jump { index: index as u32 }) {
             self.engine.play_at(index, 0);
         }
     }
@@ -561,16 +671,16 @@ impl Session {
     fn there(&self, press: Press) -> bool {
         if self.guest {
             let jam = self.jam_playing();
-            return match jam.as_ref().and_then(|j| Some((j, j.op(press)?))) {
+            return match jam.as_ref().and_then(|j| Some((j, j.mirror.op(press)?))) {
                 Some((j, op)) => j.jam_press(op) != Reach::Here,
-                None => !matches!(press, Press::Volume(_)),
+                None => !matches!(press, Press::Volume { .. }),
             };
         }
-        self.elsewhere().map(|e| e.press(press)).is_some()
-    }
-
-    fn handle(&self) -> Handle {
-        Handle { engine: self.engine.clone(), queue: self.core.session.clone(), client: self.client.clone(), keeper: self.keeper.clone(), remotes: self.remotes.clone(), level: self.level.clone(), guest: self.guest, curve: self.curve.clone(), tasks: self.tasks.clone(), out: self.out.clone() }
+        let Some(e) = self.elsewhere() else { return false };
+        if let Some(op) = e.mirror.op(press) {
+            e.send(op);
+        }
+        true
     }
 
     /// The remote control and jams, while switched on: other devices to control, the jam hosted.
@@ -591,9 +701,9 @@ impl Session {
             let discovery = self.discovery.clone().or_else(|| mdns.clone().map(|m| m as Arc<dyn nori_core::remote::Discovery>));
             #[cfg(not(feature = "desktop"))]
             let discovery = self.discovery.clone();
-            let player = Arc::new(crate::remote::HostPlayer(self.handle()));
+            let player = Arc::new(crate::remote::HostPlayer(self.clone()));
             let shown = crate::remote::Shown { out: self.out.clone(), remotes: self.remotes.clone(), engine: self.engine.clone() };
-            let r = nori_core::remote::Remote::new(self.client.clone(), self.device.clone(), player, Arc::new(shown), discovery);
+            let r = nori_core::remote::Remote::with_tasks(self.client.clone(), self.device.clone(), player, Arc::new(shown), discovery, self.tasks.clone());
             #[cfg(feature = "desktop")]
             if let Some(m) = &mdns {
                 m.serve(&r);
@@ -617,15 +727,11 @@ impl Session {
         self.remotes.played(&self.engine);
     }
 
-    fn edited(&self) {
-        self.handle().edited();
-    }
-
     /// Removes the song at list index `index` on the device playing; if it was playing, the next one
     /// takes its place.
     pub fn remove(&self, index: usize) {
-        if !self.there(Press::Remove(index as u32)) {
-            self.handle().remove(index);
+        if !self.there(Press::Remove { index: index as u32 }) {
+            self.remove_here(index);
         }
     }
 
@@ -645,7 +751,7 @@ impl Session {
     pub fn put_back(&self, id: &str) {
         let back = match self.elsewhere() {
             Some(e) => e.put_back(id),
-            None => self.handle().restore(id),
+            None => self.restore_here(id),
         };
         if !back {
             self.note(Note::NothingToPutBack);
@@ -654,21 +760,31 @@ impl Session {
 
     /// Moves the song at list index `from` to `to`, on the device playing.
     pub fn move_song(&self, from: usize, to: usize) {
-        if !self.there(Press::Move(from as u32, to as u32)) {
-            self.handle().move_song(from, to);
+        if !self.there(Press::Move { from: from as u32, to: to as u32 }) {
+            self.move_here(from, to);
         }
     }
 
     pub fn shuffle(&self, on: bool) {
-        if !self.there(Press::Shuffle(on)) {
-            self.handle().shuffle(on);
+        if !self.there(Press::Shuffle { on }) {
+            self.shuffle_here(on);
         }
     }
 
     pub fn repeat(&self, mode: u8) {
-        if !self.there(Press::Repeat(mode)) {
-            self.handle().repeat(mode);
+        if !self.there(Press::Repeat { mode }) {
+            self.repeat_here(mode);
         }
+    }
+
+    /// The next repeat mode after the one shown (`nori_core::rules::queue_next_repeat`), on the device playing.
+    pub fn cycle_repeat(&self) {
+        let now = match self.playback() {
+            crate::player::Playback::Here => self.core.session.playlist(|p| p.repeat()),
+            crate::player::Playback::There(e) | crate::player::Playback::Jam(Some(e)) => e.mirror.repeat,
+            crate::player::Playback::Jam(None) => return,
+        };
+        self.repeat(nori_core::rules::queue_next_repeat(now));
     }
 
     fn start_downloads(&self) {
@@ -683,20 +799,9 @@ impl Session {
         self.start_downloads();
     }
 
-    /// [`Session::download`] of what `what` names, asked of the server on a thread of its own.
+    /// [`Handle::download`] of what `what` names, once fetched.
     pub fn download_later(&self, what: Fetch) {
-        let (client, core, downloader, out, covers) = (self.client.clone(), self.core.clone(), self.downloader.clone(), self.out.clone(), self.covers.clone());
-        self.run(async move {
-            match what.songs(&client).await {
-                Ok(songs) => {
-                    out(Said::Note(queue_downloads(&core, covers.as_ref(), songs)));
-                    if let Some(d) = downloader {
-                        d.start(core.session.settings.prefs(|p| p.parallel_downloads).max(1) as usize);
-                    }
-                }
-                Err(e) => out(Said::Note(Note::SongsFailed(e))),
-            }
-        });
+        self.fetched(what, |me, songs| me.download(songs));
     }
 
     /// Deletes a download from disk.
@@ -733,7 +838,7 @@ impl Session {
     /// The system moved the volume by itself (its keys, where it keeps the volume), 0 to 1: loudness
     /// compensation follows, and the account's other devices see it.
     pub fn volume_followed(&self, v: f32) {
-        self.handle().set_volume(v);
+        self.set_level(v);
     }
 
     /// The volume, 0 to 1.
@@ -744,37 +849,74 @@ impl Session {
     /// Sets the volume of the device playing, as the client's own control does; the account's other
     /// devices see it.
     pub fn set_volume(&self, v: f32) {
-        if !self.there(Press::Volume(v)) {
-            self.handle().set_volume(v);
+        if !self.there(Press::Volume { level: v }) {
+            self.set_level(v);
         }
     }
 
     /// Applies a settings change's `effect` bits to the engine.
     pub fn apply(&self, effect: u32, prefs: &StoredPrefs) {
-        self.handle().apply_settings(effect, prefs);
+        if effect & (APPLY_AUDIO | SOUND | PLAYER) != 0 {
+            self.engine.set_settings(settings(prefs, self.level.loudness.db()));
+        }
+        if effect & APPLY_GAIN != 0 {
+            self.engine.gain_changed();
+        }
+        if effect & REPLAN != 0 {
+            self.engine.replan();
+        }
     }
 
     /// Does what a device step said (`DeviceEffect`): loads the sound it gives and, when it asks, has the
     /// device arrive again.
     pub fn device_effect(&self, output: &str, effect: DeviceEffect) {
-        self.handle().device_effect(output, effect);
+        let settings = &self.core.session.settings;
+        if let Some(prefs) = effect.apply.and_then(|s| Some(settings.current()?.with_sound(s))) {
+            let bits = settings.put(prefs.clone());
+            self.apply(bits, &prefs);
+        }
+        if effect.arrive {
+            self.device_effect(output, self.core.device_arrive(output.to_string()));
+            self.device_curve(output.to_string());
+        }
+    }
+
+    /// The AutoEQ step of `output`'s arrival (`Client::device_curve`), among the session's tasks.
+    fn device_curve(&self, output: String) {
+        let me = self.clone();
+        // Unmetered: the AutoEQ list waits for no network these clients can tell apart.
+        self.run(async move {
+            let c = me.client.device_curve(output.clone(), false).await;
+            me.device_curve_done(&output, c);
+        });
+    }
+
+    /// Performs an AutoEQ step's effect and says its notice, kept for [`Handle::curve_answer`].
+    fn device_curve_done(&self, output: &str, c: DeviceCurve) {
+        self.device_effect(output, c.effect);
+        *self.curve.lock() = c.notice.clone();
+        if let Some(n) = c.notice {
+            (self.out)(Said::Curve(n));
+        }
     }
 
     /// The answer to the last [`Said::Curve`]: an offered curve applied, or one applied without asking
     /// undone.
     pub fn curve_answer(&self) {
         let Some(notice) = self.curve.lock().take() else { return };
-        let me = self.handle();
         match notice {
-            CurveNotice::Offer { output, entry } => self.run(async move {
-                match me.client.device_accept(output.clone(), entry).await {
-                    Ok(c) => me.device_curve_done(&output, c),
-                    Err(e) => me.note(Note::CurveFailed(e)),
-                }
-            }),
+            CurveNotice::Offer { output, entry } => {
+                let me = self.clone();
+                self.run(async move {
+                    match me.client.device_accept(output.clone(), entry).await {
+                        Ok(c) => me.device_curve_done(&output, c),
+                        Err(e) => me.note(Note::CurveFailed(e)),
+                    }
+                });
+            }
             CurveNotice::Applied { output, curve, before, created } => {
                 let effect = self.core.device_undo(output.clone(), curve, created, before);
-                me.device_effect(&output, effect);
+                self.device_effect(&output, effect);
             }
         }
     }
@@ -841,7 +983,7 @@ impl Session {
         if !self.rules.account {
             return;
         }
-        let (client, out, notice, hearts) = (self.client.clone(), self.out.clone(), self.core.favourite_notice(), self.handle().hearts());
+        let (client, out, notice, hearts) = (self.client.clone(), self.out.clone(), self.core.favourite_notice(), self.hearts());
         self.run(async move {
             let said = match client.star(kind, id, on, hearts).await {
                 Ok(()) if !notice => return,
@@ -899,7 +1041,7 @@ impl Session {
     }
 
     /// Feeds an engine event to the core: scrobbling, queue saves and refills, the offline bridge.
-    pub fn followed(&self, e: &Event) {
+    fn followed(&self, e: &Event) {
         use nori_core::scrobble::TrackChange;
         let q = &self.core.session;
         let (now, wall) = (monotonic_ms(), nori_core::db::now_ms());
@@ -931,7 +1073,7 @@ impl Session {
             Event::Song { .. } => self.arrived(),
             Event::State(State::Paused) => self.keep(QueueMoment::Paused),
             Event::Bridge { .. } => self.bridge(),
-            Event::Output { name } => self.handle().device_curve(name.clone()),
+            Event::Output { name } => self.device_curve(name.clone()),
             _ => {}
         }
         if let Event::Buffering(on) = e {
@@ -956,10 +1098,10 @@ impl Session {
         }
         if steps.bridge == BridgeStep::Parked {
             // Back to the parked song if the server answers, else bridged further.
-            let (client, me) = (self.client.clone(), self.handle());
+            let me = self.clone();
             self.run(async move {
-                if let Some(edit) = client.bridge_parked().await {
-                    me.apply(&edit);
+                if let Some(edit) = me.client.bridge_parked().await {
+                    me.apply_edit(&edit);
                 }
             });
         }
@@ -974,7 +1116,7 @@ impl Session {
             BridgeTake::Jump { index } => {
                 self.engine.play_at(index as usize, 0);
             }
-            BridgeTake::Bridged { edit } => self.handle().apply(&edit),
+            BridgeTake::Bridged { edit } => self.apply_edit(&edit),
             BridgeTake::Skip => {
                 self.engine.next();
                 self.engine.play();
@@ -985,9 +1127,9 @@ impl Session {
 
     /// Appends autofill songs; a next pressed while fetching is applied when they land.
     fn refill(&self) {
-        let (client, me) = (self.client.clone(), self.handle());
+        let me = self.clone();
         self.run(async move {
-            let fresh = client.autofill().await;
+            let fresh = me.client.autofill().await;
             me.filled(fresh);
         });
     }
@@ -1010,129 +1152,42 @@ impl Session {
         }
     }
 
-    /// Saves the queue and stops the engine.
-    pub fn close(&self) {
-        #[cfg(feature = "desktop")]
-        if let Some(m) = &self.mpris {
-            m.serve(None);
-        }
-        self.keep(QueueMoment::Closing);
-        self.remotes.set(None);
-        self.keeper.stop();
-        self.engine.stop();
-    }
-}
-
-/// The parts of a session worker threads (and the remote control) use.
-#[derive(Clone)]
-pub(crate) struct Handle {
-    pub(crate) engine: Arc<Engine>,
-    queue: Arc<nori_core::queue::Session>,
-    client: Arc<Client>,
-    keeper: Arc<Keeper>,
-    pub(crate) remotes: Arc<crate::remote::Remotes>,
-    level: Arc<Level>,
-    guest: bool,
-    curve: Arc<parking_lot::Mutex<Option<CurveNotice>>>,
-    tasks: Arc<dyn Tasks>,
-    out: Out,
-}
-
-impl Handle {
-    /// Runs `work` among the session's tasks.
-    fn run(&self, work: impl std::future::Future<Output = ()> + Send + 'static) {
-        self.tasks.spawn(Box::pin(work));
-    }
-
     fn filled(&self, fresh: nori_core::autofill::Refill) {
         let ids: Vec<String> = fresh.songs.iter().map(|s| s.id.clone()).collect();
         if !self.client.autofill_arrived(fresh) || ids.is_empty() {
             return;
         }
-        let (len, end) = self.queue.playlist(|p| (p.len(), p.play_order().last().map(|at| p.seqs()[at])));
+        let q = &self.core.session;
+        let (len, end) = q.playlist(|p| (p.len(), p.play_order().last().map(|at| p.seqs()[at])));
         let n = ids.len();
-        self.queue.take(len as u32, ids, vec![Hand::No; n]);
+        q.take(len as u32, ids, vec![Hand::No; n]);
         self.edited();
-        if self.queue.autofill_landed() {
+        if q.autofill_landed() {
             self.engine.next();
         } else if let Some(end) = end {
             self.engine.resume_after_refill(end);
         }
     }
 
-    fn note(&self, n: Note) {
-        (self.out)(Said::Note(n));
-    }
-
-    /// Applies a settings change's `effect` bits to the engine.
-    fn apply_settings(&self, effect: u32, prefs: &StoredPrefs) {
-        if effect & (APPLY_AUDIO | SOUND | PLAYER) != 0 {
-            self.engine.set_settings(settings(prefs, self.level.loudness.db()));
-        }
-        if effect & APPLY_GAIN != 0 {
-            self.engine.gain_changed();
-        }
-        if effect & REPLAN != 0 {
-            self.engine.replan();
-        }
-    }
-
-    /// As [`Session::device_effect`].
-    fn device_effect(&self, output: &str, effect: DeviceEffect) {
-        let settings = &self.queue.settings;
-        if let Some(prefs) = effect.apply.and_then(|s| Some(settings.current()?.with_sound(s))) {
-            let bits = settings.put(prefs.clone());
-            self.apply_settings(bits, &prefs);
-        }
-        if effect.arrive {
-            self.device_effect(output, self.client.core().device_arrive(output.to_string()));
-            self.device_curve(output.to_string());
-        }
-    }
-
-    /// The AutoEQ step of `output`'s arrival (`Client::device_curve`), among the session's tasks.
-    fn device_curve(&self, output: String) {
-        let me = self.clone();
-        // Unmetered: the AutoEQ list waits for no network these clients can tell apart.
-        self.run(async move {
-            let c = me.client.device_curve(output.clone(), false).await;
-            me.device_curve_done(&output, c);
-        });
-    }
-
-    /// Performs an AutoEQ step's effect and says its notice, kept for [`Session::curve_answer`].
-    fn device_curve_done(&self, output: &str, c: DeviceCurve) {
-        self.device_effect(output, c.effect);
-        *self.curve.lock() = c.notice.clone();
-        if let Some(n) = c.notice {
-            (self.out)(Said::Curve(n));
-        }
-    }
-
-    /// Sets the volume; the account's other devices see it.
-    pub(crate) fn set_volume(&self, v: f32) {
+    /// Sets the volume here; the account's other devices see it.
+    fn set_level(&self, v: f32) {
         if self.level.set(v) {
             self.loudness_moved();
         }
         self.remotes.played(&self.engine);
     }
 
-    /// Another device set the volume: as [`Handle::set_volume`], and the client is told.
+    /// Another device set the volume: as [`Handle::set_level`], and the client is told.
     pub(crate) fn volume_from_afar(&self, v: f32) {
-        self.set_volume(v);
+        self.set_level(v);
         (self.out)(Said::Volume(self.level.get()));
     }
 
     /// Rebuilds the chain for the volume's loudness compensation, when that is on.
     fn loudness_moved(&self) {
-        if let Some(p) = self.queue.settings.current().filter(|p| p.loudness) {
+        if let Some(p) = self.core.session.settings.current().filter(|p| p.loudness) {
             self.engine.set_settings(settings(&p, self.level.loudness.db()));
         }
-    }
-
-    /// Whether `song` shows starred here: its record, or a heart pressed since.
-    pub(crate) fn starred(&self, song: &Song) -> bool {
-        self.client.core().starred(Starrable::Song, &song.id, song.starred)
     }
 
     /// The marks moving, as this session shows them.
@@ -1142,7 +1197,7 @@ impl Handle {
 
     /// Another device favourited a song (or not): the server is told, and the core's marks follow; the
     /// devices see it once marked.
-    pub(crate) fn star(&self, id: String, on: bool) {
+    pub(crate) fn star_from_afar(&self, id: String, on: bool) {
         let (client, hearts) = (self.client.clone(), self.hearts());
         self.run(async move {
             if let Err(e) = client.star(Starrable::Song, id, on, hearts).await {
@@ -1155,17 +1210,17 @@ impl Handle {
     fn edited(&self) {
         self.engine.queue_changed();
         self.keeper.later(queue_keep(QueueMoment::Edited).save_after_ms);
-        if self.queue.lyrics_prefetch_ready() {
+        if self.core.session.lyrics_prefetch_ready() {
             let client = self.client.clone();
             self.run(async move { client.lyrics_prefetch().await });
         }
         self.remotes.played(&self.engine);
     }
 
-    /// Removes the song at list index `index`; if it was playing, the next one takes its place.
-    pub(crate) fn remove(&self, index: usize) {
+    /// Removes the song at list index `index` here; if it was playing, the next one takes its place.
+    pub(crate) fn remove_here(&self, index: usize) {
         let (current, playing) = self.engine.status_with(|s| (s.index, s.state == State::Playing));
-        let change = self.queue.remove(index as u32, index as u32 + 1);
+        let change = self.core.session.remove(index as u32, index as u32 + 1);
         self.edited();
         if let (true, Some(at)) = (current == Some(index), change.at) {
             if playing {
@@ -1177,9 +1232,10 @@ impl Handle {
     }
 
     /// Puts back `id` where it was taken out; false when it was not the last song removed.
-    fn restore(&self, id: &str) -> bool {
-        let was_empty = self.queue.playlist(|p| p.is_empty());
-        if self.queue.restore(id.to_string()).at.is_none() {
+    fn restore_here(&self, id: &str) -> bool {
+        let q = &self.core.session;
+        let was_empty = q.playlist(|p| p.is_empty());
+        if q.restore(id.to_string()).at.is_none() {
             return false;
         }
         self.edited();
@@ -1190,33 +1246,34 @@ impl Handle {
     }
 
     /// Another device's undo: `song` back where it was taken out, else at list index `index`.
-    pub(crate) fn put_back(&self, song: Song, index: usize) {
-        if self.restore(&song.id) {
+    pub(crate) fn put_back_from_afar(&self, song: Song, index: usize) {
+        if self.restore_here(&song.id) {
             return;
         }
-        let (len, id) = (self.queue.playlist(|p| p.len()), song.id.clone());
-        self.queue.register(vec![song]);
-        self.queue.take(index.min(len) as u32, vec![id], vec![Hand::No]);
+        let q = &self.core.session;
+        let (len, id) = (q.playlist(|p| p.len()), song.id.clone());
+        q.register(vec![song]);
+        q.take(index.min(len) as u32, vec![id], vec![Hand::No]);
         self.edited();
         if len == 0 {
             self.engine.go_to(0, 0);
         }
     }
 
-    pub(crate) fn move_song(&self, from: usize, to: usize) {
-        self.queue.move_range(from as u32, from as u32 + 1, to as u32);
+    pub(crate) fn move_here(&self, from: usize, to: usize) {
+        self.core.session.move_range(from as u32, from as u32 + 1, to as u32);
         self.edited();
     }
 
-    pub(crate) fn shuffle(&self, on: bool) {
-        self.queue.show_shuffle(on);
-        self.queue.shuffle(on);
+    pub(crate) fn shuffle_here(&self, on: bool) {
+        self.core.session.show_shuffle(on);
+        self.core.session.shuffle(on);
         self.edited();
     }
 
-    pub(crate) fn repeat(&self, mode: u8) {
+    pub(crate) fn repeat_here(&self, mode: u8) {
         // Set on the queue first so the screen shows it at once.
-        self.queue.repeat(mode);
+        self.core.session.repeat(mode);
         self.engine.set_repeat(mode);
     }
 
@@ -1227,8 +1284,9 @@ impl Handle {
         if songs.is_empty() {
             return;
         }
-        self.queue.register(songs.clone());
-        let change = self.queue.handed(songs.iter().map(|s| s.id.clone()).collect(), index.min(songs.len() - 1) as u32, order, shuffle, repeat);
+        let q = &self.core.session;
+        q.register(songs.clone());
+        let change = q.handed(songs.iter().map(|s| s.id.clone()).collect(), index.min(songs.len() - 1) as u32, order, shuffle, repeat);
         self.engine.set_repeat(repeat);
         self.edited();
         let at = change.at.unwrap_or(0) as usize;
@@ -1240,15 +1298,11 @@ impl Handle {
     }
 
     /// Applies a queue edit the core made itself (the offline bridge).
-    fn apply(&self, e: &QueueEdit) {
+    fn apply_edit(&self, e: &QueueEdit) {
         self.edited();
         if let Some(seek) = e.seek {
             self.engine.play_at(seek as usize, 0);
         }
-    }
-
-    fn play(&self, songs: Vec<Song>, start: usize, shuffle: bool, from: Option<PageOrigin>) {
-        self.play_kept(songs, start, shuffle, from, false);
     }
 
     /// [`Handle::play`]; `keep`: the start is the song playing, which goes on with no jump (the queue's
@@ -1261,21 +1315,10 @@ impl Handle {
         }
         let start = picked.and_then(|id| songs.iter().position(|s| s.id == id)).unwrap_or(0);
         if self.guest {
-
-            let Some(r) = self.remotes.get() else { return  };
+            let Some(r) = self.remotes.get() else { return };
             if r.jam_controls().is_some_and(|c| !c.asks) {
                 let repeat = r.jam_playing().map_or(0, |m| m.repeat);
-                r.jam_press(Op::Replace {
-                    songs,
-                    index: start as u32,
-                    position_ms: 0,
-                    play: true,
-                    order: None,
-                    shuffle,
-                    repeat,
-                    transfer: None,
-                    listen: None,
-                });
+                r.jam_press(Op::Replace { songs, index: start as u32, position_ms: 0, play: true, order: None, shuffle, repeat, transfer: None, listen: None });
             } else {
                 self.ask(songs.into_iter().skip(start).take(1).collect());
             }
@@ -1284,19 +1327,19 @@ impl Handle {
         if let Some(e) = self.remotes.elsewhere() {
             return e.play(songs, start, shuffle);
         }
-        self.queue.register(songs.clone());
-        let change = self.queue.set(songs.iter().map(|s| s.id.clone()).collect(), (!shuffle).then_some(start as u32), shuffle, from);
+        let q = &self.core.session;
+        q.register(songs.clone());
+        let change = q.set(songs.iter().map(|s| s.id.clone()).collect(), (!shuffle).then_some(start as u32), shuffle, from);
         self.edited();
         if !keep {
             self.engine.play_at(change.at.unwrap_or(0) as usize, 0);
         }
     }
 
-    /// [`Handle::enqueue`] on the device playing: the active device while it is another one.
+    /// [`Handle::enqueue_here`] on the device playing: the active device while it is another one.
     fn add(&self, songs: Vec<Song>, next: bool) {
         if self.guest {
-
-            let Some(r) = self.remotes.get() else { return  };
+            let Some(r) = self.remotes.get() else { return };
             let songs = queueable(songs);
             if r.jam_controls().is_some_and(|c| !c.asks) {
                 r.jam_press(Op::Add { songs, next });
@@ -1305,7 +1348,7 @@ impl Handle {
             }
             return;
         }
-        let Some(e) = self.remotes.elsewhere() else { return self.enqueue(songs, next) };
+        let Some(e) = self.remotes.elsewhere() else { return self.enqueue_here(songs, next) };
         let songs = queueable(songs);
         if !songs.is_empty() {
             e.send(Op::Add { songs, next });
@@ -1320,17 +1363,18 @@ impl Handle {
         }
     }
 
-    pub(crate) fn enqueue(&self, songs: Vec<Song>, next: bool) {
+    pub(crate) fn enqueue_here(&self, songs: Vec<Song>, next: bool) {
         let songs = queueable(songs);
         if songs.is_empty() {
             return;
         }
         let n = songs.len();
-        self.queue.register(songs.clone());
-        let (len, current) = self.queue.playlist(|p| (p.len(), p.current()));
+        let q = &self.core.session;
+        q.register(songs.clone());
+        let (len, current) = q.playlist(|p| (p.len(), p.current()));
         let at = if next { current.map_or(len, |c| c + 1) } else { len };
         let hand = if next { Hand::Next } else { Hand::Last };
-        self.queue.take(at as u32, songs.iter().map(|s| s.id.clone()).collect(), vec![hand; n]);
+        q.take(at as u32, songs.iter().map(|s| s.id.clone()).collect(), vec![hand; n]);
         self.edited();
         if len == 0 {
             self.engine.go_to(0, 0);
@@ -1338,6 +1382,7 @@ impl Handle {
         self.note(Note::Queued { next, songs: n });
     }
 }
+
 
 /// `songs` as they may be added to a queue: a single picked song may be a provider's; lists never include
 /// them (the server downloads whatever is requested).
@@ -1362,14 +1407,6 @@ fn warm_covers(core: &Core, covers: Option<&Arc<Loader>>, songs: &[Song]) {
     }
 }
 
-async fn sync(client: &Client, out: &Out) {
-    out(Said::Note(Note::Indexing));
-    out(Said::Note(match client.sync_library().await {
-        Ok(total) => Note::Indexed(total),
-        Err(e) => Note::IndexStopped(e),
-    }));
-}
-
 /// Runs `Client::read_each` (the stored copy, then the server's if different; an error only when
 /// nothing is stored), handing each page to `each`.
 pub fn read_pages(client: &Client, read: Read, each: impl FnMut(Page)) -> Result<(), NetError> {
@@ -1384,6 +1421,30 @@ fn monotonic_ms() -> i64 {
 #[cfg(test)]
 #[path = "refill_tests.rs"]
 mod refill_tests;
+
+/// A session's opening for a test: online, playing into `output`, reporting nowhere.
+#[cfg(test)]
+fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Path, profile: SavedServer, output: Box<dyn AudioOutput>) -> Open<'a> {
+    Open {
+        queue,
+        data,
+        http: nori_http::Http::new(),
+        profile,
+        output,
+        volume: Level::new(1.0, None),
+        memory_mb: 16,
+        covers: None,
+        offline: false,
+        mpris: None,
+        device: nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop },
+        discovery: None,
+        tasks: crate::tasks(),
+        keeps_music: true,
+        decoders: Default::default(),
+        finds_active: true,
+        out: Arc::new(|_| {}),
+    }
+}
 
 #[cfg(test)]
 use nori_engine::testing::Device;
@@ -1420,25 +1481,8 @@ mod tests {
         let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
         queue.register(vec![Song { id: "host-song".into(), duration: 100, ..Default::default() }]);
         queue.set(vec!["host-song".into()], Some(0), false, None);
-        let s = Session::open(Open {
-            queue: queue.clone(),
-            data: dir.path(),
-            http: nori_http::Http::new(),
-            profile: SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), password: "pw".into(), ..Default::default() },
-            output: Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)),
-            volume: Level::new(1.0, None),
-            memory_mb: 16,
-            covers: None,
-            offline: true,
-            mpris: None,
-            device: nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop },
-            discovery: None,
-            tasks: crate::Threads::new(),
-            keeps_music: true,
-            decoders: Default::default(),
-            finds_active: true,
-            out: Arc::new(|_| {}),
-        })
+        let profile = SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), password: "pw".into(), ..Default::default() };
+        let s = Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) })
         .unwrap();
         assert!(queue.playlist(|p| p.ids().is_empty()), "the host's songs are gone");
         s.close();
@@ -1455,25 +1499,7 @@ mod tests {
         settings.put(prefs);
         let queue = Arc::new(nori_core::queue::Session::new(settings));
         let open = |profile: SavedServer| {
-            Session::open(Open {
-                queue: queue.clone(),
-                data: dir.path(),
-                http: nori_http::Http::new(),
-                profile,
-                output: Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)),
-                volume: Level::new(1.0, None),
-                memory_mb: 16,
-                covers: None,
-                offline: false,
-                mpris: None,
-                device: nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop },
-                discovery: None,
-                tasks: crate::Threads::new(),
-                keeps_music: true,
-                decoders: Default::default(),
-                finds_active: true,
-                out: Arc::new(|_| {}),
-            })
+            Session::open(test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))))
             .unwrap()
         };
         let kind = nori_core::providers::providers().into_iter().map(|p| p.kind).find(|&kind| !nori_core::providers::rules_of(SavedServer { kind, ..Default::default() }, false).remote).expect("a provider without remote control");

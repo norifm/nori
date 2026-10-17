@@ -169,9 +169,6 @@ impl Nori {
     fn drain(&self) {
         let said = std::mem::take(&mut *self.live.said.lock());
         for s in said {
-            if let Said::Engine(e) = &s {
-                self.with(|h| h.followed(e));
-            }
             if let Said::Lyrics { song, pick } = &s {
                 let at = self.with(|h| h.engine.status().position_now()).unwrap_or(0);
                 *self.live.lyrics.borrow_mut() = Some((song.clone(), clock_on(&pick.lyrics, at)));
@@ -206,15 +203,15 @@ impl Nori {
     }
 
     pub fn toggle(&self) {
-        self.with(Session::toggle);
+        self.with(|h| h.toggle());
     }
 
     pub fn next(&self) {
-        self.with(Session::next);
+        self.with(|h| h.next());
     }
 
     pub fn previous(&self) {
-        self.with(Session::previous);
+        self.with(|h| h.previous());
     }
 
     pub fn seek(&self, ms: f64) {

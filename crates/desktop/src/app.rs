@@ -1390,10 +1390,6 @@ impl App {
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     _ => {}
                 }
-                if let Some(s) = &self.session {
-                    s.mpris_heard(&e);
-                    s.followed(&e);
-                }
                 self.follow();
             }
             Msg::Data(req, r) => {
