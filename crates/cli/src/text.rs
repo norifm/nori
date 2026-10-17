@@ -67,9 +67,6 @@ pub fn feed_shelf(f: &nori_core::FeedShelf) -> String {
     format!("{}: {}", f.title, parts.join(", "))
 }
 
-pub const LYRICS_PREFETCH: &str = "Prepare next song’s lyrics";
-pub const LYRICS_PREFETCH_DETAIL: &str = "Fetch lyrics for one upcoming library song while the current song plays";
-
 /// A Home shelf's title.
 pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
     use nori_core::settings::HomeRow;
@@ -111,9 +108,7 @@ pub fn songs_caption(count: u32, seconds: u64) -> String {
 
 /// A record's format from one of its songs: "FLAC 24/96.0", "MP3 320 kbps".
 pub fn quality(s: &Song) -> Option<String> {
-    let suffix = s.suffix.to_lowercase();
-    let lossless = matches!(suffix.as_str(), "flac" | "alac" | "wav" | "aiff" | "ape" | "wv" | "dsf" | "dff");
-    let detail = if lossless && s.bit_depth > 0 {
+    let detail = if nori_core::model::is_lossless(&s.suffix) && s.bit_depth > 0 {
         Some(format!("{}/{}", s.bit_depth, numbers::khz(s.sampling_rate as i32)))
     } else {
         (s.bit_rate > 0).then(|| format!("{} kbps", s.bit_rate))

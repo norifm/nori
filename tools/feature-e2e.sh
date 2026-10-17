@@ -76,9 +76,8 @@ remember_settings offload autoMix eq remoteControl
 id=$(long_song)
 
 if want scrobble; then section scrobble
-  remember_settings scrobble scrobblePercent
+  remember_settings scrobble
   "$app" set scrobble true >/dev/null
-  "$app" set scrobblePercent 25 >/dev/null
   "$app" set autoMix false >/dev/null
   scrobble_first=$(song_id 'Long Track 01'); scrobble_second=$(song_id 'Long Track 02'); scrobble_third=$(song_id 'Long Track 03')
   count() { api getSong "&id=$1" | python3 -c 'import json,sys;print(json.load(sys.stdin)["subsonic-response"]["song"].get("playCount",0))'; }
@@ -95,7 +94,7 @@ if want scrobble; then section scrobble
   check 'pause does not submit a play' test "$(count "$scrobble_second")" = "$scrobble_before_second"
   "$app" do resume >/dev/null
   check 'resuming starts audio' sounds 10
-  check 'enough audio is heard' wait_for positionMs '>25000' 40
+  check 'half the song is heard' wait_for positionMs '>45000' 60
   "$app" play "song:$scrobble_third" >/dev/null
   count_is() { [ "$(count "$1")" = "$2" ]; }
   check 'the server counts the completed listen exactly once' wait_until 10 count_is "$scrobble_second" "$((scrobble_before_second + 1))"
@@ -109,11 +108,10 @@ if want lyrics; then section lyrics
   # Which answer wins, word timing, the lookups switch and every service's format are the lyrics crate's
   # (crates/lyrics tests, over recorded answers). Here: that an answer comes back through the platform.
   if [ "$NORI_E2E_SERVER" = local ]; then
-    remember_settings lyricsOnline lyricsPrefetch autoFill
+    remember_settings lyricsOnline autoFill
     lyrics_fill=$(field autoFill | tr 'TF' 'tf')
     "$app" set autoFill false >/dev/null
     "$app" set lyricsOnline false >/dev/null
-    "$app" set lyricsPrefetch true >/dev/null
     "$app" play "$LYRICS_SONG" >/dev/null; sounds 20
     check "the lyrics fixture is the current song" wait_for title "Long Track 05" 10
     lyric_id=$(song_id "Long Track 05")
@@ -541,7 +539,7 @@ if want dac; then section "a USB DAC, faked"
   # "dac"). Which mode a DAC gets and why one cannot be fed is dac.rs; here what the platform does: offload
   # stands down when the device appears, and the track is opened in the DAC's own format.
   "$app" set autoMix false >/dev/null; "$app" set crossfadeSec 0 >/dev/null
-  "$app" set crossfeedDb 0 >/dev/null; "$app" set offload true >/dev/null; "$app" set eq false >/dev/null
+  "$app" set headphoneSound OFF >/dev/null; "$app" set offload true >/dev/null; "$app" set eq false >/dev/null
   "$app" do "dac off" >/dev/null
   "$app" play "$PLAIN" >/dev/null; sounds 20
   check "offload is asked for on the phone's own output" wait_for offloadWanted True 10
@@ -622,7 +620,7 @@ import sqlite3, sys
 with sqlite3.connect(sys.argv[1]) as db:
     db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
     db.executemany("INSERT OR REPLACE INTO settings VALUES(?, ?)", [
-        ("remoteControl", '{"b":true}'), ("crossfadeSec", '{"i":4}'), ("crossfadeKeepAlbums", '{"b":false}'),
+        ("remoteControl", '{"b":true}'), ("crossfadeSec", '{"i":4}'),
     ])
 PY
     tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --url http://localhost:4533 --user $USER --password $PASS --no-images --no-mpris"
@@ -673,6 +671,8 @@ PY
     done
     check "remote skips keep this phone silent" silent 10
     for _ in $(seq 16); do keys -; done
+    # Songs of one album in order never mix: shuffled, the next one does.
+    "$app" do shuffle >/dev/null
     "$app" do "seek $(( $(field durationMs) - 4000 ))" >/dev/null
     check "remote playback reports the host's active mix" wait_for displayMixing True 10
     check "the controlling phone shows Mixing" wait_until 5 on_screen 'text="MIXING"'

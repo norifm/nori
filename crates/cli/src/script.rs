@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! nori-cli --script --url http://localhost:4533 --user admin --password admin --play "noise" --crossfade 6
-//! nori-cli --script ... --search "noise" --songs 2 --start 570 --crossfade 6 --mix-albums --wav out.wav
+//! nori-cli --script ... --search "noise" --songs 2 --start 570 --crossfade 6 --wav out.wav
 //! nori-cli --script --provider youtubeMusic --play "daft punk" --songs 1 --wav out.wav
 //! nori-cli --script --provider youtubeMusic --sign-in cookies.txt --home
 //! ```
@@ -49,8 +49,6 @@ struct Args {
     start_s: f64,
     crossfade: Option<i32>,
     automix: bool,
-    /// Crossfade within an album played in order too (by default albums stay gapless).
-    mix_albums: bool,
     replay_gain: Option<GainMode>,
     /// Float output to the device or file.
     hi_res: bool,
@@ -67,7 +65,7 @@ struct Args {
 fn usage() -> ! {
     eprintln!(
         "usage: nori-cli --script --url URL --user USER --password PASSWORD [--search|--play QUERY] [--songs N] [--start SECONDS]\n\
-         \x20               [--crossfade SECONDS] [--automix] [--mix-albums] [--replay-gain off|track|album|auto] [--hi-res]\n\
+         \x20               [--crossfade SECONDS] [--automix] [--replay-gain off|track|album|auto] [--hi-res]\n\
          \x20               [--download] [--offline] [--mpris]\n\
          \x20               [--wav OUT.wav [--pace X]] [--device NAME] [--devices]\n\
          \x20      nori-cli --script --provider KIND [the same, without the server] [--sign-in FILE] [--home]\n\
@@ -97,7 +95,6 @@ fn args(argv: Vec<String>) -> Args {
         start_s: 0.0,
         crossfade: None,
         automix: false,
-        mix_albums: false,
         replay_gain: None,
         hi_res: false,
         download: false,
@@ -123,7 +120,6 @@ fn args(argv: Vec<String>) -> Args {
             "--start" => a.start_s = v().parse().unwrap_or_else(|_| usage()),
             "--crossfade" => a.crossfade = Some(v().parse().unwrap_or_else(|_| usage())),
             "--automix" => a.automix = true,
-            "--mix-albums" => a.mix_albums = true,
             "--replay-gain" => a.replay_gain = Some(gain_mode(&v()).unwrap_or_else(|| usage())),
             "--hi-res" => a.hi_res = true,
             "--download" => a.download = true,
@@ -232,7 +228,7 @@ impl Cli {
             Ok(q) => println!("downloading {} ({} asked again)", q.fresh.len(), q.again.len()),
             Err(e) => println!("download failed: {e}"),
         }
-        self.downloader.start(self.prefs.parallel_downloads.max(1) as usize);
+        self.downloader.start(nori_core::transfers::DOWNLOADS_AT_ONCE);
     }
 
     /// The stored settings; a device's own sound may have been loaded since the last put.
@@ -248,7 +244,7 @@ impl Cli {
     fn apply(&mut self, effect: u32) {
         self.prefs = self.kept();
         if effect & (APPLY_AUDIO | SOUND) != 0 {
-            self.engine.set_settings(settings(&self.prefs, 0.0));
+            self.engine.set_settings(settings(&self.prefs));
         }
         if effect & APPLY_GAIN != 0 {
             self.engine.gain_changed();
@@ -302,7 +298,6 @@ pub fn main(argv: Vec<String>) {
     let mut prefs = crate::backend::app().settings.open(&db).unwrap_or_else(|e| panic!("the settings: {e}"));
     prefs.crossfade_sec = a.crossfade.unwrap_or(prefs.crossfade_sec);
     prefs.auto_mix = a.automix;
-    prefs.crossfade_keep_albums = !a.mix_albums;
     prefs.replay_gain = a.replay_gain.unwrap_or(prefs.replay_gain);
     prefs.hi_res = a.hi_res;
     crate::backend::app().settings.put(prefs.clone());
@@ -321,7 +316,7 @@ pub fn main(argv: Vec<String>) {
     let downloader = Downloader::new(client.clone(), bytes.clone(), store.clone(), analyses.clone());
     let app = CoreApp::new(core.session.clone()).measuring(Measurer::new(analyses.clone(), store.clone())).per_device(core.clone());
     let library = CoreLibrary { client: client.clone(), bytes, store: Some(store), analyses };
-    let engine = Engine::start(library, app, CoreQueue(core.session.clone()), output, None, Config { memory_mb: 256, settings: settings(&prefs, 0.0), ..Config::default() }, move |e| {
+    let engine = Engine::start(library, app, CoreQueue(core.session.clone()), output, None, Config { memory_mb: 256, settings: settings(&prefs), ..Config::default() }, move |e| {
         let _ = tx.send(e);
     });
     let mut cli = Cli { core, client, prefs, engine: Arc::new(engine), songs: Arc::default(), downloader };

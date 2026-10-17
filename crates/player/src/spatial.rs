@@ -6,6 +6,8 @@
 //! Head and room are fed the L-R difference, so centred content cancels and passes bit-exact
 //! (plain crossfeed would comb it).
 
+/// The strength the "Wide" headphone sound plays at.
+pub const WIDE: f64 = 0.6;
 /// Ring length; longer than the latest tap.
 const RING_MS: f64 = 12.5;
 const ITD_MS: f64 = 0.28;

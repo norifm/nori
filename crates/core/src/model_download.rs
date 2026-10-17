@@ -17,7 +17,6 @@ pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
     let settings = &client.session().settings;
     let model = &settings.model;
     let wanted = || settings.prefs(|p| p.auto_mix && p.auto_mix_better_beats);
-    let mobile = settings.prefs(|p| p.auto_mix_beats_mobile_data);
     if !wanted() {
         return None;
     }
@@ -25,7 +24,7 @@ pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
         return Some(f);
     }
     let file = model.file()?;
-    if !model.may_fetch(client.metered(), mobile) {
+    if !model.may_fetch(client.metered()) {
         return None;
     }
     if !model.begin_download() {

@@ -92,7 +92,10 @@ void nori_ios_remove_server(const char *data_dir, const char *id);
 /// 1 when a playback session is open.
 int32_t nori_ios_is_open(void);
 
-/// The system volume moved (0 to 1): loudness compensation follows it, and the other devices see it.
+/// How long the search waits after a keystroke before asking the server, ms.
+int32_t nori_ios_search_delay_ms(void);
+
+/// The system volume moved (0 to 1): the other devices see it.
 void nori_ios_volume(float fraction);
 
 /// Sets the volume (0 to 1) of the device playing: another device's while the music plays there.
@@ -123,8 +126,6 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_NOTE_NOTHING_TO_PUT_BACK 5
 #define NORI_NOTE_DOWNLOADING 6
 #define NORI_NOTE_DOWNLOAD_FAILED 7
-#define NORI_NOTE_STARRED 8
-#define NORI_NOTE_UNSTARRED 9
 #define NORI_NOTE_STAR_FAILED 10
 #define NORI_NOTE_INDEXING 11
 #define NORI_NOTE_INDEXED 12

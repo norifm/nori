@@ -83,7 +83,6 @@ pub(crate) struct Plain<T> {
 
 pub(crate) const FLAG: Plain<bool> = Plain { range: None, held: false };
 pub(crate) const TEXT: Plain<String> = Plain { range: None, held: false };
-pub(crate) const INT: Plain<i32> = Plain { range: None, held: false };
 pub(crate) const LONG: Plain<i64> = Plain { range: None, held: false };
 pub(crate) const FLOAT: Plain<f32> = Plain { range: None, held: false };
 
@@ -254,9 +253,8 @@ impl<T> Codec<T> for Custom<T> {
 /// What a client offers for a setting (`settings_model::SettingSpec`).
 pub(crate) enum K {
     Switch,
+    /// One of these values; an enum setting's are its names, in ordinal order.
     Choice(&'static [&'static str]),
-    /// An enum setting: its values by name, in ordinal order.
-    Named(&'static [&'static str]),
     Level(f32, f32),
     Text,
     Colour,

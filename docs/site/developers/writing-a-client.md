@@ -59,7 +59,7 @@ builds:
   `providers::log_in`, profiles are the settings' `servers`), home (nori-host's `read_home`: the album
   shelves of the rows kept, in the core's order), the library
   (albums, artists, playlists from the stored reads; songs from the offline index), search
-  (`SearchSession`: the index at every key, the server once typing pauses, `live_search_delay_ms`),
+  (`SearchSession`: the index at every key, the server once typing pauses, `search::LIVE_SEARCH_DELAY_MS`),
   album, artist and playlist pages (`AlbumDetail`, `ArtistDetail`, `PlaylistDetail` with their captions),
   the queue (`Session::view` in play order; `playlist_remove`, `playlist_move`, `playlist_shuffle`,
   `set_repeat`), now playing (the song heard is the engine's `Event::Song`/`Status`; how the next comes in
@@ -67,14 +67,10 @@ builds:
   timed by `nori_look::lyrics::LyricClock`, lit by `line_strength` and `UNSUNG`, filled a character at a
   time), downloads (`download_sections`, `Downloader`), the equalizer (the bands as bars; `edit_band`,
   `edit_level`, `settings_sound_tool`) and settings.
-- **Settings, its own**: a curated settings screen (settings_view.rs) with the terminal's own groups,
-  rows and wording - sound (the equalizer, ReplayGain and its pre-amp, crossfade, AutoMix, speed and
-  pitch, skipping silence, bit-exact output), playback, the library and history, lyrics (online lookups,
-  the sources in order, their keys), the server, storage and caches, and the client's own (the mouse,
-  covers and colors, the volume, the output device for the next start). What only a phone can do is
-  simply not there. Each row's options are the core's values (`settings_model::specs`), the value now
-  and the rules' facts are `settings_model::state`, and a row changes its setting by name through
-  `setting_set`, `edit_level` or the sound tools. What a change asks of the player
+- **Settings**: the core's pages for the terminal (`settings_pages::page`, `SettingsClient::Terminal`),
+  worded in settings_view.rs, and the client's own group (the mouse, covers, the output device for the
+  next start) and About. What only a phone can do is simply not there. A row changes its setting by name
+  through `setting_set`, `edit_level` or the sound tools. What a change asks of the player
   (`SettingChange::effect`) is applied to the engine as Android applies it: `set_settings` for the sound,
   the fades and high quality output, `gain_changed`, `replan`. The client's own few settings (mouse,
   covers, volume) are kept beside the app's (`settings_store::app_value`, `keep_app_value`) and drawn as
@@ -444,17 +440,21 @@ native heaps before and after.
   `nori_model::numbers` (half up on the shortest decimal form, as Java does; its table test holds the
   vectors) and keeps each second's clock text. The terminal client's words are `crates/cli/src/text.rs`;
   every client's numbers and unit symbols are `numbers`'. Logs, the perf report and the self test are tooling, in English.
-- **Settings**: the core holds the model only (`nori-settings::settings_model`): every setting's name
-  (what `setting_set` takes), its kind (a switch, a choice, a level, text, a color), its options as
-  values ("0.75", "320:mp3", "SYSTEM"), its range and default (`setting_specs`); the values now in the same
-  form, and what the core's rules make of them - whether the output is played untouched, whether the
-  sound chain is on, whether the battery saver stands down, the lyrics services in the order they are
-  asked, how the beat model's download stands (`settings_state`); `setting_set` applies a change and says
-  what it asks of the player. Sizes on disk and counts are numbers the client reads itself
-  (`lyrics_cache_bytes`, `analysis_count`, `index_size`). Which pages, sections and rows a client has,
-  their order, when a row is shown, the search over them and every word on them are the client's own:
-  Android's are in `app/vm/SettingsPages.kt` with the words in `res/values/strings.xml`; the terminal's
-  are in `crates/cli/src/settings_view.rs`. The two are expected to differ.
+- **Settings**: the core holds the model (`nori-settings::settings_model`): every setting's name (what
+  `setting_set` takes), its kind (a switch, a choice, a level, text, a color), its options as values
+  ("0.75", "320:mp3", "SYSTEM"), its range and default (`specs`); the values now in the same form, and
+  what the core's rules make of them - whether the output is played untouched, whether the sound chain is
+  on, whether the battery saver stands down, the lyrics services in the order they are asked, how the beat
+  model's download stands (`settings_state`); `setting_set` applies a change and says what it asks of the
+  player. It also holds the pages (`nori-settings::settings_pages`, from 0.6.3): for a client
+  (`SettingsClient`: phone, desktop or terminal) and the profile's parts, which pages there are
+  (`settings_pages`), and each page's sections and rows in order (`settings_page`): a setting with its
+  spec and value, or a link, an action, a note, a server, a music folder, a lyrics service, each with
+  whether it is shown now, whether it acts now and how deep it sits. A client only words and draws them:
+  Android's words are in `app/vm/SettingsPages.kt` and `res/values/strings.xml`, the terminal's in
+  `crates/cli/src/settings_view.rs`, the desktop's in `crates/desktop/src/settings.rs`. Sizes on disk and
+  counts are numbers the client reads itself (`lyrics_cache_bytes`, `analysis_count`, `index_size`) and
+  hands to the page as `PageFacts`.
 - **Moving covers** (optional): play the HLS address `motion_video` gives, muted and looping, only while
   the player is on screen and at rest, and let the player go when it is not. Android: `MotionPlayer`
   (core/playback, its own ExoPlayer with media3's HLS module and a 64 MB cache, so a loop is fetched

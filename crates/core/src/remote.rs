@@ -3542,7 +3542,6 @@ mod tests {
         session.settings.open("").unwrap();
         let mut prefs = session.settings.current().unwrap();
         prefs.crossfade_sec = 4;
-        prefs.crossfade_keep_albums = false;
         session.settings.put(prefs);
         session.set(
             vec!["a".into(), "b".into(), "c".into()],

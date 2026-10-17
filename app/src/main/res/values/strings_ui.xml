@@ -141,11 +141,6 @@
     <string name="analysing">Analyzing…</string>
     <string name="detecting_beats">Detecting beats…</string>
     <!-- Asked when Download is pressed with Better beat detection on and ML beats for downloads set to Ask. -->
-    <string name="beats_ask_title">Detect beats for these downloads?</string>
-    <string name="beats_ask_text">Also detect beats with the ML model for these downloads? It uses a lot of battery and CPU for a while.</string>
-    <string name="beats_ask_remember">Remember my choice</string>
-    <string name="beats_ask_yes">Yes</string>
-    <string name="beats_ask_no">No</string>
     <!-- After Analyse downloaded songs in Settings. -->
     <plurals name="said_analysing_downloads">
         <item quantity="one">Analyzing %d downloaded song</item>
@@ -174,11 +169,6 @@
     <string name="profiles">Profiles</string>
     <string name="save_these_settings">Save these settings</string>
     <string name="save_as_profile">Save current settings as a profile</string>
-    <string name="crossfeed">Crossfeed</string>
-    <string name="crossfeed_off">Off</string>
-    <string name="crossfeed_default">Default</string>
-    <string name="crossfeed_chu_moy">Chu Moy</string>
-    <string name="crossfeed_jan_meier">Jan Meier</string>
     <string name="import_preset">Import preset</string>
     <string name="import_preset_hint">Paste an AutoEQ ParametricEQ.txt or GraphicEQ.txt, or an Equalizer APO config.</string>
     <string name="import_preset_example">Preamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain -3.5 dB Q 0.70</string>
@@ -281,8 +271,6 @@
     <string name="said_playlist_created">Created %1$s</string>
     <string name="said_server_downloading">The server is downloading it into your library</string>
     <string name="said_failed">Failed</string>
-    <string name="said_favourite_added">Added to favorites</string>
-    <string name="said_favourite_removed">Removed from favorites</string>
     <plurals name="said_downloading">
         <item quantity="one">Downloading %d song</item>
         <item quantity="other">Downloading %d songs</item>
@@ -386,10 +374,6 @@
     <string name="eq_not_clipping">not clipping</string>
     <string name="eq_compressing">Compressing: −%1$s dB</string>
     <string name="eq_not_compressing">Not compressing now</string>
-    <string name="eq_crossfeed_custom">Custom, %1$s dB: each ear also hears a little of the other channel, like loudspeakers. For headphones.</string>
-    <string name="eq_crossfeed_cut">Cutoff %1$s Hz: how high up the other ear hears</string>
-    <string name="eq_crossfeed_on">%1$s dB: each ear also hears a little of the other channel, like loudspeakers. For headphones.</string>
-    <string name="eq_off">Off</string>
     <string name="eq_hz_title">%1$s Hz</string>
     <string name="eq_slope">Slope %1$s</string>
     <string name="eq_q">Q %1$s</string>

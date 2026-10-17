@@ -268,31 +268,7 @@ pub fn song_sort_kept(name: String) -> ListPref {
 
 // ---- the library ----------------------------------------------------------------
 
-/// A part of the settings, as each client groups them under its own headings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-#[repr(u8)]
-pub enum SettingsPart {
-    /// The saved profiles, to switch between.
-    Profiles,
-    /// Adding, editing and removing profiles, and the open server's own options (music folder, second
-    /// address's bitrate, syncing its library).
-    ServerOptions,
-    /// Theme, motion, screen and size.
-    Look,
-    /// Transitions, controls, the queue.
-    Playback,
-    Sound,
-    Lyrics,
-    /// The account's lists, playlists, search, history, scrobbling and remote control.
-    Library,
-    /// Streaming quality and what is fetched ahead.
-    Streaming,
-    Downloads,
-    /// The caches on this device.
-    Storage,
-    About,
-}
+pub use nori_settings::settings_pages::SettingsPart;
 
 /// What the app offers over a profile. A jam guest's is the normal app over the host's library, read
 /// only: what it plays or queues is asked of the host, and nothing in it is the account's.

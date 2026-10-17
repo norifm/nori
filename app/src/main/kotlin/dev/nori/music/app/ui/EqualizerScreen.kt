@@ -93,7 +93,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
         // Two settings switch the whole sample chain off. Without this the screen looks broken: bands
         // move, the limiter says it is on, and nothing whatsoever happens to the sound.
         val dac by vm.dac.collectAsStateWithLifecycle()
-        val bypass = remember(dac.bitPerfect, p.soundBypass) { dev.nori.music.ffi.settings.eqBypassReason(dac.bitPerfect, p.soundBypass)?.let(say::eqBypass) }
+        val bypass = remember(dac.bitPerfect, p.soundBypass) { dev.nori.music.ffi.settings.eqBypass(dac.bitPerfect, p.soundBypass)?.let(say::eqBypass) }
         if (bypass != null) Surface(
             shape = CardShape, color = MaterialTheme.colorScheme.errorContainer,
             modifier = Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp),
@@ -180,21 +180,6 @@ fun EqualizerScreen(vm: SettingsViewModel) {
             )
         }
         ActionRow(say.saveAsProfile, Icons.Filled.Add, { newName = ""; naming = true }, divider = false)
-
-        SectionTitle(say.crossfeed)
-        // bs2b's presets, or the listener's own (none of the chips lit): which is the core's.
-        val preset = remember(p.crossfeedDb, p.crossfeedHz) { dev.nori.music.ffi.settings.crossfeedPresetOf(p) }
-        Row(Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("OFF" to say.crossfeedOff, "DEFAULT" to say.crossfeedDefault, "CHU_MOY" to say.crossfeedChuMoy, "JAN_MEIER" to say.crossfeedJanMeier).forEach { (v, label) ->
-                Chip(label, v == preset) { if (v != preset) vm.set("crossfeedPreset", v) }
-            }
-        }
-        Text(remember(p.crossfeedDb, preset) { say.crossfeed(p.crossfeedDb, preset.isEmpty()) }, Modifier.padding(horizontal = Space.gutter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        NoriSlider(p.crossfeedDb, ranges.crossfeed.min..ranges.crossfeed.max, { v -> vm.setLevel(EqLevel.CROSSFEED, v) }, Modifier.padding(horizontal = Space.gutter))
-        if (p.crossfeedDb > 0f) {
-            Text(remember(p.crossfeedHz) { say.crossfeedCut(p.crossfeedHz) }, Modifier.padding(horizontal = Space.gutter), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            NoriSlider(p.crossfeedHz, ranges.crossfeedCut.min..ranges.crossfeedCut.max, { v -> vm.setLevel(EqLevel.CROSSFEED_CUT, v) }, Modifier.padding(horizontal = Space.gutter))
-        }
     }
 }
 

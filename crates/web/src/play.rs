@@ -464,7 +464,6 @@ fn note(n: &Note) -> Value {
         Note::NothingToPlay => json!({ "what": "nothingToPlay" }),
         Note::SongsFailed(e) => json!({ "what": "songsFailed", "why": e.to_string() }),
         Note::NothingToPutBack => json!({ "what": "nothingToPutBack" }),
-        Note::Starred(on) => json!({ "what": "starred", "on": on }),
         Note::StarFailed(e) => json!({ "what": "starFailed", "why": e.to_string() }),
         _ => json!({ "what": "other" }),
     }

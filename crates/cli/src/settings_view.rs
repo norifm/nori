@@ -1,17 +1,23 @@
-//! The settings page (one scrolling page of groups, sections and rows) and the equalizer's rows.
-//! Values and options come from the core's `settings_model`; rows send back a setting name and value
-//! (`setting_set`) or a level edit (`edit_level`). Phone-only settings are left out (core defaults apply).
+//! The settings page (one scrolling page of groups, sections and rows) and the equalizer's rows. The
+//! pages, their rows and values are the core's (`settings_pages`, terminal client); this words and
+//! draws them. Rows send back a setting name and value (`setting_set`) or a level edit (`edit_level`).
 
 use crate::text;
 use nori_core::settings::{EqLevel, EqMode, SoundBand, StoredPrefs, EQ_RANGES};
-use nori_core::settings_model::{self, BeatModel, LyricsSource, SettingsState};
+use nori_core::settings_model::{self, BeatModel, LyricsSource, SettingKind, SettingsState};
+use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
 use nori_core::numbers::{self, POINT};
 use nori_core::MusicFolder;
 
 use crate::app::{Cmd, Overlay, Sel, SoundToolCmd, Target, View};
 
-/// The terminal client's own group id.
-pub const OWN: &str = "terminal";
+/// A group of the page: the terminal's own, one of the core's pages, or About.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gid {
+    Own,
+    Core(SettingsPage),
+    About,
+}
 
 /// What opening a row does.
 pub enum Opened {
@@ -37,20 +43,21 @@ pub enum Switch {
 /// A settings group: a headed part of the page.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Group {
-    pub id: &'static str,
+    pub id: Gid,
     pub title: &'static str,
 }
 
 /// The groups in page order.
-pub const GROUPS: [Group; 8] = [
-    Group { id: OWN, title: "Interface" },
-    Group { id: "sound", title: "Sound" },
-    Group { id: "playback", title: "Playback" },
-    Group { id: "library", title: "Library" },
-    Group { id: "lyrics", title: "Lyrics" },
-    Group { id: "server", title: "Server" },
-    Group { id: "storage", title: "Storage" },
-    Group { id: "about", title: "About" },
+pub const GROUPS: [Group; 9] = [
+    Group { id: Gid::Own, title: "Interface" },
+    Group { id: Gid::Core(SettingsPage::Playing), title: "Playback" },
+    Group { id: Gid::Core(SettingsPage::Sound), title: "Sound" },
+    Group { id: Gid::Core(SettingsPage::Look), title: "Look" },
+    Group { id: Gid::Core(SettingsPage::Library), title: "Library" },
+    Group { id: Gid::Core(SettingsPage::Lyrics), title: "Lyrics" },
+    Group { id: Gid::Core(SettingsPage::Servers), title: "Server" },
+    Group { id: Gid::Core(SettingsPage::Data), title: "Storage" },
+    Group { id: Gid::About, title: "About" },
 ];
 
 /// What a link or button does.
@@ -347,100 +354,42 @@ pub fn slider_step(min: f32, max: f32) -> f32 {
 
 // ---- the pages ----
 
-/// Row builders over the settings and the core's model state.
-struct Build<'a> {
-    p: &'a StoredPrefs,
-    s: &'a SettingsState,
-}
-
-impl Build<'_> {
-    fn value(&self, name: &str) -> String {
-        self.s.values.get(name).cloned().unwrap_or_default()
+/// The core's page facts from the terminal's.
+fn page_facts(f: &Facts) -> PageFacts {
+    PageFacts {
+        parts: f.rules.settings.clone(),
+        folders: f.folders.iter().map(|m| m.id.clone()).collect(),
+        analysed: f.analysed,
+        indexed_songs: f.indexed.0,
+        stream_bytes: f.storage.stream,
+        cover_bytes: f.storage.covers,
+        lyrics_bytes: f.storage.lyrics,
+        download_songs: f.storage.download_songs,
+        ..PageFacts::default()
     }
-
-    fn on(&self, name: &str) -> bool {
-        self.value(name) == "true"
-    }
-
-    fn toggle(&self, name: &str, title: &str, detail: &str) -> Row {
-        self.toggle_if(name, title, detail, true)
-    }
-
-    fn toggle_if(&self, name: &str, title: &str, detail: &str, enabled: bool) -> Row {
-        Row::Toggle { switch: Switch::Setting(name.into()), title: title.into(), detail: detail.into(), on: self.on(name), enabled }
-    }
-
-    /// The core's options for `name`, each worded by `label`.
-    fn choice(&self, name: &str, title: &str, enabled: bool, label: impl Fn(&str) -> String) -> Row {
-        let options: Vec<(String, String)> = options(name).into_iter().map(|v| (label(&v), v)).collect();
-        self.choice_of(name, title, options, enabled)
-    }
-
-    fn choice_of(&self, name: &str, title: &str, options: Vec<(String, String)>, enabled: bool) -> Row {
-        let v = self.value(name);
-        let shown = options.iter().find(|o| o.1 == v).map_or(v, |o| o.0.clone());
-        Row::Choice { target: Target::Setting(name.into()), title: title.into(), options, shown, enabled }
-    }
-
-    /// An enum setting; `labels` word its options in order.
-    fn named(&self, name: &str, title: &str, labels: &[&str]) -> Row {
-        let names = options(name);
-        self.choice(name, title, true, |v| names.iter().position(|n| n == v).and_then(|i| labels.get(i)).map_or_else(|| v.to_string(), |l| l.to_string()))
-    }
-}
-
-fn options(name: &str) -> Vec<String> {
-    settings_model::specs().into_iter().find(|s| s.name == name).map(|s| s.options).unwrap_or_default()
-}
-
-fn section(title: &str, rows: Vec<Row>) -> Section {
-    Section { title: title.into(), rows }
-}
-
-fn info(title: &str, detail: String) -> Row {
-    Row::Info { title: title.into(), detail }
-}
-
-fn action(title: &str, detail: String, button: &str, enabled: bool, chore: Chore) -> Row {
-    Row::Action { title: title.into(), detail, button: button.into(), enabled, action: Act::Chore(chore) }
-}
-
-fn off_or(v: &str, words: impl Fn(&str) -> String) -> String {
-    if v == "0" { "off".into() } else { words(v) }
 }
 
 /// One group's page.
-pub fn page(id: &str, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own) -> Page {
-    let b = Build { p, s };
-    let title = GROUPS.iter().find(|g| g.id == id).map_or(id, |g| g.title).to_string();
-    use nori_core::browse::SettingsPart;
-    let part = match id {
-        OWN => SettingsPart::Look,
-        "sound" => SettingsPart::Sound,
-        "playback" => SettingsPart::Playback,
-        "library" => SettingsPart::Library,
-        "lyrics" => SettingsPart::Lyrics,
-        "server" => SettingsPart::Profiles,
-        "storage" => SettingsPart::Storage,
-        _ => SettingsPart::About,
-    };
+pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own) -> Page {
+    let title = GROUPS.iter().find(|g| g.id == id).map_or("", |g| g.title).to_string();
     let sections = match id {
-        _ if !f.rules.settings.contains(&part) => Vec::new(),
-        OWN => own_page(&b, own, f),
-        "sound" => sound(&b),
-        "playback" => playback(&b, f),
-        "library" => library(&b, f),
-        "lyrics" => lyrics(&b),
-        "server" => server(&b, f),
-        "storage" => storage(&b, f),
-        "about" => about(own),
-        _ => Vec::new(),
+        Gid::Own if !f.rules.settings.contains(&SettingsPart::Look) => Vec::new(),
+        Gid::Own => own_page(own, f),
+        Gid::About if !f.rules.settings.contains(&SettingsPart::About) => Vec::new(),
+        Gid::About => about(own),
+        Gid::Core(page) => {
+            let facts = page_facts(f);
+            settings_pages::page(page, SettingsClient::Terminal, p, s, &facts)
+                .into_iter()
+                .map(|sec| Section { title: section_title(sec.id).into(), rows: sec.rows.into_iter().filter(|r| r.shown).filter_map(|r| row_of(r, p, s, f)).collect() })
+                .collect()
+        }
     };
     Page { title, sections }
 }
 
 /// The terminal's own group.
-fn own_page(b: &Build, o: &Own, f: &Facts) -> Vec<Section> {
+fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
     let toggle = |switch, title: &str, detail: &str, on, enabled| Row::Toggle { switch, title: title.into(), detail: detail.into(), on, enabled };
     let mut devices = vec![("system default".to_string(), String::new())];
     devices.extend(f.devices.iter().map(|d| (d.clone(), d.clone())));
@@ -455,176 +404,227 @@ fn own_page(b: &Build, o: &Own, f: &Facts) -> Vec<Section> {
         Row::Choice { target: Target::Device, title: "Output device".into(), options: devices, shown, enabled: true },
         Row::Note { text: "The device is opened at start; --device overrides it for one run.".into() },
     ];
-    let accents: Vec<i64> = options("accent").iter().filter_map(|c| c.parse().ok()).collect();
-    let look = vec![
-        b.toggle("coverColors", "Colors from the cover", "The page takes the playing cover's colors (with covers on)"),
-        Row::Palette { name: "accent".into(), colours: accents, chosen: b.p.accent },
-    ];
-    vec![section("", rows), section("Look", look)]
+    vec![section("", rows)]
 }
 
-fn sound(b: &Build) -> Vec<Section> {
-    let p = b.p;
-    let s = b.s;
-    let live = !s.untouched;
-    let eq_status = if s.untouched { "bypassed" } else if s.sound_chain_on { "on" } else { "off" };
-    let eq_status = if p.sound_bypass { "no processing" } else { eq_status };
-    let eq = vec![Row::Link { title: "Equalizer, crossfeed, balance, limiter".into(), status: eq_status.into(), action: Act::Equalizer }];
+fn section(title: &str, rows: Vec<Row>) -> Section {
+    Section { title: title.into(), rows }
+}
 
-    let mut levelling = vec![b.named("replayGain", "ReplayGain", &["off", "track", "album", "auto"])];
-    if p.replay_gain != nori_core::settings::GainMode::Off {
-        let r = EQ_RANGES.replay_gain_preamp;
-        levelling.push(Row::Slider {
-            name: "preampDb".into(),
-            label: format!("Pre-amp {} dB", numbers::signed_db(p.preamp_db, POINT)),
-            value: p.preamp_db,
-            min: r.min,
-            max: r.max,
-            centred: true,
-            level: Some(EqLevel::ReplayGainPreamp),
-        });
-        levelling.push(b.choice("loudnessTarget", "Loudness target", true, |v| format!("{v} LUFS")));
-        levelling.push(b.choice("gainBoostDb", "Turn quiet songs up", true, |v| off_or(v, |v| format!("up to +{v} dB"))));
-        levelling.push(b.choice("untaggedGainDb", "Untagged files", true, |v| format!("{v} dB")));
-        levelling.push(b.toggle("gainMeasured", "Measure untagged files", "Play songs without tags at the loudness AutoMix measured"));
-    }
+fn info(title: &str, detail: String) -> Row {
+    Row::Info { title: title.into(), detail }
+}
 
-    let mut mixing = Vec::new();
-    if s.untouched {
-        mixing.push(Row::Note { text: "Bit-exact output is on: no mixing, skipping or effects.".into() });
+fn section_title(id: SectionId) -> &'static str {
+    use SectionId::*;
+    match id {
+        Accounts => "Accounts",
+        MusicFolders => "Music folders",
+        ThisServer => "This server",
+        Between => "Transitions",
+        Controls => "Controls",
+        Queue => "Queue",
+        Equalizer => "Equalizer",
+        Effects => "Effects",
+        Volume => "Volume",
+        Output => "Output",
+        Theme => "Look",
+        Cover => "Cover",
+        Home => "Home",
+        Screen => "Screen",
+        Motion => "Motion",
+        Display => "Display",
+        Sources => "Online",
+        AskedOrder => "Sources, in order",
+        Keys => "Keys",
+        Lists => "Lists",
+        Playlists => "Playlists",
+        Search => "Index and search",
+        History => "History",
+        Online => "Lookups",
+        Devices => "Other devices",
+        Streaming => "Streaming",
+        Downloads => "Downloads",
+        Storage => "Cache",
+        Updates => "Updates",
     }
-    if !p.auto_mix {
-        mixing.push(b.choice("crossfadeSec", "Crossfade", live, |v| off_or(v, |v| format!("{v} s"))));
-        if p.crossfade_sec > 0 {
-            mixing.push(b.named("crossfadeCurve", "  Curve", &["equal power", "linear", "S-curve"]));
-            let part = |v: &str| if v == "0" { "whole crossfade".to_string() } else { format!("{v} s") };
-            mixing.push(b.choice("crossfadeInSec", "  Fade in over", live, part));
-            mixing.push(b.choice("crossfadeOutSec", "  Fade out over", live, part));
-        }
-    }
-    mixing.push(b.toggle_if("autoMix", "AutoMix", "Beat-matched transitions planned per song pair", live));
-    if p.auto_mix {
-        mixing.push(b.choice("autoMixMaxS", "  Longest mix", live, |v| format!("{v} s")));
-        mixing.push(b.toggle_if("autoMixBeatMatch", "  Beat-match", "Stretch the incoming song so the beats line up", live));
-        if p.auto_mix_beat_match {
-            mixing.push(b.choice("autoMixMaxTempoPct", "    Max stretch", live, |v| format!("±{v} %")));
-            mixing.push(b.toggle_if("autoMixKeepPitch", "    Keep pitch", "Off: pitch follows the stretch (≤ 2 %)", live));
-        }
-        mixing.push(b.toggle_if("autoMixBassSwap", "  Bass swap", "Hand the low end over at the drop", live));
-        mixing.push(b.toggle_if("autoMixFilters", "  Filter out", "Low-pass the outgoing song", live));
-        mixing.push(b.toggle_if("autoMixEchoOut", "  Echo out", "Cut clashing vocals with an echo", live));
-        if s.beat_model != BeatModel::Unavailable {
+}
+
+/// A setting's title and the line under it.
+fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
+    let (title, detail) = match name {
+        "crossfadeSec" => ("Crossfade", "Equal power; never between songs of one album in order"),
+        "autoMix" => ("AutoMix", "Beat-matched transitions planned per song pair"),
+        "autoMixBetterBeats" => {
             let state = match &s.beat_model {
                 BeatModel::Ready => "model ready".to_string(),
                 BeatModel::Downloading => "downloading".to_string(),
                 BeatModel::WaitingForWifi => "waiting for Wi-Fi".to_string(),
-                BeatModel::Failed { why } => format!("download failed: {}", crate::text::beat_failure(*why)),
-                _ => format!("{} MB model, fetched on first use", s.beat_model_mb),
+                BeatModel::Failed { why } => format!("download failed: {}", text::beat_failure(*why)),
+                _ => format!("{} MB model, fetched over Wi-Fi on first use", s.beat_model_mb),
             };
-            mixing.push(b.toggle_if("autoMixBetterBeats", "  Neural beat tracking", &format!("Beat This! ({state})"), live));
+            return ("Neural beat tracking".into(), format!("Beat This! ({state})"));
         }
-    }
-    mixing.push(b.toggle_if("crossfadeKeepAlbums", "Gapless albums", "Never mix songs of the same album", live));
-    mixing.push(b.choice("fadeMs", "Fade on play/pause", true, |v| off_or(v, |v| format!("{v} ms"))));
-
-    let tempo = vec![
-        b.choice("speed", "Speed", true, |v| format!("{v}×")),
-        b.choice("pitch", "Pitch", true, |v| format!("{v}×")),
-        b.toggle_if("skipSilence", "Skip silence", "Shorten quiet gaps", live),
-    ];
-    let output = vec![
-        b.toggle("hiRes", "High quality output", "Float samples to the device; 24-bit files kept whole, effects in float"),
-        b.named("maxRate", "Highest sample rate", &["each song's own", "48 kHz", "96 kHz", "192 kHz"]),
-    ];
-    vec![section("Equalizer", eq), section("Effects", effects(b)), section("Levelling", levelling), section("Transitions", mixing), section("Tempo", tempo), section("Output", output)]
+        "fadeMs" => ("Fade on play/pause", ""),
+        "previousAlwaysSkips" => ("Previous always skips", "Never restart the current song"),
+        "speed" => ("Speed", ""),
+        "pitch" => ("Pitch", ""),
+        "skipSilence" => ("Skip silence", if s.untouched { "Off while the output is bit-exact" } else { "Shorten quiet gaps" }),
+        "skipExplicit" => ("Skip explicit", "Songs the server tags explicit"),
+        "autoFill" => ("Autoplay", "Keep adding music when the queue runs out"),
+        "autoFillKind" => ("Add", ""),
+        "autoFillBasis" => ("Picked by", ""),
+        "autoFillRemote" => ("Include remote songs", "Not in the library yet; each one played is downloaded to it"),
+        "bridgeOffline" => ("Offline fallback", "Play downloads while the server is unreachable"),
+        "headphoneSound" => ("Headphone sound", "Natural: crossfeed, as speakers sound; wide: a bigger stage"),
+        "compressor" => ("Compressor", "Evens out loud and quiet passages"),
+        "compressorPreset" => ("For", ""),
+        "replayGain" => ("Volume leveling", "Songs play at one loudness; clipping is always prevented"),
+        "loudnessLevel" => ("Level", ""),
+        "volumeBoostDb" => ("Volume boost", ""),
+        "hiRes" => ("High quality output", "Float samples to the device; 24-bit files kept whole, effects in float"),
+        "maxRate" => ("Highest sample rate", ""),
+        "accent" => ("Accent color", ""),
+        "coverColors" => ("Colors from the cover", "Where the playing cover's colors are taken (with covers on)"),
+        "lyricsSweep" => ("Word fill", "Color words in as they are sung (word-timed lyrics)"),
+        "lyricsTranslation" => ("Translations", "When the server has them"),
+        "lyricsOnline" => ("Online lookups", "When the server has no timed lyrics; sends artist, title and album"),
+        "lyricsPreferWords" => ("Prefer word timing", "Keep asking past line-timed answers"),
+        "paxSenixKey" => ("PaxSenix key", "For Spotify and Musixmatch"),
+        "betterLyricsKey" => ("BetterLyrics key", "For songs it has not cached"),
+        "tasteModel" => ("Listening history", "Kept locally; feeds mixes and stats"),
+        "scrobble" => ("Scrobble", "Report plays to the server (half the song or 4 minutes)"),
+        "thirdPartyLookups" => ("Third-party lookups", "Lyrics services and the AutoEQ list; off, nothing leaves for anyone but your server"),
+        "remoteControl" => ("Remote control and jams", "Control playback on your other devices (C), or invite guests to a jam. Uses your network directly or the octo-fiesta relay"),
+        "wifi" => ("Streaming quality", ""),
+        "download" => ("Download quality", ""),
+        "cacheMb" => ("Stream cache limit", ""),
+        other => (other, ""),
+    };
+    (title.to_string(), detail.into())
 }
 
-/// The effects section: boosts, virtualizer, compressor, loudness and noise gate.
-fn effects(b: &Build) -> Vec<Row> {
-    let p = b.p;
-    let slider = |name: &str, label: String, value: f32, (min, max): (f32, f32), level: EqLevel| Row::Slider { name: name.into(), label, value, min, max, centred: false, level: Some(level) };
-    let db_or_off = |v: f32| if v > 0.0 { format!("+{v:.1} dB") } else { "off".into() };
-    let mut rows = vec![
-        slider("bassBoostDb", format!("Bass boost {}", db_or_off(p.bass_boost_db)), p.bass_boost_db, (0.0, 12.0), EqLevel::BassBoost),
-        slider(
-            "virtualizer",
-            format!("Virtualizer {}", if p.virtualizer > 0.0 { format!("{:.0} %", p.virtualizer * 100.0) } else { "off".into() }),
-            p.virtualizer,
-            (0.0, 1.0),
-            EqLevel::Virtualizer,
-        ),
-        slider("volumeBoostDb", format!("Volume boost {}", db_or_off(p.volume_boost_db)), p.volume_boost_db, (0.0, 12.0), EqLevel::VolumeBoost),
-        Row::Note { text: "Boosts bring the limiter with them, so nothing clips.".into() },
-        b.toggle("compressor", "Compressor", "Evens out loud and quiet passages"),
-    ];
-    if p.compressor {
-        rows.push(b.choice("compressorPreset", "  Preset", true, |v| match v {
-            "GENTLE" => "gentle".into(),
-            "BALANCED" => "balanced".into(),
-            "STRONG" => "strong".into(),
-            _ => "custom".into(),
-        }));
-        rows.extend([
-            slider("compThresholdDb", format!("  Threshold {:.1} dB", p.comp_threshold_db), p.comp_threshold_db, (-60.0, 0.0), EqLevel::CompThreshold),
-            slider("compRatio", format!("  Ratio {:.1}:1", p.comp_ratio), p.comp_ratio, (1.0, 20.0), EqLevel::CompRatio),
-            slider("compAttackMs", format!("  Attack {:.1} ms", p.comp_attack_ms), p.comp_attack_ms, (0.1, 200.0), EqLevel::CompAttack),
-            slider("compReleaseMs", format!("  Release {:.0} ms", p.comp_release_ms), p.comp_release_ms, (10.0, 2000.0), EqLevel::CompRelease),
-            slider("compMakeupDb", format!("  Make-up +{:.1} dB", p.comp_makeup_db), p.comp_makeup_db, (0.0, 24.0), EqLevel::CompMakeup),
-            slider("compKneeDb", format!("  Knee {:.1} dB", p.comp_knee_db), p.comp_knee_db, (0.0, 24.0), EqLevel::CompKnee),
-        ]);
+/// A setting value in words.
+fn option_words(name: &str, v: &str) -> String {
+    let off_or = |v: &str, words: &dyn Fn(&str) -> String| if v == "0" { "off".to_string() } else { words(v) };
+    match (name, v) {
+        ("crossfadeSec", v) => off_or(v, &|v| format!("{v} s")),
+        ("fadeMs", v) => off_or(v, &|v| format!("{v} ms")),
+        ("speed" | "pitch", v) => format!("{v}×"),
+        ("autoFillKind", "SONGS") => "songs".into(),
+        ("autoFillKind", "ALBUMS") => "albums".into(),
+        ("autoFillBasis", "SIMILAR") => "similarity".into(),
+        ("autoFillBasis", "ARTIST") => "artist".into(),
+        ("autoFillBasis", "GENRE") => "genre".into(),
+        ("autoFillBasis", "ERA") => "era".into(),
+        ("headphoneSound", "OFF") | ("replayGain", "OFF") | ("coverColors", "OFF") => "off".into(),
+        ("headphoneSound", "NATURAL") => "natural".into(),
+        ("headphoneSound", "WIDE") => "wide".into(),
+        ("compressorPreset", "LIGHT") => "light".into(),
+        ("compressorPreset", "CAR") => "the car".into(),
+        ("compressorPreset", "NIGHT") => "the night".into(),
+        ("replayGain", "TRACK") => "per song".into(),
+        ("replayGain", "ALBUM") => "per album".into(),
+        ("replayGain", "AUTO") => "automatic".into(),
+        ("loudnessLevel", "QUIET") => "quiet (−23 LUFS)".into(),
+        ("loudnessLevel", "NORMAL") => "normal (−18 LUFS)".into(),
+        ("loudnessLevel", "LOUD") => "loud (−14 LUFS)".into(),
+        ("maxRate", "AUTO") => "each song's own".into(),
+        ("maxRate", "KHZ48") => "48 kHz".into(),
+        ("maxRate", "KHZ96") => "96 kHz".into(),
+        ("maxRate", "KHZ192") => "192 kHz".into(),
+        ("coverColors", "EVERYWHERE") => "everywhere".into(),
+        ("coverColors", "PAGES_ONLY") => "pages only".into(),
+        ("coverColors", "PLAYER_ONLY") => "player only".into(),
+        ("wifi" | "download", v) => quality(v),
+        ("cacheMb", v) => match v.parse::<i32>() {
+            Ok(mb) if mb % 1024 == 0 => format!("{} GB", mb / 1024),
+            _ => format!("{v} MB"),
+        },
+        (_, v) => v.to_string(),
     }
-    rows.push(b.toggle("loudness", "Loudness compensation", "Turned down, the bass comes up as the ear needs (ISO 226); follows this client's volume"));
-    if p.loudness {
-        rows.push(b.choice("loudnessRefPhon", "  Balanced at", true, |v| format!("{v} phon")));
-    }
-    rows.push(b.toggle("expander", "Noise gate", "A downward expander: hiss and hum go further down in quiet parts"));
-    if p.expander {
-        rows.extend([
-            slider("expThresholdDb", format!("  Threshold {:.1} dB", p.exp_threshold_db), p.exp_threshold_db, (-90.0, -10.0), EqLevel::ExpThreshold),
-            slider("expRatio", format!("  Ratio 1:{:.1}", p.exp_ratio), p.exp_ratio, (1.0, 20.0), EqLevel::ExpRatio),
-            slider("expAttackMs", format!("  Attack {:.1} ms", p.exp_attack_ms), p.exp_attack_ms, (0.1, 100.0), EqLevel::ExpAttack),
-            slider("expReleaseMs", format!("  Release {:.0} ms", p.exp_release_ms), p.exp_release_ms, (10.0, 2000.0), EqLevel::ExpRelease),
-        ]);
-    }
-    rows
 }
 
-fn playback(b: &Build, f: &Facts) -> Vec<Section> {
-    let p = b.p;
-    let mut queue = vec![
-        b.toggle("previousAlwaysSkips", "Previous always skips", "Never restart the current song"),
-        b.toggle("skipExplicit", "Skip explicit", "Songs the server tags explicit"),
-        b.toggle("autoFill", "Autoplay", "Keep adding music when the queue runs out"),
-    ];
-    if p.auto_fill {
-        queue.push(b.named("autoFillKind", "  Add", &["songs", "albums"]));
-        queue.push(b.named("autoFillBasis", "  Picked by", &["similarity", "artist", "genre", "era"]));
-        queue.push(b.toggle("autoFillRemote", "  Include remote songs", "Not in the library yet; each one played is downloaded to it"));
-    }
-    let errors = vec![
-        b.toggle("skipOnError", "Skip unplayable songs", "Up to three in a row"),
-        b.toggle("bridgeOffline", "Offline fallback", "Play downloads while the server is unreachable"),
-    ];
-    let analysis = vec![action("Measured songs", format!("{} songs with tempo and beats", f.analysed), "Forget", f.analysed > 0, Chore::MeasureAgain)];
-    vec![section("Queue", queue), section("Errors", errors), section("Analysis", analysis)]
-}
-
-fn library(b: &Build, f: &Facts) -> Vec<Section> {
-    let (songs, albums, artists) = f.indexed;
-    let index = vec![action("Offline index", format!("{songs} songs, {albums} albums, {artists} artists"), "Update", true, Chore::SyncLibrary)];
-    let mut history = vec![
-        b.toggle("tasteModel", "Listening history", "Kept locally; feeds mixes and stats"),
-        b.toggle("scrobble", "Scrobble", "Report plays to the server"),
-    ];
-    if b.p.scrobble {
-        history.push(b.choice("scrobblePercent", "  Scrobble at", true, |v| format!("{v} %")));
-    }
-    let online = vec![b.toggle("thirdPartyLookups", "Third-party lookups", "Lyrics services and the AutoEQ list; off, nothing leaves for anyone but your server")];
-    let devices = vec![
-        b.toggle("remoteControl", "Remote control and jams", "Control playback on your other devices (C), or invite guests to a jam. Uses your network directly or the octo-fiesta relay"),
-        Row::Button { title: text::JAM_JOIN.into(), action: Act::JoinJam },
-    ];
-    vec![section("Index and search", index), section("History", history), section("Online", online), section("Other devices", devices)]
+/// The terminal's row for one of the core's, or None for one it does not draw.
+fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Option<Row> {
+    let indent = if r.depth > 0 { "  " } else { "" };
+    let enabled = r.enabled;
+    Some(match r.item {
+        RowItem::Setting { spec, value, .. } => {
+            let (title, detail) = setting_words(&spec.name, s);
+            let title = format!("{indent}{title}");
+            match spec.kind {
+                SettingKind::Switch => Row::Toggle { switch: Switch::Setting(spec.name), title, detail, on: value == "true", enabled },
+                SettingKind::Choice => {
+                    let options: Vec<(String, String)> = spec.options.iter().map(|v| (option_words(&spec.name, v), v.clone())).collect();
+                    let shown = options.iter().find(|o| o.1 == value).map_or_else(|| value.clone(), |o| o.0.clone());
+                    Row::Choice { target: Target::Setting(spec.name), title, options, shown, enabled }
+                }
+                SettingKind::Level => {
+                    let v: f32 = value.parse().unwrap_or(spec.min);
+                    let level = (spec.name == "volumeBoostDb").then_some(EqLevel::VolumeBoost);
+                    let label = format!("{title} {}", if v > 0.0 { format!("+{v:.1} dB") } else { "off".into() });
+                    Row::Slider { name: spec.name, label, value: v, min: spec.min, max: spec.max, centred: false, level }
+                }
+                SettingKind::Text => Row::Text { name: spec.name, title, detail, value, secret: true },
+                SettingKind::Colour => Row::Palette { name: spec.name, colours: spec.options.iter().filter_map(|c| c.parse().ok()).collect(), chosen: p.accent },
+            }
+        }
+        RowItem::Link { to: SettingsLink::Equalizer } => {
+            let status = if p.sound_bypass { "no processing" } else if s.untouched { "bypassed" } else if s.sound_chain_on { "on" } else { "off" };
+            Row::Link { title: "Equalizer, balance, limiter".into(), status: status.into(), action: Act::Equalizer }
+        }
+        RowItem::Link { to: SettingsLink::Downloads } => {
+            Row::Link { title: "Downloads".into(), status: format!("{} songs, {}", f.storage.download_songs, numbers::bytes(f.storage.downloads, POINT)), action: Act::Downloads }
+        }
+        RowItem::Link { .. } | RowItem::CompressionMeter => return None,
+        RowItem::Action { action } => {
+            let bytes = |b| numbers::bytes(b, POINT);
+            let (indexed_songs, albums, artists) = f.indexed;
+            let chore = |title: &str, detail: String, button: &str, chore| Row::Action { title: format!("{indent}{title}"), detail, button: button.into(), enabled, action: Act::Chore(chore) };
+            match action {
+                SettingsAction::MeasureAgain => chore("Measured songs", format!("{} songs with tempo and beats", f.analysed), "Forget", Chore::MeasureAgain),
+                SettingsAction::SyncLibrary => chore("Offline index", format!("{indexed_songs} songs, {albums} albums, {artists} artists"), "Update", Chore::SyncLibrary),
+                SettingsAction::DownloadLibrary => chore("Download everything", "Every indexed song".into(), "Download", Chore::DownloadLibrary),
+                SettingsAction::ClearStream => chore("Stream cache", bytes(f.storage.stream), "Clear", Chore::ClearStream),
+                SettingsAction::ClearCovers => chore("Cover cache", bytes(f.storage.covers), "Clear", Chore::ClearCovers),
+                SettingsAction::ClearLyrics => chore("Lyrics cache", format!("{} of lyrics found online", bytes(f.storage.lyrics)), "Clear", Chore::ClearLyrics),
+                SettingsAction::AddServer => Row::Button { title: "Add a server".into(), action: Act::AddServer },
+                SettingsAction::JoinJam => Row::Button { title: text::JAM_JOIN.into(), action: Act::JoinJam },
+                SettingsAction::AnalyseDownloads | SettingsAction::CheckUpdate => return None,
+            }
+        }
+        RowItem::Note { note } => Row::Note {
+            text: match note {
+                SettingsNote::HeldByDac => "Bit-exact output is on: no mixing, skipping or effects.",
+                SettingsNote::Boost => "The boost brings the limiter with it, so nothing clips.",
+                SettingsNote::LyricsSources => "Enter switches a source; ← → move it. The best-scored answer wins; order breaks near ties.",
+                SettingsNote::Dac => return None,
+            }
+            .into(),
+        },
+        RowItem::Stored => info("Database", numbers::bytes(f.storage.database, POINT)),
+        RowItem::Server { index } => {
+            let sv = p.servers.get(index as usize)?;
+            let active = sv.id == p.active_server_id;
+            let words = text::provider(sv.kind);
+            let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
+            let mut detail = if sv.url.is_empty() { who.to_string() } else { format!("{who} · {}", sv.url) };
+            if sv.wifi_only {
+                detail.push_str(" · Wi-Fi only");
+            }
+            let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
+            Row::Server { id: sv.id.clone(), label, detail, active }
+        }
+        RowItem::MusicFolder { index, on, tapped } => {
+            Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }
+        }
+        RowItem::LyricsSource { index } => {
+            let LyricsSource { id, on, .. } = s.lyrics_sources.get(index as usize)?;
+            let (title, detail) = service(id);
+            Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail: detail.into(), on: *on }
+        }
+    })
 }
 
 /// A lyrics service's name and description by its core id.
@@ -650,103 +650,12 @@ fn service(id: &str) -> (&'static str, &'static str) {
     }
 }
 
-fn lyrics(b: &Build) -> Vec<Section> {
-    let display = vec![
-        b.toggle("lyricsPrefetch", crate::text::LYRICS_PREFETCH, crate::text::LYRICS_PREFETCH_DETAIL),
-        b.toggle("lyricsSweep", "Word fill", "Color words in as they are sung (word-timed lyrics)"),
-        b.toggle("lyricsTranslation", "Translations", "When the server has them"),
-    ];
-    let online = b.on("lyricsOnline");
-    let mut lookup = vec![b.toggle("lyricsOnline", "Online lookups", "When the server has no timed lyrics; sends artist, title and album")];
-    if !online {
-        return vec![section("Display", display), section("Online", lookup)];
-    }
-    lookup.push(b.toggle("lyricsPreferWords", "Prefer word timing", "Keep asking past line-timed answers"));
-    let mut sources: Vec<Row> = b
-        .s
-        .lyrics_sources
-        .iter()
-        .map(|LyricsSource { id, on, .. }| {
-            let (title, detail) = service(id);
-            Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail: detail.into(), on: *on }
-        })
-        .collect();
-    sources.push(Row::Note { text: "Enter switches a source; ← → move it. The best-scored answer wins; order breaks near ties.".into() });
-    let keys = vec![
-        Row::Text { name: "paxSenixKey".into(), title: "PaxSenix key".into(), detail: "For Spotify and Musixmatch".into(), value: b.value("paxSenixKey"), secret: true },
-        Row::Text { name: "betterLyricsKey".into(), title: "BetterLyrics key".into(), detail: "For songs it has not cached".into(), value: b.value("betterLyricsKey"), secret: true },
-    ];
-    vec![section("Display", display), section("Online", lookup), section("Sources, in order", sources), section("Keys", keys)]
-}
-
-fn server(b: &Build, f: &Facts) -> Vec<Section> {
-    let p = b.p;
-    let mut accounts: Vec<Row> = p
-        .servers
-        .iter()
-        .map(|s| {
-            let active = s.id == p.active_server_id;
-            let words = crate::text::provider(s.kind);
-            let who = if s.user.is_empty() { words.no_user } else { s.user.as_str() };
-            let mut detail = if s.url.is_empty() { who.to_string() } else { format!("{who} · {}", s.url) };
-            if s.wifi_only {
-                detail.push_str(" · Wi-Fi only");
-            }
-            let label = Some(nori_core::settings::label(&s.name, &s.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
-            Row::Server { id: s.id.clone(), label, detail, active }
-        })
-        .collect();
-    if !f.rules.settings.contains(&nori_core::browse::SettingsPart::ServerOptions) {
-        return vec![section("Accounts", accounts)];
-    }
-    accounts.push(Row::Button { title: "Add a server".into(), action: Act::AddServer });
-    let mut out = vec![section("Accounts", accounts)];
-    if f.folders.len() > 1 {
-        let shown = p.active_server().map(|s| s.music_folder_ids.clone()).unwrap_or_default();
-        let switches = nori_core::settings::folder_switches(shown, f.folders.iter().map(|m| m.id.clone()).collect());
-        let rows = f.folders.iter().zip(switches).map(|(m, s)| Row::Toggle {
-            switch: Switch::Stores("musicFolders".into(), s.tapped),
-            title: m.name.clone(),
-            detail: String::new(),
-            on: s.on,
-            enabled: true,
-        });
-        out.push(section("Music folders", rows.collect()));
-    }
-    out
-}
-
 /// A stream quality value ("320:mp3") in words.
 fn quality(v: &str) -> String {
     match v.split_once(':') {
         Some((_, "")) | None => "original".into(),
         Some((rate, format)) => format!("{format} {rate}k"),
     }
-}
-
-fn storage(b: &Build, f: &Facts) -> Vec<Section> {
-    let s = &f.storage;
-    let bytes = |b| numbers::bytes(b, POINT);
-    let mut quality_rows = vec![b.choice("wifi", "Streaming quality", true, quality)];
-    if f.rules.settings.contains(&nori_core::browse::SettingsPart::Downloads) {
-        quality_rows.extend([
-            b.choice("download", "Download quality", true, quality),
-            b.choice("parallelDownloads", "Parallel downloads", true, |v| v.to_string()),
-            action("Download everything", "Every indexed song".into(), "Download", f.indexed.0 > 0, Chore::DownloadLibrary),
-            Row::Link { title: "Downloads".into(), status: format!("{} songs, {}", s.download_songs, bytes(s.downloads)), action: Act::Downloads },
-        ]);
-    }
-    let cache = vec![
-        b.choice("cacheMb", "Stream cache limit", true, |v| match v.parse::<i32>() {
-            Ok(mb) if mb % 1024 == 0 => format!("{} GB", mb / 1024),
-            _ => format!("{v} MB"),
-        }),
-        action("Stream cache", bytes(s.stream), "Clear", s.stream > 0, Chore::ClearStream),
-        action("Cover cache", bytes(s.covers), "Clear", s.covers > 0, Chore::ClearCovers),
-        action("Lyrics cache", format!("{} of lyrics found online", bytes(s.lyrics)), "Clear", s.lyrics > 0, Chore::ClearLyrics),
-        info("Database", bytes(s.database)),
-    ];
-    vec![section("Quality and downloads", quality_rows), section("Cache", cache)]
 }
 
 /// Version and credits.
@@ -839,17 +748,10 @@ pub enum EqRow {
     AddBand,
     Reset,
     Balance,
-    /// bs2b preset (Off, Default, Chu Moy, Jan Meier) or custom.
-    CrossfeedPreset,
-    Crossfeed,
-    CrossfeedCut,
     Mono,
     Limiter,
     Ceiling,
 }
-
-/// Crossfeed presets in stepping order.
-const CROSSFEED_PRESETS: [&str; 4] = ["OFF", "DEFAULT", "CHU_MOY", "JAN_MEIER"];
 
 /// The controls in ← → order.
 pub fn eq_rows(p: &StoredPrefs) -> Vec<EqRow> {
@@ -871,11 +773,7 @@ pub fn eq_rows(p: &StoredPrefs) -> Vec<EqRow> {
     } else {
         rows.extend((0..p.eq_bands.len()).map(EqRow::Band));
     }
-    rows.extend([EqRow::Balance, EqRow::CrossfeedPreset, EqRow::Crossfeed]);
-    if p.crossfeed_db > 0.0 {
-        rows.push(EqRow::CrossfeedCut);
-    }
-    rows.extend([EqRow::Mono, EqRow::Limiter]);
+    rows.extend([EqRow::Balance, EqRow::Mono, EqRow::Limiter]);
     if p.limiter {
         rows.push(EqRow::Ceiling);
     }
@@ -904,18 +802,6 @@ impl EqRow {
             EqRow::AddBand => ("Add a band".into(), "[ Add ]".into()),
             EqRow::Reset => ("Back to flat".into(), "[ Reset ]".into()),
             EqRow::Balance => ("Balance".into(), text::balance(p.balance)),
-            EqRow::CrossfeedPreset => {
-                let name = match nori_core::settings::crossfeed_preset(p.crossfeed_hz, p.crossfeed_db) {
-                    _ if p.crossfeed_db <= 0.0 => "Off",
-                    Some(nori_core::dsp::CrossfeedPreset::Default) => "Default (bs2b)",
-                    Some(nori_core::dsp::CrossfeedPreset::ChuMoy) => "Chu Moy",
-                    Some(nori_core::dsp::CrossfeedPreset::JanMeier) => "Jan Meier",
-                    None => "Custom",
-                };
-                ("Crossfeed".into(), format!("‹ {name} ›"))
-            }
-            EqRow::Crossfeed => ("  Level".into(), if p.crossfeed_db > 0.0 { format!("{} dB", numbers::signed_db(p.crossfeed_db, POINT)) } else { "Off".into() }),
-            EqRow::CrossfeedCut => ("  Cutoff".into(), format!("{} Hz", numbers::hz(p.crossfeed_hz, POINT))),
             EqRow::Mono => ("Mono".into(), on(p.mono)),
             EqRow::Limiter => ("Limiter".into(), on(p.limiter)),
             EqRow::Ceiling => ("Limiter ceiling".into(), text::ceiling(p.limiter_threshold_db)),
@@ -965,8 +851,6 @@ impl EqRow {
             EqRow::Reset => "↺ Flat".into(),
             EqRow::Mode => (if p.eq_mode == EqMode::Graphic { "Graphic ‹›" } else { "Parametric ‹›" }).into(),
             EqRow::Layout => format!("{} bands ‹›", p.eq_graphic.len()),
-            EqRow::Crossfeed => format!("Crossfeed level {value}"),
-            EqRow::CrossfeedCut => format!("Crossfeed cutoff {value}"),
             _ => format!("{} {}", title.trim(), value),
         }
     }
@@ -1005,20 +889,6 @@ impl EqRow {
                 (gain_db != b.gain_db).then_some(Cmd::Band(i as u32, SoundBand { gain_db, ..b }))
             }
             EqRow::Balance => level(EqLevel::Balance, p.balance, (p.balance + d / 10.0).clamp(r.balance.min, r.balance.max)),
-            EqRow::Crossfeed => level(EqLevel::Crossfeed, p.crossfeed_db, (p.crossfeed_db.max(if up { 0.5 } else { 0.0 }) + d).clamp(r.crossfeed.min, r.crossfeed.max)),
-            EqRow::CrossfeedCut => level(EqLevel::CrossfeedCut, p.crossfeed_hz, (p.crossfeed_hz + d * 100.0).clamp(r.crossfeed_cut.min, r.crossfeed_cut.max)),
-            EqRow::CrossfeedPreset => {
-                // From custom, up goes to the last preset and down to the first.
-                let now = nori_core::settings::crossfeed_preset(p.crossfeed_hz, p.crossfeed_db);
-                let at = if p.crossfeed_db <= 0.0 { Some(0) } else { now.and_then(|c| nori_core::dsp::CrossfeedPreset::ALL.iter().position(|x| *x == c)).map(|i| i + 1) };
-                let to = match (at, up) {
-                    (Some(i), true) => (i + 1).min(CROSSFEED_PRESETS.len() - 1),
-                    (Some(i), false) => i.saturating_sub(1),
-                    (None, true) => CROSSFEED_PRESETS.len() - 1,
-                    (None, false) => 1,
-                };
-                (Some(to) != at).then(|| Cmd::Setting("crossfeedPreset".into(), CROSSFEED_PRESETS[to].into()))
-            }
             EqRow::Ceiling => level(EqLevel::Limiter, p.limiter_threshold_db, (p.limiter_threshold_db + d).clamp(r.limiter.min, r.limiter.max)),
             EqRow::Presets | EqRow::AddBand | EqRow::Reset => None,
         }
@@ -1047,7 +917,7 @@ mod tests {
     /// caches, but nothing of the account's or the host's server.
     #[test]
     fn a_guest_sees_only_this_computers_settings() {
-        let prefs = StoredPrefs::default();
+        let prefs = StoredPrefs { servers: vec![nori_core::settings::SavedServer { id: "a".into(), ..Default::default() }], active_server_id: "a".into(), ..StoredPrefs::default() };
         let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
         let titles = |rules: nori_core::browse::ProfileRules| -> Vec<String> {
             let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], rules, ..Facts::default() };
@@ -1066,11 +936,15 @@ mod tests {
     }
 
     fn every_row(prefs: &StoredPrefs) -> Vec<(&'static str, Row)> {
-        let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
         let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], ..Facts::default() };
+        every_row_with(prefs, &facts)
+    }
+
+    fn every_row_with(prefs: &StoredPrefs, facts: &Facts) -> Vec<(&'static str, Row)> {
+        let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
         GROUPS
             .iter()
-            .flat_map(|g| page(g.id, prefs, &state, &facts, &Own::default()).sections.into_iter().flat_map(move |s| s.rows.into_iter().map(move |r| (g.id, r))))
+            .flat_map(|g| page(g.id, prefs, &state, facts, &Own::default()).sections.into_iter().flat_map(move |s| s.rows.into_iter().map(move |r| (g.title, r))))
             .collect()
     }
 
@@ -1079,8 +953,8 @@ mod tests {
         let server = nori_core::settings::SavedServer { id: "a".into(), url: "https://a".into(), alt_url: "https://b".into(), ..Default::default() };
         StoredPrefs {
             auto_mix: true,
-            auto_mix_beat_match: true,
             auto_fill: true,
+            compressor: true,
             replay_gain: nori_core::settings::GainMode::Track,
             scrobble: true,
             lyrics_online: true,
@@ -1134,7 +1008,7 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("no {name}"))
         };
-        assert_eq!(shown("replayGain"), "off");
+        assert_eq!(shown("replayGain"), "automatic");
         assert_eq!(shown("wifi"), "original");
         assert_eq!(shown("speed"), "1×");
         assert_eq!(quality("320:mp3"), "mp3 320k");
@@ -1147,7 +1021,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        for phone in ["swipeLeft", "swipeRight", "tapAction", "offload", "bitPerfect", "motionArtwork", "amoled", "dynamicColor", "softSleeve", "lyricsKeepScreenOn", "uiScale", "soundBypass", "coversAhead", "altMaxBitRate", "liveSearchDelayMs"] {
+        for phone in ["swipeLeft", "swipeRight", "tapAction", "offload", "bitPerfect", "motionArtwork", "amoled", "dynamicColor", "lyricsKeepScreenOn", "motion", "soundBypass", "altMaxBitRate"] {
             assert!(!names.iter().any(|n| n == phone), "{phone} offered in a terminal");
         }
     }
@@ -1158,7 +1032,7 @@ mod tests {
         let prefs = StoredPrefs { servers: vec![server], active_server_id: "a".into(), ..StoredPrefs::default() };
         let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
         let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], ..Facts::default() };
-        let page = page("server", &prefs, &state, &facts, &Own::default());
+        let page = page(Gid::Core(SettingsPage::Servers), &prefs, &state, &facts, &Own::default());
         let folders = page.sections.iter().find(|s| s.title == "Music folders").unwrap();
         let switches: Vec<_> = folders.rows.iter().map(|r| match r {
             Row::Toggle { switch: Switch::Stores(name, value), title, on, .. } => (name.as_str(), value.as_str(), title.as_str(), *on),
@@ -1210,8 +1084,6 @@ mod tests {
         assert!(rows.contains(&EqRow::Layout));
         let parametric = eq_rows(&StoredPrefs { eq_mode: EqMode::Parametric, ..StoredPrefs::default() });
         assert!(parametric.contains(&EqRow::Mode) && !parametric.contains(&EqRow::Layout));
-        let fx = effects(&Build { p: &StoredPrefs { compressor: true, ..StoredPrefs::default() }, s: &settings_model::state(&StoredPrefs::default(), settings_model::Output::default(), &crate::backend::app().settings.model) });
-        assert!(fx.iter().any(|r| matches!(r, Row::Slider { level: Some(EqLevel::CompRatio), .. })));
 
         // Parametric bands step in range.
         let prefs = StoredPrefs { eq_mode: EqMode::Parametric, eq_bands: nori_core::settings::graphic(), ..StoredPrefs::default() };
@@ -1223,24 +1095,6 @@ mod tests {
         assert_eq!(EqRow::Band(0).step(&loud, true), None, "held at the top of the core's range: nothing asked");
         let Some(Cmd::Band(_, b)) = EqRow::Band(0).step(&loud, false) else { panic!() };
         assert_eq!(b.gain_db, 11.5);
-        let flat = StoredPrefs { crossfeed_db: 0.0, ..prefs.clone() };
-        assert_eq!(EqRow::Crossfeed.step(&flat, false), None, "crossfeed off stays off");
-
-        // Crossfeed presets and cutoff.
-        let off = StoredPrefs::default();
-        assert!(!eq_rows(&off).contains(&EqRow::CrossfeedCut), "no cutoff to set with crossfeed off");
-        assert_eq!(EqRow::CrossfeedPreset.words(&off).1, "‹ Off ›");
-        assert!(matches!(EqRow::CrossfeedPreset.step(&off, true), Some(Cmd::Setting(n, v)) if n == "crossfeedPreset" && v == "DEFAULT"));
-        assert_eq!(EqRow::CrossfeedPreset.step(&off, false), None);
-        let meier = StoredPrefs { crossfeed_db: 9.5, crossfeed_hz: 650.0, ..off.clone() };
-        assert!(eq_rows(&meier).contains(&EqRow::CrossfeedCut));
-        assert_eq!(EqRow::CrossfeedPreset.words(&meier).1, "‹ Jan Meier ›");
-        assert_eq!(EqRow::CrossfeedPreset.step(&meier, true), None, "the last one");
-        assert_eq!(EqRow::CrossfeedCut.words(&meier).1, "650 Hz");
-        assert!(matches!(EqRow::CrossfeedCut.step(&meier, true), Some(Cmd::Level(EqLevel::CrossfeedCut, v)) if v == 700.0));
-        let custom = StoredPrefs { crossfeed_db: 5.0, ..off };
-        assert_eq!(EqRow::CrossfeedPreset.words(&custom).1, "‹ Custom ›");
-        assert!(matches!(EqRow::CrossfeedPreset.step(&custom, false), Some(Cmd::Setting(_, v)) if v == "DEFAULT"));
     }
 
 }

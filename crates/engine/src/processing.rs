@@ -82,7 +82,7 @@ fn needs_of(core: &Core, id: &str, measuring: bool) -> (Needs, Saved) {
         measuring,
         analysed: analysable && core.analysis_missing(one.clone()).is_ok_and(|m| m.is_empty()),
         model_on: model_on(core),
-        beats_wanted: core.transfers().with(|t| t.wants_beats(id)) && core.session.settings.with_prefs(|p| p.download_beats != nori_core::settings::DownloadBeats::Never).unwrap_or(false),
+        beats_wanted: core.transfers().with(|t| t.wants_beats(id)),
         beats_done: analysable && core.analysis_neural_missing(one).is_ok_and(|m| m.is_empty()),
     };
     (transfers::needs(saved), saved)

@@ -318,7 +318,6 @@ fn worded(s: Said) -> Msg {
             Note::NothingToPutBack => note("Nothing to put back".into(), false),
             Note::Downloading(n) => note(format!("Downloading {n} songs"), false),
             Note::DownloadFailed(e) => note(format!("Could not download: {e}"), true),
-            Note::Starred(on) => note((if on { "Added to favorites" } else { "Removed from favorites" }).into(), false),
             Note::StarFailed(e) => note(format!("Could not change the favorite: {}", net_error(&e)), true),
             Note::Indexing => note("Filling the offline index…".into(), false),
             Note::Indexed(t) => note(format!("Offline index: {} songs, {} albums, {} artists", t.songs, t.albums, t.artists), false),

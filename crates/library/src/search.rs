@@ -141,8 +141,17 @@ impl Session {
 /// Shorter than this, a query is a keystroke on the way to one, not one worth remembering.
 pub const REMEMBER_MIN_UTF16: usize = 2;
 
-/// Live search's wait after a keystroke: none for a blank field, else `delay_ms`. Twin of Android's
-/// `SearchViewModel` debounce.
+/// How long live search waits after a keystroke before asking the server, ms.
+pub const LIVE_SEARCH_DELAY_MS: i64 = 250;
+
+/// [`LIVE_SEARCH_DELAY_MS`], for the platform.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn live_search_delay_ms() -> i64 {
+    LIVE_SEARCH_DELAY_MS
+}
+
+/// Live search's wait after a keystroke: none for a blank field, else `delay_ms`
+/// ([`LIVE_SEARCH_DELAY_MS`]). Twin of Android's `SearchViewModel` debounce.
 pub fn live_delay_ms(query: &str, delay_ms: i64) -> i64 {
     if query.chars().all(kotlin_whitespace) { 0 } else { delay_ms }
 }

@@ -340,8 +340,6 @@ pub const NOTE_SONGS_FAILED: i32 = 4;
 pub const NOTE_NOTHING_TO_PUT_BACK: i32 = 5;
 pub const NOTE_DOWNLOADING: i32 = 6;
 pub const NOTE_DOWNLOAD_FAILED: i32 = 7;
-pub const NOTE_STARRED: i32 = 8;
-pub const NOTE_UNSTARRED: i32 = 9;
 pub const NOTE_STAR_FAILED: i32 = 10;
 pub const NOTE_INDEXING: i32 = 11;
 pub const NOTE_INDEXED: i32 = 12;
@@ -361,8 +359,6 @@ fn note(n: &Note) -> (i32, i32, String) {
         Note::NothingToPutBack => (NOTE_NOTHING_TO_PUT_BACK, 0, String::new()),
         Note::Downloading(n) => (NOTE_DOWNLOADING, count(*n), String::new()),
         Note::DownloadFailed(e) => (NOTE_DOWNLOAD_FAILED, 0, e.to_string()),
-        Note::Starred(true) => (NOTE_STARRED, 0, String::new()),
-        Note::Starred(false) => (NOTE_UNSTARRED, 0, String::new()),
         Note::StarFailed(e) => (NOTE_STAR_FAILED, 0, e.to_string()),
         Note::Indexing => (NOTE_INDEXING, 0, String::new()),
         Note::Indexed(t) => (NOTE_INDEXED, count(t.songs as usize), String::new()),
@@ -409,8 +405,7 @@ pub extern "C" fn nori_ios_set_volume(fraction: f32) {
     with_session(|s| s.set_volume(fraction));
 }
 
-/// The system volume moved (0 to 1): loudness compensation follows it, and the account's other devices
-/// see it.
+/// The system volume moved (0 to 1): the account's other devices see it.
 #[no_mangle]
 pub extern "C" fn nori_ios_volume(fraction: f32) {
     if with_session(|s| s.volume_followed(fraction)).is_none() {
@@ -744,6 +739,12 @@ pub extern "C" fn nori_ios_memory_warning() {
 #[no_mangle]
 pub extern "C" fn nori_ios_is_open() -> i32 {
     i32::from(held().is_some())
+}
+
+/// How long the search waits after a keystroke before asking the server, ms.
+#[no_mangle]
+pub extern "C" fn nori_ios_search_delay_ms() -> i32 {
+    nori_core::search::LIVE_SEARCH_DELAY_MS as i32
 }
 
 #[cfg(test)]
@@ -1332,7 +1333,6 @@ mod tests {
                 expect(at, super::REPORT_STARRED, |_| true);
                 let h = super::held().unwrap();
                 assert_eq!(h.session.lock().unwrap().core.starred(kind, "a", !on), on);
-                assert!(!SINK.get().unwrap().got.lock().unwrap()[at..].iter().any(|r| r.kind == super::REPORT_NOTE && matches!(r.flag, super::NOTE_STARRED | super::NOTE_UNSTARRED)), "receiving favorites does not show a toast");
             }
         }
 

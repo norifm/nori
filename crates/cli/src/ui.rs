@@ -998,7 +998,6 @@ fn lit(row: &EqRow, p: &nori_core::settings::StoredPrefs) -> bool {
         EqRow::AutoPreamp => p.eq_preamp_db.is_none(),
         EqRow::Mono => p.mono,
         EqRow::Limiter => p.limiter,
-        EqRow::CrossfeedPreset | EqRow::Crossfeed => p.crossfeed_db > 0.0,
         _ => false,
     }
 }

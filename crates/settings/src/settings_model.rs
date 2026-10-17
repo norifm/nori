@@ -42,7 +42,7 @@ pub struct SettingSpec {
 fn spec(name: &str, k: &K) -> SettingSpec {
     let (kind, options, (min, max)): (SettingKind, Vec<String>, (f32, f32)) = match k {
         K::Switch => (SettingKind::Switch, vec!["false".into(), "true".into()], (0.0, 0.0)),
-        K::Choice(o) | K::Named(o) => (SettingKind::Choice, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
+        K::Choice(o) => (SettingKind::Choice, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Level(lo, hi) => (SettingKind::Level, Vec::new(), (*lo, *hi)),
         K::Text => (SettingKind::Text, Vec::new(), (0.0, 0.0)),
         K::Colour => (SettingKind::Colour, nori_look::theme::ACCENTS.iter().map(|c| (*c as i64).to_string()).collect(), (0.0, 0.0)),

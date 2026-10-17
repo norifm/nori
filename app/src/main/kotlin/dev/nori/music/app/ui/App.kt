@@ -205,7 +205,7 @@ private val tabs = listOf(
 fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    androidx.compose.runtime.SideEffect { AppMotion.force = prefs.ignoreSystemMotion; AppMotion.reduce = prefs.reduceMotion || prefs.einkScreen }
+    androidx.compose.runtime.SideEffect { AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL }
     NoriTheme(prefs) {
         // Sign-in fades to the app: the screens are different enough that a direction would invent a
         // relationship they do not have.
@@ -305,7 +305,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         dev.nori.music.app.TestDriver(controller, nav, sheet, settings, actions, player) { devicesOpen = true }
 
         // Whether the beat model also reads what is being downloaded, when the settings say to ask.
-        BeatsQuestion(actions)
 
         // The perf build's recorder starts a new stretch when the player goes up or away. See PerfHooks.
         dev.nori.music.app.PerfHooks.recorder?.let { r ->
@@ -349,7 +348,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LocalMessages provides actions::tell,
             LocalRules provides rules,
             LocalAsked provides asked,
-            LocalEinkScreen provides prefs.einkScreen,
+            LocalEinkScreen provides (prefs.motion == dev.nori.music.ffi.settings.Motion.EINK),
             LocalHiddenBars provides hiddenBars,
         ) {
             val route = controller.currentBackStackEntryAsState().value?.destination?.route

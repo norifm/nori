@@ -27,19 +27,11 @@ fun NoriTheme(prefs: StoredPrefs, content: @Composable () -> Unit) {
     // Light, dark or the phone's: the core's rule (nori_look::theme::is_dark), the same for every screen.
     val dark = remember(prefs.theme, system) { dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system) }
     val scheme = remember(dark, prefs.dynamicColor, prefs.accent, prefs.amoled) { schemeOf(context, prefs, dark) }
-    val systemDensity = androidx.compose.ui.platform.LocalDensity.current
-    // The shorter side, not the width: the same in both orientations, so text keeps its size on a turn.
-    val widthDp = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp
-    val scale = remember(prefs.uiScale, widthDp) { uiScale(prefs.uiScale, widthDp) }
-    // The whole app's density, scaled once here: dp and sp both follow it, so every size keeps its
-    // proportion to the screen. The system's font scale is left as it is - that one is the reader's.
-    val density = remember(systemDensity, scale) {
-        if (scale == 1f) systemDensity else androidx.compose.ui.unit.Density(systemDensity.density * scale, systemDensity.fontScale)
-    }
     // Everything dressed in the theme's own colours - the plates behind the buttons, the chrome, the
     // status bar - worked out once per scheme in Rust (nori_look::dress) and only looked up after.
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
-    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides density, LocalLook provides look) {
+    // Sizes follow Android's own display size and font scale.
+    androidx.compose.runtime.CompositionLocalProvider(LocalLook provides look) {
         MaterialTheme(colorScheme = scheme, typography = NoriTypography, content = content)
     }
 }
@@ -65,22 +57,6 @@ fun plainLook(scheme: ColorScheme): IntArray = dev.nori.music.look.CoverLook.pla
         scheme.surfaceContainerHigh.toArgb(), scheme.secondaryContainer.toArgb(), scheme.outlineVariant.toArgb(),
     ),
 )
-
-/** Every size in the app was measured as a share of the width of a phone this many dp wide. */
-private const val REFERENCE_WIDTH_DP = 411f
-
-/**
- * How big the interface is drawn. A setting above 0 is a fixed factor. 0 is automatic: laid out as if
- * the screen were at least [REFERENCE_WIDTH_DP] wide, so a phone set to a large display size (one
- * measured at 358 dp draws everything a seventh larger) keeps the proportions; it only ever shrinks,
- * never below three quarters, and never enlarges past what the system asked for. A phone's rule, about
- * Android's display size: a desktop window has no such setting to undo.
- */
-fun uiScale(setting: Float, screenWidthDp: Int): Float = when {
-    setting > 0f -> setting
-    screenWidthDp <= 0 -> 1f
-    else -> (screenWidthDp / REFERENCE_WIDTH_DP).coerceIn(0.75f, 1f)
-}
 
 /** A light or dark scheme from one colour: tones of the same hue, worked out in Rust (`nori_look::theme::seeded`). */
 private fun seeded(seed: Color, dark: Boolean): ColorScheme {

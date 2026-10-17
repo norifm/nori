@@ -13,7 +13,12 @@ system's media controls, notification and lock screen.
 
 - **Install**: see [Install](../start/install.md#android).
 - **Look**: pages take their color from the album cover, with light, dark or system theme, the
-  wallpaper's colors or an accent of your own, and true black for OLED screens.
+  wallpaper's colors or an accent of your own, and true black for OLED screens. From 0.6.3, **Colors
+  from the cover** picks where the cover's colors are worn: everywhere, pages only (the player stays
+  black), the player only, or nowhere. Text and buttons follow Android's own display size.
+- **Motion** (from 0.6.3): Full, Reduced (short fades instead of slides and zooms) or E-ink (nothing
+  moves, the player redraws only when something changes). nori's choice holds whatever Android's own
+  animation setting says; the playing bars move in every mode but E-ink.
 - **Battery**: music plays from a deep buffer, or through the phone's audio chip when nothing needs the
   samples. See [Offload and processing](../sound/offload.md).
 - **Updates**: the app checks GitHub for a newer release at most once a day and offers to install it.

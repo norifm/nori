@@ -1,9 +1,9 @@
 //! The equalizer page, as Android's EqualizerScreen: mode, bands and curve, presets, pre-amp, balance,
-//! mono, limiter and crossfeed. All numbers come from the core.
+//! mono and limiter. All numbers come from the core.
 
 use nori_core::dsp::{effective_preamp_db, eq_presets, graphic_bands, graphic_response};
 use nori_core::numbers::{self, POINT};
-use nori_core::settings::{crossfeed_preset_of, EqMode, StoredPrefs, EQ_RANGES};
+use nori_core::settings::{EqMode, StoredPrefs, EQ_RANGES};
 use nori_core::{EqKind, PresetKind};
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -112,24 +112,9 @@ pub fn fill(ui: &AppWindow, p: &StoredPrefs) {
     ui.set_eq_limiter(p.limiter);
     ui.set_eq_ceiling(p.limiter_threshold_db);
     ui.set_eq_ceiling_label(format!("Ceiling {} dB", signed(p.limiter_threshold_db)).into());
-    let preset = crossfeed_preset_of(p.clone());
-    ui.set_eq_crossfeed_preset(preset.as_str().into());
-    ui.set_eq_crossfeed(p.crossfeed_db);
-    ui.set_eq_crossfeed_label(
-        if p.crossfeed_db <= 0.0 {
-            "Off".to_string()
-        } else if preset.is_empty() {
-            format!("Custom, {} dB: each ear also hears a little of the other channel, like loudspeakers. For headphones.", signed(p.crossfeed_db))
-        } else {
-            format!("{} dB: each ear also hears a little of the other channel, like loudspeakers. For headphones.", signed(p.crossfeed_db))
-        }
-        .into(),
-    );
-    ui.set_eq_cut(p.crossfeed_hz);
-    ui.set_eq_cut_label(format!("Cutoff {} Hz: how high up the other ear hears", numbers::fixed(p.crossfeed_hz as f64, 0, false, POINT)).into());
     ui.set_eq_bypass(if p.sound_bypass { "No processing on this output, so nothing here changes the sound. Turn it off in Settings, under Sound." } else { "" }.into());
     let r = EQ_RANGES;
-    ui.set_eq_ranges(ModelRc::new(VecModel::from(vec![r.gain.min, r.gain.max, r.preamp.min, r.preamp.max, r.balance.min, r.balance.max, r.limiter.min, r.limiter.max, r.crossfeed.min, r.crossfeed.max, r.crossfeed_cut.min, r.crossfeed_cut.max])));
+    ui.set_eq_ranges(ModelRc::new(VecModel::from(vec![r.gain.min, r.gain.max, r.preamp.min, r.preamp.max, r.balance.min, r.balance.max, r.limiter.min, r.limiter.max])));
 }
 
 #[cfg(test)]

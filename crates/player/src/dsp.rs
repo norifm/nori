@@ -1,11 +1,11 @@
 //! The sample-domain chain, run on the playback thread for every buffer without allocating.
 //!
-//! Order: pre-amp, equalizer, bass boost, loudness (tone first, so later level decisions see it);
-//! expander, compressor; mono (before virtualizer and crossfeed, which model one speaker pair);
+//! Order: pre-amp, equalizer (tone first, so later level decisions see it); compressor; mono (before
+//! virtualizer and crossfeed, which model one speaker pair);
 //! virtualizer, crossfeed; balance (after crossfeed, which would otherwise leak the louder side back);
 //! volume boost; limiter last, so it sees every boost.
 
-use crate::compressor::{Compressor, CompressorSettings, Expander, ExpanderSettings};
+use crate::compressor::{Compressor, CompressorSettings};
 use crate::dither::Dither;
 use crate::spatial::Virtualizer;
 use crate::types::{EqBand, EqKind, NamedPreset, PresetKind};
@@ -21,10 +21,9 @@ const CHAIN: usize = 4;
 const BALANCE_RANGE_DB: f64 = 24.0;
 /// Mono sum gain (-3 dB): uncorrelated material keeps its level; centred gains 3 dB for the limiter.
 const MONO_SUM: f64 = std::f64::consts::FRAC_1_SQRT_2;
-/// Bass boost low shelf: half-gain point and gentle slope (lifts bass, leaves voices).
-const BASS_HZ: f64 = 100.0;
-const BASS_SLOPE: f64 = 0.8;
-pub const BASS_BOOST_MAX_DB: f64 = 12.0;
+/// The bass boost preset's low shelf: half-gain point and gentle slope (lifts bass, leaves voices).
+const BASS_HZ: f32 = 100.0;
+const BASS_SLOPE: f32 = 0.8;
 pub const VOLUME_BOOST_MAX_DB: f64 = 12.0;
 /// Limiter soft knee width, centred on the threshold; below it the limiter is bit-exact.
 const KNEE_DB: f64 = 4.0;
@@ -230,42 +229,11 @@ pub(crate) fn band_db(rate: f64, band: &Band, freq: f64) -> f64 {
 }
 
 /// bs2b's cutoff and level limits.
-pub const CROSSFEED_CUT_HZ: (f64, f64) = (300.0, 2000.0);
-pub(crate) const CROSSFEED_DB: (f64, f64) = (1.0, 15.0);
-/// bs2b's default cutoff.
-pub(crate) const CROSSFEED_DEFAULT_HZ: f64 = 700.0;
-
-/// bs2b's standard settings (`BS2B_DEFAULT_CLEVEL`, `BS2B_CMOY_CLEVEL`, `BS2B_JMEIER_CLEVEL`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CrossfeedPreset {
-    /// 700 Hz, 4.5 dB.
-    Default,
-    /// 700 Hz, 6 dB.
-    ChuMoy,
-    /// 650 Hz, 9.5 dB.
-    JanMeier,
-}
-
-impl CrossfeedPreset {
-    pub const ALL: [CrossfeedPreset; 3] = [CrossfeedPreset::Default, CrossfeedPreset::ChuMoy, CrossfeedPreset::JanMeier];
-
-    /// (cutoff Hz, level dB).
-    pub fn settings(self) -> (f64, f64) {
-        match self {
-            CrossfeedPreset::Default => (700.0, 4.5),
-            CrossfeedPreset::ChuMoy => (700.0, 6.0),
-            CrossfeedPreset::JanMeier => (650.0, 9.5),
-        }
-    }
-
-    /// The preset matching these settings (within 1 Hz and 0.05 dB).
-    pub fn of(cut_hz: f64, level_db: f64) -> Option<CrossfeedPreset> {
-        CrossfeedPreset::ALL.into_iter().find(|p| {
-            let (c, l) = p.settings();
-            (c - cut_hz).abs() < 1.0 && (l - level_db).abs() < 0.05
-        })
-    }
-}
+/// bs2b's level limits, dB.
+const CROSSFEED_DB: (f64, f64) = (1.0, 15.0);
+/// bs2b's default setting (`BS2B_DEFAULT_CLEVEL`): 700 Hz, 4.5 dB, the crossfeed nori offers.
+const CROSSFEED_HZ: f64 = 700.0;
+pub const CROSSFEED_NATURAL_DB: f64 = 4.5;
 
 /// bs2b headphone crossfeed (Boris Mikhaylov): each ear gets the other channel low-passed at `cut_hz`,
 /// `level_db` down in the bass, with a compensating high shelf on the direct path. Stereo only.
@@ -277,17 +245,15 @@ struct Crossfeed {
     a1_hi: f64,
     b1_hi: f64,
     gain: f64,
-    /// Kept so a new cutoff can reuse the level.
-    level_db: f64,
     lo: [f64; 2],
     hi: [f64; 2],
     last: [f64; 2],
 }
 
 impl Crossfeed {
-    fn new(rate: f64, level_db: f64, cut_hz: f64) -> Self {
-        let level_db = finite(level_db, 4.5).clamp(CROSSFEED_DB.0, CROSSFEED_DB.1);
-        let cut_hz = finite(cut_hz, CROSSFEED_DEFAULT_HZ).clamp(CROSSFEED_CUT_HZ.0, CROSSFEED_CUT_HZ.1).min(rate * 0.45);
+    fn new(rate: f64, level_db: f64) -> Self {
+        let level_db = finite(level_db, CROSSFEED_NATURAL_DB).clamp(CROSSFEED_DB.0, CROSSFEED_DB.1);
+        let cut_hz = CROSSFEED_HZ.min(rate * 0.45);
         let gb_lo = level_db * -5.0 / 6.0 - 3.0;
         let gb_hi = level_db / 6.0 - 3.0;
         let g_lo = 10f64.powf(gb_lo / 20.0);
@@ -302,7 +268,6 @@ impl Crossfeed {
             a1_hi: -x_hi,
             b1_hi: x_hi,
             gain: 1.0 / (1.0 - g_hi + g_lo),
-            level_db,
             ..Default::default()
         }
     }
@@ -495,21 +460,6 @@ impl Limiter {
     }
 }
 
-/// Loudness compensation (`contour::design`): up to two shelves and their pre-gain.
-#[derive(Clone, Copy)]
-struct Loud {
-    filters: [Biquad; 2],
-    count: usize,
-    pre: f64,
-    state: [[[f64; 2]; MAX_CHANNELS]; 2],
-}
-
-impl Loud {
-    fn same(&self, o: &Loud) -> bool {
-        self.filters[..self.count] == o.filters[..o.count] && self.pre == o.pre
-    }
-}
-
 /// Crossfade length from the old chain to the new after a settings change.
 const CHANGE_FADE_MS: f64 = 10.0;
 
@@ -521,15 +471,9 @@ struct Stages {
     /// Per filter, per channel.
     state: Vec<[[f64; 2]; MAX_CHANNELS]>,
     preamp: f64,
-    /// Bass boost shelf and per-channel state.
-    bass: Option<(Biquad, [[f64; 2]; MAX_CHANNELS])>,
-    loud: Option<Loud>,
-    expander: Option<Expander>,
     compressor: Option<Compressor>,
     virtualizer: Option<Virtualizer>,
     crossfeed: Option<Crossfeed>,
-    /// Crossfeed cutoff, kept for when it is (re)built.
-    crossfeed_hz: f64,
     mono: bool,
     balance: (f64, f64),
     /// Volume boost, linear.
@@ -556,9 +500,6 @@ impl Clone for Stages {
 impl Stages {
     fn is_identity(&self) -> bool {
         self.filters.is_empty()
-            && self.bass.is_none()
-            && self.loud.is_none()
-            && self.expander.is_none()
             && self.compressor.is_none()
             && self.virtualizer.is_none()
             && self.boost == 1.0
@@ -573,13 +514,7 @@ impl Stages {
     fn sounds_like(&self, o: &Stages) -> bool {
         self.filters == o.filters
             && self.preamp == o.preamp
-            && self.bass.map(|b| b.0) == o.bass.map(|b| b.0)
-            && match (&self.loud, &o.loud) {
-                (Some(a), Some(b)) => a.same(b),
-                (a, b) => a.is_none() && b.is_none(),
-            }
             && self.compressor.as_ref().map(Compressor::settings) == o.compressor.as_ref().map(Compressor::settings)
-            && self.expander.as_ref().map(Expander::settings) == o.expander.as_ref().map(Expander::settings)
             && self.virtualizer.as_ref().map(Virtualizer::strength) == o.virtualizer.as_ref().map(Virtualizer::strength)
             && self.boost == o.boost
             && self.mono == o.mono
@@ -600,25 +535,12 @@ impl Stages {
                 x = f.tick(&mut st[ch], x);
             }
         }
-        if let Some((f, st)) = self.bass.as_mut() {
-            x = f.tick(&mut st[ch], x);
-        }
-        if let Some(l) = self.loud.as_mut() {
-            x *= l.pre;
-            for (f, st) in l.filters[..l.count].iter().zip(l.state.iter_mut()) {
-                x = f.tick(&mut st[ch], x);
-            }
-        }
         x
     }
 
     /// Everything after the filters, on one frame.
     #[inline]
     fn output_stage(&mut self, f: &mut [f64]) {
-        // Expander before the compressor, so the compressor does not lift what the expander lowered.
-        if let Some(e) = self.expander.as_mut() {
-            e.frame(f);
-        }
         if let Some(c) = self.compressor.as_mut() {
             c.block(f, 1);
         }
@@ -685,15 +607,6 @@ impl Stages {
             }
             k += both.max(1);
         }
-        if let Some((f, st)) = self.bass.as_mut() {
-            f.run2(&mut st[..2], left, right);
-        }
-        if let Some(l) = self.loud.as_mut() {
-            left.iter_mut().chain(right.iter_mut()).for_each(|v| *v *= l.pre);
-            for (f, st) in l.filters[..l.count].iter().zip(l.state.iter_mut()) {
-                f.run2(&mut st[..2], left, right);
-            }
-        }
     }
 
     fn block_each(&mut self, planar: &mut [f64], frames: usize) {
@@ -708,22 +621,13 @@ impl Stages {
                     f.run(&mut st[c], x);
                 }
             }
-            if let Some((f, st)) = self.bass.as_mut() {
-                f.run(&mut st[c], x);
-            }
-            if let Some(l) = self.loud.as_mut() {
-                x.iter_mut().for_each(|v| *v *= l.pre);
-                for (f, st) in l.filters[..l.count].iter().zip(l.state.iter_mut()) {
-                    f.run(&mut st[c], x);
-                }
-            }
         }
     }
 
     /// The output stage over the block when it does anything: frame by frame, or stage by stage in stereo.
     fn block_output(&mut self, planar: &mut [f64], frames: usize) {
         let stereo = self.channels == 2 && (self.mono || self.virtualizer.is_some() || self.crossfeed.is_some() || self.balance != (1.0, 1.0));
-        if !(stereo || self.expander.is_some() || self.compressor.is_some() || self.boost != 1.0 || self.limiter.is_some()) {
+        if !(stereo || self.compressor.is_some() || self.boost != 1.0 || self.limiter.is_some()) {
             return;
         }
         if self.channels == 2 {
@@ -747,14 +651,6 @@ impl Stages {
     /// own state, so every frame gets the same arithmetic in the same order, except the compressor's
     /// interpolated gain.
     fn block_output2(&mut self, planar: &mut [f64], frames: usize) {
-        if let Some(e) = self.expander.as_mut() {
-            let (left, right) = planar.split_at_mut(frames);
-            for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-                let mut f = [*l, *r];
-                e.frame(&mut f);
-                (*l, *r) = (f[0], f[1]);
-            }
-        }
         if let Some(c) = self.compressor.as_mut() {
             c.block(planar, frames);
         }
@@ -789,17 +685,8 @@ impl Stages {
 
     fn reset(&mut self) {
         self.state.iter_mut().for_each(|s| *s = [[0.0; 2]; MAX_CHANNELS]);
-        if let Some((_, st)) = self.bass.as_mut() {
-            *st = [[0.0; 2]; MAX_CHANNELS];
-        }
-        if let Some(l) = self.loud.as_mut() {
-            l.state = [[[0.0; 2]; MAX_CHANNELS]; 2];
-        }
         if let Some(c) = self.compressor.as_mut() {
             c.reset();
-        }
-        if let Some(e) = self.expander.as_mut() {
-            e.reset();
         }
         if let Some(v) = self.virtualizer.as_mut() {
             v.reset();
@@ -866,13 +753,9 @@ impl Equalizer {
             filters: Vec::new(),
             state: Vec::new(),
             preamp: 1.0,
-            bass: None,
-            loud: None,
-            expander: None,
             compressor: None,
             virtualizer: None,
             crossfeed: None,
-            crossfeed_hz: CROSSFEED_DEFAULT_HZ,
             mono: false,
             balance: (1.0, 1.0),
             boost: 1.0,
@@ -943,66 +826,19 @@ impl Equalizer {
     fn rest(s: &mut Stages, rate: f64, preamp_db: f64, crossfeed_db: f64) {
         s.state.resize(s.filters.len(), [[0.0; 2]; MAX_CHANNELS]);
         s.preamp = 10f64.powf(finite(preamp_db, 0.0).clamp(-30.0, 12.0) / 20.0);
-        s.crossfeed = (crossfeed_db > 0.0 && s.channels == 2).then(|| Crossfeed::new(rate, crossfeed_db, s.crossfeed_hz));
-    }
-
-    /// Sets the crossfeed cutoff (clamped to [`CROSSFEED_CUT_HZ`]); the level comes from `configure`.
-    pub fn set_crossfeed_cut(&mut self, cut_hz: f64) {
-        let cut_hz = finite(cut_hz, CROSSFEED_DEFAULT_HZ).clamp(CROSSFEED_CUT_HZ.0, CROSSFEED_CUT_HZ.1);
-        if cut_hz == self.now.crossfeed_hz {
-            return;
-        }
-        self.change(|s, rate| {
-            s.crossfeed_hz = cut_hz;
-            if let Some(level) = s.crossfeed.as_ref().map(|c| c.level_db) {
-                s.crossfeed = Some(Crossfeed::new(rate, level, cut_hz));
-            }
-        });
+        s.crossfeed = (crossfeed_db > 0.0 && s.channels == 2).then(|| Crossfeed::new(rate, crossfeed_db));
     }
 
     /// Configures the effects; running ones are retuned keeping state. Boosts need the limiter
     /// ([`Effects::guard`]), which the caller enables via [`Equalizer::configure_output`].
     pub fn configure_effects(&mut self, e: &Effects) {
         self.change(|s, rate| {
-            let bass = finite(e.bass_boost_db, 0.0).clamp(0.0, BASS_BOOST_MAX_DB);
-            let shelf = (bass >= 0.05).then(|| Biquad::new(rate, &Band { kind: EqKind::LowShelfSlope, freq: BASS_HZ, gain_db: bass, q: BASS_SLOPE, channel: CH_BOTH }));
-            s.bass = match (shelf, s.bass) {
-                (Some(f), Some((old, st))) if old == f => Some((f, st)),
-                (Some(f), Some((_, st))) => Some((f, st)),
-                (Some(f), None) => Some((f, [[0.0; 2]; MAX_CHANNELS])),
-                (None, _) => None,
-            };
             s.compressor = match (e.compressor, s.compressor.take()) {
                 (Some(c), Some(mut old)) => {
                     old.tune(rate, c);
                     Some(old)
                 }
                 (Some(c), None) => Some(Compressor::new(rate, c)),
-                (None, _) => None,
-            };
-            let loud = e.loudness.map(|l| crate::contour::design(l.reference_phon, l.volume_db)).and_then(|sh| {
-                let bands: Vec<Band> = sh.low.into_iter().chain(sh.high).collect();
-                (!bands.is_empty()).then(|| {
-                    let mut filters = [Biquad::default(); 2];
-                    for (f, b) in filters.iter_mut().zip(&bands) {
-                        *f = Biquad::new(rate, b);
-                    }
-                    Loud { filters, count: bands.len(), pre: 10f64.powf(sh.pre_db / 20.0), state: [[[0.0; 2]; MAX_CHANNELS]; 2] }
-                })
-            });
-            s.loud = match (loud, s.loud.take()) {
-                (Some(mut new), Some(old)) if new.count == old.count => {
-                    new.state = old.state;
-                    Some(new)
-                }
-                (new, _) => new,
-            };
-            s.expander = match (e.expander, s.expander.take()) {
-                (Some(x), Some(mut old)) => {
-                    old.tune(rate, x);
-                    Some(old)
-                }
-                (Some(x), None) => Some(Expander::new(rate, x)),
                 (None, _) => None,
             };
             let width = finite(e.virtualizer, 0.0).clamp(0.0, 1.0);
@@ -1187,12 +1023,7 @@ impl Equalizer {
 /// Effects besides the equalizer, each off at 0 or `None`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Effects {
-    /// 0 to [`BASS_BOOST_MAX_DB`].
-    pub bass_boost_db: f64,
     pub compressor: Option<CompressorSettings>,
-    pub expander: Option<ExpanderSettings>,
-    /// Volume-dependent loudness compensation (`contour`).
-    pub loudness: Option<crate::contour::Loudness>,
     /// Strength, 0 to 1.
     pub virtualizer: f64,
     /// 0 to [`VOLUME_BOOST_MAX_DB`].
@@ -1202,17 +1033,12 @@ pub struct Effects {
 impl Effects {
     /// Whether any of them touches the samples.
     pub fn on(&self) -> bool {
-        self.bass_boost_db > 0.0
-            || self.compressor.is_some()
-            || self.expander.is_some()
-            || self.loudness.is_some()
-            || self.virtualizer > 0.0
-            || self.boost_db > 0.0
+        self.compressor.is_some() || self.virtualizer > 0.0 || self.boost_db > 0.0
     }
 
     /// Whether they add level, requiring the limiter.
     pub fn guard(&self) -> bool {
-        self.bass_boost_db > 0.0 || self.boost_db > 0.0 || self.compressor.is_some_and(|c| c.makeup_db > 0.0)
+        self.boost_db > 0.0 || self.compressor.is_some_and(|c| c.makeup_db > 0.0)
     }
 }
 
@@ -1228,12 +1054,17 @@ pub fn auto_preamp_db(bands: impl IntoIterator<Item = (EqKind, f32)>) -> f32 {
     -bands.into_iter().filter(|&(k, _)| k.uses_gain()).map(|(_, g)| g).fold(0f32, f32::max)
 }
 
+/// The bass boost preset's shelf at `gain_db`.
+pub fn bass_shelf(gain_db: f32) -> EqBand {
+    band(EqKind::LowShelfSlope, BASS_HZ, gain_db, BASS_SLOPE)
+}
+
 /// The built-in curves; each boosting preset carries a pre-amp that cancels its boost.
 pub fn eq_presets() -> Vec<NamedPreset> {
     let preset = |kind: PresetKind, preamp_db: f32, bands: Vec<EqBand>| NamedPreset { kind, preamp_db, bands };
     vec![
         preset(PresetKind::Flat, 0.0, vec![]),
-        preset(PresetKind::BassBoost, -6.0, vec![band(EqKind::LowShelf, 100.0, 6.0, 0.7), band(EqKind::Peaking, 60.0, 3.0, 1.0)]),
+        preset(PresetKind::BassBoost, -6.0, vec![bass_shelf(6.0)]),
         preset(PresetKind::BassCut, 0.0, vec![band(EqKind::LowShelf, 110.0, -6.0, 0.7)]),
         preset(PresetKind::TrebleBoost, -5.0, vec![band(EqKind::HighShelf, 6000.0, 5.0, 0.7)]),
         preset(PresetKind::TrebleCut, 0.0, vec![band(EqKind::HighShelf, 6000.0, -5.0, 0.7)]),
@@ -1416,12 +1247,12 @@ mod tests {
             b(EqKind::Peaking, 12000.0, 2.0, 1.0),
             b(EqKind::Peaking, 14000.0, -2.0, 1.0),
         ];
-        let expander = crate::compressor::ExpanderSettings { threshold_db: -30.0, ratio: 2.0, attack_ms: 2.0, release_ms: 50.0 };
         let mut eq = Equalizer::new(48000, 2);
         eq.configure(&bands, -2.0, 0.0);
-        eq.configure_effects(&Effects { bass_boost_db: 4.0, expander: Some(expander), virtualizer: 0.5, boost_db: 3.0, ..Effects::default() });
+        // The compressor is left out: its gain is interpolated over runs of frames.
+        eq.configure_effects(&Effects { virtualizer: 0.5, boost_db: 3.0, ..Effects::default() });
         eq.configure_output(0.3, false, -3.0, 80.0, 2.0);
-        // Loud and quiet stretches, so the expander and the limiter both move.
+        // Loud and quiet stretches, so the limiter moves.
         let x: Vec<f64> = (0..48000).flat_map(|i| {
             let level = if (i / 6000) % 2 == 0 { 0.9 } else { 0.01 };
             let t = i as f64 / 48000.0;
@@ -1440,7 +1271,7 @@ mod tests {
             blocked.block(&mut planar, frames);
             got.extend((0..frames).flat_map(|k| [planar[k], planar[frames + k]]));
         }
-        assert!(blocked.limiter.as_ref().unwrap().meter < 1.0 && blocked.expander.as_ref().unwrap().meter_db > 0.0, "the dynamics acted");
+        assert!(blocked.limiter.as_ref().unwrap().meter < 1.0, "the limiter acted");
         assert!(got == want, "first difference at {:?}", got.iter().zip(&want).position(|(a, b)| a != b));
     }
 
@@ -1486,43 +1317,18 @@ mod tests {
     }
 
     #[test]
-    fn crossfeed_presets_behave_like_bs2b() {
-        for p in CrossfeedPreset::ALL {
-            let (cut, level) = p.settings();
-            assert_eq!(CrossfeedPreset::of(cut, level), Some(p));
-            // Deep bass leaks exactly `level` down; centred sound loses under 2 dB anywhere.
-            let mut eq = Equalizer::new(48000, 2);
-            eq.set_crossfeed_cut(cut);
-            eq.configure(&[], 0.0, level);
-            let leak = leak_at(&mut eq, 40.0);
-            assert!((leak + level).abs() < 0.3, "{p:?}: {leak} dB at 40 Hz, the preset says -{level}");
-            for f in [50.0, 300.0, 700.0, 2000.0, 8000.0] {
-                let (l, r) = stereo_gain_at(&mut eq, f);
-                assert!(l <= 0.05 && l > -2.0 && (l - r).abs() < 1e-9, "{p:?}: a centred tone at {f} Hz moved {l} dB");
-            }
-        }
-        assert_eq!(CrossfeedPreset::of(700.0, 5.0), None, "custom");
-    }
-
-    #[test]
-    fn crossfeed_cutoff() {
+    fn natural_crossfeed_behaves_like_bs2b() {
+        // Deep bass leaks exactly its level down; centred sound loses under 2 dB anywhere.
+        let level = CROSSFEED_NATURAL_DB;
         let mut eq = Equalizer::new(48000, 2);
-        eq.configure(&[], 0.0, 6.0);
-        let low = leak_at(&mut eq, 2500.0);
-        eq.set_crossfeed_cut(1500.0);
-        let high = leak_at(&mut eq, 2500.0);
-        assert!(high > low + 3.0, "a higher cutoff lets more of 2.5 kHz across: {low} dB at 700 Hz, {high} dB at 1500 Hz");
-        // A cutoff set before crossfeed is on is kept.
-        let mut later = Equalizer::new(48000, 2);
-        later.set_crossfeed_cut(1500.0);
-        assert!(later.is_identity(), "a cutoff alone is no crossfeed");
-        later.configure(&[], 0.0, 6.0);
-        assert!((leak_at(&mut later, 2500.0) - high).abs() < 1e-6);
-        later.set_crossfeed_cut(f64::NAN);
-        let d = leak_at(&mut later, 2500.0);
-        assert!((d - low).abs() < 1e-6, "NaN is the default cutoff: {d} / {low}");
-        later.set_crossfeed_cut(1e9);
-        assert!(leak_at(&mut later, 2500.0).is_finite());
+        eq.configure(&[], 0.0, level);
+        let leak = leak_at(&mut eq, 40.0);
+        assert!((leak + level).abs() < 0.3, "{leak} dB at 40 Hz, bs2b says -{level}");
+        assert!(leak_at(&mut eq, 2500.0) < leak - 6.0, "the highs stay in their own ear");
+        for f in [50.0, 300.0, 700.0, 2000.0, 8000.0] {
+            let (l, r) = stereo_gain_at(&mut eq, f);
+            assert!(l <= 0.05 && l > -2.0 && (l - r).abs() < 1e-9, "a centred tone at {f} Hz moved {l} dB");
+        }
     }
 
     /// Below its knee the limiter only delays, by its look-ahead: kept across a retune, given back by
@@ -1751,8 +1557,6 @@ mod tests {
         eq.configure_effects(&Effects::default());
         assert!(eq.is_identity());
         assert!(!Effects::default().on() && !Effects::default().guard());
-        eq.configure_effects(&Effects { virtualizer: 0.0, bass_boost_db: 0.01, ..Effects::default() });
-        assert!(eq.is_identity(), "a bass boost too small to hear is none");
         // A mono stream has no width to work on.
         let mut mono = Equalizer::new(48000, 1);
         mono.configure_effects(&Effects { virtualizer: 1.0, ..Effects::default() });
@@ -1760,15 +1564,17 @@ mod tests {
     }
 
     #[test]
-    fn bass_boost() {
+    fn bass_boost_preset() {
+        let presets = eq_presets();
+        let boost = presets.iter().find(|p| p.kind == PresetKind::BassBoost).unwrap();
+        let bands: Vec<Band> = boost.bands.iter().map(Band::from).collect();
         let mut eq = Equalizer::new(48000, 1);
-        eq.configure_effects(&Effects { bass_boost_db: 9.0, ..Effects::default() });
+        eq.configure(&bands, 0.0, 0.0);
         let low = gain_at(&mut eq, 40.0);
-        assert!((low - 9.0).abs() < 1.0, "40 Hz: {low}");
-        assert!((gain_at(&mut eq, 100.0) - 4.5).abs() < 1.0, "half at the corner");
+        assert!((low - 6.0).abs() < 1.0, "40 Hz: {low}");
+        assert!((gain_at(&mut eq, 100.0) - 3.0).abs() < 1.0, "half at the corner");
         assert!(gain_at(&mut eq, 1000.0).abs() < 0.3 && gain_at(&mut eq, 5000.0).abs() < 0.1);
-        eq.configure_effects(&Effects { bass_boost_db: 99.0, ..Effects::default() });
-        assert!(gain_at(&mut eq, 40.0) < BASS_BOOST_MAX_DB + 0.5, "held to its range");
+        assert_eq!(boost.preamp_db, -6.0, "its own boost taken back off");
     }
 
     #[test]
@@ -1790,7 +1596,7 @@ mod tests {
 
     #[test]
     fn compressor_in_chain() {
-        let c = crate::compressor::CompressorPreset::Balanced.settings();
+        let c = crate::compressor::CompressorPreset::Car.settings();
         let mut eq = Equalizer::new(48000, 2);
         eq.configure_effects(&Effects { compressor: Some(crate::compressor::CompressorSettings { makeup_db: 0.0, ..c }), ..Effects::default() });
         let quiet = stereo_gain_at(&mut eq, 440.0).0; // the tone is -12 dBFS: 8 dB over, in the knee's reach
@@ -1802,52 +1608,6 @@ mod tests {
         let (x, mut y) = (vec![0f32; 960], vec![0f32; 960]);
         eq.process_f32(&x, &mut y);
         assert!(eq.is_identity() && eq.compression_db() == 0.0, "off again is gone");
-    }
-
-    #[test]
-    fn expander_in_chain() {
-        let x = crate::compressor::ExpanderSettings { threshold_db: -40.0, ratio: 4.0, attack_ms: 2.0, release_ms: 50.0 };
-        let mut eq = Equalizer::new(48000, 2);
-        eq.configure_effects(&Effects { expander: Some(x), ..Effects::default() });
-        assert!(!eq.is_identity() && Effects { expander: Some(x), ..Effects::default() }.on());
-        assert!(!Effects { expander: Some(x), ..Effects::default() }.guard(), "it never adds level");
-        let m = tone(440.0);
-        let loud: Vec<f32> = m.iter().flat_map(|s| [*s, *s]).collect();
-        let mut y = vec![0f32; loud.len()];
-        eq.process_f32(&loud, &mut y);
-        assert_eq!(loud[9600..], y[9600..], "above the threshold, bit for bit");
-        let hum: Vec<f32> = tone_at(60.0, 0.001).iter().flat_map(|s| [*s, *s]).collect();
-        eq.reset();
-        eq.process_f32(&hum, &mut y);
-        let db = 20.0 * (rms(&y[48000..]) / rms(&hum[48000..])).log10();
-        assert!((db + 60.0).abs() < 3.0, "20 dB under at 4:1 is 80 under: {db} dB");
-        eq.configure_effects(&Effects::default());
-        let (z, mut w) = (vec![0f32; 960], vec![0f32; 960]);
-        eq.process_f32(&z, &mut w);
-        assert!(eq.is_identity(), "off again is gone");
-    }
-
-    #[test]
-    fn loudness_follows_volume() {
-        use crate::contour::Loudness;
-        let mut eq = Equalizer::new(48000, 1);
-        let at = |v: f64| Effects { loudness: Some(Loudness { reference_phon: 80.0, volume_db: v }), ..Effects::default() };
-        eq.configure_effects(&at(0.0));
-        assert!(eq.is_identity(), "all the way up: nothing to make up, nothing in the samples' path");
-        assert!(at(0.0).on() && !at(-30.0).guard(), "on, and its own pre-gain keeps it from clipping");
-        eq.configure_effects(&at(-30.0));
-        let tilt = |eq: &mut Equalizer| gain_at(eq, 60.0) - gain_at(eq, 1000.0);
-        let quiet = tilt(&mut eq);
-        let want = crate::contour::compensation_db(50.0, 80.0, 60.0);
-        assert!((quiet - want).abs() < 1.5, "60 Hz against 1 kHz: {quiet} dB, the contours say {want}");
-        assert!(gain_at(&mut eq, 60.0) <= 0.05, "and nothing goes over full scale");
-        eq.configure_effects(&at(-10.0));
-        let louder = tilt(&mut eq);
-        assert!(louder > 0.5 && louder < quiet, "turned up, less of it: {louder} dB");
-        eq.configure_effects(&Effects::default());
-        let (z, mut w) = (vec![0f32; 960], vec![0f32; 960]);
-        eq.process_f32(&z, &mut w);
-        assert!(eq.is_identity(), "off again is gone");
     }
 
     #[test]

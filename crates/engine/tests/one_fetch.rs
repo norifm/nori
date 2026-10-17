@@ -107,7 +107,7 @@ struct Rig {
 impl Rig {
     fn new(name: &str, ids: &[&str]) -> Rig {
         let dir = nori_testdir::TempDir::new(name);
-        let (core, client) = common::own_core(&dir, |p| (p.auto_mix, p.precache_wifi) = (true, 2));
+        let (core, client) = common::own_core(&dir, |p| p.auto_mix = true);
         let prefs = core.session.settings.current().unwrap();
         let store = Store::open(dir.join("music"), 512 << 20).unwrap();
         let whole = Arc::new(common::Signal::default());
@@ -127,7 +127,7 @@ impl Rig {
         let app = CoreApp::new(core.session.clone()).measuring(measurer.clone());
         let card = Card::new();
         let clock = Virtual::default();
-        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs, 0.0), ..Config::default() }, clock.clone(), |_| {}));
+        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs), ..Config::default() }, clock.clone(), |_| {}));
         engine.queue_changed();
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), core, store, net, whole, analyses, measurer, ids: ids.iter().map(|s| s.to_string()).collect(), _dir: dir }
     }

@@ -142,8 +142,7 @@ impl Planner {
         } else {
             (None, None)
         };
-        let mut t = nori_player::automix::plan::plan(a.as_ref(), b.as_ref(), o.duration_ms, n.duration_ms, &chosen.settings);
-        nori_player::transitions::shape_crossfade(&prefs, &mut t);
+        let t = nori_player::automix::plan::plan(a.as_ref(), b.as_ref(), o.duration_ms, n.duration_ms, &chosen.settings);
         let plan = engine_plan(&t, &n.id);
         let note = TransitionNote {
             outgoing_id: o.id.clone(),

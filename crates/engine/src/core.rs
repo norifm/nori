@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -69,8 +69,6 @@ pub struct CoreApp {
     bridge: bool,
     /// ReplayGain levels already logged.
     gains_said: Vec<(String, f32)>,
-    /// The output volume, for rebuilding settings on a device change.
-    volume: Arc<OutputVolume>,
 }
 
 impl CoreApp {
@@ -84,14 +82,7 @@ impl CoreApp {
             output: None,
             bridge: false,
             gains_said: Vec::new(),
-            volume: Arc::default(),
         }
-    }
-
-    /// Shares the client's output volume (0 dB until told).
-    pub fn volume(mut self, volume: Arc<OutputVolume>) -> CoreApp {
-        self.volume = volume;
-        self
     }
 
     /// The client runs the offline bridge (`Core::bridge_start`): unreachable songs go to it when the
@@ -170,7 +161,7 @@ impl App for CoreApp {
             Some(s) => {
                 let prefs = self.session.settings.current()?.with_sound(s);
                 self.session.settings.put(prefs.clone());
-                Some(settings(&prefs, self.volume.db()).sound)
+                Some(settings(&prefs).sound)
             }
             None => None,
         };
@@ -1257,26 +1248,6 @@ impl BeatModel {
     }
 }
 
-/// A player's output volume in dB (0 is full), for loudness compensation ([`settings`]). Shared between
-/// the client and [`CoreApp::volume`], which rebuilds the settings on a device change.
-#[derive(Debug, Default)]
-pub struct OutputVolume(AtomicU32);
-
-impl OutputVolume {
-    /// Sets the volume (`nori_player::contour::volume_db`); true when it changed by an audible 0.25 dB.
-    pub fn set(&self, db: f64) -> bool {
-        let db = if db.is_finite() { db.clamp(-96.0, 0.0) as f32 } else { 0.0 };
-        let was = f32::from_bits(self.0.swap(db.to_bits(), Ordering::Relaxed));
-        (was - db).abs() >= 0.25
-    }
-
-    /// dB, 0 until told.
-    pub fn db(&self) -> f64 {
-        f32::from_bits(self.0.load(Ordering::Relaxed)) as f64
-    }
-}
-
-/// Engine settings from the core's, with loudness compensation for `volume_db` ([`OutputVolume::db`]).
 /// Plays along with a jam's host (a [`nori_core::remote::Follower`]'s lead): the host's songs queued
 /// here ([`queued_for`]) and the engine on its place.
 pub fn follow(engine: &crate::Engine, session: &Session, lead: Option<nori_core::remote::Lead>) {
@@ -1348,16 +1319,16 @@ pub fn queued_for(session: &Session, l: &nori_core::remote::Lead) -> (usize, boo
     }
 }
 
-pub fn settings(s: &StoredPrefs, volume_db: f64) -> Settings {
+/// Engine settings from the core's.
+pub fn settings(s: &StoredPrefs) -> Settings {
     let bands = if s.eq_enabled { s.eq_bands.iter().map(|b| Band { kind: b.kind, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }).collect() } else { Vec::new() };
     let sound = if s.sound_bypass { Sound::default() } else { Sound {
         // The graphic equalizer replaces the parametric bands.
         graphic: nori_core::dsp::graphic_sliders(s),
         bands: if s.eq_mode == nori_core::settings::EqMode::Graphic { Vec::new() } else { bands },
-        effects: s.effects().player_at(volume_db),
+        effects: s.effects().player(),
         preamp_db: nori_core::dsp::effective_preamp_db(s) as f64,
-        crossfeed_db: s.crossfeed_db as f64,
-        crossfeed_hz: s.crossfeed_hz as f64,
+        crossfeed_db: s.headphone.crossfeed_db() as f64,
         balance: s.balance as f64,
         mono: s.mono,
         limiter: s.limiter,
@@ -1375,7 +1346,7 @@ pub fn settings(s: &StoredPrefs, volume_db: f64) -> Settings {
         offload: s.offload,
         crossfade_s: s.crossfade_sec,
         auto_mix: s.auto_mix,
-        gain_boost_db: if s.gain_prefs().boosts() { s.gain_boost_db } else { 0.0 },
+        gain_boost_db: if s.gain_prefs().boosts() { nori_player::gain::BOOST_MAX_DB } else { 0.0 },
         previous_always_skips: s.previous_always_skips,
     }
 }
@@ -1392,26 +1363,17 @@ mod tests {
     fn settings_build_the_chain() {
         use nori_core::settings::EqMode;
         let p = StoredPrefs { eq_enabled: true, eq_mode: EqMode::Parametric, eq_graphic: vec![3.0; 10], ..StoredPrefs::default() };
-        let s = settings(&p, 0.0).sound;
+        let s = settings(&p).sound;
         assert!(s.graphic.is_empty() && !s.bands.is_empty(), "parametric: the bands play");
-        let g = settings(&StoredPrefs { eq_mode: EqMode::Graphic, ..p.clone() }, 0.0).sound;
+        let g = settings(&StoredPrefs { eq_mode: EqMode::Graphic, ..p.clone() }).sound;
         assert!(g.bands.is_empty() && g.graphic == vec![3.0; 10], "graphic: the sliders play, the bands wait");
         assert_eq!(g.preamp_db, -3.0, "the automatic pre-amp pays back the sliders");
-        let off = settings(&StoredPrefs { eq_enabled: false, eq_mode: EqMode::Graphic, ..p.clone() }, 0.0).sound;
+        let off = settings(&StoredPrefs { eq_enabled: false, eq_mode: EqMode::Graphic, ..p.clone() }).sound;
         assert!(off.graphic.is_empty() && off.bands.is_empty() && !off.on());
-        let fx = settings(&StoredPrefs { volume_boost_db: 4.0, compressor: true, ..StoredPrefs::default() }, 0.0).sound;
+        let fx = settings(&StoredPrefs { volume_boost_db: 4.0, compressor: true, ..StoredPrefs::default() }).sound;
         assert!(fx.on() && fx.effects.boost_db == 4.0 && fx.effects.compressor.is_some() && fx.effects.guard());
-        // Loudness at the volume last set.
-        let loud = StoredPrefs { loudness: true, ..StoredPrefs::default() };
-        let v = OutputVolume::default();
-        assert!(v.set(-30.0));
-        assert!(!v.set(-30.1), "a tenth of a dB is no change");
-        assert_eq!(settings(&loud, v.db()).sound.effects.loudness.map(|l| l.volume_db as f32), Some(-30.1));
-        assert!(v.set(0.0));
-        assert_eq!(settings(&loud, v.db()).sound.effects.loudness.map(|l| l.volume_db), Some(0.0));
-        assert_eq!(OutputVolume::default().db(), 0.0, "each player's own: a new one starts all the way up");
         // Bypass: the identity chain.
-        let none = settings(&StoredPrefs { sound_bypass: true, limiter: true, crossfeed_db: 6.0, mono: true, ..StoredPrefs { eq_mode: EqMode::Graphic, ..p } }, 0.0);
+        let none = settings(&StoredPrefs { sound_bypass: true, limiter: true, headphone: nori_core::settings::HeadphoneSound::Natural, mono: true, ..StoredPrefs { eq_mode: EqMode::Graphic, ..p } });
         assert_eq!(none.sound, nori_player::pipeline::Sound::default());
         assert!(!none.sound.on());
     }
@@ -1419,8 +1381,8 @@ mod tests {
     #[test]
     fn bit_perfect_ignores_max_rate() {
         use nori_core::settings::MaxRate;
-        assert_eq!(settings(&StoredPrefs { max_rate: MaxRate::Khz48, ..StoredPrefs::default() }, 0.0).max_rate, 48_000);
-        assert_eq!(settings(&StoredPrefs { max_rate: MaxRate::Khz48, bit_perfect: true, ..StoredPrefs::default() }, 0.0).max_rate, 0);
+        assert_eq!(settings(&StoredPrefs { max_rate: MaxRate::Khz48, ..StoredPrefs::default() }).max_rate, 48_000);
+        assert_eq!(settings(&StoredPrefs { max_rate: MaxRate::Khz48, bit_perfect: true, ..StoredPrefs::default() }).max_rate, 0);
     }
 
     #[test]
