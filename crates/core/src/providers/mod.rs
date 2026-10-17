@@ -48,14 +48,14 @@ pub trait Provider: Send + Sync {
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Page>>;
 
     /// The answer kept for `read`, fresh within `within_ms` (None: the read's own window). Kept answers
-    /// show at once and offline; a source that keeps none has none.
-    fn read_stored(&self, _client: &Client, _read: Read, _within_ms: Option<i64>) -> NetResult<Stored> {
-        Ok(Stored { page: None, digest: None, fresh: false })
+    /// show at once; by default a source's are kept in memory for the session.
+    fn read_stored(&self, client: &Client, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
+        Ok(client.kept_stored(read, within_ms))
     }
 
     /// `read` asked anew; the page only when it differs from the kept one of `digest`.
     async fn read_fetch(&self, client: &Client, read: Read, _digest: Option<u64>) -> NetResult<Option<Page>> {
-        client.read_now(read).await.map(Some)
+        client.kept_fetch(read).await
     }
 
     /// Sends one change.

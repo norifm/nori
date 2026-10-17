@@ -245,6 +245,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | each lyrics service answers (a report, no check) | - | feature-e2e `lyrics-services`, opt-in: 16 × up to 12 s, the services' health rather than the app's |
 | a YouTube Music profile plays a searched song, and the server's profile plays after it | - | feature-e2e `youtube-music`, opt-in: YouTube's to answer |
 | Google's sign-in page opens; Cancel closes it and leaves the WebView no cookies (3) | - | feature-e2e `youtube-music` (WebView, CookieManager) |
+| Home's feed is kept for the visit: scrolled away and back, its shelves show the same | a | crates/core providers/fake.rs `home_feed_is_kept_until_refreshed`; feature-e2e `youtube-music` (the LazyColumn's rows leaving and coming back) |
 | a sign-in page is done only back on music.youtube.com with a session | a | crates/youtube auth.rs |
 | no video player while off; let go when put away (2) | b | feature-e2e `motion` (ExoPlayer, Kotlin) |
 | starring reaches the server | a | client.rs |

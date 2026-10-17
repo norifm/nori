@@ -200,6 +200,17 @@ if want youtube-music; then section "a YouTube Music profile, then the server's 
   "$app" play home >/dev/null
   check "the Home feed's first song plays" wait_for title "!$before" 30
   check "through the AudioTrack" sounds 45
+  # The feed is read once for the visit (the core keeps it): scrolled away and back, YouTube is not
+  # asked again, so the shelves show what they showed.
+  "$app" open home >/dev/null
+  home_top() { ui | grep -oE 'text="[^"]+"' | head -6; }
+  home_shown() { local t; t=$(home_top); [ "$(printf '%s\n' "$t" | wc -l)" -ge 6 ] && first_home="$t"; }
+  wait_until 30 home_shown
+  size=$(adb shell wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); w=${size%x*}; h=${size#*x}
+  for _ in 1 2 3; do adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 4)) 200; done
+  for _ in 1 2 3 4; do adb shell input swipe $((w / 2)) $((h / 4)) $((w / 2)) $((h * 3 / 4)) 200; done
+  home_same() { [ "$(home_top)" = "$first_home" ]; }
+  check "scrolled down and back up, Home's first shelf shows the same" wait_until 10 home_same
   "$app" login "$APP_URL|$USER|$PASS" >/dev/null
   check "the server's profile opens again" wait_for server "$APP_URL" 30
   "$app" play "$SONG" >/dev/null

@@ -153,7 +153,7 @@ pub fn pins_toggled(pins: Vec<String>, id: String, on: bool) -> Vec<String> {
 /// The cached answers a manual refresh drops, so it reaches the server.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn home_refresh_drops() -> Vec<String> {
-    ["getAlbumList2", "getPlaylists", "getStarred2"].map(String::from).to_vec()
+    ["getAlbumList2", "getPlaylists", "getStarred2", "homeFeed"].map(String::from).to_vec()
 }
 
 // ---- long lists ---------------------------------------------------------------
