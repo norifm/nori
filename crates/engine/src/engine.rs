@@ -499,7 +499,15 @@ impl Engine {
         self.jump(Command::Previous)
     }
 
+    /// Seeks the current song; the status shows the place asked for at once.
     pub fn seek(&self, ms: i64) {
+        {
+            let mut s = self.status.lock();
+            if s.index.is_some() {
+                s.position_ms = ms.max(0);
+                s.at = Instant::now();
+            }
+        }
         self.send(Command::Seek(ms));
     }
 
@@ -2409,7 +2417,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let (speed, underruns, switching) = (self.p.speed().0, self.p.sink.track.underruns(), self.dip.is_some());
         let (chain, meter, compression) = (self.p.sink.chain_in(), self.p.sink.meter_db(), self.p.sink.compression_db());
         let on_cpu = self.state == State::Playing && !stalled && !switching;
-        let mixing_was = self.write_status(i, ms, |s| {
+        let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), |s| {
             s.speed = speed;
             s.pace = speed * tempo as f32;
             s.mixing = mixing;
@@ -2452,7 +2460,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             self.p.app.playing();
         }
         let switching = self.dip.is_some();
-        let mixing_was = self.write_status(i, ms, |s| {
+        let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), |s| {
             s.speed = 1.0;
             s.pace = 1.0;
             s.mixing = false;
@@ -2465,6 +2473,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             s.offloaded = true;
         });
         self.say_changes(now, i, ms, other, looped, mixing_was, false);
+    }
+
+    /// Where a seek waiting out the switch's dip goes: the status shows it rather than the place the music
+    /// fades out at.
+    fn sought(&self) -> Option<i64> {
+        match self.dip.as_ref()?.then.last()? {
+            Switched::Seek(ms) => Some((*ms).max(0)),
+            _ => None,
+        }
     }
 
     /// Writes the song, place, state and releases into the status, then `more`; returns whether a mix

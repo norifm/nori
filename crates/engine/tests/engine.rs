@@ -953,17 +953,19 @@ fn seeks_land() {
     }
 }
 
+/// A seek's place is the status's at once, and through the switch's dip.
 #[test]
-fn seek_reports_switching_during_dip() {
+fn a_seek_shows_its_place_at_once() {
     let a = music(30.0, 22);
     let songs: [(&str, &[i16]); 1] = [("a", &a)];
     let rig = Rig::new(&songs, prefs_off(), Settings { fade_ms: 400, ..Settings::default() });
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2));
     rig.engine.seek(20_000);
+    assert_eq!(rig.engine.status().position_ms, 20_000, "asked");
     assert!(rig.wait_for(5, |r| r.engine.status().switching), "the dip is on");
-    assert!(rig.engine.status().position_ms < 5_000, "and the place is still the one before the seek");
-    assert!(rig.wait_for(5, |r| !r.engine.status().switching && r.engine.status().position_ms >= 20_000), "then it is the one asked for");
+    assert_eq!(rig.engine.status().position_ms, 20_000, "and the place is the one asked for");
+    assert!(rig.wait_for(5, |r| !r.engine.status().switching && r.engine.status().position_ms >= 20_000), "then the music is there");
 }
 
 #[test]

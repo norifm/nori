@@ -631,12 +631,7 @@ fn seeking() {
     let bar = hit_rect(&a, Hit::Seek);
     click(&mut a, bar.x + bar.width / 2, bar.y);
     assert!(matches!(a.cmds.last(), Some(Cmd::Seek(ms)) if (ms - 100_000).abs() < 3_000));
-    // The engine's status, read before it took the seek, still says 10 s: the bar stays where it went.
-    a.follow_now(crate::app::Now { state: State::Playing, position_ms: 10_100, at: Instant::now(), ..Default::default() });
-    assert!(a.now.position(Instant::now()) > 90_000, "jumped back: {}", a.now.position(Instant::now()));
-    // Once the status is there, it is followed again.
-    a.follow_now(crate::app::Now { state: State::Playing, position_ms: 100_300, at: Instant::now(), ..Default::default() });
-    assert!(a.seek_hold.is_none());
+    assert!((a.now.position(Instant::now()) - 100_000).abs() < 3_000, "shown at once: {}", a.now.position(Instant::now()));
     a.follow_now(crate::app::Now { state: State::Playing, position_ms: 120_000, at: Instant::now(), ..Default::default() });
     assert!((a.now.position(Instant::now()) - 120_000).abs() < 500);
 

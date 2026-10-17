@@ -848,8 +848,6 @@ pub struct App {
     /// The sound was changed on the equalizer since it was opened.
     pub touched: bool,
     pub drag: Option<Drag>,
-    /// A pending seek target and when it was asked: the engine's status lags it for a few frames.
-    pub seek_hold: Option<(i64, Instant)>,
     /// Equalizer fader track top row and height, for mouse hits.
     pub eq_track: (u16, u16),
     pub seek_rect: Rect,
@@ -1236,7 +1234,6 @@ impl App {
             return;
         }
         self.transition = None;
-        self.seek_hold = None;
         let art = self.song.as_ref().and_then(|s| s.cover_art.clone());
         if art != self.cover_art {
             self.colours = None;
@@ -1767,28 +1764,15 @@ impl App {
         self.sought(to);
     }
 
-    /// Seeks to `to`, shown at once and held until the engine's status catches up.
+    /// Seeks to `to`, shown at once (the engine's status says it from the seek on).
     fn sought(&mut self, to: i64) {
-        let now = Instant::now();
         self.now.position_ms = to;
-        self.now.at = now;
-        self.seek_hold = Some((to, now));
+        self.now.at = Instant::now();
         self.cmds.push(Cmd::Seek(to));
     }
 
-    /// Takes the engine's status. After a seek the status lags: the target is kept until the status is
-    /// near it, or `SEEK_HOLD` passes (the seek landed elsewhere).
+    /// Takes the engine's status.
     pub fn follow_now(&mut self, n: Now) {
-        if let Some((to, at)) = self.seek_hold {
-            let t = Instant::now();
-            let there = (n.position(t) - to).abs() < 1_500;
-            if !there && at.elapsed() < SEEK_HOLD {
-                let held = self.now.position(t).max(to);
-                self.now = Now { position_ms: held, at: t, ..n };
-                return;
-            }
-            self.seek_hold = None;
-        }
         self.now = n;
     }
 
@@ -2778,9 +2762,6 @@ pub enum DownloadRow<'a> {
 
 /// How long a status note shows.
 pub const NOTE_FOR: Duration = Duration::from_secs(4);
-
-/// Longest a seek target overrides a lagging engine status.
-const SEEK_HOLD: Duration = Duration::from_secs(3);
 
 /// Repeat modes, numbered as `nori_player::playlist`.
 pub const REPEAT_OFF: u8 = 0;

@@ -297,8 +297,6 @@ pub struct App {
     tuning: bool,
     lyrics: Option<crate::lyrics::SongLyrics>,
     lyrics_timer: Timer,
-    /// Where a seek sent the music, until the engine says it landed: its status still holds the old place.
-    seeking: Option<i64>,
     /// Active lyric line pieces in the side panel and Now Playing, updated in place each frame.
     pieces: [Rc<VecModel<LyricPiece>>; 2],
     /// Queue rows, edited in place; leaving rows fold first, then the list settles to `queue_next`.
@@ -446,7 +444,6 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             tuning: false,
             lyrics: None,
             lyrics_timer: Timer::default(),
-            seeking: None,
             pieces: [Rc::new(VecModel::default()), Rc::new(VecModel::default())],
             queue_rows: Rc::new(VecModel::default()),
             queue_next: None,
@@ -1272,12 +1269,8 @@ impl App {
         self.seek_to(ms);
     }
 
-    /// Seeks to `ms`; the lyrics show that place at once, not the old one until the seek lands (another
-    /// device's place shows the seek at once).
+    /// Seeks to `ms`; the lyrics show that place at once.
     fn seek_to(&mut self, ms: i64) {
-        if self.elsewhere.is_none() {
-            self.seeking = Some(ms);
-        }
         self.on_session(|s| s.seek(ms));
         self.lyrics_step(true);
     }
@@ -1380,12 +1373,7 @@ impl App {
             Msg::Engine(e) => {
                 match &e {
                     // A seek landed: the lyrics follow from the new place.
-                    Event::Position { .. } => {
-                        self.seeking = None;
-                        self.lyrics_step(true);
-                    }
-                    // A seek still under way is overtaken by another song.
-                    Event::Song { .. } => self.seeking = None,
+                    Event::Position { .. } => self.lyrics_step(true),
                     Event::Buffering(b) if self.elsewhere.is_none() => self.ui().set_buffering(*b),
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     _ => {}
@@ -1593,7 +1581,7 @@ impl App {
     /// Updates the lyrics view from the playback position and schedules the next update.
     fn lyrics_step(&mut self, force: bool) {
         let ui = self.ui();
-        let at = self.seeking.unwrap_or_else(|| self.position_now());
+        let at = self.position_now();
         let playing = ui.get_playing();
         let Some(l) = &mut self.lyrics else { return };
         let full = ui.get_full_player() && ui.get_full_panel() == 2;
@@ -1722,7 +1710,6 @@ impl App {
         self.elsewhere = e;
         if moved {
             self.queue = None;
-            self.seeking = None;
             ui.set_buffering(false);
             let id = match &self.elsewhere {
                 Some(e) => e.song().map(|s| s.id.clone()),
