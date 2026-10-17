@@ -1618,7 +1618,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 let (index, ms) = match (&self.mix_place, &self.p.engine.plans) {
                     (Some(place), Plans::Led(Some((_, plan))))
                         if place.place_at(at_us) * 1000.0
-                            < (plan.out_start_us + plan.duration_us) as f64 =>
+                            < (plan.out_start_us() + plan.duration_us()) as f64 =>
                     {
                         (place.index, place.place_at(at_us))
                     }
@@ -1656,10 +1656,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
         match (&self.mix_place, &self.p.engine.plans) {
             (Some(place), Plans::Led(Some((_, plan))))
-                if place.index == index && plan.out_loop_us > 0 =>
+                if place.index == index && plan.out_loop_us() > 0 =>
             {
-                let from_ms = plan.out_start_us / 1000;
-                let phase_us = (ms * 1000.0).round() as i64 - plan.out_start_us;
+                let from_ms = plan.out_start_us() / 1000;
+                let phase_us = (ms * 1000.0).round() as i64 - plan.out_start_us();
                 self.p.resume_mix(index, from_ms, phase_us);
             }
             _ => self.p.jump(index, ms.max(0.0).round() as i64),

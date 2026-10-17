@@ -61,18 +61,9 @@ impl Library for Songs {
 /// A 3 s mix out of `a` at 8 s into `b` played 4 % fast (pitch not kept), ramped back over a second.
 fn beat_matched() -> Plan {
     let s = AutoMixSettings { max_transition_s: 3.0, ..Default::default() };
-    let t = plan::plan(None, None, 12_000, 30_000, &s);
-    Plan {
-        incoming_id: "b".into(),
-        out_start_us: 8_000_000,
-        duration_us: 3_000_000,
-        in_skip_us: 0,
-        mixer: t.clone(),
-        tempo_ratio: 1.04,
-        keep_pitch: false,
-        ramp_us: 1_000_000,
-        out_loop_us: 0,
-    }
+    let mut t = plan::plan(None, None, 12_000, 30_000, &s);
+    (t.out_start_ms, t.in_start_ms, t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms) = (8_000, 0, 1.04, false, 1_000);
+    Plan { incoming_id: "b".into(), mixer: t }
 }
 
 /// The simulated app, planning [`beat_matched`] out of `a`.

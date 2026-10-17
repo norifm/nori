@@ -40,30 +40,38 @@ fn span_us(frames: usize, pace: f64, out: Format) -> i64 {
 #[derive(Debug, Clone)]
 pub struct Plan {
     pub incoming_id: String,
-    pub out_start_us: i64,
-    pub duration_us: i64,
-    pub in_skip_us: i64,
     /// What the mixer runs.
     pub mixer: TransitionPlan,
-    pub tempo_ratio: f32,
-    pub keep_pitch: bool,
-    pub ramp_us: i64,
-    /// Capture this much outgoing audio and loop it for `duration_us`; 0 captures the full duration.
-    pub out_loop_us: i64,
 }
 
 impl PartialEq for Plan {
     fn eq(&self, o: &Plan) -> bool {
-        let Plan { incoming_id, out_start_us, duration_us, in_skip_us, mixer, tempo_ratio, keep_pitch, ramp_us, out_loop_us } = self;
-        (incoming_id, *out_start_us, *duration_us, *in_skip_us, *ramp_us, *out_loop_us) == (&o.incoming_id, o.out_start_us, o.duration_us, o.in_skip_us, o.ramp_us, o.out_loop_us)
-            && (*tempo_ratio, *keep_pitch) == (o.tempo_ratio, o.keep_pitch)
-            && mixer.sounds_same(&o.mixer)
+        self.incoming_id == o.incoming_id && self.mixer.sounds_same(&o.mixer)
     }
 }
 
 impl Plan {
+    pub fn out_start_us(&self) -> i64 {
+        self.mixer.out_start_ms * 1000
+    }
+    pub fn duration_us(&self) -> i64 {
+        self.mixer.duration_ms * 1000
+    }
+    fn in_skip_us(&self) -> i64 {
+        self.mixer.in_start_ms * 1000
+    }
+    fn tempo_ratio(&self) -> f32 {
+        self.mixer.tempo_ratio as f32
+    }
+    fn ramp_us(&self) -> i64 {
+        self.mixer.tempo_ramp_ms * 1000
+    }
+    /// Capture this much outgoing audio and loop it for the duration; 0 captures the full duration.
+    pub fn out_loop_us(&self) -> i64 {
+        self.mixer.out_loop_ms.unwrap_or(0) * 1000
+    }
     fn stretching(&self) -> bool {
-        (self.tempo_ratio - 1.0).abs() > 1e-4
+        (self.tempo_ratio() - 1.0).abs() > 1e-4
     }
 }
 
@@ -450,7 +458,7 @@ impl TransitionEngine {
         };
         let mut w = format!("{phase}, flowing {}, arriving {}", song(&self.playing_id), song(&self.current_id));
         if let Some(p) = self.plan() {
-            w.push_str(&format!(", plan {} -> {} from {} ms for {} ms", song(&self.plan_for), p.incoming_id, p.out_start_us / 1000, p.duration_us / 1000));
+            w.push_str(&format!(", plan {} -> {} from {} ms for {} ms", song(&self.plan_for), p.incoming_id, p.out_start_us() / 1000, p.duration_us() / 1000));
         }
         if self.holding() {
             w.push_str(&format!(", held {} of {} of {} ({} ms)", self.tail_len, self.tail_limit, song(&self.held_id), self.held_us / 1000));
@@ -836,24 +844,24 @@ impl TransitionEngine {
                 self.prepare(&p);
             }
         }
-        self.plan().map(|p| (p.out_start_us, p.duration_us))
+        self.plan().map(|p| (p.out_start_us(), p.duration_us()))
     }
 
     /// Allocates what the transition needs when the plan arrives, not when the mix starts (allocating
     /// between two buffers can starve the output).
     fn prepare(&mut self, p: &Plan) {
         let Some(out) = self.out else { return };
-        let bytes = out.bytes(p.duration_us);
+        let bytes = out.bytes(p.duration_us());
         if bytes > 0 && self.tail.len() < bytes {
             self.tail.resize(bytes, 0);
         }
         self.ensure_mixer(out);
         if p.stretching() {
-            if self.pending_stretch.as_ref().is_some_and(|(_, k)| *k != p.keep_pitch) {
+            if self.pending_stretch.as_ref().is_some_and(|(_, k)| *k != p.mixer.keep_pitch) {
                 self.pending_stretch = None;
             }
             if self.pending_stretch.is_none() {
-                self.pending_stretch = Some((ByteStretcher::new(out.rate, out.channels, p.keep_pitch), p.keep_pitch));
+                self.pending_stretch = Some((ByteStretcher::new(out.rate, out.channels, p.mixer.keep_pitch), p.mixer.keep_pitch));
             }
         }
         while self.pool.len() < 8 {
@@ -872,19 +880,19 @@ impl TransitionEngine {
     fn begin_hold(&mut self, p: &Plan, out: Format) {
         self.held_id = self.playing_id.clone().or_else(|| self.current_id.clone());
         self.held_offset_us = self.offset_us;
-        self.heard.next_rate = if p.stretching() { p.tempo_ratio } else { 1.0 };
+        self.heard.next_rate = if p.stretching() { p.tempo_ratio() } else { 1.0 };
         self.take_over(p);
-        let late = self.late_us.clamp(0, p.duration_us);
+        let late = self.late_us.clamp(0, p.duration_us());
         self.heard.from = self.held_id.as_ref().map(|h| h.serial);
         self.heard.audible_us = i64::MAX;
         // Outro loop: only the loop slice is captured.
-        let hold_us = if p.out_loop_us > 0 { p.out_loop_us } else { p.duration_us };
+        let hold_us = if p.out_loop_us() > 0 { p.out_loop_us() } else { p.duration_us() };
         let bytes = out.bytes(hold_us);
         if self.tail.len() < bytes {
             self.tail.resize(bytes, 0);
         }
         // A late hold only holds what is left of the overlap.
-        let late_hold = if p.out_loop_us > 0 { 0 } else { late };
+        let late_hold = if p.out_loop_us() > 0 { 0 } else { late };
         self.tail_limit = out.bytes((hold_us - late_hold).max(0));
         self.tail_len = 0;
         self.phase = Phase::Hold;
@@ -893,9 +901,9 @@ impl TransitionEngine {
     /// Where `p` hands over: the next song takes over where it becomes the louder, not where the fade
     /// begins.
     fn take_over(&mut self, p: &Plan) {
-        let late = self.late_us.clamp(0, p.duration_us);
+        let late = self.late_us.clamp(0, p.duration_us());
         self.takeover_us = (crate::automix::mixer::crossover_ms(&p.mixer) * 1000 - late).max(0);
-        self.heard.next_from_us = p.in_skip_us + ((late + self.takeover_us) as f64 * self.heard.next_rate as f64) as i64;
+        self.heard.next_from_us = p.in_skip_us() + ((late + self.takeover_us) as f64 * self.heard.next_rate as f64) as i64;
     }
 
     /// Appends outgoing audio to the hold; what does not fit is skipped by the plan.
@@ -921,13 +929,12 @@ impl TransitionEngine {
                 self.arm_staged_for(host, self.current_id.clone(), false);
                 self.mix_source_id = self.current_id.clone();
                 self.playing_id = self.current_id.clone();
-                let late = self.late_us.clamp(0, p.duration_us);
-                if p.out_loop_us <= 0 && self.tail_len < self.tail_limit {
+                let late = self.late_us.clamp(0, p.duration_us());
+                if p.out_loop_us() <= 0 && self.tail_len < self.tail_limit {
                     // The song ended before the planned end: the mix runs over what was held, its fades with it.
                     let ms = (late + out.us(self.tail_len) + 999) / 1000;
-                    host.log(&format!("mixing: {} ended {} ms into its {} ms ending: the mix is made to fit", song(&self.held_id), ms, p.duration_us / 1000));
+                    host.log(&format!("mixing: {} ended {} ms into its {} ms ending: the mix is made to fit", song(&self.held_id), ms, p.duration_us() / 1000));
                     p.mixer.squeeze(ms);
-                    p.duration_us = ms * 1000;
                     self.tail_limit = self.tail_len;
                     self.take_over(&p);
                     if let Some(from) = self.held_from_us {
@@ -951,13 +958,13 @@ impl TransitionEngine {
                 // The hold goes out as the mix now; the position already reported stands.
                 self.held_us = 0;
                 self.tail_read = 0;
-                self.mix_out_frame = if p.out_loop_us > 0 {
+                self.mix_out_frame = if p.out_loop_us() > 0 {
                     ((late * out.rate as i64 + 500_000) / 1_000_000) as usize
                 } else {
                     0
                 };
-                self.mix_out_frames = ((p.duration_us -  if p.out_loop_us > 0 { 0 } else { late }) * out.rate as i64 / 1_000_000).max(0) as usize;
-                self.out_loop_frames = if p.out_loop_us > 0 { ((p.out_loop_us * out.rate as i64 / 1_000_000) as usize).max(1) } else { 0 };
+                self.mix_out_frames = ((p.duration_us() -  if p.out_loop_us() > 0 { 0 } else { late }) * out.rate as i64 / 1_000_000).max(0) as usize;
+                self.out_loop_frames = if p.out_loop_us() > 0 { ((p.out_loop_us() * out.rate as i64 / 1_000_000) as usize).max(1) } else { 0 };
                 self.mixed_end_us = None;
                 self.mix_from_us = None;
                 self.resync_next = true;
@@ -982,24 +989,24 @@ impl TransitionEngine {
     fn enter_incoming(&mut self, p: &Plan, late: i64) {
         let Some(out) = self.out else { return };
         let stretching = p.stretching();
-        let in_late_us = if stretching { (late as f64 * p.tempo_ratio as f64) as i64 } else { late };
+        let in_late_us = if stretching { (late as f64 * p.tempo_ratio() as f64) as i64 } else { late };
         let s_fmt = self.conv_in.unwrap_or(out);
         if stretching {
-            let taken = if !self.converting() { self.pending_stretch.take().filter(|(_, k)| *k == p.keep_pitch).map(|(s, _)| s) } else { None };
+            let taken = if !self.converting() { self.pending_stretch.take().filter(|(_, k)| *k == p.mixer.keep_pitch).map(|(s, _)| s) } else { None };
             self.pending_stretch = None;
-            let mut s = taken.unwrap_or_else(|| ByteStretcher::new(s_fmt.rate, s_fmt.channels, p.keep_pitch));
+            let mut s = taken.unwrap_or_else(|| ByteStretcher::new(s_fmt.rate, s_fmt.channels, p.mixer.keep_pitch));
             s.configure(
-                p.tempo_ratio as f64,
-                ((p.duration_us - late) * s_fmt.rate as i64 / 1_000_000).max(0) as u64,
-                (p.ramp_us * s_fmt.rate as i64 / 1_000_000).max(0) as u64,
+                p.tempo_ratio() as f64,
+                ((p.duration_us() - late) * s_fmt.rate as i64 / 1_000_000).max(0) as u64,
+                (p.ramp_us() * s_fmt.rate as i64 / 1_000_000).max(0) as u64,
             );
             self.stretch = Some(s);
             self.stretch_format = Some(s_fmt);
             self.mix_in_pts_us = None;
-            self.stretch_pace = p.tempo_ratio as f64;
+            self.stretch_pace = p.tempo_ratio() as f64;
             self.last_content = 0.0;
         }
-        let skip_frames = ((p.in_skip_us + in_late_us).max(0) * s_fmt.rate as i64 + 500_000) / 1_000_000;
+        let skip_frames = ((p.in_skip_us() + in_late_us).max(0) * s_fmt.rate as i64 + 500_000) / 1_000_000;
         self.skip_left = skip_frames as usize * s_fmt.frame_bytes();
     }
 
@@ -1704,19 +1711,10 @@ mod tests {
     /// A 2 s equal-power fade into `to`, starting `start_us` into the outgoing song.
     fn fade(to: &str, start_us: i64) -> Plan {
         let s = AutoMixSettings { max_transition_s: 2.0, ..Default::default() };
-        let t = plan::plan(None, None, 60_000, 60_000, &s);
+        let mut t = plan::plan(None, None, 60_000, 60_000, &s);
         assert_eq!(t.duration_ms, 2000);
-        Plan {
-            incoming_id: to.into(),
-            out_start_us: start_us,
-            duration_us: 2_000_000,
-            in_skip_us: 0,
-            mixer: t,
-            tempo_ratio: 1.0,
-            keep_pitch: true,
-            ramp_us: 0,
-            out_loop_us: 0,
-        }
+        (t.out_start_ms, t.in_start_ms, t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms, t.out_loop_ms) = (start_us / 1000, 0, 1.0, true, 0, None);
+        Plan { incoming_id: to.into(), mixer: t }
     }
 
     #[test]
@@ -1957,8 +1955,7 @@ mod tests {
     fn stretch_returns_to_track_clock() {
         let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
         let mut p = fade("b", 1_000_000);
-        p.tempo_ratio = 1.03;
-        p.ramp_us = 500_000;
+        (p.mixer.tempo_ratio, p.mixer.tempo_ramp_ms) = (1.03, 500);
         h.plans.insert("a".into(), p);
         e.configure(&mut d, &mut h, stream("a", FMT));
         feed(&mut e, &mut d, &mut h, &tone(4000, 3.0), 0);
@@ -2031,8 +2028,7 @@ mod tests {
     fn stretched_mix_into_other_rate() {
         let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
         let mut p = fade("b", 1_000_000);
-        p.tempo_ratio = 1.03;
-        p.ramp_us = 500_000;
+        (p.mixer.tempo_ratio, p.mixer.tempo_ramp_ms) = (1.03, 500);
         h.plans.insert("a".into(), p);
         e.configure(&mut d, &mut h, stream("a", FMT));
         feed(&mut e, &mut d, &mut h, &tone(4000, 3.0), 0);
@@ -2130,7 +2126,9 @@ mod tests {
 
     /// A 2 s beat-matched mix into `c` 1 s in, `c` 4 % fast (pitch too), ramped back over 1 s.
     fn beat_matched() -> Plan {
-        Plan { tempo_ratio: 1.04, keep_pitch: false, ramp_us: 1_000_000, ..fade("c", 1_000_000) }
+        let mut p = fade("c", 1_000_000);
+        (p.mixer.tempo_ratio, p.mixer.keep_pitch, p.mixer.tempo_ramp_ms) = (1.04, false, 1000);
+        p
     }
 
     /// `a` (48 kHz) pins the output, `b` (44.1) is converted, `b` mixes into `c` (48); returns with

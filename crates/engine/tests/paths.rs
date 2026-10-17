@@ -22,6 +22,7 @@ use nori_player::playlist::REPEAT_ONE;
 use nori_player::queue::{OnError, PlaybackError};
 use nori_player::sim;
 use nori_player::transitions::WindowSong;
+use nori_player::types::TransitionPlan;
 use parking_lot::Mutex;
 
 // ---- songs ----
@@ -2180,7 +2181,7 @@ impl Watched {
 impl Host for Watched {
     fn plan_for(&mut self, id: &str) -> Option<Plan> {
         let skip = *self.1.lock();
-        self.0.lock().plan_for(id).map(|p| if skip > 0 { Plan { in_skip_us: skip, ..p } } else { p })
+        self.0.lock().plan_for(id).map(|p| if skip > 0 { Plan { mixer: TransitionPlan { in_start_ms: skip / 1000, ..p.mixer }, ..p } } else { p })
     }
     fn wants_analysis(&mut self, id: &str) -> Option<u64> {
         self.0.lock().wants_analysis(id)

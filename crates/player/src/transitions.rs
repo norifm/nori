@@ -157,17 +157,7 @@ pub fn engine_plan(p: &TransitionPlan, incoming_id: &str) -> Option<Plan> {
     if p.kind == TransitionKind::Gapless {
         return None;
     }
-    Some(Plan {
-        incoming_id: incoming_id.to_string(),
-        out_start_us: p.out_start_ms * 1000,
-        duration_us: p.duration_ms * 1000,
-        in_skip_us: p.in_start_ms * 1000,
-        mixer: p.clone(),
-        tempo_ratio: p.tempo_ratio as f32,
-        keep_pitch: p.keep_pitch,
-        ramp_us: p.tempo_ramp_ms * 1000,
-        out_loop_us: p.out_loop_ms.unwrap_or(0) * 1000,
-    })
+    Some(Plan { incoming_id: incoming_id.to_string(), mixer: p.clone() })
 }
 
 /// An analysis of `heard_ms` covers the whole `expected_ms` song (0: unknown). A cut-short analysis must

@@ -118,19 +118,9 @@ fn mix(at_ms: i64, secs: f64, tempo: f32, ramp_s: f64) -> Plan {
     t.out_start_ms = at_ms;
     t.tempo_ratio = tempo as f64;
     t.tempo_ramp_ms = (ramp_s * 1000.0) as i64;
+    // Varispeed: a stretch keeping the pitch smears the sawtooth.
     t.keep_pitch = false;
-    Plan {
-        incoming_id: "b".into(),
-        out_start_us: at_ms * 1000,
-        duration_us: (secs * 1e6) as i64,
-        in_skip_us: 0,
-        mixer: t,
-        tempo_ratio: tempo,
-        // Varispeed: a stretch keeping the pitch smears the sawtooth.
-        keep_pitch: false,
-        ramp_us: (ramp_s * 1e6) as i64,
-        out_loop_us: 0,
-    }
+    Plan { incoming_id: "b".into(), mixer: t }
 }
 
 /// The simulated app, planning a fixed mix out of `a` (or none), keeping the engine's log lines.
@@ -985,7 +975,6 @@ fn a_guest_joins_mid_mix() {
 fn a_guest_rejoins_an_outro_loop() {
     let (a, b) = (song(6.0, 1, None), song(30.0, 2, None));
     let mut plan = mix(4_000, 4.0, 1.0, 0.0);
-    plan.out_loop_us = 2_000_000;
     plan.mixer.out_loop_ms = Some(2_000);
     let mut jam = Jam::new(
         &[("a", &a), ("b", &b)],

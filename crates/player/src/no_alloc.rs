@@ -154,18 +154,9 @@ fn holding_and_mixing() {
     // Equal gains, and each song at its own gain.
     for (a, b) in [(1.0, 1.0), (0.5, 0.8)] {
         let s = AutoMixSettings { max_transition_s: 6.0, ..Default::default() };
-        let t = plan::plan(None, None, 60_000, 60_000, &s);
-        let p = Plan {
-            incoming_id: "b".into(),
-            out_start_us: 4_000_000,
-            duration_us: t.duration_ms * 1000,
-            in_skip_us: 0,
-            mixer: t.clone(),
-            tempo_ratio: 1.0,
-            keep_pitch: true,
-            ramp_us: 0,
-            out_loop_us: 0,
-        };
+        let mut t = plan::plan(None, None, 60_000, 60_000, &s);
+        (t.out_start_ms, t.tempo_ratio, t.keep_pitch) = (4_000, 1.0, true);
+        let p = Plan { incoming_id: "b".into(), mixer: t.clone() };
         let (mut e, mut d, mut h) = (TransitionEngine::new(), Sink { bytes: 0 }, App { plan: Some(p), analyse: false });
         e.configure(&mut d, &mut h, stream("a", FMT));
         e.set_gain(a);

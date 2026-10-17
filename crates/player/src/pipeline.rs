@@ -463,7 +463,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         let astray = self.read_astray(cur);
         self.app.clock(self.now_ms);
         let plan = self.engine.plans.plan_for(&mut self.app, &id);
-        let made = match self.ending_made(cur, plan.as_ref().map(|p| p.out_start_us)) {
+        let made = match self.ending_made(cur, plan.as_ref().map(|p| p.out_start_us())) {
             Some(made) => made,
             None if astray => None,
             None => return,
@@ -471,9 +471,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         if made == plan && !astray {
             return;
         }
-        let starts = [&made, &plan].map(|p| p.as_ref().map(|p| p.out_start_us));
+        let starts = [&made, &plan].map(|p| p.as_ref().map(|p| p.out_start_us()));
         let part_us = starts.into_iter().flatten().min().unwrap_or(period.duration_us).min(period.duration_us);
-        let said = |p: &Option<crate::engine::Plan>| p.as_ref().map_or("gapless".to_string(), |p| format!("a mix from {} ms", p.out_start_us / 1000));
+        let said = |p: &Option<crate::engine::Plan>| p.as_ref().map_or("gapless".to_string(), |p| format!("a mix from {} ms", p.out_start_us() / 1000));
         let why = if astray { "another song follows it now".to_string() } else { format!("{} now, {} as it was made", said(&plan), said(&made)) };
         self.app.log(&format!("the ending of {id} is made again from {} ms: {why}", part_us / 1000));
         self.remake_from(cur, part_us / 1000);

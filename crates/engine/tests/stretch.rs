@@ -93,18 +93,10 @@ impl Library for Songs {
 /// The reported mix: `b` 7.1 % fast with pitch kept, eased back over 5 s.
 fn beat_matched() -> Plan {
     let s = AutoMixSettings { max_transition_s: 23.0, ..Default::default() };
-    let t = plan::plan(None, None, (A_SECS * 1000.0) as i64, (B_SECS * 1000.0) as i64, &s);
-    Plan {
-        incoming_id: "b".into(),
-        out_start_us: MIX_AT_MS * 1000,
-        duration_us: MIX_MS * 1000,
-        in_skip_us: SKIP_MS * 1000,
-        mixer: t.clone(),
-        tempo_ratio: TEMPO,
-        keep_pitch: true,
-        ramp_us: RAMP_MS * 1000,
-        out_loop_us: 0,
-    }
+    let mut t = plan::plan(None, None, (A_SECS * 1000.0) as i64, (B_SECS * 1000.0) as i64, &s);
+    (t.out_start_ms, t.in_start_ms, t.duration_ms) = (MIX_AT_MS, SKIP_MS, MIX_MS);
+    (t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms) = (TEMPO as f64, true, RAMP_MS);
+    Plan { incoming_id: "b".into(), mixer: t }
 }
 
 struct Planned(sim::App);
