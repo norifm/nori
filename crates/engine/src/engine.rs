@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
-use std::thread::{JoinHandle, Thread};
+use std::thread::JoinHandle;
 use nori_time::{Duration, Instant};
 
 use nori_player::pcm::Encoding;
@@ -346,14 +346,13 @@ struct Dip {
 /// The handle: every call sends a command, wakes the engine's thread and returns at once.
 pub struct Engine {
     tx: Sender<Command>,
-    thread: Thread,
     join: Mutex<Option<JoinHandle<()>>>,
     status: Arc<Mutex<Status>>,
     /// Jumps and plays asked for so far ([`Event::Song`], [`Event::Stopped`]).
     jumps: AtomicU64,
     plays: AtomicU64,
-    /// How a command wakes the thread on a test's clock ([`Engine::start_on`]).
-    wake: Option<Box<dyn Fn() + Send + Sync>>,
+    /// How a command wakes the thread ([`Clock::wake`]).
+    wake: Box<dyn Fn() + Send + Sync>,
     /// Its songs' fetches.
     fetching: Arc<Fetching>,
     /// The engine's clock, µs, read on the caller's thread.
@@ -371,24 +370,12 @@ impl Engine {
         Q: Queue + Send + 'static,
         E: FnMut(Event) + Send + 'static,
     {
-        Engine::launch(library, app, queue, output, offload, config, Monotonic::new(), false, events)
+        Engine::start_on(library, app, queue, output, offload, config, Monotonic::new(), events)
     }
 
-    /// [`Engine::start`] on a test's clock: every command goes through [`Clock::wake`].
+    /// [`Engine::start`] on `clock` (a test's moves by hand).
     #[allow(clippy::too_many_arguments)]
     pub fn start_on<L, A, Q, E, C>(library: L, app: A, queue: Q, output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, events: E) -> Engine
-    where
-        L: Library,
-        A: App + Send + 'static,
-        Q: Queue + Send + 'static,
-        E: FnMut(Event) + Send + 'static,
-        C: Clock + Sync,
-    {
-        Engine::launch(library, app, queue, output, offload, config, clock, true, events)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn launch<L, A, Q, E, C>(library: L, app: A, queue: Q, output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, hooked: bool, events: E) -> Engine
     where
         L: Library,
         A: App + Send + 'static,
@@ -409,11 +396,8 @@ impl Engine {
             })
             .expect("a thread for the engine");
         let thread = join.thread().clone();
-        let wake = hooked.then(|| {
-            let t = thread.clone();
-            Box::new(move || hook.wake(&t)) as Box<dyn Fn() + Send + Sync>
-        });
-        Engine { tx, thread, join: Mutex::new(Some(join)), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake, fetching, now_us: Box::new(move || timer.now_us()) }
+        let wake = Box::new(move || hook.wake(&thread));
+        Engine { tx, join: Mutex::new(Some(join)), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake, fetching, now_us: Box::new(move || timer.now_us()) }
     }
 
     /// The engine on the caller's thread, for a platform without threads (the web): the caller runs
@@ -432,16 +416,13 @@ impl Engine {
         let fetching = Arc::new(fetching_on(&clock));
         let timer = clock.clone();
         let w = worker(library, app, queue, output, None, config, clock, rx, tx.clone(), Box::new(wake.clone()), events, status.clone(), fetching.clone());
-        let engine = Engine { tx, thread: std::thread::current(), join: Mutex::new(None), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake: Some(Box::new(wake)), fetching, now_us: Box::new(move || timer.now_us()) };
+        let engine = Engine { tx, join: Mutex::new(None), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake: Box::new(wake), fetching, now_us: Box::new(move || timer.now_us()) };
         (engine, Driven(w))
     }
 
     fn send(&self, c: Command) {
         if self.tx.send(c).is_ok() {
-            match &self.wake {
-                Some(w) => w(),
-                None => self.thread.unpark(),
-            }
+            (self.wake)();
         }
     }
 
