@@ -233,7 +233,8 @@ impl Cancel {
 
 /// One owner's song fetches (an engine's loaders, a fetch-ahead): the watch that calls off stalled
 /// requests, on one sleeping thread alive only while a request has a deadline; the requests waiting for
-/// an answer, by source ([`MAX_ASKING`]); and the loaders alive, for the memory report ([`Fetching::held`]).
+/// an answer, by source ([`MAX_ASKING`]); the loaders alive, for the memory report ([`Fetching::held`]);
+/// and the clock their arrival rates are measured on.
 #[derive(Default)]
 pub struct Fetching {
     watch: Mutex<Watch>,
@@ -241,6 +242,8 @@ pub struct Fetching {
     /// The requests waiting for an answer, oldest first, by the source they go to.
     asking: Mutex<Vec<(usize, Cancel)>>,
     alive: Mutex<Vec<Weak<Loaded>>>,
+    /// The engine's clock, µs, from `epoch` on ([`Fetching::timed`]); the machine's without one.
+    clock: Option<(Instant, Box<dyn Fn() -> i64 + Send + Sync>)>,
 }
 
 /// Requests with a stall deadline, and whether the thread that cancels stalled ones runs.
@@ -268,6 +271,19 @@ pub struct Held {
 }
 
 impl Fetching {
+    /// Fetches whose arrival rates are measured on `now_us` (the engine's clock, which a test moves).
+    pub fn timed(now_us: impl Fn() -> i64 + Send + Sync + 'static) -> Fetching {
+        let epoch = Instant::now() - Duration::from_micros(now_us().max(0) as u64);
+        Fetching { clock: Some((epoch, Box::new(now_us))), ..Fetching::default() }
+    }
+
+    fn now(&self) -> Instant {
+        match &self.clock {
+            Some((epoch, now_us)) => *epoch + Duration::from_micros(now_us().max(0) as u64),
+            None => Instant::now(),
+        }
+    }
+
     fn watch(self: &Arc<Self>, call: Weak<Mutex<CallState>>) {
         let mut w = self.watch.lock();
         w.calls.push(call);
@@ -475,13 +491,15 @@ pub struct Window {
 const BYTES_PER_MS_GUESS: u64 = 40;
 /// Read size: as much as makes a song ready ([`READY`]), so a burst is a few large reads.
 const CHUNK: usize = 256 * 1024;
-/// A reader this far past what is loaded has seeked: fetch from there.
+/// A reader this far past what is loaded has seeked: fetch from there. Once the running burst's rate and
+/// a request's answer are known, a reader further than the burst brings in that time ([`State::reach`]),
+/// but no nearer than [`NEAR`].
 const FAR: u64 = 1024 * 1024;
+const NEAR: u64 = 64 * 1024;
 /// Bytes ahead that make a song ready to read without waiting.
 pub(crate) const READY: u64 = 256 * 1024;
-/// A song read as it arrives ([`ByteSource::push`]) is ready sooner when the rate it arrives at keeps
-/// ahead of the music ([`arrives_in_time`]): with this much of it at hand, and at least [`START_BYTES`]
-/// for its header and first packets.
+/// A song is ready sooner when the rate it arrives at keeps ahead of the music ([`arrives_in_time`]):
+/// with this much of it at hand, and at least [`START_BYTES`] for its header and first packets.
 const START_MS: f64 = 1_000.0;
 const START_BYTES: u64 = 16 * 1024;
 /// The rate is known once a burst has brought bytes for this long.
@@ -545,8 +563,9 @@ struct State {
     /// The reader wants bytes from here, outside what is kept.
     restart: Option<u64>,
     closed: bool,
-    /// The engine thread to wake when ready.
+    /// The engine thread to wake when ready, and when no more bytes come in ([`State::settled`]).
     waiter: Option<Thread>,
+    settle_waiter: Option<Thread>,
     /// Readers blocked in a read. A count: one giving up must not leave another unwoken.
     blocked: u32,
     /// Connections opened: one per burst.
@@ -563,6 +582,8 @@ struct State {
     shortened: u32,
     /// The song ends before this byte ([`State::not_at`]): a promised length at or past it is ignored.
     before: Option<u64>,
+    /// The first answer came, and whether it said the song's length.
+    first_sized: Option<bool>,
     /// Fetched by the platform ([`ByteSource::push`]): readers never block, and it is woken through
     /// `pusher` when the next step may have changed.
     pushed: bool,
@@ -579,6 +600,10 @@ struct State {
     /// The running burst's first bytes: when they came, and the end then (its rate is measured from
     /// there).
     burst_from: Option<(Instant, u64)>,
+    /// When the request under way was asked and from which byte, and how long the last took to bring
+    /// its first bytes.
+    asked: Option<(Instant, u64)>,
+    answer_ms: Option<f64>,
 }
 
 impl State {
@@ -605,7 +630,10 @@ impl State {
 
     /// The song's window, within the budget.
     fn window(&self, load: [i64; 5], duration_ms: Option<i64>) -> Window {
-        let w = self.window.unwrap_or_else(|| Window::for_song(load, duration_ms, self.len));
+        self.within_budget(self.window.unwrap_or_else(|| Window::for_song(load, duration_ms, self.len)))
+    }
+
+    fn within_budget(&self, w: Window) -> Window {
         match self.budget {
             Some(b) if b < w.cap => Window { low: w.low.min(b / 2), high: w.high.min(b), cap: b },
             _ => w,
@@ -627,19 +655,30 @@ impl State {
 
     /// Bytes at hand from `at` on, without a gap.
     fn held_from(&self, at: u64) -> u64 {
-        if self.in_window(at) {
-            return self.end() - at;
-        }
-        let Some((b, d)) = self.piece_at(at) else { return 0 };
-        let end = b + d.len() as u64;
-        end - at + if self.base == end { self.data.len() as u64 } else { 0 }
+        self.held_run(at).0 - at
     }
 
-    /// Whether a read from `at` would find its bytes: enough of them (or of a pushed song arriving in
+    /// Where the bytes at hand from `at` stop, through earlier windows that follow one another, and
+    /// whether they run into the window, where more come.
+    fn held_run(&self, at: u64) -> (u64, bool) {
+        let mut end = at;
+        loop {
+            if self.in_window(end) || self.base == end {
+                return (self.end().max(end), true);
+            }
+            match self.piece_at(end) {
+                Some((b, d)) => end = b + d.len() as u64,
+                None => return (end, false),
+            }
+        }
+    }
+
+    /// Whether a read from `at` would find its bytes at `now`: enough of them (or of a song arriving in
     /// time), all up to the end, or no more to come.
-    fn ready_from(&self, at: u64) -> bool {
-        let held = self.held_from(at);
-        self.error.is_some() || self.closed || held >= READY || self.len.is_some_and(|l| at + held >= l) || (self.done && held > 0 && at + held == self.end()) || (self.in_window(at) && self.in_time(held, Instant::now()))
+    fn ready_from(&self, at: u64, now: Instant) -> bool {
+        let (end, window) = self.held_run(at);
+        let held = end - at;
+        self.error.is_some() || self.closed || held >= READY || self.len.is_some_and(|l| end >= l) || (held > 0 && window && (self.done || self.in_time(held, now)))
     }
 
     fn in_window(&self, at: u64) -> bool {
@@ -651,14 +690,12 @@ impl State {
         self.pieces.iter().find(|(b, d)| at >= *b && at < b + d.len() as u64).map(|(b, d)| (*b, d))
     }
 
-    /// The end of the earlier window the reader reads, once within `low` of it with nothing after it at
+    /// The end of the earlier windows the reader reads, once within `low` of it with nothing after it at
     /// hand: where the window goes on.
     fn piece_running_out(&self, low: u64) -> Option<u64> {
         let at = self.in_piece?;
-        let (b, d) = self.piece_at(at)?;
-        let end = b + d.len() as u64;
-        let held = self.in_window(end) || self.base == end || self.piece_at(end).is_some();
-        (!held && end - at < low.max(READY)).then_some(end)
+        let (end, window) = self.held_run(at);
+        (!window && end - at < low.max(READY)).then_some(end)
     }
 
     /// Room for the burst and `n` more bytes: what is kept behind the reader (at least [`FAR`], what a
@@ -676,6 +713,12 @@ impl State {
         self.done || self.len.is_some_and(|l| self.end() >= l)
     }
 
+    /// No bytes are coming in: all are here, the fetch failed, or it holds its window's high mark until
+    /// the reader nears the low.
+    fn settled(&self) -> bool {
+        self.at_end() || self.error.is_some() || self.closed || self.window.is_some_and(|w| self.ahead() >= self.within_budget(w).high)
+    }
+
     /// Whether the whole song is in memory: None while it may yet be; false when it never will be
     /// (failed, or larger than one burst).
     fn whole(&self) -> Option<bool> {
@@ -691,26 +734,43 @@ impl State {
         None
     }
 
-    fn ready(&self) -> bool {
-        self.ready_at(Instant::now())
-    }
-
-    /// [`State::ready`] with the clock at `now`.
-    fn ready_at(&self, now: Instant) -> bool {
+    /// Whether a read would find its bytes at `now`.
+    fn ready(&self, now: Instant) -> bool {
         if let Some(at) = self.in_piece {
-            return self.ready_from(at);
+            return self.ready_from(at, now);
         }
         self.at_end() || self.error.is_some() || self.ahead() >= if self.live { LIVE_READY } else { READY } || self.in_time(self.ahead(), now)
     }
 
-    /// A pushed song's bytes arrive fast enough to play from what is at hand ([`arrives_in_time`]).
-    fn in_time(&self, ahead: u64, now: Instant) -> bool {
-        let (true, Some(per_ms), Some((since, from)), Some(len)) = (self.pushed && !self.live, self.per_ms, self.burst_from, self.len) else { return false };
+    /// The running burst's rate, bytes per ms, once it ran for [`RATE_MS`].
+    fn rate(&self, now: Instant) -> Option<f64> {
+        let (since, from) = self.burst_from?;
         let ms = now.saturating_duration_since(since).as_secs_f64() * 1000.0;
-        if ms < RATE_MS {
-            return false;
+        (ms >= RATE_MS).then(|| self.end().saturating_sub(from) as f64 / ms)
+    }
+
+    /// Bytes past the end the running burst brings sooner than a request from further on would answer:
+    /// at its rate, or before that is known at what it brought since it was asked.
+    fn reach(&self, now: Instant) -> u64 {
+        let so_far = || {
+            let (asked, from) = self.asked.filter(|_| self.burst_from.is_some())?;
+            let ms = now.saturating_duration_since(asked).as_secs_f64() * 1000.0;
+            (ms > 0.0).then(|| self.end().saturating_sub(from) as f64 / ms)
+        };
+        match (self.rate(now).or_else(so_far), self.answer_ms) {
+            (Some(rate), Some(answer)) => ((rate * answer) as u64).max(NEAR),
+            _ => FAR,
         }
-        let rate = self.end().saturating_sub(from) as f64 / ms;
+    }
+
+    /// A read from `at` is outside what is kept and what the running burst brings soon: fetched from there.
+    fn far(&self, at: u64, now: Instant) -> bool {
+        at < self.base || at > self.end() + self.reach(now)
+    }
+
+    /// The song's bytes arrive fast enough to play from what is at hand ([`arrives_in_time`]).
+    fn in_time(&self, ahead: u64, now: Instant) -> bool {
+        let (false, Some(per_ms), Some(rate), Some(len)) = (self.live, self.per_ms, self.rate(now), self.len) else { return false };
         arrives_in_time(ahead, len.saturating_sub(self.end()), per_ms, rate)
     }
 
@@ -885,8 +945,8 @@ struct Loaded {
     /// Its running request, cancelled when the song is let go.
     cancel: Cancel,
     retry_ms: u64,
-    /// Whose watch its requests are under.
-    _fetching: Arc<Fetching>,
+    /// Whose watch its requests are under, and whose clock times their arrival.
+    fetching: Arc<Fetching>,
 }
 
 /// A song being loaded from `url` of a source; dropping the last handle stops the loader and frees its
@@ -966,7 +1026,7 @@ impl Loader {
         if s.waiter.is_some() {
             w.push_str(", the engine waits on it");
         }
-        if !s.ready() {
+        if !s.ready(self.0.now()) {
             w.push_str(", not ready");
         }
         if let Some(e) = &s.error {
@@ -1009,6 +1069,18 @@ impl Loader {
         }
     }
 
+    /// No bytes are coming in: all are here, the fetch failed, or it holds its window's high mark until
+    /// the reader nears the low.
+    /// [`State::settled`]; if not, `engine` is woken once it is.
+    pub(crate) fn settled_or_wake(&self, engine: &Thread) -> bool {
+        let mut s = self.0.state.lock();
+        if s.settled() {
+            return true;
+        }
+        s.settle_waiter = Some(engine.clone());
+        false
+    }
+
     /// The whole song is in memory.
     pub fn complete(&self) -> bool {
         let s = self.0.state.lock();
@@ -1030,6 +1102,34 @@ impl Loader {
         }
     }
 
+    /// Blocks until the first answer; whether it said the song's length (a whole file, where a transcode
+    /// made as it is sent says none).
+    pub(crate) fn wait_sized(&self) -> bool {
+        let l = &*self.0;
+        let mut s = l.state.lock();
+        loop {
+            if let Some(sized) = s.first_sized {
+                return sized;
+            }
+            if s.error.is_some() || s.closed || s.done {
+                return false;
+            }
+            s.blocked += 1;
+            l.cv.wait(&mut s);
+            s.blocked -= 1;
+        }
+    }
+
+    /// [`Loader::wait_sized`] without waiting: None until the first answer, when `engine` is woken once
+    /// the song is ready.
+    pub(crate) fn sized_or_wake(&self, engine: &Thread) -> Option<bool> {
+        let mut s = self.0.state.lock();
+        if s.first_sized.is_none() {
+            s.waiter = Some(engine.clone());
+        }
+        s.first_sized
+    }
+
     /// [`Loader::wait_whole`] without waiting: None until known, when `engine` is woken.
     pub(crate) fn whole_or_wake(&self, engine: &Thread) -> Option<bool> {
         let mut s = self.0.state.lock();
@@ -1043,7 +1143,7 @@ impl Loader {
     /// Whether a read from `at` would find its bytes; if not, `engine` is woken when the loader is ready.
     pub(crate) fn ready_from_or_wake(&self, at: u64, engine: &Thread) -> bool {
         let mut s = self.0.state.lock();
-        if s.ready_from(at) {
+        if s.ready_from(at, self.0.now()) {
             return true;
         }
         s.waiter = Some(engine.clone());
@@ -1055,11 +1155,11 @@ impl Loader {
     /// held from there stop, whatever its tries read since.
     pub(crate) fn want_from(&self, at: u64) {
         let mut s = self.0.state.lock();
-        if s.ready_from(at) {
+        if s.ready_from(at, self.0.now()) {
             return;
         }
         let gap = at + s.held_from(at);
-        if gap < s.base || gap > s.end() + FAR {
+        if s.far(gap, self.0.now()) {
             s.restart = Some(gap);
         }
         (s.reader_at, s.in_piece) = (gap, None);
@@ -1118,10 +1218,14 @@ impl Loader {
     /// Whether a read would not block; if not, `engine` is woken when it would not.
     pub(crate) fn ready_or_wake(&self, engine: &Thread) -> bool {
         let mut s = self.0.state.lock();
-        if s.ready() {
+        if s.ready(self.0.now()) {
             return true;
         }
         s.waiter = Some(engine.clone());
+        // Reading an earlier window, the window may have to go on after it.
+        if s.in_piece.is_some() {
+            self.0.stir(&mut s);
+        }
         false
     }
 
@@ -1169,7 +1273,11 @@ impl Drop for Loader {
 
 impl Loaded {
     fn new(fetching: &Arc<Fetching>, state: State, waits: Waits) -> Loaded {
-        Loaded { state: Mutex::new(state), cv: Condvar::new(), cancel: Cancel::stalling_after(fetching, waits.stall_ms), retry_ms: waits.retry_ms, _fetching: fetching.clone() }
+        Loaded { state: Mutex::new(state), cv: Condvar::new(), cancel: Cancel::stalling_after(fetching, waits.stall_ms), retry_ms: waits.retry_ms, fetching: fetching.clone() }
+    }
+
+    fn now(&self) -> Instant {
+        self.fetching.now()
     }
 
     /// The rest before the retry after `failures` failures in a row: 2, 4, 8 times `retry_ms`.
@@ -1199,7 +1307,8 @@ impl Loaded {
             return Next::Stop;
         }
         let low = s.window(run.load, run.duration_ms).low;
-        if s.restart.is_none() {
+        // An opening reading on its own thread asks for what it misses itself, wherever it jumps next.
+        if s.restart.is_none() && (s.pushed || s.opening == 0) {
             s.restart = s.piece_running_out(low);
         }
         if let Some(at) = s.restart.take() {
@@ -1249,7 +1358,11 @@ impl Loaded {
                 s.data.drain(..drop);
                 s.base = keep_from;
             }
-            return if run.open { Next::Read(s.end()) } else { Next::Open(s.end()) };
+            if run.open {
+                return Next::Read(s.end());
+            }
+            s.asked = Some((self.now(), s.end()));
+            return Next::Open(s.end());
         }
         // At the high mark: closed until the reader nears the low mark.
         run.open = false;
@@ -1265,6 +1378,7 @@ impl Loaded {
                 run.go_on = false;
                 run.brought = false;
                 let mut s = self.state.lock();
+                s.first_sized.get_or_insert(len.is_some());
                 let promised = len.filter(|&l| s.before.is_none_or(|b| l < b));
                 match (s.len, promised) {
                     (None, l) => s.len = l,
@@ -1343,7 +1457,11 @@ impl Loaded {
                     s.data.extend(bytes);
                     kept = bytes;
                     if s.burst_from.is_none() {
-                        s.burst_from = Some((Instant::now(), s.end()));
+                        let now = self.now();
+                        if s.asked.is_some_and(|a| a.1 == from) {
+                            s.answer_ms = s.asked.map(|a| now.saturating_duration_since(a.0).as_secs_f64() * 1000.0);
+                        }
+                        s.burst_from = Some((now, s.end()));
                     }
                 }
             }
@@ -1509,8 +1627,13 @@ impl Loaded {
         if s.blocked > 0 {
             self.cv.notify_all();
         }
-        if s.ready() {
+        if s.ready(self.now()) {
             if let Some(t) = s.waiter.take() {
+                t.unpark();
+            }
+        }
+        if s.settle_waiter.is_some() && s.settled() {
+            if let Some(t) = s.settle_waiter.take() {
                 t.unpark();
             }
         }
@@ -1606,8 +1729,12 @@ impl Read for LoadedReader {
             if s.live && self.pos < s.base {
                 return Err(io::Error::other("a live stream cannot be read again from further back"));
             }
-            if !s.live && (self.pos < s.base || self.pos > end + FAR) {
+            if !s.live && s.far(self.pos, l.now()) {
                 s.restart = Some(self.pos);
+                // The body bringing bytes from elsewhere is let go at once, not after its next read.
+                if s.burst_from.is_some() {
+                    l.cancel.call_off(false);
+                }
             }
             s.reader_at = self.pos;
             s.in_piece = None;
@@ -1882,25 +2009,29 @@ mod tests {
     }
 
     #[test]
-    fn pushed_song_ready_once_its_rate_is_known() {
+    fn song_ready_once_its_rate_is_known() {
         let at = Instant::now();
-        let s = |pushed: bool, ahead: usize, came_ms: u64| State {
+        let s = |pushed: bool, live: bool, ahead: usize, came_ms: u64| State {
             pushed,
+            live,
             len: Some(3_840_000),
             per_ms: Some(16.0),
             data: vec![0u8; ahead].into(),
             burst_from: Some((at, 4096)),
             ..State::default()
         }
-        .ready_at(at + Duration::from_millis(came_ms));
-        assert!(s(true, 32 * 1024, 600), "28 KB in 600 ms: 47 bytes per ms, ahead of the music");
-        assert!(!s(true, 32 * 1024, 200), "too soon to know the rate");
-        assert!(!s(true, 32 * 1024, 5_000), "6 bytes per ms: behind the music");
-        assert!(!s(false, 32 * 1024, 600), "a loader on its own thread waits for READY as ever");
-        assert!(s(true, READY as usize, 5_000) && s(false, READY as usize, 5_000), "READY is always enough");
+        .ready(at + Duration::from_millis(came_ms));
+        for pushed in [true, false] {
+            assert!(s(pushed, false, 32 * 1024, 600), "28 KB in 600 ms: 47 bytes per ms, ahead of the music");
+            assert!(!s(pushed, false, 32 * 1024, 200), "too soon to know the rate");
+            assert!(!s(pushed, false, 32 * 1024, 5_000), "6 bytes per ms: behind the music");
+            assert!(s(pushed, false, READY as usize, 5_000), "READY is always enough");
+        }
+        assert!(!s(false, true, 30 * 1024, 600), "a live stream waits for its own amount");
         // A song opening reads from where it ran dry: the same there.
-        let opening = State { pushed: true, len: Some(3_840_000), per_ms: Some(16.0), data: vec![0u8; 32 * 1024].into(), burst_from: Some((Instant::now() - Duration::from_millis(600), 4096)), ..State::default() };
-        assert!(opening.ready_from(0) && !opening.ready_from(20 * 1024), "the floor from where the opening reads");
+        let opening = State { pushed: true, len: Some(3_840_000), per_ms: Some(16.0), data: vec![0u8; 32 * 1024].into(), burst_from: Some((at, 4096)), ..State::default() };
+        let later = at + Duration::from_millis(600);
+        assert!(opening.ready_from(0, later) && !opening.ready_from(20 * 1024, later), "the floor from where the opening reads");
     }
 
     #[test]

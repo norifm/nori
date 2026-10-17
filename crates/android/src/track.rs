@@ -2556,7 +2556,7 @@ mod tests {
 
     impl nori_engine::Library for Songs {
         fn locate(&mut self, id: &str) -> Result<nori_engine::Located, String> {
-            Ok(nori_engine::Located { source: nori_engine::Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some("wav".into()), duration_ms: Some(self.ms(id)), estimated: false })
+            Ok(nori_engine::Located { source: nori_engine::Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some("wav".into()), duration_ms: Some(self.ms(id)), estimated: false, from_second: None })
         }
         fn about(&self, id: &str) -> nori_player::transitions::WindowSong {
             nori_player::transitions::WindowSong { id: id.to_string(), title: id.to_string(), duration_ms: self.ms(id), ..Default::default() }
@@ -2864,7 +2864,7 @@ mod tests {
 
     impl nori_engine::Library for OnDisk {
         fn locate(&mut self, id: &str) -> Result<nori_engine::Located, String> {
-            Ok(nori_engine::Located { source: nori_engine::Source::File(vec![self.0.dir.join(format!("{id}.wav"))]), hint: Some("wav".into()), duration_ms: Some(self.0.ms), estimated: false })
+            Ok(nori_engine::Located { source: nori_engine::Source::File(vec![self.0.dir.join(format!("{id}.wav"))]), hint: Some("wav".into()), duration_ms: Some(self.0.ms), estimated: false, from_second: None })
         }
         fn about(&self, id: &str) -> nori_player::transitions::WindowSong {
             nori_player::transitions::WindowSong { id: id.to_string(), title: id.to_string(), duration_ms: self.0.ms, ..Default::default() }

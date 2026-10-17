@@ -38,7 +38,7 @@ struct Songs {
 
 impl Library for Songs {
     fn locate(&mut self, id: &str) -> Result<Located, String> {
-        Ok(Located { source: Source::Url { url: id.into(), bytes: self.bytes.clone() }, hint: Some("wav".into()), duration_ms: Some((SECS * 1000.0) as i64), estimated: false })
+        Ok(Located { source: Source::Url { url: id.into(), bytes: self.bytes.clone() }, hint: Some("wav".into()), duration_ms: Some((SECS * 1000.0) as i64), estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {

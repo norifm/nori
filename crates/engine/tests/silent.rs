@@ -117,7 +117,7 @@ impl Library for Songs {
             panic!("the library panicked locating {id}");
         }
         let bytes: Arc<dyn ByteSource> = self.net.clone();
-        Ok(Located { source: Source::Url { url: id.to_string(), bytes }, hint: Some("wav".into()), duration_ms: Some(SECS as i64 * 1000), estimated: false })
+        Ok(Located { source: Source::Url { url: id.to_string(), bytes }, hint: Some("wav".into()), duration_ms: Some(SECS as i64 * 1000), estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {

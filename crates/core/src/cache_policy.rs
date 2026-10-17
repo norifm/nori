@@ -277,6 +277,7 @@ const NOT_FOUND: i32 = 70;
 impl Client {
     fn parse(&self, parser: Parser, body: Vec<u8>) -> NetResult<Page> {
         let r = crate::parse(&body)?;
+        self.core.heard_from_server(&r.kind);
         let stars = || self.core.stars.lock();
         Ok(match parser {
             Parser::AlbumList => Page::Albums { v: r.album_list2.unwrap_or_default().album },
@@ -476,6 +477,18 @@ mod tests {
         fake.answer(r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s"}]}}}"#);
         let page = block(c.cached_or_fetched(Read::StarredItems)).unwrap().unwrap();
         assert_eq!(page.songs().iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["s"]);
+    }
+
+    #[test]
+    fn a_navidrome_answer_says_transcodes_start_where_asked() {
+        let (c, fake) = setup();
+        assert!(!c.core.starts_transcodes());
+        fake.answer(r#"{"subsonic-response":{"status":"ok","type":"gonic","genres":{"genre":[]}}}"#);
+        block(c.read_fetch(Read::GenreList, None)).unwrap();
+        assert!(!c.core.starts_transcodes(), "another server: transcodes are read from their start");
+        fake.answer(r#"{"subsonic-response":{"status":"ok","type":"navidrome","genres":{"genre":[]}}}"#);
+        block(c.read_fetch(Read::GenreList, None)).unwrap();
+        assert!(c.core.starts_transcodes());
     }
 
     fn genres(p: &Option<Page>) -> String {

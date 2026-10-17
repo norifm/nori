@@ -110,7 +110,7 @@ struct Songs(Arc<Server>, Vec<(String, String, i64)>, Vec<(String, String, i32)>
 impl Library for Songs {
     fn locate(&mut self, id: &str) -> Result<Located, String> {
         let (_, hint, ms) = self.1.iter().find(|(i, _, _)| i == id).cloned().ok_or("no such song")?;
-        Ok(Located { source: Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some(hint), duration_ms: Some(ms), estimated: false })
+        Ok(Located { source: Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some(hint), duration_ms: Some(ms), estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {
@@ -1403,7 +1403,7 @@ struct Radio;
 
 impl Library for Radio {
     fn locate(&mut self, id: &str) -> Result<Located, String> {
-        Ok(Located { source: Source::Live { url: id.into(), bytes: Arc::new(Station) }, hint: Some("wav".into()), duration_ms: None, estimated: false })
+        Ok(Located { source: Source::Live { url: id.into(), bytes: Arc::new(Station) }, hint: Some("wav".into()), duration_ms: None, estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {
@@ -2511,7 +2511,7 @@ struct UnsizedSongs(Arc<Unsized>, Vec<(String, String, i64)>);
 impl Library for UnsizedSongs {
     fn locate(&mut self, id: &str) -> Result<Located, String> {
         let (_, hint, ms) = self.1.iter().find(|(i, _, _)| i == id).cloned().ok_or("no such song")?;
-        Ok(Located { source: Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some(hint), duration_ms: Some(ms), estimated: false })
+        Ok(Located { source: Source::Url { url: id.to_string(), bytes: self.0.clone() }, hint: Some(hint), duration_ms: Some(ms), estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {

@@ -258,11 +258,23 @@ struct Spec<'a> {
     sized: bool,
     /// Decodes HE-AAC when playing.
     platform: Platform,
+    /// The song time the source starts at (a transcode the server began there); `from_ms` and
+    /// `duration_ms` are the source's own.
+    offset_ms: i64,
 }
 
 impl<'a> Spec<'a> {
     fn new(hint: Option<&'a str>, from_ms: i64, duration_ms: Option<i64>, encoding: Encoding, mode: Mode) -> Self {
-        Spec { hint, from_ms, duration_ms, encoding, mode, whole: true, sized: true, platform: Platform::default() }
+        Spec { hint, from_ms, duration_ms, encoding, mode, whole: true, sized: true, platform: Platform::default(), offset_ms: 0 }
+    }
+
+    /// Song `from_ms` (of `duration_ms`) in a source that starts at song time `offset_ms` when `started`
+    /// says the server began it there (a transcode, which comes without a length).
+    fn at(self, offset_ms: i64, started: bool) -> Self {
+        match offset_ms {
+            o if o > 0 && started => Spec { from_ms: self.from_ms - o, duration_ms: self.duration_ms.map(|d| d - o), offset_ms: o, ..self },
+            _ => self,
+        }
     }
 }
 
@@ -504,6 +516,8 @@ struct Stream {
     /// Read whole, an Ogg stream without its last page: a copy cut short (by a server at its length
     /// estimate).
     cut_short: bool,
+    /// The song time the source starts at ([`Spec::offset_ms`]).
+    offset_us: i64,
 }
 
 /// Converts float audio from one rate and channel count to another.
@@ -541,15 +555,21 @@ impl Stream {
     }
 
     fn open_unguarded(mut source: Box<dyn MediaSource>, spec: Spec) -> Result<Stream, String> {
-        let Spec { hint, from_ms, duration_ms, encoding, mode, whole, sized, platform } = spec;
+        let Spec { hint, from_ms, duration_ms, encoding, mode, whole, sized, platform, offset_ms } = spec;
         let packets = mode == Mode::Packets;
-        let gapless = if whole { crate::mp4::gapless(&mut source).ok().flatten() } else { None };
+        // An MP4's gapless boxes are read wherever they are: a song still arriving asks for them there.
+        let gapless = if sized { crate::mp4::gapless(&mut source).ok().flatten() } else { None };
         let padded = if whole && gapless.is_none() { crate::webm::discards(&mut source).ok().flatten() } else { None };
         source.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
         let source = past_id3(source).map_err(|e| e.to_string())?;
         // Asked once the first bytes are read: a song still arriving learns its length with them.
         let byte_len = source.byte_len();
         let source: Box<dyn MediaSource> = if sized { source } else { Box::new(Unsized(source)) };
+        // A FLAC song opened at a time starts at that time's frame.
+        let (source, landed) = match byte_len.filter(|_| sized && from_ms > 0) {
+            Some(len) => crate::flac::landed(source, len, from_ms).map_err(|e| e.to_string())?,
+            None => (source, None),
+        };
         let mss = MediaSourceStream::new(source, MediaSourceStreamOptions::default());
         let mut h = Hint::new();
         if let Some(x) = hint {
@@ -662,9 +682,12 @@ impl Stream {
             settled: false,
             reshape: None,
             cut_short,
+            offset_us: offset_ms * 1000,
         };
-        if from_ms > 0 {
-            d.seek(from_ms)?;
+        match landed {
+            Some(ts) => (d.skip_to, d.frame) = (ts as i64, None),
+            None if from_ms > 0 => d.seek(from_ms)?,
+            None => {}
         }
         if packets {
             // The first packet says where reading starts after a seek.
@@ -935,11 +958,12 @@ impl Stream {
 
 impl Stream {
     fn duration_us(&self) -> i64 {
-        match self.frame {
-            // Read to its end: exactly what came out.
-            Some(f) if self.ended => f * 1_000_000 / self.format.rate as i64,
-            _ => self.duration_us,
-        }
+        self.offset_us
+            + match self.frame {
+                // Read to its end: exactly what came out.
+                Some(f) if self.ended => f * 1_000_000 / self.format.rate as i64,
+                _ => self.duration_us,
+            }
     }
 
     /// Drops everything before `ms`, trimming the primed first buffer. False once a buffer was handed
@@ -949,7 +973,7 @@ impl Stream {
             return false;
         }
         let rate = self.format.rate as i64;
-        let to = ms * rate / 1000;
+        let to = (ms - self.offset_us / 1000) * rate / 1000;
         self.skip_to = self.skip_to.max(to);
         let frame = (self.format.channels * self.format.encoding.width()).max(1);
         let n = (self.buf.len() / frame) as i64;
@@ -986,7 +1010,7 @@ impl Stream {
     }
 
     fn at_us(&self) -> i64 {
-        self.at_us
+        self.offset_us + self.at_us
     }
 }
 
@@ -1200,6 +1224,7 @@ struct Done {
 struct Pushed {
     hint: Option<String>,
     from_ms: i64,
+    offset_ms: i64,
     duration_ms: Option<i64>,
     estimated: bool,
     encoding: Encoding,
@@ -1215,12 +1240,14 @@ struct Pushed {
 impl Pushed {
     /// One try; None while it waits for bytes (`engine` is woken when they come).
     fn attempt(&mut self, l: &Arc<Loader>, engine: &Thread) -> Option<Result<Stream, String>> {
-        // An MP4's gapless boxes may be at its end: the whole song first, mostly one burst.
-        let whole = self.hint.as_deref().is_some_and(mp4_like) && l.whole_or_wake(engine)?;
+        // An MP4 transcode's length is an estimate, so its index at the end is not asked for: the whole
+        // song first, mostly one burst.
+        let whole = self.estimated && self.hint.as_deref().is_some_and(mp4_like) && l.whole_or_wake(engine)?;
         if self.need.is_some_and(|at| !l.ready_from_or_wake(at, engine)) {
             return None;
         }
-        let spec = Spec { whole, sized: !self.estimated || whole, platform: self.platform, ..Spec::new(self.hint.as_deref(), self.from_ms, self.duration_ms, self.encoding, self.mode) };
+        let started = self.offset_ms > 0 && !l.sized_or_wake(engine)?;
+        let spec = Spec { whole, sized: !self.estimated || whole, platform: self.platform, ..Spec::new(self.hint.as_deref(), self.from_ms, self.duration_ms, self.encoding, self.mode) }.at(self.offset_ms, started);
         let tried = Arc::new(Mutex::new(Tried::Reading));
         let opened = Stream::open(Box::new(l.trying_reader(tried.clone())), spec);
         // Short of bytes: again once they are here.
@@ -1273,7 +1300,7 @@ impl Demuxed {
 
     /// [`Demuxed::load`] as undecoded packets ([`Demuxed::packet`]).
     pub fn load_packets(loader: Arc<Loader>, engine: Thread, hint: Option<&str>, from_ms: i64, duration_ms: Option<i64>, estimated: bool) -> Demuxed {
-        Demuxed::start(loader, engine, hint, from_ms, duration_ms, estimated, Encoding::Pcm16, Mode::Packets, Platform::default())
+        Demuxed::start(loader, engine, hint, (from_ms, 0), duration_ms, estimated, Encoding::Pcm16, Mode::Packets, Platform::default())
     }
 
     /// The packets' format and encoder gap once open; None when decoded or not offloadable.
@@ -1309,19 +1336,29 @@ impl Demuxed {
     /// length is a transcode's estimate, hidden from the reader while the song arrives ([`Unsized`]).
     #[allow(clippy::too_many_arguments)]
     pub fn load(loader: Arc<Loader>, engine: Thread, hint: Option<&str>, from_ms: i64, duration_ms: Option<i64>, estimated: bool, encoding: Encoding, platform: Platform) -> Demuxed {
-        Demuxed::start(loader, engine, hint, from_ms, duration_ms, estimated, encoding, Mode::Play, platform)
+        Demuxed::start(loader, engine, hint, (from_ms, 0), duration_ms, estimated, encoding, Mode::Play, platform)
     }
 
+    /// [`Demuxed::load`] of a stream asked to start at song time `offset_ms` (`Located::from_second`).
+    /// One that came with a length is the whole file, which a server sends from its start.
     #[allow(clippy::too_many_arguments)]
-    fn start(loader: Arc<Loader>, engine: Thread, hint: Option<&str>, from_ms: i64, duration_ms: Option<i64>, estimated: bool, encoding: Encoding, mode: Mode, platform: Platform) -> Demuxed {
+    pub fn load_from(loader: Arc<Loader>, engine: Thread, hint: Option<&str>, from_ms: i64, offset_ms: i64, duration_ms: Option<i64>, estimated: bool, encoding: Encoding, platform: Platform) -> Demuxed {
+        Demuxed::start(loader, engine, hint, (from_ms, offset_ms), duration_ms, estimated, encoding, Mode::Play, platform)
+    }
+
+    /// `at`: the song time to open at, and the song time the loader's stream may start at.
+    #[allow(clippy::too_many_arguments)]
+    fn start(loader: Arc<Loader>, engine: Thread, hint: Option<&str>, at: (i64, i64), duration_ms: Option<i64>, estimated: bool, encoding: Encoding, mode: Mode, platform: Platform) -> Demuxed {
+        let (from_ms, offset_ms) = at;
         if loader.pushed() {
             loader.opening(true);
             let seen = loader.shortened();
-            let p = Pushed { hint: hint.map(str::to_string), from_ms, duration_ms, estimated, encoding, mode, platform, need: None, seen, reopens: 0 };
+            let p = Pushed { hint: hint.map(str::to_string), from_ms, offset_ms, duration_ms, estimated, encoding, mode, platform, need: None, seen, reopens: 0 };
             return Demuxed { state: State::Pushed(Box::new(p)), loader: Some((loader, engine)) };
         }
         if loader.complete() {
-            let opened = Stream::open(Box::new(loader.reader()), Spec { platform, ..Spec::new(hint, from_ms, duration_ms, encoding, mode) });
+            let started = loader.sized_or_wake(&engine) == Some(false);
+            let opened = Stream::open(Box::new(loader.reader()), Spec { platform, ..Spec::new(hint, from_ms, duration_ms, encoding, mode) }.at(offset_ms, started));
             if !opened.as_ref().is_ok_and(|s| s.cut_short) || !loader.refetch() {
                 let state = match opened {
                     Ok(s) => State::Open(Box::new(s)),
@@ -1332,11 +1369,14 @@ impl Demuxed {
         }
         let opening = Arc::new(Opening::default());
         let (o, l, hint) = (opening.clone(), loader.clone(), hint.map(str::to_string));
+        // What the opening reads stays at hand wherever it reads next (an MP4's index at its end).
+        loader.opening(true);
         let spawned = std::thread::Builder::new().name("nori-open".into()).spawn(move || {
-            // An MP4's gapless boxes may be at its end: wait for the whole song (one burst, mostly)
-            // rather than fetching the end separately.
-            let whole = hint.as_deref().is_some_and(mp4_like) && l.wait_whole();
-            let spec = Spec { whole, sized: !estimated || whole, platform, ..Spec::new(hint.as_deref(), from_ms, duration_ms, encoding, mode) };
+            // An MP4 transcode's length is an estimate, so its index at the end is not asked for: the
+            // whole song first, mostly one burst.
+            let whole = estimated && hint.as_deref().is_some_and(mp4_like) && l.wait_whole();
+            let started = offset_ms > 0 && !l.wait_sized();
+            let spec = Spec { whole, sized: !estimated || whole, platform, ..Spec::new(hint.as_deref(), from_ms, duration_ms, encoding, mode) }.at(offset_ms, started);
             let mut seen = l.shortened();
             let reader = || Box::new(l.reader_until(o.abandoned.clone()));
             let mut opened = Stream::open(reader(), spec);
@@ -1353,6 +1393,7 @@ impl Demuxed {
             if opened.as_ref().is_ok_and(|s| s.cut_short) && l.refetch() {
                 opened = Stream::open(reader(), spec);
             }
+            l.opening(false);
             let mut done = o.done.lock();
             done.opened = Some(opened);
             if let Some(t) = done.waiter.take() {
@@ -1361,7 +1402,10 @@ impl Demuxed {
         });
         let state = match spawned {
             Ok(_) => State::Opening(opening),
-            Err(e) => State::Failed(PlaybackError::Other, e.to_string()),
+            Err(e) => {
+                loader.opening(false);
+                State::Failed(PlaybackError::Other, e.to_string())
+            }
         };
         Demuxed { state, loader: Some((loader, engine)) }
     }
@@ -1428,7 +1472,8 @@ impl Reading for Demuxed {
             };
         }
         match &self.state {
-            State::Open(s) => s.primed || s.ended || (s.later_ready() && self.loader.as_ref().is_none_or(|(l, engine)| l.ready_or_wake(engine))),
+            // The first buffer too waits for the bytes after it: the song starts once it plays on.
+            State::Open(s) => s.ended || ((s.primed || s.later_ready()) && self.loader.as_ref().is_none_or(|(l, engine)| l.ready_or_wake(engine))),
             _ => true,
         }
     }
@@ -1470,6 +1515,13 @@ impl Reading for Demuxed {
         match &mut self.state {
             State::Open(s) => s.skip_ahead(ms),
             _ => false,
+        }
+    }
+
+    fn fetched(&mut self) -> bool {
+        match &self.state {
+            State::Opening(_) | State::Pushed(_) => false,
+            _ => self.loader.as_ref().is_none_or(|(l, engine)| l.settled_or_wake(engine)),
         }
     }
 }

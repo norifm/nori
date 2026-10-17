@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use parking_lot::{Condvar, Mutex};
 
-pub use nori_engine::testing::{Device, Stepper, Virtual};
+pub use nori_engine::testing::{Delivery, Device, Stepper, Virtual};
 
 /// A server's answer held until the test opens the gate.
 #[derive(Default)]

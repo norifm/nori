@@ -101,7 +101,7 @@ impl Library for Songs {
         let (_, path, ms) = self.0.iter().find(|s| s.0 == id).cloned().ok_or("no such song")?;
         let bytes: Arc<dyn ByteSource> = self.1.clone();
         let source = if self.1.downloaded.load(Ordering::Relaxed) { Source::File(vec![path]) } else { Source::Url { url: path.to_string_lossy().into_owned(), bytes } };
-        Ok(Located { source, hint: Some("wav".into()), duration_ms: Some(ms), estimated: false })
+        Ok(Located { source, hint: Some("wav".into()), duration_ms: Some(ms), estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {

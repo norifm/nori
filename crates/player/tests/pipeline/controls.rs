@@ -305,6 +305,21 @@ fn the_next_song_is_fetched_once_the_one_started_has_its_bytes() {
 }
 
 #[test]
+fn the_next_song_is_fetched_once_the_one_playing_has_come() {
+    // Its bytes still coming in would share the network with the next song's.
+    let s = songs(4, 12.0);
+    let mut p = Player::new(queue(&s));
+    let arrived = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    p.tracks.arriving.push(("s1".into(), arrived.clone()));
+    p.play_from(1);
+    p.run_for(2_000);
+    assert!(p.tracks.ahead.is_empty(), "fetched ahead while s1 comes in: {:?}", p.tracks.ahead);
+    arrived.store(true, std::sync::atomic::Ordering::Release);
+    p.run_for(500);
+    assert_eq!(p.tracks.ahead, ["s2"]);
+}
+
+#[test]
 fn queue_emptied_while_playing() {
     // Another server's profile taken up empties the queue under the song playing: nothing indexes it.
     let s = songs(3, 12.0);

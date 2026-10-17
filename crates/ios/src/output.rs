@@ -1019,6 +1019,7 @@ mod tests {
                 hint: Some("wav".into()),
                 duration_ms: Some(60_000),
                 estimated: false,
+                from_second: None,
             })
         }
 

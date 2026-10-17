@@ -406,6 +406,9 @@ pub struct Core {
     kind: RwLock<settings::ServerKind>,
     /// What the stored queue's songs were saved from (queue.rs).
     saved_queue: Mutex<Option<queue::SavedQueue>>,
+    /// The server starts a transcode at the second asked for (Navidrome's `timeOffset`), as its answers
+    /// said ([`Core::heard_from_server`]).
+    starts_transcodes: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Deserialize, Default)]
@@ -429,6 +432,18 @@ struct StoredPlace {
 }
 
 impl Core {
+    /// An answer named the server: Navidrome starts a transcode where `timeOffset` asks.
+    pub(crate) fn heard_from_server(&self, kind: &str) {
+        if !kind.is_empty() {
+            self.starts_transcodes.store(kind.eq_ignore_ascii_case("navidrome"), std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Whether a transcode can be asked for from a whole second on ([`Core::heard_from_server`]).
+    pub fn starts_transcodes(&self) -> bool {
+        self.starts_transcodes.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// The queue as saved; nothing saved, or a save that no longer parses, is an empty one.
     fn stored_queue(c: &Connection) -> Result<StoredQueue> {
         Ok(db::kv_get(c, "queue")?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
@@ -505,6 +520,7 @@ impl Core {
             rules: RwLock::new(browse::profile_rules(false)),
             kind: RwLock::new(settings::ServerKind::Subsonic),
             saved_queue: Mutex::new(None),
+            starts_transcodes: std::sync::atomic::AtomicBool::new(false),
         });
         core.session.db.set(&core.db);
         Ok(core)
@@ -518,6 +534,7 @@ impl Core {
         let base = s.base.clone();
         *self.server.write() = s;
         *self.kind.write() = settings::ServerKind::Subsonic;
+        self.starts_transcodes.store(false, std::sync::atomic::Ordering::Relaxed);
         let key = config.api_key.unwrap_or_default();
         *self.rules.write() = browse::profile_rules(nori_remote::is_guest_key(&key));
         *self.native_login.write() = key.is_empty().then(|| (config.user.clone(), config.password.clone()));

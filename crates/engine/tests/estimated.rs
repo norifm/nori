@@ -179,7 +179,7 @@ impl Library for Songs {
             Some(store) => Source::Cached { url, bytes, store: store.clone(), key: format!("{id}:192opus") },
             None => Source::Url { url, bytes },
         };
-        Ok(Located { source, hint: Some("opus".into()), duration_ms: Some(ms).filter(|&d| d > 0), estimated: true })
+        Ok(Located { source, hint: Some("opus".into()), duration_ms: Some(ms).filter(|&d| d > 0), estimated: true, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {

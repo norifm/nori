@@ -29,8 +29,12 @@ struct State {
     /// Sleeps so far, and the one whose byte wait was given up.
     sleeps: u64,
     gave_up: u64,
-    /// Servers waiting for the clock ([`Virtual::wait_until`]).
+    /// Servers waiting for the clock ([`Virtual::wait_until`]), and the times they wait for: the clock
+    /// stops at each until its server ran.
     time_waiters: u32,
+    due_ns: Vec<i64>,
+    /// Deliveries whose bytes are being taken ([`Delivery`]): the clock waits for them.
+    handing: u32,
     /// Woken by the test and no turn taken since.
     woken: bool,
 }
@@ -127,14 +131,57 @@ impl Virtual {
 
     /// Blocks a server thread until the clock reaches `ns`; meanwhile byte waits are [`TIME_WAIT`].
     pub fn wait_until(&self, ns: i64) {
+        self.wait_then(ns, &mut false, false);
+    }
+
+    /// [`Virtual::wait_until`]; with `hand`, a delivery's bytes are then handed over (`handing`), the
+    /// last ones taken.
+    fn wait_then(&self, ns: i64, handing: &mut bool, hand: bool) {
         let started = Instant::now();
         let mut s = self.0.s.lock();
+        if std::mem::replace(handing, hand) {
+            s.handing -= 1;
+        }
         s.time_waiters += 1;
+        s.due_ns.push(ns);
         while s.now_ns < ns {
             assert!(started.elapsed() < STUCK, "the test's clock never reached {ns} ns (it stays at {} ns)", s.now_ns);
             self.0.cv.wait_for(&mut s, Duration::from_millis(1));
         }
+        if let Some(k) = s.due_ns.iter().position(|&d| d == ns) {
+            s.due_ns.remove(k);
+        }
         s.time_waiters -= 1;
+        s.handing += hand as u32;
+        self.0.cv.notify_all();
+    }
+
+    /// A server's bytes handed over at times of this clock.
+    pub fn delivery(&self) -> Delivery {
+        Delivery { clock: self.clone(), handing: false }
+    }
+
+    fn handed(&self, handing: &mut bool) {
+        if std::mem::take(handing) {
+            self.0.s.lock().handing -= 1;
+            self.0.cv.notify_all();
+        }
+    }
+
+    /// The earliest time a server waits for.
+    fn server_due_ns(&self) -> Option<i64> {
+        self.0.s.lock().due_ns.iter().min().copied()
+    }
+
+    /// Blocks until every server waiting for a time now passed has run on, and every delivery's bytes
+    /// were taken.
+    fn let_servers_run(&self) {
+        let started = Instant::now();
+        let mut s = self.0.s.lock();
+        while s.handing > 0 || s.due_ns.iter().any(|&d| d <= s.now_ns) {
+            assert!(started.elapsed() < STUCK, "a server never ran on");
+            self.0.cv.wait_for(&mut s, Duration::from_millis(1));
+        }
     }
 
     /// Blocks a server thread while `on` holds (a hung request), at most `limit`; returns whether it
@@ -190,6 +237,26 @@ impl Virtual {
     }
 }
 
+/// Bytes a server hands over at times of the clock: the clock stops at each, and goes on once they were
+/// taken (the reader asks for the next, or the delivery is dropped).
+pub struct Delivery {
+    clock: Virtual,
+    handing: bool,
+}
+
+impl Delivery {
+    /// Blocks until the clock reaches `ns`, the bytes before it taken.
+    pub fn at(&mut self, ns: i64) {
+        self.clock.wait_then(ns, &mut self.handing, true);
+    }
+}
+
+impl Drop for Delivery {
+    fn drop(&mut self) {
+        self.clock.handed(&mut self.handing);
+    }
+}
+
 /// A device on the clock.
 pub trait Device: Send {
     /// When it next pulls, ns.
@@ -219,7 +286,9 @@ impl<D: Device> Stepper<D> {
         self.clock.settle();
         let pull = self.device.lock().due_ns();
         let t = self.clock.deadline_ns().map_or(pull, |d| d.min(pull)).min(limit_ns);
+        let t = self.clock.server_due_ns().map_or(t, |d| d.min(t));
         self.clock.move_to(t);
+        self.clock.let_servers_run();
         self.clock.settle();
         if t >= pull {
             let woke = self.device.lock().tick(t);
@@ -291,4 +360,97 @@ pub fn sine(rate: u32, hz: f64, secs: f64, peak: f64) -> Vec<i16> {
         let v = ((std::f64::consts::TAU * hz * i as f64 / rate as f64).sin() * peak) as i16;
         [v, v]
     }).collect()
+}
+
+/// A stereo 16-bit FLAC file of interleaved `samples` in fixed blocks of 4096: a block whose channel
+/// holds one value is stored as that value, others verbatim, so silence makes small frames. With
+/// `points`, a seek table with a point every that many seconds.
+pub fn flac(rate: u32, samples: &[i16], points: Option<u64>) -> Vec<u8> {
+    const BLOCK: usize = 4096;
+    let frames = samples.len() / 2;
+    let mut body = Vec::new();
+    let mut starts = Vec::new();
+    for (k, block) in samples.chunks(BLOCK * 2).enumerate() {
+        starts.push(body.len() as u64);
+        let n = block.len() / 2;
+        let mut f = vec![0xff, 0xf8, 0x70, 0x18];
+        f.extend(utf8_number(k as u64));
+        f.extend(((n - 1) as u16).to_be_bytes());
+        f.push(crc8(&f));
+        for ch in 0..2 {
+            let side: Vec<i16> = block.iter().skip(ch).step_by(2).copied().collect();
+            if side.iter().all(|&v| v == side[0]) {
+                f.push(0);
+                f.extend(side[0].to_be_bytes());
+            } else {
+                f.push(2);
+                f.extend(side.iter().flat_map(|v| v.to_be_bytes()));
+            }
+        }
+        f.extend(crc16(&f).to_be_bytes());
+        body.extend(f);
+    }
+    let mut out = b"fLaC".to_vec();
+    let mut info = Vec::new();
+    info.extend((BLOCK as u16).to_be_bytes());
+    info.extend((BLOCK as u16).to_be_bytes());
+    info.extend([0u8; 6]);
+    let packed = (rate as u64) << 44 | 1 << 41 | 15 << 36 | frames as u64;
+    info.extend(packed.to_be_bytes());
+    info.extend([0u8; 16]);
+    out.push(if points.is_some() { 0 } else { 0x80 });
+    out.extend(&(info.len() as u32).to_be_bytes()[1..]);
+    out.extend(info);
+    if let Some(every) = points {
+        let table: Vec<u8> = (0..frames as u64).step_by((every * rate as u64) as usize).flat_map(|s| {
+            let k = s as usize / BLOCK;
+            let mut p = (k as u64 * BLOCK as u64).to_be_bytes().to_vec();
+            p.extend(starts[k].to_be_bytes());
+            p.extend((BLOCK as u16).to_be_bytes());
+            p
+        }).collect();
+        out.push(0x83);
+        out.extend(&(table.len() as u32).to_be_bytes()[1..]);
+        out.extend(table);
+    }
+    out.extend(body);
+    out
+}
+
+fn utf8_number(n: u64) -> Vec<u8> {
+    if n < 0x80 {
+        return vec![n as u8];
+    }
+    let mut tail = Vec::new();
+    let mut n = n;
+    let mut room = 0x3f;
+    while n > room {
+        tail.push(0x80 | (n & 0x3f) as u8);
+        n >>= 6;
+        room >>= 1;
+    }
+    let lead = !(0xffu8 >> (tail.len() + 1)) | n as u8;
+    tail.push(lead);
+    tail.reverse();
+    tail
+}
+
+fn crc8(b: &[u8]) -> u8 {
+    b.iter().fold(0u8, |mut c, &x| {
+        c ^= x;
+        for _ in 0..8 {
+            c = if c & 0x80 != 0 { c << 1 ^ 0x07 } else { c << 1 };
+        }
+        c
+    })
+}
+
+fn crc16(b: &[u8]) -> u16 {
+    b.iter().fold(0u16, |mut c, &x| {
+        c ^= (x as u16) << 8;
+        for _ in 0..8 {
+            c = if c & 0x8000 != 0 { c << 1 ^ 0x8005 } else { c << 1 };
+        }
+        c
+    })
 }

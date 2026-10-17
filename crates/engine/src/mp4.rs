@@ -126,10 +126,11 @@ fn itunes(r: &mut (impl Read + Seek), moov: &[Atom]) -> io::Result<Option<(u64, 
 
 /// The gapless numbers of `r` (None if not an MP4). Leaves `r`'s position anywhere.
 pub fn gapless(r: &mut (impl Read + Seek)) -> io::Result<Option<Gapless>> {
-    let len = r.seek(SeekFrom::End(0))?;
-    if atom(r, 0, len)?.is_none_or(|a| &a.kind != b"ftyp") {
+    // The first box first: a song still arriving knows its length once its first bytes are here.
+    if atom(r, 0, u64::MAX)?.is_none_or(|a| &a.kind != b"ftyp") {
         return Ok(None);
     }
+    let len = r.seek(SeekFrom::End(0))?;
     let top = children(r, 0, len)?;
     let Some(moov) = find(&top, b"moov") else { return Ok(None) };
     let moov = children(r, moov.body, moov.end)?;

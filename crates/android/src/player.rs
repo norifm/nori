@@ -1186,7 +1186,7 @@ impl Library for AndroidLibrary {
         if is_radio(id) {
             let url = self.stations.lock().iter().find(|(s, _)| s == id).map(|(_, u)| u.clone()).ok_or("a station with no address")?;
             log(&format!("{id} is a station's stream"));
-            return Ok(Located { source: Source::Live { url, bytes: Arc::new(JavaBytes { bridge: self.bridge.clone(), key: String::new(), ahead: self.ahead.clone() }) }, hint: None, duration_ms: None, estimated: false });
+            return Ok(Located { source: Source::Live { url, bytes: Arc::new(JavaBytes { bridge: self.bridge.clone(), key: String::new(), ahead: self.ahead.clone() }) }, hint: None, duration_ms: None, estimated: false, from_second: None });
         }
         let song = self.queue.song(id);
         let duration_ms = song.as_ref().map(|s| s.duration as i64 * 1000).filter(|&d| d > 0);
@@ -1198,12 +1198,12 @@ impl Library for AndroidLibrary {
         // A finished download is read from its files, not copied into memory.
         if let Some(files) = download.then(|| downloaded(&self.bridge, &target.key)).flatten() {
             log(&format!("{id} opens from its download's {} files", files.len()));
-            return Ok(Located { source: Source::File(files), hint: None, duration_ms, estimated: false });
+            return Ok(Located { source: Source::File(files), hint: None, duration_ms, estimated: false, from_second: None });
         }
         let hint = if download { None } else { key_format(&target.key).or_else(|| song.map(|s| s.suffix)).filter(|s| !s.is_empty()) };
         log(&format!("{id} opens from {} as {}", target.key, hint.as_deref().unwrap_or("whatever it is")));
         let bytes = resolving(&client, Arc::new(JavaBytes { bridge: self.bridge.clone(), key: target.key, ahead: self.ahead.clone() }));
-        Ok(Located { source: Source::Url { url: target.url, bytes }, hint, duration_ms, estimated: false })
+        Ok(Located { source: Source::Url { url: target.url, bytes }, hint, duration_ms, estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {
