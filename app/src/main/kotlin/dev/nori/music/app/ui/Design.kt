@@ -2,6 +2,7 @@ package dev.nori.music.app.ui
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Pause
@@ -622,20 +623,13 @@ fun SearchField(
     // Asked for by hand: opening search focuses the field so the keyboard is already there.
     val focus = remember(autofocus) { if (autofocus) FocusRequester() else null }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    LaunchedEffect(focus, focusKey) {
-        if (focus == null) return@LaunchedEffect
-        // The field's node is not attached on the frame this first runs, and requestFocus on an
-        // unattached one throws and leaves the screen with no keyboard at all - which is what tapping
-        // Search used to do about half the time. Ask again for a few frames until it takes.
-        repeat(12) {
-            androidx.compose.runtime.withFrameNanos {}
-            if (runCatching { focus.requestFocus() }.isSuccess) {
-                // Focus alone does not always raise the keyboard when it lands before the window is
-                // ready; ask for it explicitly, which is the whole point of autofocus.
-                keyboard?.show()
-                return@LaunchedEffect
-            }
-        }
+    // A focus request needs the field's node attached, which it is once the field is placed.
+    var placed by remember { mutableStateOf(false) }
+    LaunchedEffect(focus, focusKey, placed) {
+        if (focus == null || !placed) return@LaunchedEffect
+        focus.requestFocus()
+        // Focus alone does not raise the keyboard when it lands before the window is ready.
+        keyboard?.show()
     }
     Surface(
         shape = PillShape, color = LocalLook.current.color(CoverLook.FIELD),
@@ -653,7 +647,7 @@ fun SearchField(
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
                     modifier = Modifier.fillMaxWidth()
                         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
-                        .then(if (focus != null) Modifier.focusRequester(focus) else Modifier),
+                        .then(if (focus != null) Modifier.focusRequester(focus).onPlaced { placed = true } else Modifier),
                 )
             }
             if (value.isNotEmpty()) androidx.compose.material3.IconButton({ onValue("") }, Modifier.size(28.dp)) {

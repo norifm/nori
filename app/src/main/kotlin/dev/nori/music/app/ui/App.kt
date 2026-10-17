@@ -842,10 +842,16 @@ private fun EdgeBack(swipe: PageSwipe, sheet: PlayerSheet, controller: androidx.
 @Composable
 private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
     val shown by remember { androidx.compose.runtime.derivedStateOf { sheet.progress.value > 0f || sheet.progress.targetValue > 0f } }
-    // Built once, shortly after the app is up, and kept: opening the player then only moves it. Until
-    // then, and on a phone too slow to have got there, the first open builds it.
+    // Built once the app's first frame is drawn and the main thread has nothing else to do, and kept:
+    // opening the player then only moves it. An open before that builds it.
     var warm by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { kotlinx.coroutines.delay(1500); warm = true }
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(view) {
+        val idle = android.os.MessageQueue.IdleHandler { warm = true; false }
+        val queue = android.os.Looper.myQueue()
+        view.post { queue.addIdleHandler(idle) }
+        onDispose { queue.removeIdleHandler(idle) }
+    }
     if (!shown && !warm) return
     val radius = with(androidx.compose.ui.platform.LocalDensity.current) { 14.dp.toPx() }
     if (shown) Box(
