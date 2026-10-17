@@ -97,8 +97,11 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
 
 /// The database at `path` (in memory for an empty one), set up.
 fn connect(path: &str) -> rusqlite::Result<Connection> {
-    let c = if path.is_empty() { Connection::open_in_memory()? } else { Connection::open(path)? };
+    let mut c = if path.is_empty() { Connection::open_in_memory()? } else { Connection::open(path)? };
     c.execute_batch(PRAGMAS)?;
+    // Several connections write the one file: a transaction takes the write lock as it begins, so one
+    // that reads before it writes waits its turn (busy_timeout) instead of failing on a write meanwhile.
+    c.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
     Ok(c)
 }
 
@@ -300,6 +303,29 @@ mod tests {
     fn song(c: &mut Connection, id: &str, title: &str) {
         let s: Song = serde_json::from_str(&format!(r#"{{"id":"{id}","title":"{title}"}}"#)).unwrap();
         index(c, &[], &[], &[s]).unwrap();
+    }
+
+    /// A transaction that reads before it writes holds the database from its start: another
+    /// connection's write waits for it, rather than making its own write fail as "database is locked".
+    #[test]
+    fn a_transaction_is_not_refused_by_a_write_meanwhile() {
+        let dir = nori_testdir::TempDir::new("db-busy");
+        let path = dir.join("busy.db").to_string_lossy().into_owned();
+        let mut a = open(&path, "s").unwrap();
+        let tx = a.transaction().unwrap();
+        let n: i64 = tx.query_row("SELECT count(*) FROM kv", [], |r| r.get(0)).unwrap();
+        let (done, wrote) = std::sync::mpsc::channel();
+        let other = path.clone();
+        let b = std::thread::spawn(move || {
+            let r = open(&other, "s").unwrap().execute("INSERT INTO kv VALUES('s','b','1')", []);
+            let _ = done.send(());
+            r
+        });
+        // Long enough for the other write to land, were it not held off.
+        let _ = wrote.recv_timeout(std::time::Duration::from_millis(300));
+        tx.execute("INSERT INTO kv VALUES('s','a',?1)", [n.to_string()]).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(b.join().unwrap().unwrap(), 1, "the other write lands after");
     }
 
     #[test]
