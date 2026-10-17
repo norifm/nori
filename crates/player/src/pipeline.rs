@@ -199,6 +199,8 @@ struct Opening<R> {
     from_ms: i64,
     offset_us: i64,
     r: R,
+    /// The song after it is prefetched once it is ready.
+    fetch_ahead: bool,
 }
 
 impl<R: Reading> Reader<R> {
@@ -423,7 +425,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         if r.ready() {
             return self.start_reading(i, from_ms, offset_us, r);
         }
-        self.opening = Some(Opening { index: i, from_ms, offset_us, r });
+        self.opening = Some(Opening { index: i, from_ms, offset_us, r, fetch_ahead: false });
         true
     }
 
@@ -435,6 +437,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         }
         let o = self.opening.take().expect("checked");
         self.start_reading(o.index, o.from_ms, o.offset_us, o.r);
+        if o.fetch_ahead {
+            self.fetch_ahead();
+        }
     }
 
     /// The plan out of the audible song is asked for again (settings, an analysis or the queue changed).
@@ -475,7 +480,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     fn remake_from(&mut self, i: usize, ms: i64) {
         let Some(offset_us) = self.periods.iter().rev().find(|p| p.index == i).map(|p| p.offset_us) else { return };
         match self.tracks.open(&self.id_at(i), ms) {
-            Ok(r) => self.remaking = Some(Opening { index: i, from_ms: ms, offset_us, r }),
+            Ok(r) => self.remaking = Some(Opening { index: i, from_ms: ms, offset_us, r, fetch_ahead: false }),
             Err(why) => self.app.log(&format!("{} would not open again ({why}): its ending plays as it was made", self.id_at(i))),
         }
         self.remade();
@@ -900,6 +905,15 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.changes.push((self.now_ms, i));
         self.sync_queue();
         self.upcoming = self.next_of(i).map(|n| self.id_at(n));
+        match self.opening.as_mut() {
+            Some(o) => o.fetch_ahead = true,
+            None => self.fetch_ahead(),
+        }
+    }
+
+    /// Prefetches (and measures) the song after the current one; a song still opening has its first
+    /// bytes come first.
+    fn fetch_ahead(&mut self) {
         if let Some(id) = &self.upcoming {
             self.tracks.upcoming(id);
         }

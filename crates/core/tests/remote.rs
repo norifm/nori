@@ -615,23 +615,25 @@ async fn off_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -
     .await
 }
 
-/// One HTTP/1.1 exchange with a door on this machine; refused where no door listens.
+/// One HTTP/1.1 exchange with a door on this machine; refused where no door listens, failed where the
+/// door closed meanwhile.
 fn lan_exchange(request: &Exchange) -> Result<TransportResponse, TransportError> {
     use std::io::{BufRead, BufReader, Read, Write};
     let rest = request.url.strip_prefix("http://127.0.0.1:").unwrap();
     let (port, target) = rest.split_at(rest.find('/').unwrap());
-    let refused = |_| TransportError::Failed { kind: FailureKind::Connect, detail: Some("refused".into()) };
-    let mut c = std::net::TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap())).map_err(refused)?;
+    let failed = |kind| move |e: std::io::Error| TransportError::Failed { kind, detail: Some(e.to_string()) };
+    let mut c = std::net::TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap())).map_err(failed(FailureKind::Connect))?;
     let (method, body) = request.json.as_deref().map_or(("GET", ""), |b| ("POST", b));
-    write!(c, "{method} {target} HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+    let read = failed(FailureKind::Interrupted);
+    write!(c, "{method} {target} HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}", body.len()).map_err(read)?;
     let mut r = BufReader::new(c);
     let mut line = String::new();
-    r.read_line(&mut line).unwrap();
-    let status = line.split_whitespace().nth(1).unwrap().parse().unwrap();
+    r.read_line(&mut line).map_err(read)?;
+    let Some(status) = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()) else { return Err(read(std::io::ErrorKind::UnexpectedEof.into())) };
     let mut length = 0;
     loop {
         let mut h = String::new();
-        r.read_line(&mut h).unwrap();
+        r.read_line(&mut h).map_err(read)?;
         if h.trim().is_empty() {
             break;
         }
@@ -640,7 +642,7 @@ fn lan_exchange(request: &Exchange) -> Result<TransportResponse, TransportError>
         }
     }
     let mut body = vec![0; length];
-    r.read_exact(&mut body).unwrap();
+    r.read_exact(&mut body).map_err(read)?;
     Ok(TransportResponse { status, body, set_cookies: Vec::new() })
 }
 
@@ -2678,4 +2680,51 @@ fn a_mirrored_clock_is_learned_in_a_burst_then_every_quarter_minute() {
     timers.advance(gap);
     eventually("the next exchange", || relay.clocks() == clock::BURST + 1);
     relay.close();
+}
+
+/// Playback moved from the phone to the desk, and pulled from the phone by the desk, through the relay
+/// and through the doors: the desk is told the queue with no timer run out (the clock never moves).
+#[test]
+fn a_hand_over_reaches_the_device_without_waiting() {
+    for (case, nearby, pull) in [("handed, relay", false, false), ("pulled, relay", false, true), ("handed, door", true, false), ("pulled, door", true, true)] {
+        let relay = if nearby { Relay::absent() } else { Relay::new() };
+        let timers = Virtual::new();
+        let made = |kind, name: &str| {
+            let announced = Arc::new(Announced::default());
+            let d = Device::with(&relay, ann(), kind, name, nearby.then(|| announced.clone() as Arc<dyn Discovery>), Default::default(), Some(timers.clone()));
+            (d, announced)
+        };
+        let ((phone, phone_door), (desk, desk_door)) = (made(DeviceKind::Phone, "Phone"), made(DeviceKind::Desktop, "Desk"));
+        phone.playing(&["s1", "s2"], 1);
+        desk.queued(&["d1"]);
+        phone.remote.clone().serve(true);
+        desk.remote.clone().serve(true);
+        phone.remote.clone().watch(true);
+        desk.remote.clone().watch(true);
+        if nearby {
+            for (d, door) in [(&desk, &phone_door), (&phone, &desk_door)] {
+                let door = door.0.lock().clone().expect("a door");
+                d.remote.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+            }
+        }
+        let (phone_id, desk_id) = (phone.remote.id(), desk.remote.id());
+        desk.until(case, |r| r.devices().into_iter().find(|d| d.id == phone_id && d.state.as_ref().is_some_and(|s| s.playing)));
+        phone.until(case, |r| r.devices().into_iter().find(|d| d.id == desk_id && d.state.is_some()));
+        if pull {
+            desk.remote.clone().pick(Some(phone_id.clone()));
+            desk.until(case, |r| r.active().filter(|m| m.playing));
+        }
+        let started = Instant::now();
+        if pull {
+            desk.remote.clone().pick(None);
+        } else {
+            phone.remote.clone().pick(Some(desk_id.clone()));
+        }
+        let Op::Replace { songs, index: 1, play: true, .. } = desk.told() else { panic!("{case}: the queue handed") };
+        let took = started.elapsed();
+        assert_eq!(songs.len(), 2, "{case}");
+        assert_eq!(phone.told(), Op::Pause, "{case}");
+        assert!(took < Duration::from_secs(1), "{case}: {took:?}");
+        relay.close();
+    }
 }
