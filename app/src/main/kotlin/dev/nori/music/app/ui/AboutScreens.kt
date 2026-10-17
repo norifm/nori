@@ -1,20 +1,16 @@
 package dev.nori.music.app.ui
 
 import android.os.Build
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -22,22 +18,10 @@ import androidx.compose.ui.unit.dp
 import dev.nori.music.app.BuildConfig
 import dev.nori.music.ffi.settings.Credit
 
-/** A row that says something: a title, a line under it, and optionally something at its end or a tap. */
+/** A row that says something: a title, all of the line under it, and optionally something at its end or a tap. */
 @Composable
-internal fun InfoRow(title: String, detail: String, end: String? = null, onClick: (() -> Unit)? = null) {
-    Row(
-        Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f).padding(end = if (end != null) 12.dp else 0.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (end != null) Text(end, style = MaterialTheme.typography.labelMedium, color = if (onClick != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    Hairline(startIndent = 16.dp)
-}
+internal fun InfoRow(title: String, detail: String, end: String? = null, onClick: (() -> Unit)? = null) =
+    NavRow(title, onClick, subtitle = detail, trailing = end, subtitleLines = Int.MAX_VALUE, trailingAccent = onClick != null)
 
 /**
  * What this is and what it is built out of. Most of a bug report is answered here - which build, which

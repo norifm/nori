@@ -190,9 +190,7 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
         }
         item { SectionTitle(say.readyMade) }
         items(vm.defaults, key = { it.id }) { p ->
-            Row(Modifier.fillMaxWidth().clickable { nav.smart(p.id) }.padding(start = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-                Text(remember(p) { say.smartName(p) }, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge); TextAction(say.copyIt, { nav.smartEdit(p.id) })
-            }
+            NavRow(remember(p) { say.smartName(p) }, { nav.smart(p.id) }, action = { TextAction(say.copyIt, { nav.smartEdit(p.id) }) })
         }
         item { Text(noteText(Note.SMART_HELP), Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
@@ -409,22 +407,5 @@ private fun HourChart(perHour: List<Float>) {
 
 /** A place in a chart: rank, what it is, and how often. */
 @Composable
-private fun RankRow(rank: Int, title: String, subtitle: String, count: String) {
-    Column {
-        Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "$rank", Modifier.width(28.dp), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Column(Modifier.weight(1f).padding(end = 10.dp)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                if (subtitle.isNotEmpty()) Text(
-                    subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
-            }
-            Text(count, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-        }
-        Hairline(startIndent = Space.gutter + 28.dp)
-    }
-}
+private fun RankRow(rank: Int, title: String, subtitle: String, count: String) =
+    NavRow(title, subtitle = subtitle, trailing = count, leadingText = "$rank", trailingAccent = true)

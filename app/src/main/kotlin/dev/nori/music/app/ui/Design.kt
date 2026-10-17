@@ -763,48 +763,59 @@ fun FormField(
 }
 
 /**
- * The list row every browsing screen shares: something on the left, a title (and maybe a second line),
- * a value or a chevron on the right, and a hairline that starts where the text does. Genres, decades,
- * folders, playlists and stations all used to draw their own row, each with its own padding, which is
- * what made the library feel like several apps stitched together.
+ * The list row every screen shares: something on the left (a picture, or a few characters such as a
+ * rank), a title and maybe a second line, a value or a chevron on the right, and a hairline that starts
+ * where the text does. Without [onClick] it only says something.
  */
 @Composable
 fun NavRow(
     title: String,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     trailing: String? = null,
     leading: (@Composable () -> Unit)? = null,
+    leadingText: String? = null,
     chevron: Boolean = false,
     divider: Boolean = true,
+    /** How many lines the subtitle may take. */
+    subtitleLines: Int = 1,
+    /** [trailing] in the accent, as a count or a tap's word. */
+    trailingAccent: Boolean = false,
     action: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().clickable(onClick = onClick)
+            Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .padding(start = Space.gutter, end = if (action != null) 4.dp else Space.gutter, top = 11.dp, bottom = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (leading != null) { leading(); Spacer(Modifier.size(12.dp)) }
+            if (leadingText != null) Text(leadingText, Modifier.width(LEADING_TEXT), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!subtitle.isNullOrEmpty()) Text(
                     subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    maxLines = subtitleLines, overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (!trailing.isNullOrEmpty()) Text(trailing, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+            if (!trailing.isNullOrEmpty()) Text(
+                trailing, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium,
+                color = if (trailingAccent) scheme.primary else scheme.onSurfaceVariant,
+            )
             action?.invoke(this)
             if (chevron) Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
                 Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
         }
-        if (divider) Hairline(startIndent = Space.gutter + (if (leading != null) 60.dp else 0.dp))
+        if (divider) Hairline(startIndent = Space.gutter + when { leading != null -> 60.dp; leadingText != null -> LEADING_TEXT; else -> 0.dp })
     }
 }
+
+/** The width a row's leading characters (a rank) stand in. */
+private val LEADING_TEXT = 28.dp
 
 /** A word in the accent that does something when tapped: a dialog's buttons, a row's "Edit". */
 @Composable
