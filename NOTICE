@@ -20,8 +20,8 @@ Linked into the Rust core (crates/core)
     Public License 2.0
   rusqlite, RustFFT, serde, jni, simd_cesu8, md-5, parking_lot, thiserror — MIT (dual-licensed MIT or Apache-2.0
     where the crate offers both)
-  Signalsmith Stretch — Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd., MIT;
-    Rust binding Copyright 2024 Colin Marc, MIT
+  Signalsmith Stretch — Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd., MIT, with Signalsmith
+    Linear — Copyright (c) 2025 Signalsmith Audio, MIT; ported to Rust in crates/stretch
   zune-jpeg, jpeg-decoder, png, image-webp, gif (cover art, crates/covers) — MIT (dual-licensed MIT or
     Apache-2.0; zune-jpeg also Zlib)
   yaml-rust2, roxmltree, miniz_oxide, futures-util (lyrics, crates/lyrics) — MIT (dual-licensed MIT or

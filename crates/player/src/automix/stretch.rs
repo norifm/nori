@@ -39,7 +39,7 @@ struct Vari {
 }
 
 enum Engine {
-    Signalsmith(signalsmith_stretch::Stretch),
+    Signalsmith(Box<nori_stretch::Stretch>),
     Vari(Vari),
 }
 
@@ -140,7 +140,7 @@ impl Stretcher {
     pub fn new(rate: u32, channels: usize, keep_pitch: bool) -> Self {
         let ch = channels.clamp(1, MAX_CHANNELS);
         let engine = if keep_pitch {
-            Engine::Signalsmith(signalsmith_stretch::Stretch::preset_cheaper(ch as u32, rate.max(8000)))
+            Engine::Signalsmith(Box::new(nori_stretch::Stretch::preset_cheaper(ch, rate.max(8000) as f32)))
         } else {
             Engine::Vari(Vari::new(ch))
         };

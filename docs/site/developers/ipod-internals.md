@@ -64,7 +64,7 @@ What a client has to write itself ([Writing a client](writing-a-client.md), in s
 `ByteSource` (or link `nori-http`), the OS glue (now playing, remote commands, interruptions, routes,
 background), the pictures (a `Paint` for the platform), every screen and every word.
 
-Every dependency under `nori-host` builds for `aarch64-apple-ios`: bundled SQLite and Signalsmith through
+Every dependency under `nori-host` builds for `aarch64-apple-ios`: bundled SQLite through
 `cc`, `ring` (has iOS arm64 assembly), rustls with `webpki-roots`, cpal/coreaudio-rs (has an iOS backend,
 which this plan does not use), `objc2`. Nothing of tokio, OpenSSL or D-Bus beyond `nori-mpris`, which is a
 no-op off Linux already.
@@ -145,7 +145,7 @@ commands as that one (dyld info, no chained fixups). No Xcode attaches a debugge
 (device support starts at iOS 15 in 15.2); debugging is logs over SSH, which the jailbreak makes easy.
 
 Rust: `aarch64-apple-ios` supports iOS 10+, set `IPHONEOS_DEPLOYMENT_TARGET=12.2`. The static library needs
-no linker at all; `cc`-built C/C++ (SQLite, Signalsmith) needs the SDK headers.
+no linker at all; `cc`-built C (SQLite) needs the SDK headers.
 
 The pipeline is `tools/ipod.sh` (like `tools/apk.sh`): `build` runs `tools/ios-build/build.sh` in the image,
 then `install` and `run` reach the iPod; plain `tools/ipod.sh` builds and, with an iPod on USB, installs

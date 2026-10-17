@@ -436,7 +436,7 @@
     <string name="about_unknown_abi">unknown ABI</string>
     <string name="about_playback">Media3 ExoPlayer%1$s \u0020· \u0020OkHttp%2$s \u0020· \u0020equalizer, crossfeed and limiter in the Rust core</string>
     <string name="about_library">SQLite with full-text search through rusqlite%1$s \u0020· \u0020Rust core reached through uniffi%2$s</string>
-    <string name="about_automix">Beat and key analysis on this device with RustFFT%1$s \u0020· \u0020tempo changes by Signalsmith Stretch%2$s</string>
+    <string name="about_automix">Beat and key analysis on this device with RustFFT%1$s \u0020· \u0020tempo changes by Signalsmith Stretch, ported to Rust</string>
     <string name="about_ui">Jetpack Compose and Material 3 (BOM%1$s) \u0020· \u0020covers fetched, kept and decoded by the Rust core</string>
     <string name="about_report">%1$s (%2$s)\nPlayback: %3$s\nLibrary: %4$s\nAutoMix: %5$s\nInterface: %6$s</string>
 

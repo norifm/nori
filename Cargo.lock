@@ -4001,12 +4001,12 @@ dependencies = [
  "ebur128",
  "libc",
  "nori-player",
+ "nori-stretch",
  "opus-rs",
  "prost",
  "rustfft",
  "serde",
  "sha2",
- "signalsmith-stretch",
  "symphonia",
  "tract-onnx",
 ]
@@ -4068,6 +4068,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "nori-stretch"
+version = "0.6.1"
+dependencies = [
+ "rustfft",
+ "signalsmith-stretch",
 ]
 
 [[package]]
