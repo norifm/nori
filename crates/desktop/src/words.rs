@@ -49,6 +49,27 @@ pub fn count(n: impl Into<u64>, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// The lyrics service lyrics came from, by name.
+pub fn lyrics_origin(origin: nori_core::lyrics_sources::LyricsOrigin) -> &'static str {
+    use nori_core::lyrics_sources::LyricsOrigin;
+    match origin {
+        LyricsOrigin::Server => "your server",
+        LyricsOrigin::Binilyrics => "BiniLyrics",
+        LyricsOrigin::BetterLyrics | LyricsOrigin::Portato => "BetterLyrics",
+        LyricsOrigin::Paxsenix | LyricsOrigin::PaxsenixMusixmatch | LyricsOrigin::PaxsenixSpotify => "PaxSenix",
+        LyricsOrigin::LyricsPlus => "LyricsPlus",
+        LyricsOrigin::Simpmusic => "SimpMusic",
+        LyricsOrigin::Unison => "Unison",
+        LyricsOrigin::Netease => "NetEase",
+        LyricsOrigin::Kugou => "KuGou",
+        LyricsOrigin::Lrclib => "LRCLIB",
+        LyricsOrigin::YoutubeCaptions => "YouTube",
+        LyricsOrigin::Megalobiz => "Megalobiz",
+        LyricsOrigin::YoutubeMusic => "YouTube Music",
+        LyricsOrigin::Genius => "Genius",
+    }
+}
+
 /// A Home shelf's title.
 pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
     use nori_core::settings::HomeRow;
