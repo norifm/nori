@@ -214,37 +214,11 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
      * move it under us) and written without flags, so dragging it never pops a system UI over the art.
      */
     private val audio = app.getSystemService(AudioManager::class.java)
-    /**
-     * The music stream's volume, pushed the moment it changes. It used to be read once a second by the
-     * player screen, so a press of the volume keys took up to a second to show on the slider, and the
-     * screen ticked for as long as it was open. Android announces every change with a broadcast - the
-     * one ExoPlayer's own volume tracking listens to - and this listens only while the screen collects
-     * it: nothing registered, and nothing running, once the player is closed.
-     */
+    /** The music stream's volume, pushed as it changes, watched only while the screen collects it. */
     private val systemVolume = kotlinx.coroutines.flow.callbackFlow {
-        val context = getApplication<Application>()
         trySend(volumeFraction())
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(c: android.content.Context, intent: android.content.Intent) {
-                val stream = intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", AudioManager.STREAM_MUSIC)
-                if (stream == AudioManager.STREAM_MUSIC) trySend(volumeFraction())
-            }
-        }
-        androidx.core.content.ContextCompat.registerReceiver(
-            context, receiver, android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
-            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
-        )
-        // That broadcast is not public API, and a hardened or future Android may stop delivering it. The
-        // system also writes every volume to its settings store half a second or so later, which any app
-        // may watch; so if the broadcast never comes, the slider is late rather than frozen.
-        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) { trySend(volumeFraction()) }
-        }
-        context.contentResolver.registerContentObserver(android.provider.Settings.System.CONTENT_URI, true, observer)
-        awaitClose {
-            context.unregisterReceiver(receiver)
-            context.contentResolver.unregisterContentObserver(observer)
-        }
+        val stop = dev.nori.music.playback.watchMusicVolume(getApplication()) { trySend(volumeFraction()) }
+        awaitClose(stop)
     }
 
     /** The slider's volume: this phone's music stream, or the volume of the device playing elsewhere. */
