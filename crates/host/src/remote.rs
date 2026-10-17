@@ -24,15 +24,13 @@ use crate::Level;
 pub struct Remotes {
     slot: Mutex<Option<Arc<Remote>>>,
     level: Arc<Level>,
-    /// The engine waits for a song's bytes with nothing left to play.
-    buffering: AtomicBool,
     /// Another device plays, as last seen.
     mirroring: AtomicBool,
 }
 
 impl Remotes {
     pub(crate) fn new(level: Arc<Level>) -> Remotes {
-        Remotes { slot: Mutex::default(), level, buffering: AtomicBool::new(false), mirroring: AtomicBool::new(false) }
+        Remotes { slot: Mutex::default(), level, mirroring: AtomicBool::new(false) }
     }
 
     /// The active device while it is another one: the player shows and controls it instead of this one.
@@ -55,10 +53,6 @@ impl Remotes {
         on && !was
     }
 
-    pub(crate) fn buffering(&self, on: bool) {
-        self.buffering.store(on, Ordering::Relaxed);
-    }
-
     pub fn get(&self) -> Option<Arc<Remote>> {
         self.slot.lock().clone()
     }
@@ -79,7 +73,7 @@ impl Remotes {
 
     /// The playback other devices see, from the engine's status `s`.
     fn playing(&self, s: &Status) -> Playing {
-        nori_engine::core::playing(s, self.buffering.load(Ordering::Relaxed), self.level.percent())
+        nori_engine::core::playing(s, self.level.percent())
     }
 }
 
@@ -474,8 +468,10 @@ pub(crate) mod tests {
         assert_eq!(remotes.playing(&status).volume, Some(40));
         assert!(remotes.level.set(0.25), "loudness moves with it");
         assert_eq!((*card.lock(), remotes.playing(&status).volume), (0.25, Some(25)));
-        remotes.buffering(true);
-        assert!(remotes.playing(&status).buffering);
+        // Waiting for audio as the status says it: the place is held, whenever the event is followed.
+        let waiting = Status { state: State::Playing, buffering: true, position_ms: 5_000, at: nori_time::Instant::now() - nori_time::Duration::from_secs(2), ..Default::default() };
+        let p = remotes.playing(&waiting);
+        assert_eq!((p.buffering, p.position_ms), (true, 5_000));
 
         // A volume this client cannot set is followed, not offered.
         let system = Remotes::new(Level::new(0.4, None));

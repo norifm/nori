@@ -1561,7 +1561,7 @@ extern "system" fn remote_played(h: jlong, remote: jlong, volume: jint) {
     // SAFETY: Kotlin passes `Remote.uniffiCloneHandle()`, once.
     let remote: Arc<nori_core::remote::Remote> = unsafe { crate::uniffi_object(remote) };
     let Some(p) = player(h) else { return };
-    let playing = p.engine.status_with(|s| nori_engine::core::playing(s, s.buffering, u8::try_from(volume).ok()));
+    let playing = p.engine.status_with(|s| nori_engine::core::playing(s, u8::try_from(volume).ok()));
     remote.played(playing);
 }
 /// Whether the sound chain processes the samples.

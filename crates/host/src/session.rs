@@ -1076,9 +1076,6 @@ impl Handle {
             Event::Output { name } => self.device_curve(name.clone()),
             _ => {}
         }
-        if let Event::Buffering(on) = e {
-            self.remotes.buffering(*on);
-        }
         if matches!(e, Event::Song { .. } | Event::Looped { .. } | Event::State(_) | Event::Position { .. } | Event::Placed { .. } | Event::Mixing(_)
                 | Event::Buffering(_)) {
             self.remotes.played(&self.engine);

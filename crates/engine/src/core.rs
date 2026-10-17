@@ -1300,13 +1300,13 @@ pub fn follow(engine: &crate::Engine, session: &Session, lead: Option<nori_core:
         mix_place}));
 }
 
-/// The playback the account's other devices see, from the engine's status `s` run on to now; held while
-/// `buffering`, at `volume` (0 to 100) where it can be set.
-pub fn playing(s: &crate::Status, buffering: bool, volume: Option<u8>) -> nori_core::remote::Playing {
-    let (position_ms, mix_position_ms) = s.positions_at(nori_time::Instant::now(), buffering);
+/// The playback the account's other devices see, from the engine's status `s` run on to now (held while
+/// it waits for audio), at `volume` (0 to 100) where it can be set.
+pub fn playing(s: &crate::Status, volume: Option<u8>) -> nori_core::remote::Playing {
+    let (position_ms, mix_position_ms) = s.positions_at(nori_time::Instant::now(), s.buffering);
     nori_core::remote::Playing {
         playing: s.state == crate::State::Playing,
-        buffering,
+        buffering: s.buffering,
         mixing: s.mixing,
         mix_from: s.mix_from.map(|i| i as u32),
         mix_position_ms,
