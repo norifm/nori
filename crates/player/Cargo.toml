@@ -16,9 +16,9 @@ synth = []
 neural-beats = ["dep:tract-onnx", "dep:prost"]
 
 [dependencies]
-# AutoMix: the analysis FFT, and Signalsmith Stretch (MIT, C++ built with cc) for tempo changes.
+# AutoMix: the analysis FFT, and Signalsmith Stretch (MIT, ported to Rust in crates/stretch) for tempo changes.
 rustfft = "6"
-signalsmith-stretch = "0.1"
+nori-stretch = { path = "../stretch" }
 # The neural beat tracker's runtime: tract, a pure-Rust ONNX runtime (MIT/Apache-2.0). Its default
 # "transformers" feature is what runs the model's attention as flash attention (a fifth of the memory);
 # neural.rs keeps that on the calling thread, so rayon's pool, which comes with it, is never started.

@@ -59,6 +59,7 @@ via nori-core):
 | net | request signing, `Transport` trait, stream cache keys |
 | library | history, mixes, smart playlists, browse/search, page layouts, menus, car tree |
 | automix | analysis store, transition planner, beat model location |
+| stretch | time stretch and pitch shift, a pure Rust port of Signalsmith Stretch (checked against the C++ in its tests) |
 | settings / settings-derive | every setting is one `StoredPrefs` field with a `#[setting(...)]` line; codecs, store, settings model |
 | lyrics | services, formats, scoring, sync against the vocal curve, the lyrics clock |
 | queue | the played queue, controls, autofill, offline bridge, scrobbling |

@@ -1,0 +1,17 @@
+[package]
+name = "nori-stretch"
+version.workspace = true
+edition.workspace = true
+license = "MIT"
+description = "Signalsmith Stretch's time-stretch and pitch-shift ported to Rust, for AutoMix's tempo changes"
+publish = false
+
+[lib]
+name = "nori_stretch"
+
+[dependencies]
+rustfft = "6"
+
+[dev-dependencies]
+# The C++ original, which tests/compare.rs checks the port against. Only tests build it.
+signalsmith-stretch = "0.1"

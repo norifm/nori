@@ -1,0 +1,23 @@
+# Generated from Cargo manifests by tools/bazel/generate.py.
+load("//tools/bazel:workspace.bzl", "workspace_crate")
+
+workspace_crate({'name': 'nori-stretch',
+ 'edition': '2021',
+ 'version': '0.6.1',
+ 'targets': [{'name': 'nori_stretch', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
+             {'name': 'compare', 'kind': 'test', 'root': 'tests/compare.rs', 'test': True},
+             {'name': 'no_alloc', 'kind': 'test', 'root': 'tests/no_alloc.rs', 'test': True}],
+ 'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
+ 'local': [],
+ 'registry': [{'label': '@crates//:rustfft-6.4.1',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']},
+              {'label': '@crates//:signalsmith-stretch-0.1.3',
+               'kind': 'dev',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop-tests']}],
+ 'resources': [],
+ 'aliases': {}})
