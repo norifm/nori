@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use crate::client::{Client, NetResult};
 use crate::transport::{Exchange, NetError};
 
-/// Latest published release (excludes drafts and prereleases).
+/// Latest published release (GitHub leaves out drafts and prereleases).
 pub(crate) const LATEST_URL: &str = "https://api.github.com/repos/norifm/nori/releases/latest";
 /// The newest releases, prereleases among them, for the beta channel.
 pub(crate) const RECENT_URL: &str = "https://api.github.com/repos/norifm/nori/releases?per_page=20";
@@ -24,16 +24,16 @@ const TIMEOUT_MS: u32 = 20_000;
 
 /// A semver version; build metadata is ignored.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Version {
-    pub major: u64,
-    pub minor: u64,
-    pub patch: u64,
-    pub pre: Vec<String>,
+struct Version {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    pre: Vec<String>,
 }
 
 impl Version {
     /// Parses "0.4.1", "v0.4.1", "0.5.0-rc.1" or "1.2" (patch 0).
-    pub fn parse(s: &str) -> Option<Version> {
+    fn parse(s: &str) -> Option<Version> {
         let s = s.trim();
         let s = s.strip_prefix(['v', 'V']).unwrap_or(s);
         let s = s.split('+').next().unwrap_or("");
@@ -96,35 +96,35 @@ impl PartialOrd for Version {
 
 /// A release file.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct Asset {
-    pub name: String,
+struct Asset {
+    name: String,
     #[serde(default)]
-    pub size: u64,
+    size: u64,
     #[serde(default)]
-    pub browser_download_url: String,
+    browser_download_url: String,
 }
 
 /// The fields read from GitHub's release JSON.
 #[derive(Debug, Clone, Deserialize)]
-pub struct Release {
-    pub tag_name: String,
+struct Release {
+    tag_name: String,
     #[serde(default)]
-    pub html_url: String,
+    html_url: String,
     #[serde(default)]
-    pub body: Option<String>,
+    body: Option<String>,
     #[serde(default)]
-    pub draft: bool,
+    draft: bool,
     #[serde(default)]
-    pub prerelease: bool,
+    prerelease: bool,
     #[serde(default)]
-    pub assets: Vec<Asset>,
+    assets: Vec<Asset>,
 }
 
 /// Android ABIs; an APK suffixed with one targets only it.
 const ABIS: [&str; 4] = ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"];
 
 /// The non-empty APK for the first of `abis` (preference order) that has one, else the ABI-less APK.
-pub(crate) fn pick_apk<'a>(assets: &'a [Asset], abis: &[String]) -> Option<&'a Asset> {
+fn pick_apk<'a>(assets: &'a [Asset], abis: &[String]) -> Option<&'a Asset> {
     let apks: Vec<&Asset> = assets.iter().filter(|a| a.name.to_ascii_lowercase().ends_with(".apk") && a.size > 0 && !a.browser_download_url.is_empty()).collect();
     let abi_of = |a: &Asset| {
         let stem = a.name[..a.name.len() - 4].to_string();
@@ -166,16 +166,13 @@ pub enum UpdateCheck {
 }
 
 /// The newest of `releases` a channel offers: published ones, prereleases only on the beta channel.
-pub(crate) fn newest(releases: Vec<Release>, beta: bool) -> Option<Release> {
+fn newest(releases: Vec<Release>, beta: bool) -> Option<Release> {
     releases.into_iter().filter(|r| !r.draft && (beta || !r.prerelease)).filter_map(|r| Version::parse(&r.tag_name).map(|v| (v, r))).max_by(|a, b| a.0.cmp(&b.0)).map(|(_, r)| r)
 }
 
-/// The check outcome for `release` against build `current`; an error for drafts, prereleases off the
-/// beta channel and unparseable tags.
-pub fn decide(release: &Release, current: &str, abis: &[String], skipped: Option<&str>, beta: bool) -> Result<UpdateCheck, String> {
-    if release.draft || (release.prerelease && !beta) {
-        return Err(format!("{} is a draft or a prerelease", release.tag_name));
-    }
+/// The check outcome for `release` (one its channel offers) against build `current`; an error for an
+/// unparseable tag.
+fn decide(release: &Release, current: &str, abis: &[String], skipped: Option<&str>) -> Result<UpdateCheck, String> {
     let latest = Version::parse(&release.tag_name).ok_or_else(|| format!("tag {:?} is no version", release.tag_name))?;
     let shown = release.tag_name.trim().trim_start_matches(['v', 'V']).to_string();
     let newer = Version::parse(current).is_some_and(|c| latest > c);
@@ -201,7 +198,7 @@ pub fn decide(release: &Release, current: &str, abis: &[String], skipped: Option
 
 /// Whether the automatic check is due: enabled, and never checked, a day ago, or in the future (clock
 /// set back).
-pub fn due(on: bool, checked_ms: Option<i64>, now_ms: i64) -> bool {
+fn due(on: bool, checked_ms: Option<i64>, now_ms: i64) -> bool {
     on && checked_ms.is_none_or(|t| t > now_ms || now_ms - t >= CHECK_EVERY_MS)
 }
 
@@ -352,7 +349,7 @@ impl Client {
             serde_json::from_slice(&r.body).map_err(parse)?
         };
         let skipped = if asked { None } else { self.settings().app_value(SKIPPED_KEY) };
-        let found = decide(&release, &version, &abis, skipped.as_deref(), beta).map_err(|reason| NetError::Parse { reason })?;
+        let found = decide(&release, &version, &abis, skipped.as_deref()).map_err(|reason| NetError::Parse { reason })?;
         crate::alog::info(&format!("update check: {version} here, {} latest", release.tag_name));
         Ok(found)
     }
@@ -433,7 +430,7 @@ mod tests {
     #[test]
     fn offers() {
         let phone = abis(&["arm64-v8a"]);
-        let UpdateCheck::Available { update, skipped } = decide(&latest(), "0.4.0", &phone, None, false).unwrap() else { panic!("offered") };
+        let UpdateCheck::Available { update, skipped } = decide(&latest(), "0.4.0", &phone, None).unwrap() else { panic!("offered") };
         assert!(!skipped);
         assert_eq!(update.version, "0.5.0");
         assert_eq!(update.apk_name, "nori-music-0.5.0.apk");
@@ -441,24 +438,22 @@ mod tests {
         assert_eq!(update.page, "https://github.com/norifm/nori/releases/tag/v0.5.0");
         assert_eq!(update.notes, "The player is faster.\n\nFixed\n\n• A song that was cut off\n• Undo works");
         // Postponed: still found, marked skipped.
-        assert!(matches!(decide(&latest(), "0.4.0", &phone, Some("0.5.0"), false).unwrap(), UpdateCheck::Available { skipped: true, .. }));
-        assert!(matches!(decide(&latest(), "0.4.0", &phone, Some("v0.5.0"), false).unwrap(), UpdateCheck::Available { skipped: true, .. }));
-        assert!(matches!(decide(&latest(), "0.4.0", &phone, Some("0.4.9"), false).unwrap(), UpdateCheck::Available { skipped: false, .. }));
-        assert_eq!(decide(&latest(), "0.5.0", &phone, None, false).unwrap(), UpdateCheck::UpToDate { latest: "0.5.0".into() });
-        assert_eq!(decide(&latest(), "0.6.0-dev", &phone, None, false).unwrap(), UpdateCheck::UpToDate { latest: "0.5.0".into() });
-        assert!(matches!(decide(&latest(), "0.5.0-rc.2", &phone, None, false).unwrap(), UpdateCheck::Available { .. }));
+        assert!(matches!(decide(&latest(), "0.4.0", &phone, Some("0.5.0")).unwrap(), UpdateCheck::Available { skipped: true, .. }));
+        assert!(matches!(decide(&latest(), "0.4.0", &phone, Some("v0.5.0")).unwrap(), UpdateCheck::Available { skipped: true, .. }));
+        assert!(matches!(decide(&latest(), "0.4.0", &phone, Some("0.4.9")).unwrap(), UpdateCheck::Available { skipped: false, .. }));
+        assert_eq!(decide(&latest(), "0.5.0", &phone, None).unwrap(), UpdateCheck::UpToDate { latest: "0.5.0".into() });
+        assert_eq!(decide(&latest(), "0.6.0-dev", &phone, None).unwrap(), UpdateCheck::UpToDate { latest: "0.5.0".into() });
+        assert!(matches!(decide(&latest(), "0.5.0-rc.2", &phone, None).unwrap(), UpdateCheck::Available { .. }));
         let only_x86 = Release { assets: vec![asset("nori-music-0.5.0-x86_64.apk")], ..latest() };
         assert_eq!(
-            decide(&only_x86, "0.4.0", &phone, None, false).unwrap(),
+            decide(&only_x86, "0.4.0", &phone, None).unwrap(),
             UpdateCheck::NoApk { version: "0.5.0".into(), page: "https://github.com/norifm/nori/releases/tag/v0.5.0".into() }
         );
-        assert!(decide(&Release { prerelease: true, ..latest() }, "0.4.0", &phone, None, false).is_err());
-        assert!(decide(&Release { draft: true, ..latest() }, "0.4.0", &phone, None, true).is_err());
-        assert!(decide(&Release { tag_name: "nightly".into(), ..latest() }, "0.4.0", &phone, None, false).is_err());
+        assert!(decide(&Release { tag_name: "nightly".into(), ..latest() }, "0.4.0", &phone, None).is_err());
         // The beta channel takes a prerelease.
         let beta = Release { prerelease: true, tag_name: "v0.5.0-beta.2".into(), ..latest() };
-        assert!(matches!(decide(&beta, "0.4.0", &phone, None, true).unwrap(), UpdateCheck::Available { .. }));
-        assert!(matches!(decide(&beta, "0.5.0-beta.1", &phone, None, true).unwrap(), UpdateCheck::Available { .. }));
+        assert!(matches!(decide(&beta, "0.4.0", &phone, None).unwrap(), UpdateCheck::Available { .. }));
+        assert!(matches!(decide(&beta, "0.5.0-beta.1", &phone, None).unwrap(), UpdateCheck::Available { .. }));
 
         // Due at most daily.
         let day = CHECK_EVERY_MS;
@@ -498,7 +493,7 @@ mod tests {
         let (c, _) = crate::client::tests::client(Default::default());
         let dir = nori_testdir::TempDir::new("update-changelog");
         c.session().settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
-        let UpdateCheck::Available { update, .. } = decide(&latest(), "0.4.0", &abis(&["arm64-v8a"]), None, false).unwrap() else { panic!("offered") };
+        let UpdateCheck::Available { update, .. } = decide(&latest(), "0.4.0", &abis(&["arm64-v8a"]), None).unwrap() else { panic!("offered") };
         c.update_installing(update);
         nori_db::background::flush();
         assert_eq!(c.update_changelog("0.4.0".into()), None, "not installed yet");
