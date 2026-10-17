@@ -30,8 +30,16 @@ fun NoriTheme(prefs: StoredPrefs, content: @Composable () -> Unit) {
     // Everything dressed in the theme's own colours - the plates behind the buttons, the chrome, the
     // status bar - worked out once per scheme in Rust (nori_look::dress) and only looked up after.
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
-    // Sizes follow Android's own display size and font scale.
-    androidx.compose.runtime.CompositionLocalProvider(LocalLook provides look) {
+    val systemDensity = androidx.compose.ui.platform.LocalDensity.current
+    // The shorter side, not the width: the same in both orientations, so text keeps its size on a turn.
+    val widthDp = androidx.compose.ui.platform.LocalConfiguration.current.smallestScreenWidthDp
+    // dp and sp both follow the scale, so every size keeps its proportion to the screen; Android's font
+    // scale is left as it is, that one is the reader's.
+    val density = remember(systemDensity, widthDp) {
+        val scale = uiScale(widthDp)
+        if (scale == 1f) systemDensity else androidx.compose.ui.unit.Density(systemDensity.density * scale, systemDensity.fontScale)
+    }
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides density, LocalLook provides look) {
         MaterialTheme(colorScheme = scheme, typography = NoriTypography, content = content)
     }
 }
@@ -57,6 +65,18 @@ fun plainLook(scheme: ColorScheme): IntArray = dev.nori.music.look.CoverLook.pla
         scheme.surfaceContainerHigh.toArgb(), scheme.secondaryContainer.toArgb(), scheme.outlineVariant.toArgb(),
     ),
 )
+
+/** Every size in the app was measured as a share of the width of a phone this many dp wide. */
+private const val REFERENCE_WIDTH_DP = 411f
+
+/**
+ * How big the interface is drawn: laid out as if the screen were at least [REFERENCE_WIDTH_DP] wide, so a
+ * phone set to a large display size (one measured at 358 dp draws everything a seventh larger) keeps the
+ * proportions; it only ever shrinks, never below three quarters. A phone's rule, about Android's display
+ * size: a desktop window has no such setting to undo.
+ */
+fun uiScale(screenWidthDp: Int): Float =
+    if (screenWidthDp <= 0) 1f else (screenWidthDp / REFERENCE_WIDTH_DP).coerceIn(0.75f, 1f)
 
 /** A light or dark scheme from one colour: tones of the same hue, worked out in Rust (`nori_look::theme::seeded`). */
 private fun seeded(seed: Color, dark: Boolean): ColorScheme {
