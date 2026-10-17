@@ -70,6 +70,15 @@ pub fn feed_shelf(f: &nori_core::FeedShelf) -> String {
 pub const LYRICS_PREFETCH: &str = "Prepare next song’s lyrics";
 pub const LYRICS_PREFETCH_DETAIL: &str = "Fetch lyrics for one upcoming library song while the current song plays";
 
+/// The repeat mode `mode` as said when it is chosen.
+pub fn repeat(mode: u8) -> &'static str {
+    match mode {
+        nori_core::rules::REPEAT_ONE => "Repeat one",
+        nori_core::rules::REPEAT_ALL => "Repeat all",
+        _ => "Repeat off",
+    }
+}
+
 /// A playback position or length in ms: "3:07".
 pub fn clock(ms: i64) -> String {
     numbers::clock(ms / 1000, false)

@@ -1488,6 +1488,21 @@ mod tests {
         s.close();
     }
 
+    /// The repeat button goes off, all, one, off, as every client shows it.
+    #[test]
+    fn repeat_cycles_off_all_one() {
+        let dir = nori_testdir::TempDir::new("host-repeat");
+        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
+        let profile = SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), ..Default::default() };
+        let s = Session::open(Open { offline: true, ..test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let modes: Vec<u8> = (0..3).map(|_| {
+            s.cycle_repeat();
+            queue.playlist(|p| p.repeat())
+        }).collect();
+        assert_eq!(modes, [nori_core::rules::REPEAT_ALL, nori_core::rules::REPEAT_ONE, nori_core::rules::REPEAT_OFF]);
+        s.close();
+    }
+
     /// A profile of a provider without remote control opens with its own rules, and no remote control
     /// even when it is switched on; a server's profile with it on serves.
     #[test]

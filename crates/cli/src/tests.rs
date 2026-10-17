@@ -483,7 +483,7 @@ fn queue_panel_editing() {
     key(&mut a, KeyCode::Char('s'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Shuffle(true)));
     key(&mut a, KeyCode::Char('r'));
-    assert_eq!(a.cmds.last(), Some(&Cmd::Repeat(2)), "off, then all");
+    assert_eq!(a.cmds.last(), Some(&Cmd::CycleRepeat));
     // Q again puts the panel away; the page has the keys.
     key(&mut a, KeyCode::Char('Q'));
     assert_eq!((a.panel, a.focus), (None, Focus::Main));

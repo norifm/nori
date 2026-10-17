@@ -1414,8 +1414,8 @@ fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool) {
             modes.push_str(" · shuffle");
         }
         match q.repeat {
-            crate::app::REPEAT_ONE => modes.push_str(" · repeat one"),
-            crate::app::REPEAT_ALL => modes.push_str(" · repeat all"),
+            nori_core::rules::REPEAT_ONE => modes.push_str(" · repeat one"),
+            nori_core::rules::REPEAT_ALL => modes.push_str(" · repeat all"),
             _ => {}
         }
         text(f, Rect { height: 1, ..area }, &format!("{}{modes}", crate::text::songs_caption(q.len, secs)), dim(&t));
@@ -1680,14 +1680,14 @@ fn player_bar(f: &mut Frame, area: Rect, app: &mut App, ui: &Theme) {
         .controls
         .map_or(app.now.state == State::Playing, |c| c.playing);
     let lit = |on: bool| if on { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { dim(&t) };
-    let repeat = if app.repeat() == crate::app::REPEAT_ONE { "↻¹" } else { "↻" };
+    let repeat = if app.repeat() == nori_core::rules::REPEAT_ONE { "↻¹" } else { "↻" };
     let toggle = if app.now.buffering { " ⋯ " } else if playing { " ⏸ " } else { " ▶ " };
     let controls: [(&str, Style, Button); 5] = [
         ("⤮", lit(app.queue_shuffled()), Button::Shuffle),
         ("⏮", Style::default().fg(t.text), Button::Previous),
         (toggle, Style::default().bg(t.accent).fg(on(t.accent)).add_modifier(Modifier::BOLD), Button::Toggle),
         ("⏭", Style::default().fg(t.text), Button::Next),
-        (repeat, lit(app.repeat() != crate::app::REPEAT_OFF), Button::Repeat),
+        (repeat, lit(app.repeat() != nori_core::rules::REPEAT_OFF), Button::Repeat),
     ];
     // A jam guest's are those its role offers: shuffle and repeat are the host's.
     let offered = |b: Button| match b {

@@ -235,8 +235,9 @@ impl Nori {
         self.with(|h| h.shuffle(on));
     }
 
-    pub fn repeat(&self, mode: u8) {
-        self.with(|h| h.repeat(mode));
+    /// The next repeat mode after the one shown: off, all, one.
+    pub fn cycle_repeat(&self) {
+        self.with(|h| h.cycle_repeat());
     }
 
     /// Sets a setting by name and applies it; false if there is no such setting.

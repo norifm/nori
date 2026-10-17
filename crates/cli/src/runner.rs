@@ -599,7 +599,10 @@ impl Runner {
             Cmd::Restore(id) => s.put_back(&id),
             Cmd::Move(from, to) => s.move_song(from, to),
             Cmd::Shuffle(on) => s.shuffle(on),
-            Cmd::Repeat(m) => s.repeat(m),
+            Cmd::CycleRepeat => {
+                s.cycle_repeat();
+                app.say(crate::text::repeat(s.now().repeat), false);
+            }
             Cmd::Download(songs) => s.download(songs),
             Cmd::DownloadFetch(what) => s.download_later(what),
             Cmd::DownloadRemove(id) => {

@@ -593,14 +593,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.follow();
     });
     on!(ui.on_cycle_repeat, h, |a| {
-        // Off, all, one.
-        let next = match a.ui().get_repeat() {
-            0 => 2,
-            2 => 1,
-            _ => 0,
-        };
-        a.on_session(|s| s.repeat(next));
-        a.say(["Repeat off", "Repeat one", "Repeat all"][next as usize], false);
+        a.on_session(|s| s.cycle_repeat());
+        let shown = a.session.as_ref().map_or(0, |s| s.now().repeat);
+        a.say(["Repeat off", "Repeat one", "Repeat all"][shown.min(2) as usize], false);
         a.follow();
     });
     on!(ui.on_lyric_tapped, h, |a, line| a.lyric_tapped(line));

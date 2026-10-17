@@ -1079,20 +1079,41 @@ pub unsafe extern "C" fn nori_ios_enqueue_collection(kind: i32, id: *const c_cha
     with_session(|s| s.enqueue_later(what, next != 0));
 }
 
+/// A song (1), album (2) or artist (3) by its code.
+fn starrable(kind: i32) -> Option<Starrable> {
+    match kind {
+        1 => Some(Starrable::Song),
+        2 => Some(Starrable::Album),
+        3 => Some(Starrable::Artist),
+        _ => None,
+    }
+}
+
 /// Stars (`on` 1) or unstars a song (1), album (2) or artist (3).
 ///
 /// # Safety
 /// `id` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_star(kind: i32, id: *const c_char, on: i32) {
-    let kind = match kind {
-        1 => Starrable::Song,
-        2 => Starrable::Album,
-        3 => Starrable::Artist,
-        _ => return,
-    };
+    let Some(kind) = starrable(kind) else { return };
     let id = c_text(id);
     with_session(|s| s.star(kind, id, on != 0));
+}
+
+/// Whether a song (1), album (2) or artist (3) shows starred (1), its record saying `listed`: a song as
+/// the device playing elsewhere shows it while it is in that queue, else this session's mark over the
+/// record (`Handle::starred`).
+///
+/// # Safety
+/// `id` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_starred(kind: i32, id: *const c_char, listed: i32) -> i32 {
+    let (Some(kind), id, listed) = (starrable(kind), c_text(id), listed != 0) else { return listed };
+    let shown = with_session(|s| match kind {
+        Starrable::Song => s.starred(&Song { id: id.clone(), starred: listed, ..Song::default() }, s.elsewhere().as_ref()),
+        _ => s.core.starred(kind, &id, listed),
+    });
+    i32::from(shown.unwrap_or(listed))
 }
 
 /// What plays now, as JSON to free with `nori_ios_free`; NULL when nothing is open.

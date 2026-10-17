@@ -453,9 +453,9 @@ Each ends with something that runs on the iPod; nothing moves on until the one b
 In the tree, uncommitted:
 
 - `crates/ios` (`nori-ios`): a staticlib over `nori-host`, in the workspace. Its C ABI today is
-  `nori_ios_version`, `nori_ios_probe(data_dir)` (opens the settings database; proves SQLite and the
-  filesystem on the device) and `nori_ios_free`. Two tests (`cargo test -p nori-ios`) cover the ABI's
-  string handling and the probe.
+  `nori_ios_version`, a probe that opened the settings database (it proved SQLite and the filesystem on
+  the device, and has gone since) and `nori_ios_free`. Tests (`cargo test -p nori-ios`) cover the ABI's
+  string handling.
 - `ios/`: `Sources/main.swift`, `AppDelegate.swift` (the data directory under Application Support,
   excluded from backup), `ProbeViewController.swift` (one label: the version and the probe's note, the
   core called off the main thread), `Sources/nori_ios.h` (the bridging header, kept in step with lib.rs by

@@ -167,6 +167,9 @@ impl Session {
     }
 }
 
+/// The repeat modes, in media3's numbering.
+pub use nori_player::playlist::{REPEAT_ALL, REPEAT_OFF, REPEAT_ONE};
+
 /// The repeat mode after a press of the button (media3 numbering: off 0, one 1, all 2).
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn queue_next_repeat(mode: u8) -> u8 {

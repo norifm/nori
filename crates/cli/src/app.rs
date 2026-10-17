@@ -138,7 +138,8 @@ pub enum Cmd {
     Restore(String),
     Move(usize, usize),
     Shuffle(bool),
-    Repeat(u8),
+    /// The next repeat mode after the one shown.
+    CycleRepeat,
     Download(Vec<Song>),
     DownloadFetch(Fetch),
     DownloadRemove(String),
@@ -201,7 +202,7 @@ impl Cmd {
             Cmd::Volume(v) => format!("volume {v}"),
             Cmd::Jump(i) => format!("jump {i}"),
             Cmd::Shuffle(on) => format!("shuffle {on}"),
-            Cmd::Repeat(m) => format!("repeat {m}"),
+            Cmd::CycleRepeat => "repeat".into(),
             Cmd::Setting(k, v) => format!("setting {k}={v}"),
             Cmd::Action(a) => format!("action {a:?}"),
             Cmd::Curve => "curve".into(),
@@ -1673,15 +1674,7 @@ impl App {
                 self.cmds.push(Cmd::Shuffle(on));
                 self.say(if on { "Shuffle on" } else { "Shuffle off" }, false);
             }
-            Action::Repeat => {
-                let (next, said) = match self.repeat() {
-                    REPEAT_OFF => (REPEAT_ALL, "Repeat all"),
-                    REPEAT_ALL => (REPEAT_ONE, "Repeat one"),
-                    _ => (REPEAT_OFF, "Repeat off"),
-                };
-                self.cmds.push(Cmd::Repeat(next));
-                self.say(said, false);
-            }
+            Action::Repeat => self.cmds.push(Cmd::CycleRepeat),
             Action::Go(n) => {
                 if let Some(v) = GO.get(n as usize).filter(|v| self.nav().contains(&nav_of(**v))) {
                     self.go(*v);
@@ -2763,7 +2756,3 @@ pub enum DownloadRow<'a> {
 /// How long a status note shows.
 pub const NOTE_FOR: Duration = Duration::from_secs(4);
 
-/// Repeat modes, numbered as `nori_player::playlist`.
-pub const REPEAT_OFF: u8 = 0;
-pub const REPEAT_ONE: u8 = 1;
-pub const REPEAT_ALL: u8 = 2;

@@ -69,7 +69,7 @@ pub const REPORT_JAM_LEFT: i32 = 21;
 /// 0). [`Report::text`] is the curve, [`Report::id`] the output; `nori_ios_curve_answer` applies or
 /// undoes it.
 pub const REPORT_CURVE: i32 = 22;
-/// The current favorite overlays, by kind, in `text` as JSON.
+/// The hearts changed (`nori_ios_starred` reads them again).
 pub const REPORT_STARRED: i32 = 23;
 
 pub const STATE_IDLE: i32 = 0;
@@ -247,10 +247,7 @@ fn pack(said: &Said) -> Packed {
             p.kind = REPORT_VOLUME;
             p.ms = (v * 1000.0).round() as i64;
         }
-        Said::Starred(marks) => {
-            p.kind = REPORT_STARRED;
-            p.text = c(&serde_json::json!({ "song": marks.songs, "album": marks.albums, "artist": marks.artists }).to_string());
-        }
+        Said::Starred(_) => p.kind = REPORT_STARRED,
         Said::Curve(n) => {
             p.kind = REPORT_CURVE;
             let (output, curve, offer) = match n {
@@ -670,18 +667,10 @@ pub extern "C" fn nori_ios_seek(ms: i64) {
     with_session(|s| s.seek(ms));
 }
 
-/// Goes to `index` at `ms`, playing or paused as before. Returns the jump number, or 0 when nothing is open.
+/// The next repeat mode after the one shown: off, all, one.
 #[no_mangle]
-pub extern "C" fn nori_ios_go_to(index: i32, ms: i64) -> u64 {
-    with_session(|s| s.engine.go_to(index.max(0) as usize, ms)).unwrap_or(0)
-}
-
-/// Repeat off (0), one (1) or all (2).
-#[no_mangle]
-pub extern "C" fn nori_ios_set_repeat(mode: i32) {
-    if (0..=2).contains(&mode) {
-        with_session(|s| s.repeat(mode as u8));
-    }
+pub extern "C" fn nori_ios_cycle_repeat() {
+    with_session(|s| s.cycle_repeat());
 }
 
 /// `on` is 0 or 1.
@@ -1068,11 +1057,7 @@ mod tests {
         assert!(super::nori_ios_play_at(1, 0) > 0);
         song_of(at, "b", 1);
 
-        let at = mark();
-        assert!(super::nori_ios_go_to(0, 0) > 0);
-        song_of(at, "a", 0);
-
-        super::nori_ios_set_repeat(2);
+        super::nori_ios_cycle_repeat();
         super::nori_ios_shuffle(1);
         {
             let h = super::held().unwrap();
@@ -1344,10 +1329,7 @@ mod tests {
             for on in [true, false] {
                 let at = mark();
                 phone.clone().send(ipod.clone(), Op::LibraryMarks { marks: vec![nori_core::remote::wire::LibraryMark { kind, id: "a".into(), on }] });
-                let report = expect(at, super::REPORT_STARRED, |_| true);
-                let marks: serde_json::Value = serde_json::from_str(&report.text).unwrap();
-                let key = if kind == nori_core::client::Starrable::Song { "song" } else { "album" };
-                assert_eq!(marks[key]["a"], on);
+                expect(at, super::REPORT_STARRED, |_| true);
                 let h = super::held().unwrap();
                 assert_eq!(h.session.lock().unwrap().core.starred(kind, "a", !on), on);
                 assert!(!SINK.get().unwrap().got.lock().unwrap()[at..].iter().any(|r| r.kind == super::REPORT_NOTE && matches!(r.flag, super::NOTE_STARRED | super::NOTE_UNSTARRED)), "receiving favorites does not show a toast");

@@ -218,8 +218,7 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
     }
 
     @objc private func repeatTapped() {
-        let next: Int32 = [0: 2, 2: 1, 1: 0][Core.shared.now.repeatMode] ?? 0
-        nori_ios_set_repeat(next)
+        nori_ios_cycle_repeat()
         Core.shared.refresh()
     }
 
