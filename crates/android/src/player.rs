@@ -983,10 +983,6 @@ impl ByteSource for AheadBytes {
         Err("asked without its cache key".into())
     }
 
-    fn open_keyed(&self, url: &str, key: &str, from: u64) -> Result<Body, OpenError> {
-        open_java(&self.0, url, key, from, &Cancel::new())
-    }
-
     fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
         match key {
             Some(key) => open_java(&self.0, url, key, from, cancel),
