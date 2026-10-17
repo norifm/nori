@@ -43,7 +43,7 @@ impl Core {
         let rows: Vec<(String, String)> = {
             let c = self.db.lock();
             let mut st = c.prepare("SELECT id, json FROM items WHERE server=sid() AND kind=?1 ORDER BY rowid")?;
-            let rows = st.query_map([crate::db::SONG], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let rows = st.query_map([crate::db::ItemKind::Song], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.filter_map(|r| r.ok()).collect()
         };
         self.queue_downloads(rows)

@@ -11,9 +11,19 @@ use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{de::DeserializeOwned, Serialize};
 
-pub const ARTIST: i64 = 0;
-pub const ALBUM: i64 = 1;
-pub const SONG: i64 = 2;
+/// What an index row holds, stored as its number (`kind`); SQL text names songs as `kind=2`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemKind {
+    Artist = 0,
+    Album = 1,
+    Song = 2,
+}
+
+impl rusqlite::ToSql for ItemKind {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok((*self as i64).into())
+    }
+}
 
 /// One database for the app. Per-server rows carry the profile id in `server`; a connection filters by
 /// `sid()`, the id it was opened for. Profiles, AutoEQ and settings are app-wide.
@@ -35,8 +45,6 @@ CREATE TABLE IF NOT EXISTS download_beats(server TEXT NOT NULL, id TEXT NOT NULL
 CREATE TABLE IF NOT EXISTS autoeq(rowid INTEGER PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL, form TEXT NOT NULL, target TEXT NOT NULL, path TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS autoeq_missing(path TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, outputs TEXT NOT NULL DEFAULT '') WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS app_kv(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS searches(server TEXT NOT NULL, query TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(server, query)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS plays(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, song_id TEXT NOT NULL, started_ms INTEGER NOT NULL, heard_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL, completed INTEGER NOT NULL, skipped INTEGER NOT NULL, hour INTEGER NOT NULL, day INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS plays_started ON plays(server, started_ms);
@@ -61,6 +69,12 @@ CREATE TABLE IF NOT EXISTS track_analysis(server TEXT NOT NULL, song_id TEXT NOT
 CREATE TABLE IF NOT EXISTS vocal_curve(server TEXT NOT NULL, song_id TEXT NOT NULL, curve BLOB NOT NULL, PRIMARY KEY(server, song_id)) WITHOUT ROWID;
 ";
 
+/// The app-wide tables.
+const APP_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS app_kv(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
+";
+
 /// Per-server tables, cleared when a profile is removed.
 const SERVER_TABLES: [&str; 15] = [
     "items", "cache", "kv", "pending", "downloads", "download_beats", "searches", "plays", "song_stats", "server_plays", "mix_excluded", "autofill_picks", "smart_playlists", "track_analysis",
@@ -75,6 +89,7 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
         Ok(sid.clone())
     })?;
     drop_old_analysis(&c)?;
+    c.execute_batch(APP_SCHEMA)?;
     c.execute_batch(SCHEMA)?;
     drop_old_lyrics(&c)?;
     Ok(c)
@@ -106,10 +121,7 @@ fn drop_old_analysis(c: &Connection) -> rusqlite::Result<()> {
 /// Opens the database for app-wide tables only (settings, app_kv).
 pub fn open_app(path: &str) -> rusqlite::Result<Connection> {
     let c = connect(path)?;
-    c.execute_batch(
-        "CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
-         CREATE TABLE IF NOT EXISTS app_kv(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;",
-    )?;
+    c.execute_batch(APP_SCHEMA)?;
     Ok(c)
 }
 
@@ -157,7 +169,7 @@ pub fn now_ms() -> i64 {
 }
 
 /// Stores `item` as the row of `kind` and `id`; its rowid, none for an item the index does not keep.
-fn upsert<T: Serialize>(c: &Connection, kind: i64, id: &str, text: &str, item: &T) -> rusqlite::Result<Option<i64>> {
+fn upsert<T: Serialize>(c: &Connection, kind: ItemKind, id: &str, text: &str, item: &T) -> rusqlite::Result<Option<i64>> {
     // Provider items are not library rows.
     if id.is_empty() || nori_model::is_provider_id(id) {
         return Ok(None);
@@ -188,13 +200,13 @@ pub fn index(c: &mut Connection, artists: &[Artist], albums: &[Album], songs: &[
     let tx = c.transaction()?;
     let mut rows = Vec::with_capacity(artists.len() + albums.len() + songs.len());
     for a in artists {
-        rows.extend(upsert(&tx, ARTIST, &a.id, &a.name, a)?);
+        rows.extend(upsert(&tx, ItemKind::Artist, &a.id, &a.name, a)?);
     }
     for a in albums.iter().filter(|a| !a.is_external) {
-        rows.extend(upsert(&tx, ALBUM, &a.id, &format!("{} {}", a.name, a.artist), a)?);
+        rows.extend(upsert(&tx, ItemKind::Album, &a.id, &format!("{} {}", a.name, a.artist), a)?);
     }
     for s in songs.iter().filter(|s| !s.is_external) {
-        rows.extend(upsert(&tx, SONG, &s.id, &format!("{} {} {}", s.title, s.artist, s.album), s)?);
+        rows.extend(upsert(&tx, ItemKind::Song, &s.id, &format!("{} {} {}", s.title, s.artist, s.album), s)?);
     }
     tx.commit()?;
     Ok(rows)
@@ -255,7 +267,7 @@ fn load<T: DeserializeOwned>(c: &Connection, rowids: &[i64]) -> rusqlite::Result
     Ok(items)
 }
 
-pub fn count(c: &Connection, kind: i64) -> rusqlite::Result<u32> {
+pub fn count(c: &Connection, kind: ItemKind) -> rusqlite::Result<u32> {
     c.query_row("SELECT count(*) FROM items WHERE server=sid() AND kind=?1", [kind], |r| r.get(0))
 }
 

@@ -574,7 +574,7 @@ impl Core {
 
     pub fn index_size(&self) -> Result<IngestStats> {
         let c = self.db.lock();
-        Ok(IngestStats { artists: db::count(&c, db::ARTIST)?, albums: db::count(&c, db::ALBUM)?, songs: db::count(&c, db::SONG)? })
+        Ok(IngestStats { artists: db::count(&c, db::ItemKind::Artist)?, albums: db::count(&c, db::ItemKind::Album)?, songs: db::count(&c, db::ItemKind::Song)? })
     }
 
     pub fn save_queue(&self, queue: PlayQueue) -> Result<()> {

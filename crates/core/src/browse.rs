@@ -44,7 +44,7 @@ impl Core {
     pub fn browse_decades(&self) -> Result<Vec<Decade>> {
         let c = self.db.lock();
         let mut st = c.prepare_cached("SELECT (json_extract(json, '$.year') / 10) * 10 AS d, count(*) FROM items WHERE server=sid() AND kind=?1 AND json_extract(json, '$.year') > 0 GROUP BY d ORDER BY d DESC")?;
-        let rows = st.query_map([db::SONG], |r| {
+        let rows = st.query_map([db::ItemKind::Song], |r| {
             let start: u32 = r.get(0)?;
             Ok(Decade { start, song_count: r.get(1)? })
         })?;
@@ -78,7 +78,7 @@ pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years:
     // The song kind written out, so the songs' sort indexes (db.rs) serve the order a page at a time.
     // Starred songs are few: sorting them beats walking a sort index past all the others.
     let items = if starred_only { "items INDEXED BY items_starred" } else { "items" };
-    let mut sql = format!("SELECT json FROM {items} WHERE server=sid() AND kind={}", db::SONG);
+    let mut sql = format!("SELECT json FROM {items} WHERE server=sid() AND kind={}", db::ItemKind::Song as i64);
     if starred_only {
         sql.push_str(" AND json_extract(json, '$.starred') = 1");
     }
