@@ -7,8 +7,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nori_core::look::clock_on;
+use nori_core::race::LyricsPick;
 use nori_core::settings::SavedServer;
-use nori_core::{PageOrigin, Song};
+use nori_core::{LyricsTiming, PageOrigin, Song};
 use nori_engine::{AudioOutput, Body, ByteSource, Feed, Filling, OpenError, OutputFormat, State};
 use nori_host::session::{Driven, Note, Open, Said, Session};
 use nori_look::lyrics::LyricClock;
@@ -163,8 +164,8 @@ pub struct Live {
     /// What the session said since the last turn.
     said: Arc<Mutex<Vec<Said>>>,
     open: RefCell<Option<Opened>>,
-    /// The lyrics shown, and their clock.
-    lyrics: RefCell<Option<(String, LyricClock)>>,
+    /// The lyrics shown: the song's id, the pick and its clock.
+    lyrics: RefCell<Option<(String, LyricsPick, LyricClock)>>,
 }
 
 impl Live {
@@ -208,11 +209,41 @@ impl Nori {
         Ok(())
     }
 
+    /// Keeps `pick` as song `song`'s lyrics shown, its clock at the position now, and tells the page.
+    fn show_lyrics(&self, song: String, pick: LyricsPick) {
+        let at = self.position_now();
+        self.live.tell.say(&json!({ "kind": "lyrics", "song": song, "lyrics": pick.lyrics, "origin": format!("{:?}", pick.origin), "timing": timing(pick.lyrics.timing) }));
+        *self.live.lyrics.borrow_mut() = Some((song, pick.clone(), clock_on(&pick.lyrics, at)));
+    }
+
+    /// Where the song the player shows is now.
+    fn position_now(&self) -> i64 {
+        self.with(|h| h.now().position_now()).unwrap_or(0)
+    }
+
     /// Saves the queue and closes the session.
     pub(crate) fn leave(&self) {
         if let Some(o) = self.live.open.borrow_mut().take() {
             o.host.close();
         }
+    }
+
+    /// What the app offers over the profile open.
+    pub(crate) fn rules(&self) -> nori_core::browse::ProfileRules {
+        self.with(|h| h.rules.clone()).unwrap_or_default()
+    }
+
+    /// What a jam adds to song menus: starting one, or asking the host as its guest.
+    pub(crate) fn jam_offer(&self) -> Option<nori_core::menus::JamOffer> {
+        use nori_core::menus::JamOffer;
+        self.with(|h| {
+            if h.guest {
+                return Some(JamOffer::Guest);
+            }
+            let r = h.remote()?;
+            (r.jam_start() == nori_core::remote::JamStart::Offered).then_some(JamOffer::Start)
+        })
+        .flatten()
     }
 
     pub(crate) fn client(&self) -> Option<Arc<nori_core::client::Client>> {
@@ -228,8 +259,8 @@ impl Nori {
         let said = std::mem::take(&mut *self.live.said.lock());
         for s in said {
             if let Said::Lyrics { song, pick } = &s {
-                let at = self.with(|h| h.engine.status().position_now()).unwrap_or(0);
-                *self.live.lyrics.borrow_mut() = Some((song.clone(), clock_on(&pick.lyrics, at)));
+                self.show_lyrics(song.clone(), pick.clone());
+                continue;
             }
             if let Some(v) = told(&s) {
                 self.live.tell.say(&v);
@@ -278,6 +309,18 @@ impl Nori {
         self.with(|h| h.seek(ms as i64));
     }
 
+    /// Plays a radio (`radio`) or an instant mix seeded by song `id`: the songs played (0: the server had
+    /// none).
+    pub async fn mix(&self, id: String, radio: bool) -> Result<usize, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let songs = if radio { client.radio(id).await } else { client.instant_mix(id).await }.map_err(error)?;
+        let n = songs.len();
+        if n > 0 {
+            self.with(|h| h.play(songs, 0, false, None));
+        }
+        Ok(n)
+    }
+
     /// Plays the queue's song at `index`.
     pub fn jump(&self, index: usize) {
         self.with(|h| h.jump(index));
@@ -310,21 +353,27 @@ impl Nori {
         self.with(|h| h.lyrics(song));
     }
 
-    /// The lyrics' state at the position now: `{ song, active, glide, sung, wait }` (`wait`: ms until it
-    /// changes, 0 never), or null without lyrics.
-    pub fn lyrics_now(&self) -> String {
+    /// The lyrics' state at the position now: `{ song, active, glide, sung, wait }` (`sung`: how much of
+    /// the lit line is sung, in UTF-16 units, while the words sweep; `wait`: ms until it next changes,
+    /// a display frame being `frame_ms`; 0 never), or null without lyrics.
+    pub fn lyrics_now(&self, frame_ms: u32) -> String {
         let lyrics = self.live.lyrics.borrow();
-        let Some((song, clock)) = lyrics.as_ref() else { return "null".into() };
-        let at = self.with(|h| h.engine.status().position_now()).unwrap_or(0);
-        let step = clock.advance(at, false, false, true);
-        json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "sung": step.frame.sung, "wait": step.wait }).to_string()
+        let Some((song, _, clock)) = lyrics.as_ref() else { return "null".into() };
+        let sweep = self.app.settings.prefs(|p| p.lyrics_sweep);
+        let step = clock.advance(self.position_now(), sweep, true, true);
+        let wait = clock.wait_ms(&step, sweep, frame_ms as u64).unwrap_or(0);
+        json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "sung": step.frame.sung, "wait": wait }).to_string()
     }
 
     /// A tap on lyric line `line`: shows it at once and plays from where it is sung, the lyrics' timing
-    /// applied. `{ active, ms }`: the line lit and the place sought, or null without lyrics.
+    /// applied. `{ active, ms }`: the line lit and the place sought; null without synced lyrics, or for a
+    /// jam guest who asks the host for what plays (its taps reach nothing, as on Android).
     pub fn lyrics_tap(&self, line: usize) -> String {
+        if self.rules().asks {
+            return "null".into();
+        }
         let lyrics = self.live.lyrics.borrow();
-        let Some((_, clock)) = lyrics.as_ref() else { return "null".into() };
+        let Some((_, _, clock)) = lyrics.as_ref().filter(|(_, pick, _)| pick.lyrics.synced) else { return "null".into() };
         let ms = clock.tap(line);
         let active = clock.shown().active;
         drop(lyrics);
@@ -332,50 +381,64 @@ impl Nori {
         json!({ "active": active, "ms": ms }).to_string()
     }
 
-    /// What plays: `{ state, index, id, positionMs, mixing, song, queue, current, shuffle, repeat,
-    /// underruns, transition }` (`transition`: the plan out of the song, `{ kind, into, reason }`); for a
-    /// jam guest, the host's (`jam: true`).
+    /// The lyrics shown a step sooner (`dir` > 0) or later (< 0), or back to the sync check's timing
+    /// (0); kept for those words. They come again as a `lyrics` report.
+    pub fn lyrics_nudge(&self, dir: i32) {
+        let Some((song, pick, _)) = self.live.lyrics.borrow_mut().take() else { return };
+        let Some(pick) = self.with(|h| h.core.lyrics_nudge(song.clone(), pick, dir)) else { return };
+        self.show_lyrics(song, pick);
+    }
+
+    /// What the player shows playing (`nori_host::player`): this browser's playback, the account's
+    /// device playing while it is another one, or a jam guest's host: `{ state, playing, index, id,
+    /// positionMs, pace, mixing, buffering, song, queue, current, reorderable, shuffle, repeat, device,
+    /// jam, asks, underruns, transition }` (`asks`: a jam guest's picks are asked of the host, and its
+    /// lyric taps reach nothing). `queue` is in play order, each song with its list `index`;
+    /// `current` the place in it of the song heard; `device` the name of the device playing elsewhere;
+    /// `transition` the plan out of the song here, `{ kind, into, reason }`.
     pub fn now(&self) -> String {
         self.with(|h| {
-            if let Some(there) = h.jam_playing() {
-                let m = &there.mirror;
-                let song = there.song().map(|s| crate::pages::song(h.core.as_ref(), s));
-                let queue: Vec<Value> = m.rows.iter().map(|r| crate::pages::song(h.core.as_ref(), &r.song)).collect();
-                return json!({
-                    "jam": true,
-                    "state": if m.playing { "Playing" } else { "Paused" },
-                    "index": m.at,
-                    "id": there.song().map(|s| s.id.clone()),
-                    "positionMs": there.position_ms(),
-                    "pace": if m.playing { m.rate } else { 0.0 },
-                    "mixing": m.mixing,
-                    "song": song,
-                    "queue": queue,
-                    "current": m.at,
-                    "shuffle": m.shuffle,
-                    "repeat": 0,
-                    "underruns": 0,
+            let n = h.now();
+            let shown = h.queue_shown(None);
+            let core = h.core.as_ref();
+            let queue: Vec<Value> = shown
+                .rows
+                .order
+                .iter()
+                .map(|&i| {
+                    let mut v = match shown.view.songs.get(i as usize).filter(|s| !s.id.is_empty()) {
+                        Some(s) => crate::pages::song(core, s),
+                        None => json!({}),
+                    };
+                    v["index"] = json!(i);
+                    if let Some(by) = v["id"].as_str().and_then(|id| shown.by.get(id)) {
+                        v["by"] = json!(by);
+                    }
+                    v
                 })
-                .to_string();
-            }
-            let s = h.engine.status();
-            let q = &h.core.session;
-            let (ids, current, shuffle, repeat) = q.playlist(|p| (p.ids().to_vec(), p.current(), p.shuffling(), p.repeat()));
-            let queue: Vec<Value> = ids.iter().map(|id| q.song(id).map_or(json!({ "id": id }), |s| crate::pages::song(h.core.as_ref(), &s))).collect();
+                .collect();
+            let here = !shown.mirrored;
+            let status = here.then(|| h.engine.status());
             json!({
-                "state": format!("{:?}", s.state),
-                "index": s.index,
-                "id": s.id,
-                "positionMs": s.position_now(),
-                "pace": s.pace,
-                "mixing": s.mixing,
-                "song": s.id.as_deref().and_then(|id| q.song(id)).map(|song| crate::pages::song(h.core.as_ref(), &song)),
+                "state": format!("{:?}", n.state),
+                "playing": n.playing,
+                "index": n.index,
+                "id": n.song.as_ref().map(|s| s.id.clone()),
+                "positionMs": n.position_now(),
+                "pace": n.pace,
+                "mixing": n.mixing,
+                "buffering": n.buffering,
+                "song": n.song.as_ref().map(|s| crate::pages::song(core, s)),
                 "queue": queue,
-                "current": current,
-                "shuffle": shuffle,
-                "repeat": repeat,
-                "underruns": s.underruns,
-                "transition": s.id.as_deref().and_then(|id| q.planner.transition_note(id)).map(|t| json!({ "kind": format!("{:?}", t.kind), "into": t.incoming_id, "reason": t.reason })),
+                "current": shown.rows.now,
+                "reorderable": shown.rows.reorderable && here,
+                "shuffle": n.shuffle,
+                "repeat": n.repeat,
+                "device": n.device,
+                "jam": n.jam,
+                "asks": h.rules.asks,
+                "underruns": status.as_ref().map_or(0, |s| s.underruns),
+                "transition": status.as_ref().and_then(|s| s.id.as_deref()).and_then(|id| h.core.session.planner.transition_note(id)).map(|t| json!({ "kind": format!("{:?}", t.kind), "into": t.incoming_id, "reason": t.reason })),
             })
             .to_string()
         })
@@ -555,11 +618,64 @@ impl Nori {
     }
 }
 
+/// Moving the music between the account's devices ("Play on"), through the relay.
+#[wasm_bindgen]
+impl Nori {
+    /// The account's other devices: `{ on, active, list: [{ id, name, kind, playing, nearby }] }`; `on`
+    /// while the music can move (remote control on, not a jam guest), `active` the id of the device
+    /// playing while it is another one. `kinds` (JSON `{ phone, desktop, terminal, guest }`) words the
+    /// kinds that tell devices of one name apart.
+    pub fn devices(&self, kinds: String) -> String {
+        let words: Kinds = serde_json::from_str(&kinds).unwrap_or_default();
+        self.with(|h| {
+            let remote = h.remote().filter(|_| !h.guest);
+            let Some(r) = remote else { return json!({ "on": false, "active": null, "list": [] }).to_string() };
+            let devices = r.devices();
+            let words = nori_core::remote::KindWords { phone: words.phone, desktop: words.desktop, terminal: words.terminal, guest: words.guest };
+            let names = nori_core::remote::device_names(devices.clone(), r.me(), words);
+            let list: Vec<Value> = devices
+                .iter()
+                .zip(names)
+                .map(|(d, name)| json!({ "id": d.id, "name": name, "kind": format!("{:?}", d.kind), "playing": d.state.as_ref().is_some_and(|s| s.playing), "nearby": d.nearby }))
+                .collect();
+            json!({ "on": true, "active": h.elsewhere().map(|e| e.mirror.id), "list": list }).to_string()
+        })
+        .unwrap_or_else(|| json!({ "on": false, "active": null, "list": [] }).to_string())
+    }
+
+    /// Moves the music to device `id`, or here ("").
+    pub fn pick(&self, id: String) {
+        if let Some(r) = self.with(|h| h.remote()).flatten() {
+            r.pick((!id.is_empty()).then_some(id));
+        }
+    }
+}
+
+/// The page's words for the kinds of device.
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct Kinds {
+    phone: String,
+    desktop: String,
+    terminal: String,
+    guest: String,
+}
+
+/// Lyrics' timing as the page shows it: `{ kind, ms, automatic }`.
+fn timing(t: LyricsTiming) -> Value {
+    match t {
+        LyricsTiming::NotChecked => json!({ "kind": "NotChecked", "ms": 0 }),
+        LyricsTiming::Automatic { ms } => json!({ "kind": "Automatic", "ms": ms }),
+        LyricsTiming::Yours { ms, automatic } => json!({ "kind": "Yours", "ms": ms, "automatic": automatic }),
+    }
+}
+
 /// A report of the session's as the page takes it.
 fn told(s: &Said) -> Option<Value> {
     Some(match s {
         Said::Engine(e) => json!({ "kind": "engine", "event": format!("{e:?}") }),
-        Said::Lyrics { song, pick } => json!({ "kind": "lyrics", "song": song, "lyrics": pick.lyrics }),
+        // Told with its timing as it is kept (`Nori::show_lyrics`).
+        Said::Lyrics { .. } => return None,
         Said::Search(_) => return None,
         Said::Note(n) => json!({ "kind": "note", "note": note(n) }),
         Said::Reachable(r) => json!({ "kind": "reachable", "ok": r.is_ok() }),
