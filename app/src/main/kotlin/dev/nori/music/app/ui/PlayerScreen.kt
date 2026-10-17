@@ -37,13 +37,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.only
@@ -581,7 +578,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     // things to look at for something the page already does - a pull anywhere on the
                     // artwork puts the player away - so only the drag is left, over the strip the lyrics
                     // and the queue cannot have (they need their own vertical drag to scroll).
-                    Spacer(Modifier.fillMaxWidth().statusBarsPadding().height(22.dp).dragsSheet(sheet))
+                    Spacer(Modifier.fillMaxWidth().windowInsetsPadding(statusBarRoom).height(22.dp).dragsSheet(sheet))
                     Box(
                         Modifier.weight(1f).graphicsLayer { alpha = panelFade.read() }
                             // On its side the lyrics and the queue start clear of the camera's punch hole,
@@ -786,8 +783,8 @@ private val OUTPUT_LINE = 14.dp
 @Composable
 private fun barRoom(): androidx.compose.ui.unit.Dp {
     val d = androidx.compose.ui.platform.LocalDensity.current
-    val top = androidx.compose.foundation.layout.WindowInsets.statusBars.getTop(d)
-    val bottom = androidx.compose.foundation.layout.WindowInsets.navigationBars.getBottom(d)
+    val top = statusBarRoom.getTop(d)
+    val bottom = gestureBarRoom.getBottom(d)
     return with(d) { maxOf(top, bottom).toDp() }
 }
 
@@ -811,7 +808,7 @@ private val LocalUnderControls = androidx.compose.runtime.compositionLocalOf { 0
  */
 @Composable
 private fun PlayerHalves(wide: Boolean, controlsDrag: Modifier, panel: @Composable ColumnScope.() -> Unit, controls: @Composable ColumnScope.() -> Unit) {
-    if (!wide) Column(Modifier.fillMaxSize().navigationBarsPadding()) { panel(); controls() }
+    if (!wide) Column(Modifier.fillMaxSize().windowInsetsPadding(gestureBarRoom)) { panel(); controls() }
     else androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         // Wider than it is tall: the sleeve is a band across the cover, cropped above and below rather than at
         // the sides. The controls keep their place (the square's edge) and stand over the sleeve's soft edge,

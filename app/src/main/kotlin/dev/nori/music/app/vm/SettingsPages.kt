@@ -108,6 +108,12 @@ fun settingKey(title: String): String {
 
 /** Each setting's options as values, from the core's model; asked once. */
 private val OPTIONS: Map<String, List<String>> by lazy { settingSpecs().associate { it.name to it.options } }
+/** Both bars' choices, worded in the core's order (`HideBar`). */
+private val HIDE_BAR = intArrayOf(
+    R.string.settings_hide_bar_never, R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright,
+    R.string.settings_hide_bar_always, R.string.settings_hide_bar_protected,
+)
+
 private val ACCENTS: List<Long> by lazy { settingSpecs().first { it.kind == SettingKind.COLOUR }.options.map { it.toLong() } }
 
 /** The groups the root of Settings lists: connect first, then what plays, how it sounds, how it looks; those the profile opens ([parts]). */
@@ -237,7 +243,11 @@ private val INDEX: List<Triple<String, Int, Int>> = listOf(
     Triple("look", R.string.settings_less_movement, R.string.settings_hint_less_movement),
     Triple("look", R.string.settings_eink_screen, R.string.settings_hint_eink_screen),
     Triple("look", R.string.settings_hide_status_bar, R.string.settings_hint_hide_status_bar),
+    Triple("look", R.string.settings_hide_gesture_bar, R.string.settings_hint_hide_gesture_bar),
     Triple("look", R.string.settings_keep_awake, R.string.settings_hint_keep_awake),
+    Triple("look", R.string.settings_burn_in, R.string.settings_hint_burn_in),
+    Triple("look", R.string.settings_dim_idle, R.string.settings_hint_dim_idle),
+    Triple("look", R.string.settings_dim_level, 0),
     Triple("look", R.string.settings_controls_side, R.string.settings_hint_controls_side),
     Triple("look", R.string.settings_animate_anyway, R.string.settings_hint_animate_anyway),
     Triple("lyrics", R.string.settings_lyrics_prefetch, R.string.settings_hint_lyrics_prefetch),
@@ -720,17 +730,24 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         )
         if (!p.reduceMotion && !p.einkScreen) size += toggle("ignoreSystemMotion", R.string.settings_animate_anyway, R.string.settings_animate_anyway_detail)
         val screen = listOf(
-            chips(
-                "hideStatusBar", R.string.settings_hide_status_bar, R.string.settings_hide_status_bar_detail,
-                R.string.settings_hide_status_bar_never, R.string.settings_hide_status_bar_sideways,
-                R.string.settings_hide_status_bar_upright, R.string.settings_hide_status_bar_always,
-            ),
+            chips("hideStatusBar", R.string.settings_hide_status_bar, R.string.settings_hide_status_bar_detail, *HIDE_BAR),
+            chips("hideGestureBar", R.string.settings_hide_gesture_bar, R.string.settings_hide_gesture_bar_detail, *HIDE_BAR),
             chips(
                 "keepAwake", R.string.settings_keep_awake, R.string.settings_keep_awake_detail,
                 R.string.settings_keep_awake_never, R.string.settings_keep_awake_sideways, R.string.settings_keep_awake_charging,
                 R.string.settings_keep_awake_sideways_charging, R.string.settings_keep_awake_always,
             ),
+            toggle("burnInProtection", R.string.settings_burn_in, R.string.settings_burn_in_detail),
         ) + listOfNotNull(
+            chips(
+                "dimWhenIdle", R.string.settings_dim_idle, R.string.settings_dim_idle_detail,
+                R.string.settings_dim_idle_never, R.string.settings_dim_idle_half_minute,
+                R.string.settings_dim_idle_minute, R.string.settings_dim_idle_five_minutes,
+            ).takeIf { p.burnInProtection },
+            chips(
+                "dimLevel", R.string.settings_dim_level, R.string.settings_dim_level_detail,
+                R.string.settings_dim_level_light, R.string.settings_dim_level_medium, R.string.settings_dim_level_strong,
+            ).takeIf { p.burnInProtection && p.dimWhenIdle != dev.nori.music.ffi.settings.DimIdle.NEVER },
             // Only on a car's own screen, the only place it changes anything.
             chips(
                 "controlsSide", R.string.settings_controls_side, R.string.settings_controls_side_detail,

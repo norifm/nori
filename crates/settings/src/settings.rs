@@ -116,14 +116,16 @@ pub enum ThemeMode {
     Dark,
 }
 
-/// When the status bar is hidden, by orientation (`wide` is sideways).
+/// When a system bar (status or gesture) is hidden: by orientation, or while burn-in protection is on.
+/// `Protected` is last because picks are stored by position.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum HideStatusBar {
+pub enum HideBar {
     Never,
     Sideways,
     Upright,
     Always,
+    Protected,
 }
 
 /// Which side a car screen puts the controls and tabs on; the cover goes on the other.
@@ -144,6 +146,25 @@ pub enum KeepAwake {
     Charging,
     SidewaysCharging,
     Always,
+}
+
+/// How long burn-in protection waits for a touch before it dims the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum DimIdle {
+    Never,
+    HalfMinute,
+    Minute,
+    FiveMinutes,
+}
+
+/// How far burn-in protection dims an untouched screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum DimLevel {
+    Light,
+    Medium,
+    Strong,
 }
 
 /// What a tap on a song in a list does.
@@ -472,10 +493,19 @@ pub struct StoredPrefs {
     // Appearance.
     #[setting("theme", PICK, default = ThemeMode::System, show = K::Named(ThemeMode::NAMES))]
     pub theme: ThemeMode,
-    #[setting("hideStatusBar", PICK, default = HideStatusBar::Sideways, show = K::Named(HideStatusBar::NAMES))]
-    pub hide_status_bar: HideStatusBar,
+    #[setting("hideStatusBar", PICK, default = HideBar::Sideways, show = K::Named(HideBar::NAMES))]
+    pub hide_status_bar: HideBar,
+    #[setting("hideGestureBar", PICK, default = HideBar::Protected, show = K::Named(HideBar::NAMES))]
+    pub hide_gesture_bar: HideBar,
     #[setting("keepAwake", PICK, default = KeepAwake::Never, show = K::Named(KeepAwake::NAMES))]
     pub keep_awake: KeepAwake,
+    /// While nori keeps the screen on, everything drawn drifts a few dp ([`nori_look::burn_in`]).
+    #[setting("burnInProtection", FLAG, default = true, show = K::Switch)]
+    pub burn_in_protection: bool,
+    #[setting("dimWhenIdle", PICK, default = DimIdle::Minute, show = K::Named(DimIdle::NAMES))]
+    pub dim_when_idle: DimIdle,
+    #[setting("dimLevel", PICK, default = DimLevel::Medium, show = K::Named(DimLevel::NAMES))]
+    pub dim_level: DimLevel,
     #[setting("controlsSide", PICK, default = ControlsSide::Driver, show = K::Named(ControlsSide::NAMES))]
     pub controls_side: ControlsSide,
     #[setting("amoled", FLAG, default = false, show = K::Switch)]

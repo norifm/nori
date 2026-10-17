@@ -134,6 +134,28 @@ pub fn lyrics_keep_screen_on(asked: bool, shown: bool, playing: bool) -> bool {
     nori_look::lyrics::keeps_screen_on(asked, shown, playing)
 }
 
+/// Where burn-in protection draws the screen; see `nori_look::burn_in::Drift`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct BurnInDrift {
+    pub x_dp: f32,
+    pub y_dp: f32,
+    pub reach_dp: f32,
+}
+
+/// The drift at `now_ms` for protection that started at `since_ms` (wall clock).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn burn_in_drift(now_ms: i64, since_ms: i64) -> BurnInDrift {
+    let d = nori_look::burn_in::drift(now_ms, since_ms);
+    BurnInDrift { x_dp: d.x_dp, y_dp: d.y_dp, reach_dp: d.reach_dp }
+}
+
+/// Milliseconds until the burn-in drift next moves.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn burn_in_next_move_ms(now_ms: i64) -> i64 {
+    nori_look::burn_in::next_move_ms(now_ms)
+}
+
 /// The times either side of the seek bar, in whole seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]

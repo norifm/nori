@@ -13,9 +13,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -104,7 +104,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val hosted = jam?.takeIf { it.hosting }
         var page by remember(hosted?.link) { mutableStateOf(RoomPage.MAIN) }
         BackHandler(page != RoomPage.MAIN) { page = RoomPage.MAIN }
-        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
             if (hosted != null && page != RoomPage.MAIN) {
                 ActionRow(words(R.string.back), Icons.AutoMirrored.Filled.ArrowBack, { page = RoomPage.MAIN }, divider = false)
                 if (page == RoomPage.INVITE) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)

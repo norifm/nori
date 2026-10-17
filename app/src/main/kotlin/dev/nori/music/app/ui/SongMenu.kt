@@ -10,10 +10,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -110,7 +110,7 @@ fun SongMenu(
     NoriSheet(song?.takeIf { !picking && !details && !sleeping }, onDismiss) { song ->
         val downloads by actions.downloads.collectAsState()
         var more by remember { mutableStateOf(false) }
-        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
             // The track leads the sheet, the way the row it came from looked.
             Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 Cover(actions.cover(song.coverArt, CoverSize.ROW), 52.dp, radius = 8.dp)
@@ -202,7 +202,7 @@ fun SongMenu(
 @Composable
 private fun SleepChoices(player: dev.nori.music.app.vm.PlayerViewModel, onDone: () -> Unit) {
     val state by player.state.collectAsState()
-    Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+    Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
         SectionTitle(say.sleepTimer)
         val running = state.sleepAt > 0 || state.sleepAtEndOfTrack
         // The choices are the core's (`menus::sleep_choices`); "Off" is all zeros.
