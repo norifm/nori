@@ -332,6 +332,7 @@ pub enum NoticeChange {
 
 /// Which running-batch notification title applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum NoticeKind {
     /// "Waiting for a network".
     #[default]
@@ -520,6 +521,7 @@ pub struct Processing {
 
 /// Which finished-batch notification title applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SummaryTitle {
     /// "`failed` songs couldn’t be downloaded".
     Failed,
@@ -531,6 +533,7 @@ pub enum SummaryTitle {
 
 /// The line under a finished batch's title.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SummaryText {
     None,
     /// Some failed, some did not: "`done` downloaded · tap to see what failed".
