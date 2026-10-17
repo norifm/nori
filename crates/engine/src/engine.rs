@@ -208,6 +208,9 @@ pub struct Status {
     pub pcm_why: Option<String>,
     /// As last said by [`Event::Awake`].
     pub awake: bool,
+    /// Playing but not heard: waiting for bytes, or a start not heard yet. Written with `state`, so a
+    /// reader never sees a start as playing before [`Event::Buffering`] says otherwise.
+    pub buffering: bool,
 }
 
 impl Default for Status {
@@ -235,6 +238,7 @@ impl Default for Status {
             offload_wanted: false,
             pcm_why: None,
             awake: true,
+            buffering: false,
         }
     }
 }
@@ -659,6 +663,8 @@ struct Told {
     heard: Option<(usize, String)>,
     loops: u32,
     stalled: bool,
+    /// Music was heard playing at the last report, through any jump since.
+    audible: bool,
     placed: bool,
     seek_landed: bool,
     /// The jumps made by the last [`Event::Position`].
@@ -722,6 +728,8 @@ const WAIT_FOR_START_MS: i64 = 250;
 const START_LATE_US: i64 = 15_000;
 /// A start's fades, ms.
 const START_FADE_MS: i64 = 10;
+/// While a start waits to be heard, it looks at least this far apart, ms.
+const START_HEARD_MS: i64 = 20;
 /// Less than this to play while a song's bytes are on their way is [`Event::Buffering`].
 const STALL_US: i64 = 200_000;
 const TEAR_DOWNS: u32 = 2;
@@ -1195,6 +1203,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 // The place held while stopped runs on from now, not from when it stopped.
                 st.at = Instant::now();
             }
+            // Loading until this turn's report says it is heard.
+            st.buffering = s == State::Playing && !self.told.audible;
             st.state = s;
             drop(st);
             self.report(self.now());
@@ -2330,6 +2340,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Ends a [`Event::Buffering`]: the CPU path no longer waits for bytes.
     fn unstall(&mut self) {
+        self.status.lock().buffering = false;
         if std::mem::take(&mut self.told.stalled) {
             (self.events)(Event::Buffering(false));
         }
@@ -2378,6 +2389,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if self.offloading() {
             // The output's decoder says its own waits.
             self.unstall();
+            self.told.audible = self.state == State::Playing;
             return self.report_offload(now);
         }
         if self.p.current().is_none() {
@@ -2386,7 +2398,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             return;
         }
         let track = &self.p.sink.track;
-        let stalled = self.state == State::Playing && self.p.starved() && track.filled_us() < STALL_US && track.latency_us() < STALL_US;
+        // A start from silence is loading until its first sample is heard; a jump while music plays is not.
+        let unheard = self.p.unheard() && !self.told.audible;
+        let stalled = self.state == State::Playing && ((self.p.starved() && track.filled_us() < STALL_US && track.latency_us() < STALL_US) || unheard);
+        self.told.audible = self.state == State::Playing && !stalled && (self.told.audible || !self.p.unheard());
         let stall_changed = std::mem::replace(&mut self.told.stalled, stalled) != stalled;
         let seen = self.p.bar();
         let Some(i) = seen.index.or(self.p.current()) else { return };
@@ -2422,6 +2437,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             s.gain_reduction_db = meter;
             s.compression_db = compression;
             s.offloaded = false;
+            s.buffering = stalled;
         });
         if stall_changed {
             (self.events)(Event::Buffering(stalled));
@@ -2621,6 +2637,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         } else {
             // The burst's own count (which includes the device) does not agree yet.
             at(200);
+        }
+        // A start is said once its first sample is heard, the output's latency after it was written.
+        if self.p.unheard() && !self.told.audible {
+            at((track.latency_us() / 1000).max(START_HEARD_MS));
         }
         // With no screen watching, only a change of song needs saying on time (the notification, a car).
         for u in [self.p.until_next_song_us().map(|u| (u, 5)), self.p.until_heard_changes_us(!positions).map(|u| (u, 1))].into_iter().flatten() {
