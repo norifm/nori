@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut, Range};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::automix::analysis::Analyzer;
@@ -266,12 +267,14 @@ pub struct Reading {
     at_us: i64,
     /// Not ready when first asked (still opening).
     opening: bool,
+    /// Set once its bytes have all come ([`Tracks::arriving`]).
+    arrived: Option<Arc<AtomicBool>>,
 }
 
 impl Reading {
     /// Reads from `from_frame`; compressed audio starts at the packet a seek would land on.
     fn new(audio: &Audio, from_frame: i64) -> Reading {
-        let mut r = Reading { audio: audio.clone(), frame: from_frame, skip_to: from_frame, next_packet: 0, decoder: None, out: Vec::new(), buf: Vec::new(), at_us: 0, opening: false };
+        let mut r = Reading { audio: audio.clone(), frame: from_frame, skip_to: from_frame, next_packet: 0, decoder: None, out: Vec::new(), buf: Vec::new(), at_us: 0, opening: false, arrived: None };
         if let Audio::Coded { codec, rate, channels, setup, starts, .. } = audio {
             let mut d = Decoder::new(*codec, *rate, *channels, setup.as_deref().map(|s| s.as_slice()), false).expect("the codec opens");
             // Frames the decoder drops after a reset (MP3 delay, Opus 80 ms pre-roll).
@@ -305,6 +308,10 @@ impl pipeline::Reading for Reading {
 
     fn ready(&mut self) -> bool {
         !std::mem::take(&mut self.opening)
+    }
+
+    fn fetched(&mut self) -> bool {
+        self.arrived.as_ref().is_none_or(|a| a.load(Ordering::Acquire))
     }
 
     fn fill(&mut self) -> bool {
@@ -362,6 +369,8 @@ pub struct Tracks {
     pub broken: Vec<String>,
     /// Ids whose readings are ready a turn after they are opened.
     pub slow: Vec<String>,
+    /// Ids whose bytes keep coming in until the flag is set.
+    pub arriving: Vec<(String, Arc<AtomicBool>)>,
     /// Ids the player asked to prefetch, in order.
     pub ahead: Vec<String>,
 }
@@ -395,6 +404,7 @@ impl Songs for Tracks {
         let audio = &self.get(id).audio;
         let mut r = Reading::new(audio, from_ms * audio.format().rate as i64 / 1000);
         r.opening = self.slow.iter().any(|s| s == id);
+        r.arrived = self.arriving.iter().find(|(a, _)| a == id).map(|(_, f)| f.clone());
         Ok(r)
     }
 

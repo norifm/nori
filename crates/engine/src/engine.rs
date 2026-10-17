@@ -394,7 +394,7 @@ impl Engine {
     {
         let (tx, rx) = channel();
         let status = Arc::new(Mutex::new(Status::default()));
-        let fetching = Arc::new(Fetching::default());
+        let fetching = Arc::new(fetching_on(&clock));
         let (shared, devices, loading, hook, own, timer) = (status.clone(), tx.clone(), fetching.clone(), clock.clone(), clock.clone(), clock.clone());
         let join = std::thread::Builder::new()
             .name("nori-engine".into())
@@ -425,7 +425,7 @@ impl Engine {
     {
         let (tx, rx) = channel();
         let status = Arc::new(Mutex::new(Status::default()));
-        let fetching = Arc::new(Fetching::default());
+        let fetching = Arc::new(fetching_on(&clock));
         let timer = clock.clone();
         let w = worker(library, app, queue, output, None, config, clock, rx, tx.clone(), Box::new(wake.clone()), events, status.clone(), fetching.clone());
         let engine = Engine { tx, thread: std::thread::current(), join: Mutex::new(None), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake: Some(Box::new(wake)), fetching, now_us: Box::new(move || timer.now_us()) };
@@ -731,6 +731,12 @@ const HAND_DIP_MS: i64 = 30;
 const CHAIN_EVERY_MS: i64 = 100;
 /// How far ahead of the output's decoder the CPU opens an offloaded song it takes over.
 pub const REMAKE_LEAD_MS: i64 = 120;
+
+/// The fetches of an engine on `clock`: their arrival rates are measured on it.
+fn fetching_on<C: Clock + Sync>(clock: &C) -> Fetching {
+    let clock = clock.clone();
+    Fetching::timed(move || clock.now_us())
+}
 
 /// The engine's worker over `library`, `app` and `queue`, taking commands from `rx`; `woken` wakes it
 /// for a device change sent through `devices`.

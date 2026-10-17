@@ -165,7 +165,7 @@ struct Songs(Arc<Server>);
 impl Library for Songs {
     fn locate(&mut self, id: &str) -> Result<Located, String> {
         let bytes: Arc<dyn ByteSource> = Arc::new(Net(self.0.clone()));
-        Ok(Located { source: Source::Url { url: id.to_string(), bytes }, hint: Some("wav".into()), duration_ms: Some(SECS as i64 * 1000), estimated: false })
+        Ok(Located { source: Source::Url { url: id.to_string(), bytes }, hint: Some("wav".into()), duration_ms: Some(SECS as i64 * 1000), estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {

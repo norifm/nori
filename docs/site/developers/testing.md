@@ -440,7 +440,10 @@ line that starts the thread (the start-up NPE of 2026-09-25).
   single worker, a later warm-up) and `try_recv`.
 - On the engine's clock, time moves only when the test moves it (`Rig::run`, `wait_for`, `until`). The
   loader's waits (stalls, tries again after a dropped connection) come from the clock's
-  `nori_engine::Waits`, which the virtual clock shortens.
+  `nori_engine::Waits`, which the virtual clock shortens. The loaders measure how fast bytes arrive on
+  that clock too. A server paced on it (`Virtual::wait_until`) stops the clock at each time it waits
+  for; a body handing its bytes over through a `Delivery` also holds the clock until the loader takes
+  them, so a slow link plays the same on every run.
 - Songs are made once per binary: `music()` in engine.rs and pipeline/common.rs, `steady()` in levels.rs
   and the ffmpeg encodes in paths.rs and estimated.rs are cached by length and seed.
 - Anything process-wide (the core's queue, the active client, the AutoEQ fetch, the watch hook) is either

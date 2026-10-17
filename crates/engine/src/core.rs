@@ -238,16 +238,18 @@ impl Library for CoreLibrary {
         // A download may be transcoded: the file says what it is.
         let kept = self.store.as_ref().filter(|_| self.client.core().transfers().held().state(id) == transfers::HeldState::Done).and_then(|s| s.downloaded(id));
         if let Some(path) = kept {
-            return Ok(Located { source: Source::File(vec![path]), hint: None, duration_ms, estimated: false });
+            return Ok(Located { source: Source::File(vec![path]), hint: None, duration_ms, estimated: false, from_second: None });
         }
         let target = self.client.resolve(id.to_string(), false, self.client.metered());
         let hint = key_format(&target.key).or_else(|| song.as_ref().map(|s| s.suffix.clone())).filter(|s| !s.is_empty());
         let (url, bytes) = (target.url, self.bytes.clone());
+        // A transcode (its key names the format) starts where it is asked to.
+        let from_second = key_format(&target.key).filter(|_| self.client.core().starts_transcodes()).map(|_| crate::FromSecond { url: url.clone(), bytes: bytes.clone() });
         let source = match &self.store {
             Some(store) => Source::Cached { url, bytes, store: store.clone(), key: target.key },
             None => Source::Url { url, bytes },
         };
-        Ok(Located { source, hint, duration_ms, estimated: false })
+        Ok(Located { source, hint, duration_ms, estimated: false, from_second })
     }
 
     fn about(&self, id: &str) -> WindowSong {

@@ -39,6 +39,17 @@ pub struct Located {
     /// nothing is asked past what is arriving (`Demuxed::load`), and the length is `duration_ms` until
     /// the bytes end.
     pub estimated: bool,
+    /// A transcode the server can start at a whole second: opened mid-way, it streams from there.
+    pub from_second: Option<FromSecond>,
+}
+
+/// A transcode from a whole second on: `url` with `&timeOffset=<seconds>` (Subsonic's), through `bytes`,
+/// which must not keep it as the song's. A server that ignores the offset sends the whole file, with its
+/// length ([`Demuxed::load_from`]).
+#[derive(Clone)]
+pub struct FromSecond {
+    pub url: String,
+    pub bytes: Arc<dyn ByteSource>,
 }
 
 /// The client's side of the songs.
@@ -151,6 +162,17 @@ impl<L: Library> Sources<L> {
         };
         // Opened to play: the whole cap, whatever its budget was.
         let budget = packets.filter(|&ahead| ahead).map(|_| self.left_for(id));
+        // A transcode opened mid-way is asked for from there, not read from its start up to there.
+        let cached = matches!(&at.source, Source::Cached { store, key, .. } if store.cached(key).is_some());
+        if let (Some(f), None, false, None) = (&at.from_second, packets, cached, self.loading(id)) {
+            let secs = from_ms / 1000;
+            if secs > 0 {
+                let duration_ms = at.duration_ms.map(|d| d - secs * 1000);
+                let loader = Loader::start_within(&self.fetching, f.bytes.clone(), format!("{}&timeOffset={secs}", f.url), self.load, duration_ms, None, None, None, self.waits);
+                let loader = self.keep(&format!("{id} from {secs} s"), loader);
+                return Ok(Demuxed::load_from(loader, engine, at.hint.as_deref(), from_ms, secs * 1000, at.duration_ms, at.estimated, encoding, platform));
+            }
+        }
         match &at.source {
             Source::File(paths) => file(paths),
             Source::Cached { store, key, .. } if self.loading(id).is_none() && store.cached(key).is_some() => {
