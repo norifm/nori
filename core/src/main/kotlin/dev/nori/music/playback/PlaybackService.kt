@@ -168,14 +168,16 @@ class PlaybackService : MediaLibraryService() {
     }
     private val sleepAlarm = AlarmManager.OnAlarmListener { player.pause() }
     /**
-     * The network turning unmetered, for the AutoEQ list. One registration for the service's life; a change
-     * that leaves the answer as it was is not passed on.
+     * The network turning unmetered, for the AutoEQ list, and coming back, for the remote's relay poll. One
+     * registration for the service's life; a change that leaves the answer as it was is not passed on.
      */
     private val connectivity by lazy { getSystemService(android.net.ConnectivityManager::class.java) }
     private var metered: Boolean? = null
     private val network = object : android.net.ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: android.net.Network, caps: android.net.NetworkCapabilities) =
             meteredNow(!caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
+
+        override fun onAvailable(network: android.net.Network) = nori.remotes.networkBack()
     }
     private fun meteredNow(now: Boolean) {
         if (now == metered) return

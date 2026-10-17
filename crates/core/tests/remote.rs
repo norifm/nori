@@ -2598,6 +2598,14 @@ fn a_failed_poll_is_asked_again_after_the_retry_wait_or_at_a_change() {
     let polls = relay.asked_for("noriRemote.poll");
     phone.remote.clone().watch(true);
     eventually("asked again at once", || relay.asked_for("noriRemote.poll") > polls);
+
+    // Down again: the network coming back asks at once.
+    relay.go_down(true);
+    timers.waiting("the retry after that", Duration::from_secs(30));
+    relay.go_down(false);
+    let polls = relay.asked_for("noriRemote.poll");
+    phone.remote.network_back();
+    eventually("asked again once the network is back", || relay.asked_for("noriRemote.poll") > polls);
     relay.close();
 }
 

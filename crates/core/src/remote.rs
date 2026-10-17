@@ -1298,6 +1298,11 @@ impl Remote {
         }
     }
 
+    /// The device is on a network again: a poll that failed is asked again now, not after its wait.
+    pub fn network_back(&self) {
+        self.retry.notify();
+    }
+
     /// The device's volume moved by itself (its own keys), 0 to 100; None when it cannot be set.
     pub fn volume_changed(self: Arc<Self>, volume: Option<u8>) {
         let publish = {
