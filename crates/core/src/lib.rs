@@ -416,6 +416,16 @@ struct StoredQueue {
     position: u64,
     /// Parsed separately so an unknown origin kind loses only the origin.
     origin: serde_json::Value,
+    /// Made with each write of the songs; the place belongs to them only with the same stamp, so two
+    /// apps over one database never pair one's place with the other's songs.
+    stamp: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StoredPlace {
+    index: u32,
+    position: u64,
+    stamp: Option<String>,
 }
 
 impl Core {
@@ -424,23 +434,28 @@ impl Core {
         Ok(db::kv_get(c, "queue")?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
     }
 
-    /// The queue's songs, origin and place, in one transaction.
-    fn write_queue(&self, queue: PlayQueue) -> Result<()> {
-        let json = serde_json::json!({ "songs": queue.songs, "index": queue.index, "position": queue.position_ms, "origin": queue.origin });
+    /// The queue's songs, origin and place, in one transaction; returns their new stamp.
+    fn write_queue(&self, queue: PlayQueue) -> Result<String> {
+        let stamp = nori_remote::new_id();
+        let json = serde_json::json!({ "songs": queue.songs, "index": queue.index, "position": queue.position_ms, "origin": queue.origin, "stamp": stamp });
         let c = self.db.lock();
         let tx = c.unchecked_transaction()?;
         db::kv_put(&tx, "queue", &json.to_string())?;
-        Self::put_place(&tx, queue.index, queue.position_ms)?;
-        Ok(tx.commit()?)
+        db::kv_put(&tx, "queue_place", &Self::place_json(queue.index, queue.position_ms, &stamp))?;
+        tx.commit()?;
+        Ok(stamp)
     }
 
-    /// The current song's index and position in the stored queue.
-    pub(crate) fn save_place(&self, index: u32, position_ms: u64) -> Result<()> {
-        Ok(Self::put_place(&self.db.lock(), index, position_ms)?)
+    /// The current song's index and position in the stored queue, when its songs are still the ones
+    /// written with `stamp`; false when another app has written its own since.
+    pub(crate) fn save_place(&self, index: u32, position_ms: u64, stamp: &str) -> Result<bool> {
+        let c = self.db.lock();
+        let mut st = c.prepare_cached("UPDATE kv SET value=?1 WHERE server=sid() AND key='queue_place' AND json_extract(value, '$.stamp')=?2")?;
+        Ok(st.execute(params![Self::place_json(index, position_ms, stamp), stamp])? > 0)
     }
 
-    fn put_place(c: &Connection, index: u32, position_ms: u64) -> rusqlite::Result<()> {
-        db::kv_put(c, "queue_place", &serde_json::json!({ "index": index, "position": position_ms }).to_string())
+    fn place_json(index: u32, position_ms: u64, stamp: &str) -> String {
+        serde_json::json!({ "index": index, "position": position_ms, "stamp": stamp }).to_string()
     }
 
     /// The downloads table in memory and the progress of their work.
@@ -567,7 +582,7 @@ impl Core {
     pub fn save_queue(&self, queue: PlayQueue) -> Result<()> {
         let mut saved = self.saved_queue.lock();
         *saved = None;
-        self.write_queue(queue)
+        self.write_queue(queue).map(drop)
     }
 
     /// Whether the saved queue has songs: what a play button can resume while the app is not running.
@@ -576,16 +591,11 @@ impl Core {
     }
 
     pub fn load_queue(&self) -> Result<PlayQueue> {
-        #[derive(Deserialize)]
-        struct Place {
-            index: u32,
-            position: u64,
-        }
         let (mut q, place) = {
             let c = self.db.lock();
-            (Self::stored_queue(&c)?, db::kv_get(&c, "queue_place")?.and_then(|j| serde_json::from_str::<Place>(&j).ok()))
+            (Self::stored_queue(&c)?, db::kv_get(&c, "queue_place")?.and_then(|j| serde_json::from_str::<StoredPlace>(&j).ok()))
         };
-        if let Some(p) = place {
+        if let Some(p) = place.filter(|p| p.stamp == q.stamp) {
             (q.index, q.position) = (p.index, p.position);
         }
         let index = q.index.min(q.songs.len().saturating_sub(1) as u32);
