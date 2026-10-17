@@ -265,6 +265,8 @@ if (!only || only.includes("edit")) {
   await menu("Rename");
   await named(`${name} renamed`);
   await page.waitForFunction(async (n) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.name === n), { timeout: 30000, polling: 250 }, `${name} renamed`);
+  // The page is drawn again with the new name: its rows before that are gone.
+  await page.waitForFunction((n) => document.querySelector(".hero-text h1")?.textContent === n, { timeout: 30000, polling: 100 }, `${name} renamed`);
   await page.waitForSelector(".songs li");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
   await menu("Move Down");
