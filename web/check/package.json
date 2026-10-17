@@ -1,0 +1,9 @@
+{
+  "name": "nori-web-check",
+  "private": true,
+  "type": "module",
+  "description": "The web client checked in headless Chrome (check.mjs)",
+  "dependencies": {
+    "puppeteer-core": "23.11.1"
+  }
+}

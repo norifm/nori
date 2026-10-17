@@ -17,13 +17,16 @@ desktop = ["dep:nori-mpris", "dep:mdns-sd"]
 # Time, read the same way natively and in a browser.
 nori-time = { path = "../time" }
 nori-core = { path = "../core", default-features = false }
-nori-engine = { path = "../engine", features = ["core"] }
+# The codecs decoded here are the client's to choose (nori-engine's `rust-codecs`).
+nori-engine = { path = "../engine", default-features = false, features = ["core"] }
 nori-covers = { path = "../covers" }
 nori-look = { path = "../look" }
 nori-mpris = { path = "../mpris", optional = true }
 # Nearby devices for remote control (nori-remote lan.rs); started only while it is on.
 mdns-sd = { version = "0.21", optional = true, default-features = false }
 nori-remote = { path = "../remote" }
+# Where work that waits on the network runs.
+nori-tasks = { path = "../tasks" }
 parking_lot = "0.12"
 async-trait = "0.1"
 

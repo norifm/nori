@@ -249,6 +249,10 @@ impl Session {
             mpris: o.mpris,
             device: nori_core::remote::RemoteMe { name: nori_host::device_name(), kind: nori_core::remote::wire::DeviceKind::Terminal },
             discovery: None,
+            tasks: nori_host::Threads::new(),
+            keeps_music: true,
+            decoders: Default::default(),
+            finds_active: true,
             out,
         })?;
         Ok(Session { id, host, tx: o.tx })
@@ -324,7 +328,7 @@ impl Session {
                     let stored = core.downloaded_library();
                     send(stored.and_then(|stored| core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { active: s.active, queued: s.queued, failed: s.failed, stored })))).map_err(|e| e.to_string()));
                 }
-                Req::Facts => send(Ok(Data::Facts(Box::new(facts(&core, &client, &store, &db, covers_bytes, offline))))),
+                Req::Facts => send(Ok(Data::Facts(Box::new(facts(&core, &client, store.as_deref(), &db, covers_bytes, offline))))),
             }
         });
     }
@@ -422,7 +426,7 @@ fn unreachable(e: &NetError) -> String {
 }
 
 /// Library, storage and device facts for the settings page.
-fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: &nori_engine::Store, db: &PathBuf, cover_bytes: u64, offline: bool) -> Facts {
+fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Option<&nori_engine::Store>, db: &PathBuf, cover_bytes: u64, offline: bool) -> Facts {
     let index = core.index_size().unwrap_or_default();
     let downloads = core.downloads(true).unwrap_or_default();
     let folders = match (!offline).then(|| block_on(client.read_now(Read::MusicFolders))) {
@@ -433,7 +437,7 @@ fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: &nor
         analysed: core.analysis_count().unwrap_or(0),
         indexed: (index.songs, index.albums, index.artists),
         storage: Storage {
-            stream: store.cache_bytes() as i64,
+            stream: store.map_or(0, |s| s.cache_bytes()) as i64,
             covers: cover_bytes as i64,
             lyrics: core.lyrics_cache_bytes(),
             downloads: downloads.iter().map(|s| s.size as i64).sum(),

@@ -25,7 +25,7 @@ use nori_core::Core;
 use parking_lot::{Condvar, Mutex};
 
 use crate::ahead::{AheadSong, Takers};
-use crate::arriving::{Heard, Listening};
+use crate::arriving::{Heard, Listening, Steps};
 use crate::engine::Settings;
 use crate::library::{Library, Located, Source};
 use crate::source::{ByteSource, OpenError};
@@ -915,17 +915,34 @@ pub struct Analyses {
     arrived: Condvar,
     pub(crate) read_back: crate::processing::ReadBack,
     pub(crate) models: Models,
+    /// Songs measured as they arrive on the caller's turns, where there are no threads ([`Analyses::turn`]).
+    steps: Option<Steps>,
 }
 
 impl Analyses {
     /// Over the profile `client` gives at each use (a profile switch replaces it).
     pub fn new(client: impl Fn() -> Option<Arc<Client>> + Send + Sync + 'static) -> Arc<Analyses> {
-        Arc::new(Analyses { client: Box::new(client), arrivals: Mutex::default(), arrived: Condvar::new(), read_back: Default::default(), models: Models::default() })
+        Analyses::made(Box::new(client), None)
+    }
+
+    fn made(client: Box<dyn Fn() -> Option<Arc<Client>> + Send + Sync>, steps: Option<Steps>) -> Arc<Analyses> {
+        Arc::new(Analyses { client, arrivals: Mutex::default(), arrived: Condvar::new(), read_back: Default::default(), models: Models::default(), steps })
     }
 
     /// Over `client` for good.
     pub fn of(client: Arc<Client>) -> Arc<Analyses> {
         Analyses::new(move || Some(client.clone()))
+    }
+
+    /// Over `client`, measuring songs as they arrive on the caller's [`Analyses::turn`]s instead of
+    /// threads (an engine its caller drives).
+    pub fn on_turns(client: Arc<Client>) -> Arc<Analyses> {
+        Analyses::made(Box::new(move || Some(client.clone())), Some(Steps::default()))
+    }
+
+    /// Measures a slice of the songs arriving, if one is due ([`Steps::turn`]): ms until the next is.
+    pub fn turn(&self) -> Option<i64> {
+        self.steps.as_ref()?.turn()
     }
 
     pub(crate) fn client(&self) -> Option<Arc<Client>> {
@@ -984,7 +1001,11 @@ impl Analyses {
         }
         let expected_ms = core.session.song(id).map_or(0, |s| s.duration as i64 * 1000);
         let heard = AsItComes { id: id.to_string(), core: core.clone(), analyses: self.clone(), expected_ms, stream: None, cpu_from: None };
-        match Listening::start(hint.map(str::to_string), wait, Box::new(heard)) {
+        let listening = match &self.steps {
+            Some(steps) => Some(Listening::on_turns(hint.map(str::to_string), Box::new(heard), steps)),
+            None => Listening::start(hint.map(str::to_string), wait, Box::new(heard)),
+        };
+        match listening {
             Some(l) => {
                 core.transfers().with(|t| t.analysing_began(id));
                 Some(l)
