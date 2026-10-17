@@ -14,8 +14,10 @@ system's media controls, notification and lock screen.
 - **Install**: see [Install](../start/install.md#android).
 - **Look**: pages take their color from the album cover, with light, dark or system theme, the
   wallpaper's colors or an accent of your own, and true black for OLED screens. From 0.6.3, **Colors
-  from the cover** picks where the cover's colors are worn: everywhere, pages only (the player stays
-  black), the player only, or nowhere. Text follows Android's font size; with a large display size the layout keeps a phone's proportions.
+  from the cover** is two switches, Pages and Player: where one is off it stays black in dark mode.
+  **Keep the screen on** and hiding the status or navigation bar work the same way: each condition
+  (sideways, upright, charging, burn-in protection) is a button of its own, and any one lit that holds
+  is enough. Text follows Android's font size; with a large display size the layout keeps a phone's proportions.
 - **Motion** (from 0.6.3): Full, Reduced (short fades instead of slides and zooms) or E-ink (nothing
   moves, the player redraws only when something changes). nori's choice holds whatever Android's own
   animation setting says; the playing bars move in every mode but E-ink.

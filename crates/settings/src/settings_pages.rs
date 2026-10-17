@@ -372,7 +372,7 @@ impl Page<'_> {
             }
         }
         theme.push(self.setting("accent").shown(!(self.phone() && self.f.wallpaper_colors && p.dynamic_color)));
-        let mut cover = vec![self.chips("coverColors")];
+        let mut cover = vec![self.setting("coverColors")];
         if self.phone() {
             let moving = self.on("motionArtwork");
             cover.extend([self.setting("motionArtwork"), self.setting("motionArtworkMobile").under().shown(moving)]);
@@ -382,9 +382,9 @@ impl Page<'_> {
             use crate::settings::DimIdle;
             let home = vec![row(RowItem::Link { to: SettingsLink::HomeRows }), row(RowItem::Link { to: SettingsLink::LibrarySections })];
             let mut screen = vec![
-                self.chips("hideStatusBar"),
-                self.chips("hideGestureBar"),
-                self.chips("keepAwake"),
+                self.setting("hideStatusBar"),
+                self.setting("hideGestureBar"),
+                self.setting("keepAwake"),
                 self.setting("burnInProtection"),
                 self.chips("dimWhenIdle").under().shown(p.burn_in_protection),
                 self.chips("dimLevel").under().shown(p.burn_in_protection && p.dim_when_idle != DimIdle::Never),

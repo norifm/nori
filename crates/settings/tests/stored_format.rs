@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, CompressorPreset, ControlsSide, CoverColors, DimIdle, DimLevel, EqMode, GainMode, HeadphoneSound, Level, Motion, HideBar, HomeRow, KeepAwake, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode};
+use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, CompressorPreset, ControlsSide, CoverPlace, DimIdle, DimLevel, EqMode, GainMode, HeadphoneSound, Level, Motion, HideBarWhen, HomeRow, AwakeWhen, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode};
 use nori_settings::settings_model::{specs, value_of};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/stored_format.txt");
@@ -41,7 +41,7 @@ fn sample() -> StoredPrefs {
         level: Level::Loud,
         headphone: HeadphoneSound::Wide,
         compressor_preset: CompressorPreset::Night,
-        cover_colors: CoverColors::PagesOnly,
+        cover_colors: vec![CoverPlace::Pages],
         motion: Motion::Eink,
         playlist_notes: false,
         fade_ms: 300,
@@ -101,10 +101,10 @@ fn sample() -> StoredPrefs {
         paxsenix_key: "pax".into(),
         better_lyrics_key: "better".into(),
         theme: ThemeMode::Dark,
-        hide_status_bar: HideBar::Always,
-        hide_gesture_bar: HideBar::Sideways,
+        hide_status_bar: vec![HideBarWhen::Sideways, HideBarWhen::Upright],
+        hide_gesture_bar: vec![HideBarWhen::Sideways],
         lyrics_timing_button: false,
-        keep_awake: KeepAwake::SidewaysCharging,
+        keep_awake: vec![AwakeWhen::Sideways, AwakeWhen::Charging],
         burn_in_protection: false,
         dim_when_idle: DimIdle::FiveMinutes,
         dim_level: DimLevel::Strong,

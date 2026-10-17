@@ -7,7 +7,7 @@ use nori_model::{EqBand, EqKind, EqPreset, NamedPreset, TransitionPrefs};
 pub use nori_model::CompressorPreset;
 use serde_json::{Map, Value};
 
-use crate::codec::{clamped, on, within, Choice, Custom, Picks, Preamp, Quality, Raw, Row, FLAG, FLOAT, K, LONG, PICK, PICK_NEAREST, TEXT};
+use crate::codec::{clamped, on, within, Choice, Custom, Flags, Picks, Preamp, Quality, Raw, Row, FLAG, FLOAT, K, LONG, PICK, PICK_NEAREST, TEXT};
 use crate::lyrics_sources::{self, LyricsService};
 use crate::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 
@@ -138,41 +138,23 @@ impl Level {
     }
 }
 
-/// Where covers' colors are worn. Off, nothing takes them; elsewhere, the place that does not wear them
-/// is black in the dark theme, with only the cover's accents.
+/// A place that wears covers' colors. With none, nothing takes them; with one, the other is black in
+/// the dark theme, with only the cover's accents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum CoverColors {
-    Everywhere,
-    /// Album, artist and playlist pages; the player stays black.
-    PagesOnly,
-    PlayerOnly,
-    Off,
+pub enum CoverPlace {
+    /// Album, artist and playlist pages.
+    Pages,
+    Player,
 }
 
-impl CoverColors {
-    /// The player wears the playing cover's colors.
-    pub fn player(self) -> bool {
-        matches!(self, CoverColors::Everywhere | CoverColors::PlayerOnly)
-    }
-
-    /// Album, artist and playlist pages wear their cover's colors.
-    pub fn pages(self) -> bool {
-        matches!(self, CoverColors::Everywhere | CoverColors::PagesOnly)
-    }
-
-    /// Whether the player (or, not `player`, a page) is black ([`nori_look::sleeve::page_black`]): with
-    /// AMOLED black where it does not wear the colors, and in the dark theme where only the other does.
-    pub fn black(self, player: bool, dark: bool, amoled: bool) -> bool {
-        let wears = if player { self.player() } else { self.pages() };
-        nori_look::sleeve::page_black(dark, amoled || self != CoverColors::Off && !wears, wears)
-    }
-}
-
-/// [`CoverColors::black`], for the platform.
+/// Whether the player (or, not `player`, a page) is black ([`nori_look::sleeve::page_black`]) where
+/// `colors` wear covers' colors: with AMOLED black where it does not wear them, and in the dark theme
+/// where only the other does.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn cover_black(colors: CoverColors, player: bool, dark: bool, amoled: bool) -> bool {
-    colors.black(player, dark, amoled)
+pub fn cover_black(colors: Vec<CoverPlace>, player: bool, dark: bool, amoled: bool) -> bool {
+    let wears = colors.contains(if player { &CoverPlace::Player } else { &CoverPlace::Pages });
+    nori_look::sleeve::page_black(dark, amoled || !colors.is_empty() && !wears, wears)
 }
 
 /// How much the interface moves. nori's choice holds whatever Android's animation setting says.
@@ -195,15 +177,13 @@ pub enum ThemeMode {
     Dark,
 }
 
-/// When a system bar (status or gesture) is hidden: by orientation, or while burn-in protection is on.
-/// `Protected` is last because picks are stored by position.
+/// A condition that hides a system bar (status or gesture); the bar is hidden while any chosen one holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum HideBar {
-    Never,
+pub enum HideBarWhen {
     Sideways,
     Upright,
-    Always,
+    /// Burn-in protection is at work.
     Protected,
 }
 
@@ -216,15 +196,14 @@ pub enum ControlsSide {
     Right,
 }
 
-/// When the screen is kept on while the app is in front: by orientation and charging.
+/// A condition that keeps the screen on while the app is in front; it is kept on while any chosen one
+/// holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum KeepAwake {
-    Never,
+pub enum AwakeWhen {
     Sideways,
+    Upright,
     Charging,
-    SidewaysCharging,
-    Always,
 }
 
 /// How long burn-in protection waits for a touch before it dims the screen.
@@ -529,12 +508,12 @@ pub struct StoredPrefs {
     // Appearance.
     #[setting("theme", PICK, default = ThemeMode::System, show = K::Choice(ThemeMode::NAMES))]
     pub theme: ThemeMode,
-    #[setting("hideStatusBar", PICK, default = HideBar::Sideways, show = K::Choice(HideBar::NAMES))]
-    pub hide_status_bar: HideBar,
-    #[setting("hideGestureBar", PICK, default = HideBar::Protected, show = K::Choice(HideBar::NAMES))]
-    pub hide_gesture_bar: HideBar,
-    #[setting("keepAwake", PICK, default = KeepAwake::Never, show = K::Choice(KeepAwake::NAMES))]
-    pub keep_awake: KeepAwake,
+    #[setting("hideStatusBarWhen", Flags, default = vec![HideBarWhen::Sideways], name = "hideStatusBar", show = K::Flags(HideBarWhen::NAMES))]
+    pub hide_status_bar: Vec<HideBarWhen>,
+    #[setting("hideGestureBarWhen", Flags, default = vec![HideBarWhen::Protected], name = "hideGestureBar", show = K::Flags(HideBarWhen::NAMES))]
+    pub hide_gesture_bar: Vec<HideBarWhen>,
+    #[setting("keepAwakeWhen", Flags, default = Vec::new(), name = "keepAwake", show = K::Flags(AwakeWhen::NAMES))]
+    pub keep_awake: Vec<AwakeWhen>,
     /// While nori keeps the screen on, everything drawn drifts a few dp ([`nori_look::burn_in`]).
     #[setting("burnInProtection", FLAG, default = true, show = K::Switch)]
     pub burn_in_protection: bool,
@@ -550,9 +529,9 @@ pub struct StoredPrefs {
     pub dynamic_color: bool,
     #[setting("accent", LONG, default = 0xFF6750A4, show = K::Colour)]
     pub accent: i64,
-    /// Where the playing cover's colors are taken ([`CoverColors`]).
-    #[setting("coverColorsWhere", PICK, default = CoverColors::Everywhere, name = "coverColors", show = K::Choice(CoverColors::NAMES))]
-    pub cover_colors: CoverColors,
+    /// Where covers' colors are worn ([`CoverPlace`]).
+    #[setting("coverColorsOn", Flags, default = vec![CoverPlace::Pages, CoverPlace::Player], name = "coverColors", show = K::Flags(CoverPlace::NAMES))]
+    pub cover_colors: Vec<CoverPlace>,
     /// Apple Music motion artwork in the player.
     #[setting("motionArtwork", FLAG, default = false, show = K::Switch, lookups)]
     pub motion_artwork: bool,
@@ -1066,11 +1045,11 @@ fn migrate(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
     // The page switches only counted with AMOLED black; without it every page kept its colors.
     let (player, pages) = (on("playerColours", true), on("albumColours", false) || on("artistColours", false));
     p.cover_colors = match (on("coverColors", true), p.amoled, player, pages) {
-        (false, ..) => CoverColors::Off,
-        (true, false, ..) | (true, true, true, true) => CoverColors::Everywhere,
-        (true, true, true, false) => CoverColors::PlayerOnly,
-        (true, true, false, true) => CoverColors::PagesOnly,
-        (true, true, false, false) => CoverColors::Off,
+        (false, ..) => Vec::new(),
+        (true, false, ..) | (true, true, true, true) => vec![CoverPlace::Pages, CoverPlace::Player],
+        (true, true, true, false) => vec![CoverPlace::Player],
+        (true, true, false, true) => vec![CoverPlace::Pages],
+        (true, true, false, false) => Vec::new(),
     };
     p.motion = if on("einkScreen", false) {
         Motion::Eink
@@ -1197,7 +1176,59 @@ pub fn load(raw: &HashMap<String, PrefValue>) -> StoredPrefs {
     if legacy(raw) {
         migrate(raw, &mut p);
     }
+    migrate_picks(raw, &mut p);
     p
+}
+
+/// Keys of the settings that were one pick of combined conditions before each became a set of them.
+pub(crate) const PICK_KEYS: &[&str] = &["keepAwake", "hideStatusBar", "hideGestureBar", "coverColorsWhere"];
+
+/// Whether stored settings hold any of [`PICK_KEYS`]: read once as sets ([`migrate_picks`]), then stored
+/// without them.
+pub(crate) fn picked(raw: &HashMap<String, PrefValue>) -> bool {
+    PICK_KEYS.iter().any(|k| raw.contains_key(*k))
+}
+
+/// The picks of [`PICK_KEYS`] as the sets that hold where they held: "always" as both orientations, and
+/// "sideways and charging" as each of them (either now keeps the screen on).
+fn migrate_picks(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
+    let old = |k: &str| match raw.get(k) {
+        Some(PrefValue::Number { v }) => Some(*v),
+        _ => None,
+    };
+    use AwakeWhen as A;
+    use HideBarWhen as H;
+    if let Some(v) = old("keepAwake") {
+        p.keep_awake = match v {
+            1 => vec![A::Sideways],
+            2 => vec![A::Charging],
+            3 => vec![A::Sideways, A::Charging],
+            4 => vec![A::Sideways, A::Upright],
+            _ => Vec::new(),
+        };
+    }
+    let bar = |v: i32, d: Vec<H>| match v {
+        0 => Vec::new(),
+        1 => vec![H::Sideways],
+        2 => vec![H::Upright],
+        3 => vec![H::Sideways, H::Upright],
+        4 => vec![H::Protected],
+        _ => d,
+    };
+    if let Some(v) = old("hideStatusBar") {
+        p.hide_status_bar = bar(v, p.hide_status_bar.clone());
+    }
+    if let Some(v) = old("hideGestureBar") {
+        p.hide_gesture_bar = bar(v, p.hide_gesture_bar.clone());
+    }
+    if let Some(v) = old("coverColorsWhere") {
+        p.cover_colors = match v {
+            1 => vec![CoverPlace::Pages],
+            2 => vec![CoverPlace::Player],
+            3 => Vec::new(),
+            _ => vec![CoverPlace::Pages, CoverPlace::Player],
+        };
+    }
 }
 
 /// The equalizer mode's key; absent in settings stored before the graphic equalizer existed.
@@ -2017,7 +2048,10 @@ mod tests {
         assert_eq!(set("lyricsSize", "7").lyrics_size, 2);
         assert_eq!(set("loudnessLevel", "loud").level, Level::Loud);
         assert_eq!(set("motion", "EINK").motion, Motion::Eink);
-        assert_eq!(set("coverColors", "PAGES_ONLY").cover_colors, CoverColors::PagesOnly);
+        // A set by its names, each once, in their order; unknown ones dropped, none for "".
+        assert_eq!(set("coverColors", "player,pages,PLAYER,glow").cover_colors, vec![CoverPlace::Pages, CoverPlace::Player]);
+        assert_eq!(set("keepAwake", "").keep_awake, vec![]);
+        assert_eq!(crate::settings_model::value_of(&set("hideStatusBar", "protected,sideways"), "hideStatusBar").as_deref(), Some("SIDEWAYS,PROTECTED"));
 
         // Active server settings by name.
         let a = SavedServer { id: "a".into(), ..SavedServer::default() };
@@ -2387,12 +2421,13 @@ mod tests {
 
     #[test]
     fn cover_colors_places() {
-        use CoverColors::*;
+        use CoverPlace::*;
         // (player black, page black) in the dark theme, without and with AMOLED.
-        let black = |c: CoverColors, amoled| (c.black(true, true, amoled), c.black(false, true, amoled));
-        assert_eq!([Everywhere, PagesOnly, PlayerOnly, Off].map(|c| black(c, false)), [(false, false), (true, false), (false, true), (false, false)]);
-        assert_eq!([Everywhere, PagesOnly, PlayerOnly, Off].map(|c| black(c, true)), [(false, false), (true, false), (false, true), (true, true)]);
-        assert!(!PagesOnly.black(true, false, false), "black is a dark theme's");
+        let black = |c: &[CoverPlace], amoled| (cover_black(c.to_vec(), true, true, amoled), cover_black(c.to_vec(), false, true, amoled));
+        let places: [&[CoverPlace]; 4] = [&[Pages, Player], &[Pages], &[Player], &[]];
+        assert_eq!(places.map(|c| black(c, false)), [(false, false), (true, false), (false, true), (false, false)]);
+        assert_eq!(places.map(|c| black(c, true)), [(false, false), (true, false), (false, true), (true, true)]);
+        assert!(!cover_black(vec![Pages], true, false, false), "black is a dark theme's");
     }
 
     #[test]

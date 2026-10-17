@@ -253,7 +253,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // pure black and the picture looked cut off, where Apple's carries the record's colour down the whole
     // screen. Which, is the core's (`CoverColors::black`).
     val black = remember(dark, prefs.amoled, prefs.coverColors) { dev.nori.music.ffi.settings.coverBlack(prefs.coverColors, true, dark, prefs.amoled) }
-    val tinted = prefs.coverColors != dev.nori.music.ffi.settings.CoverColors.OFF
+    val tinted = prefs.coverColors.isNotEmpty()
     // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
     val rowUrl = vm.cover(state.current?.coverArt, CoverSize.ROW)
     val tint = if (tinted) rememberCoverTint(rowUrl, black) else CoverTint(rowUrl, null)

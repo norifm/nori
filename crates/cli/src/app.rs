@@ -891,7 +891,7 @@ impl App {
 
     fn retheme(&mut self) {
         self.theme = match &self.colours {
-            Some(c) if self.prefs.cover_colors.player() && self.images => Theme::from_cover(c),
+            Some(c) if self.prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player) && self.images => Theme::from_cover(c),
             _ => Theme::plain(self.prefs.accent),
         };
     }

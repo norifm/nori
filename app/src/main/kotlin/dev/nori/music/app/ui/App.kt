@@ -338,7 +338,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         CompositionLocalProvider(
             LocalNav provides nav,
             LocalLyricsKeepOn provides lyricsKeepOn,
-            LocalStatusRoomKept provides dev.nori.music.ffi.settings.barRoomKept(prefs.hideStatusBar),
+            LocalStatusRoomKept provides dev.nori.music.ffi.settings.barRoomKept(prefs.hideStatusBar, wide),
             LocalPageSwipe provides swipe,
             LocalPlayerSheet provides sheet,
             LocalDownloadMarks provides rememberDownloadMarks(actions),

@@ -381,7 +381,7 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own) -
             let facts = page_facts(f);
             settings_pages::page(page, SettingsClient::Terminal, p, s, &facts)
                 .into_iter()
-                .map(|sec| Section { title: section_title(sec.id).into(), rows: sec.rows.into_iter().filter(|r| r.shown).filter_map(|r| row_of(r, p, s, f)).collect() })
+                .map(|sec| Section { title: section_title(sec.id).into(), rows: sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, s).unwrap_or_else(|| row_of(r, p, s, f).into_iter().collect())).collect() })
                 .collect()
         }
     };
@@ -453,7 +453,7 @@ fn section_title(id: SectionId) -> &'static str {
 /// A setting's title and the line under it.
 fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
-        "crossfadeSec" => ("Crossfade", "Equal power; never between songs of one album in order"),
+        "crossfadeSec" => ("Crossfade", "Songs fade into each other, not within an album"),
         "autoMix" => ("AutoMix", "Beat-matched transitions planned per song pair"),
         "autoMixBetterBeats" => {
             let state = match &s.beat_model {
@@ -476,16 +476,16 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "autoFillBasis" => ("Picked by", ""),
         "autoFillRemote" => ("Include remote songs", "Not in the library yet; each one played is downloaded to it"),
         "bridgeOffline" => ("Offline fallback", "Play downloads while the server is unreachable"),
-        "headphoneSound" => ("Headphone sound", "Natural: crossfeed, as speakers sound; wide: a bigger stage"),
-        "compressor" => ("Compressor", "Evens out loud and quiet passages"),
+        "headphoneSound" => ("Headphone sound", "Natural sounds like speakers, wide sounds bigger"),
+        "compressor" => ("Compressor", "Evens out quiet and loud parts"),
         "compressorPreset" => ("For", ""),
-        "replayGain" => ("Volume leveling", "Songs play at one loudness; clipping is always prevented"),
-        "loudnessLevel" => ("Level", ""),
+        "replayGain" => ("Volume leveling", "Every song plays equally loud"),
+        "loudnessLevel" => ("Level", "How loud leveled songs play"),
         "volumeBoostDb" => ("Volume boost", ""),
         "hiRes" => ("High quality output", "Float samples to the device; 24-bit files kept whole, effects in float"),
         "maxRate" => ("Highest sample rate", ""),
         "accent" => ("Accent color", ""),
-        "coverColors" => ("Colors from the cover", "Where the playing cover's colors are taken (with covers on)"),
+        "coverColors" => ("Colors from the cover", "Where the artwork's colors show (with covers on)"),
         "lyricsSweep" => ("Word fill", "Color words in as they are sung (word-timed lyrics)"),
         "lyricsTranslation" => ("Translations", "When the server has them"),
         "lyricsOnline" => ("Online lookups", "When the server has no timed lyrics; sends artist, title and album"),
@@ -517,7 +517,7 @@ fn option_words(name: &str, v: &str) -> String {
         ("autoFillBasis", "ARTIST") => "artist".into(),
         ("autoFillBasis", "GENRE") => "genre".into(),
         ("autoFillBasis", "ERA") => "era".into(),
-        ("headphoneSound", "OFF") | ("replayGain", "OFF") | ("coverColors", "OFF") => "off".into(),
+        ("headphoneSound", "OFF") | ("replayGain", "OFF") => "off".into(),
         ("headphoneSound", "NATURAL") => "natural".into(),
         ("headphoneSound", "WIDE") => "wide".into(),
         ("compressorPreset", "LIGHT") => "light".into(),
@@ -533,9 +533,8 @@ fn option_words(name: &str, v: &str) -> String {
         ("maxRate", "KHZ48") => "48 kHz".into(),
         ("maxRate", "KHZ96") => "96 kHz".into(),
         ("maxRate", "KHZ192") => "192 kHz".into(),
-        ("coverColors", "EVERYWHERE") => "everywhere".into(),
-        ("coverColors", "PAGES_ONLY") => "pages only".into(),
-        ("coverColors", "PLAYER_ONLY") => "player only".into(),
+        ("coverColors", "PAGES") => "pages".into(),
+        ("coverColors", "PLAYER") => "player".into(),
         ("wifi" | "download", v) => quality(v),
         ("cacheMb", v) => match v.parse::<i32>() {
             Ok(mb) if mb % 1024 == 0 => format!("{} GB", mb / 1024),
@@ -543,6 +542,23 @@ fn option_words(name: &str, v: &str) -> String {
         },
         (_, v) => v.to_string(),
     }
+}
+
+/// A set of independent flags as its title, then a switch for each; None for any other row.
+fn flag_rows(r: &settings_pages::SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
+    let RowItem::Setting { spec, value, .. } = &r.item else { return None };
+    if spec.kind != SettingKind::Flags {
+        return None;
+    }
+    let (title, detail) = setting_words(&spec.name, s);
+    let switches = spec.options.iter().map(|flag| Row::Toggle {
+        switch: Switch::Stores(spec.name.clone(), settings_model::flag_toggled(value.clone(), flag.clone())),
+        title: format!("  {}", option_words(&spec.name, flag)),
+        detail: String::new(),
+        on: settings_model::flag_on(value.clone(), flag.clone()),
+        enabled: r.enabled,
+    });
+    Some(std::iter::once(Row::Info { title, detail: detail.to_string() }).chain(switches).collect())
 }
 
 /// The terminal's row for one of the core's, or None for one it does not draw.
@@ -568,6 +584,8 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                 }
                 SettingKind::Text => Row::Text { name: spec.name, title, detail, value, secret: true },
                 SettingKind::Colour => Row::Palette { name: spec.name, colours: spec.options.iter().filter_map(|c| c.parse().ok()).collect(), chosen: p.accent },
+                // Drawn by `flag_rows`.
+                SettingKind::Flags => return None,
             }
         }
         RowItem::Link { to: SettingsLink::Equalizer } => {

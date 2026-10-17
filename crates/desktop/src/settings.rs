@@ -189,7 +189,7 @@ fn section_title(id: SectionId) -> &'static str {
 /// A setting's title and the line under it.
 fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
-        "crossfadeSec" => ("Crossfade", "Songs fade into each other, except those of one album playing in order."),
+        "crossfadeSec" => ("Crossfade", "Songs fade into each other, not within an album."),
         "autoMix" => ("AutoMix", "Blends songs like a DJ, matching the beat."),
         "autoMixBetterBeats" => {
             let mb = s.beat_model_mb;
@@ -217,16 +217,16 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "autoEqDownload" => ("Keep the AutoEQ list", "Downloads the headphone list (850 kB, from github.com), and again once a month, so headphones find their curve."),
         "profilePerOutput" => ("Remember sound per device", "Each device keeps its own equalizer settings."),
         "soundBypass" => ("No processing on this output", "No equalizer or effects reach this output. Saved with the device's sound."),
-        "headphoneSound" => ("Headphone sound", "Natural lets each ear hear a little of the other side, as speakers do. Wide makes the stage bigger."),
-        "compressor" => ("Compressor", "Brings quiet passages up and loud ones down."),
+        "headphoneSound" => ("Headphone sound", "Natural sounds like speakers, Wide sounds bigger."),
+        "compressor" => ("Compressor", "Evens out quiet and loud parts."),
         "compressorPreset" => ("For", ""),
-        "replayGain" => ("Volume leveling", "Songs play equally loud. Songs without tags are measured; nothing ever clips."),
-        "loudnessLevel" => ("Level", ""),
+        "replayGain" => ("Volume leveling", "Every song plays equally loud."),
+        "loudnessLevel" => ("Level", "How loud leveled songs play."),
         "volumeBoostDb" => ("Volume boost", ""),
         "hiRes" => ("High quality output", "Plays 24-bit files in full, and runs the equalizer and effects in floating point. Starts with the next song."),
         "maxRate" => ("Highest sample rate", ""),
         "accent" => ("Accent color", ""),
-        "coverColors" => ("Colors from the cover", "Where pages and the player take their colors from the artwork."),
+        "coverColors" => ("Colors from the cover", "Where the artwork's colors show."),
         "lyricsSweep" => ("Fill in words as they're sung", "For lyrics timed word by word."),
         "lyricsTranslation" => ("Show translations", "When your server has them."),
         "lyricsOnline" => ("Find missing lyrics online", "When your server has no timed lyrics. Sends the artist, song and album name to the lyrics sources."),
@@ -267,7 +267,7 @@ fn option_words(name: &str, v: &str) -> String {
         ("autoFillBasis", "ARTIST") => "The same artist".into(),
         ("autoFillBasis", "GENRE") => "The same genre".into(),
         ("autoFillBasis", "ERA") => "The same era".into(),
-        ("headphoneSound" | "replayGain" | "coverColors", "OFF") => "Off".into(),
+        ("headphoneSound" | "replayGain", "OFF") => "Off".into(),
         ("headphoneSound", "NATURAL") => "Natural".into(),
         ("headphoneSound", "WIDE") => "Wide".into(),
         ("compressorPreset", "LIGHT") => "Light".into(),
@@ -283,9 +283,8 @@ fn option_words(name: &str, v: &str) -> String {
         ("maxRate", "KHZ48") => "48 kHz".into(),
         ("maxRate", "KHZ96") => "96 kHz".into(),
         ("maxRate", "KHZ192") => "192 kHz".into(),
-        ("coverColors", "EVERYWHERE") => "Everywhere".into(),
-        ("coverColors", "PAGES_ONLY") => "Pages only".into(),
-        ("coverColors", "PLAYER_ONLY") => "Player only".into(),
+        ("coverColors", "PAGES") => "Pages".into(),
+        ("coverColors", "PLAYER") => "Player".into(),
         ("wifi" | "download", v) => {
             let (rate, format) = v.split_once(':').unwrap_or((v, ""));
             match format {
@@ -315,6 +314,25 @@ fn action(title: &str, detail: String, button: &str, enabled: bool, chore: Chore
     Row { kind: ACTION, name: chore_name(chore).into(), title: title.into(), detail, button: button.into(), enabled, ..Default::default() }
 }
 
+/// A set of independent flags as its title, then a switch for each (its name stores the set with the
+/// flag switched); None for any other row.
+fn flag_rows(r: &SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
+    let RowItem::Setting { spec, value, .. } = &r.item else { return None };
+    if spec.kind != SettingKind::Flags {
+        return None;
+    }
+    let (title, detail) = setting_words(&spec.name, s);
+    let switches = spec.options.iter().map(|flag| Row {
+        kind: TOGGLE,
+        name: format!("{}={}", spec.name, settings_model::flag_toggled(value.clone(), flag.clone())),
+        title: option_words(&spec.name, flag),
+        on: settings_model::flag_on(value.clone(), flag.clone()),
+        enabled: r.enabled,
+        ..Default::default()
+    });
+    Some(std::iter::once(info(&title, detail)).chain(switches).collect())
+}
+
 /// The desktop's row for one of the core's, or None for one it does not draw.
 fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Option<Row> {
     let enabled = r.enabled;
@@ -337,6 +355,8 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                     let swatches = spec.options.iter().filter_map(|c| c.parse::<i64>().ok()).map(|c| c as u32).collect();
                     Row { kind: PALETTE, name: spec.name, title, swatches, value: p.accent as u32 as f32, enabled: true, ..Default::default() }
                 }
+                // Drawn by `flag_rows`.
+                SettingKind::Flags => return None,
             }
         }
         RowItem::Link { to: SettingsLink::Equalizer } => {
@@ -446,7 +466,7 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32) -> Vec<(&'static str, Vec<Row>)>
     };
     let mut groups: Vec<(&'static str, Vec<Row>)> = Vec::new();
     for sec in settings_pages::page(tab_page(tab), SettingsClient::Desktop, p, &s, &facts) {
-        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).filter_map(|r| row_of(r, p, &s, f)).collect();
+        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f).into_iter().collect())).collect();
         let title = section_title(sec.id);
         // Sections that share a title are one group here.
         match groups.last_mut() {
@@ -550,8 +570,9 @@ mod tests {
         for tab in 0..7 {
             for (_, rows) in groups(&p, &f, tab) {
                 for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE | TEXT) && r.name != DEVICE) {
-                    assert!(specs.contains(&r.name), "{} is not a core setting", r.name);
-                    assert!(!setting_words(&r.name, &settings_model::state(&p, settings_model::Output::default(), &crate::session::app().settings.model)).0.eq(&r.name), "{} has no words", r.name);
+                    let name = toggled(&r.name, r.on).0;
+                    assert!(specs.iter().any(|s| s == name), "{name} is not a core setting");
+                    assert!(!setting_words(name, &settings_model::state(&p, settings_model::Output::default(), &crate::session::app().settings.model)).0.eq(name), "{name} has no words");
                 }
                 for r in rows.iter().filter(|r| r.kind == SLIDER) {
                     assert!(level_of(&r.name).is_some(), "{}", r.name);

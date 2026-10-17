@@ -73,6 +73,8 @@ sealed interface SettingRow {
     data class CompressionMeter(val key: String) : SettingRow
     /** One setting with a few values, all on view as chips, the one it has lit. */
     data class ChipChoice(val key: String, val name: String, val title: String, val detail: String, val options: List<SettingOption>, val chosen: String) : SettingRow
+    /** Independent conditions as chips, each lit while on; [value] is the core's form of the set (`SettingKind::Flags`). */
+    data class Flags(val key: String, val name: String, val title: String, val detail: String, val options: List<SettingOption>, val value: String, val enabled: Boolean) : SettingRow
     /** Text typed in (a service's key), hidden when [secret]. */
     data class Text(val key: String, val name: String, val title: String, val detail: String, val value: String, val secret: Boolean) : SettingRow
 }
@@ -245,14 +247,11 @@ private val NAMED: Map<String, IntArray> = mapOf(
     "loudnessLevel" to intArrayOf(R.string.settings_level_quiet, R.string.settings_level_normal, R.string.settings_level_loud),
     "maxRate" to intArrayOf(R.string.settings_max_rate_auto, R.string.settings_max_rate_48, R.string.settings_max_rate_96, R.string.settings_max_rate_192),
     "theme" to intArrayOf(R.string.settings_theme_system, R.string.settings_theme_light, R.string.settings_theme_dark),
-    "coverColors" to intArrayOf(R.string.settings_cover_colours_everywhere, R.string.settings_cover_colours_pages, R.string.settings_cover_colours_player, R.string.settings_off),
+    "coverColors" to intArrayOf(R.string.settings_cover_colours_pages, R.string.settings_cover_colours_player),
     "motion" to intArrayOf(R.string.settings_motion_full, R.string.settings_motion_reduced, R.string.settings_motion_eink),
     "hideStatusBar" to HIDE_BAR,
     "hideGestureBar" to HIDE_BAR,
-    "keepAwake" to intArrayOf(
-        R.string.settings_keep_awake_never, R.string.settings_keep_awake_sideways, R.string.settings_keep_awake_charging,
-        R.string.settings_keep_awake_sideways_charging, R.string.settings_keep_awake_always,
-    ),
+    "keepAwake" to intArrayOf(R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright, R.string.settings_when_charging),
     "dimWhenIdle" to intArrayOf(R.string.settings_dim_idle_never, R.string.settings_dim_idle_half_minute, R.string.settings_dim_idle_minute, R.string.settings_dim_idle_five_minutes),
     "dimLevel" to intArrayOf(R.string.settings_dim_level_light, R.string.settings_dim_level_medium, R.string.settings_dim_level_strong),
     "controlsSide" to intArrayOf(R.string.settings_controls_side_driver, R.string.settings_controls_side_left, R.string.settings_controls_side_right),
@@ -261,11 +260,8 @@ private val NAMED: Map<String, IntArray> = mapOf(
     "swipeLeft" to SWIPES,
 )
 
-/** Both bars' choices, worded in the core's order (`HideBar`). */
-private val HIDE_BAR get() = intArrayOf(
-    R.string.settings_hide_bar_never, R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright,
-    R.string.settings_hide_bar_always, R.string.settings_hide_bar_protected,
-)
+/** What hides either bar, worded in the core's order (`HideBarWhen`). */
+private val HIDE_BAR get() = intArrayOf(R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright, R.string.settings_hide_bar_protected)
 private val SWIPES get() = intArrayOf(R.string.settings_swipe_none, R.string.settings_swipe_queue, R.string.settings_swipe_play_next, R.string.settings_swipe_favourite, R.string.settings_swipe_download)
 
 /** What a link, action or info row is called, and what search also finds it by. */
@@ -628,6 +624,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 if (chips) SettingRow.ChipChoice(key, name, title, detail(name), options, value)
                 else SettingRow.Choice(key, name, title, options, options.firstOrNull { it.value == value }?.label ?: valueWords(name, value, spec.options), enabled)
             }
+            SettingKind.FLAGS -> SettingRow.Flags(key, name, title, detail(name), spec.options.map { SettingOption(valueWords(name, it, spec.options), it) }, value, enabled)
             SettingKind.LEVEL -> {
                 val db = value.toFloatOrNull() ?: spec.min
                 val shown = if (db <= 0f) str(R.string.settings_off) else str(R.string.settings_db, Fmt.signedDb(db))

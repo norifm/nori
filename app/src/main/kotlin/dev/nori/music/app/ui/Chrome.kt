@@ -340,7 +340,7 @@ internal fun rememberTabAccent(player: PlayerViewModel, slab: Color, content: Co
     }
     // The same cover and key the mini player warms, so the colours are already worked out by the time a
     // song starts.
-    val tinted = prefs.coverColors != dev.nori.music.ffi.settings.CoverColors.OFF
+    val tinted = prefs.coverColors.isNotEmpty()
     val url = if (tinted) player.cover(state.current?.coverArt, CoverSize.ROW) else null
     val playing = rememberCoverPalette(url, dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, false))?.look?.get(CoverLook.ACCENT)
     val seed = (if (tinted) pagePalette.value?.look?.get(CoverLook.ACCENT) else null) ?: playing
@@ -424,7 +424,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
     val near by vm.coversNear.collectAsStateWithLifecycle()
     val around = remember(near) { near.mapNotNull { vm.cover(it, CoverSize.ROW) }.filterNot(::isProviderCover) }
     LaunchedEffect(around, dark, prefs.coverColors, prefs.amoled) {
-        if (prefs.coverColors == dev.nori.music.ffi.settings.CoverColors.OFF) return@LaunchedEffect
+        if (prefs.coverColors.isEmpty()) return@LaunchedEffect
         val plain = !dev.nori.music.ffi.settings.coverBlack(prefs.coverColors, true, dark, prefs.amoled)
         for (url in around) {
             // The full-screen player keeps the record's colours where the bar goes black, so that is a

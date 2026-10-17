@@ -140,7 +140,7 @@ impl SettingsStore {
             prefs.eq_mode = crate::settings::EqMode::Parametric;
         }
         let legacy = crate::settings::legacy(&raw);
-        if raw.is_empty() || !chosen || legacy || raw.contains_key("jam") || raw.contains_key("jamAlong") {
+        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
             write(&mut c, &prefs)?;
         }
         if legacy {
@@ -685,19 +685,44 @@ mod tests {
     }
 
     #[test]
-    fn old_cover_color_switches_become_choice() {
-        use crate::settings::CoverColors::*;
+    fn old_cover_color_switches_become_places() {
+        use crate::settings::CoverPlace::*;
         for (colors, amoled, player, album, artist, want) in [
-            (false, false, true, false, false, Off),
-            (true, false, false, false, false, Everywhere),
-            (true, true, true, false, false, PlayerOnly),
-            (true, true, false, true, false, PagesOnly),
-            (true, true, false, false, true, PagesOnly),
-            (true, true, true, true, true, Everywhere),
-            (true, true, false, false, false, Off),
+            (false, false, true, false, false, vec![]),
+            (true, false, false, false, false, vec![Pages, Player]),
+            (true, true, true, false, false, vec![Player]),
+            (true, true, false, true, false, vec![Pages]),
+            (true, true, false, false, true, vec![Pages]),
+            (true, true, true, true, true, vec![Pages, Player]),
+            (true, true, false, false, false, vec![]),
         ] {
             let raw = old(&[("coverColors", flag(colors)), ("amoled", flag(amoled)), ("playerColours", flag(player)), ("albumColours", flag(album)), ("artistColours", flag(artist))]);
             assert_eq!(open_old("old-colors", &raw).0.cover_colors, want, "colors {colors}, AMOLED {amoled}, player {player}, album {album}, artist {artist}");
+        }
+    }
+
+    #[test]
+    fn old_picks_become_conditions() {
+        use crate::settings::AwakeWhen as A;
+        use crate::settings::CoverPlace as C;
+        use crate::settings::HideBarWhen as H;
+        let bars = [(0, vec![]), (1, vec![H::Sideways]), (2, vec![H::Upright]), (3, vec![H::Sideways, H::Upright]), (4, vec![H::Protected])];
+        for (pick, want) in bars {
+            let (p, stored) = open_old("old-bars", &old(&[("hideStatusBar", number(pick)), ("hideGestureBar", number(pick))]));
+            assert_eq!((p.hide_status_bar, p.hide_gesture_bar), (want.clone(), want), "{pick}");
+            assert!(!stored.contains_key("hideStatusBar") && !stored.contains_key("hideGestureBar"), "{stored:?}");
+        }
+        let awake = [(0, vec![]), (1, vec![A::Sideways]), (2, vec![A::Charging]), (3, vec![A::Sideways, A::Charging]), (4, vec![A::Sideways, A::Upright])];
+        for (pick, want) in awake {
+            assert_eq!(open_old("old-awake", &old(&[("keepAwake", number(pick))])).0.keep_awake, want, "{pick}");
+        }
+        // Stored by 0.6.3's first builds, with no key of 0.6.2's left.
+        for (pick, want) in [(0, vec![C::Pages, C::Player]), (1, vec![C::Pages]), (2, vec![C::Player]), (3, vec![])] {
+            let raw = HashMap::from([("coverColorsWhere".to_string(), number(pick)), ("keepAwake".to_string(), number(4)), ("motion".to_string(), number(2))]);
+            let (p, stored) = open_old("old-places", &raw);
+            assert_eq!((p.cover_colors, p.keep_awake, p.motion), (want, vec![A::Sideways, A::Upright], crate::settings::Motion::Eink), "{pick}");
+            assert_eq!(stored, save(&load(&stored)), "stored once, as read");
+            assert!(!crate::settings::PICK_KEYS.iter().any(|k| stored.contains_key(*k)), "{stored:?}");
         }
     }
 

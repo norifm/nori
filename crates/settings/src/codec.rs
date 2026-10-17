@@ -181,6 +181,36 @@ impl<T: Choice> Codec<Vec<T>> for Picks {
     }
 }
 
+/// Conditions or places, any set of them: stored and changed by name as comma-separated names ("" for
+/// none), each once and in the enum's order; unknown names are dropped.
+pub(crate) struct Flags;
+
+impl Flags {
+    fn parse<T: Choice>(value: &str) -> Vec<T> {
+        let named: Vec<T> = value.split(',').filter_map(|n| T::NAMES.iter().position(|x| x.eq_ignore_ascii_case(n.trim())).map(|i| T::ALL[i])).collect();
+        T::ALL.iter().copied().filter(|t| named.contains(t)).collect()
+    }
+
+    fn names<T: Choice>(v: &[T]) -> String {
+        T::ALL.iter().filter(|t| v.contains(t)).map(|t| t.name()).collect::<Vec<_>>().join(",")
+    }
+}
+
+impl<T: Choice> Codec<Vec<T>> for Flags {
+    fn load(&self, r: &Raw, k: &str, d: Vec<T>) -> Vec<T> {
+        r.get::<String>(k).map_or(d, |s| Flags::parse(&s))
+    }
+    fn save(&self, v: &Vec<T>, k: &str, out: &mut Put) {
+        put(out, k, PrefValue::Text { v: Flags::names(v) });
+    }
+    fn set(&self, value: &str, _: &Vec<T>) -> Option<Vec<T>> {
+        Some(Flags::parse(value))
+    }
+    fn show(&self, v: &Vec<T>) -> String {
+        Flags::names(v)
+    }
+}
+
 /// Stream quality, stored under `<key>BitRate` and `<key>Format`; by name "320:mp3" ("0:" is the
 /// original file).
 pub(crate) struct Quality;
@@ -255,6 +285,8 @@ pub(crate) enum K {
     Switch,
     /// One of these values; an enum setting's are its names, in ordinal order.
     Choice(&'static [&'static str]),
+    /// Any set of these, by name (an enum's, in ordinal order).
+    Flags(&'static [&'static str]),
     Level(f32, f32),
     Text,
     Colour,
