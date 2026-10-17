@@ -34,6 +34,9 @@ struct SettingsStore {
     prefs: StoredPrefs,
     /// Bumped per change; a queued write skips itself when a newer one is queued behind it.
     writes: Arc<AtomicU64>,
+    /// The settings as this app last read or wrote them; a write changes only the keys that differ from
+    /// them, so another app over the same database keeps its own changes.
+    written: Arc<Mutex<StoredPrefs>>,
 }
 
 fn to_json(v: &PrefValue) -> String {
@@ -88,6 +91,23 @@ fn write(c: &mut Connection, prefs: &StoredPrefs) -> rusqlite::Result<()> {
     tx.commit()
 }
 
+/// Writes the stored settings that differ between `before` and `after`, in one transaction.
+fn write_changes(c: &mut Connection, before: &StoredPrefs, after: &StoredPrefs) -> rusqlite::Result<()> {
+    let (before, after) = (save(before), save(after));
+    let tx = c.transaction()?;
+    {
+        let mut put = tx.prepare("INSERT OR REPLACE INTO settings(key, value) VALUES(?1, ?2)")?;
+        for (k, v) in after.iter().filter(|(k, v)| before.get(*k) != Some(v)) {
+            put.execute(params![k, to_json(v)])?;
+        }
+        let mut drop = tx.prepare("DELETE FROM settings WHERE key=?1")?;
+        for k in before.keys().filter(|k| !after.contains_key(*k)) {
+            drop.execute([k])?;
+        }
+    }
+    tx.commit()
+}
+
 /// What a change from `a` to `b` asks the player to apply again: each changed setting's effect bits, plus
 /// [`APPLY_AUDIO`] when the sound chain starts or stops being needed.
 fn effects(a: &StoredPrefs, b: &StoredPrefs) -> u32 {
@@ -110,7 +130,7 @@ impl SettingsStore {
         if raw.is_empty() || !chosen || raw.contains_key("jam") || raw.contains_key("jamAlong") {
             write(&mut c, &prefs)?;
         }
-        Ok(SettingsStore { db: Arc::new(Mutex::new(c)), prefs, writes: Arc::new(AtomicU64::new(0)) })
+        Ok(SettingsStore { db: Arc::new(Mutex::new(c)), written: Arc::new(Mutex::new(prefs.clone())), prefs, writes: Arc::new(AtomicU64::new(0)) })
     }
 
     /// Replaces the settings with what `make` makes of them and queues the write. Returns the effect
@@ -122,14 +142,16 @@ impl SettingsStore {
         }
         let effect = effects(&self.prefs, &prefs);
         self.prefs = prefs;
-        let (db, writes, prefs) = (self.db.clone(), self.writes.clone(), self.prefs.clone());
+        let (db, writes, written, prefs) = (self.db.clone(), self.writes.clone(), self.written.clone(), self.prefs.clone());
         let n = writes.fetch_add(1, Ordering::SeqCst) + 1;
         background::run(move || {
             if writes.load(Ordering::SeqCst) != n {
                 return;
             }
-            if let Err(e) = write(&mut db.lock(), &prefs) {
-                alog::info(&format!("settings: could not write: {e}"));
+            let mut written = written.lock();
+            match write_changes(&mut db.lock(), &written, &prefs) {
+                Ok(()) => *written = prefs,
+                Err(e) => alog::info(&format!("settings: could not write: {e}")),
             }
         });
         Some(effect)
@@ -437,6 +459,19 @@ mod tests {
         assert_eq!(s.edit_level(EqLevel::Balance, -0.6), Some((SOUND, -0.6)));
         assert_eq!(s.edit_level(EqLevel::ReplayGainPreamp, 20.0), Some((APPLY_GAIN, 6.0)));
         assert_eq!(s.prefs.preamp_db, 6.0);
+    }
+
+    #[test]
+    fn two_apps_over_one_database_keep_each_others_changes() {
+        let dir = nori_testdir::TempDir::new("settings-shared");
+        let (mut a, mut b) = (open(&dir), open(&dir));
+        a.edit(|p| StoredPrefs { fade_ms: 400, ..p.clone() });
+        background::flush();
+        b.edit(|p| StoredPrefs { amoled: !p.amoled, ..p.clone() });
+        b.edit(|p| StoredPrefs { cache_mb: 4096, ..p.clone() });
+        background::flush();
+        let kept = open(&dir).prefs;
+        assert_eq!((kept.fade_ms, kept.amoled, kept.cache_mb), (400, !a.prefs.amoled, 4096));
     }
 
     #[test]
