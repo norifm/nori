@@ -263,10 +263,10 @@ class Library(
 
     /**
      * The queue another device or app left on the server, when it is worth offering to this one while it is
-     * [playing] or not; whether it is, is the core's (`queue_offer`).
+     * [playing] or not and shows the song [shown]; whether it is, is the core's (`queue_offer`).
      */
-    suspend fun queueOffer(playing: Boolean): dev.nori.music.ffi.library.QueueOffer? =
-        withContext(Dispatchers.IO) { lifted { client.queueOffer(playing) } }
+    suspend fun queueOffer(playing: Boolean, shown: String?): dev.nori.music.ffi.library.QueueOffer? =
+        withContext(Dispatchers.IO) { lifted { client.queueOffer(playing, shown) } }
 
     /** [offer] was taken or turned down: the same queue is not offered again. */
     fun queueOfferDone(offer: dev.nori.music.ffi.library.QueueOffer) = client.queueOfferDone(offer)
