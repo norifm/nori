@@ -59,7 +59,7 @@ struct Section {
     let key: String
     let grid: Bool
     let items: [Item]
-    /// A service's own title for it (YouTube Music's shelves); empty: the key's words.
+    /// A source's own title for it (its feed's shelves); empty: the key's words.
     var title = ""
 }
 
@@ -128,9 +128,9 @@ struct Now {
 struct Rules {
     var asks = false
     var account = true
-    /// Songs carry hearts (an account's, or a signed-in YouTube Music profile's likes).
+    /// Songs carry hearts (an account's, or a provider account's likes).
     var stars = true
-    /// Home is the service's own feed (YouTube Music's).
+    /// Home is the source's own feed.
     var feed = false
     /// The library's sections, as the core's LibrarySection numbers.
     var sections: Set<Int> = Set(0...11)

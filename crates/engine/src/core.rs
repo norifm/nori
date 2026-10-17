@@ -17,6 +17,7 @@ use nori_player::playlist::Playlist;
 use nori_player::queue::{OnError, PlaybackError};
 use nori_player::transitions::WindowSong;
 use nori_core::client::Client;
+use nori_core::providers::ResolveStream;
 use nori_core::queue::Session;
 use nori_core::settings::StoredPrefs;
 
@@ -280,26 +281,33 @@ impl Library for CoreLibrary {
     }
 }
 
-#[cfg(feature = "youtube")]
-/// A YouTube Music profile's byte source: a song's stream address opens at the URL YouTube serves it at
-/// now ([`Client::playable`], resolved on the opening thread). A refused URL is forgotten, so the
-/// loader's next try asks YouTube again. Other URLs pass through.
-pub struct Resolving {
-    pub bytes: Arc<dyn ByteSource>,
-    pub client: Arc<Client>,
+/// `bytes`, opening the stream addresses of `client`'s provider at the URLs they resolve to
+/// ([`Resolving`]); `bytes` itself when its addresses are URLs already.
+pub fn resolving(client: &Arc<Client>, bytes: Arc<dyn ByteSource>) -> Arc<dyn ByteSource> {
+    match client.stream_resolver() {
+        Some(resolver) => Arc::new(Resolving { bytes, resolver }),
+        None => bytes,
+    }
 }
 
-#[cfg(feature = "youtube")]
+/// A byte source over a provider's stream addresses: each opens at the URL it resolves to now, on the
+/// opening thread. A refused URL is forgotten, so the loader's next try resolves it anew. Other URLs
+/// pass through.
+pub struct Resolving {
+    pub bytes: Arc<dyn ByteSource>,
+    pub resolver: Arc<dyn ResolveStream>,
+}
+
 impl ByteSource for Resolving {
     fn open(&self, url: &str, from: u64) -> Result<crate::source::Body, OpenError> {
         self.open_cancellable(url, None, from, &crate::source::Cancel::new())
     }
 
     fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
-        let Some(served) = self.client.playable(url, from) else { return self.bytes.open_cancellable(url, key, from, cancel) };
+        let Some(served) = self.resolver.resolve(url, from) else { return self.bytes.open_cancellable(url, key, from, cancel) };
         let opened = self.bytes.open_cancellable(&served.map_err(|e| OpenError::Failed(e.to_string()))?, key, from, cancel);
         if matches!(opened, Err(OpenError::Status(403))) {
-            self.client.playable_refused(url);
+            self.resolver.refused(url);
         }
         opened
     }

@@ -1,8 +1,21 @@
 import UIKit
 
-/// Adds a server, or YouTube Music: checks the address, saves the profile as the active one and opens it.
+/// Adds a profile of one of the kinds the core offers (`nori_ios_providers`), with the fields its form
+/// asks: the core checks it, saves it as the active one, and the page opens it.
 final class LoginPage: UIViewController, UITextFieldDelegate {
-    private let kind = UISegmentedControl(items: [Say.yourServer, Say.youtubeMusic])
+    /// A kind offered, and its form's fields by the login JSON's keys, plain or advanced.
+    private struct Kind {
+        let id: String
+        let plain: Set<String>
+        let advanced: Set<String>
+    }
+
+    private let kinds: [Kind] = (takenJSON(nori_ios_providers()) as? [[String: Any]] ?? []).map { p in
+        let fields = p["fields"] as? [[String: Any]] ?? []
+        let named = { (advanced: Bool) in Set(fields.filter { $0["advanced"] as? Bool == advanced }.compactMap { $0["what"] as? String }) }
+        return Kind(id: p["kind"] as? String ?? "", plain: named(false), advanced: named(true))
+    }
+    private lazy var kind = UISegmentedControl(items: kinds.map { Say.provider($0.id).name })
     private let hint = UILabel()
     private let address = UITextField()
     private let user = UITextField()
@@ -48,8 +61,8 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         spinner.color = Theme.label
 
         kind.selectedSegmentIndex = 0
+        kind.isHidden = kinds.count < 2
         kind.addTarget(self, action: #selector(kindChanged), for: .valueChanged)
-        hint.text = Say.serverKinds
         hint.textColor = Theme.secondary
         hint.font = UIFont.preferredFont(forTextStyle: .footnote)
         hint.adjustsFontForContentSizeCategory = true
@@ -65,9 +78,9 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         more.contentHorizontalAlignment = .leading
         more.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
         for f in [name, second, key] {
-            f.isHidden = true
             f.heightAnchor.constraint(equalToConstant: 44).isActive = true
         }
+        kindChanged()
         let stack = UIStackView(arrangedSubviews: [kind, address, user, password, more, name, second, key, connect, spinner, status, hint])
         stack.axis = .vertical
         stack.spacing = 12
@@ -120,31 +133,39 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         scroll.scrollIndicatorInsets.bottom = covered
     }
 
-    /// The name, the second address and the API key: shown on asking.
+    /// The boxes by the login JSON's keys.
+    private var boxes: [String: UITextField] {
+        ["name": name, "url": address, "user": user, "password": password, "alt": second, "key": key]
+    }
+
+    private var chosen: Kind? { kinds.indices.contains(kind.selectedSegmentIndex) ? kinds[kind.selectedSegmentIndex] : nil }
+
+    /// The chosen kind's advanced fields: shown on asking.
     @objc private func moreTapped() {
-        let show = name.isHidden
+        guard let k = chosen else { return }
+        let show = k.advanced.contains { boxes[$0]?.isHidden ?? false }
         UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.25) {
-            for f in [self.name, self.second, self.key] { f.isHidden = !show }
+            for f in k.advanced { self.boxes[f]?.isHidden = !show }
         }
         more.setTitle(show ? Say.hideAdvanced : Say.advanced, for: .normal)
     }
 
-    private var youtube: Bool { kind.selectedSegmentIndex == 1 }
-
-    /// YouTube Music has no server, so only its name is asked.
+    /// The chosen kind's plain fields, its advanced ones folded away, and its words.
     @objc private func kindChanged() {
-        for f in [address, user, password, more, second, key] { f.isHidden = youtube }
-        name.isHidden = !youtube
+        let k = chosen
+        for (what, box) in boxes { box.isHidden = !(k?.plain.contains(what) ?? false) }
+        more.isHidden = k?.advanced.isEmpty ?? true
         more.setTitle(Say.advanced, for: .normal)
-        hint.text = youtube ? Say.youtubeMusicHint : Say.serverKinds
-        connect.setTitle(youtube ? Say.youtubeMusicAdd : Say.connect, for: .normal)
+        let words = Say.provider(k?.id ?? "")
+        hint.text = words.note
+        connect.setTitle(words.add, for: .normal)
         status.text = ""
     }
 
     @objc private func submit() {
         view.endEditing(true)
         let fields: [String: String] = [
-            "kind": youtube ? "youtubeMusic" : "subsonic",
+            "kind": chosen?.id ?? "",
             "url": address.text ?? "", "user": user.text ?? "", "password": password.text ?? "",
             "name": name.text ?? "", "alt": second.text ?? "", "key": key.text ?? "",
         ]
@@ -173,7 +194,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
                     }
                 }
                 self.status.text = opened ?? Say.failure(code, extra)
-                self.connect.setTitle(self.youtube ? Say.youtubeMusicAdd : Say.connect, for: .normal)
+                self.connect.setTitle(Say.provider(self.chosen?.id ?? "").add, for: .normal)
                 self.connect.isEnabled = true
             }
         }

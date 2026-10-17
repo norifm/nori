@@ -15,7 +15,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,50 +32,56 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
+import dev.nori.music.ffi.AccountState
+import dev.nori.music.ffi.FormField as Field
+import dev.nori.music.ffi.ProviderInfo
+import dev.nori.music.ffi.SignIn
 import dev.nori.music.ffi.settings.SavedServer
-import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.settings.server
-import dev.nori.music.settings.serverUrl
 
 /**
- * A YouTube Music profile's account, as Spotify's and Apple Music's account rows read: who is signed in,
- * or a button to Google's sign-in page (YouTubeSignIn.kt), with pasting a browser session's cookies
- * folded under it. The sign-in itself, and what each answer means, are the core's (`youtube_sign_in`);
- * [signed] hands the account's name to the form being edited.
+ * The account of a profile whose provider signs it in apart from the form (the core's
+ * `ProviderInfo.sign_in`), as Spotify's and Apple Music's account rows read: who is signed in, or a
+ * button to the provider's sign-in page (SignInPage.kt), with pasting folded under it. The sign-in
+ * itself, and what each answer means, are the core's (`Client::sign_in`); [signed] hands the account's
+ * name to the form being edited.
  */
 @Composable
-private fun YouTubeAccountPart(vm: SettingsViewModel, signed: (String) -> Unit) {
-    val yt by vm.youtube.collectAsStateWithLifecycle()
+private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (String) -> Unit) {
+    val ui by vm.account.collectAsStateWithLifecycle()
+    val words = providerStrings(info.kind).account ?: return
     val name = vm.prefs.collectAsStateWithLifecycle().value.server?.user.orEmpty()
-    var cookies by remember { mutableStateOf("") }
-    var pasting by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { vm.lookAtYoutubeAccount() }
+    var answer by remember { mutableStateOf("") }
+    val page = info.signIn.any { it is SignIn.WebPage }
+    val pastes = info.signIn.any { it is SignIn.Paste }
+    var pasting by remember { mutableStateOf(!page) }
+    LaunchedEffect(Unit) { vm.lookAtAccount() }
     LaunchedEffect(name) { signed(name) }
-    SectionTitle(say.youtubeAccount)
-    when (yt.account) {
-        dev.nori.music.ffi.YouTubeAccount.SIGNED_IN -> {
-            Text(say.youtubeSignedInAs(name), Modifier.testTag("youtube-signed-in"))
-            PillButton(say.youtubeSignOut, null, vm::youtubeSignOut, Modifier.fillMaxWidth().testTag("youtube-sign-out"))
+    SectionTitle(say.account)
+    when (ui.account) {
+        AccountState.SIGNED_IN -> {
+            Text(say.signedInAs(name), Modifier.testTag("signed-in"))
+            PillButton(say.signOut, null, vm::signOut, Modifier.fillMaxWidth().testTag("sign-out"))
             return
         }
-        dev.nori.music.ffi.YouTubeAccount.ENDED -> Text(say.youtubeSignedOutAgain, color = MaterialTheme.colorScheme.error)
+        AccountState.ENDED -> Text(say.word(words.signedOutAgain), color = MaterialTheme.colorScheme.error)
         else -> {}
     }
-    Text(say.youtubeSignInHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    PillButton(say.youtubeSignInGoogle, null, vm::openYoutubeSignIn, Modifier.fillMaxWidth().testTag("youtube-sign-in-google"), prominent = true, enabled = !yt.busy)
-    if (!pasting) {
-        TextButton({ pasting = true }, Modifier.testTag("youtube-paste-instead")) { Text(say.youtubePasteInstead) }
-    } else {
-        Text(say.youtubePasteHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FormField(cookies, { cookies = it }, label = { Text(say.youtubeCookies) }, minLines = 3, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("youtube-cookies"))
+    Text(say.word(words.signInHint), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (page) PillButton(say.word(words.pageButton), null, vm::openSignInPage, Modifier.fillMaxWidth().testTag("sign-in-page"), prominent = true, enabled = !ui.busy)
+    if (pastes && !pasting) {
+        TextButton({ pasting = true }, Modifier.testTag("paste-instead")) { Text(say.word(words.pasteInstead)) }
+    } else if (pastes) {
+        Text(say.word(words.pasteHint), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FormField(answer, { answer = it }, label = { Text(say.word(words.pasteLabel)) }, minLines = 3, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("pasted"))
         // The sign-in page shows its own failures.
-        yt.failed?.takeIf { !yt.page }?.let { Text(say.youtubeSignIn(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("youtube-sign-in-failed")) }
+        ui.failed?.takeIf { !ui.page }?.let { Text(say.signIn(info.kind, it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("sign-in-failed")) }
         PillButton(
-            if (yt.busy) say.connecting else say.youtubeSignInAction, null, { vm.youtubeSignIn(cookies) },
-            Modifier.fillMaxWidth().testTag("youtube-sign-in"), enabled = !yt.busy && cookies.isNotBlank(),
+            if (ui.busy) say.connecting else say.signInAction, null, { vm.signIn(answer) },
+            Modifier.fillMaxWidth().testTag("sign-in"), enabled = !ui.busy && answer.isNotBlank(),
         )
     }
-    Text(say.youtubeAccountRisk, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(say.word(words.risk), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
@@ -92,14 +97,16 @@ private fun Check(title: String, detail: String, value: Boolean, onChange: (Bool
 
 /**
  * First run, and "add / edit server" from settings ([initial] and [onClose] set). A profile being added
- * picks its kind first: a server of the user's own, or YouTube Music.
+ * picks its kind first (the core's `providers`); the form then has the fields that kind's provider asks,
+ * its advanced ones folded away.
  */
 @Composable
 fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: (() -> Unit)? = null) {
     val ui by vm.login.collectAsStateWithLifecycle()
     var p by remember { mutableStateOf(initial ?: vm.newProfile()) }
     val adding = remember { initial == null || vm.prefs.value.servers.none { it.id == initial.id } }
-    val youtube = p.kind == ServerKind.YOU_TUBE_MUSIC
+    val info = vm.provider(p.kind)
+    val words = providerStrings(p.kind)
     var advanced by remember { mutableStateOf(initial != null) }
     var headers by remember { mutableStateOf(dev.nori.music.ffi.settings.serverHeadersText(p.headers)) }
     var certPassword by remember { mutableStateOf("") }
@@ -107,9 +114,39 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
     LaunchedEffect(ui.done) { if (ui.done) { vm.clearLoginResult(); onClose?.invoke() } }
 
     // Reading the form - the headers typed, the addresses trimmed, whether it can be sent, the schemes
-    // offered for an address typed without one - is the core's (settings.rs).
-    val ready = remember(p.url, p.user, p.apiKey) { dev.nori.music.ffi.settings.serverReady(p) }
+    // offered for an address typed without one - is the core's (settings.rs, providers).
+    val ready = remember(p.kind, p.url, p.user, p.apiKey) { dev.nori.music.ffi.serverReady(p) }
     val schemes = remember(p.url) { dev.nori.music.ffi.settings.serverUrlSchemes(p.url) }
+
+    /** The box for one field of the form. */
+    @Composable
+    fun Ask(what: Field) {
+        when (what) {
+            Field.NAME -> FormField(p.name, { p = p.copy(name = it) }, label = { Text(say.nameOptional) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Field.ADDRESS -> {
+                FormField(p.url, { p = p.copy(url = it) }, label = { Text(say.serverUrl) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth().testTag("url"))
+                if (schemes.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    schemes.forEach { s -> Chip(s, false) { p = p.copy(url = s + p.url) } }
+                }
+            }
+            // An API key stands in for the user and password.
+            Field.USER -> if (p.apiKey.isEmpty()) FormField(p.user, { p = p.copy(user = it) }, label = { Text(say.user) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("user"))
+            Field.PASSWORD -> if (p.apiKey.isEmpty()) FormField(p.password, { p = p.copy(password = it) }, label = { Text(say.password) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth().testTag("password"))
+            Field.SECOND_ADDRESS -> FormField(p.altUrl, { p = p.copy(altUrl = it) }, label = { Text(say.secondAddress) }, supportingText = { Text(say.secondAddressHint) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Field.API_KEY -> FormField(p.apiKey, { p = p.copy(apiKey = it) }, label = { Text(say.apiKey) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Field.HEADERS -> FormField(headers, { headers = it }, label = { Text(say.extraHeaders) }, supportingText = { Text(say.extraHeadersHint) }, minLines = 2, modifier = Modifier.fillMaxWidth())
+            Field.LEGACY_AUTH -> Check(say.legacyAuth, say.legacyAuthHint, p.legacyAuth) { p = p.copy(legacyAuth = it) }
+            Field.SELF_SIGNED -> Check(say.selfSigned, say.selfSignedHint, p.allowSelfSigned) { p = p.copy(allowSelfSigned = it) }
+            Field.WIFI_ONLY -> Check(say.wifiOnly, say.wifiOnlyHint, p.wifiOnly) { p = p.copy(wifiOnly = it) }
+            Field.CLIENT_CERT -> {
+                FormField(certPassword, { certPassword = it }, label = { Text(say.clientCertPassword) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton({ pickCert.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) }) { Text(if (p.clientCert.isEmpty()) say.importClientCert else say.replaceClientCert) }
+                    if (p.clientCert.isNotEmpty()) TextButton({ p = p.copy(clientCert = "", clientCertPassword = "") }) { Text(say.remove) }
+                }
+            }
+        }
+    }
 
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
@@ -117,57 +154,26 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
                 if (initial == null) "nori" else say.server,
                 style = MaterialTheme.typography.displaySmall, modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
             )
-            if (adding) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip(say.profileKindServer, !youtube, Modifier.testTag("kind-server")) { p = p.copy(kind = ServerKind.SUBSONIC) }
-                Chip(say.youtubeMusic, youtube, Modifier.testTag("kind-youtube")) { p = p.copy(kind = ServerKind.YOU_TUBE_MUSIC) }
+            if (adding && vm.providers.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                vm.providers.forEach { k -> Chip(say.word(providerStrings(k.kind).name), p.kind == k.kind, Modifier.testTag("kind-${k.kind.name.lowercase()}")) { p = p.copy(kind = k.kind) } }
             }
-            if (youtube) {
-                Text(say.youtubeMusicHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FormField(p.name, { p = p.copy(name = it) }, label = { Text(say.nameOptional) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                PillButton(
-                    if (adding) say.youtubeMusicAdd else say.save, null, { vm.login(p) },
-                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true, enabled = !ui.busy,
-                )
-                // Signing in is the profile in use's: its core asks YouTube.
-                if (!adding && p.id == vm.prefs.value.activeServerId) YouTubeAccountPart(vm) { name -> p = p.copy(user = name) }
-                onClose?.let { TextButton(it) { Text(say.cancel) } }
-                return@Column
-            }
-            if (initial == null) Text(say.serverHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FormField(p.url, { p = p.copy(url = it) }, label = { Text(say.serverUrl) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth().testTag("url"))
-            if (schemes.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                schemes.forEach { s -> Chip(s, false) { p = p.copy(url = s + p.url) } }
-            }
-            if (p.apiKey.isEmpty()) {
-                FormField(p.user, { p = p.copy(user = it) }, label = { Text(say.user) }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("user"))
-                FormField(p.password, { p = p.copy(password = it) }, label = { Text(say.password) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth().testTag("password"))
-            }
+            if (adding) Text(say.word(words.hint), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            info?.fields?.filter { !it.advanced }?.forEach { Ask(it.what) }
             ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             PillButton(
-                if (ui.busy) say.connecting else say.connect, null,
+                if (ui.busy) say.connecting else if (adding) say.word(words.add) else say.save, null,
                 { vm.login(dev.nori.music.ffi.settings.serverFromForm(p, headers)) },
-                Modifier.fillMaxWidth().padding(top = 4.dp), prominent = true,
+                Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true,
                 enabled = !ui.busy && ready,
             )
+            // Signing in is the profile in use's: its core asks the provider.
+            if (info != null && info.signIn.isNotEmpty() && !adding && p.id == vm.prefs.value.activeServerId) AccountPart(vm, info) { name -> p = p.copy(user = name) }
+            val folded = info?.fields?.filter { it.advanced }.orEmpty()
             Row {
-                TextButton({ advanced = !advanced }) { Text(if (advanced) say.hideAdvanced else say.advanced) }
+                if (folded.isNotEmpty()) TextButton({ advanced = !advanced }) { Text(if (advanced) say.hideAdvanced else say.advanced) }
                 onClose?.let { TextButton(it) { Text(say.cancel) } }
             }
-            if (advanced) {
-                FormField(p.name, { p = p.copy(name = it) }, label = { Text(say.nameOptional) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                FormField(p.altUrl, { p = p.copy(altUrl = it) }, label = { Text(say.secondAddress) }, supportingText = { Text(say.secondAddressHint) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                FormField(p.apiKey, { p = p.copy(apiKey = it) }, label = { Text(say.apiKey) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                FormField(headers, { headers = it }, label = { Text(say.extraHeaders) }, supportingText = { Text(say.extraHeadersHint) }, minLines = 2, modifier = Modifier.fillMaxWidth())
-                Check(say.legacyAuth, say.legacyAuthHint, p.legacyAuth) { p = p.copy(legacyAuth = it) }
-                Check(say.selfSigned, say.selfSignedHint, p.allowSelfSigned) { p = p.copy(allowSelfSigned = it) }
-                Check(say.wifiOnly, say.wifiOnlyHint, p.wifiOnly) { p = p.copy(wifiOnly = it) }
-                FormField(certPassword, { certPassword = it }, label = { Text(say.clientCertPassword) }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton({ pickCert.launch(arrayOf("application/x-pkcs12", "application/octet-stream", "*/*")) }) { Text(if (p.clientCert.isEmpty()) say.importClientCert else say.replaceClientCert) }
-                    if (p.clientCert.isNotEmpty()) TextButton({ p = p.copy(clientCert = "", clientCertPassword = "") }) { Text(say.remove) }
-                }
-            }
+            if (advanced) folded.forEach { Ask(it.what) }
         }
     }
 }

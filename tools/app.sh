@@ -47,5 +47,5 @@ case "${1:-}" in
     send state ;;
   open|play|state|set|login|do|remote|queuesaved|webcookies) send "$@" ;;
   wake) adb shell input keyevent 224 >/dev/null; adb shell wm dismiss-keyguard >/dev/null 2>&1; sleep 1 ;;
-  *) echo "usage: app.sh launch|open <route>|play <ref>|do <action>|login <url|user|pass>|login youtube-music|set <name> <value>|state|queuesaved|webcookies|wake" >&2; exit 2 ;;
+  *) echo "usage: app.sh launch|open <route>|play <ref>|do <action>|login <url|user|pass>|login kind:<KIND>|set <name> <value>|state|queuesaved|webcookies|wake" >&2; exit 2 ;;
 esac

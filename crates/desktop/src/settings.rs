@@ -509,13 +509,13 @@ impl Build<'_> {
             .iter()
             .map(|sv| {
                 let active = sv.id == p.active_server_id;
-                let youtube = sv.kind == nori_core::settings::ServerKind::YouTubeMusic;
-                let who = if youtube { "best effort" } else if sv.user.is_empty() { "API key" } else { sv.user.as_str() };
+                let words = crate::words::provider(sv.kind);
+                let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
                 let mut detail = format!("{who} · {}", if active { "in use" } else { "not in use" });
                 if !sv.alt_url.trim().is_empty() {
                     detail.push_str(" · second address");
                 }
-                let title = if youtube && sv.name.trim().is_empty() { "YouTube Music".into() } else { nori_core::settings::label(&sv.name, &sv.url) };
+                let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
                 Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, ..Default::default() }
             })
             .collect();

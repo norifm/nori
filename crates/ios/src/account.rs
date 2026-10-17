@@ -3,10 +3,9 @@
 use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
-use nori_core::client::login_check;
+use nori_core::providers::{check_profile, providers, server_for_login, server_ready, FormField};
 use nori_core::settings::{
-    server_for_login, servers_activated, servers_removed, SavedServer, ServerKind, ServerList,
-    StoredPrefs,
+    servers_activated, servers_removed, SavedServer, ServerKind, ServerList, StoredPrefs,
 };
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, FailureKind, NetError};
@@ -62,21 +61,18 @@ fn opened(dir: &Path) -> Result<(std::sync::Arc<Settings>, StoredPrefs), String>
     Ok((settings, prefs))
 }
 
+/// A profile's name, otherwise its user, otherwise its address; empty for none of them (the app then
+/// calls it by its kind).
 fn label(s: &SavedServer) -> String {
-    let name = s.name.trim();
-    if !name.is_empty() {
-        name.to_string()
-    } else if s.kind == ServerKind::YouTubeMusic {
-        "YouTube Music".to_string()
-    } else if !s.user.trim().is_empty() {
-        s.user.trim().to_string()
-    } else {
-        s.url.clone()
-    }
+    [s.name.trim(), s.user.trim(), s.url.as_str()]
+        .into_iter()
+        .find(|l| !l.is_empty())
+        .unwrap_or_default()
+        .to_string()
 }
 
-/// The active server's label, or empty when none are saved.
-pub(crate) fn active(dir: &Path) -> Result<String, String> {
+/// The active server's label and kind; None when none are saved.
+pub(crate) fn active(dir: &Path) -> Result<Option<(String, ServerKind)>, String> {
     let (_, prefs) = opened(dir)?;
     let id = &prefs.active_server_id;
     let server = prefs
@@ -84,7 +80,7 @@ pub(crate) fn active(dir: &Path) -> Result<String, String> {
         .iter()
         .find(|s| &s.id == id)
         .or_else(|| prefs.servers.first());
-    Ok(server.map(label).unwrap_or_default())
+    Ok(server.map(|s| (label(s), s.kind)))
 }
 
 /// Writes `profile` as the active server and waits until the database has it.
@@ -105,13 +101,16 @@ fn list_of(prefs: &mut StoredPrefs) -> ServerList {
     }
 }
 
-/// The saved servers as `(id, label, address, active)`, in the order they were saved.
-pub(crate) fn servers(dir: &Path) -> Result<Vec<(String, String, String, bool)>, String> {
+/// The saved servers as `{id, label, url, active, kind}`, in the order they were saved.
+pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
     let (_, prefs) = opened(dir)?;
     Ok(prefs
         .servers
         .iter()
-        .map(|s| (s.id.clone(), label(s), s.url.clone(), s.id == prefs.active_server_id))
+        .map(|s| {
+            let active = s.id == prefs.active_server_id;
+            serde_json::json!({ "id": s.id, "label": label(s), "url": s.url, "active": active, "kind": s.kind.id() })
+        })
         .collect())
 }
 
@@ -161,8 +160,8 @@ pub(crate) fn fail(e: NetError) -> (i32, Option<String>) {
     }
 }
 
-/// The login form as the app sends it. `name`, `alt` (the second address) and `key` (an API key) are
-/// the advanced fields and may be empty; a YouTube Music profile has only its `name`.
+/// The login form as the app sends it: the fields its kind asks (`nori_ios_providers`); any may be
+/// empty. `alt` is the second address, `key` an API key.
 #[derive(Debug, Default)]
 pub(crate) struct Form {
     pub kind: ServerKind,
@@ -175,13 +174,13 @@ pub(crate) struct Form {
 }
 
 impl Form {
-    /// The app's JSON `{kind, url, user, password, name, alt, key}`; a missing field is empty, and
-    /// `kind` is `"youtubeMusic"` for YouTube Music, else a server's.
+    /// The app's JSON `{kind, url, user, password, name, alt, key}`; a missing field is empty, and an
+    /// unknown `kind` a server's.
     fn parse(json: &str) -> Form {
         let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
         let field = |k: &str| v[k].as_str().unwrap_or_default().to_string();
         Form {
-            kind: if field("kind") == "youtubeMusic" { ServerKind::YouTubeMusic } else { ServerKind::Subsonic },
+            kind: ServerKind::from_id(&field("kind")).unwrap_or_default(),
             url: field("url"),
             user: field("user"),
             password: field("password"),
@@ -192,37 +191,58 @@ impl Form {
     }
 }
 
-/// The profile `form` asks for, or None when it lacks an address, or both a user and an API key.
+/// The profile `form` asks for, of the fields its kind asks; None when the form cannot be sent yet
+/// (a server's lacks an address, or both a user and an API key).
 fn draft(form: &Form) -> Option<SavedServer> {
-    if form.kind == ServerKind::YouTubeMusic {
-        return Some(SavedServer {
-            id: nori_core::settings::new_server_id(),
-            kind: ServerKind::YouTubeMusic,
-            name: form.name.trim().to_string(),
-            ..SavedServer::default()
-        });
-    }
-    let url = address(&form.url);
-    let user = form.user.trim();
-    let key = form.key.trim();
-    if url.len() < 8 || (user.is_empty() && key.is_empty()) {
-        return None;
-    }
-    let alt = form.alt.trim();
-    Some(SavedServer {
+    let info = providers().into_iter().find(|p| p.kind == form.kind)?;
+    let asks = |what| info.fields.iter().any(|f| f.what == what);
+    let typed = |what, text: &str| if asks(what) { text.trim().to_string() } else { String::new() };
+    let profile = SavedServer {
         id: nori_core::settings::new_server_id(),
-        name: form.name.trim().to_string(),
-        url,
-        alt_url: if alt.is_empty() { String::new() } else { address(alt) },
-        user: user.to_string(),
-        password: form.password.clone(),
-        api_key: key.to_string(),
+        kind: form.kind,
+        name: typed(FormField::Name, &form.name),
+        url: address(&typed(FormField::Address, &form.url)),
+        alt_url: address(&typed(FormField::SecondAddress, &form.alt)),
+        user: typed(FormField::User, &form.user),
+        password: if asks(FormField::Password) { form.password.clone() } else { String::new() },
+        api_key: typed(FormField::ApiKey, &form.key),
         ..SavedServer::default()
-    })
+    };
+    server_ready(profile.clone()).then_some(profile)
 }
 
-/// Pings the server and, when it answers, saves the profile as the active one. YouTube Music has no
-/// server to ping.
+/// The kinds of profile the login page offers, as JSON to free: `[{kind, fields: [{what, advanced}]}]`,
+/// `kind` as the settings store it, `what` one of the form's JSON keys (`name`, `url`, `user`,
+/// `password`, `alt`, `key`); fields the page has no box for are left out.
+#[no_mangle]
+pub extern "C" fn nori_ios_providers() -> *mut c_char {
+    let rows: Vec<serde_json::Value> = providers()
+        .into_iter()
+        .map(|p| {
+            let fields: Vec<serde_json::Value> = p
+                .fields
+                .iter()
+                .filter_map(|f| {
+                    let what = match f.what {
+                        FormField::Name => "name",
+                        FormField::Address => "url",
+                        FormField::User => "user",
+                        FormField::Password => "password",
+                        FormField::SecondAddress => "alt",
+                        FormField::ApiKey => "key",
+                        _ => return None,
+                    };
+                    Some(serde_json::json!({ "what": what, "advanced": f.advanced }))
+                })
+                .collect();
+            serde_json::json!({ "kind": p.kind.id(), "fields": fields })
+        })
+        .collect();
+    owned(&serde_json::Value::from(rows).to_string()).into_raw()
+}
+
+/// Checks the profile with its provider (a server is pinged) and, when it passes, saves it as the
+/// active one.
 pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
     let Some(draft) = draft(form) else {
         return (LOGIN_INCOMPLETE, None);
@@ -238,23 +258,9 @@ pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
         },
         draft,
     );
-    if draft.kind == ServerKind::YouTubeMusic {
-        return match keep(dir, draft) {
-            Ok(()) => (LOGIN_OK, None),
-            Err(e) => (LOGIN_DATABASE, Some(e)),
-        };
-    }
-    let legacy = match block_on(login_check(
-        Http::new(),
-        nori_host::config(&draft),
-        draft.alt_url.clone(),
-    )) {
-        Ok(v) => v,
+    let profile = match block_on(check_profile(Http::new(), draft)) {
+        Ok(p) => p,
         Err(e) => return fail(e),
-    };
-    let profile = SavedServer {
-        legacy_auth: legacy || draft.legacy_auth,
-        ..draft
     };
     match keep(dir, profile) {
         Ok(()) => (LOGIN_OK, None),
@@ -262,7 +268,8 @@ pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
     }
 }
 
-/// The active server's label. Empty when none are saved; NULL for an unreadable path.
+/// The active server as JSON to free, `{label, kind}` (`{}` when none are saved); NULL for an
+/// unreadable path.
 ///
 /// # Safety
 /// `data_dir` is NUL-terminated UTF-8, or NULL.
@@ -273,7 +280,10 @@ pub unsafe extern "C" fn nori_ios_active(data_dir: *const c_char) -> *mut c_char
         return std::ptr::null_mut();
     }
     match active(Path::new(&dir)) {
-        Ok(label) => owned(&label).into_raw(),
+        Ok(found) => {
+            let row = found.map_or(serde_json::json!({}), |(label, kind)| serde_json::json!({ "label": label, "kind": kind.id() }));
+            owned(&row.to_string()).into_raw()
+        }
         Err(_) => std::ptr::null_mut(),
     }
 }
@@ -306,22 +316,16 @@ pub unsafe extern "C" fn nori_ios_login(
     code
 }
 
-/// The saved servers as JSON to free: `[{id, label, url, active}]`. NULL for an unreadable path.
+/// The saved servers as JSON to free: `[{id, label, url, active, kind}]`. NULL for an unreadable path.
 ///
 /// # Safety
 /// `data_dir` is NUL-terminated UTF-8, or NULL.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_servers(data_dir: *const c_char) -> *mut c_char {
     let dir = text(data_dir);
-    let Ok(list) = servers(Path::new(&dir)) else {
+    let Ok(rows) = servers(Path::new(&dir)) else {
         return std::ptr::null_mut();
     };
-    let rows: Vec<serde_json::Value> = list
-        .into_iter()
-        .map(|(id, label, url, active)| {
-            serde_json::json!({ "id": id, "label": label, "url": url, "active": active })
-        })
-        .collect();
     owned(&serde_json::Value::from(rows).to_string()).into_raw()
 }
 
@@ -362,14 +366,14 @@ mod tests {
         let dir = nori_testdir::TempDir::new("ios-pick");
         keep(dir.path(), profile("one", "ada")).unwrap();
         keep(dir.path(), profile("two", "bob")).unwrap();
-        assert_eq!(active(dir.path()).unwrap(), "bob");
+        assert_eq!(active(dir.path()).unwrap().unwrap().0, "bob");
         assert!(pick(dir.path(), "one").unwrap());
         assert!(!pick(dir.path(), "nope").unwrap());
-        assert_eq!(active(dir.path()).unwrap(), "ada");
+        assert_eq!(active(dir.path()).unwrap().unwrap().0, "ada");
         remove(dir.path(), "one").unwrap();
         let left = servers(dir.path()).unwrap();
         assert_eq!(left.len(), 1);
-        assert_eq!((left[0].0.as_str(), left[0].3), ("two", true));
+        assert_eq!((&left[0]["id"], &left[0]["active"]), (&serde_json::json!("two"), &serde_json::json!(true)));
     }
 
     #[test]
@@ -383,7 +387,7 @@ mod tests {
             ..SavedServer::default()
         };
         keep(dir.path(), profile).unwrap();
-        assert_eq!(active(dir.path()).unwrap(), "ada");
+        assert_eq!(active(dir.path()).unwrap(), Some(("ada".into(), ServerKind::Subsonic)));
     }
 
     #[test]
@@ -392,7 +396,7 @@ mod tests {
         let form = Form { url: "http://127.0.0.1:1".into(), user: "ada".into(), password: "secret".into(), ..Form::default() };
         let (code, _) = login(dir.path(), &form);
         assert_eq!(code, LOGIN_UNREACHABLE);
-        assert_eq!(active(dir.path()).unwrap(), "");
+        assert_eq!(active(dir.path()).unwrap(), None);
     }
 
     #[test]
@@ -413,14 +417,20 @@ mod tests {
         assert_eq!((parsed.user.as_str(), parsed.alt.as_str(), parsed.key.as_str()), ("ada", "a", ""));
     }
 
+    /// A kind whose form asks no address saves without asking a server, of only the fields it asks,
+    /// and added again is the same profile.
     #[test]
-    fn a_youtube_music_profile_is_saved_without_a_server() {
-        let dir = nori_testdir::TempDir::new("ios-youtube");
-        let form = Form::parse(r#"{"kind":"youtubeMusic","url":"http://127.0.0.1:1"}"#);
+    fn a_profile_without_a_server_is_saved_as_its_form_asks() {
+        let dir = nori_testdir::TempDir::new("ios-no-server");
+        let info = providers().into_iter().find(|p| !p.fields.iter().any(|f| f.what == FormField::Address)).expect("a kind without a server");
+        let form = Form::parse(&serde_json::json!({ "kind": info.kind.id(), "url": "http://127.0.0.1:1", "user": "ada" }).to_string());
         assert_eq!(login(dir.path(), &form).0, LOGIN_OK);
-        assert_eq!(active(dir.path()).unwrap(), "YouTube Music");
+        assert_eq!(active(dir.path()).unwrap(), Some((String::new(), info.kind)), "no address or user kept");
         assert_eq!(login(dir.path(), &form).0, LOGIN_OK);
         assert_eq!(servers(dir.path()).unwrap().len(), 1, "added again, the same profile");
+        let offered: serde_json::Value = serde_json::from_str(&text(nori_ios_providers())).unwrap();
+        assert_eq!(offered[0]["kind"], "subsonic");
+        assert!(offered.as_array().unwrap().iter().any(|p| p["kind"] == info.kind.id()));
     }
 
     #[test]

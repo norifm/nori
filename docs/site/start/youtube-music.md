@@ -22,7 +22,7 @@ or playback stops working until nori is updated. Your own server is the reliable
   instead of **Your server**, then **Add YouTube Music**. A name is optional.
 - **Desktop**: on the sign-in page, pick **YouTube Music**, then **Add YouTube Music**.
 - **iPod touch**: on **Add a server**, pick **YouTube Music**.
-- **Terminal**: start `nori-cli --youtube-music`.
+- **Terminal**: start `nori-cli --provider youtubeMusic`.
 
 It shows in the server list like any other profile, marked best effort, and you switch between it and
 your servers the same way. Adding it again opens the same profile.
@@ -60,7 +60,7 @@ On Android, **Paste cookies instead** under **Sign in with Google** opens the fi
    - **Android**: Settings, Servers, tap the YouTube Music profile (it must be the one in use),
      **Paste cookies instead**, paste into **Cookies**, **Sign In**.
    - **Terminal**: save it to a file and run
-     `nori-cli --script --youtube-music --sign-in cookies.txt --home`.
+     `nori-cli --script --provider youtubeMusic --sign-in cookies.txt --home`.
 
 nori keeps the session fresh by itself from then on: it renews it whenever the profile is used and it
 is more than ten minutes old, and keeps every change YouTube makes to it at once. A network failure never

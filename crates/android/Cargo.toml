@@ -33,7 +33,7 @@ nori-player = { path = "../player" }
 nori-look = { path = "../look" }
 nori-covers = { path = "../covers" }
 async-trait = "0.1"
-nori-engine = { path = "../engine", features = ["core", "youtube"] }
+nori-engine = { path = "../engine", features = ["core"] }
 libc = "0.2"
 jni = { version = "0.21", default-features = false }
 parking_lot = "0.12"

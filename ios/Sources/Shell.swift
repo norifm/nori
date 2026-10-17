@@ -542,7 +542,9 @@ final class SettingsPage: UITableViewController {
     @objc private func load() {
         let dir = dataDirectory().path
         DispatchQueue.global(qos: .userInitiated).async {
-            let label = dir.withCString { taken(nori_ios_active($0)) } ?? ""
+            let active = dir.withCString { takenJSON(nori_ios_active($0)) } as? [String: Any] ?? [:]
+            let label = (active["label"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (active["kind"] as? String).map { Say.provider($0).name } ?? ""
             let rows = takenJSON(nori_ios_settings()) as? [[String: Any]] ?? []
             let facts = takenJSON(nori_ios_facts()) as? [String: Any] ?? [:]
             DispatchQueue.main.async {

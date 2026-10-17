@@ -29,7 +29,8 @@ final class ServersPage: UITableViewController {
         DispatchQueue.global(qos: .userInitiated).async {
             let rows = dataDirectory().path.withCString { takenJSON(nori_ios_servers($0)) } as? [[String: Any]] ?? []
             let saved = rows.map {
-                Saved(id: $0["id"] as? String ?? "", label: $0["label"] as? String ?? "",
+                Saved(id: $0["id"] as? String ?? "",
+                      label: ($0["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? Say.provider($0["kind"] as? String ?? "").name,
                       url: $0["url"] as? String ?? "", active: $0["active"] as? Bool ?? false)
             }
             DispatchQueue.main.async {

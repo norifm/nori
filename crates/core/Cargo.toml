@@ -12,7 +12,7 @@ name = "nori_core"
 
 [features]
 default = ["ffi", "youtube"]
-# YouTube Music profiles (innertube-music). Off in the web client, which has none.
+# The YouTube Music provider (innertube-music). Off in the web client, which has none.
 youtube = ["dep:innertube-music"]
 # The optional neural beat tracker and its model download (enabled by nori-engine's `neural-beats`).
 neural-beats = ["nori-player/neural-beats", "dep:sha2"]
@@ -46,7 +46,7 @@ nori-perf = { path = "../perf" }
 nori-remote = { path = "../remote" }
 # Where the remote's polls, time keeper and sends run.
 nori-tasks = { path = "../tasks" }
-# A YouTube Music profile's reads and streams.
+# The YouTube Music provider's reads and streams.
 innertube-music = { path = "../youtube", optional = true }
 # The beat model's file is checked against its pinned SHA-256.
 sha2 = { version = "0.11", optional = true }

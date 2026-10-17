@@ -406,7 +406,7 @@ fn read(token: u64, kind: i32, arg: String) {
         return;
     };
     match kind {
-        // A service's own Home (YouTube Music's): its shelves, titled as it titles them; their songs one
+        // A source's own Home (`ProfileRules::feed`): its shelves, titled as it titles them; their songs one
         // list for taps.
         PAGE_HOME if core.rules().feed => pages(&client, token, Read::HomeFeed, &|p| {
             let Page::Feed { v } = p else { return None };

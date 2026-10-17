@@ -146,14 +146,13 @@ pub const ALBUM_PAGE: u32 = 500;
 /// Key prefix of album card covers in [`crate::art::Art`]: `thumb:<cover id>`.
 pub const THUMB: &str = "thumb:";
 
-/// Logs `draft` in (blocking). The core tries the second address and falls back to legacy auth, which
-/// is then kept on the profile.
+/// Logs `draft` in (blocking): the core checks it with its provider (a server is tried through its
+/// second address, then with legacy auth, which the profile then keeps).
 pub fn check_login(http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    let legacy = block_on(nori_core::client::login_check(http, nori_host::config(&draft), draft.alt_url.clone())).map_err(|e| match net_error(&e) {
+    block_on(nori_core::providers::check_profile(http, draft)).map_err(|e| match net_error(&e) {
         e if e.is_empty() => "the server did not answer".to_string(),
         e => e,
-    })?;
-    Ok(SavedServer { legacy_auth: legacy || draft.legacy_auth, ..draft })
+    })
 }
 
 /// The app's queue session over its settings: the client's object graph root, which every screen reads.
@@ -282,7 +281,7 @@ impl Session {
                 }
             };
             match &req {
-                // A service's own Home (YouTube Music's): its feed, as shelves of albums.
+                // A source's own Home: its feed, as shelves of albums.
                 Req::Home if core.rules().feed => {
                     let r = read_pages(&client, Read::HomeFeed, |p| {
                         if let Page::Feed { v } = p {

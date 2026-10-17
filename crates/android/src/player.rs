@@ -25,7 +25,7 @@ use nori_engine::ahead::{Ahead, Entry, Keeping};
 use nori_engine::arriving::Listening;
 use nori_core::client::CurrentClient;
 use nori_core::queue::is_radio;
-use nori_engine::core::{ahead_songs, key_format, measuring_ahead, settings, Analyses, CoreApp, CoreQueue, OutputVolume, Resolving};
+use nori_engine::core::{ahead_songs, key_format, measuring_ahead, resolving, settings, Analyses, CoreApp, CoreQueue, OutputVolume};
 use nori_engine::{Body, ByteSource, Cancel, Coded, Coding, Config, Device, Engine, Event, Library, Located, OffloadOutput, OpenError, OutputFacts, OutputFormat, Source, State, Support};
 use nori_player::transitions::WindowSong;
 use parking_lot::Mutex;
@@ -1238,14 +1238,6 @@ impl Library for AndroidLibrary {
         }
         let said = cache_words(&self.bridge, &target.key, |j| j.forget).unwrap_or_else(|| "Kotlin could not be asked".into());
         log(&format!("{id} is fetched anew: its stream cache entry goes ({said})"));
-    }
-}
-
-/// `bytes`, opening a YouTube Music profile's songs at the URLs YouTube serves them at ([`Resolving`]).
-fn resolving(client: &Arc<nori_core::client::Client>, bytes: Arc<dyn ByteSource>) -> Arc<dyn ByteSource> {
-    match client.core().kind() {
-        nori_core::settings::ServerKind::Subsonic => bytes,
-        nori_core::settings::ServerKind::YouTubeMusic => Arc::new(Resolving { bytes, client: client.clone() }),
     }
 }
 

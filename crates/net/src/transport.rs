@@ -69,7 +69,7 @@ pub fn get_failed(status: u16, body_empty: bool) -> bool {
 pub struct TransportResponse {
     pub status: u16,
     pub body: Vec<u8>,
-    /// The answer's `Set-Cookie` values (a signed-in YouTube Music session's rotated cookies).
+    /// The answer's `Set-Cookie` values (a provider session's rotated cookies).
     #[cfg_attr(feature = "ffi", uniffi(default))]
     pub set_cookies: Vec<String>,
 }

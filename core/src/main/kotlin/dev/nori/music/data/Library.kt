@@ -165,7 +165,7 @@ class Library(
     fun artistInfo(id: String): Flow<ArtistInfo> = cached(Read.ArtistAbout(id)) { (it as Page.About).v }
     fun topSongs(artist: String): Flow<List<Song>> = cached(Read.TopSongs(artist)) { (it as Page.Songs).v }
     fun playlists(): Flow<List<Playlist>> = cached(Read.PlaylistList) { (it as Page.Playlists).v }
-    /** The service's own home feed (YouTube Music's), shelf by shelf. */
+    /** The source's own home feed (`ProfileRules.feed`), shelf by shelf. */
     fun homeFeed(): Flow<List<dev.nori.music.ffi.model.FeedShelf>> = cached(Read.HomeFeed) { (it as Page.Feed).v }
     fun playlist(id: String): Flow<PlaylistDetail> = cached(Read.PlaylistById(id)) { (it as Page.PlaylistPage).v }
     /** The favourites, with this session's marks laid over them by the core as they are read. */
@@ -333,20 +333,21 @@ class Library(
 
     suspend fun indexSize(): IngestStats = withContext(Dispatchers.IO) { core.indexSize() }
 
-    /** The signed prefix a server's cover addresses start with; null where the core makes each one (YouTube Music's). */
+    /** The signed prefix the profile's cover addresses start with; null where the core makes each one. */
     private class CoverForm(val prefix: String?)
     @Volatile private var coverForm: CoverForm? = null
 
     /**
      * Called for every row a list draws, on the UI thread: plain string work, no FFI. The core signs the
      * prefix once (per server and address) and says how the rest is put together (`cover_rules`); a row
-     * only appends its id and size, which is cheaper than any crossing into the core would be. A YouTube
-     * Music cover is an address of its own, sized by the core (`cover_address`).
+     * only appends its id and size, which is cheaper than any crossing into the core would be. A provider
+     * without a prefix (`cover_prefix`) has an address of its own for each cover, sized by the core
+     * (`cover_address`).
      */
     fun coverUrl(id: String?, size: Int): String? {
         if (id == null) return null
         val form = coverForm ?: core.let { c ->
-            CoverForm((c.urlPrefix("getCoverArt") + Covers.rules.idParam).takeIf { c.kind() == dev.nori.music.ffi.settings.ServerKind.SUBSONIC })
+            CoverForm(c.coverPrefix()?.plus(Covers.rules.idParam))
         }.also { coverForm = it }
         val prefix = form.prefix ?: return core.coverAddress(id, size.toUInt())
         return prefix + android.net.Uri.encode(id) + Covers.rules.sizeParam + size

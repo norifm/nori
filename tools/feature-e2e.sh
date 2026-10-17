@@ -175,19 +175,20 @@ fi
 if want youtube-music; then section "a YouTube Music profile, then the server's again (YouTube's to answer)"
   # The song's address is resolved through the core and its bytes come through media3's data source
   # from googlevideo: the glue Rust's tests stand in for. Opt-in, since YouTube may refuse on any day.
-  "$app" login youtube-music >/dev/null
+  "$app" login kind:YOU_TUBE_MUSIC >/dev/null
   check "the YouTube Music profile opens" wait_for kind YOU_TUBE_MUSIC 20
-  # Google's sign-in page is a WebView of the app's own; when it is done is Rust's (auth::signed_in_at).
+  # Google's sign-in page is the provider's sign-in page, a WebView of the app's own; when it is done is
+  # Rust's (the provider's sign_in_done, auth::signed_in_at).
   # That it opens, and that Cancel leaves the WebView no cookies, only a device can say.
-  if [ "$(field youtubeOffer)" = True ]; then
+  if [ "$(field signInOffer)" = True ]; then
     check "the profile just added offers Google's sign-in" tapnode text "Sign in with Google"
   else
-    "$app" open youtube-sign-in >/dev/null
+    "$app" open sign-in >/dev/null
   fi
-  check "the sign-in page opens" wait_for youtubeSignInPage True 10
+  check "the sign-in page opens" wait_for signInPage True 10
   check "and shows Google's sign-in form" wait_until 30 on_screen 'text="to continue to YouTube"'
   tapnode text Cancel
-  check "Cancel closes it" wait_for youtubeSignInPage False 10
+  check "Cancel closes it" wait_for signInPage False 10
   no_web_cookies() { [ "$("$app" webcookies)" = "cookies 0" ]; }
   check "and leaves the WebView no cookies" wait_until 10 no_web_cookies
   "$app" play "search:daft punk one more time" >/dev/null

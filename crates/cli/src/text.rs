@@ -4,23 +4,55 @@ use nori_core::beat_model::BeatFailure;
 use nori_core::lyrics_sources::LyricsOrigin;
 use nori_core::numbers::{self, POINT};
 use nori_core::profiles::CurveNotice;
-use nori_core::settings::{BandMark, EqBypass};
+use nori_core::providers::SignInResult;
+use nori_core::settings::{BandMark, EqBypass, ServerKind};
 use nori_core::transport::{FailureKind, NetError};
 use nori_core::remote::wire::{DeviceKind, Refusal, Role};
 use nori_core::remote::{KindWords, Listening, RemoteDevice};
 use nori_core::{AlbumDetail, PlaylistDetail, PresetKind, Song};
 
-/// The name a YouTube Music profile is added under: it works until YouTube changes it.
-pub const YOUTUBE_MUSIC: &str = "YouTube Music (best effort)";
+/// What the terminal says of a kind of profile (nori-core's providers): the only words a provider
+/// needs here.
+pub struct ProviderWords {
+    /// What a profile of the kind is called without a name of its own.
+    pub name: &'static str,
+    /// Under a profile that names no user.
+    pub no_user: &'static str,
+    /// A sign-in's answer held no signed-in session.
+    pub no_session: &'static str,
+    /// The source did not take the sign-in.
+    pub refused: &'static str,
+    /// The source could not be asked.
+    pub unreachable: &'static str,
+}
 
-/// How a YouTube Music sign-in went.
-pub fn youtube_sign_in(r: &nori_core::youtube::YouTubeSignIn) -> String {
-    use nori_core::youtube::YouTubeSignIn::*;
+pub fn provider(kind: ServerKind) -> ProviderWords {
+    match kind {
+        ServerKind::Subsonic => ProviderWords {
+            name: "Your server",
+            no_user: "API key",
+            no_session: "That isn't a signed-in session",
+            refused: "The server didn't accept this sign-in",
+            unreachable: "Couldn't reach the server",
+        },
+        ServerKind::YouTubeMusic => ProviderWords {
+            name: "YouTube Music",
+            no_user: "best effort",
+            no_session: "These aren't a signed-in session's cookies: copy them from music.youtube.com while signed in",
+            refused: "YouTube didn't accept these cookies: sign in again in a private window and copy them anew",
+            unreachable: "Couldn't reach YouTube",
+        },
+    }
+}
+
+/// How a sign-in to a `kind` profile went.
+pub fn sign_in(kind: ServerKind, r: &SignInResult) -> String {
+    let w = provider(kind);
     match r {
-        SignedIn { name } => format!("Signed in to YouTube Music as {name}"),
-        NoSession => "These aren't a signed-in session's cookies: copy them from music.youtube.com while signed in".into(),
-        Refused => "YouTube didn't accept these cookies: sign in again in a private window and copy them anew".into(),
-        Unreachable { reason } => format!("Couldn't reach YouTube ({reason}); nothing changed"),
+        SignInResult::SignedIn { name } => format!("Signed in to {} as {name}", w.name),
+        SignInResult::NoSession => w.no_session.into(),
+        SignInResult::Refused => w.refused.into(),
+        SignInResult::Unreachable { reason } => format!("{} ({reason}); nothing changed", w.unreachable),
     }
 }
 

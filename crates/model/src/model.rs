@@ -292,7 +292,7 @@ pub struct Genre {
     pub album_count: u32,
 }
 
-/// One row of a service's own home feed (YouTube Music's), titled as the service titles it.
+/// One row of a source's own home feed (`ProfileRules::feed`), titled as the source titles it.
 #[derive(Debug, Clone, Default, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct FeedShelf {

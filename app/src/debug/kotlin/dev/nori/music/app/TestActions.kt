@@ -88,7 +88,7 @@ object TestActions {
 
     /**
      * "song:<id>", "album:<id>", "search:<text>" (first song hit), "downloaded:<n>", or "home" (the first
-     * song shelf of the service's own Home, YouTube Music's, read as its page reads it). An album is played
+     * song shelf of the source's own Home, read as its page reads it). An album is played
      * as its page's Play plays it, so the page answers for it.
      */
     fun playByRef(context: Context, actions: ActionsViewModel, ref: String) = actions.attempt(null) {

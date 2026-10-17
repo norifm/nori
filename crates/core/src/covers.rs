@@ -112,15 +112,9 @@ impl Core {
             .collect()
     }
 
-    /// The URL of cover `id` at `size` px ([`cover_url_into`]).
+    /// The URL of cover `id` at `size` px, as the profile's provider makes it.
     pub fn cover_address(&self, id: String, size: u32) -> String {
-        #[cfg(feature = "youtube")]
-        if self.kind() == crate::settings::ServerKind::YouTubeMusic {
-            return crate::youtube::cover_address(&id, size);
-        }
-        let mut out = String::new();
-        cover_url_into(&mut out, &self.url_prefix("getCoverArt".into()), &id, size as i32);
-        out
+        self.provider().cover_address(self, &id, size)
     }
 }
 
@@ -247,7 +241,7 @@ impl CoverNet {
         let (head, query) = url.split_once('?').unwrap_or((url, ""));
         let (base, path) = match head.find("/rest/") {
             Some(i) => (&head[..i], &head[i..]),
-            // Another site's image (YouTube's): its path names it.
+            // Another site's image (a provider's own): its path names it.
             None => {
                 let host = head.find("://").map_or(0, |s| s + 3);
                 head[host..].find('/').map_or((head, ""), |p| head.split_at(host + p))

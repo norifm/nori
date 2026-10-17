@@ -90,7 +90,7 @@ void nori_ios_memory_warning(void);
 /// Closes the open session and opens the active saved server: NULL, or an error to free.
 char *nori_ios_reopen(const char *data_dir);
 
-/// The saved servers as JSON to free: [{id, label, url, active}].
+/// The saved servers as JSON to free: [{id, label, url, active, kind}]; an empty label: call it by its kind.
 char *nori_ios_servers(const char *data_dir);
 /// Makes server `id` the active one: 1, or 0 for an unknown id. Takes effect at nori_ios_reopen.
 int32_t nori_ios_pick_server(const char *data_dir, const char *id);
@@ -307,9 +307,13 @@ char *nori_ios_credits(void);
 /// Index and storage numbers as JSON (free it).
 char *nori_ios_facts(void);
 
-/// The active server's label (its name, otherwise the user, otherwise the address).
-/// Empty when none are saved. NULL for an unreadable path. Free with `nori_ios_free`.
+/// The active server as JSON, {label, kind}: its name, otherwise the user, otherwise the address (empty:
+/// call it by its kind), and its kind as the settings store it. {} when none are saved. NULL for an
+/// unreadable path. Free with `nori_ios_free`.
 char *nori_ios_active(const char *data_dir);
+/// The kinds of profile the login page offers, as JSON to free: [{kind, fields: [{what, advanced}]}],
+/// `what` the login form's key it fills (name, url, user, password, alt, key).
+char *nori_ios_providers(void);
 
 /// Login result. `NORI_LOGIN_HTTP` and `NORI_LOGIN_OTHER` and `NORI_LOGIN_DATABASE` may set `detail`.
 #define NORI_LOGIN_OK 0

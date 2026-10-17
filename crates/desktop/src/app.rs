@@ -26,7 +26,7 @@ use crate::compositor::{Compositor, Focus};
 use crate::session::{self, CoverKey, CoverSize, Data, Fetch, Msg, Req, Session, Tx};
 use crate::settings::{Act, Target};
 use crate::words;
-use crate::{AppWindow, ArtistLink, Card, Credits, LyricPiece, Pick, PlayerBar, Shelf, SidebarWindow, SongGo, SongRow};
+use crate::{AppWindow, ArtistLink, Card, Credits, LoginKind, LyricPiece, Pick, PlayerBar, Shelf, SidebarWindow, SongGo, SongRow};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -399,6 +399,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
     ui.set_greeting("Home".into());
     ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
+    ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
     let (tx, inbox) = Tx::new(ui.as_weak());
     let art = Rc::new(RefCell::new(Art::default()));
     let app = Rc::new_cyclic(|me: &Weak<RefCell<App>>| {
@@ -540,6 +541,22 @@ fn stop(app: &RefCell<App>) {
     if let Some(s) = app.borrow_mut().session.take() {
         session::own::keep(session::own::VOLUME, s.volume().to_string());
         s.close();
+    }
+}
+
+/// A kind of profile as the login page offers it.
+fn login_kind(info: &nori_core::providers::ProviderInfo) -> LoginKind {
+    use nori_core::providers::FormField;
+    let w = words::provider(info.kind);
+    let asks = |what| info.fields.iter().any(|f| f.what == what && !f.advanced);
+    LoginKind {
+        name: w.name.into(),
+        note: w.note.into(),
+        add: w.add.into(),
+        asks_name: asks(FormField::Name),
+        asks_address: asks(FormField::Address),
+        asks_user: asks(FormField::User),
+        asks_password: asks(FormField::Password),
     }
 }
 
@@ -828,18 +845,23 @@ impl App {
 
     fn login(&mut self) {
         let ui = self.ui();
-        // YouTube Music has no server to check.
-        if ui.get_login_youtube() {
-            let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: nori_core::settings::ServerKind::YouTubeMusic, ..Default::default() };
-            return self.take(Msg::LoggedIn(Ok(draft)));
-        }
-        let url = ui.get_login_url().trim().trim_end_matches('/').to_string();
-        let user = ui.get_login_user().trim().to_string();
-        if url.len() < 8 || user.is_empty() {
+        let Some(info) = nori_core::providers::providers().into_iter().nth(ui.get_login_kind().max(0) as usize) else { return };
+        let asks = |what| info.fields.iter().any(|f| f.what == what && !f.advanced);
+        let text = |what, typed: slint::SharedString| if asks(what) { typed.trim().to_string() } else { String::new() };
+        use nori_core::providers::FormField;
+        let draft = SavedServer {
+            id: nori_core::settings::new_server_id(),
+            kind: info.kind,
+            name: text(FormField::Name, ui.get_login_name()),
+            url: text(FormField::Address, ui.get_login_url()).trim_end_matches('/').to_string(),
+            user: text(FormField::User, ui.get_login_user()),
+            password: if asks(FormField::Password) { ui.get_login_password().to_string() } else { String::new() },
+            ..Default::default()
+        };
+        if !nori_core::providers::server_ready(draft.clone()) {
             ui.set_login_error("The server's address and a user name, please.".into());
             return;
         }
-        let draft = SavedServer { id: nori_core::settings::new_server_id(), url, user, password: ui.get_login_password().to_string(), ..Default::default() };
         ui.set_login_busy(true);
         ui.set_login_error("".into());
         let (http, tx) = (self.http.clone(), self.tx.clone());
@@ -1298,7 +1320,7 @@ impl App {
         self.session.as_ref().is_some_and(|s| s.rules.account)
     }
 
-    /// `s`'s heart as the lists show it; a guest has none, nor a signed-out YouTube Music profile.
+    /// `s`'s heart as the lists show it; none where songs carry no hearts (`ProfileRules::stars`).
     fn heart(&self, s: &Song) -> Option<bool> {
         self.session.as_ref().is_some_and(|x| x.rules.stars).then(|| self.starred(s))
     }
@@ -1444,7 +1466,8 @@ impl App {
                 ui.set_login_busy(false);
                 match r {
                     Ok(p) => {
-                        use nori_core::settings::{server_for_login, servers_activated, ServerList};
+                        use nori_core::providers::server_for_login;
+                        use nori_core::settings::{servers_activated, ServerList};
                         let mut prefs = crate::session::app().settings.current().unwrap_or_default();
                         let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
                         // A server and user saved already is logged in to again, with its library.
@@ -2443,6 +2466,7 @@ mod tests {
         let ui = AppWindow::new().unwrap();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_mixing_label(words::MIXING.into());
+    ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
         ui.set_has_song(true);
         ui.set_playing(true);
         ui.set_now_title("Track".into());
@@ -2549,6 +2573,7 @@ mod tests {
             ui.set_picks_loaded(true);
             ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
+    ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
             ui.set_shelves(ModelRc::new(VecModel::from(vec![Shelf {
                 title: "Recently played".into(), loaded: true,
                 cards: cards((0..100).map(|i| Card { id: i.to_string().into(), art: i.to_string().into(), ..Default::default() })),

@@ -64,12 +64,13 @@ A profile kind answers the same reads the clients already make (`cache_policy::R
 | writes (stars, scrobbles, playlists, queue push) | Subsonic writes, queued offline | none: `Client::get` refuses every Subsonic call for this kind, so nothing is queued |
 | sync | `search3` pages | none (`ProfileRules::indexed` false) |
 
-In code the seam is an enum, not a trait object: `nori_settings::settings::ServerKind { Subsonic,
-YouTubeMusic }` on `SavedServer`, held by the `Core` (`Core::kind`) and set by
-`Core::configure` (Subsonic) or `Core::configure_youtube_music`. A trait with one other implementation
-would be the abstraction AGENTS.md rules out; the next kind turns the `match` arms into a trait if it
-shares enough. Each kind is one file in the core (`youtube.rs`) and one platform-free crate for its wire
-format (`crates/youtube`).
+In code the seam is the `Provider` trait (`crates/core/src/providers/`, docs/site/developers/providers.md):
+`ServerKind` on `SavedServer` picks the provider `Core::configure_profile` installs, and the Subsonic
+server and YouTube Music are its two implementations. YouTube Music's is one module
+(`providers/youtube.rs`, `providers/youtube/account.rs`) over one platform-free crate for its wire
+format (`crates/youtube`); the names below of the first version (`configure_youtube_music`,
+`youtube_read`, `Resolving` over `Client::playable`, `youtube_sign_in`) are now that module's
+`Provider` methods, the engine's generic `Resolving` over a `ResolveStream`, and `Client::sign_in`.
 
 ### Ids
 

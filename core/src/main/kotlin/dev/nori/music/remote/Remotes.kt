@@ -230,7 +230,7 @@ class Remotes(private val context: Context, private val nori: Nori) {
     /** Whether the profile in use is a jam guest's: songs picked are asked of the host, and nothing plays here. */
     fun isGuest() = nori.settings.value.server?.apiKey?.let { isGuestKey(it) } == true
 
-    /** Whether the profile in use asks for a remote at all; a YouTube Music profile never does. */
+    /** Whether the profile in use asks for a remote at all (`ProfileRules.remote`). */
     private fun wanted(): Boolean {
         val p = nori.settings.value
         return p.server != null && nori.rules.remote && (p.remoteControl || isGuest())

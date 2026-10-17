@@ -676,7 +676,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             // A heart, as on an album, an artist and a playlist. The star here was the
                             // odd one out, and a song being "starred" while everything else is
                             // "favourited" is a distinction the server makes and nobody else does.
-                            // A jam guest's hearts would be the host's; YouTube Music has them signed in.
+                            // A jam guest's hearts would be the host's; a provider may have them signed in.
                             if (LocalRules.current.stars) TitleCircle(
                                 if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                                 say.favourite, starred,

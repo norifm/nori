@@ -46,11 +46,12 @@ private const val CACHE_LIMIT = 32u
 data class LoginUi(val busy: Boolean = false, val error: String? = null, val done: Boolean = false)
 
 /**
- * A YouTube Music profile's account: where it stands (null until asked), a sign-in on its way, why the
- * last one failed, whether Google's sign-in page is open, and whether a profile just added offers it.
+ * The account of the profile in use, for a provider that signs it in apart from its form
+ * (`ProviderInfo.sign_in`): where it stands (null until asked), a sign-in on its way, why the last one
+ * failed, whether the provider's sign-in page is open, and whether a profile just added offers it.
  */
-data class YouTubeUi(
-    val account: dev.nori.music.ffi.YouTubeAccount? = null, val busy: Boolean = false, val failed: dev.nori.music.ffi.YouTubeSignIn? = null,
+data class AccountUi(
+    val account: dev.nori.music.ffi.AccountState? = null, val busy: Boolean = false, val failed: dev.nori.music.ffi.SignInResult? = null,
     val page: Boolean = false, val offer: Boolean = false,
 )
 /**
@@ -288,39 +289,45 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** A blank profile for the "add server" form, with a fresh id from the core. */
     fun newProfile() = dev.nori.music.settings.newServer(serverNewId())
 
-    private val _youtube = MutableStateFlow(YouTubeUi())
-    val youtube: StateFlow<YouTubeUi> = _youtube
+    /** The kinds of profile this build adds, and how each is added and signed in (the core's `providers`). */
+    val providers: List<dev.nori.music.ffi.ProviderInfo> by lazy { dev.nori.music.ffi.providers() }
 
-    fun lookAtYoutubeAccount() {
-        viewModelScope.launch { _youtube.update { it.copy(account = runCatching { nori.youtubeAccount() }.getOrNull()) } }
+    fun provider(kind: dev.nori.music.ffi.settings.ServerKind): dev.nori.music.ffi.ProviderInfo? = providers.firstOrNull { it.kind == kind }
+
+    private val _account = MutableStateFlow(AccountUi())
+    val account: StateFlow<AccountUi> = _account
+
+    fun lookAtAccount() {
+        viewModelScope.launch { _account.update { it.copy(account = runCatching { nori.account() }.getOrNull()) } }
     }
 
-    fun youtubeSignIn(cookies: String) {
-        if (_youtube.value.busy) return
-        _youtube.update { it.copy(busy = true, failed = null) }
+    /** Signs the profile in use in with [answer]: a sign-in page's cookies, or what was pasted. */
+    fun signIn(answer: String) {
+        if (_account.value.busy) return
+        _account.update { it.copy(busy = true, failed = null) }
         viewModelScope.launch {
-            val r = nori.youtubeSignIn(cookies)
-            val failed = r.takeIf { it !is dev.nori.music.ffi.YouTubeSignIn.SignedIn }
-            val account = nori.youtubeAccount()
+            val r = nori.signIn(answer)
+            val failed = r.takeIf { it !is dev.nori.music.ffi.SignInResult.SignedIn }
+            val account = nori.account()
             // Signed in, the sign-in page has done its work; a failure stays on it to be tried again.
-            _youtube.update { it.copy(account = account, busy = false, failed = failed, page = it.page && failed != null) }
+            _account.update { it.copy(account = account, busy = false, failed = failed, page = it.page && failed != null) }
         }
     }
 
-    fun youtubeSignOut() {
-        nori.youtubeSignOut()
-        _youtube.value = YouTubeUi(account = dev.nori.music.ffi.YouTubeAccount.SIGNED_OUT)
+    fun signOut() {
+        nori.signOut()
+        _account.value = AccountUi(account = dev.nori.music.ffi.AccountState.SIGNED_OUT)
     }
 
-    /** Opens Google's sign-in page, from the account's row or a just-added profile's offer. */
-    fun openYoutubeSignIn() = _youtube.update { it.copy(page = true, offer = false, failed = null) }
+    /** Opens the provider's sign-in page, from the account's row or a just-added profile's offer. */
+    fun openSignInPage() = _account.update { it.copy(page = true, offer = false, failed = null) }
 
-    fun closeYoutubeSignIn() = _youtube.update { it.copy(page = false, failed = null) }
+    fun closeSignInPage() = _account.update { it.copy(page = false, failed = null) }
 
     /** Leaves the sign-in page's failure for a fresh page. */
-    fun retryYoutubeSignIn() = _youtube.update { it.copy(failed = null) }
+    fun retrySignIn() = _account.update { it.copy(failed = null) }
 
-    fun skipYoutubeSignIn() = _youtube.update { it.copy(offer = false) }
+    fun skipSignIn() = _account.update { it.copy(offer = false) }
 
     fun login(profile: SavedServer) {
         if (_login.value.busy) return
@@ -329,8 +336,8 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch {
             _login.value = try {
                 val accepted = nori.login(profile)
-                // A YouTube Music profile just added offers its sign-in, which can be skipped.
-                if (accepted.id !in saved && accepted.kind == dev.nori.music.ffi.settings.ServerKind.YOU_TUBE_MUSIC) _youtube.value = YouTubeUi(offer = true)
+                // A profile just added whose account signs in on a page offers it, which can be skipped.
+                if (accepted.id !in saved && provider(accepted.kind)?.signIn?.firstOrNull() is dev.nori.music.ffi.SignIn.WebPage) _account.value = AccountUi(offer = true)
                 LoginUi(done = true)
             } catch (e: Exception) {
                 LoginUi(error = describeConnectionError(e))
