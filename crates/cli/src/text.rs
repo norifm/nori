@@ -10,6 +10,31 @@ use nori_core::remote::wire::{DeviceKind, Refusal, Role};
 use nori_core::remote::{KindWords, Listening, RemoteDevice};
 use nori_core::{AlbumDetail, PlaylistDetail, PresetKind, Song};
 
+/// The name a YouTube Music profile is added under: it works until YouTube changes it.
+pub const YOUTUBE_MUSIC: &str = "YouTube Music (best effort)";
+
+/// How a YouTube Music sign-in went.
+pub fn youtube_sign_in(r: &nori_core::youtube::YouTubeSignIn) -> String {
+    use nori_core::youtube::YouTubeSignIn::*;
+    match r {
+        SignedIn { name } => format!("Signed in to YouTube Music as {name}"),
+        NoSession => "These aren't a signed-in session's cookies: copy them from music.youtube.com while signed in".into(),
+        Refused => "YouTube didn't accept these cookies: sign in again in a private window and copy them anew".into(),
+        Unreachable { reason } => format!("Couldn't reach YouTube ({reason}); nothing changed"),
+    }
+}
+
+/// One shelf of a feed: its title and what it holds.
+pub fn feed_shelf(f: &nori_core::FeedShelf) -> String {
+    let mut parts = Vec::new();
+    for (n, one, many) in [(f.songs.len(), "song", "songs"), (f.albums.len(), "album", "albums"), (f.playlists.len(), "playlist", "playlists"), (f.artists.len(), "artist", "artists")] {
+        if n > 0 {
+            parts.push(count(n as u64, one, many));
+        }
+    }
+    format!("{}: {}", f.title, parts.join(", "))
+}
+
 pub const LYRICS_PREFETCH: &str = "Prepare next song’s lyrics";
 pub const LYRICS_PREFETCH_DETAIL: &str = "Fetch lyrics for one upcoming library song while the current song plays";
 

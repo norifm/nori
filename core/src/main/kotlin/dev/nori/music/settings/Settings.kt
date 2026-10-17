@@ -7,6 +7,7 @@ import dev.nori.music.ffi.settings.BandChannel
 import dev.nori.music.ffi.settings.EqLevel
 import dev.nori.music.ffi.settings.SavedQuality
 import dev.nori.music.ffi.settings.SavedServer
+import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.ffi.settings.SettingChange
 import dev.nori.music.ffi.settings.SoundTool
 import dev.nori.music.ffi.settings.ServerList
@@ -35,7 +36,7 @@ val EqKind.slope: Boolean get() = EQ.bandKinds[ordinal].slope
 
 /** A new server profile: only its id, everything else empty. */
 fun newServer(id: String) = SavedServer(
-    id = id, name = "", url = "", altUrl = "", user = "", password = "", apiKey = "", legacyAuth = false, headers = emptyMap(),
+    id = id, kind = ServerKind.SUBSONIC, name = "", url = "", altUrl = "", user = "", password = "", apiKey = "", legacyAuth = false, headers = emptyMap(),
     allowSelfSigned = false, clientCert = "", clientCertPassword = "", wifiOnly = false, musicFolderIds = emptyList(), altMaxBitRate = 0,
 )
 

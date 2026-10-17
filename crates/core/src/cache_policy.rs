@@ -8,7 +8,7 @@ use rusqlite::OptionalExtension;
 
 use crate::client::{pairs, Client, NetResult};
 use crate::{
-    Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, Directory, Genre, Lyrics, MusicFolder, PlayQueue, Playlist, PlaylistDetail, RadioStation, SearchResult,
+    Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, Directory, FeedShelf, Genre, Lyrics, MusicFolder, PlayQueue, Playlist, PlaylistDetail, RadioStation, SearchResult,
     ServerInfo, Song, Starred,
 };
 
@@ -61,6 +61,8 @@ pub enum Read {
     /// A public share link (needs sharing enabled on the server).
     ShareLink { id: String },
     PullQueue,
+    /// The service's own home feed (YouTube Music's); a Subsonic server has none.
+    HomeFeed,
 }
 
 /// A parsed answer; the variant follows the read.
@@ -87,6 +89,7 @@ pub enum Page {
     ShareUrl { v: String },
     /// The queue saved on the server, and the app that saved it (`by`).
     Queue { v: PlayQueue, by: String },
+    Feed { v: Vec<FeedShelf> },
 }
 
 impl Page {
@@ -146,6 +149,7 @@ enum Parser {
     Status,
     Share,
     Queue,
+    Feed,
 }
 
 struct Spec {
@@ -230,6 +234,7 @@ fn spec(read: Read) -> Spec {
         Read::NowPlaying { id: i } => s("scrobble", pairs(&[("id", i), ("submission", "false".into())]), None, Parser::Status),
         Read::ShareLink { id: i } => s("createShare", id(i), None, Parser::Share),
         Read::PullQueue => s("getPlayQueue", vec![], None, Parser::Queue),
+        Read::HomeFeed => s("ping", vec![], None, Parser::Feed),
     }
 }
 
@@ -311,6 +316,7 @@ impl Client {
                 let by = q.changed_by.clone();
                 Page::Queue { v: q.into(), by }
             }
+            Parser::Feed => Page::Feed { v: Vec::new() },
         })
     }
 
@@ -318,8 +324,14 @@ impl Client {
     /// they were indexed when they came.
     fn parse_fresh(&self, parser: Parser, body: Vec<u8>) -> NetResult<Page> {
         let page = self.parse(parser, body)?;
+        self.index(parser, &page)?;
+        Ok(page)
+    }
+
+    /// Keeps `page`'s library items (of a read parsed by `parser`) in the index.
+    fn index(&self, parser: Parser, page: &Page) -> NetResult<()> {
         let none: (&[Artist], &[Album], &[Song]) = (&[], &[], &[]);
-        let (artists, albums, songs) = match (parser, &page) {
+        let (artists, albums, songs) = match (parser, page) {
             // getIndexes lists folders, not artists.
             (Parser::Indexes, _) => none,
             (_, Page::Albums { v }) => (&[][..], v.as_slice(), &[][..]),
@@ -336,6 +348,20 @@ impl Client {
         if !(artists.is_empty() && albums.is_empty() && songs.is_empty()) {
             crate::db::index(&mut self.core.db.lock(), artists, albums, songs)?;
         }
+        Ok(())
+    }
+
+    /// The page a read of `read` answers when there is nothing to answer: what the server would give for
+    /// an empty answer (a YouTube Music profile's reads without an InnerTube match, youtube.rs).
+    pub(crate) fn nothing(&self, read: Read) -> NetResult<Page> {
+        self.parse(spec(read).parser, br#"{"subsonic-response":{"status":"ok"}}"#.to_vec())
+    }
+
+    /// A YouTube Music profile's `read`, indexed as a server's answer would be.
+    async fn youtube_fresh(&self, read: Read) -> NetResult<Page> {
+        let parser = spec(read.clone()).parser;
+        let page = self.youtube_read(read).await?;
+        self.index(parser, &page)?;
         Ok(page)
     }
 }
@@ -344,6 +370,9 @@ impl Client {
 impl Client {
     /// Asks the server, bypassing the cache.
     pub async fn read_now(&self, read: Read) -> NetResult<Page> {
+        if self.youtube() {
+            return self.youtube_fresh(read).await;
+        }
         let sp = spec(read);
         let body = self.fetch(sp.endpoint, sp.params).await?;
         self.parse_fresh(sp.parser, body)
@@ -362,7 +391,8 @@ impl Client {
     }
 
     fn stored_for(&self, sp: Spec, within_ms: Option<i64>) -> NetResult<Stored> {
-        let Some(fresh_ms) = sp.fresh_ms.map(|ms| within_ms.unwrap_or(ms)) else { return Ok(Stored { page: None, digest: None, fresh: false }) };
+        let fresh_ms = sp.fresh_ms.filter(|_| !self.youtube()).map(|ms| within_ms.unwrap_or(ms));
+        let Some(fresh_ms) = fresh_ms else { return Ok(Stored { page: None, digest: None, fresh: false }) };
         let k = key(sp.endpoint, &self.scoped(sp.endpoint, sp.params));
         let row: Option<(Vec<u8>, i64)> = {
             let c = self.core.db.lock();
@@ -388,6 +418,9 @@ impl Client {
     /// Asks the server; returns the page only if it differs from `stored_digest`, and re-caches it either
     /// way (restarting the window). Uncached reads always return their page.
     pub(crate) async fn read_fetch(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
+        if self.youtube() {
+            return Ok(Some(self.youtube_fresh(read).await?));
+        }
         let sp = spec(read);
         if sp.fresh_ms.is_none() {
             let body = self.fetch(sp.endpoint, sp.params).await?;

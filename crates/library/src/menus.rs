@@ -63,19 +63,20 @@ pub enum SongDownload {
 }
 
 /// The menu of `song`, most used first. `starred` as shown; `player`: opened from the player, which adds
-/// the sleep timer. A provider's song has no mix or share actions: those need it on the server. `jam`:
-/// what a jam adds.
+/// the sleep timer. `stars`: songs carry hearts ([`crate::browse::ProfileRules::stars`]). `account`: the
+/// profile has an account's playlists, downloads, radio, mixes and shares (not a jam guest's or YouTube
+/// Music's). A provider's song has no mix or share actions: those need it on the server. `jam`: what a
+/// jam adds.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool, jam: Option<JamOffer>) -> Vec<SongMenuItem> {
+pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool, stars: bool, account: bool, jam: Option<JamOffer>) -> Vec<SongMenuItem> {
     let mut out = Vec::with_capacity(16);
     let mut add = |action: SongAction, more: bool| out.push(SongMenuItem { action, more });
-    let guest = jam == Some(JamOffer::Guest);
-    if !guest {
+    if stars {
         add(SongAction::Favourite { on: !starred }, false);
     }
     add(SongAction::PlayNext, false);
     add(SongAction::AddToQueue, false);
-    if !guest {
+    if account {
         add(SongAction::AddToPlaylist, false);
         match download {
             SongDownload::Done => add(SongAction::RemoveDownload, false),
@@ -93,11 +94,11 @@ pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool
     } else if let Some(id) = &song.artist_id {
         add(SongAction::GoToArtist { id: id.clone(), name: song.artist.clone(), named: false }, false);
     }
-    if guest {
+    if jam == Some(JamOffer::Guest) {
         add(SongAction::Details, false);
         return out;
     }
-    if song.is_provider() {
+    if account && song.is_provider() {
         add(SongAction::AddToLibrary, false);
     }
     if jam == Some(JamOffer::Start) {
@@ -106,11 +107,13 @@ pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool
     if player {
         add(SongAction::SleepTimer, false);
     }
-    add(SongAction::StartRadio, true);
-    if !song.is_provider() {
-        add(SongAction::InstantMix, true);
-        add(SongAction::ExcludeFromMixes, true);
-        add(SongAction::Share, true);
+    if account {
+        add(SongAction::StartRadio, true);
+        if !song.is_provider() {
+            add(SongAction::InstantMix, true);
+            add(SongAction::ExcludeFromMixes, true);
+            add(SongAction::Share, true);
+        }
     }
     add(SongAction::Details, true);
     out
@@ -210,15 +213,16 @@ pub enum RowSwipeAct {
     Download,
 }
 
-/// The swipe `setting` on a song whose heart is `starred`; none when it does nothing. Without the
-/// `account`'s things (a jam guest's profile, `ProfileRules::account`) a song is not hearted or kept.
+/// The swipe `setting` on a song whose heart is `starred`; none when it does nothing. Without hearts
+/// (`ProfileRules::stars`) a song is not hearted; without the `account`'s things (a jam guest's profile,
+/// YouTube Music's, `ProfileRules::account`) it is not kept.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn row_swipe(setting: SwipeAction, starred: bool, account: bool) -> Option<RowSwipeAct> {
+pub fn row_swipe(setting: SwipeAction, starred: bool, stars: bool, account: bool) -> Option<RowSwipeAct> {
     match setting {
         SwipeAction::None => None,
         SwipeAction::Queue => Some(RowSwipeAct::Queue),
         SwipeAction::PlayNext => Some(RowSwipeAct::PlayNext),
-        SwipeAction::Favourite => account.then_some(RowSwipeAct::Favourite { on: !starred }),
+        SwipeAction::Favourite => stars.then_some(RowSwipeAct::Favourite { on: !starred }),
         SwipeAction::Download => account.then_some(RowSwipeAct::Download),
     }
 }
@@ -305,15 +309,25 @@ mod tests {
     #[test]
     fn song_menus() {
         let s = Song { id: "1".into(), album_id: Some("al".into()), artist_id: Some("ar".into()), artist: "Björk".into(), ..Default::default() };
-        let m = song_menu(s.clone(), false, SongDownload::None, false, None);
+        let m = song_menu(s.clone(), false, SongDownload::None, false, true, true, None);
         assert_eq!(
-            actions(&song_menu(s.clone(), false, SongDownload::None, true, Some(JamOffer::Guest))),
+            actions(&song_menu(s.clone(), false, SongDownload::None, true, false, false, Some(JamOffer::Guest))),
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Details, false)],
             "a jam guest asks for songs and opens what it may read"
         );
-        let starts = song_menu(s, false, SongDownload::None, false, Some(JamOffer::Start));
+        let starts = song_menu(s.clone(), false, SongDownload::None, false, true, true, Some(JamOffer::Start));
         assert_eq!(actions(&starts).into_iter().filter(|(a, _)| *a == StartJam).collect::<Vec<_>>(), [(StartJam, false)], "a jam starts from the menu's first part");
         use SongAction::*;
+        assert_eq!(
+            actions(&song_menu(s.clone(), false, SongDownload::None, true, false, false, None)),
+            [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (SleepTimer, false), (Details, true)],
+            "without an account (YouTube Music) only the queue, the pages and what plays here"
+        );
+        assert_eq!(
+            actions(&song_menu(s, true, SongDownload::None, false, true, false, None))[..3],
+            [(Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false)],
+            "signed in to YouTube Music: a heart, still no playlists or downloads"
+        );
         assert_eq!(
             actions(&m),
             [
@@ -330,7 +344,7 @@ mod tests {
             artists: vec![ArtistRef { id: "a".into(), name: "A".into() }, ArtistRef { id: String::new(), name: "Nobody".into() }, ArtistRef { id: "b".into(), name: "B".into() }],
             ..Default::default()
         };
-        let m = song_menu(s, true, SongDownload::Pending, true, None);
+        let m = song_menu(s, true, SongDownload::Pending, true, true, true, None);
         assert_eq!(
             actions(&m),
             [
@@ -340,7 +354,7 @@ mod tests {
                 (StartRadio, true), (Details, true),
             ]
         );
-        let done = song_menu(Song::default(), false, SongDownload::Done, false, None);
+        let done = song_menu(Song::default(), false, SongDownload::Done, false, true, true, None);
         assert_eq!(done[4].action, SongAction::RemoveDownload);
     }
 
@@ -379,12 +393,15 @@ mod tests {
 
     #[test]
     fn marks() {
-        assert_eq!(row_swipe(SwipeAction::None, false, true), None);
-        assert_eq!(row_swipe(SwipeAction::Favourite, true, true), Some(RowSwipeAct::Favourite { on: false }));
-        assert_eq!(row_swipe(SwipeAction::Favourite, false, true), Some(RowSwipeAct::Favourite { on: true }));
+        assert_eq!(row_swipe(SwipeAction::None, false, true, true), None);
+        assert_eq!(row_swipe(SwipeAction::Favourite, true, true, true), Some(RowSwipeAct::Favourite { on: false }));
+        assert_eq!(row_swipe(SwipeAction::Favourite, false, true, true), Some(RowSwipeAct::Favourite { on: true }));
         // A jam guest's swipes ask for songs; hearts and downloads are the account's.
-        let guest: Vec<_> = [SwipeAction::Queue, SwipeAction::PlayNext, SwipeAction::Favourite, SwipeAction::Download].map(|s| row_swipe(s, false, false)).into();
+        let guest: Vec<_> = [SwipeAction::Queue, SwipeAction::PlayNext, SwipeAction::Favourite, SwipeAction::Download].map(|s| row_swipe(s, false, false, false)).into();
         assert_eq!(guest, [Some(RowSwipeAct::Queue), Some(RowSwipeAct::PlayNext), None, None]);
+        // Signed in to YouTube Music: hearts, no downloads.
+        assert_eq!(row_swipe(SwipeAction::Favourite, false, true, false), Some(RowSwipeAct::Favourite { on: true }));
+        assert_eq!(row_swipe(SwipeAction::Download, false, true, false), None);
 
         // A rows download mark.
         use DownloadPhase as P;

@@ -356,7 +356,7 @@ pub enum Item {
 #[derive(Default)]
 pub struct Home {
     /// Indexed like `HOME_ROWS`; None until loaded.
-    pub rows: Vec<Option<(&'static str, Vec<Album>)>>,
+    pub rows: Vec<Option<(String, Vec<Album>)>>,
     pub error: Option<String>,
     pub asked: bool,
     /// Selected shelf, indexed like `HOME_ROWS`.
@@ -370,8 +370,8 @@ pub struct Home {
 
 impl Home {
     /// Non-empty shelves: index, title, albums.
-    pub fn shelves(&self) -> Vec<(usize, &'static str, &[Album])> {
-        self.rows.iter().enumerate().filter_map(|(i, r)| r.as_ref().filter(|(_, v)| !v.is_empty()).map(|(t, v)| (i, *t, v.as_slice()))).collect()
+    pub fn shelves(&self) -> Vec<(usize, &str, &[Album])> {
+        self.rows.iter().enumerate().filter_map(|(i, r)| r.as_ref().filter(|(_, v)| !v.is_empty()).map(|(t, v)| (i, t.as_str(), v.as_slice()))).collect()
     }
 
     /// The selected album.
@@ -1257,6 +1257,12 @@ impl App {
     fn data(&mut self, req: Req, r: Result<Data, String>) {
         match (req, r) {
             (Req::Home, Ok(Data::HomeRow(i, title, albums))) => {
+                // A feed has as many shelves as the service sends.
+                if i >= self.home.rows.len() {
+                    self.home.rows.resize(i + 1, None);
+                    self.home.pos.resize(i + 1, 0);
+                    self.home.left.resize(i + 1, 0);
+                }
                 if let Some(slot) = self.home.rows.get_mut(i) {
                     *slot = Some((title, albums));
                 }
@@ -2094,8 +2100,9 @@ impl App {
                     Item::Playlist(p) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Playlist(p.id), next)),
                 }
             }
-            // Hearts and downloads are the account's.
-            (Action::Download | Action::Star, _) if !self.rules.account => self.dirty = false,
+            // Hearts are where songs carry them, downloads the account's.
+            (Action::Star, _) if !self.rules.stars => self.dirty = false,
+            (Action::Download, _) if !self.rules.account => self.dirty = false,
             (Action::Download, item) => match item {
                 Item::Song(songs, i) => self.cmds.push(Cmd::Download(vec![songs[i].clone()])),
                 Item::Album(al) => self.cmds.push(Cmd::DownloadFetch(Fetch::Album(al.id))),
@@ -2678,7 +2685,7 @@ impl App {
                 self.say("Downloading…", false);
             }
             Button::StarSong => {
-                if let Some(s) = self.song.as_ref().filter(|_| self.rules.account) {
+                if let Some(s) = self.song.as_ref().filter(|_| self.rules.stars) {
                     let (id, listed) = (s.id.clone(), s.starred);
                     self.star(Starrable::Song, id, listed);
                 }

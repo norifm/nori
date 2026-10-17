@@ -676,8 +676,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             // A heart, as on an album, an artist and a playlist. The star here was the
                             // odd one out, and a song being "starred" while everything else is
                             // "favourited" is a distinction the server makes and nobody else does.
-                            // A jam guest's would be the host's.
-                            if (!state.jamGuest) TitleCircle(
+                            // A jam guest's hearts would be the host's; YouTube Music has them signed in.
+                            if (LocalRules.current.stars) TitleCircle(
                                 if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                                 say.favourite, starred,
                             ) { actions.star(s, !starred) }
@@ -869,7 +869,7 @@ internal fun OutputButton(
     // With remote control or jams on, the button opens nori's own devices first (RemoteScreens); this
     // phone's outputs are one row of it.
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val devices = prefs.remoteControl
+    val devices = prefs.remoteControl && LocalRules.current.remote
     val openDevices = LocalDevices.current
     val tell = LocalMessages.current
     IconButton({ if (devices) openDevices() else openOutputPicker(context, output, tell) }) {

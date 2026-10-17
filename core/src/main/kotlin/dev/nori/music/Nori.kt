@@ -19,6 +19,7 @@ import dev.nori.music.playback.Outputs
 import dev.nori.music.playback.MediaSources
 import dev.nori.music.playback.PlayerConnection
 import dev.nori.music.ffi.settings.SavedServer
+import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.settings.Settings
 import dev.nori.music.settings.serverList
 import dev.nori.music.settings.withServers
@@ -114,10 +115,10 @@ class Nori private constructor(private val context: Context) {
     val remotes = dev.nori.music.remote.Remotes(context, this)
 
     /**
-     * What the app offers over the profile in use (the core's `profile_rules`): a jam guest's browses its
-     * host's library and asks for songs, and does none of the account's work.
+     * What the app offers over the profile in use (the core's `rules_of`): a jam guest's browses its host's
+     * library and asks for songs, and does none of the account's work; a YouTube Music profile has no account.
      */
-    val rules: dev.nori.music.ffi.library.ProfileRules get() = dev.nori.music.ffi.library.profileRules(remotes.isGuest())
+    val rules: dev.nori.music.ffi.library.ProfileRules get() = dev.nori.music.ffi.library.rulesOf(settings.value.server ?: dev.nori.music.settings.newServer(""), remotes.isGuest())
     val player = PlayerConnection(context, this)
 
     /**
@@ -153,7 +154,13 @@ class Nori private constructor(private val context: Context) {
     val updates = dev.nori.music.update.Updates(context, { http }, { client })
 
     private fun open(id: String, profile: SavedServer?): Core =
-        Core(File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path, id, session).also { c -> profile?.let { c.configure(it.config()) } }
+        Core(File(context.filesDir, dev.nori.music.ffi.db.dbFileName()).path, id, session).also { c ->
+            when (profile?.kind) {
+                ServerKind.SUBSONIC -> c.configure(profile.config())
+                ServerKind.YOU_TUBE_MUSIC -> c.configureYoutubeMusic(profile.user.isNotEmpty())
+                null -> {}
+            }
+        }
 
     private fun SavedServer.config() = ServerConfig(url, user, password, apiKey.ifEmpty { null }, legacyAuth)
     private fun SavedServer.net() = NetProfile(url, altUrl, musicFolderIds, altMaxBitRate.coerceAtLeast(0).toUInt())
@@ -195,6 +202,8 @@ class Nori private constructor(private val context: Context) {
         // A server and user already saved is that profile logged in to again, not a copy with an empty
         // library and no downloads (the core's `servers_login`).
         val draft = dev.nori.music.ffi.settings.serverForLogin(settings.value.serverList(), form)
+        // YouTube Music has no server to check.
+        if (draft.kind == ServerKind.YOU_TUBE_MUSIC) return@withContext draft.also(::activate)
         val old = settings.value.server
         val accepted = try {
             http.configure(draft)
@@ -248,6 +257,24 @@ class Nori private constructor(private val context: Context) {
     }
 
     fun logout() = settings.value.server?.let { removeServer(it.id) }
+
+    /**
+     * Signs the YouTube Music profile in use in with a browser session's cookies (the core's
+     * `youtube_sign_in`); signed in, the profile keeps the account's name, which brings its library and hearts.
+     */
+    suspend fun youtubeSignIn(cookies: String): dev.nori.music.ffi.YouTubeSignIn {
+        val r = withContext(Dispatchers.IO) { client.youtubeSignIn(cookies) }
+        if (r is dev.nori.music.ffi.YouTubeSignIn.SignedIn) settings.value.server?.let { updateServer(it.copy(user = r.name)) }
+        return r
+    }
+
+    /** Signs the YouTube Music profile in use out: its cookies are forgotten. Main thread. */
+    fun youtubeSignOut() {
+        client.youtubeSignOut()
+        settings.value.server?.let { updateServer(it.copy(user = "")) }
+    }
+
+    suspend fun youtubeAccount(): dev.nori.music.ffi.YouTubeAccount = withContext(Dispatchers.IO) { client.youtubeAccount() }
 
     companion object {
         @Volatile private var instance: Nori? = null

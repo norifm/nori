@@ -8,6 +8,8 @@ import dev.nori.music.ffi.library.TextIndex
 import dev.nori.music.ffi.model.MusicFolder
 import dev.nori.music.ffi.settings.BeatModel
 import dev.nori.music.ffi.settings.EqLevel
+import dev.nori.music.ffi.settings.SavedServer
+import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.ffi.settings.SettingKind
 import dev.nori.music.ffi.settings.SettingsState
 import dev.nori.music.ffi.settings.settingSpecs
@@ -922,10 +924,18 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     }
 
     /** The line under a saved server: who signs in, whether it is in use, and what is special about it. */
-    fun serverDetail(user: String, active: Boolean, wifiOnly: Boolean, second: Boolean): String {
-        val parts = mutableListOf(user.ifEmpty { str(R.string.settings_server_api_key) }, str(if (active) R.string.settings_server_in_use else R.string.settings_server_not_in_use))
-        if (wifiOnly) parts += str(R.string.settings_server_wifi_only)
-        if (second) parts += str(R.string.settings_server_second_address)
+    /** A YouTube Music profile without a name of its own is called by its kind. */
+    private fun serverLabel(sv: SavedServer): String =
+        if (sv.kind == ServerKind.YOU_TUBE_MUSIC && sv.name.isBlank()) str(R.string.youtube_music) else sv.label
+
+    private fun serverDetail(sv: SavedServer, active: Boolean): String {
+        val who = when (sv.kind) {
+            ServerKind.SUBSONIC -> sv.user.ifEmpty { str(R.string.settings_server_api_key) }
+            ServerKind.YOU_TUBE_MUSIC -> sv.user.ifEmpty { str(R.string.settings_server_best_effort) }
+        }
+        val parts = mutableListOf(who, str(if (active) R.string.settings_server_in_use else R.string.settings_server_not_in_use))
+        if (sv.wifiOnly) parts += str(R.string.settings_server_wifi_only)
+        if (sv.altUrl.isNotBlank()) parts += str(R.string.settings_server_second_address)
         return parts.joinToString(str(R.string.settings_server_separator))
     }
 
@@ -959,7 +969,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         val accounts = p.servers.map { sv ->
             val active = sv.id == p.activeServerId
             SettingRow.Server(
-                sv.id, sv.label, serverDetail(sv.user, active, sv.wifiOnly, sv.altUrl.isNotBlank()), active,
+                sv.id, serverLabel(sv), serverDetail(sv, active), active,
                 if (active) libraries else emptyList(), str(R.string.settings_music_folder_detail),
             )
         }.toMutableList<SettingRow>()

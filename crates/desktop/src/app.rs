@@ -387,11 +387,14 @@ fn sidebar(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) -
     Some(side)
 }
 
+/// The library's Home shelves, empty until read.
+fn home_shelves() -> Vec<Shelf> {
+    session::HOME_ROWS.iter().map(|(t, _)| Shelf { title: (*t).into(), cards: ModelRc::default(), loaded: false }).collect()
+}
+
 /// Builds the app state and wires the window. Keep the returned app alive while the window runs.
 pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCell<App>> {
-    let shelves = Rc::new(VecModel::from(
-        session::HOME_ROWS.iter().map(|(t, _)| Shelf { title: (*t).into(), cards: ModelRc::default(), loaded: false }).collect::<Vec<_>>(),
-    ));
+    let shelves = Rc::new(VecModel::from(home_shelves()));
     ui.set_shelves(ModelRc::from(shelves.clone()));
     ui.set_greeting("Home".into());
     ui.set_show_all_text(words::SHOW_ALL.into());
@@ -800,13 +803,7 @@ impl App {
                 self.heard = None;
                 self.song = None;
                 self.queue = None;
-                for i in 0..self.shelves.row_count() {
-                    if let Some(mut shelf) = self.shelves.row_data(i) {
-                        shelf.cards = ModelRc::default();
-                        shelf.loaded = false;
-                        self.shelves.set_row_data(i, shelf);
-                    }
-                }
+                self.shelves.set_vec(home_shelves());
                 ui.set_picks(ModelRc::default());
                 ui.set_picks_loaded(false);
                 self.jam_now = None;
@@ -831,6 +828,11 @@ impl App {
 
     fn login(&mut self) {
         let ui = self.ui();
+        // YouTube Music has no server to check.
+        if ui.get_login_youtube() {
+            let draft = SavedServer { id: nori_core::settings::new_server_id(), kind: nori_core::settings::ServerKind::YouTubeMusic, ..Default::default() };
+            return self.take(Msg::LoggedIn(Ok(draft)));
+        }
         let url = ui.get_login_url().trim().trim_end_matches('/').to_string();
         let user = ui.get_login_user().trim().to_string();
         if url.len() < 8 || user.is_empty() {
@@ -1017,6 +1019,10 @@ impl App {
                     .collect();
                 ui.set_picks(ModelRc::new(VecModel::from(picks)));
                 ui.set_picks_loaded(true);
+            }
+            Data::Feed(shelves) => {
+                let shelves: Vec<Shelf> = shelves.into_iter().map(|(title, albums)| Shelf { title: title.into(), cards: cards(albums.iter().map(album_card)), loaded: true }).collect();
+                self.shelves.set_vec(shelves);
             }
             Data::HomeRow(i, albums) => {
                 if let Some(mut shelf) = self.shelves.row_data(i) {
@@ -1292,9 +1298,9 @@ impl App {
         self.session.as_ref().is_some_and(|s| s.rules.account)
     }
 
-    /// `s`'s heart as the lists show it; a guest has none.
+    /// `s`'s heart as the lists show it; a guest has none, nor a signed-out YouTube Music profile.
     fn heart(&self, s: &Song) -> Option<bool> {
-        self.account().then(|| self.starred(s))
+        self.session.as_ref().is_some_and(|x| x.rules.stars).then(|| self.starred(s))
     }
 
     /// Joins the jam `link` invites to, as a guest profile of its own.
@@ -1438,10 +1444,13 @@ impl App {
                 ui.set_login_busy(false);
                 match r {
                     Ok(p) => {
+                        use nori_core::settings::{server_for_login, servers_activated, ServerList};
                         let mut prefs = crate::session::app().settings.current().unwrap_or_default();
-                        prefs.servers.retain(|s| !(s.url == p.url && s.user == p.user));
-                        prefs.servers.push(p.clone());
-                        prefs.active_server_id = p.id.clone();
+                        let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
+                        // A server and user saved already is logged in to again, with its library.
+                        let p = server_for_login(list.clone(), p);
+                        let list = servers_activated(list, p.clone());
+                        (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
                         crate::session::app().settings.put(prefs);
                         ui.set_login_password("".into());
                         self.open(p);
@@ -2076,9 +2085,8 @@ fn credits(s: &Song) -> Credits {
 /// (None: no heart).
 fn song_menu(s: &Song, starred: Option<bool>) -> ModelRc<SongGo> {
     use nori_core::menus::{song_menu, SongAction, SongDownload};
-    let lines: Vec<SongGo> = song_menu(s.clone(), starred.unwrap_or_default(), SongDownload::None, false, None)
+    let lines: Vec<SongGo> = song_menu(s.clone(), starred.unwrap_or_default(), SongDownload::None, false, starred.is_some(), false, None)
         .into_iter()
-        .filter(|item| starred.is_some() || !matches!(item.action, SongAction::Favourite { .. }))
         .filter_map(|item| {
             let title = words::song_action(&item.action)?.into();
             let (kind, id) = match item.action {

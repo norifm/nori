@@ -5,7 +5,8 @@ use std::path::Path;
 
 use nori_core::client::login_check;
 use nori_core::settings::{
-    server_for_login, servers_activated, servers_removed, SavedServer, ServerList, StoredPrefs,
+    server_for_login, servers_activated, servers_removed, SavedServer, ServerKind, ServerList,
+    StoredPrefs,
 };
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, FailureKind, NetError};
@@ -65,6 +66,8 @@ fn label(s: &SavedServer) -> String {
     let name = s.name.trim();
     if !name.is_empty() {
         name.to_string()
+    } else if s.kind == ServerKind::YouTubeMusic {
+        "YouTube Music".to_string()
     } else if !s.user.trim().is_empty() {
         s.user.trim().to_string()
     } else {
@@ -159,9 +162,10 @@ pub(crate) fn fail(e: NetError) -> (i32, Option<String>) {
 }
 
 /// The login form as the app sends it. `name`, `alt` (the second address) and `key` (an API key) are
-/// the advanced fields and may be empty.
+/// the advanced fields and may be empty; a YouTube Music profile has only its `name`.
 #[derive(Debug, Default)]
 pub(crate) struct Form {
+    pub kind: ServerKind,
     pub url: String,
     pub user: String,
     pub password: String,
@@ -171,11 +175,13 @@ pub(crate) struct Form {
 }
 
 impl Form {
-    /// The app's JSON `{url, user, password, name, alt, key}`; a missing field is empty.
+    /// The app's JSON `{kind, url, user, password, name, alt, key}`; a missing field is empty, and
+    /// `kind` is `"youtubeMusic"` for YouTube Music, else a server's.
     fn parse(json: &str) -> Form {
         let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
         let field = |k: &str| v[k].as_str().unwrap_or_default().to_string();
         Form {
+            kind: if field("kind") == "youtubeMusic" { ServerKind::YouTubeMusic } else { ServerKind::Subsonic },
             url: field("url"),
             user: field("user"),
             password: field("password"),
@@ -188,6 +194,14 @@ impl Form {
 
 /// The profile `form` asks for, or None when it lacks an address, or both a user and an API key.
 fn draft(form: &Form) -> Option<SavedServer> {
+    if form.kind == ServerKind::YouTubeMusic {
+        return Some(SavedServer {
+            id: nori_core::settings::new_server_id(),
+            kind: ServerKind::YouTubeMusic,
+            name: form.name.trim().to_string(),
+            ..SavedServer::default()
+        });
+    }
     let url = address(&form.url);
     let user = form.user.trim();
     let key = form.key.trim();
@@ -207,7 +221,8 @@ fn draft(form: &Form) -> Option<SavedServer> {
     })
 }
 
-/// Pings the server and, when it answers, saves the profile as the active one.
+/// Pings the server and, when it answers, saves the profile as the active one. YouTube Music has no
+/// server to ping.
 pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
     let Some(draft) = draft(form) else {
         return (LOGIN_INCOMPLETE, None);
@@ -223,6 +238,12 @@ pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
         },
         draft,
     );
+    if draft.kind == ServerKind::YouTubeMusic {
+        return match keep(dir, draft) {
+            Ok(()) => (LOGIN_OK, None),
+            Err(e) => (LOGIN_DATABASE, Some(e)),
+        };
+    }
     let legacy = match block_on(login_check(
         Http::new(),
         nori_host::config(&draft),
@@ -390,6 +411,16 @@ mod tests {
         assert!(draft(&Form { key: String::new(), ..form }).is_none(), "neither a user nor a key");
         let parsed = Form::parse(r#"{"url":"u","user":"ada","alt":"a"}"#);
         assert_eq!((parsed.user.as_str(), parsed.alt.as_str(), parsed.key.as_str()), ("ada", "a", ""));
+    }
+
+    #[test]
+    fn a_youtube_music_profile_is_saved_without_a_server() {
+        let dir = nori_testdir::TempDir::new("ios-youtube");
+        let form = Form::parse(r#"{"kind":"youtubeMusic","url":"http://127.0.0.1:1"}"#);
+        assert_eq!(login(dir.path(), &form).0, LOGIN_OK);
+        assert_eq!(active(dir.path()).unwrap(), "YouTube Music");
+        assert_eq!(login(dir.path(), &form).0, LOGIN_OK);
+        assert_eq!(servers(dir.path()).unwrap().len(), 1, "added again, the same profile");
     }
 
     #[test]

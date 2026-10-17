@@ -18,6 +18,7 @@ pub mod source;
 pub mod store;
 pub mod wav;
 pub mod watch;
+mod webm;
 
 #[cfg(feature = "core")]
 pub mod core;

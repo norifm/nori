@@ -228,6 +228,30 @@ fn section(key: &str, grid: bool, items: Vec<Value>) -> Value {
     json!({ "key": key, "grid": grid, "items": items })
 }
 
+/// A feed's shelves as titled sections (key `feed`); their songs are kept as one list for `token`.
+fn feed_sections(token: u64, feed: &[nori_core::FeedShelf]) -> Vec<Value> {
+    let mut songs = Vec::new();
+    let mut out = Vec::new();
+    for f in feed {
+        let titled = |mut v: Value| {
+            v["title"] = json!(f.title);
+            v
+        };
+        if !f.songs.is_empty() {
+            out.push(titled(songs_section("feed", &f.songs, songs.len())));
+            songs.extend(f.songs.iter().cloned());
+        }
+        if !f.albums.is_empty() {
+            out.push(titled(section("feed", true, f.albums.iter().map(album_json).collect())));
+        }
+        if !f.playlists.is_empty() {
+            out.push(titled(section("feed", true, f.playlists.iter().map(playlist_json).collect())));
+        }
+    }
+    keep_list(token, songs, None);
+    out
+}
+
 fn songs_section(key: &str, songs: &[Song], from: usize) -> Value {
     section(
         key,
@@ -382,6 +406,12 @@ fn read(token: u64, kind: i32, arg: String) {
         return;
     };
     match kind {
+        // A service's own Home (YouTube Music's): its shelves, titled as it titles them; their songs one
+        // list for taps.
+        PAGE_HOME if core.rules().feed => pages(&client, token, Read::HomeFeed, &|p| {
+            let Page::Feed { v } = p else { return None };
+            Some(json!({ "sections": feed_sections(token, &v) }))
+        }),
         PAGE_HOME => {
             // The mixes, the favourites and the playlists are the account's: a jam guest's Home is the
             // host's album shelves.

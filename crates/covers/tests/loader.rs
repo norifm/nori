@@ -59,7 +59,7 @@ impl Transport for Server {
         if self.status == 0 {
             return Err(TransportError::Failed { kind: FailureKind::Connect, detail: Some("refused".into()) });
         }
-        Ok(TransportResponse { status: self.status, body: self.body.lock().clone() })
+        Ok(TransportResponse { status: self.status, body: self.body.lock().clone(), set_cookies: Vec::new() })
     }
 
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {

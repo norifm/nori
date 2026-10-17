@@ -686,12 +686,13 @@ fn server(b: &Build, f: &Facts) -> Vec<Section> {
         .iter()
         .map(|s| {
             let active = s.id == p.active_server_id;
-            let who = if s.user.is_empty() { "API key" } else { s.user.as_str() };
-            let mut detail = format!("{who} · {}", s.url);
+            let youtube = s.kind == nori_core::settings::ServerKind::YouTubeMusic;
+            let mut detail = if youtube { "best effort".to_string() } else { format!("{} · {}", if s.user.is_empty() { "API key" } else { s.user.as_str() }, s.url) };
             if s.wifi_only {
                 detail.push_str(" · Wi-Fi only");
             }
-            Row::Server { id: s.id.clone(), label: nori_core::settings::label(&s.name, &s.url), detail, active }
+            let label = if youtube && s.name.trim().is_empty() { "YouTube Music".into() } else { nori_core::settings::label(&s.name, &s.url) };
+            Row::Server { id: s.id.clone(), label, detail, active }
         })
         .collect();
     if !f.rules.settings.contains(&nori_core::browse::SettingsPart::ServerOptions) {

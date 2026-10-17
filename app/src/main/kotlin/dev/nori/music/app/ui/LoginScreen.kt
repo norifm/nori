@@ -34,8 +34,50 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.ffi.settings.SavedServer
+import dev.nori.music.ffi.settings.ServerKind
 import dev.nori.music.settings.server
 import dev.nori.music.settings.serverUrl
+
+/**
+ * A YouTube Music profile's account, as Spotify's and Apple Music's account rows read: who is signed in,
+ * or a button to Google's sign-in page (YouTubeSignIn.kt), with pasting a browser session's cookies
+ * folded under it. The sign-in itself, and what each answer means, are the core's (`youtube_sign_in`);
+ * [signed] hands the account's name to the form being edited.
+ */
+@Composable
+private fun YouTubeAccountPart(vm: SettingsViewModel, signed: (String) -> Unit) {
+    val yt by vm.youtube.collectAsStateWithLifecycle()
+    val name = vm.prefs.collectAsStateWithLifecycle().value.server?.user.orEmpty()
+    var cookies by remember { mutableStateOf("") }
+    var pasting by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { vm.lookAtYoutubeAccount() }
+    LaunchedEffect(name) { signed(name) }
+    SectionTitle(say.youtubeAccount)
+    when (yt.account) {
+        dev.nori.music.ffi.YouTubeAccount.SIGNED_IN -> {
+            Text(say.youtubeSignedInAs(name), Modifier.testTag("youtube-signed-in"))
+            PillButton(say.youtubeSignOut, null, vm::youtubeSignOut, Modifier.fillMaxWidth().testTag("youtube-sign-out"))
+            return
+        }
+        dev.nori.music.ffi.YouTubeAccount.ENDED -> Text(say.youtubeSignedOutAgain, color = MaterialTheme.colorScheme.error)
+        else -> {}
+    }
+    Text(say.youtubeSignInHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    PillButton(say.youtubeSignInGoogle, null, vm::openYoutubeSignIn, Modifier.fillMaxWidth().testTag("youtube-sign-in-google"), prominent = true, enabled = !yt.busy)
+    if (!pasting) {
+        TextButton({ pasting = true }, Modifier.testTag("youtube-paste-instead")) { Text(say.youtubePasteInstead) }
+    } else {
+        Text(say.youtubePasteHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FormField(cookies, { cookies = it }, label = { Text(say.youtubeCookies) }, minLines = 3, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("youtube-cookies"))
+        // The sign-in page shows its own failures.
+        yt.failed?.takeIf { !yt.page }?.let { Text(say.youtubeSignIn(it), color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("youtube-sign-in-failed")) }
+        PillButton(
+            if (yt.busy) say.connecting else say.youtubeSignInAction, null, { vm.youtubeSignIn(cookies) },
+            Modifier.fillMaxWidth().testTag("youtube-sign-in"), enabled = !yt.busy && cookies.isNotBlank(),
+        )
+    }
+    Text(say.youtubeAccountRisk, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
 
 @Composable
 private fun Check(title: String, detail: String, value: Boolean, onChange: (Boolean) -> Unit) {
@@ -48,11 +90,16 @@ private fun Check(title: String, detail: String, value: Boolean, onChange: (Bool
     }
 }
 
-/** First run, and "add / edit server" from settings ([initial] and [onClose] set). */
+/**
+ * First run, and "add / edit server" from settings ([initial] and [onClose] set). A profile being added
+ * picks its kind first: a server of the user's own, or YouTube Music.
+ */
 @Composable
 fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: (() -> Unit)? = null) {
     val ui by vm.login.collectAsStateWithLifecycle()
     var p by remember { mutableStateOf(initial ?: vm.newProfile()) }
+    val adding = remember { initial == null || vm.prefs.value.servers.none { it.id == initial.id } }
+    val youtube = p.kind == ServerKind.YOU_TUBE_MUSIC
     var advanced by remember { mutableStateOf(initial != null) }
     var headers by remember { mutableStateOf(dev.nori.music.ffi.settings.serverHeadersText(p.headers)) }
     var certPassword by remember { mutableStateOf("") }
@@ -70,6 +117,23 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
                 if (initial == null) "nori" else say.server,
                 style = MaterialTheme.typography.displaySmall, modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
             )
+            if (adding) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip(say.profileKindServer, !youtube, Modifier.testTag("kind-server")) { p = p.copy(kind = ServerKind.SUBSONIC) }
+                Chip(say.youtubeMusic, youtube, Modifier.testTag("kind-youtube")) { p = p.copy(kind = ServerKind.YOU_TUBE_MUSIC) }
+            }
+            if (youtube) {
+                Text(say.youtubeMusicHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FormField(p.name, { p = p.copy(name = it) }, label = { Text(say.nameOptional) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                ui.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                PillButton(
+                    if (adding) say.youtubeMusicAdd else say.save, null, { vm.login(p) },
+                    Modifier.fillMaxWidth().padding(top = 4.dp).testTag("connect"), prominent = true, enabled = !ui.busy,
+                )
+                // Signing in is the profile in use's: its core asks YouTube.
+                if (!adding && p.id == vm.prefs.value.activeServerId) YouTubeAccountPart(vm) { name -> p = p.copy(user = name) }
+                onClose?.let { TextButton(it) { Text(say.cancel) } }
+                return@Column
+            }
             if (initial == null) Text(say.serverHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
             FormField(p.url, { p = p.copy(url = it) }, label = { Text(say.serverUrl) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth().testTag("url"))
             if (schemes.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

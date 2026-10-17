@@ -441,11 +441,11 @@ impl Transport for Authors {
     async fn get(&self, url: String, _timeout_ms: u32) -> Result<TransportResponse, TransportError> {
         let found = url == nori_core::automix::beat_model::CHECKPOINT_URL;
         self.1.lock().push(url);
-        Ok(if found { TransportResponse { status: 200, body: self.0.clone() } } else { TransportResponse { status: 404, body: b"<html>not found</html>".to_vec() } })
+        Ok(if found { TransportResponse { status: 200, body: self.0.clone(), set_cookies: Vec::new() } } else { TransportResponse { status: 404, body: b"<html>not found</html>".to_vec(), set_cookies: Vec::new() } })
     }
 
     async fn send(&self, _request: Exchange) -> Result<TransportResponse, TransportError> {
-        Ok(TransportResponse { status: 500, body: Vec::new() })
+        Ok(TransportResponse { status: 500, body: Vec::new(), set_cookies: Vec::new() })
     }
 
     fn address_changed(&self) {}
@@ -530,4 +530,69 @@ fn a_guest_queues_the_host_songs_once() {
     // Near its end, autofill on here: the host's queue is the host's to fill.
     s.moved_to(1);
     assert!(!s.song_arrived().fill, "nothing fetched for it here");
+}
+
+/// InnerTube answering every player request with the recorded visionOS answer.
+#[derive(Default)]
+struct Player {
+    asked: Mutex<u32>,
+}
+
+#[async_trait::async_trait]
+impl nori_core::transport::Transport for Player {
+    async fn get(&self, url: String, _: u32) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
+        panic!("a Subsonic request in a YouTube Music profile: {url}");
+    }
+
+    async fn send(&self, _: nori_core::transport::Exchange) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
+        *self.asked.lock() += 1;
+        let body = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../youtube/tests/fixtures/player.json")).unwrap();
+        Ok(nori_core::transport::TransportResponse { status: 200, body, set_cookies: Vec::new() })
+    }
+
+    fn address_changed(&self) {}
+
+    fn network(&self) -> nori_core::transport::Network {
+        nori_core::transport::Network::Unmetered
+    }
+}
+
+/// The googlevideo bytes: refuses the first URL as an expired one would be, then serves.
+#[derive(Default)]
+struct Googlevideo {
+    opened: Mutex<Vec<(String, u64)>>,
+}
+
+impl ByteSource for Googlevideo {
+    fn open(&self, url: &str, from: u64) -> Result<Body, nori_engine::OpenError> {
+        let mut opened = self.opened.lock();
+        opened.push((url.to_string(), from));
+        if opened.len() == 1 {
+            return Err(nori_engine::OpenError::Status(403));
+        }
+        Ok(Body { start: from, len: Some(LEN as u64), reader: Box::new(Cursor::new(vec![0; LEN - from as usize])) })
+    }
+}
+
+/// A YouTube song's address opens at the URL YouTube serves; a refused URL is asked for again on the
+/// next try, a served one is kept; a server's URL passes through untouched.
+#[test]
+fn youtube_addresses_open_at_the_served_url() {
+    let core = Core::new(String::new(), "yt".into(), Default::default()).unwrap();
+    core.configure_youtube_music(false).unwrap();
+    let innertube = Arc::new(Player::default());
+    let client = Client::new(core, innertube.clone(), Default::default());
+    let bytes = Arc::new(Googlevideo::default());
+    let resolving = nori_engine::core::Resolving { bytes: bytes.clone(), client };
+    let address = "youtube:dQw4w9WgXcQ";
+    assert!(matches!(resolving.open(address, 0), Err(nori_engine::OpenError::Status(403))));
+    assert!(resolving.open(address, 0).is_ok());
+    assert!(resolving.open(address, 1000).is_ok());
+    assert_eq!(*innertube.asked.lock(), 2, "asked again after the refusal, then kept");
+    let opened = bytes.opened.lock().clone();
+    assert!(opened.iter().all(|(u, _)| u.starts_with("https://rr1---sn-fixture.googlevideo.com/videoplayback?") && u.contains("itag=251")), "{opened:?}");
+    assert!(opened[1].0.ends_with("&range=0-3433754") && !opened[2].0.contains("&range="));
+    assert_eq!(opened.iter().map(|o| o.1).collect::<Vec<_>>(), [0, 0, 1000]);
+    assert!(resolving.open("http://nas/rest/stream?id=1", 0).is_ok());
+    assert_eq!(bytes.opened.lock().last().unwrap().0, "http://nas/rest/stream?id=1");
 }

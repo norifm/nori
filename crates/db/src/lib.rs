@@ -277,6 +277,10 @@ pub fn kv_put(c: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
     c.prepare_cached("INSERT OR REPLACE INTO kv(server, key, value) VALUES(sid(), ?1, ?2)")?.execute(params![key, value]).map(|_| ())
 }
 
+pub fn kv_delete(c: &Connection, key: &str) -> rusqlite::Result<()> {
+    c.prepare_cached("DELETE FROM kv WHERE server=sid() AND key=?1")?.execute([key]).map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

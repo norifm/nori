@@ -146,7 +146,8 @@ fun SongMenu(
                 jamCan -> dev.nori.music.ffi.library.JamOffer.START
                 else -> null
             }
-            val items = remember(song, starred, download, player != null, jam) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, jam) }
+            val rules = LocalRules.current
+            val items = remember(song, starred, download, player != null, rules, jam) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, rules.stars, rules.account, jam) }
             val labels = remember(items) { items.map { say.songAction(it.action) } }
             @Composable fun line(i: dev.nori.music.ffi.library.SongMenuItem, label: String) = when (val a = i.action) {
                 is dev.nori.music.ffi.library.SongAction.Favourite -> Item(label, if (a.on) Icons.Filled.FavoriteBorder else Icons.Filled.Favorite) { actions.star(song, a.on); onDismiss() }
@@ -261,8 +262,11 @@ fun SelectionBar(actions: ActionsViewModel) {
                 BarAction(say.play) { actions.play(songs); actions.clearSelection() }
                 BarAction(say.next) { actions.playNext(songs); actions.clearSelection() }
                 BarAction(say.queue) { actions.enqueue(songs); actions.clearSelection() }
-                BarAction(say.playlist) { picking = true }
-                BarAction(say.get) { actions.download(songs); actions.clearSelection() }
+                // Playlists and downloads are the account's.
+                if (LocalRules.current.account) {
+                    BarAction(say.playlist) { picking = true }
+                    BarAction(say.get) { actions.download(songs); actions.clearSelection() }
+                }
                 IconButton(actions::clearSelection) { Icon(androidx.compose.material.icons.Icons.Filled.Close, say.clearSelection) }
             }
         }

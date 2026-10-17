@@ -27,6 +27,7 @@ pub mod library;
 pub mod stage;
 pub mod update;
 pub mod remote;
+pub mod youtube;
 #[cfg(feature = "neural-beats")]
 pub mod model_download;
 
@@ -390,6 +391,8 @@ pub struct Core {
     native_login: RwLock<Option<(String, String)>>,
     /// What the app offers over the profile (a jam guest's: the host's library, read only).
     rules: RwLock<browse::ProfileRules>,
+    /// What the profile plays from.
+    kind: RwLock<settings::ServerKind>,
     /// What the stored queue's songs were saved from (queue.rs).
     saved_queue: Mutex<Option<queue::SavedQueue>>,
 }
@@ -474,6 +477,7 @@ impl Core {
             account: RwLock::new(None),
             native_login: RwLock::new(None),
             rules: RwLock::new(browse::profile_rules(false)),
+            kind: RwLock::new(settings::ServerKind::Subsonic),
             saved_queue: Mutex::new(None),
         });
         core.session.db.set(&core.db);
@@ -484,14 +488,10 @@ impl Core {
     /// at another server or user.
     pub fn configure(&self, config: ServerConfig) -> Result<String> {
         let s = config.server();
-        let ident = format!("{}|{}", s.base, config.user);
-        let db = self.db.lock();
-        if db::kv_get(&db, "server")?.as_deref() != Some(&ident) {
-            db::clear_library(&db)?;
-            db::kv_put(&db, "server", &ident)?;
-        }
+        self.serves(&format!("{}|{}", s.base, config.user))?;
         let base = s.base.clone();
         *self.server.write() = s;
+        *self.kind.write() = settings::ServerKind::Subsonic;
         let key = config.api_key.unwrap_or_default();
         *self.rules.write() = browse::profile_rules(nori_remote::is_guest_key(&key));
         *self.native_login.write() = key.is_empty().then(|| (config.user.clone(), config.password.clone()));
@@ -501,6 +501,23 @@ impl Core {
             (false, true) => None,
         };
         Ok(base)
+    }
+
+    /// Makes the profile a YouTube Music one: no server and no Subsonic account (youtube.rs); `signed_in`
+    /// when the profile names a YouTube account. Clears the library when the profile was a server's.
+    pub fn configure_youtube_music(&self, signed_in: bool) -> Result<()> {
+        self.serves(youtube::IDENT)?;
+        *self.server.write() = api::Server::default();
+        *self.kind.write() = settings::ServerKind::YouTubeMusic;
+        *self.rules.write() = browse::youtube_rules(signed_in);
+        *self.native_login.write() = None;
+        *self.account.write() = None;
+        Ok(())
+    }
+
+    /// What the profile plays from.
+    pub fn kind(&self) -> settings::ServerKind {
+        *self.kind.read()
     }
 
     pub fn url(&self, endpoint: String, params: Vec<Param>) -> String {
@@ -635,6 +652,16 @@ impl Core {
 }
 
 impl Core {
+    /// The profile now plays from `ident` (a server and user); the library goes when that changed.
+    fn serves(&self, ident: &str) -> Result<()> {
+        let db = self.db.lock();
+        if db::kv_get(&db, "server")?.as_deref() != Some(ident) {
+            db::clear_library(&db)?;
+            db::kv_put(&db, "server", ident)?;
+        }
+        Ok(())
+    }
+
     /// Points requests at another address of the same server (LAN vs WAN) without touching the index.
     pub(crate) fn use_address(&self, url: String) {
         let next = self.server.read().rebased(&url);

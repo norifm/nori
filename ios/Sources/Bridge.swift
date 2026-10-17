@@ -59,6 +59,8 @@ struct Section {
     let key: String
     let grid: Bool
     let items: [Item]
+    /// A service's own title for it (YouTube Music's shelves); empty: the key's words.
+    var title = ""
 }
 
 /// A page answer: sections, an optional header, or an error code.
@@ -78,7 +80,8 @@ struct PageAnswer {
             Section(
                 key: $0["key"] as? String ?? "",
                 grid: $0["grid"] as? Bool ?? false,
-                items: ($0["items"] as? [[String: Any]] ?? []).map(Item.init)
+                items: ($0["items"] as? [[String: Any]] ?? []).map(Item.init),
+                title: $0["title"] as? String ?? ""
             )
         }
     }
@@ -125,6 +128,10 @@ struct Now {
 struct Rules {
     var asks = false
     var account = true
+    /// Songs carry hearts (an account's, or a signed-in YouTube Music profile's likes).
+    var stars = true
+    /// Home is the service's own feed (YouTube Music's).
+    var feed = false
     /// The library's sections, as the core's LibrarySection numbers.
     var sections: Set<Int> = Set(0...11)
     /// The parts of the settings it opens, as the core's SettingsPart numbers (1: the server's own options).
@@ -135,6 +142,8 @@ struct Rules {
     init(_ d: [String: Any]) {
         asks = d["asks"] as? Bool ?? false
         account = d["account"] as? Bool ?? true
+        stars = d["stars"] as? Bool ?? account
+        feed = d["feed"] as? Bool ?? false
         sections = Set(d["sections"] as? [Int] ?? [])
         settings = Set(d["settings"] as? [Int] ?? [])
     }

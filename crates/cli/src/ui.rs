@@ -315,7 +315,7 @@ struct Marks<'a> {
 
 impl<'a> Marks<'a> {
     fn of(stars: &'a StarMarks, rules: &nori_core::browse::ProfileRules, devices: &'a crate::app::Devices) -> Marks<'a> {
-        Marks { stars, hearts: rules.account, asked: devices.asked() }
+        Marks { stars, hearts: rules.stars, asked: devices.asked() }
     }
 
     fn mark(&self, s: &Song) -> String {
@@ -616,7 +616,7 @@ fn greeting() -> &'static str {
 
 fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics: &mut Pics) {
     let area = heading(f, area, greeting(), "", t);
-    let shelves: Vec<(usize, &'static str, usize)> = app.home.shelves().iter().map(|(i, title, v)| (*i, *title, v.len())).collect();
+    let shelves: Vec<(usize, String, usize)> = app.home.shelves().iter().map(|(i, title, v)| (*i, title.to_string(), v.len())).collect();
     if shelves.is_empty() {
         match &app.home.error {
             Some(e) => failed(f, area, t, e),
@@ -689,7 +689,7 @@ fn albums(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pi
 }
 
 fn artists(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let hearts = app.rules.account;
+    let hearts = app.rules.stars;
     let App { library: l, marks, hits, .. } = app;
     let caption = l.artists.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "artist", "artists"));
     let body = heading(f, area, "Artists", &caption, t);
@@ -1664,7 +1664,7 @@ fn player_bar(f: &mut Frame, area: Rect, app: &mut App, ui: &Theme) {
         let lw = left_w as usize - 2;
         match &app.song {
             Some(s) => {
-                if app.rules.account {
+                if app.rules.stars {
                     let on = app.starred(Starrable::Song, &s.id, s.starred);
                     let hr = Rect { x: area.x + 1, width: 2, ..l1 };
                     put(f, Paragraph::new(Span::styled(if on { "♥ " } else { "♡ " }, Style::default().fg(if on { t.accent } else { t.dim }))), hr);

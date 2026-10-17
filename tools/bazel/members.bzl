@@ -31,4 +31,5 @@ MEMBERS = ['crates/android',
  'crates/transfers',
  'crates/uniffi-bindgen',
  'crates/uniffi-jni-runtime',
- 'crates/web']
+ 'crates/web',
+ 'crates/youtube']

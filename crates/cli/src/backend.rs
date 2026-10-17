@@ -109,8 +109,8 @@ pub enum Req {
 }
 
 pub enum Data {
-    /// Home shelf: index into `HOME_ROWS`, title, albums.
-    HomeRow(usize, &'static str, Vec<nori_core::Album>),
+    /// Home shelf: index (into `HOME_ROWS`, or the service's feed), title, albums.
+    HomeRow(usize, String, Vec<nori_core::Album>),
     Albums(Vec<nori_core::Album>),
     Artists(Vec<nori_core::Artist>),
     Playlists(Vec<nori_core::Playlist>),
@@ -278,18 +278,31 @@ impl Session {
                 }
             };
             match &req {
+                // A service's own Home (YouTube Music's): its feed, as shelves of albums.
+                Req::Home if core.rules().feed => {
+                    let r = read_pages(&client, Read::HomeFeed, |p| {
+                        if let Page::Feed { v } = p {
+                            for (i, (title, albums)) in nori_core::browse::feed_album_shelves(v).into_iter().enumerate() {
+                                send(Ok(Data::HomeRow(i, title, albums)));
+                            }
+                        }
+                    });
+                    if let Err(e) = r {
+                        send(Err(unreachable(&e)));
+                    }
+                }
                 Req::Home => {
                     // The favourites are the account's: a jam guest's Home is the host's shelves.
                     let account = core.rules().account;
                     for (i, (title, kind)) in HOME_ROWS.iter().enumerate() {
                         if *kind == AlbumSort::Starred && !account {
-                            send(Ok(Data::HomeRow(i, title, Vec::new())));
+                            send(Ok(Data::HomeRow(i, title.to_string(), Vec::new())));
                             continue;
                         }
                         let read = if *kind == AlbumSort::Starred { Read::FavouriteAlbums { size: 40 } } else { Read::AlbumList { kind: *kind, size: 40, offset: 0, genre: None } };
                         if let Err(e) = read_pages(&client, read, |p| {
                             if let Page::Albums { v } = p {
-                                send(Ok(Data::HomeRow(i, title, v)));
+                                send(Ok(Data::HomeRow(i, title.to_string(), v)));
                             }
                         }) {
                             return send(Err(unreachable(&e)));

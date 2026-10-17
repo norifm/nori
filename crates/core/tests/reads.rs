@@ -13,7 +13,7 @@ struct Answer(String);
 #[async_trait::async_trait]
 impl Transport for Answer {
     async fn get(&self, _: String, _: u32) -> Result<TransportResponse, TransportError> {
-        Ok(TransportResponse { status: 200, body: self.0.clone().into_bytes() })
+        Ok(TransportResponse { status: 200, body: self.0.clone().into_bytes(), set_cookies: Vec::new() })
     }
     async fn send(&self, r: Exchange) -> Result<TransportResponse, TransportError> {
         self.get(r.url, 0).await
@@ -89,6 +89,7 @@ fn said(p: &Page) -> String {
         Page::Status { v } => format!("status {} {} {} {}", v.version, v.server_type, v.server_version, v.open_subsonic),
         Page::ShareUrl { v } => format!("share {v}"),
         Page::Queue { v, .. } => format!("queue {} at {} {} ms", ids(&v.songs, song), v.index, v.position_ms),
+        Page::Feed { v } => format!("feed {}", ids(v, |s| &s.title)),
     }
 }
 
@@ -120,6 +121,8 @@ fn every_read_makes_page_and_index() {
         (Read::Search { query: id(), songs: 5, albums: 5, artists: 5 }, "found ar1 al1,al2 s1,ext-deezer-song-2", (1, 1, 1)),
         (Read::ShareLink { id: id() }, "share http://share/1", (0, 0, 0)),
         (Read::PullQueue, "queue s1,ext-deezer-song-2 at 1 1234 ms", (0, 0, 0)),
+        // A server has no feed of its own.
+        (Read::HomeFeed, "feed ", (0, 0, 0)),
     ];
     for (read, want, (artists, albums, songs)) in reads {
         let core = Core::new(String::new(), "reads".into(), Default::default()).unwrap();

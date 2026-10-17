@@ -7,6 +7,7 @@ use std::ffi::{c_char, CString};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Starrable, Write};
 use nori_core::menus::{row_swipe, sleep_choices, song_menu, JamOffer, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
+use nori_core::browse::ProfileRules;
 use nori_core::Song;
 use nori_host::session::Session;
 use serde_json::{json, Value};
@@ -67,9 +68,10 @@ fn details_json(s: &Song) -> Value {
     })
 }
 
-/// `account`: the profile has the account's things; a jam guest's menu asks the host (`JamOffer::Guest`).
-fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, account: bool) -> Value {
-    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, (!account).then_some(JamOffer::Guest))
+/// `rules`: whether the profile has the account's things, and whether its menu asks a jam's host
+/// (`JamOffer::Guest`).
+fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, rules: &ProfileRules) -> Value {
+    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, rules.stars, rules.account, rules.asks.then_some(JamOffer::Guest))
         .iter()
         .map(item_json)
         .collect();
@@ -142,7 +144,7 @@ pub extern "C" fn nori_ios_song_menu(token: u64, index: i32, starred: i32, playe
     let Some(song) = song_at(token, index) else {
         return std::ptr::null_mut();
     };
-    with_session(|s| owned(&menu_json(&song, starred != 0, download_of(s, &song.id), player != 0, s.rules.account)))
+    with_session(|s| owned(&menu_json(&song, starred != 0, download_of(s, &song.id), player != 0, &s.rules)))
         .unwrap_or(std::ptr::null_mut())
 }
 
@@ -225,8 +227,8 @@ pub unsafe extern "C" fn nori_ios_playlist_create(token: u64, index: i32, name: 
 /// `starred`: -1 nothing, else a `NORI_SWIPE_*` code.
 #[no_mangle]
 pub extern "C" fn nori_ios_row_swipe(left: i32, starred: i32) -> i32 {
-    let setting = with_session(|s| (s.core.session.settings.prefs(|p| if left != 0 { p.swipe_left } else { p.swipe_right }), s.rules.account));
-    match setting.and_then(|(s, account)| row_swipe(s, starred != 0, account)) {
+    let setting = with_session(|s| (s.core.session.settings.prefs(|p| if left != 0 { p.swipe_left } else { p.swipe_right }), (s.rules.stars, s.rules.account)));
+    match setting.and_then(|(s, (stars, account))| row_swipe(s, starred != 0, stars, account)) {
         None => -1,
         Some(RowSwipeAct::Queue) => 0,
         Some(RowSwipeAct::PlayNext) => 1,
@@ -294,6 +296,7 @@ pub extern "C" fn nori_ios_sleep_now() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nori_core::browse::profile_rules;
 
     fn song() -> Song {
         Song {
@@ -312,7 +315,7 @@ mod tests {
 
     #[test]
     fn the_menu_carries_each_line_by_code_with_what_it_needs() {
-        let v = menu_json(&song(), true, SongDownload::Done, false, true);
+        let v = menu_json(&song(), true, SongDownload::Done, false, &profile_rules(false));
         let items = v["items"].as_array().unwrap();
         assert_eq!((items[0]["a"].as_i64(), items[0]["on"].as_bool()), (Some(0), Some(false)));
         assert!(codes(&v).contains(&4), "a downloaded song offers removing it: {v}");
@@ -321,11 +324,11 @@ mod tests {
         let artist = items.iter().find(|i| i["a"] == 8).unwrap();
         assert_eq!((artist["id"].as_str(), artist["named"].as_bool()), (Some("ar"), Some(false)));
         assert!(!codes(&v).contains(&10), "the sleep timer is the player's");
-        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, true)).contains(&10));
-        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, true)).contains(&5));
+        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, &profile_rules(false))).contains(&10));
+        assert!(codes(&menu_json(&song(), false, SongDownload::Pending, true, &profile_rules(false))).contains(&5));
         assert_eq!(v["details"]["title"], "Blue");
         // A jam guest's asks the host, and has nothing of the account's.
-        assert_eq!(codes(&menu_json(&song(), false, SongDownload::None, true, false)), [1, 2, 7, 8, 15]);
+        assert_eq!(codes(&menu_json(&song(), false, SongDownload::None, true, &profile_rules(true))), [1, 2, 7, 8, 15]);
     }
 
     #[test]

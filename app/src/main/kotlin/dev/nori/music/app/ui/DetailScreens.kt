@@ -503,11 +503,13 @@ private fun PlaylistPage(
             // from the page whether this playlist was on the home page or not. The server has no
             // way to star a playlist, so it is kept on this phone, and the home page's shelf of
             // them reads it.
-            FavoriteCircle(pinned) { settings.pin(id, !pinned); Unit }
+            // The home page that shows them is the account's.
+            val account = LocalRules.current.account
+            if (account) FavoriteCircle(pinned) { settings.pin(id, !pinned); Unit }
             LateMore(detail != null) {
                 listOfNotNull(
                     say.addToQueue to { actions.enqueue(detail!!.songs) },
-                    downloadEntry(detail!!.songs, done, actions),
+                    downloadEntry(detail!!.songs, done, actions).takeIf { account },
                     jamStartEntry { actions.play(detail!!.songs, from = from) },
                     say.exportPlaylistFile to { export(playlist.name) },
                 )

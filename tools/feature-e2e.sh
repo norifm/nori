@@ -9,7 +9,7 @@
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
 SECTIONS="lyrics motion notification album-page bridge download-notification downloads car-art foryou dac device-sound remote jam"
-OPT_IN="lyrics-services scrobble download-albums"
+OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
   echo "the scrobble and download-albums checks require NORI_E2E_SERVER=local" >&2
@@ -170,6 +170,41 @@ if want lyrics-services; then section "each lyrics service (a report, not a chec
   done
   echo "     $answered of $(echo $services | wc -w) services answered"
   "$app" set lyricsSources default >/dev/null
+fi
+
+if want youtube-music; then section "a YouTube Music profile, then the server's again (YouTube's to answer)"
+  # The song's address is resolved through the core and its bytes come through media3's data source
+  # from googlevideo: the glue Rust's tests stand in for. Opt-in, since YouTube may refuse on any day.
+  "$app" login youtube-music >/dev/null
+  check "the YouTube Music profile opens" wait_for kind YOU_TUBE_MUSIC 20
+  # Google's sign-in page is a WebView of the app's own; when it is done is Rust's (auth::signed_in_at).
+  # That it opens, and that Cancel leaves the WebView no cookies, only a device can say.
+  if [ "$(field youtubeOffer)" = True ]; then
+    check "the profile just added offers Google's sign-in" tapnode text "Sign in with Google"
+  else
+    "$app" open youtube-sign-in >/dev/null
+  fi
+  check "the sign-in page opens" wait_for youtubeSignInPage True 10
+  check "and shows Google's sign-in form" wait_until 30 on_screen 'text="to continue to YouTube"'
+  tapnode text Cancel
+  check "Cancel closes it" wait_for youtubeSignInPage False 10
+  no_web_cookies() { [ "$("$app" webcookies)" = "cookies 0" ]; }
+  check "and leaves the WebView no cookies" wait_until 10 no_web_cookies
+  "$app" play "search:daft punk one more time" >/dev/null
+  check "a song found on YouTube Music plays through the AudioTrack" sounds 45
+  at=$(field positionMs); written=$(field sinkBytes)
+  check "its position advances" wait_for positionMs ">$((at + 3000))" 15
+  check "and the sink takes its bytes" wait_for sinkBytes ">$written" 10
+  echo "     playing '$(field title)' by '$(field artist)'"
+  # Signed out, Home is YouTube's feed for everyone: its first song shelf plays from there.
+  before=$(field title)
+  "$app" play home >/dev/null
+  check "the Home feed's first song plays" wait_for title "!$before" 30
+  check "through the AudioTrack" sounds 45
+  "$app" login "$APP_URL|$USER|$PASS" >/dev/null
+  check "the server's profile opens again" wait_for server "$APP_URL" 30
+  "$app" play "$SONG" >/dev/null
+  check "and its songs play" sounds 20
 fi
 
 if want motion; then section "moving covers"

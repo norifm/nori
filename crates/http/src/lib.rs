@@ -122,8 +122,9 @@ fn configured<B>(mut req: RequestBuilder<B>, headers: &HashMap<String, String>, 
 fn response(r: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<TransportResponse, TransportError> {
     let r = r.map_err(failure)?;
     let status = r.status().as_u16();
+    let set_cookies = r.headers().get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).map(str::to_string).collect();
     let body = r.into_body().with_config().limit(MAX_ANSWER).read_to_vec().map_err(failure)?;
-    Ok(TransportResponse { status, body })
+    Ok(TransportResponse { status, body, set_cookies })
 }
 
 /// Each request runs on a thread of its own ([`Call`]), so dropping its future ends it.

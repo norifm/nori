@@ -126,7 +126,8 @@ class Http(private val context: Context) {
                 if (rule?.unmeteredOnly == true && metered) throw MeteredNetworkException()
                 chain.proceed(request.newBuilder().apply {
                     // Public services ask clients to identify themselves; some reject OkHttp's default outright.
-                    header("User-Agent", policy.userAgent)
+                    // One the core's exchange names (YouTube's player) is its own.
+                    if (request.header("User-Agent") == null) header("User-Agent", policy.userAgent)
                     if (rule?.server == true) now?.headers?.forEach { (k, v) -> header(k, v) }
                 }.build())
             }
@@ -191,7 +192,7 @@ class Http(private val context: Context) {
             override fun onResponse(call: Call, response: Response) {
                 try {
                     val body = response.use { it.body.bytes() }
-                    cont.resume(TransportResponse(response.code.toUShort(), body))
+                    cont.resume(TransportResponse(response.code.toUShort(), body, response.headers("Set-Cookie")))
                 } catch (e: IOException) {
                     if (cont.isActive) cont.resumeWithException(e)
                 }

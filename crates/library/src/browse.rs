@@ -1,7 +1,7 @@
 //! The browsing screens' rules: home shelves, list paging and orders, library sections, the stats page.
 
-use nori_model::{HistoryEntry, ListeningStats, Playlist, Song};
-use nori_settings::settings::HomeRow;
+use nori_model::{Album, FeedShelf, HistoryEntry, ListeningStats, Playlist, Song};
+use nori_settings::settings::{HomeRow, SavedServer, ServerKind};
 pub use nori_settings::settings::LibrarySection;
 
 /// A day, in milliseconds.
@@ -60,6 +60,23 @@ pub fn home_shelves(rows: Vec<HomeRow>) -> Vec<HomeShelf> {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn home_rows_shown(rows: Vec<HomeRow>, account: bool) -> Vec<HomeRow> {
     rows.into_iter().filter(|r| account || matches!(shelf(*r), HomeShelf::Albums { follows_stars: false, .. })).collect()
+}
+
+/// A service's feed (YouTube Music's Home) as shelves of albums, for the Homes that draw only albums
+/// (desktop, terminal): a shelf's songs stand for their albums, each once; its playlists and artists are
+/// left out, and a shelf left with nothing goes.
+pub fn feed_album_shelves(feed: Vec<FeedShelf>) -> Vec<(String, Vec<Album>)> {
+    feed.into_iter()
+        .filter_map(|f| {
+            let mut albums = f.albums;
+            for s in f.songs {
+                let Some(id) = s.album_id.filter(|id| !albums.iter().any(|a| &a.id == id)) else { continue };
+                let subtitle = nori_model::lines::album_subtitle(&s.artist, 0);
+                albums.push(Album { id, name: s.album, artist: s.artist, artist_id: s.artist_id, cover_art: s.cover_art, subtitle, ..Default::default() });
+            }
+            (!albums.is_empty()).then_some((f.title, albums))
+        })
+        .collect()
 }
 
 /// The pinned playlists, in the order the server lists them.
@@ -262,8 +279,8 @@ pub fn song_sort_kept(name: String) -> ListPref {
 pub enum SettingsPart {
     /// The saved profiles, to switch between.
     Profiles,
-    /// Adding a profile, and the open server's own options (music folder, second address's bitrate,
-    /// syncing its library).
+    /// Adding, editing and removing profiles, and the open server's own options (music folder, second
+    /// address's bitrate, syncing its library).
     ServerOptions,
     /// Theme, motion, screen and size.
     Look,
@@ -301,6 +318,14 @@ pub struct ProfileRules {
     /// The parts of the settings it opens: a guest's are this device's own, nothing that acts on the
     /// host's account or server.
     pub settings: Vec<SettingsPart>,
+    /// Remote control and jams are offered (a guest is in one).
+    pub remote: bool,
+    /// AutoMix measures the songs ahead here (a guest plays its host's transitions).
+    pub measures: bool,
+    /// Songs carry hearts, and a heart is sent (an account's, or a signed-in YouTube Music profile's likes).
+    pub stars: bool,
+    /// Home is the service's own feed (`Read::HomeFeed`), not the library's shelves.
+    pub feed: bool,
 }
 
 /// An account's.
@@ -322,7 +347,29 @@ pub fn profile_rules(guest: bool) -> ProfileRules {
     let sections = if guest { vec![Albums, Artists, Songs, Genres] } else { vec![Albums, Favourites, Artists, Songs, Playlists, Smart, History, Genres, Decades, Folders, Radio, Downloads] };
     let account_only = [SettingsPart::ServerOptions, SettingsPart::Library, SettingsPart::Downloads];
     let settings = SETTINGS_PARTS.into_iter().filter(|p| !guest || !account_only.contains(p)).collect();
-    ProfileRules { asks: guest, account: !guest, indexed: !guest, sections, settings }
+    ProfileRules { asks: guest, account: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, feed: false }
+}
+
+/// The rules of a YouTube Music profile: Home is YouTube's feed, songs play and mix here, and nothing is
+/// offered to other devices. Signed out there is no library, so search is the way in; `signed_in`, the
+/// account's albums, liked songs and playlists are its library, and songs carry its likes as hearts.
+/// The rest of an account's work (downloads, scrobbles, history, mixes) stays off.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn youtube_rules(signed_in: bool) -> ProfileRules {
+    use SettingsPart::*;
+    let settings = vec![Profiles, ServerOptions, Look, Playback, Sound, Lyrics, Storage, About];
+    let sections = if signed_in { vec![LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists] } else { Vec::new() };
+    ProfileRules { asks: false, account: false, indexed: false, sections, settings, remote: false, measures: true, stars: signed_in, feed: true }
+}
+
+/// The rules of saved `profile`; `guest` when it is a jam guest's. A YouTube Music profile is signed in
+/// when it names its account (`user`, kept at sign-in).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn rules_of(profile: SavedServer, guest: bool) -> ProfileRules {
+    match profile.kind {
+        ServerKind::Subsonic => profile_rules(guest),
+        ServerKind::YouTubeMusic => youtube_rules(!profile.user.is_empty()),
+    }
 }
 
 /// A decade's years, first and last, from its first year.
@@ -509,6 +556,57 @@ mod tests {
         use SettingsPart::*;
         assert_eq!(profile_rules(false).settings, SETTINGS_PARTS);
         assert_eq!(profile_rules(true).settings, [Profiles, Look, Playback, Sound, Lyrics, Streaming, Storage, About]);
+    }
+
+    /// An account measures ahead and offers remote control; a guest is in a jam but plays its host's
+    /// transitions; YouTube Music measures but offers no remote, account or library.
+    #[test]
+    fn who_measures_and_who_is_remote() {
+        let rules = |r: ProfileRules| (r.remote, r.measures, r.account, r.indexed, r.sections.is_empty());
+        assert_eq!(rules(profile_rules(false)), (true, true, true, true, false));
+        assert_eq!(rules(profile_rules(true)), (true, false, false, false, false));
+        assert_eq!(rules(youtube_rules(false)), (false, true, false, false, true));
+        assert!(!youtube_rules(false).settings.iter().any(|p| matches!(p, SettingsPart::Library | SettingsPart::Downloads | SettingsPart::Streaming)));
+    }
+
+    /// Songs stand for their albums once; playlists are left out, and a shelf of only them goes.
+    #[test]
+    fn a_feed_as_album_shelves() {
+        let song = |id: &str, album: Option<&str>| Song { id: id.into(), album: album.unwrap_or_default().into(), album_id: album.map(String::from), artist: "A".into(), ..Default::default() };
+        let feed = vec![
+            FeedShelf { title: "Quick picks".into(), songs: vec![song("s1", Some("al1")), song("s2", Some("al1")), song("s3", None), song("s4", Some("al2"))], ..Default::default() },
+            FeedShelf { title: "All hits".into(), playlists: vec![Playlist::default()], ..Default::default() },
+            FeedShelf { title: "New releases".into(), albums: vec![Album { id: "al3".into(), ..Default::default() }], ..Default::default() },
+        ];
+        let shelves = feed_album_shelves(feed);
+        let said: Vec<(&str, Vec<&str>)> = shelves.iter().map(|(t, a)| (t.as_str(), a.iter().map(|a| a.id.as_str()).collect())).collect();
+        assert_eq!(said, [("Quick picks", vec!["al1", "al2"]), ("New releases", vec!["al3"])]);
+        assert_eq!((shelves[0].1[0].name.as_str(), shelves[0].1[0].subtitle.as_str()), ("al1", "A"));
+    }
+
+    /// Signed in, YouTube Music has a library of albums, likes and playlists, and hearts; still no
+    /// account's work. Its Home is always YouTube's feed; a server's never is.
+    #[test]
+    fn a_signed_in_youtube_profile_has_a_library_and_hearts() {
+        use LibrarySection::*;
+        let (out, signed) = (youtube_rules(false), youtube_rules(true));
+        assert_eq!((out.stars, out.sections.len()), (false, 0));
+        assert_eq!((signed.stars, signed.account, signed.sections), (true, false, vec![Albums, Favourites, Playlists]));
+        assert!(out.feed && signed.feed && !profile_rules(false).feed && !profile_rules(true).feed);
+        assert_eq!((profile_rules(false).stars, profile_rules(true).stars), (true, false), "an account's hearts, a guest's none");
+    }
+
+    /// Profiles are added and removed from a YouTube Music profile as from an account's, never a guest's.
+    #[test]
+    fn who_adds_profiles() {
+        let of = |kind, user: &str| SavedServer { kind, user: user.into(), ..Default::default() };
+        let adds = |kind, guest| rules_of(of(kind, ""), guest).settings.contains(&SettingsPart::ServerOptions);
+        assert!(adds(ServerKind::Subsonic, false));
+        assert!(!adds(ServerKind::Subsonic, true));
+        assert!(adds(ServerKind::YouTubeMusic, false));
+        assert_eq!(rules_of(of(ServerKind::YouTubeMusic, ""), true), youtube_rules(false));
+        assert_eq!(rules_of(of(ServerKind::YouTubeMusic, "Ann"), false), youtube_rules(true), "signed in as Ann");
+        assert_eq!(rules_of(of(ServerKind::Subsonic, "ann"), false), profile_rules(false));
     }
 
     #[test]

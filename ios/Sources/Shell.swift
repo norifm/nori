@@ -253,7 +253,7 @@ final class MiniPlayer: UIView {
     }
 
     @objc private func paintHeart() {
-        guard let song = Core.shared.now.song, !song.external, Core.shared.rules.account else {
+        guard let song = Core.shared.now.song, !song.external, Core.shared.rules.stars else {
             heart.isHidden = true
             return
         }

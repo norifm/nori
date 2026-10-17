@@ -114,6 +114,15 @@ browser callbacks, Compose navigation, and offline AudioTrack playback require A
 provider, then repeats with one unavailable cover. It compares decoded pixels in the three
 available quadrants. Content-provider pipes, Bitmap decoding, and Canvas painting require Android.
 
+`NORI_E2E_SERVER=local tools/feature-e2e.sh --only youtube-music` adds a YouTube Music profile,
+plays the first song a search finds, and switches back to the fixture server. The profile's rules,
+reads, stream resolution and WebM decoding are Rust tests; the resolved googlevideo URL passing
+through media3's data source and OkHttp (with the core's own User-Agent) requires Android. It is
+opt-in because YouTube can refuse on any day. The same section opens Google's sign-in page from the
+new profile's offer, sees Google's form, taps Cancel, and checks that the WebView keeps no cookies:
+when a sign-in is done is Rust's (`auth::signed_in_at`), but the WebView, its CookieManager and the
+sheet over it are Android's.
+
 The `jam` section also checks that media3 receives the guest timeline without issuing a seek to
 zero after Rust has aligned playback with the host. This queue handoff belongs to the Android service.
 
@@ -234,6 +243,9 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | sweeping only claimed for real word timing | a | crates/lyrics formats.rs, every format's test asserts `synced`/`word_timed` (`lyricsfile`, `ttml_lines_and_voices`, ...) |
 | lookups off: only the server's lyrics | a | lyrics_sources.rs (no service under the lookups switch) |
 | each lyrics service answers (a report, no check) | - | feature-e2e `lyrics-services`, opt-in: 16 × up to 12 s, the services' health rather than the app's |
+| a YouTube Music profile plays a searched song, and the server's profile plays after it | - | feature-e2e `youtube-music`, opt-in: YouTube's to answer |
+| Google's sign-in page opens; Cancel closes it and leaves the WebView no cookies (3) | - | feature-e2e `youtube-music` (WebView, CookieManager) |
+| a sign-in page is done only back on music.youtube.com with a session | a | crates/youtube auth.rs |
 | no video player while off; let go when put away (2) | b | feature-e2e `motion` (ExoPlayer, Kotlin) |
 | starring reaches the server | a | client.rs |
 | the server is told what is playing | a | client.rs, scrobble.rs |

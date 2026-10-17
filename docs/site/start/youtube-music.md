@@ -1,0 +1,93 @@
+---
+title: YouTube Music
+description: A profile that searches and plays YouTube Music without a server, signed in to your account or not, best effort.
+sidebar:
+  order: 5
+---
+
+Applies to the nori release after 0.6.2, on Android, the desktop, the terminal and the iPod touch. Not on
+the web client. Signing in is on Android and the terminal.
+
+Besides your own server, nori can add a **YouTube Music** profile. It needs no server: nori asks YouTube
+directly, the way its own apps do. An account is optional.
+
+:::caution[Best effort]
+This is not an official YouTube client. YouTube can change what it answers at any time, and then search
+or playback stops working until nori is updated. Your own server is the reliable way to use nori.
+:::
+
+## Adding it
+
+- **Android**: on the sign-in screen, or in Settings, Servers, **Add server**, pick **YouTube Music**
+  instead of **Your server**, then **Add YouTube Music**. A name is optional.
+- **Desktop**: on the sign-in page, pick **YouTube Music**, then **Add YouTube Music**.
+- **iPod touch**: on **Add a server**, pick **YouTube Music**.
+- **Terminal**: start `nori-cli --youtube-music`.
+
+It shows in the server list like any other profile, marked best effort, and you switch between it and
+your servers the same way. Adding it again opens the same profile.
+
+## Signing in (optional)
+
+Signed in, Home is your own YouTube Music Home, Library has your saved albums, your liked songs (as
+Favorites) and your playlists, and the heart on a song likes it on YouTube Music.
+
+nori signs in with the cookies of a browser session, since YouTube no longer lets other apps sign in
+with an account's password or a code.
+
+### On Android: Sign in with Google
+
+Right after you add the profile, nori offers **Sign in with Google** (**Not Now** skips it). Later,
+it is in Settings, Servers: tap the YouTube Music profile (it must be the one in use), then **Sign in
+with Google**.
+
+Google's own sign-in page opens inside nori. Sign in as you would in a browser. Once the page reaches
+YouTube Music, nori keeps that session's cookies, wipes everything the sign-in page stored (its
+cookies and site data), and closes it, so the page never keeps the session going behind nori's back.
+**Cancel** closes it and wipes it the same way. The page is used for signing in and nothing else:
+music never plays through it.
+
+### Pasting cookies (the desktop's way, and Android's fallback)
+
+On Android, **Paste cookies instead** under **Sign in with Google** opens the field for this.
+
+1. Open a **private** (incognito) browser window and sign in at music.youtube.com.
+2. Open the browser's developer tools, Network, click any request to music.youtube.com, and copy the
+   value of its **Cookie** request header. (A cookies.txt export of that window works too.)
+3. **Close the private window.** A browser that keeps the session open keeps changing it, and the copy
+   nori has would stop working.
+4. Paste it:
+   - **Android**: Settings, Servers, tap the YouTube Music profile (it must be the one in use),
+     **Paste cookies instead**, paste into **Cookies**, **Sign In**.
+   - **Terminal**: save it to a file and run
+     `nori-cli --script --youtube-music --sign-in cookies.txt --home`.
+
+nori keeps the session fresh by itself from then on: it renews it whenever the profile is used and it
+is more than ten minutes old, and keeps every change YouTube makes to it at once. A network failure never
+signs you out. If YouTube does end the session (you signed out everywhere, changed your password, or
+YouTube decided so), the profile says **YouTube signed you out** and goes on as a signed-out one until
+you sign in again. **Sign Out** forgets the cookies on this device.
+
+Music always plays without the account: only Home, Library and likes use it.
+
+:::caution[Your account]
+Unofficial apps are against YouTube's terms, and YouTube may flag an account that uses one. If that
+matters to you, use YouTube Music signed out.
+:::
+
+## What works
+
+- Home: YouTube Music's own shelves (Quick picks, new releases, playlists), everyone's when signed out.
+  The desktop and the terminal show their albums; Android and the iPod show the songs and playlists too.
+- Searching songs, albums and artists, and opening albums, artists and playlists.
+- Signed in: your saved albums, liked songs and playlists in Library, and hearts that like songs.
+- Playing, the queue, AutoMix, the equalizer and the rest of the sound settings.
+- Lyrics from the lyrics services (there is no server to ask).
+- Songs played once are kept in the stream cache like any other, and play again from there.
+
+## What is off
+
+Signed out there is no library: search and Home are the way in. Editing playlists, downloads,
+scrobbling, listening history, mixes, song radio and sharing are not offered, signed in or not.
+**Remote control and jams** are off in this profile, even when switched on in the settings. nori fetches
+at most the next song ahead, so it asks YouTube for nothing you did not queue.
