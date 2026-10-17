@@ -318,7 +318,10 @@ private fun QueueOfferCard(offer: dev.nori.music.ffi.library.QueueOffer, actions
     val song = offer.songs.getOrNull(offer.index.toInt()) ?: return
     androidx.compose.material3.Surface(
         onClick = onPlay, shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, bottom = 8.dp),
+        // Spaced as a shelf is under its heading: the large title's line leaves more room under its letters than a
+        // section heading's, so 4 dp here puts the card as far below them as a row sits below a heading; below it,
+        // only what the next heading keeps above itself.
+        color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 4.dp),
     ) {
         Row(Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Cover(actions.cover(song.coverArt, CoverSize.ROW), 48.dp, radius = 8.dp)
