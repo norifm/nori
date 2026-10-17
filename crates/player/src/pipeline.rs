@@ -49,6 +49,11 @@ pub trait Reading {
     fn skip_to_ms(&mut self, _ms: i64) -> bool {
         false
     }
+    /// Its bytes are no longer coming in (all here, or as many as it holds at once): the network is
+    /// free for the next song's.
+    fn fetched(&mut self) -> bool {
+        true
+    }
 }
 
 /// Opens the songs a queue names.
@@ -199,8 +204,6 @@ struct Opening<R> {
     from_ms: i64,
     offset_us: i64,
     r: R,
-    /// The song after it is prefetched once it is ready.
-    fetch_ahead: bool,
 }
 
 impl<R: Reading> Reader<R> {
@@ -238,8 +241,10 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     /// Maximum gain: 1 unless float output with the limiter allows boosting (`nori_player::gain`).
     pub gain_max: f32,
     reading: Option<Reader<S::Reading>>,
-    /// The next song last prefetched ([`Songs::upcoming`]).
+    /// The next song last prefetched ([`Songs::upcoming`]), and whether it waits for the song read to
+    /// have its bytes first ([`Player::fetch_when_free`]).
     upcoming: Option<String>,
+    fetch_after: bool,
     /// A song to read after a jump or seek, still opening.
     opening: Option<Opening<S::Reading>>,
     /// The audible song opened again to make its ending anew ([`Player::replan_ending`]).
@@ -300,6 +305,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             gain_max: 1.0,
             reading: None,
             upcoming: None,
+            fetch_after: false,
             opening: None,
             remaking: None,
             heard_from: None,
@@ -425,7 +431,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         if r.ready() {
             return self.start_reading(i, from_ms, offset_us, r);
         }
-        self.opening = Some(Opening { index: i, from_ms, offset_us, r, fetch_ahead: false });
+        self.opening = Some(Opening { index: i, from_ms, offset_us, r });
         true
     }
 
@@ -437,9 +443,6 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         }
         let o = self.opening.take().expect("checked");
         self.start_reading(o.index, o.from_ms, o.offset_us, o.r);
-        if o.fetch_ahead {
-            self.fetch_ahead();
-        }
     }
 
     /// The plan out of the audible song is asked for again (settings, an analysis or the queue changed).
@@ -480,7 +483,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     fn remake_from(&mut self, i: usize, ms: i64) {
         let Some(offset_us) = self.periods.iter().rev().find(|p| p.index == i).map(|p| p.offset_us) else { return };
         match self.tracks.open(&self.id_at(i), ms) {
-            Ok(r) => self.remaking = Some(Opening { index: i, from_ms: ms, offset_us, r, fetch_ahead: false }),
+            Ok(r) => self.remaking = Some(Opening { index: i, from_ms: ms, offset_us, r }),
             Err(why) => self.app.log(&format!("{} would not open again ({why}): its ending plays as it was made", self.id_at(i))),
         }
         self.remade();
@@ -905,14 +908,21 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.changes.push((self.now_ms, i));
         self.sync_queue();
         self.upcoming = self.next_of(i).map(|n| self.id_at(n));
-        match self.opening.as_mut() {
-            Some(o) => o.fetch_ahead = true,
-            None => self.fetch_ahead(),
-        }
+        self.fetch_after = true;
+        self.fetch_when_free();
     }
 
-    /// Prefetches (and measures) the song after the current one; a song still opening has its first
-    /// bytes come first.
+    /// Prefetches the song after the current one once the song read has its bytes ([`Reading::fetched`]):
+    /// on a slow link they would share it.
+    fn fetch_when_free(&mut self) {
+        if !self.fetch_after || self.opening.is_some() || self.reading.as_mut().is_some_and(|r| !r.r.fetched()) {
+            return;
+        }
+        self.fetch_after = false;
+        self.fetch_ahead();
+    }
+
+    /// Prefetches (and measures) the song after the current one.
     fn fetch_ahead(&mut self) {
         if let Some(id) = &self.upcoming {
             self.tracks.upcoming(id);
@@ -1129,6 +1139,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         if self.playing {
             self.follow_clock();
         }
+        self.fetch_when_free();
         self.render();
         // A pending failure is raised once everything before it has played.
         if self.failed.is_some() && self.ended() {

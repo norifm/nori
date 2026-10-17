@@ -172,7 +172,7 @@ impl Library for Radio {
     fn locate(&mut self, id: &str) -> Result<Located, String> {
         let bytes = self.0.iter().find(|(i, _)| i == id).map(|(_, b)| b.clone()).ok_or("no such station")?;
         // No hint for a station, as on Android.
-        Ok(Located { source: Source::Live { url: id.into(), bytes }, hint: None, duration_ms: None, estimated: false })
+        Ok(Located { source: Source::Live { url: id.into(), bytes }, hint: None, duration_ms: None, estimated: false, from_second: None })
     }
 
     fn about(&self, id: &str) -> WindowSong {

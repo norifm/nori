@@ -88,6 +88,39 @@ struct Server {
     gap: Mutex<Vec<(String, u64, Duration)>>,
     /// Plain answers the loader let go of (read whole, or given up).
     let_go: Arc<Signal>,
+    /// Songs whose bytes arrive at a rate on the rig's clock: from each byte on, so many a second.
+    paced: Mutex<Vec<(String, Rates)>>,
+    /// Songs transcoded on request (16-bit stereo WAV at [`RATE`]): `&timeOffset=<s>` starts one there,
+    /// with no length, unless the server ignores it and sends the whole file.
+    transcodes: Mutex<Vec<String>>,
+    ignores_offsets: AtomicBool,
+}
+
+/// From each byte on, so many bytes a second.
+type Rates = Vec<(u64, u64)>;
+
+/// A body arriving at the rates `steps` set (from a byte on, bytes a second of the clock) in reads of
+/// [`PACED_READ`], timed from when it opened.
+struct Paced {
+    inner: Cursor<Bytes>,
+    delivery: common::Delivery,
+    steps: Rates,
+    /// When the bytes so far came, ns.
+    at_ns: i64,
+}
+
+const PACED_READ: usize = 16 * 1024;
+
+impl std::io::Read for Paced {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let at = self.inner.position();
+        let rate = self.steps.iter().rev().find(|(from, _)| *from <= at).map_or(u64::MAX, |s| s.1);
+        let n = buf.len().min(PACED_READ);
+        let got = self.inner.read(&mut buf[..n])?;
+        self.at_ns += (got as u128 * 1_000_000_000 / rate as u128) as i64;
+        self.delivery.at(self.at_ns);
+        Ok(got)
+    }
 }
 
 /// A plain answer, telling the server when it is let go of.
@@ -131,10 +164,28 @@ impl ByteSource for Server {
         if let (Some(d), Some(clock)) = (slow, self.clock.lock().clone()) {
             clock.wait_until(clock.now_ns() + d.as_nanos() as i64);
         }
+        if let Some((id, secs)) = url.split_once("&timeOffset=").filter(|(id, _)| self.transcodes.lock().iter().any(|t| t == id)) {
+            let file = self.files.lock().iter().find(|(u, _)| u == id).map(|(_, f)| f.clone()).ok_or("404")?;
+            if self.ignores_offsets.load(Ordering::Relaxed) {
+                let mut c = Cursor::new(Bytes(file.clone()));
+                c.set_position(from);
+                return Ok(Body { start: from, len: Some(file.len() as u64), reader: Box::new(c) });
+            }
+            let skip = secs.parse::<usize>().map_err(|e| e.to_string())? * RATE as usize * 4;
+            let samples: Vec<i16> = file[44 + skip..].as_chunks::<2>().0.iter().map(|&b| i16::from_le_bytes(b)).collect();
+            let started = Arc::new(wav(&samples));
+            let mut c = Cursor::new(Bytes(started));
+            c.set_position(from);
+            return Ok(Body { start: from, len: None, reader: Box::new(c) });
+        }
         let file = self.files.lock().iter().find(|(u, _)| u == url).map(|(_, f)| f.clone()).ok_or("404")?;
         let len = file.len() as u64;
         let mut c = Cursor::new(Bytes(file));
         c.set_position(from);
+        if let (Some(steps), Some(clock)) = (self.paced.lock().iter().find(|(u, _)| u == url).map(|p| p.1.clone()), self.clock.lock().clone()) {
+            let reader = Paced { inner: c, delivery: clock.delivery(), steps, at_ns: clock.now_ns() };
+            return Ok(Body { start: from, len: Some(len), reader: Box::new(reader) });
+        }
         if let Some((at, _)) = gap.filter(|_| first) {
             return Ok(Body { start: from, len: Some(len), reader: Box::new(Broken(c, at)) });
         }
@@ -217,7 +268,8 @@ impl Library for Songs {
             (Some(store), None) => Source::Cached { url, bytes, store: store.clone(), key: format!("{id}:0") },
             (None, None) => Source::Url { url, bytes },
         };
-        Ok(Located { source, hint: Some(self.hint.into()), duration_ms, estimated: false })
+        let from_second = self.server.transcodes.lock().iter().any(|t| t == id).then(|| nori_engine::FromSecond { url: id.to_string(), bytes: self.server.clone() });
+        Ok(Located { source, hint: Some(self.hint.into()), duration_ms, estimated: false, from_second })
     }
 
     fn about(&self, id: &str) -> WindowSong {
@@ -616,6 +668,115 @@ fn slow_song_reports_buffering() {
     let on = events.iter().position(|e| *e == Event::Buffering(true)).unwrap_or_else(|| panic!("said while it waits: {events:?}"));
     let off = events.iter().position(|e| *e == Event::Buffering(false)).unwrap_or_else(|| panic!("and when it comes: {events:?}"));
     assert!(on < off, "{events:?}");
+}
+
+/// A song of 32 KB a second of music (8 kHz stereo) on a link three times as fast, with a round trip of
+/// 150 ms.
+fn on_a_slow_link(secs: f64, steps: Rates) -> (Rig, Vec<i16>) {
+    let a: Vec<i16> = music(secs * 8_000.0 / RATE as f64, 83);
+    let extra = Extra::default();
+    extra.server.slow.lock().push(("a".into(), Duration::from_millis(150)));
+    extra.server.paced.lock().push(("a".into(), steps));
+    let file = common::wav(8_000, &a);
+    let rig = Rig::build(vec![("a".into(), file, (secs * 1000.0) as i64)], sim::App::new(), Settings::default(), extra);
+    (rig, a)
+}
+
+#[test]
+fn slow_link_plays_once_its_bytes_come_in_time() {
+    let (rig, a) = on_a_slow_link(10.0, vec![(0, 100_000)]);
+    rig.engine.play_at(0, 0);
+    rig.run(2_500);
+    // 256 KB would take 2.6 s; a second of music and the rate take well under one.
+    let heard_ms = rig.heard.lock().len() as u64 / 2 * 1000 / 8_000;
+    assert!(heard_ms >= 600, "{heard_ms} ms of music heard in the first 2.5 s");
+    assert!(rig.wait_for(20, Rig::ended));
+    assert!(*rig.heard.lock() == a, "all of it, in order");
+    assert_eq!(rig.waits(), 0, "never short once it plays");
+    let events = rig.events.lock().clone();
+    assert_eq!(events.iter().filter(|e| **e == Event::Buffering(true)).count(), 1, "buffering only before the start: {events:?}");
+}
+
+#[test]
+fn slow_link_fetches_the_next_song_once_this_one_came() {
+    let (a, b) = (music(10.0 * 8_000.0 / RATE as f64, 83), music(2.0, 84));
+    let extra = Extra::default();
+    extra.server.paced.lock().push(("a".into(), vec![(0, 100_000)]));
+    let files = vec![("a".into(), common::wav(8_000, &a), 10_000), ("b".into(), wav(&b), 2_000)];
+    let rig = Rig::build(files, sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.server.requests.lock().iter().any(|(u, _)| u == "b")));
+    // a's 320 KB take 3.2 s.
+    assert!(rig.now_ms() >= 3_200, "b fetched at {} ms, while a still came", rig.now_ms());
+    assert!(rig.wait_for(20, Rig::ended));
+    assert!(rig.heard.lock()[..a.len()] == a[..], "a whole");
+}
+
+#[test]
+fn slow_link_seek_ahead_asks_from_there() {
+    let (rig, a) = on_a_slow_link(30.0, vec![(0, 100_000)]);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > 8_000 * 2));
+    // 20 s in is 640 KB, some 500 KB past what came: five seconds of the burst, a request answers in 150 ms.
+    rig.engine.seek(20_000);
+    let (at, from) = (rig.now_ms(), 20 * 8_000 * 2);
+    assert!(rig.wait_for(10, |r| r.heard.lock().windows(256).any(|w| w == &a[from..from + 256])));
+    assert!(rig.now_ms() - at < 2_500, "heard from 20 s after {} ms", rig.now_ms() - at);
+    assert!(rig.server.requests.lock().iter().any(|(u, f)| u == "a" && *f > 500_000), "{:?}", rig.server.requests.lock());
+}
+
+#[test]
+fn transcode_opened_mid_way_streams_from_there() {
+    let a = music(60.0, 87);
+    for ignored in [false, true] {
+        let extra = Extra::default();
+        extra.server.transcodes.lock().push("a".into());
+        extra.server.ignores_offsets.store(ignored, Ordering::Relaxed);
+        let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
+        rig.engine.play_at(0, 40_500);
+        assert!(rig.wait_for(10, |r| r.heard.lock().len() > 2 * RATE as usize * 2));
+        let from = 40_500 * RATE as usize / 1000 * 2;
+        let heard = rig.heard.lock().clone();
+        assert!(heard[RATE as usize..2 * RATE as usize] == a[from + RATE as usize..from + 2 * RATE as usize], "the song from 40.5 s (offset ignored: {ignored})");
+        let s = rig.engine.status();
+        assert!((40_500..43_000).contains(&s.position_ms), "the place is the song's: {s:?}");
+        let asked = rig.server.requests.lock().clone();
+        assert!(asked.iter().all(|r| r.0 == "a&timeOffset=40"), "asked to start at the whole second before: {asked:?}");
+        // A server that ignores the offset sends the whole file: the reader seeks in it.
+        assert_eq!(asked.len(), if ignored { 2 } else { 1 }, "{asked:?}");
+        assert!(rig.wait_for(30, Rig::ended), "and plays to the song's end");
+        let heard = rig.heard.lock().len();
+        assert!(heard.abs_diff(a.len() - from) <= 2 * BLOCK, "the rest of it: {heard} of {}", a.len() - from);
+    }
+}
+
+#[test]
+fn flac_seek_asks_for_a_range_or_two() {
+    // Half silence, half music: the first guess from the bitrate misses, the second lands.
+    let a: Vec<i16> = std::iter::repeat_n(0, 30 * RATE as usize * 2).chain(music(30.0, 85)).collect();
+    let extra = Extra { hint: Some("flac"), ..Extra::default() };
+    extra.server.paced.lock().push(("a".into(), vec![(0, 2_000_000)]));
+    let file = nori_engine::testing::flac(RATE, &a, None);
+    let rig = Rig::build(vec![("a".into(), file, 60_000)], sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 35_000);
+    assert!(rig.wait_for(10, |r| r.heard.lock().len() > 2 * RATE as usize * 2));
+    let from = 35 * RATE as usize * 2;
+    let heard = rig.heard.lock().clone();
+    assert!(heard[RATE as usize..2 * RATE as usize] == a[from + RATE as usize..from + 2 * RATE as usize], "the song from 35 s");
+    let asked: Vec<u64> = rig.server.requests.lock().iter().filter(|(u, _)| u == "a").map(|r| r.1).collect();
+    assert!(asked.len() <= 3, "the start, a guess and one more: {asked:?}");
+}
+
+#[test]
+fn slow_link_slowing_down_buffers_and_plays_on() {
+    // A quarter of the song at three times the music's rate, then at half of it.
+    let (rig, a) = on_a_slow_link(10.0, vec![(0, 100_000), (80_000, 16_000)]);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(40, Rig::ended));
+    assert!(*rig.heard.lock() == a, "all of it, in order");
+    let events = rig.events.lock().clone();
+    let said: Vec<_> = events.iter().filter(|e| matches!(e, Event::Buffering(_))).collect();
+    assert!(said.len() >= 4 && said.iter().step_by(2).all(|e| **e == Event::Buffering(true)), "buffering said again once the bytes fell behind: {said:?}");
 }
 
 #[test]
