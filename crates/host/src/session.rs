@@ -221,6 +221,8 @@ pub struct Session {
     pub offline: bool,
     #[cfg(feature = "desktop")]
     mpris: Option<Arc<nori_mpris::Mpris>>,
+    #[cfg(feature = "desktop")]
+    seen: parking_lot::Mutex<crate::PlaceSeen>,
     keeper: Arc<Keeper>,
     /// The database file, for its size.
     pub db: PathBuf,
@@ -280,7 +282,7 @@ impl Session {
         let keeper = Keeper::start(core.clone(), engine.clone());
         // A jam guest is no device of the account's: the jam lists it as a guest.
         let device = if guest { nori_core::remote::RemoteMe { kind: nori_remote::wire::DeviceKind::Guest, ..o.device } } else { o.device };
-        let s = Session { core, client, engine, store, downloader, covers, level, search: SearchSession::new(), offline: o.offline, #[cfg(feature = "desktop")] mpris: o.mpris, keeper, db: PathBuf::from(db), remotes, device, guest, rules, discovery: o.discovery, curve: Arc::default(), out: o.out };
+        let s = Session { core, client, engine, store, downloader, covers, level, search: SearchSession::new(), offline: o.offline, #[cfg(feature = "desktop")] mpris: o.mpris, #[cfg(feature = "desktop")] seen: Default::default(), keeper, db: PathBuf::from(db), remotes, device, guest, rules, discovery: o.discovery, curve: Arc::default(), out: o.out };
         #[cfg(feature = "desktop")]
         if let Some(m) = &s.mpris {
             let cover = crate::remote::NowCover::new(s.covers.clone(), s.core.clone(), Arc::downgrade(m));
@@ -303,6 +305,20 @@ impl Session {
     pub fn mpris_changed(&self) {
         if let Some(m) = &self.mpris {
             m.changed();
+        }
+    }
+
+    /// Tells the media controls of engine event `e`: the song or state changed, or the place jumped (a
+    /// seek, a restart, a song coming in past its start).
+    #[cfg(feature = "desktop")]
+    pub fn mpris_heard(&self, e: &Event) {
+        let Some(m) = &self.mpris else { return };
+        if matches!(e, Event::Song { .. } | Event::State(_) | Event::Looped { .. } | Event::Bridge { .. }) {
+            m.changed();
+        }
+        let jumped = self.engine.status_with(|s| self.seen.lock().jumped(s));
+        if jumped && self.remotes.elsewhere().is_none() {
+            m.seeked();
         }
     }
 

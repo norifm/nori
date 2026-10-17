@@ -305,7 +305,8 @@ that beside the database, the same on every client (`nori-core::model_download`)
 
 ### 3. The operating system around the player
 - Media controls and "now playing": the Android media session and notification, MPRIS on Linux
-  (`nori-mpris`: a client says what the controls do and when something changed), System Media Transport
+  (`nori-mpris`: a client says what the controls do; over nori-host it hands each engine event to
+  `Session::mpris_heard`, which says when the song changed or the place jumped), System Media Transport
   Controls on Windows, MPNowPlayingInfoCenter on macOS.
 - Headset buttons, audio focus and ducking, sleep and idle release. The core gives the timings
   (`rules.rs`); the client wires the events.

@@ -1363,7 +1363,7 @@ impl App {
                     _ => {}
                 }
                 if let Some(s) = &self.session {
-                    s.mpris_changed();
+                    s.mpris_heard(&e);
                     s.followed(&e);
                 }
                 self.follow();

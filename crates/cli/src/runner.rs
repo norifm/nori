@@ -8,7 +8,7 @@ use std::time::Instant;
 use nori_core::remote::wire::Op;
 use nori_core::remote::RelaySupport;
 use nori_core::settings::SavedServer;
-use nori_engine::{Event, State};
+use nori_engine::State;
 use nori_host::remote::Elsewhere;
 use nori_http::Http;
 use ratatui::crossterm::event::{self, Event as TermEvent};
@@ -293,9 +293,7 @@ impl Runner {
         match &m {
             Msg::Engine(e) => {
                 if let Some(s) = &self.session {
-                    if matches!(e, Event::Song { .. } | Event::State(_) | Event::Looped { .. } | Event::Bridge { .. }) {
-                        s.mpris_changed();
-                    }
+                    s.mpris_heard(e);
                     // Every event: a seek landing or the place moving is news for the account's other devices.
                     s.followed(e);
                 }

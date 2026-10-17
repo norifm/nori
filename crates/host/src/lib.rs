@@ -304,7 +304,46 @@ impl nori_mpris::Controls for Controls {
             position_ms: s.position_now(),
             starred: song.starred,
             art: None,
+            art_file: None,
         }
+    }
+}
+
+/// The place heard at the last look, for telling a jump (MPRIS's Seeked) from the music moving on.
+#[cfg(feature = "desktop")]
+#[derive(Default)]
+pub(crate) struct PlaceSeen(Option<Seen>);
+
+#[cfg(feature = "desktop")]
+struct Seen {
+    index: usize,
+    id: Option<String>,
+    ms: i64,
+    at: Instant,
+    pace: f32,
+    playing: bool,
+}
+
+/// A place this far from where the last look ran on to has jumped.
+#[cfg(feature = "desktop")]
+const JUMP_MS: i64 = 500;
+
+#[cfg(feature = "desktop")]
+impl PlaceSeen {
+    /// Looks at `s`: whether its place jumped since the last look, within the song away from where that
+    /// look ran on to, or into another song anywhere but its start.
+    pub(crate) fn jumped(&mut self, s: &Status) -> bool {
+        let Some(index) = s.index else {
+            self.0 = None;
+            return false;
+        };
+        let seen = Seen { index, id: s.id.clone(), ms: s.position_ms, at: s.at, pace: s.pace, playing: s.state == State::Playing };
+        let ran_to = match self.0.replace(seen) {
+            Some(p) if p.index == index && p.id == s.id && p.playing => p.ms + (s.at.saturating_duration_since(p.at).as_secs_f64() * 1000.0 * p.pace as f64) as i64,
+            Some(p) if p.index == index && p.id == s.id => p.ms,
+            _ => 0,
+        };
+        (s.position_ms - ran_to).abs() > JUMP_MS
     }
 }
 
@@ -361,5 +400,39 @@ mod tests {
         jam_joined(&settings, pass, "Jam");
         assert_eq!(jam_left(&settings).map(|s| s.id), None, "the login");
         assert!(settings.current().unwrap().servers.is_empty());
+    }
+
+    /// Seeked's rule: a jump within the song, or a song coming in past its start, but not the music
+    /// moving on at its pace, a pause, or a resume.
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn a_place_jumps_only_off_its_run() {
+        let start = Instant::now();
+        let mut seen = PlaceSeen::default();
+        // (seconds since start, index, id, ms, playing, pace, jumped)
+        let looks = [
+            (0.0, Some(0), "a", 0, true, 1.0, false),
+            (10.0, Some(0), "a", 10_000, true, 1.0, false),
+            (11.0, Some(0), "a", 11_040, true, 1.0, false),
+            (12.0, Some(0), "a", 60_000, true, 1.0, true),
+            (13.0, Some(0), "a", 61_000, false, 1.0, false),
+            (40.0, Some(0), "a", 61_000, false, 1.0, false),
+            (41.0, Some(0), "a", 20_000, false, 1.0, true),
+            (90.0, Some(0), "a", 20_000, true, 1.0, false),
+            (93.0, Some(0), "a", 0, true, 1.0, true),
+            (94.0, Some(1), "b", 120, true, 1.0, false),
+            (100.0, Some(2), "c", 15_000, true, 1.5, true),
+            (102.0, Some(2), "c", 18_000, true, 1.0, false),
+            (104.0, Some(2), "c", 0, true, 1.0, true),
+            (105.0, Some(2), "d", 30_000, true, 1.0, true),
+            (106.0, None, "", 0, false, 1.0, false),
+            (107.0, Some(2), "d", 0, true, 1.0, false),
+        ];
+        for (n, (t, index, id, ms, playing, pace, jumped)) in looks.into_iter().enumerate() {
+            let state = if playing { State::Playing } else { State::Paused };
+            let at = start + Duration::from_secs_f64(t);
+            let status = Status { state, index, id: index.map(|_| id.to_string()), position_ms: ms, at, pace, ..Status::default() };
+            assert_eq!(seen.jumped(&status), jumped, "look {n}");
+        }
     }
 }
