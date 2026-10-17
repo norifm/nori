@@ -3,7 +3,7 @@
 //! `park_timeout`.
 
 use std::thread::Thread;
-use std::time::{Duration, Instant};
+use nori_time::{Duration, Instant};
 
 /// Time as the engine's thread sees it. Every call but [`Clock::wake`] is made on that thread.
 pub trait Clock: Clone + Send + 'static {

@@ -158,13 +158,13 @@ mod tests {
             s.lines().find_map(|l| l.strip_prefix("VmHWM:").map(|v| v.trim().to_string())).unwrap_or_default()
         };
         let before = rss();
-        let t0 = std::time::Instant::now();
+        let t0 = nori_time::Instant::now();
         let weights = convert(&ckpt).unwrap();
         let converted = t0.elapsed();
         let pin = sha(&weights);
         println!("converted in {:.0} ms, {} bytes, SHA-256 {pin}; peak RSS {before} before, {} after", converted.as_secs_f64() * 1e3, weights.len(), rss());
         assert_eq!(pin, "e9349da04b9da4ad41c5e416c71a9471af3a416249e7addef0101b3d569df5a7", "export.py's numpy makes the same bytes");
-        let t1 = std::time::Instant::now();
+        let t1 = nori_time::Instant::now();
         let ours = BeatThis::from_weights(&weights).unwrap();
         println!("assembled and loaded in {:.0} ms; peak RSS {}", t1.elapsed().as_secs_f64() * 1e3, rss());
 

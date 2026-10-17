@@ -33,6 +33,8 @@ neural-beats = ["core", "nori-core/neural-beats"]
 testing = []
 
 [dependencies]
+# Time, read the same way natively and in a browser.
+nori-time = { path = "../time" }
 nori-player = { path = "../player" }
 parking_lot = "0.12"
 # Containers: the format readers only. Decoding is nori-player's, so every platform hears the same samples.

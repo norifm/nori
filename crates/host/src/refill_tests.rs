@@ -22,7 +22,7 @@ fn late_autofill_respects_playback_and_new_queues() {
         let s = Session::open_on(Open {
             queue,
             data: dir.path(),
-            http: Http::new(),
+            http: nori_http::Http::new(),
             profile: SavedServer { id: "test".into(), url: "http://127.0.0.1:9".into(), user: "ann".into(), password: "pw".into(), ..Default::default() },
             output: Box::new(card.clone()),
             volume: Level::new(1.0, None),

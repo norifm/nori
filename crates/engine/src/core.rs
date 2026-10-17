@@ -1068,7 +1068,7 @@ pub(crate) fn listen(core: &Core, id: &str, model: &Model, ends: &mut Ends) -> b
             MixEnd::Outro => ends.tail(),
         };
         let have = (start_ms, start_ms + x.len() as i64 * 1000 / rate as i64);
-        let t0 = std::time::Instant::now();
+        let t0 = nori_time::Instant::now();
         let grid = match beats::window(&row, end, have) {
             Some((from, to)) => {
                 let at = |ms: i64| ((ms - start_ms) * rate as i64 / 1000).clamp(0, x.len() as i64) as usize;
@@ -1157,7 +1157,7 @@ impl BeatModel {
     /// The model and the heap it took (1 where the heap is not counted).
     fn load(client: &Client) -> Option<(BeatModel, u64)> {
         let file = nori_core::model_download::ensure(client)?;
-        let t0 = std::time::Instant::now();
+        let t0 = nori_time::Instant::now();
         let before = nori_core::heap::live_bytes();
         let loaded = nori_core::model_download::read(&nori_core::beat_model::BEAT_THIS, &file).and_then(|bytes| nori_player::automix::neural::BeatThis::from_weights(&bytes).map_err(|e| e.to_string()));
         match loaded {

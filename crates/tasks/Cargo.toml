@@ -1,0 +1,18 @@
+[package]
+name = "nori-tasks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Where the core's async work runs: futures and timers, natively on one thread per executor, in a browser on its event loop"
+
+[lib]
+name = "nori_tasks"
+
+[dependencies]
+nori-time = { path = "../time" }
+
+# In a browser, tasks run on the page's event loop and timers are setTimeout.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = "=0.2.128"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"

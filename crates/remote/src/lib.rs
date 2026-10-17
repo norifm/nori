@@ -112,9 +112,13 @@ pub fn is_home_only(url: &str) -> bool {
 /// A new random id (a device's, kept by the app).
 pub fn new_id() -> String {
     use sha2::{Digest, Sha256};
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let t = nori_time::since_epoch().as_nanos();
     let here = &t as *const u128 as usize;
+    // A browser has no process id.
+    #[cfg(not(target_arch = "wasm32"))]
     let h = Sha256::digest(format!("{t}:{}:{here}", std::process::id()));
+    #[cfg(target_arch = "wasm32")]
+    let h = Sha256::digest(format!("{t}:{here}"));
     h[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 

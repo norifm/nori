@@ -32,7 +32,7 @@ pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
         return None;
     }
     let spec = model.model;
-    let t0 = std::time::Instant::now();
+    let t0 = nori_time::Instant::now();
     let got = fetch(&*client.transport, spec.checkpoint_url, spec.checkpoint_bytes, wanted)
         .map_err(|e| (BeatFailure::Network, e))
         .and_then(|ckpt| {

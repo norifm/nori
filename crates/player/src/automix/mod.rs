@@ -96,7 +96,7 @@ pub fn window_grid(f: &Features, from_s: f64, to_s: f64, meter: i64) -> Grid {
 
 /// Wall-clock ms since the epoch.
 fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+    nori_time::unix_ms()
 }
 
 /// A `TrackAnalysis` plus the working data behind it, for tests and diagnostics.

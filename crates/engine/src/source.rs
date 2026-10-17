@@ -15,7 +15,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::thread::Thread;
-use std::time::Duration;
+use nori_time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex};
 use symphonia::core::io::MediaSource;
@@ -114,7 +114,7 @@ struct CallState {
     /// How the client cancels the running request.
     hook: Option<Box<dyn FnOnce() + Send>>,
     /// Called off at this moment unless it moves first.
-    deadline: Option<std::time::Instant>,
+    deadline: Option<Instant>,
     watched: bool,
     stall_ms: u64,
     /// Whose watch calls it off when it stalls, and counts it among the requests asking; none for a
@@ -188,7 +188,7 @@ impl Cancel {
             s.off = None;
             s.hook = None;
         }
-        s.deadline = Some(std::time::Instant::now() + Duration::from_millis(s.stall_ms));
+        s.deadline = Some(Instant::now() + Duration::from_millis(s.stall_ms));
         if !s.watched {
             let Some(fetching) = s.fetching.upgrade() else { return };
             s.watched = true;
@@ -285,9 +285,9 @@ impl Fetching {
     fn watching(&self) {
         let mut w = self.watch.lock();
         loop {
-            let now = std::time::Instant::now();
+            let now = Instant::now();
             let mut due = Vec::new();
-            let mut next: Option<std::time::Instant> = None;
+            let mut next: Option<Instant> = None;
             w.calls.retain(|c| {
                 let Some(c) = c.upgrade() else { return false };
                 let mut s = c.lock();
@@ -317,7 +317,7 @@ impl Fetching {
             }
             match next {
                 Some(at) => {
-                    self.watch_cv.wait_until(&mut w, at);
+                    self.watch_cv.wait_for(&mut w, at.saturating_duration_since(Instant::now()));
                 }
                 None => {
                     w.running = false;
@@ -863,9 +863,9 @@ impl Loaded {
     /// Waits before the retry after `failures` failures in a row (2, 4, 8 times `retry_ms`); false once
     /// the song is let go.
     fn rest(&self, failures: u32) -> bool {
-        let until = std::time::Instant::now() + Duration::from_millis(self.retry_ms << failures);
+        let until = Instant::now() + Duration::from_millis(self.retry_ms << failures);
         let mut s = self.state.lock();
-        while !s.closed && !self.cv.wait_until(&mut s, until).timed_out() {}
+        while !s.closed && !self.cv.wait_for(&mut s, until.saturating_duration_since(Instant::now())).timed_out() {}
         !s.closed
     }
 
@@ -1331,7 +1331,6 @@ impl MediaSource for LoadedReader {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
-    use std::time::Instant;
 
     /// A count a test waits on.
     #[derive(Default)]
