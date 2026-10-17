@@ -29,7 +29,6 @@ const logs = [];
 page.on("pageerror", (e) => logs.push(`pageerror: ${e}`));
 page.on("console", (m) => m.type() === "error" && !m.text().includes("404") && logs.push(`console: ${m.text()}`));
 page.on("workercreated", (w) => w.on("console", (m) => m.type() !== "log" && logs.push(`worker ${m.type()}: ${m.text()}`)));
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const facts = () => page.evaluate(() => JSON.parse(JSON.stringify(window.nori)));
 const ask = (call, ...args) => page.evaluate((c, a) => window.ask(c, ...a), call, args);
 const now = async () => JSON.parse(await ask("now"));
@@ -37,6 +36,12 @@ const read = async (q) => JSON.parse(await ask("read", JSON.stringify(q)));
 const report = {};
 const failures = [];
 const expect = (ok, what) => ok || failures.push(what);
+
+/** Until `p` (this page by default) has heard `s` more seconds than `from` (a `nori.heard`), 60 s at
+ * most; the time is the music's, not the clock's. */
+const heardFor = (s, from, p = page) => p.waitForFunction((x, f) => (window.nori.heard?.seconds ?? 0) >= f + x, { timeout: 60000, polling: 100 }, s, from?.seconds ?? 0).catch(() => {});
+/** Until the queue's index is `i`, 10 s at most. */
+const atIndex = (i) => page.waitForFunction(async (x) => JSON.parse(await window.ask("now"))?.index === x, { timeout: 10000, polling: 100 }, i).catch(() => {});
 
 /** Opens `h` and waits for its page (`top`) to be drawn. */
 async function hash(h, top) {
@@ -118,7 +123,7 @@ async function early(at) {
 if (!only || only.includes("play")) {
   const firstSoundMs = await playAlbum(album("Playback") ?? albums[0].id);
   const before = (await facts()).heard;
-  await wait(10000);
+  await heardFor(10, before);
   const after = (await facts()).heard;
   const n = await now();
   expect(firstSoundMs < 1000, "the first Play sounds within a second");
@@ -130,25 +135,26 @@ if (!only || only.includes("lyrics")) {
   await playAlbum(album("Sung Album"));
   await page.click("#mini");
   await page.waitForFunction(() => window.nori.lyrics, { timeout: 30000 });
-  const lit = [];
-  for (let i = 0; i < 30; i++) {
-    await wait(500);
-    lit.push((await facts()).lyricLine ?? null);
-  }
-  report.lyrics = { lyrics: (await facts()).lyrics, lit: [...new Set(lit)] };
+  // The lines lit as the song plays, until two have been.
+  await page.waitForFunction(() => {
+    const lit = (window.litLines ??= new Set());
+    lit.add(window.nori.lyricLine ?? null);
+    return [...lit].filter((l) => l >= 0).length >= 2;
+  }, { timeout: 30000, polling: 100 }).catch(() => {});
+  const lit = await page.evaluate(() => [...window.litLines]);
+  report.lyrics = { lyrics: (await facts()).lyrics, lit };
   expect(report.lyrics.lit.filter((l) => l >= 0).length >= 2, "synced lyrics move on line by line");
   await page.click(".grabber");
 }
 
 if (!only || only.includes("skip")) {
   await playAlbum(album("Second Wind", "Alpha Waves"));
-  await wait(1500);
   const a = await now();
   await ask("next");
-  await wait(1500);
+  await atIndex(1);
   const b = await now();
   await ask("previous");
-  await wait(1500);
+  await atIndex(0);
   const c = await now();
   report.skip = { start: a.index, afterNext: b.index, afterPrevious: c.index };
   expect(a.index === 0 && b.index === 1 && c.index === 0, "next and previous move through the queue");
@@ -165,28 +171,30 @@ async function transition(name, settings, measured = false) {
   await ask("play", JSON.stringify(songs), 0, false, "", "");
   await page.waitForFunction(async (id) => JSON.parse(await window.ask("now"))?.song?.id === id, { timeout: 30000, polling: 250 }, songs[0].id);
   const t0 = Date.now();
-  if (measured) {
-    const unmeasured = ["Gapless", "EqualPowerFade"];
-    await page.waitForFunction(async (u) => {
-      const t = JSON.parse(await window.ask("now"))?.transition;
-      return t && !u.includes(t.kind);
-    }, { timeout: 30000, polling: 250 }, unmeasured).catch(() => {});
-  } else await wait(1000);
+  // The plan out of the first song; measured, one made from both songs' measurements.
+  const unmeasured = measured ? ["Gapless", "EqualPowerFade"] : [];
+  await page.waitForFunction(async (u) => {
+    const t = JSON.parse(await window.ask("now"))?.transition;
+    return t && !u.includes(t.kind);
+  }, { timeout: 30000, polling: 250 }, unmeasured).catch(() => {});
   const first = await now();
   const plan = first.transition && { ...first.transition, afterMs: Date.now() - t0 };
   const before = (await facts()).heard;
   await ask("seek", first.song.duration * 1000 - 16000);
   const seekHeard = (await facts()).heard.seconds;
-  let movedHeard;
-  let mixed = 0;
-  let moved = false;
-  for (let i = 0; i < 40; i++) {
-    await wait(500);
-    const n = await now();
-    if (n.mixing) mixed += 0.5;
-    if (n.index === 1 && !moved) movedHeard = (await facts()).heard.seconds;
-    if (n.index === 1) moved = true;
-  }
+  // Listened to until the second song plays on its own: how long the two mixed, and when it took over.
+  await page.waitForFunction(async () => {
+    const s = (window.through ??= { mixedMs: 0, last: performance.now(), moved: false });
+    const n = JSON.parse(await window.ask("now"));
+    const t = performance.now();
+    if (n.mixing) s.mixedMs += t - s.last;
+    s.last = t;
+    if (n.index === 1 && !s.moved) [s.moved, s.movedHeard] = [true, window.nori.heard.seconds];
+    return s.moved && !n.mixing;
+  }, { timeout: 30000, polling: 250 }).catch(() => {});
+  const { mixedMs, moved, movedHeard } = await page.evaluate(() => window.through);
+  await page.evaluate(() => (window.through = undefined));
+  const mixed = mixedMs / 1000;
   const after = (await facts()).heard;
   const gaps = after.silences.filter(([at]) => at >= before.seconds);
   report[name] = { mixedS: mixed, moved, dry: after.dry - before.dry, silences: gaps, plan, beforeS: before.seconds, seekS: seekHeard, movedS: movedHeard };
@@ -203,7 +211,7 @@ if (!only || only.includes("codecs")) {
   // Apple Lossless: no browser decodes it, so the Rust decoders are loaded beside the player module.
   await playAlbum(album("Lossless", "Nori Codecs"));
   const before = (await facts()).heard;
-  await wait(8000);
+  await heardFor(8, before);
   const [after, n] = [(await facts()).heard, await now()];
   report.codecs = { song: n.song?.title, index: n.index, state: n.state, heardS: Math.round(after.seconds - before.seconds), dry: after.dry - before.dry, peak: after.peak };
   expect(n.song?.title === "Lossless Song" && after.seconds - before.seconds > 7 && after.dry === before.dry && after.peak > 0.01, "an Apple Lossless song plays");
@@ -215,11 +223,12 @@ if (!only || only.includes("speed")) {
   for (const [speed, pitch] of [["1.5", "1"], ["0.75", "1"], ["1", "1.1"]]) {
     await ask("setting", "speed", speed);
     await ask("setting", "pitch", pitch);
-    await wait(1500);
+    // Taken up once the sound heard has run on a while; then the song's pace against the sound's.
+    await heardFor(1.5, (await facts()).heard);
     const [h0, a] = [(await facts()).heard, await now()];
-    await wait(4000);
+    await heardFor(4, h0);
     const [h1, b] = [(await facts()).heard, await now()];
-    const rate = (b.positionMs - a.positionMs) / 4000;
+    const rate = (b.positionMs - a.positionMs) / ((h1.seconds - h0.seconds) * 1000);
     report.speed[`${speed}x pitch ${pitch}`] = { rate: Math.round(rate * 100) / 100, dry: h1.dry - h0.dry };
     expect(Math.abs(rate - Number(speed)) < 0.05 && h1.dry === h0.dry, `speed ${speed} and pitch ${pitch} play at their pace`);
   }
@@ -302,7 +311,7 @@ if (!only || only.includes("crash")) {
   // A panic aborts the player's module: the worker goes, another starts over the saved session, at the
   // song and place this page saw last, playing on.
   await playAlbum(album("Second Wind", "Alpha Waves"));
-  await wait(3000);
+  await heardFor(3, (await facts()).heard);
   const was = await now();
   let w;
   for (const x of page.workers()) if (await x.evaluate(() => self.name === "player")) w = x;
@@ -410,7 +419,7 @@ async function slowStart(at) {
   await p.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 0, { timeout: 60000, polling: 20 });
   const firstSoundMs = Date.now() - t0;
   const before = await p.evaluate(() => JSON.parse(JSON.stringify(window.nori.heard)));
-  await new Promise((r) => setTimeout(r, 20000));
+  await heardFor(20, before, p);
   const after = await p.evaluate(() => JSON.parse(JSON.stringify(window.nori.heard)));
   const n = JSON.parse(await p.evaluate(() => window.ask("now")));
   await p.close();

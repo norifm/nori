@@ -237,6 +237,9 @@ trap 'exit 143' TERM HUP
 # The settings a script changes, read at its start and put back at its end (the ones state reports).
 SAVED=()
 remember_settings() { local v; v=$(fields "$@"); local i=0; for k in "$@"; do i=$((i+1)); SAVED+=("$k $(echo "$v" | sed -n "${i}p" | tr 'TF' 'tf')"); done; }
+# The settings that let the plain path play: nothing mixing, nothing in the chain; then any more
+# `name value` pairs given.
+plain_sound() { local s; for s in "autoMix false" "crossfadeSec 0" "crossfadeKeepAlbums true" "eq false" "speed 1" "pitch 1" "skipSilence false" "$@"; do "$app" set $s >/dev/null; done; }
 restore_settings() { local s; for s in "${SAVED[@]+"${SAVED[@]}"}"; do "$app" set $s >/dev/null; done; SAVED=(); }
 logged() { grep -qE "$1" "$watching"; }
 never() { ! logged "$1"; }
