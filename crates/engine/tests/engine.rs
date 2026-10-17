@@ -780,6 +780,28 @@ fn slow_link_slowing_down_buffers_and_plays_on() {
 }
 
 #[test]
+fn playing_is_said_once_the_music_is_heard() {
+    // A device holding half a second before it plays, as a phone's track does.
+    let a = music(10.0, 86);
+    let mut wrong = Vec::new();
+    for at in [0, 4_000] {
+        let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), Extra { hold_ms: Some(500), ..Extra::default() });
+        rig.engine.play_at(0, at);
+        // Neither the events nor the status (which a client may read at any time) say playing early.
+        let early = |r: &Rig| {
+            let s = r.engine.status();
+            r.heard.lock().is_empty() && s.state == State::Playing && !s.buffering
+        };
+        assert!(rig.wait_for(5, |r| early(r) || r.events.lock().contains(&Event::Buffering(false))), "{:?}", rig.events.lock());
+        if rig.heard.lock().is_empty() {
+            wrong.push(format!("from {at} ms: said playing before a sample was heard: {:?}, {:?}", rig.events.lock(), rig.engine.status()));
+        }
+        assert!(rig.wait_for(5, |r| r.heard.lock().len() > RATE as usize), "it plays");
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
 fn dead_device_stops_and_play_reopens() {
     let a = music(90.0, 71);
     let rig = Rig::new(&[("a", &a)], prefs_off(), Settings::default());
@@ -1138,7 +1160,7 @@ fn seek_waiting_for_bytes_holds_the_place() {
     rig.run(1_000);
     assert_eq!(rig.heard.lock().len(), heard, "nothing is heard while the bytes are on their way");
     assert_eq!(rig.engine.status().position_ms, 40_000, "the place stands where it was sent");
-    assert!(rig.wait_for(30, |r| r.heard.lock().len() > heard + 1000), "{:?}", rig.events.lock());
+    assert!(rig.wait_for(30, |r| r.heard.lock().len() > heard + RATE as usize), "{:?}", rig.events.lock());
     assert!(rig.events.lock()[before..].contains(&Event::Buffering(false)), "and says it waits no more");
     assert!(rig.engine.status().position_ms >= 40_000, "{:?}", rig.engine.status());
 }
