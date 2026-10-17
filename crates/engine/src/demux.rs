@@ -27,7 +27,7 @@ use symphonia::core::codecs::audio::well_known::*;
 use symphonia::core::codecs::audio::AudioCodecId;
 use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::well_known::FORMAT_ID_WAVE;
+use symphonia::core::formats::well_known::{FORMAT_ID_OGG, FORMAT_ID_WAVE};
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions, ReadBytes};
 use symphonia::core::meta::MetadataOptions;
@@ -604,7 +604,8 @@ impl Stream {
             (Some(d), Some(tb)) => d.frames(tb.numer.get(), tb.denom.get(), rate),
             _ => Vec::new(),
         };
-        let cut_short = sized && byte_len.is_some() && matches!(codec, Some(Codec::Opus | Codec::Vorbis)) && track.num_frames.is_none();
+        // Only Ogg says its length in its last page; a WebM never states its frames.
+        let cut_short = sized && byte_len.is_some() && reader.format_info().format == FORMAT_ID_OGG && track.num_frames.is_none();
         let setup = params.extra_data.clone();
         let bits = params.bits_per_sample.or(params.bits_per_coded_sample).unwrap_or(0);
         // The gapless numbers are in the track's timescale: used when it counts frames.

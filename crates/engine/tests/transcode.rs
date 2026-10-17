@@ -138,8 +138,16 @@ impl Rig {
 
     /// Plays `a` from `from_ms` until `b` is heard; returns the seconds of `a`'s 440 Hz heard.
     fn play_a(&self, from_ms: i64) -> f64 {
+        self.play_a_then(from_ms, || {})
+    }
+
+    /// [`Rig::play_a`], doing `then` once a has started.
+    fn play_a_then(&self, from_ms: i64, then: impl FnOnce()) -> f64 {
         let (before, seen) = (self.card.heard.lock().len(), self.events.lock().len());
         self.engine.play_at(0, from_ms);
+        let a = |e: &Event| matches!(e, Event::Song { id, .. } if id == "a");
+        assert!(self.time.until(Duration::from_secs(10), || self.events.lock().iter().skip(seen).any(a)), "a came: {:?}", self.events.lock());
+        then();
         let b = |e: &Event| matches!(e, Event::Song { id, .. } if id == "b");
         assert!(self.time.until(Duration::from_secs(A_SECS as u64 + 30), || self.events.lock().iter().skip(seen).any(b)), "b came: {:?}", self.events.lock());
         let failed: Vec<Event> = self.events.lock().iter().filter(|e| matches!(e, Event::Error { .. } | Event::Stopped { .. })).cloned().collect();
@@ -213,4 +221,50 @@ fn cut_copy_fetched_anew() {
     let rig = Rig::new(media3.clone(), false, Virtual::default());
     assert!(rig.play_a(0) >= A_SECS as f64 - 0.1, "all of a");
     assert_eq!(*media3.forgot.lock(), ["a"], "the cut copy forgotten once");
+}
+
+/// The phone's media3 cache as nori's bridge to it answers: songs served from any byte, and every
+/// forget answered as done, the copy written again as it is fetched anew.
+struct Phone {
+    songs: HashMap<String, Arc<Vec<u8>>>,
+    forgot: Mutex<Vec<String>>,
+}
+
+impl ByteSource for Phone {
+    fn open(&self, url: &str, from: u64) -> Result<Body, OpenError> {
+        let song = self.songs.get(id_of(url)).ok_or("404")?.clone();
+        let len = song.len();
+        if from >= len as u64 {
+            return Err(OpenError::PastEnd { len: Some(len as u64) });
+        }
+        Ok(Body { start: from, len: Some(len as u64), reader: Box::new(Sent { song, at: from as usize, stop: len, dropped: false, paced: None }) })
+    }
+
+    fn forget(&self, url: &str) -> bool {
+        self.forgot.lock().push(id_of(url).to_string());
+        true
+    }
+}
+
+#[test]
+fn webm_seek_lands_in_its_cached_copy() {
+    // YouTube's WebM Opus, whole in the phone's cache: a seek while it plays is heard from where it
+    // lands, and the copy is kept.
+    let Some([_, b, _]) = songs() else { return };
+    let dir = nori_testdir::TempDir::new("webm");
+    let a = dir.join("a.webm");
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", &format!("sine=frequency=440:sample_rate=48000:duration={A_SECS}"), "-ac", "2", "-c:a", "libopus", "-b:a", "192k"])
+        .arg(&a)
+        .status()
+        .is_ok_and(|s| s.success());
+    assert!(made, "ffmpeg made a.webm");
+    let phone = Arc::new(Phone { songs: HashMap::from([("a".into(), Arc::new(std::fs::read(a).unwrap())), ("b".into(), b.clone())]), forgot: Mutex::default() });
+    let rig = Rig::new(phone.clone(), false, Virtual::default());
+    let heard = rig.play_a_then(0, || {
+        assert!(rig.time.until(Duration::from_secs(20), || rig.card.heard.lock().len() >= 5 * 48_000 * 2), "a plays");
+        rig.engine.go_to(0, A_SECS as i64 * 1000 - 10_000);
+    });
+    assert!((9.5..=10.5).contains(&heard), "the last ten seconds of a: {heard} s");
+    assert!(phone.forgot.lock().is_empty(), "the copy kept: {:?}", phone.forgot.lock());
 }
