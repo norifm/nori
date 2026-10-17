@@ -14,7 +14,7 @@
 
 <p align="center">
   <img src="docs/screenshots/home.png" width="28%" alt="Home">&nbsp;
-  <img src="docs/screenshots/player.png" width="28%" alt="The player">&nbsp;
+  <img src="docs/screenshots/album.png" width="28%" alt="An album">&nbsp;
   <img src="docs/screenshots/lyrics.png" width="28%" alt="Lyrics">
 </p>
 
