@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import kotlin.math.roundToInt
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -28,10 +27,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -169,9 +165,9 @@ fun EqualizerScreen(vm: SettingsViewModel) {
         NoriDialog(naming, { naming = false }) {
             AlertCard(
                 title = { Text(say.saveTheseSettings) },
-                text = { OutlinedTextField(newName, { newName = it }, singleLine = true, label = { Text(say.name) }) },
-                confirmButton = { TextButton({ vm.saveProfile(newName); naming = false }, enabled = newName.isNotBlank()) { Text(say.save) } },
-                dismissButton = { TextButton({ naming = false }) { Text(say.cancel) } },
+                text = { FormField(newName, { newName = it }, label = { Text(say.name) }, singleLine = true) },
+                confirmButton = { TextAction(say.save, { vm.saveProfile(newName); naming = false }, enabled = newName.isNotBlank()) },
+                dismissButton = { TextAction(say.cancel, { naming = false }) },
             )
         }
         val rows by vm.deviceRows.collectAsStateWithLifecycle()
@@ -303,8 +299,8 @@ private fun ImportDialog(vm: SettingsViewModel, onDone: () -> Unit) {
                 if (error) Text(say.noFiltersFound, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
         },
-        confirmButton = { TextButton({ if (vm.importPreset(text) > 0) onDone() else error = true }) { Text(say.import) } },
-        dismissButton = { TextButton(onDone) { Text(say.cancel) } },
+        confirmButton = { TextAction(say.import, { if (vm.importPreset(text) > 0) onDone() else error = true }) },
+        dismissButton = { TextAction(say.cancel, onDone) },
     )
 }
 
@@ -334,7 +330,7 @@ private fun BandDialog(band: SoundBand, onChange: (SoundBand) -> Unit, onRemove:
                 NoriSlider(band.q, ranges.q.min..ranges.q.max, { q -> onChange(band.copy(q = q)) })
             }
         },
-        confirmButton = { TextButton(onDone) { Text(say.done) } },
+        confirmButton = { TextAction(say.done, onDone) },
         dismissButton = { TextButton(onRemove) { Icon(Icons.Filled.Close, null); Text(say.removeBand) } },
     )
 }

@@ -806,6 +806,12 @@ fun NavRow(
     }
 }
 
+/** A word in the accent that does something when tapped: a dialog's buttons, a row's "Edit". */
+@Composable
+fun TextAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    androidx.compose.material3.TextButton(onClick, modifier, enabled = enabled) { Text(label) }
+}
+
 /** A row that does something rather than going somewhere: "New playlist", "Import M3U…". */
 @Composable
 fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Boolean = true) {

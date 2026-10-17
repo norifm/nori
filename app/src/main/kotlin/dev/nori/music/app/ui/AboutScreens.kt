@@ -122,7 +122,7 @@ private fun LicenceText(c: Credit, dismiss: () -> Unit) {
         c.file?.let { f -> runCatching { context.assets.open("licences/$f.txt").bufferedReader().use { it.readText() }.trim() }.getOrNull() }
     }
     AlertCard(
-        confirmButton = { androidx.compose.material3.TextButton(dismiss) { Text(say.close) } },
+        confirmButton = { TextAction(say.close, dismiss) },
         title = { Text(c.name) },
         text = {
             Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {

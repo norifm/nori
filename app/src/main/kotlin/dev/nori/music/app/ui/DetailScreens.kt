@@ -19,7 +19,6 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -312,7 +311,7 @@ fun ArtistScreen(id: String, actions: ActionsViewModel, vm: ArtistViewModel = vi
     var leaving by remember { mutableStateOf<String?>(null) }
     NoriDialog(leaving, { leaving = null }) { url ->
         AlertCard(title = { Text(say.openInBrowser) }, text = { Text(url) },
-            confirmButton = { TextButton({ runCatching { uri.openUri(url) }; leaving = null }) { Text(say.open) } }, dismissButton = { TextButton({ leaving = null }) { Text(say.cancel) } })
+            confirmButton = { TextAction(say.open, { runCatching { uri.openUri(url) }; leaving = null }) }, dismissButton = { TextAction(say.cancel, { leaving = null }) })
     }
     val hint = LocalNav.current.artistHint(id)
     if (hint == null) {
@@ -366,8 +365,8 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                 }
                 if (ui.info?.lastFmUrl != null || ui.info?.musicBrainzId != null) item(key = "links", contentType = "links") {
                     Row(late(arrival).padding(horizontal = 12.dp)) {
-                        ui.info?.lastFmUrl?.let { u -> TextButton({ leave(u) }) { Text("last.fm") } }
-                        ui.info?.musicBrainzId?.let { m -> TextButton({ leave(dev.nori.music.ffi.library.musicbrainzArtistUrl(m)) }) { Text("MusicBrainz") } }
+                        ui.info?.lastFmUrl?.let { u -> TextAction("last.fm", { leave(u) }) }
+                        ui.info?.musicBrainzId?.let { m -> TextAction("MusicBrainz", { leave(dev.nori.music.ffi.library.musicbrainzArtistUrl(m)) }) }
                     }
                 }
                 groups.forEachIndexed { n, (group, albums) ->

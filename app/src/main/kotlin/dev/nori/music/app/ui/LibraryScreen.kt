@@ -33,22 +33,15 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryScrollableTabRow
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -371,7 +364,7 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
         AlertCard(
             title = { Text(say.newPlaylist) },
             text = { FormField(name, { name = it }, label = { Text(say.name) }, singleLine = true) },
-            confirmButton = { TextButton({ vm.create(name.trim()); creating = false }, enabled = name.isNotBlank()) { Text(say.create) } },
+            confirmButton = { TextAction(say.create, { vm.create(name.trim()); creating = false }, enabled = name.isNotBlank()) },
         )
     }
     val smart = LibrarySection.SMART in LocalRules.current.sections
@@ -450,7 +443,7 @@ private fun Radio(vm: RadioViewModel = viewModel()) {
         AlertCard(
             title = { Text(say.newStation) },
             text = { Column { FormField(name, { name = it }, label = { Text(say.name) }, singleLine = true); Spacer(Modifier.height(10.dp)); FormField(url, { url = it }, label = { Text(say.streamUrl) }, singleLine = true) } },
-            confirmButton = { TextButton({ vm.add(name.trim(), url.trim()); adding = false }, enabled = dev.nori.music.ffi.library.radioCanAdd(name, url)) { Text(say.add) } },
+            confirmButton = { TextAction(say.add, { vm.add(name.trim(), url.trim()); adding = false }, enabled = dev.nori.music.ffi.library.radioCanAdd(name, url)) },
         )
     }
     LoadBox(load) { stations ->

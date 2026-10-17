@@ -34,7 +34,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -184,7 +183,7 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
             NavRow(
                 remember(p) { say.smartName(p) }, { nav.smart(p.id) },
                 action = {
-                    TextButton({ nav.smartEdit(p.id) }) { Text(say.edit) }
+                    TextAction(say.edit, { nav.smartEdit(p.id) })
                     IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Close, say.delete, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 },
             )
@@ -192,7 +191,7 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
         item { SectionTitle(say.readyMade) }
         items(vm.defaults, key = { it.id }) { p ->
             Row(Modifier.fillMaxWidth().clickable { nav.smart(p.id) }.padding(start = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-                Text(remember(p) { say.smartName(p) }, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge); TextButton({ nav.smartEdit(p.id) }) { Text(say.copyIt) }
+                Text(remember(p) { say.smartName(p) }, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge); TextAction(say.copyIt, { nav.smartEdit(p.id) })
             }
         }
         item { Text(noteText(Note.SMART_HELP), Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -233,7 +232,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
             IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
             Text(say.smartPlaylist, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-            TextButton({ error = vm.save(draft) { nav.back() } }) { Text(say.save, style = MaterialTheme.typography.titleSmall) }
+            TextAction(say.save, { error = vm.save(draft) { nav.back() } })
         }
         FormField(draft.name, { draft = draft.copy(name = it) }, Modifier.fillMaxWidth().padding(horizontal = Space.gutter), label = { Text(say.name) }, singleLine = true)
         Row(Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), Arrangement.spacedBy(8.dp)) {
@@ -293,7 +292,7 @@ fun HistoryList(actions: ActionsViewModel, vm: HistoryViewModel = viewModel()) {
     LaunchedEffect(list, entries.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= entries.size - 30 }.collect { if (it) vm.loadMore() } }
     val songs = remember(entries) { entries.map { it.song } }
     LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-        item { Row(Modifier.padding(horizontal = 8.dp)) { TextButton(nav::stats) { Text(say.listeningStats) }; TextButton(vm::clear) { Text(say.clearHistory) } } }
+        item { Row(Modifier.padding(horizontal = 8.dp)) { TextAction(say.listeningStats, nav::stats); TextAction(say.clearHistory, vm::clear) } }
         if (entries.isEmpty()) item { Text(noteText(Note.NO_HISTORY), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         songRows(songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "h")
     }

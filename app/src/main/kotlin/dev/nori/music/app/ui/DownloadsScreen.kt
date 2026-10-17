@@ -22,7 +22,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -49,7 +48,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
@@ -271,8 +269,8 @@ fun DownloadsScreen(actions: ActionsViewModel) {
         AlertCard(
             title = { Text(say.stopAllTitle) },
             text = { Text(say.stopAllText(unfinished)) },
-            confirmButton = { TextButton({ actions.cancelAllDownloads(); confirm = false }) { Text(say.stopAll) } },
-            dismissButton = { TextButton({ confirm = false }) { Text(say.cancel) } },
+            confirmButton = { TextAction(say.stopAll, { actions.cancelAllDownloads(); confirm = false }) },
+            dismissButton = { TextAction(say.cancel, { confirm = false }) },
         )
     }
     Column {
@@ -461,16 +459,16 @@ fun BeatsQuestion(actions: ActionsViewModel) {
                 Column {
                     Text(say.beatsAskText)
                     Row(
-                        Modifier.padding(top = 12.dp).clip8().clickable { keep = !keep }.padding(end = 8.dp),
+                        Modifier.padding(top = 12.dp).clip8().clickable { keep = !keep }.padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        androidx.compose.material3.Checkbox(keep, { keep = it })
-                        Text(say.beatsAskRemember)
+                        Text(say.beatsAskRemember, Modifier.weight(1f).padding(end = 12.dp))
+                        NoriSwitch(keep, { keep = it })
                     }
                 }
             },
-            confirmButton = { TextButton({ actions.answerBeats(true, keep); keep = false }) { Text(say.beatsAskYes) } },
-            dismissButton = { TextButton({ actions.answerBeats(false, keep); keep = false }) { Text(say.beatsAskNo) } },
+            confirmButton = { TextAction(say.beatsAskYes, { actions.answerBeats(true, keep); keep = false }) },
+            dismissButton = { TextAction(say.beatsAskNo, { actions.answerBeats(false, keep); keep = false }) },
         )
     }
 }
