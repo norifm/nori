@@ -13,9 +13,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/home.png" width="28%" alt="Home">&nbsp;
+  <img src="docs/screenshots/quick-picks.png" width="28%" alt="Quick picks">&nbsp;
   <img src="docs/screenshots/album.png" width="28%" alt="An album">&nbsp;
-  <img src="docs/screenshots/lyrics.png" width="28%" alt="Lyrics">
+  <img src="docs/screenshots/lyrics-synced.png" width="28%" alt="Lyrics">
 </p>
 
 - **Sleeps between bursts.** Music is decoded ahead and the CPU sleeps in between; nothing ticks with the screen off.
