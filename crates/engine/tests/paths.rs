@@ -3185,3 +3185,26 @@ fn torn_down_while_paused_plays_again() {
     assert!(s.index == Some(0) && s.position_ms >= 2_900, "a from where it was paused: {s:?}");
     rig.engine.stop();
 }
+
+#[test]
+fn webm_seek_shows_its_place() {
+    // YouTube's WebM counts its stamps in milliseconds: a seek while it plays is placed where it
+    // landed, not at those milliseconds read as frames.
+    let d = dir();
+    let a = made(&d, "a", 30, 440, &["-c:a", "libopus", "-b:a", "128k", "-cluster_time_limit", "1000"], "webm");
+    let b = mp3(&d, "b", 5, 660);
+    let server = Arc::new(Server::default());
+    serve(&server, &[("a", &a), ("b", &b)]);
+    let songs = vec![("a".into(), "webm".into(), 30_000), ("b".into(), "mp3".into(), 5_000)];
+    let rig = Rig::new(server, songs, app(), Some(Fake::new(MP3_ONLY)), offload());
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait(10, |r| r.card.heard.lock().len() > 3 * 2 * 44_100), "a plays");
+    rig.engine.go_to(0, 20_000);
+    rig.run(1_000);
+    let at = rig.engine.status().position_ms;
+    assert!((20_000..22_500).contains(&at), "a from about 20 s: {at} ms");
+    assert!(rig.wait(30, |r| r.heard_song("b")), "{:?}", rig.events.lock());
+    let placed: Vec<i64> = rig.events.lock().iter().filter_map(|e| match e { Event::Placed { ms, .. } => Some(*ms), _ => None }).collect();
+    assert!(placed.iter().skip_while(|&&ms| ms < 20_000).all(|&ms| ms >= 20_000), "never placed back before the seek: {placed:?}");
+    rig.engine.stop();
+}

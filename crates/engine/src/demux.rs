@@ -333,6 +333,25 @@ fn codec_of(id: AudioCodecId) -> Option<Codec> {
     })
 }
 
+/// A track's time base, to count its stamps in frames: a WebM's count milliseconds.
+#[derive(Clone, Copy)]
+struct Ticks {
+    numer: i64,
+    denom: i64,
+    rate: i64,
+}
+
+impl Ticks {
+    fn of(time_base: Option<symphonia::core::units::TimeBase>, rate: u32) -> Ticks {
+        let (numer, denom) = time_base.map_or((1, rate as i64), |t| (t.numer.get() as i64, t.denom.get() as i64));
+        Ticks { numer, denom, rate: rate as i64 }
+    }
+
+    fn frames(self, ts: i64) -> i64 {
+        (ts as i128 * (self.numer * self.rate) as i128 / self.denom.max(1) as i128) as i64
+    }
+}
+
 /// A song's packets: symphonia's container reader (with the packet it handed out last), `mpeg.rs` for
 /// a live MP3 stream, or a WAV file's samples.
 enum Packets {
@@ -518,6 +537,7 @@ struct Stream {
     cut_short: bool,
     /// The song time the source starts at ([`Spec::offset_ms`]).
     offset_us: i64,
+    ticks: Ticks,
 }
 
 /// Converts float audio from one rate and channel count to another.
@@ -607,6 +627,7 @@ impl Stream {
         // Only Ogg says its length in its last page; a WebM never states its frames.
         let cut_short = sized && byte_len.is_some() && reader.format_info().format == FORMAT_ID_OGG && track.num_frames.is_none();
         let setup = params.extra_data.clone();
+        let ticks = Ticks::of(track.time_base, rate);
         let bits = params.bits_per_sample.or(params.bits_per_coded_sample).unwrap_or(0);
         // The gapless numbers are in the track's timescale: used when it counts frames.
         let per_frame = track.time_base.is_some_and(|t| t.numer.get() == 1 && t.denom.get() == rate);
@@ -684,6 +705,7 @@ impl Stream {
             reshape: None,
             cut_short,
             offset_us: offset_ms * 1000,
+            ticks,
         };
         match landed {
             Some(ts) => (d.skip_to, d.frame) = (ts as i64, None),
@@ -738,7 +760,7 @@ impl Stream {
         };
         self.skip_to = match self.mp4 {
             Some(_) => ms * self.format.rate as i64 / 1000,
-            None => seeked.required_ts.get(),
+            None => self.ticks.frames(seeked.required_ts.get()),
         };
         self.frame = None;
         match &mut self.inner {
@@ -775,7 +797,7 @@ impl Stream {
                 None => {
                     let trim_end = packet.trim_end.get() as i64 + crate::webm::discarded(&self.discards, pts) as i64;
                     let trim_start = packet.trim_start.get() as i64;
-                    (pts + trim_start, (dur - trim_start - trim_end).max(0))
+                    (self.ticks.frames(pts) + trim_start, (self.ticks.frames(dur) - trim_start - trim_end).max(0))
                 }
             };
             // The packet's own memory, not a copy.
@@ -848,8 +870,8 @@ impl Stream {
             };
             let mut at = match self.frame {
                 Some(f) => f,
-                None if pcm.is_some() => packet.pts,
-                None => song_frame(self.codec, self.delay_known, packet.pts),
+                None if pcm.is_some() => self.ticks.frames(packet.pts),
+                None => song_frame(self.codec, self.delay_known, self.ticks.frames(packet.pts)),
             };
             let n = match pcm {
                 Some((_, w)) => packet.data.len() / (w * ch),
@@ -1591,5 +1613,25 @@ mod tests {
         let ogg = decoded(open(include_bytes!("../../player/testdata/tone440.opus"), "opus"));
         assert!(!ogg.is_empty());
         assert!(webm == ogg, "{} bytes from WebM, {} from Ogg", webm.len(), ogg.len());
+    }
+
+    /// Opened half way, WebM's millisecond stamps put the place about where Ogg's frame stamps do (each
+    /// lands on its own packet).
+    #[test]
+    fn webm_opus_opens_half_way_as_ogg_opus() {
+        let open = |bytes: &'static [u8], hint| {
+            let mut d = Demuxed::open(Box::new(io::Cursor::new(bytes)), Some(hint), 500, None, Encoding::Pcm16, Platform::default()).unwrap();
+            assert!(d.fill());
+            let at = d.at_us();
+            let mut out = d.buffer().to_vec();
+            while d.fill() {
+                out.extend_from_slice(d.buffer());
+            }
+            (at, out)
+        };
+        let (webm_at, webm) = open(include_bytes!("../testdata/tone440.webm"), "webm");
+        let (ogg_at, ogg) = open(include_bytes!("../../player/testdata/tone440.opus"), "opus");
+        assert!((500_000..700_000).contains(&ogg_at) && webm_at.abs_diff(ogg_at) <= 40_000, "about the same place: {webm_at} and {ogg_at} µs");
+        assert!(webm.len().abs_diff(ogg.len()) <= 4 * 48 * 40, "about the same music from there: {} and {} bytes", webm.len(), ogg.len());
     }
 }
