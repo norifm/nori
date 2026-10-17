@@ -19,6 +19,10 @@ with nori, signed in to the same server account, see each other. One plays at a 
   and the volume keys show it and control it. The seek bar and **Mixing** indicator follow the playing
   device. The device you hold stops its own playback.
 - **The terminal** lists your devices in its right panel (`C`).
+- **Several clients on one computer.** On 0.6.3 and later, the desktop app and the terminal client
+  running on one computer are separate devices, as is a second copy of either. Devices that share a name
+  are listed with their kind, as "MacBook (computer)" and "MacBook (terminal)". The first client to start
+  after the update keeps the computer's existing device.
 
 On Android 11 and newer, the system media output picker also lists your nori devices while you
 control remote playback. Choose **This phone** there to bring playback back without opening nori.

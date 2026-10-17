@@ -942,7 +942,7 @@ fn a_restarted_device_publishes_a_newer_instance() {
     phone.remote.clone().watch(true);
     let before = phone.until("the first process", |r| r.devices().into_iter().find(|d| d.name == "Desk").and_then(|d| d.state));
     let id = first.remote.id();
-    eventually("the device id is stored", || first.core.session.settings.app_value("remoteDeviceId").as_deref() == Some(&id));
+    eventually("the device id is stored", || first.core.session.settings.app_value("remoteDeviceId.desktop.0").as_deref() == Some(&id));
     first.remote.clone().stop();
     let second = Device::kept(&relay, &dir, DeviceKind::Desktop, "Desk");
     assert_eq!(second.remote.id(), id);
@@ -950,6 +950,45 @@ fn a_restarted_device_publishes_a_newer_instance() {
     second.remote.clone().serve(true);
     let after = phone.until("the restarted process", |r| r.devices().into_iter().find(|d| d.id == id).and_then(|d| d.state).filter(|s| s.index == Some(1)));
     assert!(after.instance.unwrap() > before.instance.unwrap());
+    relay.close();
+}
+
+#[test]
+fn clients_over_one_app_database_are_devices_of_their_own() {
+    let relay = Relay::new();
+    let dir = nori_testdir::TempDir::new("remote-shared-db");
+    let old = {
+        let settings = nori_core::settings_store::Settings::new();
+        settings.open(&dir.path().join("app.db").to_string_lossy()).unwrap();
+        settings.app_db().unwrap().lock().execute("INSERT INTO app_kv(key, value) VALUES('remoteDeviceId', 'old')", []).unwrap();
+        "old".to_string()
+    };
+    let desk = Device::kept(&relay, &dir, DeviceKind::Desktop, "Mac");
+    let terminal = Device::kept(&relay, &dir, DeviceKind::Terminal, "Mac");
+    let second = Device::kept(&relay, &dir, DeviceKind::Desktop, "Mac");
+    let ids = [desk.remote.id(), terminal.remote.id(), second.remote.id()];
+    assert_eq!(ids[0], old, "the first client keeps the id the app had");
+    assert!(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2], "{ids:?}");
+
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    for d in [&desk, &terminal, &second] {
+        d.remote.clone().serve(true);
+    }
+    phone.remote.clone().watch(true);
+    for id in &ids {
+        relay.list(id, Some(DeviceState { playing: false, ..Default::default() }));
+    }
+    phone.until("the three", |r| (r.devices().len() == 3).then_some(()));
+    phone.remote.clone().send(terminal.remote.id(), Op::Pause);
+    assert_eq!(terminal.told(), Op::Pause);
+    phone.remote.clone().send(desk.remote.id(), Op::Next);
+    assert_eq!(desk.told(), Op::Next);
+    assert!(terminal.ops.try_recv().is_err() && second.ops.try_recv().is_err(), "only the device asked carries it out");
+
+    // Stopped, its id is free for the next copy of its kind.
+    second.remote.clone().stop();
+    let again = Device::kept(&relay, &dir, DeviceKind::Desktop, "Mac");
+    assert_eq!(again.remote.id(), ids[2]);
     relay.close();
 }
 
