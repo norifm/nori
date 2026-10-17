@@ -28,6 +28,9 @@ def applies(expression, system):
         if current == "=":
             value = json.loads(next(tokens))
             current = next(tokens, None)
+            # Bazel builds natively only; the web's wasm32 is never one of its systems.
+            if (name, value) == ("target_arch", "wasm32"):
+                return False
             if name not in values:
                 raise ValueError(f"unsupported Cargo condition: {name}")
             return values[name] == value

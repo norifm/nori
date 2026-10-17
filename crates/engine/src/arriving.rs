@@ -339,7 +339,7 @@ mod tests {
         let song = wav(44_100 * 20);
         let (tx, rx) = channel();
         let mut l = Box::new(Listening::start(Some("wav".into()), false, Box::new(Count(0, tx))).unwrap());
-        let started = std::time::Instant::now();
+        let started = nori_time::Instant::now();
         l.take(&song);
         assert!(started.elapsed() < std::time::Duration::from_secs(5), "never waited on the decoder");
         l.end(true);

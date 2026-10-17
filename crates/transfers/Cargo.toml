@@ -13,6 +13,8 @@ name = "nori_transfers"
 ffi = ["dep:uniffi", "nori-model/ffi", "nori-db/ffi", "nori-net/ffi", "nori-settings/ffi"]
 
 [dependencies]
+# Time, read the same way natively and in a browser.
+nori-time = { path = "../time" }
 uniffi = { workspace = true, optional = true }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled", "functions"] }

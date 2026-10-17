@@ -10,6 +10,7 @@ use nori_player::decode::PlatformAac;
 use nori_player::pcm::Encoding;
 use nori_player::pipeline::Songs;
 use nori_player::transitions::WindowSong;
+use symphonia::core::io::MediaSource;
 
 use crate::arriving::Listening;
 use crate::demux::Demuxed;
@@ -27,6 +28,9 @@ pub enum Source {
     Cached { url: String, bytes: Arc<dyn ByteSource>, store: Arc<Store>, key: String },
     /// Internet radio: never cached or fetched ahead (`Loader::live`).
     Live { url: String, bytes: Arc<dyn ByteSource> },
+    /// All here, in memory: a platform without threads fetched it whole (the web, until its loader runs
+    /// on fetch's own events).
+    Memory(Arc<[u8]>),
 }
 
 /// A located song: its source, a container hint (extension or MIME type), and its tagged length.
@@ -137,13 +141,14 @@ impl<L: Library> Sources<L> {
     fn open_as(&mut self, id: &str, from_ms: i64, packets: Option<bool>) -> Result<Demuxed, String> {
         let at = self.library.locate(id)?;
         let (encoding, aac, engine) = (self.encoding, self.platform_aac, self.engine.clone());
+        let here = |bytes: Box<dyn MediaSource>, hint: Option<&str>| match packets {
+            Some(_) => Demuxed::open_packets(bytes, hint, from_ms, at.duration_ms),
+            None => Demuxed::open(bytes, hint, from_ms, at.duration_ms, encoding, aac),
+        };
         let file = |paths: &[PathBuf]| {
             let file = Box::new(Pieces::open(paths).map_err(|e| format!("{paths:?}: {e}"))?);
             let hint = at.hint.clone().or_else(|| paths.first()?.extension().map(|e| e.to_string_lossy().into_owned()));
-            match packets {
-                Some(_) => Demuxed::open_packets(file, hint.as_deref(), from_ms, at.duration_ms),
-                None => Demuxed::open(file, hint.as_deref(), from_ms, at.duration_ms, encoding, aac),
-            }
+            here(file, hint.as_deref())
         };
         let load = |loader: Arc<Loader>, from_ms: i64, duration_ms: Option<i64>, estimated: bool| match packets {
             Some(_) => Demuxed::load_packets(loader, engine.clone(), at.hint.as_deref(), from_ms, duration_ms, estimated),
@@ -167,6 +172,7 @@ impl<L: Library> Sources<L> {
             // A live stream starts where the station is now.
             Source::Live { url, bytes } if packets.is_none() => Ok(load(self.live(id, url, bytes), 0, None, false)),
             Source::Live { .. } => Err("a live stream is decoded here".into()),
+            Source::Memory(bytes) => here(Box::new(std::io::Cursor::new(bytes.clone())), at.hint.as_deref()),
         }
     }
 

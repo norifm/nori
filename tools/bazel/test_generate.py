@@ -44,6 +44,8 @@ class Platforms(unittest.TestCase):
             ('cfg(all(target_os = "linux", target_env = "gnu"))', "android", False),
             ('cfg(unix)', "macos", True), ('cfg(unix)', "windows", False),
             ('cfg(not(target_os = "linux"))', "linux", False),
+            ('cfg(not(target_arch = "wasm32"))', "macos", True),
+            ('cfg(all(target_arch = "wasm32", target_os = "unknown"))', "linux", False),
         ]
         for expression, system, expected in cases:
             with self.subTest(expression=expression, system=system):

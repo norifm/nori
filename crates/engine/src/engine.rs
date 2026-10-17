@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread::{JoinHandle, Thread};
-use std::time::{Duration, Instant};
+use nori_time::{Duration, Instant};
 
 use nori_player::pcm::Encoding;
 use nori_player::pipeline::{App, ChainSettings, Player, Queue, Reading, Known, Songs, Sound};
@@ -384,7 +384,7 @@ impl Engine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn launch<L, A, Q, E, C>(library: L, app: A, queue: Q, mut output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, hooked: bool, events: E) -> Engine
+    fn launch<L, A, Q, E, C>(library: L, app: A, queue: Q, output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, hooked: bool, events: E) -> Engine
     where
         L: Library,
         A: App + Send + 'static,
@@ -395,22 +395,13 @@ impl Engine {
         let (tx, rx) = channel();
         let status = Arc::new(Mutex::new(Status::default()));
         let fetching = Arc::new(Fetching::default());
-        let loading = fetching.clone();
-        let (shared, devices, hook, own, timer) = (status.clone(), tx.clone(), clock.clone(), clock.clone(), clock.clone());
+        let (shared, devices, loading, hook, own, timer) = (status.clone(), tx.clone(), fetching.clone(), clock.clone(), clock.clone(), clock.clone());
         let join = std::thread::Builder::new()
             .name("nori-engine".into())
             .spawn(move || {
                 let me = std::thread::current();
-                let wake = me.clone();
-                // Device changes arrive on the output's own thread.
-                output.watch(Box::new(move |d| {
-                    if devices.send(Command::Device(d)).is_ok() {
-                        own.wake(&wake);
-                    }
-                }));
-                let songs = Sources::new(library, load_control(config.memory_mb), config.platform_aac, clock.waits(), me, loading);
-                let player = Player::build(songs, queue, app, RingTrack::new(output));
-                Worker::new(player, offload.map(Offload::new), rx, events, shared, config, clock).run();
+                let woken = Box::new(move || own.wake(&me));
+                worker(library, app, queue, output, offload, config, clock, rx, devices, woken, events, shared, loading).run();
             })
             .expect("a thread for the engine");
         let thread = join.thread().clone();
@@ -419,6 +410,26 @@ impl Engine {
             Box::new(move || hook.wake(&t)) as Box<dyn Fn() + Send + Sync>
         });
         Engine { tx, thread, join: Mutex::new(Some(join)), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake, fetching, now_us: Box::new(move || timer.now_us()) }
+    }
+
+    /// The engine on the caller's thread, for a platform without threads (the web): the caller runs
+    /// [`Driven::turn`] whenever `wake` is called and once the time it returns has passed on `clock`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn driven<L, A, Q, E, C>(library: L, app: A, queue: Q, output: Box<dyn AudioOutput>, config: Config, clock: C, wake: impl Fn() + Send + Sync + Clone + 'static, events: E) -> (Engine, Driven<L, A, Q, E, C>)
+    where
+        L: Library,
+        A: App + Send + 'static,
+        Q: Queue + Send + 'static,
+        E: FnMut(Event) + Send + 'static,
+        C: Clock + Sync,
+    {
+        let (tx, rx) = channel();
+        let status = Arc::new(Mutex::new(Status::default()));
+        let fetching = Arc::new(Fetching::default());
+        let timer = clock.clone();
+        let w = worker(library, app, queue, output, None, config, clock, rx, tx.clone(), Box::new(wake.clone()), events, status.clone(), fetching.clone());
+        let engine = Engine { tx, thread: std::thread::current(), join: Mutex::new(None), status, jumps: AtomicU64::new(0), plays: AtomicU64::new(0), wake: Some(Box::new(wake)), fetching, now_us: Box::new(move || timer.now_us()) };
+        (engine, Driven(w))
     }
 
     fn send(&self, c: Command) {
@@ -721,6 +732,39 @@ const CHAIN_EVERY_MS: i64 = 100;
 /// How far ahead of the output's decoder the CPU opens an offloaded song it takes over.
 pub const REMAKE_LEAD_MS: i64 = 120;
 
+/// The engine's worker over `library`, `app` and `queue`, taking commands from `rx`; `woken` wakes it
+/// for a device change sent through `devices`.
+#[allow(clippy::too_many_arguments)]
+fn worker<L, A, Q, E, C>(library: L, app: A, queue: Q, mut output: Box<dyn AudioOutput>, offload: Option<Box<dyn OffloadOutput>>, config: Config, clock: C, rx: Receiver<Command>, devices: Sender<Command>, woken: Box<dyn Fn() + Send + Sync>, events: E, status: Arc<Mutex<Status>>, fetching: Arc<Fetching>) -> Worker<L, A, Q, E, C>
+where
+    L: Library,
+    A: App,
+    Q: Queue,
+    E: FnMut(Event),
+    C: Clock,
+{
+    // Device changes arrive on the output's own thread.
+    output.watch(Box::new(move |d| {
+        if devices.send(Command::Device(d)).is_ok() {
+            woken();
+        }
+    }));
+    let songs = Sources::new(library, load_control(config.memory_mb), config.platform_aac, clock.waits(), std::thread::current(), fetching);
+    let player = Player::build(songs, queue, app, RingTrack::new(output));
+    Worker::new(player, offload.map(Offload::new), rx, events, status, config, clock)
+}
+
+/// An engine its caller runs ([`Engine::driven`]).
+pub struct Driven<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock>(Worker<L, A, Q, E, C>);
+
+impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Driven<L, A, Q, E, C> {
+    /// Takes the commands sent and plays on: ms until the next turn is due (`None`: when woken), or
+    /// `None` once the engine stopped.
+    pub fn turn(&mut self) -> Option<Option<i64>> {
+        self.0.step()
+    }
+}
+
 struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     p: Player<Sources<L>, RingTrack, A, Q>,
     off: Option<Offload>,
@@ -823,16 +867,19 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// A turn per wake. A panicking turn is reported and the song opened again ([`Worker::recover`]):
     /// a dead thread once left the app claiming to play in silence.
     fn run(mut self) {
-        loop {
-            let wake = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.turn())) {
-                Ok(None) => return,
-                Ok(Some(w)) => w,
-                Err(p) => self.panicked(panic_words(&*p)),
-            };
+        while let Some(wake) = self.step() {
             match wake {
                 Some(0) => continue,
                 w => self.clock.sleep(w.map(|ms| ms as u64), || self.waiting_for_bytes()),
             }
+        }
+    }
+
+    /// One turn, a panicking one recovered: ms until the next (`None`: until woken), or `None` to stop.
+    fn step(&mut self) -> Option<Option<i64>> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.turn())) {
+            Ok(w) => w,
+            Err(p) => Some(self.panicked(panic_words(&*p))),
         }
     }
 

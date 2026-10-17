@@ -153,7 +153,7 @@ pub(crate) fn forget_server(c: &Connection, server: &str) -> rusqlite::Result<()
 }
 
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    nori_time::unix_ms()
 }
 
 /// Stores `item` as the row of `kind` and `id`; its rowid, none for an item the index does not keep.

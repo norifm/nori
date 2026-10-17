@@ -2,8 +2,8 @@
 //! the engine asks for plans, whether a song wants measuring, and hands over finished measurements.
 //! The engine re-asks every couple of seconds while nothing is planned, so a repeated "no" is a cached lookup.
 
-use std::sync::mpsc::{channel, Sender};
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, OnceLock};
 
 use nori_model::alog;
 use nori_player::automix::analysis::Analyzer;
@@ -78,6 +78,7 @@ pub struct Planner {
     db: Arc<nori_db::Profile>,
     read_settings: ReadSettings,
     /// The thread measurements are finished and stored on, never the audio thread. Started on first use.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     worker: OnceLock<Mutex<Sender<Finished>>>,
     /// Told after each plan made.
     planned: Mutex<Option<Planned>>,
@@ -225,10 +226,11 @@ impl Planner {
 
     /// The engine heard `song_id` from its first sample to its last. Finished on the planner's thread,
     /// which ends with the planner.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn analysed(self: &Arc<Self>, song_id: &str, analyzer: Analyzer, frames: u64, rate: u32) {
         let worker = self.worker.get_or_init(|| {
-            let (tx, rx) = channel::<Finished>();
-            let me: Weak<Planner> = Arc::downgrade(self);
+            let (tx, rx) = std::sync::mpsc::channel::<Finished>();
+            let me: std::sync::Weak<Planner> = Arc::downgrade(self);
             std::thread::Builder::new()
                 .name("nori-analysis".into())
                 .spawn(move || rx.into_iter().for_each(|f| if let Some(p) = me.upgrade() { p.finish(f) }))
@@ -236,6 +238,12 @@ impl Planner {
             Mutex::new(tx)
         });
         let _ = worker.lock().send(Finished { song_id: song_id.to_string(), analyzer, frames, rate });
+    }
+
+    /// The web has no threads: there the measurement is finished at once, between the engine's turns.
+    #[cfg(target_arch = "wasm32")]
+    pub fn analysed(self: &Arc<Self>, song_id: &str, analyzer: Analyzer, frames: u64, rate: u32) {
+        self.finish(Finished { song_id: song_id.to_string(), analyzer, frames, rate });
     }
 
     fn finish(&self, mut f: Finished) {

@@ -1,0 +1,106 @@
+:root {
+  --bg: #fbfbfd;
+  --fg: #1d1d1f;
+  --dim: #6e6e73;
+  --card: #ffffff;
+  --accent: #fa2d48;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --fg: #f5f5f7;
+    --dim: #a1a1a6;
+    --card: #1c1c1e;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 0 16px 72px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+header h1 {
+  margin: 16px 0 0;
+  font-size: 28px;
+}
+
+#status {
+  color: var(--dim);
+  margin: 4px 0 16px;
+}
+
+form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+input,
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--dim) 30%, transparent);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+#albums {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.album {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  border: none;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.album img {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  background: var(--card);
+  object-fit: cover;
+}
+
+.album small {
+  color: var(--dim);
+}
+
+#songs button {
+  border: none;
+  background: none;
+  padding: 6px 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--card);
+  border-top: 1px solid color-mix(in srgb, var(--dim) 20%, transparent);
+}
+
+#now {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}

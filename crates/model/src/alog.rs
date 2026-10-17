@@ -45,7 +45,7 @@ struct Journal {
 static JOURNAL: Mutex<Option<Journal>> = Mutex::new(None);
 
 fn wall_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+    nori_time::unix_ms()
 }
 
 /// `ms` since the epoch, `offset_min` east of UTC, as `2026-09-28 13:22:05.123`.

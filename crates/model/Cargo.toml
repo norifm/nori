@@ -14,6 +14,8 @@ name = "nori_model"
 ffi = ["dep:uniffi"]
 
 [dependencies]
+# Time, read the same way natively and in a browser.
+nori-time = { path = "../time" }
 uniffi = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"] }
 # The core's error says what the database said.

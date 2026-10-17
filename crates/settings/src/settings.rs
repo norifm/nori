@@ -1859,7 +1859,7 @@ pub fn new_server_id() -> String {
     static N: AtomicU64 = AtomicU64::new(0);
     let mut h = std::collections::hash_map::RandomState::new().build_hasher();
     h.write_u64(N.fetch_add(1, Ordering::Relaxed));
-    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    h.write_u128(nori_time::since_epoch().as_nanos());
     format!("{:08x}", h.finish() as u32)
 }
 

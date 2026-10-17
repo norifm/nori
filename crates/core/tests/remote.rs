@@ -17,6 +17,7 @@ use nori_player::playlist::Hand;
 use nori_core::{Core, ServerConfig, Song};
 use nori_remote::clock;
 use nori_remote::wire::{Answer, Body, DeviceKind, DeviceState, Event, Member, Op, Outgoing, Refusal, Role, Room};
+use nori_tasks::{Native, Sleep, Tasks};
 use parking_lot::Mutex;
 
 const SERVER: &str = "http://octo:5274";
@@ -89,6 +90,8 @@ impl Drop for Parked<'_> {
 
 /// The relay in front of a server whose library is a few songs.
 struct Relay {
+    /// Itself, for what reaches it after the device gave up on the request.
+    me: Weak<Relay>,
     devices: Mutex<Vec<Weak<Remote>>>,
     hub: Mutex<Hub>,
     /// Held polls waiting for news; dropping one gives it up, as a cancelled request.
@@ -165,13 +168,18 @@ const GUEST_ENDPOINTS: &[&str] = &["ping", "search3", "getCoverArt", "getSong", 
 
 impl Relay {
     fn new() -> Arc<Relay> {
-        Arc::new(Relay {
-            devices: Mutex::default(),
-            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: Default::default(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None) })
+        Relay::made(false)
     }
 
     fn absent() -> Arc<Relay> {
-        Arc::new(Relay { absent: true.into(), ..Arc::into_inner(Relay::new()).unwrap() })
+        Relay::made(true)
+    }
+
+    fn made(absent: bool) -> Arc<Relay> {
+        Arc::new_cyclic(|me| Relay {
+            me: me.clone(),
+            devices: Mutex::default(),
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None) })
     }
 
     /// Device `dev`'s times read `skew_us` ahead as the relay passes them on. Its states reach the relay
@@ -186,7 +194,7 @@ impl Relay {
     }
 
     /// The lagging device's send `body`, as it reaches the relay (late) and with its clock read ahead.
-    fn lagged(&self, dev: &str, body: Option<String>) -> Option<String> {
+    async fn lagged(&self, dev: &str, body: Option<String>) -> Option<String> {
         let Some((skew, slow)) = self.lagging.lock().as_ref().filter(|(d, ..)| d == dev).map(|(_, s, l)| (*s, *l)) else { return body };
         let mut out: Outgoing = serde_json::from_str(body.as_deref()?).unwrap();
         let k = self.lagged.fetch_add(1, Ordering::Relaxed);
@@ -198,7 +206,7 @@ impl Relay {
             _ => 60 + k * 53 % 110,
         };
         if slow {
-            std::thread::sleep(Duration::from_millis(late));
+            off_thread(move || std::thread::sleep(Duration::from_millis(late))).await;
         }
         if let Some(at) = out.state.as_mut().and_then(|s| s.at_us.as_mut()) {
             *at += skew;
@@ -295,11 +303,11 @@ impl Relay {
         self.wake();
     }
 
-    /// Until first answers are no longer held, or the relay closed.
+    /// Until first answers are no longer held, or the relay closed or went down.
     async fn first_answer(&self) {
         std::future::poll_fn(|cx| {
             let hub = self.hub.lock();
-            if !self.first_answers_held.load(Ordering::Relaxed) || hub.closed {
+            if !self.first_answers_held.load(Ordering::Relaxed) || hub.closed || self.down.load(Ordering::Relaxed) {
                 return Poll::Ready(());
             }
             self.waiting.lock().push(cx.waker().clone());
@@ -524,27 +532,36 @@ impl Transport for Relay {
         if endpoint == "noriRemote.open" && self.opens_late.load(Ordering::Relaxed) {
             let k = self.opens.fetch_add(1, Ordering::Relaxed);
             self.hub.lock().asked.push("open waits".into());
-            std::thread::sleep(Duration::from_millis(300 - 50 * k.min(5)));
+            off_thread(move || std::thread::sleep(Duration::from_millis(300 - 50 * k.min(5)))).await;
         }
         self.hub.lock().asked.push(format!("{endpoint} {} {}", params.get("id").map_or("", String::as_str), params.get("dev").map_or("", String::as_str)));
         if endpoint == "noriRemote.poll" {
             if self.leave_late.load(Ordering::Relaxed) && params.get("serve").map(String::as_str) == Some("0") {
-                std::thread::sleep(Duration::from_millis(250));
+                off_thread(|| std::thread::sleep(Duration::from_millis(250))).await;
             }
             let late = params.get("serve").filter(|s| *s == "1").and_then(|_| {
                 let mut late = self.late_poll.lock();
                 late.take_if(|l| params.get("dev") == Some(&l.dev))
             });
-            if let Some(l) = &late {
-                l.caught.send(()).unwrap();
-                l.go.recv().unwrap();
-            }
-            self.arrived(&params);
-            if let Some(l) = late {
-                l.arrived.send(()).unwrap();
+            match late {
+                Some(l) => {
+                    l.caught.send(()).unwrap();
+                    let (relay, sent) = (self.me.upgrade().unwrap(), params.clone());
+                    // Sent, it arrives even if the device gives up waiting for the answer.
+                    off_thread(move || {
+                        l.go.recv().unwrap();
+                        relay.arrived(&sent);
+                        l.arrived.send(()).unwrap();
+                    })
+                    .await;
+                }
+                None => self.arrived(&params),
             }
             if !params.contains_key("since") {
                 self.first_answer().await;
+                if self.down.load(Ordering::Relaxed) {
+                    return unreachable();
+                }
             }
             if let (Some(since), Some("1")) = (params.get("since").and_then(|s| s.parse().ok()), params.get("hold").map(String::as_str)) {
                 // The rooms it listens to as it arrives: a jam opened meanwhile is not one of them. A key
@@ -560,7 +577,7 @@ impl Transport for Relay {
             }
         }
         let json = match endpoint {
-            "noriRemote.send" => self.lagged(params.get("dev").map_or("", String::as_str), request.json),
+            "noriRemote.send" => self.lagged(params.get("dev").map_or("", String::as_str), request.json).await,
             _ => request.json,
         };
         Ok(TransportResponse { status: 200, body: self.answer(endpoint, &params, json.as_deref()) })
@@ -713,10 +730,15 @@ impl Device {
     }
 
     fn found(relay: &Arc<Relay>, config: ServerConfig, kind: DeviceKind, name: &str, discovery: Option<Arc<dyn Discovery>>) -> Device {
-        Device::with(relay, config, kind, name, discovery, Default::default())
+        Device::with(relay, config, kind, name, discovery, Default::default(), None)
     }
 
-    fn with(relay: &Arc<Relay>, config: ServerConfig, kind: DeviceKind, name: &str, discovery: Option<Arc<dyn Discovery>>, session: Arc<nori_queue::Session>) -> Device {
+    /// An account's device whose remote keeps time on `timers`.
+    fn timed(relay: &Arc<Relay>, kind: DeviceKind, name: &str, timers: &Arc<Virtual>) -> Device {
+        Device::with(relay, ann(), kind, name, None, Default::default(), Some(timers.clone()))
+    }
+
+    fn with(relay: &Arc<Relay>, config: ServerConfig, kind: DeviceKind, name: &str, discovery: Option<Arc<dyn Discovery>>, session: Arc<nori_queue::Session>, tasks: Option<Arc<dyn Tasks>>) -> Device {
         let core = Core::new(String::new(), "remote".into(), session).unwrap();
         core.configure(config).unwrap();
         let client = Client::new(core.clone(), relay.clone(), Default::default());
@@ -724,7 +746,11 @@ impl Device {
         let (ops_to, ops) = channel();
         let (news_to, news) = channel();
         let ended = Arc::new(Mutex::new(Vec::new()));
-        let remote = Remote::new(client.clone(), RemoteMe { name: name.into(), kind }, Arc::new(Player(Mutex::new(ops_to))), Arc::new(Shown(Mutex::new(news_to), ended.clone())), discovery);
+        let (me, player, shown) = (RemoteMe { name: name.into(), kind }, Arc::new(Player(Mutex::new(ops_to))), Arc::new(Shown(Mutex::new(news_to), ended.clone())));
+        let remote = match tasks {
+            Some(tasks) => Remote::with_tasks(client.clone(), me, player, shown, discovery, tasks),
+            None => Remote::new(client.clone(), me, player, shown, discovery),
+        };
 
         relay.devices.lock().push(Arc::downgrade(&remote));
         Device { core, client, remote, ops, news, ended }
@@ -741,7 +767,7 @@ impl Device {
         let mut prefs = settings.open(&dir.path().join("app.db").to_string_lossy()).unwrap();
         prefs.remote_control = true;
         settings.put(prefs);
-        Device::with(relay, ann(), kind, name, None, Arc::new(nori_queue::Session::new(settings)))
+        Device::with(relay, ann(), kind, name, None, Arc::new(nori_queue::Session::new(settings)), None)
     }
 
     /// Waits for `ready` to hold, rechecking at each change notice.
@@ -2407,5 +2433,210 @@ fn a_jam_and_playing_on_another_device_exclude_each_other() {
     desk.remote.clone().jam_close();
     desk.remote.clone().pick(Some(phone_id.clone()));
     assert!(desk.remote.active().is_some(), "free to move it again once the jam is over");
+    relay.close();
+}
+
+/// A remote's tasks on a thread of their own, its timers on a clock the test moves.
+struct Virtual {
+    tasks: Native,
+    clock: Arc<Mutex<Clock>>,
+}
+
+#[derive(Default)]
+struct Clock {
+    now: Duration,
+    /// The timers waiting: (number, when due, the task to wake).
+    timers: Vec<(u64, Duration, Option<Waker>)>,
+    made: u64,
+}
+
+impl Virtual {
+    fn new() -> Arc<Virtual> {
+        Arc::new(Virtual { tasks: Native::new("nori-remote-test").unwrap(), clock: Arc::default() })
+    }
+
+    /// Moves the clock on, waking the timers due.
+    fn advance(&self, by: Duration) {
+        let due: Vec<Waker> = {
+            let mut c = self.clock.lock();
+            c.now += by;
+            let now = c.now;
+            c.timers.iter_mut().filter(|(_, at, _)| *at <= now).filter_map(|(_, _, w)| w.take()).collect()
+        };
+        due.into_iter().for_each(Waker::wake);
+    }
+
+    /// How long each timer waiting has left.
+    fn waits(&self) -> Vec<Duration> {
+        let c = self.clock.lock();
+        c.timers.iter().map(|(_, at, _)| at.saturating_sub(c.now)).collect()
+    }
+
+    /// Waits until a timer with `left` to go waits.
+    fn waiting(&self, what: &str, left: Duration) {
+        eventually(what, || self.waits().contains(&left));
+    }
+}
+
+impl Tasks for Virtual {
+    fn spawn(&self, task: nori_tasks::Task) {
+        self.tasks.spawn(task);
+    }
+
+    fn sleep(&self, after: Duration) -> Sleep {
+        let (n, at) = {
+            let mut c = self.clock.lock();
+            c.made += 1;
+            let (n, at) = (c.made, c.now + after);
+            c.timers.push((n, at, None));
+            (n, at)
+        };
+        Box::pin(VirtualSleep { clock: self.clock.clone(), n, at })
+    }
+}
+
+struct VirtualSleep {
+    clock: Arc<Mutex<Clock>>,
+    n: u64,
+    at: Duration,
+}
+
+impl std::future::Future for VirtualSleep {
+    type Output = ();
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<()> {
+        let mut c = self.clock.lock();
+        if c.now >= self.at {
+            return Poll::Ready(());
+        }
+        if let Some(t) = c.timers.iter_mut().find(|t| t.0 == self.n) {
+            t.2 = Some(cx.waker().clone());
+        }
+        Poll::Pending
+    }
+}
+
+impl Drop for VirtualSleep {
+    fn drop(&mut self) {
+        self.clock.lock().timers.retain(|t| t.0 != self.n);
+    }
+}
+
+impl Relay {
+    /// Whether device `id` is listed with a state.
+    fn lists(&self, id: &str) -> bool {
+        self.hub.lock().rooms.values().flat_map(|r| &r.members).any(|m| m.id == id && m.state.is_some())
+    }
+}
+
+#[test]
+fn a_failed_poll_is_asked_again_after_the_retry_wait_or_at_a_change() {
+    let relay = Relay::new();
+    relay.first_answers_held.store(true, Ordering::Relaxed);
+    let timers = Virtual::new();
+    let phone = Device::timed(&relay, DeviceKind::Phone, "Phone", &timers);
+    phone.playing(&["s1"], 0);
+    phone.remote.clone().serve(true);
+    let id = phone.remote.id();
+    // Its first poll fails once everything here is said: nothing changes while it rests.
+    eventually("the first poll at the relay", || relay.asked_for("noriRemote.poll") == 1);
+    relay.go_down(true);
+    timers.waiting("the retry", Duration::from_secs(30));
+    relay.go_down(false);
+    relay.release_first_answers();
+    timers.advance(Duration::from_secs(29));
+    assert_eq!(timers.waits(), [Duration::from_secs(1)], "only the retry waits");
+    assert_eq!(relay.asked_for("noriRemote.poll"), 1, "not asked again before its time");
+    timers.advance(Duration::from_secs(1));
+    eventually("listed once asked again", || relay.lists(&id));
+
+    // Down again: something changing here asks at once.
+    relay.go_down(true);
+    timers.waiting("the next retry", Duration::from_secs(30));
+    relay.go_down(false);
+    let polls = relay.asked_for("noriRemote.poll");
+    phone.remote.clone().watch(true);
+    eventually("asked again at once", || relay.asked_for("noriRemote.poll") > polls);
+    relay.close();
+}
+
+#[test]
+fn leaving_gives_up_the_held_poll_and_leaves_nothing_waiting() {
+    let relay = Relay::new();
+    let timers = Virtual::new();
+    let phone = Device::timed(&relay, DeviceKind::Phone, "Phone", &timers);
+    phone.playing(&["s1"], 0);
+    phone.remote.clone().serve(true);
+    let id = phone.remote.id();
+    eventually("the held poll", || relay.parked(&id) && relay.lists(&id));
+    phone.remote.clone().serve(false);
+    eventually("left, its poll no longer held", || !relay.parked(&id) && !relay.lists(&id));
+    assert!(timers.waits().is_empty(), "no timer waits: {:?}", timers.waits());
+
+    // A jam guest's leave goes, and stopping gives up the rest at once.
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    let pass = joined(&relay, opened(&host), "Bo".into());
+    let guest = Device::with(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, "Bo", None, Default::default(), Some(timers.clone()));
+    guest.remote.clone().watch(true);
+    guest.until("the jam", |r| r.jam_view());
+    guest.remote.clone().jam_leave();
+    let left = Instant::now();
+    guest.remote.clone().stop();
+    assert!(left.elapsed() < Duration::from_secs(2), "stopping waited for a held poll");
+    assert_eq!(relay.asked_for("noriRemote.leave"), 1);
+    assert!(timers.waits().is_empty(), "no timer waits: {:?}", timers.waits());
+    assert_eq!(Arc::strong_count(&guest.remote), 1, "no task of the remote runs");
+    phone.remote.clone().stop();
+    assert_eq!(Arc::strong_count(&phone.remote), 1, "no task of the remote runs");
+    relay.close();
+}
+
+#[test]
+fn sends_reach_the_relay_in_the_order_made() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    desk.remote.clone().watch(true);
+    let phone_id = phone.remote.id();
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
+    // Its sends take from none to 170 ms each on the way.
+    relay.lag(&desk.remote.id(), 0);
+    for ms in 1..=12 {
+        desk.remote.clone().send(phone_id.clone(), Op::Seek { ms: ms * 1_000 });
+    }
+    let told: Vec<Op> = (0..12).map(|_| phone.told()).collect();
+    assert_eq!(told, (1..=12).map(|ms| Op::Seek { ms: ms * 1_000 }).collect::<Vec<_>>());
+    relay.close();
+}
+
+#[test]
+fn a_mirrored_clock_is_learned_in_a_burst_then_every_quarter_minute() {
+    let relay = Relay::new();
+    let timers = Virtual::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::timed(&relay, DeviceKind::Desktop, "Desk", &timers);
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
+    desk.remote.clone().watch(false);
+    desk.remote.clone().pick(Some(phone_id.clone()));
+    desk.until("the phone mirrored, playing", |r| r.active().filter(|m| m.playing));
+    eventually("the first exchange", || relay.clocks() == 1);
+    let gap = Duration::from_millis(250);
+    for sent in 2..=clock::BURST {
+        timers.waiting("the burst's gap", gap);
+        timers.advance(gap);
+        eventually("the burst's next exchange", || relay.clocks() == sent);
+    }
+    let every = Duration::from_micros(clock::EVERY_US as u64);
+    timers.waiting("the quarter minute", every);
+    timers.advance(every - gap);
+    assert_eq!(relay.clocks(), clock::BURST, "none before the quarter minute");
+    timers.advance(gap);
+    eventually("the next exchange", || relay.clocks() == clock::BURST + 1);
     relay.close();
 }
