@@ -274,6 +274,13 @@ pub fn download_entry(songs: u32, missing: u32) -> DownloadAct {
     }
 }
 
+/// Whether stopping every download asks first: it does once more than one song would leave the queue
+/// (`unfinished` counts those downloading, waiting and failed).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn stop_all_asks(unfinished: u32) -> bool {
+    unfinished > 1
+}
+
 /// Every download entry a page's menu offers for `songs` songs of which `missing` are not downloaded:
 /// a partly downloaded page can fetch the rest or give back what it holds. [`DownloadAct::Remove`] then
 /// removes only the songs that are downloaded.
@@ -300,6 +307,11 @@ mod tests {
         for (songs, missing, want) in [(12, 12, vec![All]), (12, 0, vec![Remove]), (12, 5, vec![Missing, Remove]), (0, 0, vec![All])] {
             assert_eq!(download_entries(songs, missing), want, "{songs} songs, {missing} missing");
         }
+    }
+
+    #[test]
+    fn stopping_one_download_does_not_ask() {
+        assert_eq!([0, 1, 2, 40].map(stop_all_asks), [false, false, true, true]);
     }
 
     fn actions(m: &[SongMenuItem]) -> Vec<(SongAction, bool)> {

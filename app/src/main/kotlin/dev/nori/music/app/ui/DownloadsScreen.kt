@@ -265,12 +265,12 @@ fun DownloadsScreen(actions: ActionsViewModel) {
     var confirm by remember { mutableStateOf(false) }
     val s = sections
     val unfinished = s?.let { it.active.size + it.queued.size + it.failed.size } ?: 0
-    // Whether stopping everything asks first, and what it says, are the core's (`words_stop_all`).
-    val stop = remember(unfinished) { StopAll(unfinished > 1, say.stopAllTitle, say.stopAllText(unfinished)) }
+    // Whether stopping everything asks first is the core's (`stop_all_asks`).
+    val asks = remember(unfinished) { dev.nori.music.ffi.library.stopAllAsks(unfinished.toUInt()) }
     NoriDialog(confirm, { confirm = false }) {
         AlertCard(
-            title = { Text(stop.title) },
-            text = { Text(stop.text) },
+            title = { Text(say.stopAllTitle) },
+            text = { Text(say.stopAllText(unfinished)) },
             confirmButton = { TextButton({ actions.cancelAllDownloads(); confirm = false }) { Text(say.stopAll) } },
             dismissButton = { TextButton({ confirm = false }) { Text(say.cancel) } },
         )
@@ -282,7 +282,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
             AnimatedVisibility(unfinished > 0, enter = fadeIn(tween(if (plain) 0 else 200)), exit = fadeOut(tween(if (plain) 0 else 200))) {
                 Text(
                     say.stopAll,
-                    Modifier.clip8().clickable { if (stop.asks) confirm = true else actions.cancelAllDownloads() }.padding(horizontal = 8.dp, vertical = 8.dp),
+                    Modifier.clip8().clickable { if (asks) confirm = true else actions.cancelAllDownloads() }.padding(horizontal = 8.dp, vertical = 8.dp),
                     style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
                 )
             }
@@ -373,9 +373,6 @@ private fun activeSub(song: Song): String {
         ?.takeIf { it.phase == DownloadPhase.DOWNLOADING }?.progress?.collectAsStateWithLifecycle()?.value
     return progress.let { _ -> DownloadLines.row(LocalContext.current.resources, song.id) }
 }
-
-/** Stopping every download: whether it asks first (more than one song would leave the queue), and how. */
-private class StopAll(val asks: Boolean, val title: String, val text: String)
 
 /** A song on the downloads screen: the same proportions as a row in any song list. */
 @Composable
