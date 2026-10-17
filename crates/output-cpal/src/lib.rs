@@ -6,12 +6,13 @@
 //! (not reported on ALSA).
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Device, DeviceType, ErrorKind, InterfaceType, SampleFormat, SizedSample, Stream, StreamConfig};
 use nori_engine::{AudioOutput, DeviceWatch, Feed, OutputFormat, OutputKind};
+use parking_lot::Mutex;
 
 #[derive(Default)]
 pub struct CpalOutput {
@@ -64,18 +65,18 @@ impl Default for Heard {
 
 impl Heard {
     fn follow(&self, ring: Pulled) {
-        *self.ring.lock().unwrap_or_else(|p| p.into_inner()) = Some(ring);
+        *self.ring.lock() = Some(ring);
     }
 
     fn taken(&self) -> u64 {
-        self.ring.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map_or(0, |r| r())
+        self.ring.lock().as_ref().map_or(0, |r| r())
     }
 
     /// A callback at `now` took `frames` at `rate`, heard `delay_us` after it starts.
     fn pulled(&self, now: Instant, delay_us: u64, frames: usize, rate: u32) {
         let at = now.saturating_duration_since(self.base).as_micros() as u64;
         let taken = self.taken();
-        let mut last = self.last.lock().unwrap_or_else(|p| p.into_inner());
+        let mut last = self.last.lock();
         // Silent pulls may discard a skipped song; those frames never reach the device.
         let until_us = if frames == 0 { last.until_us } else { at + delay_us + frames as u64 * 1_000_000 / rate.max(1) as u64 };
         *last = Last { until_us, taken, rate };
@@ -84,7 +85,7 @@ impl Heard {
     /// How long until what was pulled has been heard.
     fn left_us(&self, now: Instant) -> u64 {
         // The callback's word first: a pull after it counts as held.
-        let last = *self.last.lock().unwrap_or_else(|p| p.into_inner());
+        let last = *self.last.lock();
         let since = self.taken().saturating_sub(last.taken) * 1_000_000 / last.rate.max(1) as u64;
         last.until_us.saturating_sub(now.saturating_duration_since(self.base).as_micros() as u64) + since
     }
@@ -198,7 +199,7 @@ fn build_stream<T: SizedSample + Default + Send + 'static>(
         .build_output_stream(
             config,
             move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
-                let Ok(mut feed) = feed.try_lock() else {
+                let Some(mut feed) = feed.try_lock() else {
                     data.fill(T::default());
                     return;
                 };
@@ -229,12 +230,20 @@ fn build_stream<T: SizedSample + Default + Send + 'static>(
 fn stream_failed(kind: ErrorKind, detail: String, failed: &Mutex<Option<String>>, wake: impl FnOnce()) {
     eprintln!("nori: the output stream failed: {detail}");
     if matches!(kind, ErrorKind::DeviceNotAvailable | ErrorKind::HostUnavailable | ErrorKind::StreamInvalidated) {
-        *failed.lock().unwrap_or_else(|p| p.into_inner()) = Some(detail);
+        *failed.lock() = Some(detail);
         wake();
     }
 }
 
 impl CpalOutput {
+    /// The stream stopped for good: the engine is told ([`AudioOutput::failed`]) and woken to hear it.
+    fn fail(&self, why: String) {
+        *self.failed.lock() = Some(why);
+        if let Some(feed) = &self.feed {
+            feed.lock().wake_engine();
+        }
+    }
+
     fn period_ms(&self) -> u32 {
         if self.shallow {
             SHALLOW_PERIOD_MS
@@ -257,7 +266,7 @@ impl CpalOutput {
                     w(d);
                 }
             }
-            kind => stream_failed(kind, e.to_string(), &failed, || stopped.lock().unwrap_or_else(|p| p.into_inner()).wake_engine()),
+            kind => stream_failed(kind, e.to_string(), &failed, || stopped.lock().wake_engine()),
         };
         let (feed, volume, heard) = (feed.clone(), self.volume.clone(), self.heard.clone());
         let stream = match format {
@@ -321,10 +330,7 @@ impl AudioOutput for CpalOutput {
         self.playing = true;
         if let Some(s) = &self.stream {
             if let Err(e) = s.play() {
-                *self.failed.lock().unwrap_or_else(|p| p.into_inner()) = Some(e.to_string());
-                if let Some(feed) = &self.feed {
-                    feed.lock().unwrap_or_else(|p| p.into_inner()).wake_engine();
-                }
+                self.fail(e.to_string());
             }
         }
     }
@@ -342,7 +348,7 @@ impl AudioOutput for CpalOutput {
     }
 
     fn failed(&mut self) -> Option<String> {
-        self.failed.lock().unwrap_or_else(|p| p.into_inner()).take()
+        self.failed.lock().take()
     }
 
     fn takes_float(&mut self) -> bool {
@@ -363,10 +369,7 @@ impl AudioOutput for CpalOutput {
             return;
         }
         if let Err(e) = self.rebuild() {
-            *self.failed.lock().unwrap_or_else(|p| p.into_inner()) = Some(e);
-            if let Some(feed) = &self.feed {
-                feed.lock().unwrap_or_else(|p| p.into_inner()).wake_engine();
-            }
+            self.fail(e);
         }
     }
 
@@ -436,7 +439,7 @@ mod tests {
         for (kind, stops) in [(ErrorKind::DeviceNotAvailable, true), (ErrorKind::HostUnavailable, true), (ErrorKind::DeviceBusy, false), (ErrorKind::StreamInvalidated, true)] {
             let mut woke = false;
             stream_failed(kind, "gone".into(), &failed, || woke = true);
-            assert_eq!((failed.lock().unwrap().take().is_some(), woke), (stops, stops), "{kind:?}");
+            assert_eq!((failed.lock().take().is_some(), woke), (stops, stops), "{kind:?}");
         }
     }
 }

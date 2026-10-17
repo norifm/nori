@@ -11,3 +11,4 @@ name = "nori_output_cpal"
 [dependencies]
 nori-engine = { path = "../engine" }
 cpal = "0.18"
+parking_lot = "0.12"

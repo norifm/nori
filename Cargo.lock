@@ -4178,6 +4178,7 @@ version = "0.6.2"
 dependencies = [
  "cpal",
  "nori-engine",
+ "parking_lot",
 ]
 
 [[package]]
