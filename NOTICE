@@ -41,8 +41,7 @@ The terminal client (crates/cli, nori-cli; not part of the Android app)
   cpal, alsa (the sound card, crates/output-cpal) — Apache-2.0 (alsa also MIT)
   ureq, rustls, ring, webpki-roots (HTTP and TLS, crates/http) — MIT or Apache-2.0; rustls also ISC;
     ring Apache-2.0 and ISC; webpki-roots' certificate data CDLA-Permissive-2.0
-  dbus, dbus-crossroads (the desktop's media controls, crates/mpris) — MIT or Apache-2.0; libdbus is
-    the system's own, linked at run time
+  zbus, async-io (the desktop's media controls, crates/mpris) — zbus MIT; async-io MIT or Apache-2.0
 
 Android libraries
   AndroidX (Media3, Compose, Material 3, Palette, Navigation, Lifecycle, Activity, Core), Material
