@@ -22,7 +22,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, M
 use ratatui::layout::{Position, Rect};
 
 use crate::art::Theme;
-use crate::backend::{Data, Downloads, Fetch, Msg, Req, ALBUM_PAGE, HOME_ROWS};
+use crate::backend::{Data, Downloads, Fetch, Msg, Req, ALBUM_PAGE};
 use crate::keys::{action, Action, Scope};
 use crate::lyrics::SongLyrics;
 use crate::settings_view::{Chore, Opened, SettingsView, Switch};
@@ -356,11 +356,11 @@ pub enum Item {
 /// The home page: album shelves, each scrolled independently.
 #[derive(Default)]
 pub struct Home {
-    /// Indexed like `HOME_ROWS`; None until loaded.
+    /// Indexed like the session's `home_album_rows`; None until loaded.
     pub rows: Vec<Option<(String, Vec<Album>)>>,
     pub error: Option<String>,
     pub asked: bool,
-    /// Selected shelf, indexed like `HOME_ROWS`.
+    /// Selected shelf, indexed like `rows`.
     pub shelf: usize,
     /// Per shelf: the selected album and the first visible one.
     pub pos: Vec<usize>,
@@ -689,7 +689,7 @@ pub enum Hit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListRef {
     Side,
-    /// Home shelf, indexed like `HOME_ROWS`.
+    /// Home shelf, indexed like `Home::rows`.
     Shelf(usize),
     Albums,
     Artists,
@@ -965,9 +965,9 @@ impl App {
         match view {
             View::Home if !self.home.asked => {
                 self.home.asked = true;
-                self.home.rows = (0..HOME_ROWS.len()).map(|_| None).collect();
-                self.home.pos = vec![0; HOME_ROWS.len()];
-                self.home.left = vec![0; HOME_ROWS.len()];
+                self.home.rows = Vec::new();
+                self.home.pos = Vec::new();
+                self.home.left = Vec::new();
                 self.cmds.push(Cmd::Load(Req::Home));
             }
             View::Albums if matches!(l.albums, Load::Idle) => {

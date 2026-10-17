@@ -49,6 +49,21 @@ pub fn count(n: impl Into<u64>, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// A Home shelf's title.
+pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
+    use nori_core::settings::HomeRow;
+    match row {
+        HomeRow::Recent => "Recently played",
+        HomeRow::Newest => "Recently added",
+        HomeRow::Frequent => "Most played",
+        HomeRow::Starred => "Favorites",
+        HomeRow::Random => "Something random",
+        HomeRow::Playlists => "Playlists",
+        HomeRow::Pinned => "Pinned",
+        HomeRow::TopSongs => "Top songs",
+    }
+}
+
 pub fn songs(n: usize) -> String {
     count(n as u64, "song", "songs")
 }

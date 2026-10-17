@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
-use nori_core::browse::AlbumSort;
 use nori_core::cache_policy::{Page, Read};
 use nori_core::race::LyricsPick;
 use nori_core::search::SearchView;
@@ -13,12 +12,14 @@ use nori_core::settings::SavedServer;
 use nori_core::transport::NetError;
 use nori_core::{AlbumDetail, ArtistDetail, PlaylistDetail, Song};
 use nori_covers::memory::Image;
+pub use nori_host::desktop::app;
+use nori_host::pages::{HomePart, PageAsk, PageFailed, PageGot, ShelfItems};
+pub use nori_host::pages::ALBUM_PAGE;
 pub use nori_host::session::{Audio, Chore};
-use nori_host::session::{read_pages, Note, Said};
+use nori_host::session::{Note, Said};
 pub use nori_host::{db_path, Fetch};
 use nori_http::Http;
 use nori_look::cover::CoverColours;
-use nori_engine::AudioOutput;
 use nori_output_cpal::CpalOutput;
 use ratatui::crossterm::event::{KeyEvent, MouseEvent};
 
@@ -109,7 +110,7 @@ pub enum Req {
 }
 
 pub enum Data {
-    /// Home shelf: index (into `HOME_ROWS`, or the service's feed), title, albums.
+    /// Home shelf: index (into the session's `home_album_rows`, or the service's feed), title, albums.
     HomeRow(usize, String, Vec<nori_core::Album>),
     Albums(Vec<nori_core::Album>),
     Artists(Vec<nori_core::Artist>),
@@ -131,61 +132,27 @@ pub struct Downloads {
     pub stored: nori_core::library::DownloadedLibrary,
 }
 
-/// Home shelves: title and Subsonic album list type.
-pub const HOME_ROWS: [(&str, AlbumSort); 5] = [
-    ("Recently added", AlbumSort::Newest),
-    ("Recently played", AlbumSort::Recent),
-    ("Most played", AlbumSort::Frequent),
-    ("Favorites", AlbumSort::Starred),
-    ("Something random", AlbumSort::Random),
-];
-
-/// Albums requested per page.
-pub const ALBUM_PAGE: u32 = 500;
-
 /// Key prefix of album card covers in [`crate::art::Art`]: `thumb:<cover id>`.
 pub const THUMB: &str = "thumb:";
 
-/// Logs `draft` in (blocking): the core checks it with its provider (a server is tried through its
-/// second address, then with legacy auth, which the profile then keeps).
+/// Logs `draft` in and keeps it as the active profile (blocking): the core checks it with its provider
+/// (a server is tried through its second address, then with legacy auth, which the profile then keeps).
 pub fn check_login(http: Arc<Http>, draft: SavedServer) -> Result<SavedServer, String> {
-    block_on(nori_core::providers::check_profile(http, draft)).map_err(|e| match net_error(&e) {
+    nori_host::desktop::log_in(http, draft).map_err(|e| match net_error(&e) {
         e if e.is_empty() => "the server did not answer".to_string(),
         e => e,
     })
 }
 
-/// The app's queue session over its settings: the client's object graph root, which every screen reads.
-/// Global: the root of the terminal client's own object graph (as Kotlin's `Nori`), made once.
-pub fn app() -> &'static Arc<nori_core::queue::Session> {
-    static APP: std::sync::OnceLock<Arc<nori_core::queue::Session>> = std::sync::OnceLock::new();
-    APP.get_or_init(|| Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new())))
-}
-
 /// The terminal client's own settings, stored in the core's `app_kv`.
 pub mod own {
+    pub use nori_host::desktop::own::{flag, keep, number, text};
     pub const MOUSE: &str = "tui.mouse";
     pub const IMAGES: &str = "tui.images";
     pub const CARD_COVERS: &str = "tui.cardCovers";
     pub const VOLUME: &str = "tui.volume";
     /// Output device name opened at start; empty for the system default.
     pub const DEVICE: &str = "tui.device";
-
-    pub fn text(key: &str) -> Option<String> {
-        crate::backend::app().settings.app_value(key).filter(|v| !v.is_empty())
-    }
-
-    pub fn flag(key: &str, default: bool) -> bool {
-        crate::backend::app().settings.app_value(key).map_or(default, |v| v == "true")
-    }
-
-    pub fn number(key: &str, default: f32) -> f32 {
-        crate::backend::app().settings.app_value(key).and_then(|v| v.parse().ok()).unwrap_or(default)
-    }
-
-    pub fn keep(key: &'static str, value: String) {
-        crate::backend::app().settings.keep_app_value(key, value);
-    }
 }
 
 pub struct Open<'a> {
@@ -198,16 +165,6 @@ pub struct Open<'a> {
     /// The process's media controls, driven by this session while it is open.
     pub mpris: Option<Arc<nori_mpris::Mpris>>,
     pub tx: Sender<Msg>,
-}
-
-/// The cpal device at `volume` (0 to 1).
-fn sound(device: Option<&str>, volume: f32) -> (Box<dyn AudioOutput>, Arc<nori_host::Level>) {
-    let card = match device {
-        Some(name) => CpalOutput::with_device(name),
-        None => CpalOutput::new(),
-    };
-    let level = card.volume();
-    (Box::new(card), nori_host::Level::new(volume, Some(Box::new(move |v| level.set(v)))))
 }
 
 /// One open server profile; its messages come tagged with its id.
@@ -233,25 +190,16 @@ impl Session {
         let out = Arc::new(move |s: Said| {
             let _ = tx.send(Msg::From(id, Box::new(worded(s))));
         });
-        let v = own::number(own::VOLUME, 1.0);
-        let (output, level) = sound(o.device.or_else(|| own::text(own::DEVICE)).as_deref(), v);
-        let host = nori_host::session::Session::open(nori_host::session::Open {
-            queue: app().clone(),
+        let host = nori_host::desktop::open(nori_host::desktop::DesktopOpen {
             data: o.data,
             http: o.http,
             profile: o.profile,
-            output,
-            volume: level,
-            memory_mb: 256,
+            device: o.device.or_else(|| own::text(own::DEVICE)),
+            volume: own::number(own::VOLUME, 1.0),
             covers: o.images.then(|| nori_covers::Config::new(o.data.join("covers"))),
             offline: o.offline,
             mpris: o.mpris,
-            device: nori_core::remote::RemoteMe { name: nori_host::device_name(), kind: nori_core::remote::wire::DeviceKind::Terminal },
-            discovery: None,
-            tasks: nori_host::tasks(),
-            keeps_music: true,
-            decoders: Default::default(),
-            finds_active: true,
+            kind: nori_core::remote::wire::DeviceKind::Terminal,
             out,
         })?;
         Ok(Session { id, host, tx: o.tx })
@@ -259,77 +207,53 @@ impl Session {
 
     /// Loads a screen's data in the background: the stored copy first, then the server's if different.
     pub fn load(&self, req: Req) {
-        let (client, core, store, id, tx) = (self.client.clone(), self.core.clone(), self.store.clone(), self.id, self.tx.clone());
-        let (offline, db) = (self.offline, self.db.clone());
-        let covers_bytes = self.covers.as_ref().and_then(|l| l.disk().map(|d| d.bytes())).unwrap_or(0);
-        nori_host::spawn("nori-read", move || {
-            let send = |r: Result<Data, String>| {
-                let _ = tx.send(Msg::From(id, Box::new(Msg::Data(req.clone(), r))));
-            };
-            let pages = |read: Read, make: &dyn Fn(Page) -> Option<Data>| {
-                let mut any = false;
-                let r = read_pages(&client, read, |p| {
-                    if let Some(d) = make(p) {
-                        any = true;
-                        send(Ok(d));
+        let (id, tx, asked) = (self.id, self.tx.clone(), req.clone());
+        let send = move |r: Result<Data, String>| {
+            let _ = tx.send(Msg::From(id, Box::new(Msg::Data(asked.clone(), r))));
+        };
+        let ask = match req.clone() {
+            Req::Albums { offset } => Some(PageAsk::Albums { offset }),
+            Req::Artists => Some(PageAsk::Artists),
+            Req::Playlists => Some(PageAsk::Playlists),
+            Req::Songs { offset } => Some(PageAsk::Songs { offset }),
+            Req::Album(id) => Some(PageAsk::Album(id)),
+            Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
+            Req::Artist(id) => Some(PageAsk::Artist(id)),
+            Req::Playlist(id) => Some(PageAsk::Playlist(id)),
+            Req::Home | Req::Downloads | Req::Facts => None,
+        };
+        if let Some(ask) = ask {
+            return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
+        }
+        match req {
+            Req::Home => {
+                let rows = self.host.home_album_rows();
+                self.host.read_home(rows.clone(), false, move |r| match r {
+                    // A source's own Home: its feed, as shelves of albums.
+                    Ok(HomePart::Feed(feed)) => {
+                        for (i, (title, albums)) in nori_core::browse::feed_album_shelves(feed).into_iter().enumerate() {
+                            send(Ok(Data::HomeRow(i, title, albums)));
+                        }
                     }
-                });
-                match r {
-                    Ok(()) if !any => send(Err("The server sent nothing for this page".into())),
-                    Ok(()) => {}
+                    Ok(HomePart::Shelf { at, items: ShelfItems::Albums(albums) }) => send(Ok(Data::HomeRow(at, crate::text::home_row(rows[at]).into(), albums))),
+                    Ok(_) => {}
                     Err(e) => send(Err(unreachable(&e))),
-                }
-            };
-            match &req {
-                // A source's own Home: its feed, as shelves of albums.
-                Req::Home if core.rules().feed => {
-                    let r = read_pages(&client, Read::HomeFeed, |p| {
-                        if let Page::Feed { v } = p {
-                            for (i, (title, albums)) in nori_core::browse::feed_album_shelves(v).into_iter().enumerate() {
-                                send(Ok(Data::HomeRow(i, title, albums)));
-                            }
-                        }
-                    });
-                    if let Err(e) = r {
-                        send(Err(unreachable(&e)));
-                    }
-                }
-                Req::Home => {
-                    // The favourites are the account's: a jam guest's Home is the host's shelves.
-                    let account = core.rules().account;
-                    for (i, (title, kind)) in HOME_ROWS.iter().enumerate() {
-                        if *kind == AlbumSort::Starred && !account {
-                            send(Ok(Data::HomeRow(i, title.to_string(), Vec::new())));
-                            continue;
-                        }
-                        let read = if *kind == AlbumSort::Starred { Read::FavouriteAlbums { size: 40 } } else { Read::AlbumList { kind: *kind, size: 40, offset: 0, genre: None } };
-                        if let Err(e) = read_pages(&client, read, |p| {
-                            if let Page::Albums { v } = p {
-                                send(Ok(Data::HomeRow(i, title.to_string(), v)));
-                            }
-                        }) {
-                            return send(Err(unreachable(&e)));
-                        }
-                    }
-                }
-                Req::Albums { offset } => {
-                    let read = Read::AlbumList { kind: AlbumSort::ByName, size: ALBUM_PAGE as i32, offset: *offset as i32, genre: None };
-                    pages(read, &|p| if let Page::Albums { v } = p { Some(Data::Albums(v)) } else { None });
-                }
-                Req::Artists => pages(Read::ArtistIndex, &|p| if let Page::Artists { v } = p { Some(Data::Artists(v)) } else { None }),
-                Req::Playlists => pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(Data::Playlists(v)) } else { None }),
-                Req::DownloadedAlbum(id) => send(core.downloaded_album(id.clone()).map_err(|e| e.to_string()).and_then(|a| a.map(|a| Data::Album(Box::new(a))).ok_or_else(|| "Album is no longer downloaded".into()))),
-                Req::Album(id) => pages(Read::AlbumById { id: id.clone() }, &|p| if let Page::AlbumPage { v } = p { Some(Data::Album(Box::new(v))) } else { None }),
-                Req::Artist(id) => pages(Read::ArtistById { id: id.clone() }, &|p| if let Page::ArtistPage { v } = p { Some(Data::Artist(Box::new(v))) } else { None }),
-                Req::Playlist(id) => pages(Read::PlaylistById { id: id.clone() }, &|p| if let Page::PlaylistPage { v } = p { Some(Data::Playlist(Box::new(v))) } else { None }),
-                Req::Songs { offset } => send(block_on(client.songs_listed("title".into(), false, 0, 0, *offset)).map(|p| Data::Songs(p.songs, p.exhausted)).map_err(|e| unreachable(&e))),
-                Req::Downloads => {
+                });
+            }
+            Req::Downloads => {
+                let core = self.core.clone();
+                nori_host::spawn("nori-read", move || {
                     let stored = core.downloaded_library();
                     send(stored.and_then(|stored| core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { active: s.active, queued: s.queued, failed: s.failed, stored })))).map_err(|e| e.to_string()));
-                }
-                Req::Facts => send(Ok(Data::Facts(Box::new(facts(&core, &client, store.as_deref(), &db, covers_bytes, offline))))),
+                });
             }
-        });
+            Req::Facts => {
+                let (core, client, store, db, offline) = (self.core.clone(), self.client.clone(), self.store.clone(), self.db.clone(), self.offline);
+                let covers_bytes = self.covers.as_ref().and_then(|l| l.disk().map(|d| d.bytes())).unwrap_or(0);
+                nori_host::spawn("nori-read", move || send(Ok(Data::Facts(Box::new(facts(&core, &client, store.as_deref(), &db, covers_bytes, offline))))));
+            }
+            _ => {}
+        }
     }
 
     /// Requests cover `art` at `size` px, deriving colours on the loader thread when `colours`.
@@ -411,6 +335,32 @@ fn worded(s: Said) -> Msg {
                 false,
             ),
         },
+    }
+}
+
+/// A page read's answer as a screen's data.
+fn data_of(got: PageGot) -> Data {
+    match got {
+        PageGot::Albums(v) => Data::Albums(v),
+        PageGot::Artists(v) => Data::Artists(v),
+        PageGot::Playlists(v) => Data::Playlists(v),
+        PageGot::Songs { songs, exhausted } => Data::Songs(songs, exhausted),
+        PageGot::Album(d) => Data::Album(d),
+        PageGot::Artist(d) => Data::Artist(d),
+        PageGot::Playlist(d) => Data::Playlist(d),
+        // No screen of the terminal's reads a mix as a page.
+        PageGot::Mix(m) => Data::Songs(m.songs, true),
+    }
+}
+
+/// Why a page has nothing, in words.
+fn page_failed(e: &PageFailed) -> String {
+    match e {
+        PageFailed::Nothing => "The server sent nothing for this page".into(),
+        PageFailed::Net(e) => unreachable(e),
+        PageFailed::NotDownloaded => "Album is no longer downloaded".into(),
+        PageFailed::Stored(e) => e.to_string(),
+        PageFailed::EmptyMix => "This mix has nothing in it yet".into(),
     }
 }
 

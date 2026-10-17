@@ -828,7 +828,7 @@ impl Handle {
         }
         if change.server {
             // Per-server settings (music folder, second address bitrate) live on the profile.
-            if let Some(s) = change.prefs.servers.iter().find(|s| s.id == change.prefs.active_server_id) {
+            if let Some(s) = change.prefs.active_server() {
                 self.client.set_profile(net(s));
             }
         }

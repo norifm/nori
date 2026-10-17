@@ -158,12 +158,9 @@ pub fn run(o: Options) -> Result<(), String> {
         crate::backend::app().settings.put(prefs.clone());
     }
     if let Some(kind) = o.provider {
-        use nori_core::providers::server_for_login;
-        use nori_core::settings::{servers_activated, ServerList};
-        let list = ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
+        let list = nori_core::settings::ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
         let form = SavedServer { id: nori_core::settings::new_server_id(), kind, ..Default::default() };
-        let list = servers_activated(list.clone(), server_for_login(list, form));
-        (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
+        prefs = nori_core::providers::profile_activated(prefs, nori_core::providers::server_for_login(list, form));
         crate::backend::app().settings.put(prefs.clone());
     }
     let mouse = o.mouse.unwrap_or_else(|| own::flag(own::MOUSE, true));
@@ -195,7 +192,7 @@ pub fn run(o: Options) -> Result<(), String> {
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
     let mut r = Runner { http: Http::new(), tx, session: None, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, focused: true, unseen_cover: false, elsewhere: None, o };
-    match prefs.servers.iter().find(|s| s.id == prefs.active_server_id).cloned() {
+    match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => app.view = View::Login,
     }
@@ -340,12 +337,7 @@ impl Runner {
                 return app.say(said.clone(), false);
             }
             Msg::LoggedIn(Ok(p)) => {
-                let mut prefs = crate::backend::app().settings.current().unwrap_or_default();
-                prefs.servers.retain(|s| !(s.url == p.url && s.user == p.user));
-                prefs.servers.push(p.clone());
-                prefs.active_server_id = p.id.clone();
-                crate::backend::app().settings.put(prefs.clone());
-                app.prefs_changed(prefs);
+                prefs_changed(app);
                 self.open(app, p.clone());
                 app.go(View::Home);
                 return;

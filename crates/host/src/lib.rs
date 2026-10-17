@@ -2,6 +2,9 @@
 //! changes, a collection's songs, the offline index, cover colours and the output volume in dB. Media
 //! controls (`desktop` feature) sit over the engine. Each client words what happens itself.
 
+#[cfg(feature = "desktop")]
+pub mod desktop;
+pub mod pages;
 pub mod player;
 pub mod remote;
 pub mod session;
@@ -61,7 +64,7 @@ pub enum JoinError {
 /// one `remote` (this device's) opened ([`nori_core::remote::jam_join`]).
 pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &Arc<Settings>, link: String, device: &str, remote: Option<Arc<nori_core::remote::Remote>>) -> Result<JamPass, JoinError> {
     use nori_core::remote::JamJoin;
-    let user = settings.prefs(|p| p.servers.iter().find(|s| s.id == p.active_server_id).map(|s| s.user.clone()).filter(|u| !u.is_empty()));
+    let user = settings.prefs(|p| p.active_server().map(|s| s.user.clone()).filter(|u| !u.is_empty()));
     match block_on(nori_core::remote::jam_join(transport, settings.clone(), remote, link, user.unwrap_or_else(|| device.into()))) {
         Ok(JamJoin::Joined { pass }) => Ok(pass),
         Ok(JamJoin::Own) => Err(JoinError::Own),
@@ -74,15 +77,12 @@ pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &
 /// profile before it. The account's profile active until now is opened again by [`jam_left`].
 pub fn jam_joined(settings: &Settings, pass: JamPass, name: &str) -> SavedServer {
     let mut prefs = settings.current().unwrap_or_default();
-    let active = prefs.servers.iter().find(|s| s.id == prefs.active_server_id);
-    if active.is_some_and(|s| !nori_remote::is_guest_key(&s.api_key)) {
+    if prefs.active_server().is_some_and(|s| !nori_remote::is_guest_key(&s.api_key)) {
         settings.keep_app_value(BEFORE_JAM, prefs.active_server_id.clone());
     }
     let guest = SavedServer { id: nori_core::settings::new_server_id(), name: name.into(), url: pass.url, api_key: pass.api_key, ..Default::default() };
     prefs.servers.retain(|s| !nori_remote::is_guest_key(&s.api_key));
-    prefs.servers.push(guest.clone());
-    prefs.active_server_id = guest.id.clone();
-    settings.put(prefs);
+    settings.put(nori_core::providers::profile_activated(prefs, guest.clone()));
     guest
 }
 

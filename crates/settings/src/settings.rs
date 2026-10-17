@@ -926,6 +926,11 @@ impl StoredPrefs {
             replay_gain: self.replay_gain != GainMode::Off,
         }
     }
+
+    /// The profile in use; None before a login.
+    pub fn active_server(&self) -> Option<&SavedServer> {
+        self.servers.iter().find(|s| s.id == self.active_server_id)
+    }
 }
 
 /// A failed sound edit. Messages are for the log.

@@ -63,7 +63,7 @@ pub(crate) mod counting {
     }
 }
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, CString};
 
 /// The workspace version, for the about page and the log. A static string: never freed.
 #[no_mangle]
@@ -87,6 +87,7 @@ pub unsafe extern "C" fn nori_ios_free(s: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CStr;
 
     #[test]
     fn strings_round_trip_through_the_abi() {

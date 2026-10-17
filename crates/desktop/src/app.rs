@@ -24,6 +24,7 @@ use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPix
 
 use crate::compositor::{Compositor, Focus};
 use crate::session::{self, CoverKey, CoverSize, Data, Fetch, Msg, Req, Session, Tx};
+use nori_host::pages::{HomePart, PageAsk, PageGot, ShelfItems};
 use crate::settings::{Act, Target};
 use crate::words;
 use crate::{AppWindow, ArtistLink, Card, Credits, LoginKind, LyricPiece, Pick, PlayerBar, Shelf, SidebarWindow, SongGo, SongRow};
@@ -282,6 +283,10 @@ pub struct App {
     /// The read the shown page waits for.
     want: Option<Req>,
     shelves: Rc<VecModel<Shelf>>,
+    /// The rows of the shelves shown.
+    home_rows: Vec<nori_core::settings::HomeRow>,
+    /// The album list's pages asked for, to this offset.
+    albums_asked: u32,
     /// Separate player and sidebar windows drawn as glass (macOS); None where the page draws them.
     player: Option<PlayerBar>,
     sidebar: Option<SidebarWindow>,
@@ -385,14 +390,27 @@ fn sidebar(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) -
     Some(side)
 }
 
-/// The library's Home shelves, empty until read.
-fn home_shelves() -> Vec<Shelf> {
-    session::HOME_ROWS.iter().map(|(t, _)| Shelf { title: (*t).into(), cards: ModelRc::default(), loaded: false }).collect()
+/// The album list once its page from `offset` came (`page`), and the page to ask for next: while pages
+/// come full, each once (`asked`: the pages asked for, to this offset).
+fn albums_paged(list: &mut Vec<Card>, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
+    list.truncate(offset as usize);
+    list.extend(page.iter().map(album_card));
+    let next = offset + page.len() as u32;
+    let more = page.len() as u32 == nori_host::pages::ALBUM_PAGE && *asked < next;
+    more.then(|| {
+        *asked = next;
+        next
+    })
+}
+
+/// The library's Home shelves of `rows`, empty until read.
+fn home_shelves(rows: &[nori_core::settings::HomeRow]) -> Vec<Shelf> {
+    rows.iter().map(|&r| Shelf { title: words::home_row(r).into(), cards: ModelRc::default(), loaded: false }).collect()
 }
 
 /// Builds the app state and wires the window. Keep the returned app alive while the window runs.
 pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCell<App>> {
-    let shelves = Rc::new(VecModel::from(home_shelves()));
+    let shelves = Rc::new(VecModel::from(Vec::new()));
     ui.set_shelves(ModelRc::from(shelves.clone()));
     ui.set_greeting("Home".into());
     ui.set_show_all_text(words::SHOW_ALL.into());
@@ -434,6 +452,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             search_songs: Vec::new(),
             want: None,
             shelves,
+            home_rows: Vec::new(),
+            albums_asked: 0,
             backdrop: None,
             tickets: VecDeque::new(),
             tick: Timer::default(),
@@ -501,7 +521,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         });
         a.settings_shown();
         let prefs = crate::session::app().settings.current().unwrap_or_default();
-        match prefs.servers.iter().find(|s| s.id == prefs.active_server_id).cloned() {
+        match prefs.active_server().cloned() {
             Some(p) => a.open(p),
             None => ui.set_view(LOGIN),
         }
@@ -561,10 +581,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_messages_arrived, h, |a| a.drain_inbox());
     on!(ui.on_go, h, |a, v| a.go(v));
     on!(ui.on_note_act, h, |a| a.note_act());
-    on!(ui.on_open_album, h, |a, id| a.open_page(Req::Album(id.into())));
-    on!(ui.on_open_artist, h, |a, id| a.open_page(Req::Artist(id.into())));
-    on!(ui.on_open_playlist, h, |a, id| a.open_page(Req::Playlist(id.into())));
-    on!(ui.on_open_mix, h, |a, id| a.open_page(Req::Mix(id.into())));
+    on!(ui.on_open_album, h, |a, id| a.open_page(PageAsk::Album(id.into())));
+    on!(ui.on_open_artist, h, |a, id| a.open_page(PageAsk::Artist(id.into())));
+    on!(ui.on_open_playlist, h, |a, id| a.open_page(PageAsk::Playlist(id.into())));
+    on!(ui.on_open_mix, h, |a, id| a.open_page(PageAsk::Mix(id.into())));
     on!(ui.on_play_album, h, |a, id| a.play_fetch(Fetch::Album(id.into())));
     on!(ui.on_play_playlist, h, |a, id| a.play_fetch(Fetch::Playlist(id.into())));
     on!(ui.on_song, h, |a, list, i, how| a.song(list, i as usize, how));
@@ -617,8 +637,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_pick_device, h, |a, id| a.pick_device(id.to_string()));
     let go = ui.global::<crate::Go>();
-    on!(go.on_artist, h, |a, id| a.go_to(Req::Artist(id.into())));
-    on!(go.on_album, h, |a, id| a.go_to(Req::Album(id.into())));
+    on!(go.on_artist, h, |a, id| a.go_to(PageAsk::Artist(id.into())));
+    on!(go.on_album, h, |a, id| a.go_to(PageAsk::Album(id.into())));
     on!(ui.on_jam_play, h, |a, kind, id| {
         let what = if kind == 0 { Fetch::Album(id.into()) } else { Fetch::Playlist(id.into()) };
         a.on_session(|s| {
@@ -812,7 +832,8 @@ impl App {
                 self.heard = None;
                 self.song = None;
                 self.queue = None;
-                self.shelves.set_vec(home_shelves());
+                self.home_rows.clear();
+                self.shelves.set_vec(Vec::new());
                 ui.set_picks(ModelRc::default());
                 ui.set_picks_loaded(false);
                 self.jam_now = None;
@@ -821,7 +842,7 @@ impl App {
                 self.go(HOME);
                 if self.account() {
                     // The sidebar lists playlists on every page.
-                    self.on_session(|s| s.load(Req::Playlists));
+                    self.on_session(|s| s.load(Req::Page(PageAsk::Playlists)));
                 } else {
                     // A jam guest's: the host's library, and the jam in the queue panel.
                     ui.set_side_playlists(ModelRc::default());
@@ -882,13 +903,16 @@ impl App {
         }
         ui.set_view(view);
         let req = match view {
-            HOME => Some(Req::Home),
-            ALBUMS => Some(Req::Albums),
-            ARTISTS => Some(Req::Artists),
-            PLAYLISTS => Some(Req::Playlists),
+            HOME => self.home_req(),
+            ALBUMS => {
+                self.albums_asked = 0;
+                Some(Req::Page(PageAsk::Albums { offset: 0 }))
+            }
+            ARTISTS => Some(Req::Page(PageAsk::Artists)),
+            PLAYLISTS => Some(Req::Page(PageAsk::Playlists)),
             SONGS => {
                 self.songs.clear();
-                Some(Req::Songs { offset: 0 })
+                Some(Req::Page(PageAsk::Songs { offset: 0 }))
             }
             SETTINGS => {
                 self.settings_shown();
@@ -913,7 +937,17 @@ impl App {
         s.load(req);
     }
 
-    fn open_page(&mut self, req: Req) {
+    /// Home's read: the shelves of the rows the profile shows, drawn anew when those changed.
+    fn home_req(&mut self) -> Option<Req> {
+        let rows = self.session.as_ref()?.home_album_rows();
+        if rows != self.home_rows {
+            self.shelves.set_vec(home_shelves(&rows));
+            self.home_rows = rows.clone();
+        }
+        Some(Req::Home(rows))
+    }
+
+    fn open_page(&mut self, ask: PageAsk) {
         if !self.find.is_empty() {
             self.find.clear();
             self.ui().set_find_text("".into());
@@ -921,23 +955,23 @@ impl App {
         }
         let ui = self.ui();
         self.page_songs.clear();
-        self.page_fetch = Some(match &req {
-            Req::Album(id) => Fetch::Album(id.clone()),
-            Req::Artist(id) => Fetch::Artist(id.clone()),
-            Req::Playlist(id) => Fetch::Playlist(id.clone()),
-            Req::Mix(id) => Fetch::Mix(id.clone()),
+        self.page_fetch = Some(match &ask {
+            PageAsk::Album(id) => Fetch::Album(id.clone()),
+            PageAsk::Artist(id) => Fetch::Artist(id.clone()),
+            PageAsk::Playlist(id) => Fetch::Playlist(id.clone()),
+            PageAsk::Mix(id) => Fetch::Mix(id.clone()),
             _ => return,
         });
-        ui.set_page_id(match &req {
-            Req::Album(id) | Req::Artist(id) | Req::Playlist(id) | Req::Mix(id) => id.as_str().into(),
+        ui.set_page_id(match &ask {
+            PageAsk::Album(id) | PageAsk::Artist(id) | PageAsk::Playlist(id) | PageAsk::Mix(id) => id.as_str().into(),
             _ => "".into(),
         });
-        ui.set_page_kind(match &req {
-            Req::Album(_) => 0,
-            Req::Artist(_) => 1,
+        ui.set_page_kind(match &ask {
+            PageAsk::Album(_) => 0,
+            PageAsk::Artist(_) => 1,
             _ => 2,
         });
-        ui.set_page_mix(matches!(req, Req::Mix(_)));
+        ui.set_page_mix(matches!(ask, PageAsk::Mix(_)));
         ui.set_page_title("".into());
         ui.set_page_sub("".into());
         ui.set_page_sub_artist("".into());
@@ -949,13 +983,13 @@ impl App {
         ui.set_view(PAGE);
         ui.set_failed("".into());
         self.mirror();
-        self.load(req);
+        self.load(Req::Page(ask));
     }
 
     /// Opens a page from a name that links to it, leaving Now Playing for it.
-    fn go_to(&mut self, req: Req) {
+    fn go_to(&mut self, ask: PageAsk) {
         self.ui().set_full_player(false);
-        self.open_page(req);
+        self.open_page(ask);
     }
 
     /// Page colours from its cover, or the defaults. The desktop's pages are dark under white text.
@@ -1015,7 +1049,7 @@ impl App {
             }
         };
         match d {
-            Data::Picks(tiles) => {
+            Data::Home(HomePart::Mixes(tiles)) => {
                 self.art.borrow_mut().mosaics.clear();
                 let picks: Vec<Pick> = tiles
                     .into_iter()
@@ -1034,22 +1068,27 @@ impl App {
                 ui.set_picks(ModelRc::new(VecModel::from(picks)));
                 ui.set_picks_loaded(true);
             }
-            Data::Feed(shelves) => {
-                let shelves: Vec<Shelf> = shelves.into_iter().map(|(title, albums)| Shelf { title: title.into(), cards: cards(albums.iter().map(album_card)), loaded: true }).collect();
-                self.shelves.set_vec(shelves);
+            Data::Home(HomePart::Feed(feed)) => {
+                let shelves = nori_core::browse::feed_album_shelves(feed).into_iter();
+                self.shelves.set_vec(shelves.map(|(title, albums)| Shelf { title: title.into(), cards: cards(albums.iter().map(album_card)), loaded: true }).collect::<Vec<_>>());
             }
-            Data::HomeRow(i, albums) => {
-                if let Some(mut shelf) = self.shelves.row_data(i) {
+            Data::Home(HomePart::Shelf { at, items }) => {
+                let ShelfItems::Albums(albums) = items else { return };
+                if let Some(mut shelf) = self.shelves.row_data(at) {
                     shelf.cards = cards(albums.iter().map(album_card));
                     shelf.loaded = true;
-                    self.shelves.set_row_data(i, shelf);
+                    self.shelves.set_row_data(at, shelf);
                 }
             }
-            Data::Albums(v) => {
-                self.lists.albums = v.iter().map(album_card).collect();
+            Data::Page(PageGot::Albums(v)) => {
+                // Pages of the list, each asked for once the one before came full.
+                let Req::Page(PageAsk::Albums { offset }) = req else { return };
+                if let Some(next) = albums_paged(&mut self.lists.albums, offset, &v, &mut self.albums_asked) {
+                    self.on_session(|s| s.load(Req::Page(PageAsk::Albums { offset: next })));
+                }
                 self.narrowed();
             }
-            Data::Artists(v) => {
+            Data::Page(PageGot::Artists(v)) => {
                 self.lists.artists = v.iter().map(artist_card).collect();
                 self.narrowed();
                 // The Artists view opens on its first artist.
@@ -1059,7 +1098,7 @@ impl App {
                     }
                 }
             }
-            Data::Playlists(v) => {
+            Data::Page(PageGot::Playlists(v)) => {
                 self.lists.playlists = v
                     .iter()
                     .map(|p| Card {
@@ -1073,13 +1112,13 @@ impl App {
                 ui.set_side_playlists(cards(self.lists.playlists.iter().cloned()));
                 self.narrowed();
             }
-            Data::Songs(v, exhausted) => {
+            Data::Page(PageGot::Songs { songs: v, exhausted }) => {
                 self.songs.extend(v);
                 ui.set_more_songs(!exhausted);
                 ui.set_songs(self.rows(&self.songs));
             }
             // Page details apply only if that page is still shown.
-            Data::Album(d) if shown => {
+            Data::Page(PageGot::Album(d)) if shown => {
                 ui.set_page_title(d.album.name.as_str().into());
                 ui.set_page_sub(d.album.artist.as_str().into());
                 ui.set_page_sub_artist(d.album.artist_id.clone().unwrap_or_default().into());
@@ -1096,14 +1135,14 @@ impl App {
                 self.page_songs = d.songs;
                 ui.set_page_songs(self.rows(&self.page_songs));
             }
-            Data::Artist(d) if shown => {
+            Data::Page(PageGot::Artist(d)) if shown => {
                 ui.set_page_title(d.artist.name.as_str().into());
                 ui.set_page_sub("".into());
                 ui.set_page_caption(words::albums(d.albums.len() as u32).into());
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
                 ui.set_page_albums(cards(d.albums.iter().map(|a| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) })));
             }
-            Data::Playlist(d) if shown => {
+            Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_title(d.playlist.name.as_str().into());
                 ui.set_page_sub(d.playlist.owner.clone().unwrap_or_default().into());
                 ui.set_page_caption(words::songs_caption(d.songs.len(), d.seconds).into());
@@ -1111,7 +1150,7 @@ impl App {
                 self.page_songs = d.songs;
                 ui.set_page_songs(self.rows(&self.page_songs));
             }
-            Data::Mix(m) if shown => {
+            Data::Page(PageGot::Mix(m)) if shown => {
                 ui.set_page_title(words::mix_name(m.name).into());
                 ui.set_page_sub(words::mix_caption(m.favourites).into());
                 ui.set_page_caption(words::songs_caption(m.songs.len(), m.seconds).into());
@@ -1119,7 +1158,7 @@ impl App {
                 self.page_songs = m.songs;
                 ui.set_page_songs(self.rows(&self.page_songs));
             }
-            Data::Album(_) | Data::Artist(_) | Data::Playlist(_) | Data::Mix(_) => {}
+            Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_)) => {}
         }
     }
 
@@ -1164,7 +1203,7 @@ impl App {
         ui.set_page_albums(ModelRc::default());
         self.page_songs.clear();
         self.page_fetch = Some(Fetch::Artist(id.clone()));
-        self.load(Req::Artist(id));
+        self.load(Req::Page(PageAsk::Artist(id)));
         // Keep the list visible while the artist loads.
         ui.set_loading(false);
     }
@@ -1180,7 +1219,7 @@ impl App {
     }
 
     fn more_songs(&mut self) {
-        let req = Req::Songs { offset: self.songs.len() as u32 };
+        let req = Req::Page(PageAsk::Songs { offset: self.songs.len() as u32 });
         // Scrolling asks again as the list nears its end: the page already on its way is asked for once.
         if self.ui().get_loading() && self.want.as_ref() == Some(&req) {
             return;
@@ -1433,9 +1472,10 @@ impl App {
                     let taste = crate::session::app().settings.prefs(|p| p.taste_model);
                     let id = nori_core::mixes::board::FAVOURITES_MIX;
                     if let nori_core::mixes::board::MixLookup::Ready { sheet } = core.mix_page(id.into()) {
-                        self.data(Req::Mix(id.into()), Ok(Data::Mix(Box::new(sheet))));
+                        self.data(Req::Page(PageAsk::Mix(id.into())), Ok(Data::Page(PageGot::Mix(Box::new(sheet)))));
                     }
-                    self.data(Req::Home, Ok(Data::Picks(core.mix_cards(taste))));
+                    let home = Req::Home(self.home_rows.clone());
+                    self.data(home, Ok(Data::Home(HomePart::Mixes(core.mix_cards(taste)))));
                 }
             }
             Msg::Volume(v) if self.elsewhere.is_none() => self.ui().set_volume(v),
@@ -1445,15 +1485,6 @@ impl App {
                 ui.set_login_busy(false);
                 match r {
                     Ok(p) => {
-                        use nori_core::providers::server_for_login;
-                        use nori_core::settings::{servers_activated, ServerList};
-                        let mut prefs = crate::session::app().settings.current().unwrap_or_default();
-                        let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() };
-                        // A server and user saved already is logged in to again, with its library.
-                        let p = server_for_login(list.clone(), p);
-                        let list = servers_activated(list, p.clone());
-                        (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
-                        crate::session::app().settings.put(prefs);
                         ui.set_login_password("".into());
                         self.open(p);
                     }
@@ -2226,6 +2257,20 @@ mod tests {
         slint::platform::update_timers_and_animations();
         ui.window().take_snapshot().unwrap();
         assert!(requested.borrow().contains("499"), "scrolling to the bottom loads its covers");
+    }
+
+    /// The album list is read page after page, each asked for once (the stored copy and the server's
+    /// both come), until one comes short.
+    #[test]
+    fn albums_come_page_after_page() {
+        let page = |from: usize, n: usize| (from..from + n).map(|i| nori_core::Album { id: i.to_string(), ..Default::default() }).collect::<Vec<_>>();
+        let full = nori_host::pages::ALBUM_PAGE as usize;
+        let (mut list, mut asked) = (Vec::new(), 0);
+        assert_eq!(albums_paged(&mut list, 0, &page(0, full), &mut asked), Some(full as u32));
+        assert_eq!(albums_paged(&mut list, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
+        assert_eq!(albums_paged(&mut list, full as u32, &page(full, 3), &mut asked), None, "the last page");
+        assert_eq!(list.len(), full + 3);
+        assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 2).to_string()));
     }
 
     #[test]

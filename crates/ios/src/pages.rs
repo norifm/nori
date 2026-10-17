@@ -19,7 +19,9 @@ use nori_engine::State;
 use nori_core::remote::{Mirror, MirrorRow};
 use nori_host::remote::Elsewhere;
 use nori_host::session::{read_pages, Chore};
+use nori_host::pages::{HomePart, ShelfItems};
 use nori_host::Fetch;
+use nori_core::settings::HomeRow;
 use serde_json::{json, Value};
 
 use crate::session::{c_text, with_session};
@@ -41,8 +43,6 @@ pub const PAGE_STARRED: i32 = 14;
 
 /// Albums asked per list page.
 const ALBUM_PAGE: i32 = 500;
-/// Albums on a home shelf.
-const SHELF: i32 = 30;
 /// Song lists kept for taps; older pages fall off.
 const KEPT_LISTS: usize = 24;
 
@@ -52,9 +52,6 @@ pub const PAGE_SMARTS: i32 = 16;
 /// One smart playlist by id: its songs.
 pub const PAGE_SMART: i32 = 17;
 pub const PAGE_DOWNLOADED_ALBUM: i32 = 18;
-
-/// The home shelves, in order: their keys are the client's to word.
-const SHELVES: [&str; 6] = ["mixes", "random", "recent", "newest", "starred", "playlists"];
 
 pub type PageFn = unsafe extern "C" fn(u64, *const c_char);
 /// `(token, width, height, rgba, len, owner)`: the pixels stay valid until `owner` is given to
@@ -352,11 +349,23 @@ fn refresh_favourites(
     let _ = nori_core::transport::block_on(client.mix_favourites_refresh(digest));
 }
 
-/// The "For you" row to send again once the mixes are warm: whenever it differs from what was sent,
-/// whoever drew them (another read of Home may have, leaving this one's warm-up nothing to do), or always
-/// when no shelf answered.
-fn tiles_again(sent: &Value, now: Value, any: bool) -> Option<Value> {
-    (now != *sent || !any).then_some(now)
+/// A Home shelf's key, which the app words.
+fn shelf_key(row: HomeRow) -> &'static str {
+    match row {
+        HomeRow::Pinned => "pinned",
+        HomeRow::Playlists => "playlists",
+        HomeRow::Recent => "recent",
+        HomeRow::Newest => "newest",
+        HomeRow::Frequent => "frequent",
+        HomeRow::TopSongs => "topSongs",
+        HomeRow::Random => "random",
+        HomeRow::Starred => "starred",
+    }
+}
+
+/// A shelf of covers; songs are a list.
+fn shelf_grid(row: HomeRow) -> bool {
+    row != HomeRow::TopSongs
 }
 
 /// The running downloads' facts on their rows: `pct` whole percent (-1 unknown), `bps` bytes a second
@@ -413,62 +422,32 @@ fn read(token: u64, kind: i32, arg: String) {
             Some(json!({ "sections": feed_sections(token, &v) }))
         }),
         PAGE_HOME => {
-            // The mixes, the favourites and the playlists are the account's: a jam guest's Home is the
-            // host's album shelves.
-            let account = core.rules().account;
-            let taste = core.session.settings.prefs(|p| p.taste_model);
-            let mixes = |core: &nori_core::Core| {
-                section("mixes", true, if account { core.mix_cards(taste).iter().map(mix_json).collect() } else { Vec::new() })
-            };
-            let mut rows: Vec<Value> = SHELVES
-                .iter()
-                .map(|k| section(k, true, Vec::new()))
-                .collect();
-            let stored = client.mix_favourites_stored();
-            rows[0] = mixes(&core);
-            let mut any = false;
-            for (i, key) in SHELVES.iter().enumerate().skip(1) {
-                if !account && matches!(*key, "starred" | "playlists") {
-                    continue;
-                }
-                let read = match *key {
-                    "starred" => Read::FavouriteAlbums { size: SHELF },
-                    "playlists" => Read::PlaylistList,
-                    _ => Read::AlbumList {
-                        kind: match *key {
-                            "random" => AlbumSort::Random,
-                            "recent" => AlbumSort::Recent,
-                            _ => AlbumSort::Newest,
-                        },
-                        size: SHELF,
-                        offset: 0,
-                        genre: None,
-                    },
-                };
-                let r = read_pages(&client, read, |p| {
-                    let items = match p {
-                        Page::Albums { v } => v.iter().map(album_json).collect(),
-                        Page::Playlists { v } => v.iter().map(playlist_json).collect(),
-                        _ => return,
-                    };
-                    rows[i] = section(key, true, items);
-                    any = true;
-                    send(token, &json!({ "sections": rows }));
-                });
-                if let Err(e) = r {
-                    if !any {
-                        return send_error(token, &e);
+            let Some(h) = with_session(|s| nori_host::session::Handle::clone(s)) else { return };
+            let rows = h.home_rows();
+            // "For you", then the shelves in the order kept; a jam guest's mixes stay empty.
+            let shown: Vec<Value> = std::iter::once(section("mixes", true, Vec::new())).chain(rows.iter().map(|&r| section(shelf_key(r), shelf_grid(r), Vec::new()))).collect();
+            let shown = std::sync::Mutex::new(shown);
+            h.read_home(rows, true, move |r| {
+                let mut v = lock(&shown);
+                match r {
+                    Ok(HomePart::Feed(feed)) => return send(token, &json!({ "sections": feed_sections(token, &feed) })),
+                    Ok(HomePart::Mixes(tiles)) => v[0] = section("mixes", true, tiles.iter().map(mix_json).collect()),
+                    Ok(HomePart::Shelf { at, items }) => {
+                        let key = v[at + 1]["key"].as_str().unwrap_or_default().to_string();
+                        v[at + 1] = match items {
+                            ShelfItems::Albums(a) => section(&key, true, a.iter().map(album_json).collect()),
+                            ShelfItems::Playlists(p) => section(&key, true, p.iter().map(playlist_json).collect()),
+                            ShelfItems::Songs(songs) => {
+                                let shelf = songs_section(&key, &songs, 0);
+                                keep_list(token, songs, None);
+                                shelf
+                            }
+                        };
                     }
+                    Err(e) => return send_error(token, &e),
                 }
-            }
-            if account {
-                refresh_favourites(&client, stored);
-                nori_core::transport::block_on(client.mix_warm_all());
-            }
-            if let Some(tiles) = tiles_again(&rows[0], mixes(&core), any) {
-                rows[0] = tiles;
-                send(token, &json!({ "sections": rows }));
-            }
+                send(token, &json!({ "sections": *v }));
+            });
         }
         PAGE_MIX => {
             if arg == FAVOURITES_MIX {
@@ -1495,17 +1474,6 @@ pub extern "C" fn nori_ios_facts() -> *mut c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn home_sends_mixes_drawn_by_another_read() {
-        // Regression: Home sent its tiles again only when its own warm-up drew a mix, so mixes another
-        // read drew in the meantime stayed grey, without covers, until a refresh.
-        let bare = section("mixes", true, vec![json!({ "k": "mix", "id": "quick", "c": "" })]);
-        let drawn = section("mixes", true, vec![json!({ "k": "mix", "id": "quick", "c": "cover-1" })]);
-        assert_eq!(tiles_again(&bare, drawn.clone(), true), Some(drawn.clone()));
-        assert_eq!(tiles_again(&drawn, drawn.clone(), true), None, "nothing new: not sent twice");
-        assert_eq!(tiles_again(&drawn, drawn.clone(), false), Some(drawn), "no shelf answered: the row alone");
-    }
 
     fn song(id: &str) -> Song {
         Song {

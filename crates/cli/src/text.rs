@@ -70,6 +70,21 @@ pub fn feed_shelf(f: &nori_core::FeedShelf) -> String {
 pub const LYRICS_PREFETCH: &str = "Prepare next song’s lyrics";
 pub const LYRICS_PREFETCH_DETAIL: &str = "Fetch lyrics for one upcoming library song while the current song plays";
 
+/// A Home shelf's title.
+pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
+    use nori_core::settings::HomeRow;
+    match row {
+        HomeRow::Recent => "Recently played",
+        HomeRow::Newest => "Recently added",
+        HomeRow::Frequent => "Most played",
+        HomeRow::Starred => "Favorites",
+        HomeRow::Random => "Something random",
+        HomeRow::Playlists => "Playlists",
+        HomeRow::Pinned => "Pinned",
+        HomeRow::TopSongs => "Top songs",
+    }
+}
+
 /// The repeat mode `mode` as said when it is chosen.
 pub fn repeat(mode: u8) -> &'static str {
     match mode {
