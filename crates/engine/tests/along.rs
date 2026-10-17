@@ -805,7 +805,7 @@ fn guests_keep_their_own_equalizers() {
     let settings = |db| Settings {
         sound: nori_player::sink::Sound {
             bands: vec![nori_player::dsp::Band {
-                kind: nori_player::dsp::PEAKING,
+                kind: nori_player::types::EqKind::Peaking,
                 freq: 222.0,
                 gain_db: db,
                 q: 1.0,

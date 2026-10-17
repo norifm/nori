@@ -15,6 +15,7 @@ use std::time::Duration;
 use common::{Stepper, Virtual};
 use nori_engine::{AudioOutput, Body, ByteSource, Coded, Coding, Config, Engine, Event, Feed, Library, Located, OffloadOutput, OutputFacts, OutputFormat, Settings, SharedQueue, Source, State, Support, REMAKE_LEAD_MS};
 use nori_player::dsp::Band;
+use nori_player::types::EqKind;
 use nori_player::engine::{Host, Plan};
 use nori_player::automix::analysis::Analyzer;
 use nori_player::pipeline::{App, Sound};
@@ -890,7 +891,7 @@ fn offload_follows_settings_both_ways() {
     let fake = Fake::new(MP3_ONLY);
     let songs = vec![("a".into(), "mp3".into(), 120_000), ("b".into(), "mp3".into(), 60_000)];
     // Offload on with the equalizer: the CPU plays.
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let rig = Rig::new(server, songs, app(), Some(fake.clone()), Settings { sound: eq.clone(), ..offload() });
     rig.engine.play_at(0, 0);
     assert!(rig.wait(10, |r| r.card.heard.lock().len() > 2 * 44_100), "the CPU plays a");
@@ -1030,7 +1031,7 @@ fn offload_volume_restored() {
     // Regression: back on offload after a CPU takeover, the track stayed at the takeover's silence.
     let d = dir();
     let Some((rig, fake)) = two_on_the_chip(&d, 20) else { return };
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let heard = rig.card.heard.lock().len();
     rig.engine.set_settings(Settings { sound: eq, ..offload() });
     assert!(rig.wait(10, |r| r.card.heard.lock().len() > heard + 44_100), "the CPU plays a on");
@@ -1268,7 +1269,7 @@ fn bit_perfect_is_exact() {
     let mut app = app();
     app.gains.insert("a".into(), 0.5);
     app.gains.insert("b".into(), 0.25);
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let songs = vec![("a".into(), "wav".into(), 1_000), ("b".into(), "wav".into(), 1_000)];
     let rig = Rig::new(server, songs, app, None, Settings { sound: eq, ..Settings::default() });
     rig.engine.set_output(OutputFacts { usb: true, bit_perfect: true });
@@ -2183,7 +2184,7 @@ fn automix_on_after_equalizer_mixes() {
     assert!(rig.wait(10, |r| r.engine.status().offloaded && fake.written() > 0), "{:?}", rig.engine.status().pcm_why);
     fake.advance(5 * 44_100);
     assert!(rig.wait(5, |r| r.engine.status().position_ms >= 4_900), "{:?}", rig.engine.status());
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     rig.engine.set_settings(Settings { sound: eq.clone(), ..offload() });
     assert!(rig.wait(10, |r| !r.engine.status().offloaded && r.card.heard.lock().len() > 2 * 44_100), "the CPU took over: {:?}", rig.engine.status());
     rig.run(1_000);
@@ -2265,7 +2266,7 @@ fn equalizer_on_a_phone(jittery: bool, before: Before) {
     let events_before = rig.events.lock().len();
     // The track moves with the clock: here is the position when the settings arrive.
     let chip_ms = (head() * 1000 / 44_100) as i64;
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let asked_at = rig.now_ms();
     rig.engine.set_settings(Settings { sound: eq, ..offload() });
     // The CPU plays at once, not at the next top-up.
@@ -2329,7 +2330,7 @@ fn leaving_offload_has_no_gap() {
     rig.engine.position_updates(Some(Duration::from_millis(100)));
     let head = || fake.0.lock().played;
     assert!(rig.time.until(Duration::from_secs(40), || head() >= 3 * 44_100), "on the chip");
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     for round in 0..3 {
         let (t0, chip0, cpu0, calls0, seen) = (rig.time.clock.now_ns(), head(), rig.card.heard.lock().len(), fake.0.lock().calls.len(), rig.events.lock().len());
         assert!(rig.engine.status().offloaded, "round {round}: on the chip");
@@ -2449,7 +2450,7 @@ fn equalizer_on_unsized_song() {
     rig.engine.play_at(0, 0);
     assert!(rig.time.until(Duration::from_secs(40), || fake.0.lock().head >= 8 * 44_100), "a on the chip: {:?} {:?}", rig.engine.status(), fake.notes());
     let chip_ms = (fake.0.lock().head * 1000 / 44_100) as i64;
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     rig.engine.set_settings(Settings { sound: eq, ..offload() });
     let took = rig.time.until(Duration::from_secs(10), || !rig.engine.status().offloaded && rig.card.heard.lock().len() >= 44_100);
     let events = rig.events.lock().clone();
@@ -2471,7 +2472,7 @@ fn equalizer_on_unsized_song() {
     rig.engine.play_at(0, 0);
     assert!(rig.wait(10, |r| r.engine.status().position_ms >= 5_000), "{:?} {:?}", rig.engine.status(), rig.events.lock());
     let before = rig.engine.status().position_ms;
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let asked_at = rig.now_ms();
     rig.engine.set_settings(Settings { sound: eq, ..Settings::default() });
     assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().chain), "{:?}", rig.engine.status());
@@ -2493,7 +2494,7 @@ fn equalizer_toggles_cleanly() {
     let Some((rig, fake)) = two_on_a_phone_with(&d, secs, true, true, true) else { return };
     rig.engine.position_updates(Some(Duration::from_millis(100)));
     assert!(rig.time.until(Duration::from_secs(40), || fake.0.lock().head >= 5 * 44_100));
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let events_before = rig.events.lock().len();
     let started = rig.engine.status().position_ms;
     let t0 = rig.now_ms();
@@ -2533,7 +2534,7 @@ fn equalizer_toggles_cleanly() {
     rig.engine.position_updates(Some(Duration::from_millis(100)));
     rig.engine.play_at(0, 0);
     assert!(rig.wait(10, |r| r.card.heard.lock().len() > 2 * 5 * 44_100), "the CPU plays a");
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let asked_at = rig.now_ms();
     rig.engine.set_settings(Settings { sound: eq.clone(), ..Settings::default() });
     assert!(rig.time.until(Duration::from_secs(10), || rig.engine.status().chain), "{:?}", rig.engine.status());
@@ -2917,7 +2918,7 @@ fn new_queue_around_current() {
     serve(&server, &[("p1", &file), ("a", &file), ("p2", &file), ("c", &file), ("d", &file)]);
     let songs = ["p1", "a", "p2", "c", "d"].iter().map(|id| (id.to_string(), "wav".to_string(), 3_000)).collect();
     // The equalizer on, as where it was seen.
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let rig = Rig::new(server, songs, app(), None, Settings { sound: eq, ..Settings::default() });
     rig.queue.0.lock().set(vec!["p1".into(), "a".into(), "p2".into()], Some(1), false, 0);
     rig.engine.queue_changed();
@@ -2941,7 +2942,7 @@ fn new_queue_around_current() {
     serve(&server, &[("p1", &file), ("a", &file), ("c", &file), ("d", &file)]);
     server.down.lock().push("p2".into());
     let songs = ["p1", "a", "p2", "c", "d"].iter().map(|id| (id.to_string(), "wav".to_string(), 3_000)).collect();
-    let eq = Sound { bands: vec![Band { kind: 0, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let eq = Sound { bands: vec![Band { kind: EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let rig = Rig::new(server, songs, app(), None, Settings { sound: eq, ..Settings::default() });
     rig.queue.0.lock().set(vec!["p1".into(), "a".into(), "p2".into()], Some(1), false, 0);
     rig.engine.queue_changed();

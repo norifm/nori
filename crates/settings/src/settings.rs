@@ -40,6 +40,11 @@ pub enum BandChannel {
     Right,
 }
 
+/// The kind with ordinal `code`, as a platform passes it.
+pub fn eq_kind(code: i32) -> Option<EqKind> {
+    EqKind::nth(code)
+}
+
 /// A band from kind and channel ordinals; out-of-range ordinals become the first variant.
 pub fn band_from(kind: i32, freq: f32, gain_db: f32, q: f32, channel: i32) -> SoundBand {
     SoundBand { kind: EqKind::nth(kind).unwrap_or(EqKind::Peaking), freq, gain_db, q, channel: BandChannel::nth(channel).unwrap_or(BandChannel::Both) }
@@ -1579,7 +1584,7 @@ pub fn eq_model_get() -> EqModel {
     EqModel {
         band_kinds: EqKind::ALL
             .iter()
-            .map(|k| BandKindInfo { uses_gain: nori_player::dsp::uses_gain(*k as i32), slope: matches!(k, EqKind::LowShelfSlope | EqKind::HighShelfSlope) })
+            .map(|k| BandKindInfo { uses_gain: k.uses_gain(), slope: matches!(k, EqKind::LowShelfSlope | EqKind::HighShelfSlope) })
             .collect(),
         eq_ranges: EQ_RANGES,
     }
@@ -1616,14 +1621,14 @@ impl SoundSettings {
 /// The pre-amp in effect for the equalizer in use: the manual one, or else automatic; 0 when it is off.
 pub(crate) fn mode_preamp_db(eq_enabled: bool, eq_preamp_db: Option<f32>, mode: EqMode, graphic: &[f32], bands: &[SoundBand]) -> f32 {
     match mode {
-        EqMode::Graphic => effective_preamp_db(eq_enabled, eq_preamp_db, graphic.iter().map(|g| (nori_player::dsp::PEAKING, *g))),
-        EqMode::Parametric => effective_preamp_db(eq_enabled, eq_preamp_db, bands.iter().map(|b| (b.kind as i32, b.gain_db))),
+        EqMode::Graphic => effective_preamp_db(eq_enabled, eq_preamp_db, graphic.iter().map(|g| (EqKind::Peaking, *g))),
+        EqMode::Parametric => effective_preamp_db(eq_enabled, eq_preamp_db, bands.iter().map(|b| (b.kind, b.gain_db))),
     }
 }
 
 /// The pre-amp in effect from the equalizer's parts: on or off, the manual pre-amp (None for
 /// automatic) and each band's kind and gain.
-pub fn effective_preamp_db(eq_enabled: bool, eq_preamp_db: Option<f32>, bands: impl IntoIterator<Item = (i32, f32)>) -> f32 {
+pub fn effective_preamp_db(eq_enabled: bool, eq_preamp_db: Option<f32>, bands: impl IntoIterator<Item = (EqKind, f32)>) -> f32 {
     if !eq_enabled {
         return 0.0;
     }
@@ -1812,7 +1817,7 @@ pub fn band_mark(kind: i32, channel: i32) -> BandMark {
         2 => BandMark::Right,
         _ if low => BandMark::LowShelf,
         _ if high => BandMark::HighShelf,
-        _ if !nori_player::dsp::uses_gain(kind) => BandMark::NoGain,
+        _ if !eq_kind(kind).is_some_and(EqKind::uses_gain) => BandMark::NoGain,
         _ => BandMark::None,
     }
 }
@@ -1990,7 +1995,7 @@ pub fn parse_eq_preset(text: String) -> EqPreset {
             let Some(freq) = after("Fc") else { continue };
             let gain_db = after("Gain").unwrap_or(0.0);
             // Shelves and peaks need a gain; pass filters have none.
-            if nori_player::dsp::uses_gain(kind as i32) && after("Gain").is_none() {
+            if kind.uses_gain() && after("Gain").is_none() {
                 continue;
             }
             preset.bands.push(EqBand { kind, freq, gain_db, q: after("Q").unwrap_or(0.71) });

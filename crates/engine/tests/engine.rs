@@ -1340,7 +1340,7 @@ fn music24(secs: f64, seed: u64) -> Vec<i32> {
 }
 
 fn loud_eq() -> Settings {
-    let bands = vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }];
+    let bands = vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }];
     Settings { sound: nori_engine::Sound { bands, ..Default::default() }, ..Settings::default() }
 }
 
@@ -2182,7 +2182,7 @@ enum Step {
 }
 
 fn eq_at(db: f64) -> Settings {
-    let bands = vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: db, q: 1.0, channel: 0 }];
+    let bands = vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: db, q: 1.0, channel: 0 }];
     with_sound(nori_engine::Sound { bands, ..Default::default() })
 }
 
@@ -3479,7 +3479,7 @@ fn mixramp_fades_out_after_seek() {
     let x = common::sine(RATE, 3_000.0, 12.0, 6_000.0);
     let (a, b) = (common::sine(48_000, 200.0, 40.0, 6_000.0), common::sine(48_000, 900.0, 40.0, 6_000.0));
     let gentler = || {
-        let bands = vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }];
+        let bands = vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }];
         Settings { auto_mix: true, sound: nori_engine::Sound { bands, ..Default::default() }, ..Settings::default() }
     };
     use Meanwhile::*;

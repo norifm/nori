@@ -176,7 +176,7 @@ fn holding_and_mixing() {
 #[test]
 fn parametric_equalizer() {
     let mut eq = Equalizer::new(RATE, 2);
-    let bands = [Band { kind: 0, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }, Band { kind: 1, freq: 90.0, gain_db: 3.0, q: 0.7, channel: 0 }];
+    let bands = [Band { kind: crate::types::EqKind::Peaking, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }, Band { kind: crate::types::EqKind::LowShelf, freq: 90.0, gain_db: 3.0, q: 0.7, channel: 0 }];
     eq.configure(&bands, -3.0, -6.0);
     eq.configure_output(0.1, false, -1.0, 120.0, 5.0);
     let x: Vec<i16> = tone(2.0, 440.0).chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();

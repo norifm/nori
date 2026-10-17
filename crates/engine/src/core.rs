@@ -1331,7 +1331,7 @@ pub fn queued_for(session: &Session, l: &nori_core::remote::Lead) -> (usize, boo
 }
 
 pub fn settings(s: &StoredPrefs, volume_db: f64) -> Settings {
-    let bands = if s.eq_enabled { s.eq_bands.iter().map(|b| Band { kind: b.kind as i32, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }).collect() } else { Vec::new() };
+    let bands = if s.eq_enabled { s.eq_bands.iter().map(|b| Band { kind: b.kind, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }).collect() } else { Vec::new() };
     let sound = if s.sound_bypass { Sound::default() } else { Sound {
         // The graphic equalizer replaces the parametric bands.
         graphic: nori_core::dsp::graphic_sliders(s),

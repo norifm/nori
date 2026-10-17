@@ -6,7 +6,7 @@
 //! and gain, seeded greedily (each new peak at the largest remaining error). The pre-amp removes any
 //! boost, as AutoEQ does.
 
-use crate::dsp::{band_coefficients, Band, CH_BOTH, HIGH_SHELF, LOW_SHELF, PEAKING};
+use crate::dsp::{band_coefficients, Band, CH_BOTH};
 use crate::types::{EqBand, EqKind};
 
 /// Design rate (AutoEQ's too).
@@ -87,7 +87,7 @@ impl Grid {
 
 #[derive(Clone, Copy, Debug)]
 struct Filter {
-    kind: i32,
+    kind: EqKind,
     /// The fitted parameters (shelf Q is fixed).
     lnf: f64,
     lnq: f64,
@@ -101,8 +101,8 @@ impl Filter {
 
     fn hz_range(&self) -> (f64, f64) {
         match self.kind {
-            LOW_SHELF => LOW_SHELF_HZ,
-            HIGH_SHELF => HIGH_SHELF_HZ,
+            EqKind::LowShelf => LOW_SHELF_HZ,
+            EqKind::HighShelf => HIGH_SHELF_HZ,
             _ => PEAK_HZ,
         }
     }
@@ -111,7 +111,7 @@ impl Filter {
     fn clamped(mut self) -> Self {
         let (lo, hi) = self.hz_range();
         self.lnf = self.lnf.clamp(lo.ln(), hi.ln());
-        self.lnq = if self.kind == PEAKING { self.lnq.clamp(PEAK_Q.0.ln(), PEAK_Q.1.ln()) } else { SHELF_Q.ln() };
+        self.lnq = if self.kind == EqKind::Peaking { self.lnq.clamp(PEAK_Q.0.ln(), PEAK_Q.1.ln()) } else { SHELF_Q.ln() };
         self.gain = self.gain.clamp(-GAIN_DB, GAIN_DB);
         self
     }
@@ -141,7 +141,7 @@ impl Filter {
         }
     }
     fn moves(&self, p: usize) -> bool {
-        p != 1 || self.kind == PEAKING
+        p != 1 || self.kind == EqKind::Peaking
     }
 }
 
@@ -334,12 +334,12 @@ pub fn fit_graphic(points: &[(f64, f64)]) -> GraphicFit {
     let target: Vec<f64> = grid.hz.iter().map(|&f| curve_at(points, f)).collect();
     let mut fit = Fit::new(&grid, &target);
     let shelf = |kind, hz: f64| Filter { kind, lnf: hz.ln(), lnq: SHELF_Q.ln(), gain: 0.0 };
-    fit.add(shelf(LOW_SHELF, 105.0));
-    fit.add(shelf(HIGH_SHELF, 10_000.0));
+    fit.add(shelf(EqKind::LowShelf, 105.0));
+    fit.add(shelf(EqKind::HighShelf, 10_000.0));
     fit.solve(30);
     for _ in 0..PEAKS {
         let (hz, gain) = fit.worst();
-        fit.add(Filter { kind: PEAKING, lnf: hz.ln(), lnq: 1.0f64.ln(), gain });
+        fit.add(Filter { kind: EqKind::Peaking, lnf: hz.ln(), lnq: 1.0f64.ln(), gain });
         fit.solve(25);
     }
     fit.solve(300);
@@ -351,8 +351,8 @@ pub fn fit_graphic(points: &[(f64, f64)]) -> GraphicFit {
         .map(|f| Filter { kind: f.kind, lnf: f.lnf.exp().round().ln(), lnq: round_to(f.lnq.exp(), 0.01).ln(), gain: round_to(f.gain, 0.1) }.clamped())
         .collect();
     let order = |f: &Filter| match f.kind {
-        LOW_SHELF => 0,
-        HIGH_SHELF => 2,
+        EqKind::LowShelf => 0,
+        EqKind::HighShelf => 2,
         _ => 1,
     };
     filters.sort_by(|a, b| (order(a), a.lnf).partial_cmp(&(order(b), b.lnf)).unwrap_or(std::cmp::Ordering::Equal));
@@ -367,8 +367,8 @@ pub fn fit_graphic(points: &[(f64, f64)]) -> GraphicFit {
     let preamp = -(boost * 10.0).ceil() / 10.0;
 
     let kind = |k| match k {
-        LOW_SHELF => EqKind::LowShelf,
-        HIGH_SHELF => EqKind::HighShelf,
+        EqKind::LowShelf => EqKind::LowShelf,
+        EqKind::HighShelf => EqKind::HighShelf,
         _ => EqKind::Peaking,
     };
     GraphicFit {
@@ -401,9 +401,9 @@ mod tests {
             .iter()
             .map(|b| {
                 let kind = match b.kind {
-                    EqKind::LowShelf => LOW_SHELF,
-                    EqKind::HighShelf => HIGH_SHELF,
-                    _ => PEAKING,
+                    EqKind::LowShelf => EqKind::LowShelf,
+                    EqKind::HighShelf => EqKind::HighShelf,
+                    _ => EqKind::Peaking,
                 };
                 Filter { kind, lnf: (b.freq as f64).ln(), lnq: (b.q as f64).ln(), gain: b.gain_db as f64 }.response(&grid, &mut out);
                 out[0]

@@ -10,18 +10,6 @@ use crate::dither::Dither;
 use crate::spatial::Virtualizer;
 use crate::types::{EqBand, EqKind, NamedPreset, PresetKind};
 
-pub const PEAKING: i32 = 0;
-pub const LOW_SHELF: i32 = 1;
-pub const HIGH_SHELF: i32 = 2;
-pub const LOW_PASS: i32 = 3;
-pub const HIGH_PASS: i32 = 4;
-pub const BAND_PASS: i32 = 5;
-pub const NOTCH: i32 = 6;
-pub const ALL_PASS: i32 = 7;
-/// Shelves whose `q` is the RBJ slope S (1: steepest without ripple).
-pub const LOW_SHELF_SLOPE: i32 = 8;
-pub const HIGH_SHELF_SLOPE: i32 = 9;
-
 pub(crate) const CH_BOTH: i32 = 0;
 pub(crate) const CH_LEFT: i32 = 1;
 pub(crate) const CH_RIGHT: i32 = 2;
@@ -43,10 +31,10 @@ const KNEE_DB: f64 = 4.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Band {
-    pub kind: i32,
+    pub kind: EqKind,
     pub freq: f64,
     pub gain_db: f64,
-    /// Q, or the slope S for the `*_SHELF_SLOPE` kinds.
+    /// Q, or the slope S for the `*ShelfSlope` kinds.
     pub q: f64,
     /// `CH_BOTH`, `CH_LEFT` or `CH_RIGHT`.
     pub channel: i32,
@@ -204,17 +192,17 @@ impl Biquad {
             )
         };
         let (b0, b1, b2, a0, a1, a2) = match band.kind {
-            LOW_SHELF => low_shelf(2.0 * a.sqrt() * alpha),
-            HIGH_SHELF => high_shelf(2.0 * a.sqrt() * alpha),
-            LOW_SHELF_SLOPE => low_shelf(2.0 * a.sqrt() * slope_alpha()),
-            HIGH_SHELF_SLOPE => high_shelf(2.0 * a.sqrt() * slope_alpha()),
-            LOW_PASS => ((1.0 - cos) / 2.0, 1.0 - cos, (1.0 - cos) / 2.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
-            HIGH_PASS => ((1.0 + cos) / 2.0, -(1.0 + cos), (1.0 + cos) / 2.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            EqKind::LowShelf => low_shelf(2.0 * a.sqrt() * alpha),
+            EqKind::HighShelf => high_shelf(2.0 * a.sqrt() * alpha),
+            EqKind::LowShelfSlope => low_shelf(2.0 * a.sqrt() * slope_alpha()),
+            EqKind::HighShelfSlope => high_shelf(2.0 * a.sqrt() * slope_alpha()),
+            EqKind::LowPass => ((1.0 - cos) / 2.0, 1.0 - cos, (1.0 - cos) / 2.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            EqKind::HighPass => ((1.0 + cos) / 2.0, -(1.0 + cos), (1.0 + cos) / 2.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
             // Constant 0 dB peak gain.
-            BAND_PASS => (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
-            NOTCH => (1.0, -2.0 * cos, 1.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
-            ALL_PASS => (1.0 - alpha, -2.0 * cos, 1.0 + alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
-            _ => (1.0 + alpha * a, -2.0 * cos, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * cos, 1.0 - alpha / a),
+            EqKind::BandPass => (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            EqKind::Notch => (1.0, -2.0 * cos, 1.0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            EqKind::AllPass => (1.0 - alpha, -2.0 * cos, 1.0 + alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
+            EqKind::Peaking => (1.0 + alpha * a, -2.0 * cos, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * cos, 1.0 - alpha / a),
         };
         let chans = match band.channel {
             CH_LEFT => 0b0000_0001,
@@ -239,11 +227,6 @@ pub(crate) fn band_db(rate: f64, band: &Band, freq: f64) -> f64 {
     let (nr, ni) = (c[0] + c[1] * c1 + c[2] * c2, -(c[1] * s1 + c[2] * s2));
     let (dr, di) = (1.0 + c[3] * c1 + c[4] * c2, -(c[3] * s1 + c[4] * s2));
     10.0 * ((nr * nr + ni * ni) / (dr * dr + di * di)).max(1e-30).log10()
-}
-
-/// Whether `gain_db` matters for this kind.
-pub fn uses_gain(kind: i32) -> bool {
-    matches!(kind, PEAKING | LOW_SHELF | HIGH_SHELF | LOW_SHELF_SLOPE | HIGH_SHELF_SLOPE)
 }
 
 /// bs2b's cutoff and level limits.
@@ -938,8 +921,8 @@ impl Equalizer {
             for b in bands {
                 // Side bands need two channels.
                 let routable = b.channel == CH_BOTH || (s.channels >= 2 && (b.channel == CH_LEFT || b.channel == CH_RIGHT));
-                let shaped = !uses_gain(b.kind) || b.gain_db.abs() >= 0.05;
-                if routable && shaped && b.freq > 0.0 && b.freq < rate / 2.0 && matches!(b.kind, PEAKING..=HIGH_SHELF_SLOPE) {
+                let shaped = !b.kind.uses_gain() || b.gain_db.abs() >= 0.05;
+                if routable && shaped && b.freq > 0.0 && b.freq < rate / 2.0 {
                     s.filters.push(Biquad::new(rate, &Band { gain_db: b.gain_db.clamp(-24.0, 24.0), ..*b }));
                 }
             }
@@ -982,7 +965,7 @@ impl Equalizer {
     pub fn configure_effects(&mut self, e: &Effects) {
         self.change(|s, rate| {
             let bass = finite(e.bass_boost_db, 0.0).clamp(0.0, BASS_BOOST_MAX_DB);
-            let shelf = (bass >= 0.05).then(|| Biquad::new(rate, &Band { kind: LOW_SHELF_SLOPE, freq: BASS_HZ, gain_db: bass, q: BASS_SLOPE, channel: CH_BOTH }));
+            let shelf = (bass >= 0.05).then(|| Biquad::new(rate, &Band { kind: EqKind::LowShelfSlope, freq: BASS_HZ, gain_db: bass, q: BASS_SLOPE, channel: CH_BOTH }));
             s.bass = match (shelf, s.bass) {
                 (Some(f), Some((old, st))) if old == f => Some((f, st)),
                 (Some(f), Some((_, st))) => Some((f, st)),
@@ -1241,8 +1224,8 @@ fn band(kind: EqKind, freq: f32, gain_db: f32, q: f32) -> EqBand {
 }
 
 /// Automatic pre-amp: cut by the largest boost.
-pub fn auto_preamp_db(bands: impl IntoIterator<Item = (i32, f32)>) -> f32 {
-    -bands.into_iter().filter(|&(k, _)| uses_gain(k)).map(|(_, g)| g).fold(0f32, f32::max)
+pub fn auto_preamp_db(bands: impl IntoIterator<Item = (EqKind, f32)>) -> f32 {
+    -bands.into_iter().filter(|&(k, _)| k.uses_gain()).map(|(_, g)| g).fold(0f32, f32::max)
 }
 
 /// The built-in curves; each boosting preset carries a pre-amp that cancels its boost.
@@ -1275,7 +1258,7 @@ pub fn eq_presets() -> Vec<NamedPreset> {
 
 impl From<&EqBand> for Band {
     fn from(b: &EqBand) -> Self {
-        Band { kind: b.kind as i32, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: CH_BOTH }
+        Band { kind: b.kind, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: CH_BOTH }
     }
 }
 
@@ -1285,8 +1268,8 @@ mod tests {
 
     #[test]
     fn auto_preamp_offsets_largest_boost() {
-        assert_eq!(auto_preamp_db([(PEAKING, 4.5), (LOW_SHELF, 6.0), (HIGH_PASS, 12.0)]), -6.0, "a pass filter's gain is not a boost");
-        assert_eq!(auto_preamp_db([(PEAKING, -3.0)]), 0.0, "cuts need no room");
+        assert_eq!(auto_preamp_db([(EqKind::Peaking, 4.5), (EqKind::LowShelf, 6.0), (EqKind::HighPass, 12.0)]), -6.0, "a pass filter's gain is not a boost");
+        assert_eq!(auto_preamp_db([(EqKind::Peaking, -3.0)]), 0.0, "cuts need no room");
         assert_eq!(auto_preamp_db([]), 0.0);
     }
 
@@ -1302,7 +1285,7 @@ mod tests {
         (0..48000).map(|i| (amplitude * (2.0 * std::f64::consts::PI * freq * i as f64 / 48000.0).sin()) as f32).collect()
     }
 
-    fn b(kind: i32, freq: f64, gain_db: f64, q: f64) -> Band {
+    fn b(kind: EqKind, freq: f64, gain_db: f64, q: f64) -> Band {
         Band { kind, freq, gain_db, q, channel: CH_BOTH }
     }
 
@@ -1349,16 +1332,16 @@ mod tests {
         let below = |db: f64| (-200.0, db);
         type Want = (f64, (f64, f64));
         let cases: &[(&str, Band, f64, &[Want])] = &[
-            ("peaking", b(PEAKING, 1000.0, -12.0, 1.41), 0.0, &[(1000.0, near(-12.0, 0.5)), (8000.0, near(0.0, 0.5))]),
-            ("low shelf and pre-amp", b(LOW_SHELF, 200.0, 6.0, 0.71), -3.0, &[(40.0, near(3.0, 0.5)), (5000.0, near(-3.0, 0.5))]),
-            ("high shelf", b(HIGH_SHELF, 4000.0, -6.0, 0.71), 0.0, &[(16000.0, near(-6.0, 0.6)), (200.0, near(0.0, 0.5))]),
-            ("low slope shelf", b(LOW_SHELF_SLOPE, 250.0, 8.0, 1.0), 0.0, &[(40.0, near(8.0, 0.6)), (250.0, near(4.0, 0.6)), (8000.0, near(0.0, 0.3))]),
-            ("high slope shelf", b(HIGH_SHELF_SLOPE, 3000.0, -8.0, 1.0), 0.0, &[(16000.0, near(-8.0, 0.7)), (100.0, near(0.0, 0.3))]),
-            ("low pass", b(LOW_PASS, 1000.0, 0.0, 0.707), 0.0, &[(100.0, near(0.0, 0.2)), (1000.0, near(-3.0, 0.6)), (8000.0, below(-15.0))]),
-            ("high pass", b(HIGH_PASS, 1000.0, 0.0, 0.707), 0.0, &[(10000.0, near(0.0, 0.2)), (1000.0, near(-3.0, 0.6)), (125.0, below(-15.0))]),
-            ("band pass", b(BAND_PASS, 1000.0, 0.0, 2.0), 0.0, &[(1000.0, near(0.0, 0.2)), (100.0, below(-12.0)), (10000.0, below(-12.0))]),
-            ("notch", b(NOTCH, 1000.0, 0.0, 8.0), 0.0, &[(1000.0, below(-20.0)), (250.0, near(0.0, 0.4)), (4000.0, near(0.0, 0.4))]),
-            ("all pass", b(ALL_PASS, 1000.0, 0.0, 0.707), 0.0, &[(100.0, near(0.0, 0.2)), (1000.0, near(0.0, 0.2)), (5000.0, near(0.0, 0.2)), (15000.0, near(0.0, 0.2))]),
+            ("peaking", b(EqKind::Peaking, 1000.0, -12.0, 1.41), 0.0, &[(1000.0, near(-12.0, 0.5)), (8000.0, near(0.0, 0.5))]),
+            ("low shelf and pre-amp", b(EqKind::LowShelf, 200.0, 6.0, 0.71), -3.0, &[(40.0, near(3.0, 0.5)), (5000.0, near(-3.0, 0.5))]),
+            ("high shelf", b(EqKind::HighShelf, 4000.0, -6.0, 0.71), 0.0, &[(16000.0, near(-6.0, 0.6)), (200.0, near(0.0, 0.5))]),
+            ("low slope shelf", b(EqKind::LowShelfSlope, 250.0, 8.0, 1.0), 0.0, &[(40.0, near(8.0, 0.6)), (250.0, near(4.0, 0.6)), (8000.0, near(0.0, 0.3))]),
+            ("high slope shelf", b(EqKind::HighShelfSlope, 3000.0, -8.0, 1.0), 0.0, &[(16000.0, near(-8.0, 0.7)), (100.0, near(0.0, 0.3))]),
+            ("low pass", b(EqKind::LowPass, 1000.0, 0.0, 0.707), 0.0, &[(100.0, near(0.0, 0.2)), (1000.0, near(-3.0, 0.6)), (8000.0, below(-15.0))]),
+            ("high pass", b(EqKind::HighPass, 1000.0, 0.0, 0.707), 0.0, &[(10000.0, near(0.0, 0.2)), (1000.0, near(-3.0, 0.6)), (125.0, below(-15.0))]),
+            ("band pass", b(EqKind::BandPass, 1000.0, 0.0, 2.0), 0.0, &[(1000.0, near(0.0, 0.2)), (100.0, below(-12.0)), (10000.0, below(-12.0))]),
+            ("notch", b(EqKind::Notch, 1000.0, 0.0, 8.0), 0.0, &[(1000.0, below(-20.0)), (250.0, near(0.0, 0.4)), (4000.0, near(0.0, 0.4))]),
+            ("all pass", b(EqKind::AllPass, 1000.0, 0.0, 0.707), 0.0, &[(100.0, near(0.0, 0.2)), (1000.0, near(0.0, 0.2)), (5000.0, near(0.0, 0.2)), (15000.0, near(0.0, 0.2))]),
         ];
         for (what, band, preamp, want) in cases {
             let mut eq = Equalizer::new(48000, 1);
@@ -1370,7 +1353,7 @@ mod tests {
         }
         // The all pass moves the phase even though the level stays.
         let mut eq = Equalizer::new(48000, 1);
-        eq.configure(&[b(ALL_PASS, 1000.0, 0.0, 0.707)], 0.0, 0.0);
+        eq.configure(&[b(EqKind::AllPass, 1000.0, 0.0, 0.707)], 0.0, 0.0);
         let x = tone(1000.0);
         let mut y = vec![0f32; x.len()];
         eq.process_f32(&x, &mut y);
@@ -1380,7 +1363,7 @@ mod tests {
     #[test]
     fn bad_settings_are_harmless() {
         let mut eq = Equalizer::new(48000, 2);
-        let bad = [b(PEAKING, f64::NAN, 6.0, 1.0), b(PEAKING, 30000.0, 6.0, 1.0), b(PEAKING, -100.0, 6.0, 1.0), b(PEAKING, 1000.0, f64::NAN, 1.0), b(99, 1000.0, 6.0, 1.0)];
+        let bad = [b(EqKind::Peaking, f64::NAN, 6.0, 1.0), b(EqKind::Peaking, 30000.0, 6.0, 1.0), b(EqKind::Peaking, -100.0, 6.0, 1.0), b(EqKind::Peaking, 1000.0, f64::NAN, 1.0)];
         eq.configure(&bad, f64::NAN, 0.0);
         assert!(eq.is_identity(), "no band survived, so the processor can be skipped");
         eq.configure_output(f64::NAN, false, f64::NAN, -5.0, f64::INFINITY);
@@ -1393,15 +1376,15 @@ mod tests {
     #[test]
     fn side_routed_bands() {
         let mut eq = Equalizer::new(48000, 2);
-        eq.configure(&[Band { channel: CH_LEFT, ..b(PEAKING, 1000.0, 12.0, 1.0) }], 0.0, 0.0);
+        eq.configure(&[Band { channel: CH_LEFT, ..b(EqKind::Peaking, 1000.0, 12.0, 1.0) }], 0.0, 0.0);
         let (l, r) = stereo_gain_at(&mut eq, 1000.0);
         assert!((l - 12.0).abs() < 0.5 && r.abs() < 0.2, "left only: {l} / {r}");
 
-        eq.configure(&[Band { channel: CH_RIGHT, ..b(PEAKING, 1000.0, -12.0, 1.0) }], 0.0, 0.0);
+        eq.configure(&[Band { channel: CH_RIGHT, ..b(EqKind::Peaking, 1000.0, -12.0, 1.0) }], 0.0, 0.0);
         let (l, r) = stereo_gain_at(&mut eq, 1000.0);
         assert!(l.abs() < 0.2 && (r + 12.0).abs() < 0.5, "right only: {l} / {r}");
 
-        eq.configure(&[b(HIGH_SHELF, 4000.0, 8.0, 0.71)], 0.0, 0.0);
+        eq.configure(&[b(EqKind::HighShelf, 4000.0, 8.0, 0.71)], 0.0, 0.0);
         let m = tone(4000.0);
         let x: Vec<f32> = m.iter().flat_map(|s| [*s, *s]).collect();
         let mut y = vec![0f32; x.len()];
@@ -1410,7 +1393,7 @@ mod tests {
         assert!(y.as_chunks::<2>().0.iter().all(|f| f[0] == f[1]), "both-channel band kept the centre centred");
 
         let mut mono = Equalizer::new(48000, 1);
-        mono.configure(&[Band { channel: CH_RIGHT, ..b(PEAKING, 1000.0, 12.0, 1.0) }], 0.0, 0.0);
+        mono.configure(&[Band { channel: CH_RIGHT, ..b(EqKind::Peaking, 1000.0, 12.0, 1.0) }], 0.0, 0.0);
         assert!(mono.is_identity());
     }
 
@@ -1421,17 +1404,17 @@ mod tests {
     fn stereo_block_is_frame_by_frame() {
         let side = |channel, band: Band| Band { channel, ..band };
         let bands = [
-            b(PEAKING, 60.0, 5.0, 1.0),
-            b(LOW_SHELF, 120.0, -3.0, 0.7),
-            side(CH_LEFT, b(PEAKING, 300.0, 4.0, 2.0)),
-            b(PEAKING, 700.0, -4.0, 1.4),
-            b(PEAKING, 1500.0, 6.0, 1.0),
-            b(NOTCH, 2500.0, 0.0, 4.0),
-            b(PEAKING, 4000.0, 3.0, 1.4),
-            b(HIGH_SHELF, 8000.0, 4.0, 0.7),
-            side(CH_RIGHT, b(PEAKING, 10000.0, -6.0, 1.0)),
-            b(PEAKING, 12000.0, 2.0, 1.0),
-            b(PEAKING, 14000.0, -2.0, 1.0),
+            b(EqKind::Peaking, 60.0, 5.0, 1.0),
+            b(EqKind::LowShelf, 120.0, -3.0, 0.7),
+            side(CH_LEFT, b(EqKind::Peaking, 300.0, 4.0, 2.0)),
+            b(EqKind::Peaking, 700.0, -4.0, 1.4),
+            b(EqKind::Peaking, 1500.0, 6.0, 1.0),
+            b(EqKind::Notch, 2500.0, 0.0, 4.0),
+            b(EqKind::Peaking, 4000.0, 3.0, 1.4),
+            b(EqKind::HighShelf, 8000.0, 4.0, 0.7),
+            side(CH_RIGHT, b(EqKind::Peaking, 10000.0, -6.0, 1.0)),
+            b(EqKind::Peaking, 12000.0, 2.0, 1.0),
+            b(EqKind::Peaking, 14000.0, -2.0, 1.0),
         ];
         let expander = crate::compressor::ExpanderSettings { threshold_db: -30.0, ratio: 2.0, attack_ms: 2.0, release_ms: 50.0 };
         let mut eq = Equalizer::new(48000, 2);
@@ -1655,7 +1638,7 @@ mod tests {
         let x: Vec<i16> = (0..N).map(|i| ((std::f64::consts::TAU * K as f64 * i as f64 / N as f64).sin() * 10f64.powf(-46.0 / 20.0) * 32768.0).round() as i16).collect();
         let chain = || {
             let mut eq = Equalizer::new(48000, 1);
-            eq.configure(&[b(PEAKING, 48000.0 * K as f64 / N as f64, -24.0, 0.3)], -30.0, 0.0);
+            eq.configure(&[b(EqKind::Peaking, 48000.0 * K as f64 / N as f64, -24.0, 0.3)], -30.0, 0.0);
             eq
         };
         let xf: Vec<f32> = x.iter().map(|v| *v as f32 / 32768.0).collect();
@@ -1877,24 +1860,5 @@ mod tests {
         let mut y = vec![0f32; x.len()];
         eq.process_f32(&x, &mut y);
         assert_eq!(x, y, "a centred tone passes as it came");
-    }
-
-    /// `EqKind` ordinals cross JNI as dsp codes.
-    #[test]
-    fn eq_kind_ordinals_match_codes() {
-        for (kind, code) in [
-            (EqKind::Peaking, PEAKING),
-            (EqKind::LowShelf, LOW_SHELF),
-            (EqKind::HighShelf, HIGH_SHELF),
-            (EqKind::LowPass, LOW_PASS),
-            (EqKind::HighPass, HIGH_PASS),
-            (EqKind::BandPass, BAND_PASS),
-            (EqKind::Notch, NOTCH),
-            (EqKind::AllPass, ALL_PASS),
-            (EqKind::LowShelfSlope, LOW_SHELF_SLOPE),
-            (EqKind::HighShelfSlope, HIGH_SHELF_SLOPE),
-        ] {
-            assert_eq!(kind as i32, code, "{kind:?}");
-        }
     }
 }
