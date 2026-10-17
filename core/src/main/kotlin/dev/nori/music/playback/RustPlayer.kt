@@ -68,7 +68,7 @@ internal object RustPlayerJni {
     /** The engine reads its output once, now. */
     @JvmStatic @CriticalNative external fun look(h: Long)
     @JvmStatic @CriticalNative external fun mixing(h: Long): Boolean
-    @JvmStatic @FastNative external fun remoteState(h: Long, buffering: Boolean, words: LongArray)
+    @JvmStatic @FastNative external fun remoteState(h: Long, words: LongArray)
     @JvmStatic @CriticalNative external fun chainIn(h: Long): Boolean
     @JvmStatic @CriticalNative external fun onCpu(h: Long): Boolean
     /** Song ms per real ms: the speed times a mix's tempo. */
@@ -332,10 +332,10 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     internal var onRemoteStateChanged: (() -> Unit)? = null
     private var remoteWords: LongArray? = null
     internal fun remotePlaying(): dev.nori.music.ffi.Playing {
-        val w = remoteWords ?: LongArray(8).also { remoteWords = it }
-        RustPlayerJni.remoteState(h, buffering, w)
+        val w = remoteWords ?: LongArray(9).also { remoteWords = it }
+        RustPlayerJni.remoteState(h, w)
         return dev.nori.music.ffi.Playing(
-            w[0] != 0L, buffering, w[4] != 0L, w[5].takeIf { it >= 0 }?.toUInt(), w[6], Float.fromBits(w[7].toInt()),
+            w[0] != 0L, w[8] != 0L, w[4] != 0L, w[5].takeIf { it >= 0 }?.toUInt(), w[6], Float.fromBits(w[7].toInt()),
             w[1], Float.fromBits(w[2].toInt()), w[3].takeIf { it >= 0 }?.toUInt(), null,
         )
     }

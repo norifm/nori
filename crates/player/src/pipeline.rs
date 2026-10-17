@@ -1118,6 +1118,11 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.reading.as_ref().map(|r| r.index).or(self.opening.as_ref().map(|o| o.index))
     }
 
+    /// Playing from a start, jump or seek whose first sample the output's clock has not passed yet.
+    pub fn unheard(&self) -> bool {
+        self.heard_from.is_some()
+    }
+
     /// The song being read is waiting for bytes or still opening.
     pub fn starved(&self) -> bool {
         self.opening.is_some() || self.reading.as_ref().is_some_and(|r| !r.left() && !r.ended && r.waiting)
