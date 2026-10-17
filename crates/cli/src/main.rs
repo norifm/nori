@@ -29,6 +29,8 @@ pub struct Options {
     pub mouse: Option<bool>,
     /// (url, user, password) of a server to add and use.
     pub login: Option<(String, String, String)>,
+    /// Add (or find) the YouTube Music profile and use it.
+    pub youtube_music: bool,
     /// Plays downloads only; no network requests.
     pub offline: bool,
     /// Serve MPRIS media controls.
@@ -38,7 +40,7 @@ pub struct Options {
 fn usage() -> ! {
     eprintln!(
         "usage: nori-cli [--data DIR] [--device NAME] [--no-images] [--no-mouse] [--no-mpris] [--offline] [--debug]\n\
-         \x20               [--url URL --user USER --password PASSWORD]\n\
+         \x20               [--url URL --user USER --password PASSWORD | --youtube-music]\n\
          \x20      nori-cli --script ... (the non-interactive player; nori-cli --script --help)\n\
          \x20      nori-cli --devices\n\
          The url, user and password may also come from NORI_URL, NORI_USER and NORI_PASSWORD.\n\
@@ -67,7 +69,7 @@ fn main() {
         return;
     }
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-    let mut o = Options { data: data_dir(), device: None, images: None, mouse: None, login: None, offline: false, mpris: true };
+    let mut o = Options { data: data_dir(), device: None, images: None, mouse: None, login: None, youtube_music: false, offline: false, mpris: true };
     let (mut url, mut user, mut password) = (env("NORI_URL"), env("NORI_USER"), env("NORI_PASSWORD"));
     if env("NORI_DEBUG").is_some_and(|v| v != "0") {
         term::set_debug(true);
@@ -88,6 +90,7 @@ fn main() {
             "--url" => url = Some(v()),
             "--user" => user = Some(v()),
             "--password" => password = Some(v()),
+            "--youtube-music" => o.youtube_music = true,
             _ => usage(),
         }
     }

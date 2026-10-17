@@ -485,6 +485,7 @@
     <string name="settings_section_accounts">Accounts</string>
     <string name="settings_section_this_server">This server</string>
     <string name="settings_server_api_key">API key</string>
+    <string name="settings_server_best_effort">Best effort</string>
     <string name="settings_server_in_use">in use</string>
     <string name="settings_server_not_in_use">not in use</string>
     <string name="settings_server_wifi_only">Wi-Fi only</string>

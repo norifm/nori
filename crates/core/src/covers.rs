@@ -111,11 +111,12 @@ impl Core {
             })
             .collect()
     }
-}
 
-impl Core {
     /// The URL of cover `id` at `size` px ([`cover_url_into`]).
     pub fn cover_address(&self, id: String, size: u32) -> String {
+        if self.kind() == crate::settings::ServerKind::YouTubeMusic {
+            return crate::youtube::cover_address(&id, size);
+        }
         let mut out = String::new();
         cover_url_into(&mut out, &self.url_prefix("getCoverArt".into()), &id, size as i32);
         out
@@ -245,7 +246,11 @@ impl CoverNet {
         let (head, query) = url.split_once('?').unwrap_or((url, ""));
         let (base, path) = match head.find("/rest/") {
             Some(i) => (&head[..i], &head[i..]),
-            None => (head, ""),
+            // Another site's image (YouTube's): its path names it.
+            None => {
+                let host = head.find("://").map_or(0, |s| s + 3);
+                head[host..].find('/').map_or((head, ""), |p| head.split_at(host + p))
+            }
         };
         let host = host_of(base);
         {
@@ -350,6 +355,9 @@ mod tests {
         net.alike("http://keys.lan:4533/", "https://keys.example");
         assert_eq!(key("http://keys.lan:4533/rest/getCoverArt?u=a&t=x&s=y&id=al-1&size=320"), key("https://keys.example/rest/getCoverArt?u=b&id=al-1&size=320"));
         assert_ne!(key("https://other.example/rest/getCoverArt?id=al-1&size=320"), key("https://keys.example/rest/getCoverArt?id=al-1&size=320"));
+        // Images named by their path, not a query.
+        assert_ne!(key("https://yt3.googleusercontent.com/abc=w320-h320-l90-rj"), key("https://yt3.googleusercontent.com/def=w320-h320-l90-rj"));
+        assert_ne!(key("https://yt3.googleusercontent.com/abc=w320-h320-l90-rj"), key("https://yt3.googleusercontent.com/abc=w800-h800-l90-rj"));
     }
 
     #[test]

@@ -303,8 +303,8 @@ fn home_shelves() {
     let mut a = app();
     a.go(View::Home);
     let shelf = |n: usize, p: &str| (0..n).map(|i| album(&format!("{p}-{i}"), &format!("{p} {i}"))).collect::<Vec<_>>();
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Recently added", shelf(12, "New")))));
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(2, "Most played", shelf(3, "Top")))));
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Recently added".into(), shelf(12, "New")))));
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(2, "Most played".into(), shelf(3, "Top")))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Recently added") && s.contains("Most played") && s.contains("New 0") && s.contains("Top 2"), "{s}");
     assert!(s.contains("Good "), "a greeting:\n{s}");

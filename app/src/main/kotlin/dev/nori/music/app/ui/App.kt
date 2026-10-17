@@ -213,16 +213,19 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         val plain = reduceMotion()
         // A jam guest's profile is the same app over its host's library, started afresh on joining and on leaving.
         val guest = remember(prefs.activeServerId, prefs.server?.apiKey) { prefs.server?.apiKey?.let { dev.nori.music.ffi.remote.isGuestKey(it) } == true }
+        val kind = prefs.server?.kind ?: dev.nori.music.ffi.settings.ServerKind.SUBSONIC
         androidx.compose.animation.Crossfade(
-            targetState = prefs.loggedIn to guest,
+            targetState = Triple(prefs.loggedIn, guest, kind),
             animationSpec = if (plain) androidx.compose.animation.core.snap() else androidx.compose.animation.core.tween(280),
             label = "session",
-        ) { (loggedIn, guest) ->
+        ) { (loggedIn, guest, kind) ->
         if (!loggedIn) {
             LoginScreen(settings)
             return@Crossfade
         }
-        val rules = remember(guest) { dev.nori.music.ffi.library.profileRules(guest) }
+        // A YouTube Music profile's account (its `user`) brings its library and hearts.
+        val account = prefs.server?.user.orEmpty()
+        val rules = remember(guest, kind, account) { dev.nori.music.ffi.library.rulesOf(prefs.server ?: dev.nori.music.settings.newServer(""), guest) }
         val home = "home"
         // A guest follows the host while the app is in sight: what plays, the queue, its requests.
         val remote: dev.nori.music.app.vm.RemoteViewModel = viewModel()
@@ -295,6 +298,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url), null))
             }
         }
+
+        if (kind == dev.nori.music.ffi.settings.ServerKind.YOU_TUBE_MUSIC && !guest) YouTubeSignInFlow(settings)
 
         // The debug build's test bridge drives the app through this (src/debug TestDriver.kt); every
         // other build has an empty one (src/noTest), so a release carries none of it.
@@ -585,7 +590,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             SongMenu(menuSong, actions, onDismiss = { menuSong = null }, player = player.takeIf { menuFromPlayer })
             DevicesHost(devicesOpen) { devicesOpen = false }
             // A jam that would not start says so, whichever menu started it.
-            if (prefs.remoteControl) JamFailures(actions)
+            if (prefs.remoteControl && rules.remote) JamFailures(actions)
         }
         }
     }

@@ -614,7 +614,7 @@ private fun LyricsHeader(vm: PlayerViewModel, actions: ActionsViewModel, song: d
         song?.let { s ->
             val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
             // A jam guest's heart would be the host's.
-            if (LocalRules.current.account) TitleCircle(if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, say.favourite, starred) { actions.star(s, !starred) }
+            if (LocalRules.current.stars) TitleCircle(if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, say.favourite, starred) { actions.star(s, !starred) }
             TitleCircle(Icons.Filled.MoreHoriz, say.more, false) { menu(s) }
         }
     }

@@ -3714,6 +3714,8 @@ export component AppWindow inherits Window {
     in property <string> login-error;
     in property <bool> login-busy;
     in property <bool> can-cancel-login;
+    // The profile being added is YouTube Music's (no server, no account) rather than a server's.
+    in-out property <bool> login-youtube;
 
     callback go(int);
     callback open-album(string);
@@ -3813,8 +3815,26 @@ export component AppWindow inherits Window {
                                 image-fit: contain;
                             }
                         }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: center;
+                            Capsule {
+                                text: "Your server";
+                                ink: root.login-youtube ? Theme.fill : Theme.accent;
+                                label: root.login-youtube ? Theme.text : white;
+                                clicked => { root.login-youtube = false; }
+                            }
+                            Capsule {
+                                text: "YouTube Music";
+                                ink: root.login-youtube ? Theme.accent : Theme.fill;
+                                label: root.login-youtube ? white : Theme.text;
+                                clicked => { root.login-youtube = true; }
+                            }
+                        }
                         Text {
-                            text: "Sign in to your Navidrome or Subsonic server.";
+                            text: root.login-youtube
+                                ? "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Favorites, playlists, downloads, scrobbling, remote control and jams are off."
+                                : "Sign in to your Navidrome or Subsonic server.";
                             color: Theme.dim;
                             horizontal-alignment: center;
                             wrap: word-wrap;
@@ -3822,17 +3842,17 @@ export component AppWindow inherits Window {
                         Rectangle {
                             height: 10px;
                         }
-                        Field {
+                        if !root.login-youtube: Field {
                             icon: Icons.server;
                             placeholder: "Server address";
                             text <=> root.login-url;
                         }
-                        Field {
+                        if !root.login-youtube: Field {
                             icon: Icons.person;
                             placeholder: "User name";
                             text <=> root.login-user;
                         }
-                        Field {
+                        if !root.login-youtube: Field {
                             icon: Icons.key;
                             placeholder: "Password";
                             secret: true;
@@ -3862,7 +3882,7 @@ export component AppWindow inherits Window {
                                 clicked => { root.cancel-login(); }
                             }
                             Capsule {
-                                text: root.login-busy ? "Signing In…" : "Sign In";
+                                text: root.login-youtube ? "Add YouTube Music" : root.login-busy ? "Signing In…" : "Sign In";
                                 clicked => {
                                     if !root.login-busy {
                                         root.login();

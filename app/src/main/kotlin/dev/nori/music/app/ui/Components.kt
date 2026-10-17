@@ -435,7 +435,7 @@ fun SongRow(
             // A jam guest's hearts would be the host's: none are shown.
             val rules = LocalRules.current
             Box(Modifier.padding(start = 4.dp).width(15.dp), Alignment.Center) {
-                if (rules.account && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)) Icon(Icons.Filled.Favorite, say.favourite, Modifier.size(15.dp), tint)
+                if (rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)) Icon(Icons.Filled.Favorite, say.favourite, Modifier.size(15.dp), tint)
             }
             Box(Modifier.width(MARK_SLOT), Alignment.Center) { DownloadSlot(song.id, downloaded, tint) }
             // A song a jam guest asked for says so in its time's place until the host decides.
@@ -575,7 +575,8 @@ internal fun rowSwipe(action: SwipeAction, song: Song, actions: ActionsViewModel
     val starred = action == SwipeAction.FAVOURITE && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)
     // What it does is nori-core's (`row_swipe`); there are twenty answers in all, so each is asked once.
     // What it says is one of Say's words, read once per locale: a row allocates no text.
-    val act = SwipeActs.of(action, starred, LocalRules.current.account) ?: return null
+    val rules = LocalRules.current
+    val act = SwipeActs.of(action, starred, rules.stars, rules.account) ?: return null
     // Made once per row and answer: a new one on every pass would make the row compose again with it.
     return remember(act, song, actions) {
         val label = say.rowSwipe(act)
@@ -590,12 +591,12 @@ internal fun rowSwipe(action: SwipeAction, song: Song, actions: ActionsViewModel
 
 /** The core's answer for each swipe setting, hearted or not, asked once each. */
 private object SwipeActs {
-    private val made = arrayOfNulls<Any>(SwipeAction.entries.size * 4)
+    private val made = arrayOfNulls<Any>(SwipeAction.entries.size * 8)
     private val NONE = Any()
-    fun of(setting: SwipeAction, starred: Boolean, account: Boolean): dev.nori.music.ffi.library.RowSwipeAct? {
+    fun of(setting: SwipeAction, starred: Boolean, stars: Boolean, account: Boolean): dev.nori.music.ffi.library.RowSwipeAct? {
         // A slot per setting, heart and profile kind: a place to remember the answer in, nothing more.
-        val i = setting.ordinal * 4 + (if (starred) 1 else 0) + (if (account) 2 else 0)
-        val got = made[i] ?: (dev.nori.music.ffi.library.rowSwipe(setting, starred, account) ?: NONE).also { made[i] = it }
+        val i = setting.ordinal * 8 + (if (starred) 1 else 0) + (if (stars) 2 else 0) + (if (account) 4 else 0)
+        val got = made[i] ?: (dev.nori.music.ffi.library.rowSwipe(setting, starred, stars, account) ?: NONE).also { made[i] = it }
         return got as? dev.nori.music.ffi.library.RowSwipeAct
     }
 }

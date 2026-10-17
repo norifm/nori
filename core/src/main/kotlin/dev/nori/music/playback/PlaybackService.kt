@@ -755,7 +755,7 @@ class PlaybackService : MediaLibraryService() {
      * AutoMixPrefetch). Asked again with the same songs, it does nothing.
      */
     /** The account's: a jam guest plays its host's transitions. */
-    private fun analyseAhead() { if (nori.rules.account) analyser.update() }
+    private fun analyseAhead() { if (nori.rules.measures) analyser.update() }
 
     private fun prefetchLyrics() {
         if (nori.session.lyricsPrefetchReady()) scope.launch(Dispatchers.IO) { runCatching { nori.client.lyricsPrefetch() } }

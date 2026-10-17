@@ -25,7 +25,7 @@ use nori_engine::ahead::{Ahead, Entry, Keeping};
 use nori_engine::arriving::Listening;
 use nori_core::client::CurrentClient;
 use nori_core::queue::is_radio;
-use nori_engine::core::{ahead_songs, key_format, measuring_ahead, settings, Analyses, CoreApp, CoreQueue, OutputVolume};
+use nori_engine::core::{ahead_songs, key_format, measuring_ahead, settings, Analyses, CoreApp, CoreQueue, OutputVolume, Resolving};
 use nori_engine::{Body, ByteSource, Cancel, Coded, Coding, Config, Device, Engine, Event, Library, Located, OffloadOutput, OpenError, OutputFacts, OutputFormat, Source, State, Support};
 use nori_player::transitions::WindowSong;
 use parking_lot::Mutex;
@@ -1192,7 +1192,8 @@ impl Library for AndroidLibrary {
         let duration_ms = song.as_ref().map(|s| s.duration as i64 * 1000).filter(|&d| d > 0);
         // Format hint from a transcoded stream's key; a download (`dl:<id>`) may be transcoded too, so its
         // file is sniffed instead.
-        let target = self.current.get().ok_or("no server to play from")?.resolve_now(id);
+        let client = self.current.get().ok_or("no server to play from")?;
+        let target = client.resolve_now(id);
         let download = target.key == nori_core::stream::download_key(id.to_string());
         // A finished download is read from its files, not copied into memory.
         if let Some(files) = download.then(|| downloaded(&self.bridge, &target.key)).flatten() {
@@ -1201,7 +1202,8 @@ impl Library for AndroidLibrary {
         }
         let hint = if download { None } else { key_format(&target.key).or_else(|| song.map(|s| s.suffix)).filter(|s| !s.is_empty()) };
         log(&format!("{id} opens from {} as {}", target.key, hint.as_deref().unwrap_or("whatever it is")));
-        Ok(Located { source: Source::Url { url: target.url, bytes: Arc::new(JavaBytes { bridge: self.bridge.clone(), key: target.key, ahead: self.ahead.clone() }) }, hint, duration_ms, estimated: false })
+        let bytes = resolving(&client, Arc::new(JavaBytes { bridge: self.bridge.clone(), key: target.key, ahead: self.ahead.clone() }));
+        Ok(Located { source: Source::Url { url: target.url, bytes }, hint, duration_ms, estimated: false })
     }
 
     fn about(&self, id: &str) -> WindowSong {
@@ -1214,8 +1216,11 @@ impl Library for AndroidLibrary {
 
     /// Fetches the core's precache targets except `next` (the engine loads that) into media3's cache.
     fn ahead(&mut self, next: &str) {
-        let fetch = self.current.get().map(|c| c.precache_now()).unwrap_or_default();
-        self.ahead.ask(Arc::new(Media3Cache(self.bridge.clone())), Arc::new(AheadBytes(self.bridge.clone())), ahead_songs(fetch, next), Some(measuring_ahead(&self.analyses, self.queue.clone())));
+        let client = self.current.get();
+        let fetch = client.as_ref().map(|c| c.precache_now()).unwrap_or_default();
+        let bytes: Arc<dyn ByteSource> = Arc::new(AheadBytes(self.bridge.clone()));
+        let bytes = client.map_or(bytes.clone(), |c| resolving(&c, bytes));
+        self.ahead.ask(Arc::new(Media3Cache(self.bridge.clone())), bytes, ahead_songs(fetch, next), Some(measuring_ahead(&self.analyses, self.queue.clone())));
     }
 
     fn taker(&self, id: &str, hint: Option<&str>) -> Option<Listening> {
@@ -1233,6 +1238,14 @@ impl Library for AndroidLibrary {
         }
         let said = cache_words(&self.bridge, &target.key, |j| j.forget).unwrap_or_else(|| "Kotlin could not be asked".into());
         log(&format!("{id} is fetched anew: its stream cache entry goes ({said})"));
+    }
+}
+
+/// `bytes`, opening a YouTube Music profile's songs at the URLs YouTube serves them at ([`Resolving`]).
+fn resolving(client: &Arc<nori_core::client::Client>, bytes: Arc<dyn ByteSource>) -> Arc<dyn ByteSource> {
+    match client.core().kind() {
+        nori_core::settings::ServerKind::Subsonic => bytes,
+        nori_core::settings::ServerKind::YouTubeMusic => Arc::new(Resolving { bytes, client: client.clone() }),
     }
 }
 
