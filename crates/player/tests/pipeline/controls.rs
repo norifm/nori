@@ -287,6 +287,24 @@ fn new_queue_prefetches_after_its_start() {
 }
 
 #[test]
+fn the_next_song_is_fetched_once_the_one_started_has_its_bytes() {
+    // Its first bytes would share the network with the next song's.
+    let s = songs(4, 12.0);
+    let mut p = Player::new(queue(&s));
+    p.tracks.slow.push("s1".into());
+    p.play_from(1);
+    assert!(p.tracks.ahead.is_empty(), "fetched ahead while s1 opens: {:?}", p.tracks.ahead);
+    p.run_for(100);
+    assert_eq!(p.tracks.ahead, ["s2"]);
+    // Skipped to, s2 opens slowly too.
+    p.tracks.slow.push("s2".into());
+    assert!(p.next());
+    assert_eq!(p.tracks.ahead, ["s2"]);
+    p.run_for(100);
+    assert_eq!(p.tracks.ahead, ["s2", "s3"]);
+}
+
+#[test]
 fn queue_emptied_while_playing() {
     // Another server's profile taken up empties the queue under the song playing: nothing indexes it.
     let s = songs(3, 12.0);
