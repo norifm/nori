@@ -12,7 +12,7 @@ use crate::dsp::{Band, Effects, Equalizer};
 use crate::engine::Downstream;
 use crate::pcm::{Encoding, Format};
 use crate::silence::SilenceSkipper;
-use crate::sound::sound_on;
+use crate::policy::sound_on;
 use crate::speed::{speed_active, SpeedPitch};
 
 /// A buffer this far from its expected timestamp resyncs the clock (media3).

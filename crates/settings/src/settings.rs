@@ -886,7 +886,7 @@ impl StoredPrefs {
     /// Whether the sound chain is needed (anything that alters samples is on and the output is not
     /// bypassed). Audio offload is off while it is.
     pub fn sound_chain_on(&self) -> bool {
-        !self.sound_bypass && nori_player::sound::sound_on(self.eq_enabled, self.crossfeed_db, self.balance, self.mono, self.limiter, self.effects().on())
+        !self.sound_bypass && nori_player::policy::sound_on(self.eq_enabled, self.crossfeed_db, self.balance, self.mono, self.limiter, self.effects().on())
     }
 
     /// How songs are levelled (`nori_player::gain`).
