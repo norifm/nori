@@ -55,6 +55,17 @@ impl Notify {
         waiting.into_iter().for_each(Waker::wake);
     }
 
+    /// Ready once `done` holds, checked now and after each notice.
+    pub async fn until(&self, done: impl Fn() -> bool) {
+        loop {
+            let notified = self.notified();
+            if done() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     /// Ready at the next notice after now.
     pub fn notified(&self) -> Notified<'_> {
         let seen = self.inner.lock().unwrap_or_else(|e| e.into_inner()).0;

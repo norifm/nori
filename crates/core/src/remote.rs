@@ -1059,67 +1059,63 @@ fn kind_name(kind: DeviceKind) -> String {
     serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
-/// Device ids kept in the app database, one for each copy of a kind of client running at once.
-struct DeviceId;
+/// Device ids are kept in the app database, one for each copy of a kind of client running at once.
+/// The id of the first copy of `kind` over `settings`' app database that no running remote holds
+/// (`remoteDeviceId.desktop.0`, `.1`, ...), made the first time, and its lock. A fresh id while the
+/// database is not open; the first copy's when no lock file can be made.
+fn claim_device_id(settings: &Settings, kind: DeviceKind) -> (String, IdLock) {
+    let Some(db) = settings.app_db() else { return (nori_remote::new_id(), None) };
+    let name = kind_name(kind);
+    let path = db.lock().path().filter(|p| !p.is_empty()).map(str::to_string);
+    let (key, lock) = (0..)
+        .map(|copy| format!("{SHARED_DEVICE_ID}.{name}.{copy}"))
+        .find_map(|key| id_lock(path.as_deref(), &key).map(|lock| (key, lock)))
+        .expect("a copy no remote holds");
+    let id = kept_device_id(&db.lock(), &key, kind != DeviceKind::Guest).unwrap_or_else(|e| {
+        crate::alog::info(&format!("remote: could not keep the device id: {e}"));
+        nori_remote::new_id()
+    });
+    (id, lock)
+}
 
-impl DeviceId {
-    /// The id of the first copy of `kind` over `settings`' app database that no running remote holds
-    /// (`remoteDeviceId.desktop.0`, `.1`, ...), made the first time, and its lock. A fresh id while the
-    /// database is not open; the first copy's when no lock file can be made.
-    fn claim(settings: &Settings, kind: DeviceKind) -> (String, IdLock) {
-        let Some(db) = settings.app_db() else { return (nori_remote::new_id(), None) };
-        let name = kind_name(kind);
-        let path = db.lock().path().filter(|p| !p.is_empty()).map(str::to_string);
-        let (key, lock) = (0..)
-            .map(|copy| format!("{SHARED_DEVICE_ID}.{name}.{copy}"))
-            .find_map(|key| DeviceId::free(path.as_deref(), &key).map(|lock| (key, lock)))
-            .expect("a copy no remote holds");
-        let id = DeviceId::kept(&db.lock(), &key, kind != DeviceKind::Guest).unwrap_or_else(|e| {
-            crate::alog::info(&format!("remote: could not keep the device id: {e}"));
-            nori_remote::new_id()
-        });
-        (id, lock)
-    }
-
-    /// The lock of id `key` next to the app database at `db`; None while another remote holds it.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn free(db: Option<&str>, key: &str) -> Option<IdLock> {
-        let Some(db) = db else { return Some(None) };
-        let opened = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(format!("{db}.{key}.lock"));
-        let locked = opened.and_then(|file| match file.try_lock() {
-            Ok(()) => Ok(Some(file)),
-            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(std::fs::TryLockError::Error(e)) => Err(e),
-        });
-        match locked {
-            Ok(None) => None,
-            Ok(lock) => Some(lock),
-            Err(e) => {
-                crate::alog::info(&format!("remote: no lock for the device id: {e}"));
-                Some(None)
-            }
+/// The lock of id `key` next to the app database at `db`; None while another remote holds it.
+#[cfg(not(target_arch = "wasm32"))]
+fn id_lock(db: Option<&str>, key: &str) -> Option<IdLock> {
+    let Some(db) = db else { return Some(None) };
+    let opened = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(format!("{db}.{key}.lock"));
+    let locked = opened.and_then(|file| match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    });
+    match locked {
+        Ok(None) => None,
+        Ok(lock) => Some(lock),
+        Err(e) => {
+            crate::alog::info(&format!("remote: no lock for the device id: {e}"));
+            Some(None)
         }
     }
+}
 
-    /// A browser runs one copy of a client over its database.
-    #[cfg(target_arch = "wasm32")]
-    fn free(_: Option<&str>, _: &str) -> Option<IdLock> {
-        Some(None)
-    }
+/// A browser runs one copy of a client over its database.
+#[cfg(target_arch = "wasm32")]
+fn id_lock(_: Option<&str>, _: &str) -> Option<IdLock> {
+    Some(None)
+}
 
-    /// The id kept at `key`: made the first time, or the shared one taken over when `shared` allows.
-    fn kept(c: &rusqlite::Connection, key: &str, shared: bool) -> rusqlite::Result<String> {
-        use rusqlite::OptionalExtension;
-        let tx = c.unchecked_transaction()?;
-        if let Some(id) = tx.query_row("SELECT value FROM app_kv WHERE key=?1 AND value<>''", [key], |r| r.get::<_, String>(0)).optional()? {
-            return Ok(id);
-        }
-        let taken = if shared { tx.query_row("DELETE FROM app_kv WHERE key=?1 AND value<>'' RETURNING value", [SHARED_DEVICE_ID], |r| r.get::<_, String>(0)).optional()? } else { None };
-        let id = taken.unwrap_or_else(nori_remote::new_id);
-        tx.execute("INSERT OR REPLACE INTO app_kv(key, value) VALUES(?1, ?2)", [key, id.as_str()])?;
-        tx.commit()?;
-        Ok(id)
+/// The id kept at `key`: made the first time, or the shared one taken over when `shared` allows.
+fn kept_device_id(c: &rusqlite::Connection, key: &str, shared: bool) -> rusqlite::Result<String> {
+    use rusqlite::OptionalExtension;
+    let tx = c.unchecked_transaction()?;
+    if let Some(id) = tx.query_row("SELECT value FROM app_kv WHERE key=?1 AND value<>''", [key], |r| r.get::<_, String>(0)).optional()? {
+        return Ok(id);
     }
+    let taken = if shared { tx.query_row("DELETE FROM app_kv WHERE key=?1 AND value<>'' RETURNING value", [SHARED_DEVICE_ID], |r| r.get::<_, String>(0)).optional()? } else { None };
+    let id = taken.unwrap_or_else(nori_remote::new_id);
+    tx.execute("INSERT OR REPLACE INTO app_kv(key, value) VALUES(?1, ?2)", [key, id.as_str()])?;
+    tx.commit()?;
+    Ok(id)
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -1946,13 +1942,7 @@ struct Queued {
 impl Sends {
     /// Until the sender ended.
     async fn ended(&self) {
-        loop {
-            let changed = self.changed.notified();
-            if self.queue.lock().ended {
-                return;
-            }
-            changed.await;
-        }
+        self.changed.until(|| self.queue.lock().ended).await;
     }
 }
 
@@ -2003,13 +1993,7 @@ struct Running {
 impl Running {
     /// Until none runs.
     async fn ended(&self) {
-        loop {
-            let ended = self.ended.notified();
-            if *self.count.lock() == 0 {
-                return;
-            }
-            ended.await;
-        }
+        self.ended.until(|| *self.count.lock() == 0).await;
     }
 }
 
@@ -2046,7 +2030,7 @@ impl Remote {
     /// A remote whose work runs on `tasks`.
     pub fn with_tasks(client: Arc<Client>, me: RemoteMe, player: Arc<dyn RemotePlayer>, shown: Arc<dyn RemoteShown>, discovery: Option<Arc<dyn Discovery>>, tasks: Arc<dyn Tasks>) -> Arc<Remote> {
         let settings = &client.core.session.settings;
-        let (id, id_lock) = DeviceId::claim(settings, me.kind);
+        let (id, id_lock) = claim_device_id(settings, me.kind);
         // Persist once per process so delayed states stay ordered across restarts.
         let instance = settings.app_db().and_then(|db| {
             db.lock().query_row(
@@ -2560,14 +2544,7 @@ impl Remote {
                 if played {
                     i.heard_playing.insert(from.clone(), received);
                 }
-                for e in a.events {
-                    match e.body {
-                        Body::Command { id, op } => commands.push((id, *op)),
-                        Body::Ack { id, refusal } => note(&mut i, &from, id, refusal),
-                        Body::Page { rev, from: turn, entries, .. } => paged(&mut i, &from, rev, turn, entries),
-                        Body::Clock { t1, t2, t3 } => timed(&mut i, &from, clock::Exchange { t1, t2, t3, t4: received }),
-                    }
-                }
+                commands.extend(a.events.into_iter().filter_map(|e| heard(&mut i, &from, e.body, received)));
                 (from, base)
             };
             for (id, op) in commands {
@@ -2635,12 +2612,9 @@ impl Remote {
                 }
             }
             for e in a.events {
-                let jam = a.rooms.iter().any(|r| r.jam && r.room == e.room);
-                match e.body {
-                    Body::Command { id, op } => commands.push((Via::Relay(jam.then_some(e.room)), e.from, id, *op)),
-                    Body::Ack { id, refusal } => note(&mut i, &e.from, id, refusal),
-                    Body::Page { rev, from, entries, .. } => paged(&mut i, &e.from, rev, from, entries),
-                    Body::Clock { t1, t2, t3 } => timed(&mut i, &e.from, clock::Exchange { t1, t2, t3, t4: received }),
+                if let Some((id, op)) = heard(&mut i, &e.from, e.body, received) {
+                    let jam = a.rooms.iter().any(|r| r.jam && r.room == e.room);
+                    commands.push((Via::Relay(jam.then_some(e.room)), e.from, id, op));
                 }
             }
             i.rooms = a.rooms;
@@ -3182,6 +3156,18 @@ fn plan_of(mix: &Mix, entries: &[Entry]) -> Option<(String, Plan)> {
     Some((from.id.clone(), engine_plan(&plan, &mix.into)?))
 }
 
+/// Event `body` from device `from` arrived at `received` (this device's clock): an answer, a page or a
+/// time exchange is noted in `i`; a command is handed back, to obey once `i` is let go.
+fn heard(i: &mut Inner, from: &str, body: Body, received: i64) -> Option<(u64, Op)> {
+    match body {
+        Body::Command { id, op } => return Some((id, *op)),
+        Body::Ack { id, refusal } => note(i, from, id, refusal),
+        Body::Page { rev, from: turn, entries, .. } => paged(i, from, rev, turn, entries),
+        Body::Clock { t1, t2, t3 } => timed(i, from, clock::Exchange { t1, t2, t3, t4: received }),
+    }
+    None
+}
+
 /// A page of the queue of device `from` arrived.
 fn paged(i: &mut Inner, from: &str, rev: u64, turn: u32, entries: Vec<Entry>) {
     if let Some(m) = i.mirror.as_mut().filter(|m| m.id == from) {
@@ -3469,15 +3455,6 @@ mod tests {
 
     #[test]
     fn a_mix_survives_the_incoming_song_takeover() {
-        struct Quiet;
-        impl RemotePlayer for Quiet {
-            fn apply(&self, _: Op) {}
-        }
-        impl RemoteShown for Quiet {
-            fn changed(&self) {}
-            fn marks_changed(&self) {}
-            fn jam_ended(&self, _: Option<String>) {}
-        }
         let (client, _) = crate::client::tests::client(crate::client::NetProfile {
             url: "http://test".into(),
             ..Default::default()
