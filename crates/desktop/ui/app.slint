@@ -426,6 +426,8 @@ component IconButton inherits Rectangle {
     in property <bool> solid;
     in property <bool> lit;
     in property <bool> quiet;
+    in property <bool> enabled: true;
+    opacity: root.enabled ? 1 : 0.3;
     in property <length> size: 32px;
     in property <length> icon: 19px;
     in property <color> ink: Theme.text;
@@ -448,6 +450,7 @@ component IconButton inherits Rectangle {
         animate transform-scale { duration: 260ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
     }
     touch := TouchArea {
+        enabled: root.enabled;
         clicked => { root.clicked(); }
     }
 }
@@ -1295,6 +1298,7 @@ component Field inherits Rectangle {
 // macOS they are the whole of `PlayerBar`, a window of their own over the system's Liquid Glass.
 component PlayerControls inherits Rectangle {
     in property <bool> has-song;
+    in property <bool> has-lyrics;
     in property <string> now-title;
     in property <string> now-artist;
     in property <string> now-album;
@@ -1535,6 +1539,7 @@ component PlayerControls inherits Rectangle {
         IconButton {
             y: (parent.height - self.height) / 2;
             path: Icons.lyrics;
+            enabled: root.has-lyrics;
             lit: root.inspector == 2;
             size: 34px;
             icon: 20px;
@@ -4651,6 +4656,7 @@ export component AppWindow inherits Window {
                     density: 0.9;
                     PlayerControls {
                         has-song: root.has-song;
+                        has-lyrics: root.lyrics-lines.length > 0;
                         now-title: root.now-title;
                         now-artist: root.now-artist;
                         now-album: root.now-album;
@@ -5296,11 +5302,12 @@ export component AppWindow inherits Window {
                         animate background { duration: 160ms; easing: ease-out; }
                         Icon {
                             path: b == 2 ? Icons.lyrics : Icons.queue;
-                            colour: root.full-panel == b ? #1c1c1e : white;
+                            colour: b == 2 && root.lyrics-lines.length == 0 ? #ffffff4d : root.full-panel == b ? #1c1c1e : white;
                             width: 19px;
                             height: 19px;
                         }
                         TouchArea {
+                            enabled: b != 2 || root.lyrics-lines.length > 0;
                             clicked => { root.full-panel = root.full-panel == b ? 0 : b; }
                         }
                     }
@@ -5394,6 +5401,7 @@ export component PlayerBar inherits Window {
     default-font-family: root.font;
     in property <string> font: "Inter";
     in property <bool> has-song;
+    in property <bool> has-lyrics;
     in property <string> now-title;
     in property <string> now-artist;
     in property <string> now-album;
@@ -5438,6 +5446,7 @@ export component PlayerBar inherits Window {
     }
     PlayerControls {
         has-song: root.has-song;
+        has-lyrics: root.has-lyrics;
         now-title: root.now-title;
         now-artist: root.now-artist;
         now-album: root.now-album;

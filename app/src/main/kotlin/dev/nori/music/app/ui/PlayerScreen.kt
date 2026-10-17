@@ -159,6 +159,9 @@ enum class Panel { ART, QUEUE, LYRICS }
 @Composable
 fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val lyrics by vm.lyrics.collectAsStateWithLifecycle()
+    val lyricsReady = (lyrics.of(state.current?.id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data
+    val offersLyrics = lyricsReady?.lyrics?.lines?.isNotEmpty() == true
     val marks = LocalStarMarks.current
     val sheet = LocalPlayerSheet.current
     val menu = LocalSongMenu.current
@@ -734,7 +737,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 // move the lyrics and queue buttons; each keeps the line under its glyph whether it has words or not.
                 Row(kept("icons").fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 4.dp), verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, nudge = (-1.5).dp) { choose(Panel.LYRICS) }
+                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, enabled = offersLyrics, nudge = (-1.5).dp) { choose(Panel.LYRICS) }
                         Spacer(Modifier.height(OUTPUT_LINE))
                     }
                     // Apple's middle glyph is AirPlay, not a sleep timer: on this screen the thing worth
@@ -2398,11 +2401,12 @@ private fun PanelButton(
      */
     size: androidx.compose.ui.unit.Dp = 27.dp,
     nudge: androidx.compose.ui.unit.Dp = 0.dp,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val look = LocalLook.current
-    IconButton(onClick) {
-        LookIcon(icon, label, Modifier.size(size).offset(x = nudge)) { look.color(if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+    IconButton(onClick, enabled = enabled) {
+        LookIcon(icon, label, Modifier.size(size).offset(x = nudge)) { look.color(if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT).copy(alpha = if (enabled) 1f else 0.3f) }
     }
 }
 

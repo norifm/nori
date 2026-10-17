@@ -11,7 +11,8 @@ pub fn nudged(t: LyricsTiming, dir: i32) -> LyricsTiming {
     if dir == 0 {
         return automatic.map_or(LyricsTiming::NotChecked, |ms| LyricsTiming::Automatic { ms });
     }
-    LyricsTiming::Yours { ms: t.offset_ms() + NUDGE_STEP_MS * dir.signum() as i64, automatic }
+    let rounded = (t.offset_ms() as f64 / NUDGE_STEP_MS as f64).round() as i64 * NUDGE_STEP_MS;
+    LyricsTiming::Yours { ms: rounded + NUDGE_STEP_MS * dir.signum() as i64, automatic }
 }
 
 /// `t` with the listener's offset `yours`, when they set one.
@@ -65,8 +66,8 @@ mod tests {
     fn yours_replaces_the_check_and_reset_gives_it_back() {
         let checked = LyricsTiming::Automatic { ms: 320 };
         let sooner = nudged(checked, 1);
-        assert_eq!(sooner, LyricsTiming::Yours { ms: 570, automatic: Some(320) });
-        assert_eq!(nudged(nudged(sooner, -1), -1), LyricsTiming::Yours { ms: 70, automatic: Some(320) });
+        assert_eq!(sooner, LyricsTiming::Yours { ms: 500, automatic: Some(320) });
+        assert_eq!(nudged(nudged(sooner, -1), -1), LyricsTiming::Yours { ms: 0, automatic: Some(320) });
         assert_eq!(nudged(sooner, 0), checked);
         assert_eq!(nudged(nudged(LyricsTiming::NotChecked, -1), 0), LyricsTiming::NotChecked);
         assert_eq!(with_yours(checked, Some(-250)), LyricsTiming::Yours { ms: -250, automatic: Some(320) });

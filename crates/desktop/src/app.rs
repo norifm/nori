@@ -1436,6 +1436,7 @@ impl App {
                     ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit().into() });
                     self.lyrics = Some(l);
                     self.lyrics_step(true);
+                    self.mirror();
                 }
             }
             Msg::Facts(f) => {
@@ -1560,6 +1561,7 @@ impl App {
         let ui = self.ui();
         if let Some(p) = &self.player {
             p.set_has_song(ui.get_has_song());
+            p.set_has_lyrics(ui.get_lyrics_lines().row_count() > 0);
             p.set_now_title(ui.get_now_title());
             p.set_now_artist(ui.get_now_artist());
             p.set_now_album(ui.get_now_album());

@@ -227,9 +227,13 @@ private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: Strin
             remember(lyrics.timing) { say.lyricsTiming(lyrics.timing) },
             Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter - 12.dp, vertical = 8.dp)) {
-            TextAction(say.later, { player.nudgeLyrics(id, -1) })
-            TextAction(say.sooner, { player.nudgeLyrics(id, 1) })
+        Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter - 12.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            TextAction("−", { player.nudgeLyrics(id, -1) })
+            Text(
+                say.lyricsShift(dev.nori.music.ffi.lyrics.lyricsOffsetMs(lyrics.timing)),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            TextAction("+", { player.nudgeLyrics(id, 1) })
             if (lyrics.timing is dev.nori.music.ffi.model.LyricsTiming.Yours) TextAction(say.reset, { player.nudgeLyrics(id, 0) })
         }
     }

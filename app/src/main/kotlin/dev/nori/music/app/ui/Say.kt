@@ -491,6 +491,8 @@ class Say(private val r: Resources) {
         r.getString(if (!synced) R.string.lyrics_not_timed else if (wordTimed) R.string.lyrics_timed_words else R.string.lyrics_timed_lines),
     )
 
+    fun lyricsShift(ms: Long): String = r.getString(R.string.lyrics_shift, ms / 1000.0)
+
     /** Who moved the lyrics' timing, and by how much (`LyricsTiming`). */
     fun lyricsTiming(t: dev.nori.music.ffi.model.LyricsTiming): String = when (t) {
         dev.nori.music.ffi.model.LyricsTiming.NotChecked -> r.getString(R.string.lyrics_timing_not_checked)
