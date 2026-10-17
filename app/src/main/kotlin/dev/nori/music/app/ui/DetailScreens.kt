@@ -6,35 +6,23 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.IosShare
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,7 +30,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -53,7 +40,6 @@ import dev.nori.music.app.vm.ArtistViewModel
 import dev.nori.music.app.vm.FolderViewModel
 import dev.nori.music.app.vm.GenreViewModel
 import dev.nori.music.app.vm.Load
-import dev.nori.music.app.vm.PlayerViewModel
 import dev.nori.music.app.vm.PlaylistViewModel
 import dev.nori.music.app.vm.SettingsViewModel
 import dev.nori.music.ffi.model.Album
@@ -63,24 +49,6 @@ import dev.nori.music.ffi.library.PlaylistDetail
 import dev.nori.music.ffi.model.OriginKind
 import dev.nori.music.ffi.model.PageOrigin
 import dev.nori.music.ffi.model.Song
-
-@Composable
-private fun Header(title: String, subtitle: String, coverUrl: String?, actions: @Composable () -> Unit = {}) {
-    val nav = LocalNav.current
-    var fullscreen by remember { mutableStateOf(false) }
-    NoriDialog(coverUrl?.takeIf { fullscreen }, { fullscreen = false }, scrim = 0.8f) { url -> Cover(url, 0.dp, Modifier.fillMaxWidth().clickable { fullscreen = false }) }
-    Column {
-        Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Caption(subtitle, Modifier.padding(top = 2.dp))
-            }
-            actions()
-        }
-        if (coverUrl != null) Cover(coverUrl, 220.dp, Modifier.padding(Space.gutter).align(Alignment.CenterHorizontally).clickable { fullscreen = true }, radius = Radius.card)
-    }
-}
 
 /**
  * Play and shuffle live in the hero now; a long playlist still wants a way to narrow itself. An album
@@ -94,21 +62,36 @@ private fun FilterField(count: Int, filter: String, onFilter: (String) -> Unit) 
     SearchField(filter, onFilter, say.filter, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp))
 }
 
-/** The row of buttons the screens without a hero still use; [from] the page [songs] are the list of. */
+/**
+ * A hero page over a list of [songs] with no cover of its own (a genre, a folder, a smart playlist): its
+ * name and [caption], Play and Shuffle while there is something to play, then [actions] and a ⋯ with the
+ * list's queue and download entries, and [content] under it.
+ */
 @Composable
-private fun PlayButtons(songs: List<Song>, actions: ActionsViewModel, from: PageOrigin? = null) {
-    val player: PlayerViewModel = viewModel()
-    val shuffling by player.state.collectAsStateWithLifecycle()
-    Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp), Arrangement.spacedBy(10.dp)) {
-        PillButton(say.play, Icons.Filled.PlayArrow, { actions.play(songs, from = from) }, Modifier.weight(1f), prominent = true, enabled = songs.isNotEmpty())
-        PillButton(
-            say.shuffle, Icons.Filled.Shuffle, { actions.shuffle(songs, from) }, Modifier.weight(1f),
-            prominent = shuffling.shuffle, enabled = songs.isNotEmpty(),
-        )
-        IconButton({ actions.enqueue(songs) }, enabled = songs.isNotEmpty()) { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, say.addAllToQueue) }
-        IconButton({ actions.download(songs) }, enabled = songs.isNotEmpty()) { Icon(Icons.Filled.Download, say.downloadAll) }
-    }
+internal fun SongListPage(
+    title: String, caption: String, songs: List<Song>, done: Set<String>, from: PageOrigin, actions: ActionsViewModel,
+    pageActions: @Composable RowScope.() -> Unit = {}, content: LazyListScope.() -> Unit,
+) {
+    val any = songs.isNotEmpty()
+    HeroPage(
+        coverUrl = null,
+        title = title,
+        caption = caption,
+        onPlay = if (any) { { actions.play(songs, from = from) } } else null,
+        onShuffle = if (any) { { actions.shuffle(songs, from) } } else null,
+        queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
+        actions = {
+            pageActions()
+            if (any) MoreCircle(songsMore(songs, done, actions))
+        },
+        content = content,
+    )
 }
+
+/** The ⋯ entries of a page of [songs]: add them to the queue, and download what is missing or give it back. */
+@Composable
+internal fun songsMore(songs: List<Song>, done: Set<String>, actions: ActionsViewModel): List<Pair<String, () -> Unit>> =
+    listOf(say.addToQueue to { actions.enqueue(songs) }, downloadEntry(songs, done, actions))
 
 /**
  * The places in [songs] a filter keeps, by title or artist in either case (nori-core's `TextIndex`); null
@@ -516,8 +499,7 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
     val list = rememberSongListState(actions)
     val from = rememberOrigin(OriginKind.GENRE, name)
     LoadBox(load) { songs ->
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            item(key = "header") { Header(name, remember(songs.size) { say.songs(songs.size) }, null); PlayButtons(songs, actions, from) }
+        SongListPage(name, remember(songs.size) { say.songs(songs.size) }, songs, list.downloaded, from, actions) {
             songRows(songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
     }
@@ -532,15 +514,8 @@ fun FolderScreen(id: String, actions: ActionsViewModel, vm: FolderViewModel = vi
     val nav = LocalNav.current
     val from = rememberOrigin(OriginKind.FOLDER, id)
     LoadBox(load) { d ->
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            item(key = "header") {
-                Header(
-                    remember(d.name) { say.folderTitle(d.name) },
-                    remember(d) { say.folderCaption(d.folders.size, d.songs.size) }, null,
-                )
-                if (d.songs.isNotEmpty()) PlayButtons(d.songs, actions, from)
-            }
-            items(d.folders, key = { "f" + it.id }) { f -> Text(remember(f.name) { say.folderRow(f.name) }, Modifier.fillMaxWidth().clickable { nav.folder(f.id) }.padding(horizontal = 16.dp, vertical = 14.dp)) }
+        SongListPage(remember(d.name) { say.folderTitle(d.name) }, remember(d) { say.folderCaption(d.folders.size, d.songs.size) }, d.songs, list.downloaded, from, actions) {
+            items(d.folders, key = { "f" + it.id }) { f -> NavRow(remember(f.name) { say.folderRow(f.name) }, { nav.folder(f.id) }, chevron = true) }
             songRows(d.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
     }

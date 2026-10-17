@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,23 +26,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,11 +52,9 @@ import dev.nori.music.app.vm.HistoryViewModel
 import dev.nori.music.app.vm.MixesViewModel
 import dev.nori.music.app.vm.MixViewModel
 import dev.nori.music.app.vm.MixCard
-import dev.nori.music.app.vm.FAVOURITES_MIX
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.layout.fillMaxSize
-import dev.nori.music.app.vm.PlayerViewModel
 
 import dev.nori.music.ffi.library.SmartEditRule
 import dev.nori.music.ffi.library.StatsSource
@@ -172,7 +163,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp, large = true) },
             actions = {
                 if (m.refreshable) CircleButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
-                MoreCircle(listOf(say.addToQueue to { actions.enqueue(m.songs) }, downloadEntry(m.songs, list.downloaded, actions)))
+                MoreCircle(songsMore(m.songs, list.downloaded, actions))
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {
@@ -217,25 +208,14 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
     val nav = LocalNav.current
     val list = rememberSongListState(actions)
     val from = remember(id) { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SMART, id) }
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-            Text(remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist }, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-            TextButton({ nav.smartEdit(id) }) { Text(say.edit) }
-        }
-        LoadBox(load) { page ->
-            val songs = page.songs
-            LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-                item {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), Arrangement.spacedBy(8.dp)) {
-                        Button({ actions.play(songs, from = from) }, Modifier.weight(1f), enabled = songs.isNotEmpty()) { Icon(Icons.Filled.PlayArrow, null); Text(say.play) }
-                        OutlinedButton({ actions.shuffle(songs, from) }, Modifier.weight(1f), enabled = songs.isNotEmpty()) { Icon(Icons.Filled.Shuffle, null); Text(say.shuffle) }
-                        TextButton({ actions.download(songs) }, enabled = songs.isNotEmpty()) { Text(say.get) }
-                    }
-                    Text(remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) }, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
-                }
-                songRows(songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
-            }
+    LoadBox(load) { page ->
+        SongListPage(
+            remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist },
+            remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) },
+            page.songs, list.downloaded, from, actions,
+            pageActions = { CircleButton(Icons.Filled.Edit, say.edit) { nav.smartEdit(id) } },
+        ) {
+            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
     }
 }

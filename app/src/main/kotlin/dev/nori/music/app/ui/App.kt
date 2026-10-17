@@ -517,13 +517,13 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     page("artist/{id}", inset = false) { ArtistScreen(it.arguments!!.getString("id")!!, actions) }
                     page("playlist/{id}", inset = false) { PlaylistScreen(it.arguments!!.getString("id")!!, actions) }
                     page("mix/{id}", inset = false) { MixScreen(it.arguments!!.getString("id")!!, actions) }
-                    page("genre/{id}") { GenreScreen(it.arguments!!.getString("id")!!, actions) }
-                    page("smart/{id}") { SmartScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("genre/{id}", inset = false) { GenreScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("smart/{id}", inset = false) { SmartScreen(it.arguments!!.getString("id")!!, actions) }
                     page("smartEdit/{id}") { SmartEditScreen(it.arguments!!.getString("id")!!.let { i -> if (i == "new") "" else i }) }
                     page("stats") { StatsScreen() }
                     page("perf") { dev.nori.music.app.PerfHooks.recorder?.Page() }
                     page("downloads") { DownloadsScreen(actions) }
-                    page("folder/{id}") { FolderScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("folder/{id}", inset = false) { FolderScreen(it.arguments!!.getString("id")!!, actions) }
                     page("decade/{year}") { SongsScreen(actions, it.arguments!!.getString("year")!!.toInt()) }
                 }
                 // A newer release, and its download and install once asked for; under the player, so the
