@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::thread::Thread;
 
 use nori_player::automix::resample::{Resampler, Tables};
-use nori_player::automix::PCM_FLOAT;
 use nori_player::decode::{he_aac, later_seek_skip, rounded_i16, Codec, Decoder, LaterDecoder, Platform, Setup, MP3_DECODER_DELAY};
 use nori_player::pcm::{Encoding, Format};
 use nori_player::pipeline::Reading;
@@ -554,7 +553,7 @@ fn reshaped(reshape: &mut Option<Reshape>, from: (u32, usize), to: Format, sampl
     put(samples, Encoding::Float, &mut r.input);
     let frames = samples.len() / from.1.max(1);
     r.output.resize((frames * to.rate as usize / from.0.max(1) as usize + 4) * to.channels * 4, 0);
-    let Some((_, made)) = r.resampler.process(&r.input, PCM_FLOAT, &mut r.output, PCM_FLOAT) else { return 0 };
+    let Some((_, made)) = r.resampler.process(&r.input, Encoding::Float, &mut r.output, Encoding::Float) else { return 0 };
     let made_floats = r.output[..made].as_chunks::<4>().0;
     match to.encoding {
         Encoding::Float => out.extend_from_slice(&r.output[..made]),

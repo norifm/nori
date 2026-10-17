@@ -12,17 +12,6 @@ pub enum Encoding {
 }
 
 impl Encoding {
-    /// media3's `C.ENCODING_PCM_16BIT` / `C.ENCODING_PCM_FLOAT`.
-    pub const PCM_16: i32 = 2;
-    pub const FLOAT: i32 = 4;
-
-    pub fn media3(self) -> i32 {
-        match self {
-            Encoding::Pcm16 => Self::PCM_16,
-            Encoding::Float => Self::FLOAT,
-        }
-    }
-
     pub fn width(self) -> usize {
         match self {
             Encoding::Pcm16 => 2,

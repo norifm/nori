@@ -952,7 +952,7 @@ impl Track for RingTrack {
                 if self.converted.len() < need {
                     self.converted.resize(need, 0);
                 }
-                let Some((_, made)) = rs.process(data, f.encoding.media3(), &mut self.converted, Encoding::FLOAT) else { return };
+                let Some((_, made)) = rs.process(data, f.encoding, &mut self.converted, Encoding::Float) else { return };
                 let samples = self.converted[..made].as_chunks::<4>().0;
                 if slipping {
                     (0, self.slipper.run(samples, ch, f32::from_le_bytes))

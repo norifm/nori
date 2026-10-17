@@ -4,6 +4,7 @@ use super::structure::camelot;
 use super::*;
 use super::eval::{grid, precision, Song, Style, DRUMS, FULL, KEYS};
 use super::synth::*;
+use crate::pcm::Encoding;
 
 fn octave_ok(got: f64, want: f64, tol: f64) -> bool {
     [0.5, 1.0, 2.0].iter().any(|k| (got / (want * k) - 1.0).abs() < tol)
@@ -203,15 +204,15 @@ fn input_form_changes_nothing() {
         let b = ((v * 32767.0).round() as i16).to_le_bytes();
         [b[0], b[1], b[0], b[1]]
     }).collect();
-    let t = analyse_bytes("t", &stereo16, 48000, 2, PCM_16).track;
+    let t = analyse_bytes("t", &stereo16, 48000, 2, Encoding::Pcm16).track;
     assert!((t.bpm - reference.bpm).abs() < 0.01 && t.key == reference.key, "{t:?}");
     assert!((t.beat_offset_ms - reference.beat_offset_ms).abs() < 1.0);
     assert_eq!(t.duration_ms, reference.duration_ms);
     let mono: Vec<u8> = x.iter().flat_map(|v| v.to_le_bytes()).collect();
-    let t = analyse_bytes("t", &mono, 48000, 1, PCM_FLOAT).track;
+    let t = analyse_bytes("t", &mono, 48000, 1, Encoding::Float).track;
     assert_eq!(TrackAnalysis { analysed_ms: 0, ..t }, TrackAnalysis { analysed_ms: 0, ..reference });
     // Garbage in: no panic.
-    let t = analyse_bytes("t", &vec![1, 2, 3], 0, 0, 99).track;
+    let t = analyse_bytes("t", &vec![1, 2, 3], 0, 0, Encoding::Pcm16).track;
     assert!(t.bpm == 0.0 && t.duration_ms <= 1, "{t:?}");
 }
 

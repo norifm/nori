@@ -223,23 +223,19 @@ pub fn analyse(song_id: &str, pcm: &[f32], sample_rate: u32) -> Analysis {
     finish(song_id, &f)
 }
 
-/// media3's `C.ENCODING_PCM_16BIT` and `C.ENCODING_PCM_FLOAT`.
-pub const PCM_16: i32 = 2;
-pub const PCM_FLOAT: i32 = 4;
-
 /// Analyses interleaved little-endian PCM bytes, 16-bit or float.
 #[cfg(any(test, feature = "synth"))]
-pub fn analyse_bytes(song_id: &str, pcm: &[u8], sample_rate: i32, channels: i32, encoding: i32) -> Analysis {
+pub fn analyse_bytes(song_id: &str, pcm: &[u8], sample_rate: i32, channels: i32, encoding: crate::pcm::Encoding) -> Analysis {
     let ch = channels.clamp(1, 8) as usize;
     let rate = sample_rate.max(1) as u32;
-    let width = if encoding == PCM_FLOAT { 4 } else { 2 };
+    let width = encoding.width();
     let frames = pcm.len() / width / ch;
     let mut a = Analyzer::new(rate, frames as u64 * 1000 / rate as u64);
     // Converted in slices so the whole track never exists as f32 too.
     let chunk = 1024 * ch * width;
     for part in pcm.chunks(chunk) {
         let part = &part[..part.len() / (ch * width) * (ch * width)];
-        if encoding == PCM_FLOAT {
+        if encoding == crate::pcm::Encoding::Float {
             let mut s = [0f32; 1024 * 8];
             for (d, b) in s.iter_mut().zip(part.chunks_exact(4)) {
                 *d = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);

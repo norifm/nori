@@ -461,7 +461,7 @@ impl TransitionEngine {
     pub fn configure<D: Downstream, H: Host>(&mut self, down: &mut D, host: &mut H, stream: StreamFormat) {
         let StreamFormat { id: sid, format: f } = stream;
         let id = Some(sid.clone());
-        host.log(&format!("sink: {} {} Hz x{} enc={}", song(&id), f.rate, f.channels, f.encoding.media3()));
+        host.log(&format!("sink: {} {} Hz x{} {:?}", song(&id), f.rate, f.channels, f.encoding));
         // After a flush, or after a boundary nothing has flowed across yet, the announced stream is the
         // one about to flow: it must be armed now (staged, it would never be armed and play unconverted at
         // the wrong rate).
@@ -1114,10 +1114,10 @@ impl TransitionEngine {
         let need = (((in_frames as u64 * out.rate as u64 / src.rate.max(1) as u64) as usize + 4) * out.frame_bytes()).max(16384);
         let mut b = self.take_pooled(need);
         b.resize(need, 0);
-        let mut r = self.resampler.as_mut().and_then(|rs| rs.process(input, src.encoding.media3(), &mut b, out.encoding.media3()));
+        let mut r = self.resampler.as_mut().and_then(|rs| rs.process(input, src.encoding, &mut b, out.encoding));
         if r.is_none() && self.resampler.is_some() {
             b.resize(b.len() * 2 + 16384, 0);
-            r = self.resampler.as_mut().and_then(|rs| rs.process(input, src.encoding.media3(), &mut b, out.encoding.media3()));
+            r = self.resampler.as_mut().and_then(|rs| rs.process(input, src.encoding, &mut b, out.encoding));
         }
         let Some((_, made)) = r else {
             host.log(&format!("conversion {} Hz x{} -> {} Hz x{} failed, letting the ending play", src.rate, src.channels, out.rate, out.channels));
