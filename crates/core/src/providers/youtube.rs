@@ -554,6 +554,8 @@ mod tests {
         let (c, _) = youtube(&[]);
         let t = c.resolve("yt-dQw4w9WgXcQ".into(), false, false);
         assert_eq!((t.url.as_str(), t.key.as_str()), ("youtube:dQw4w9WgXcQ", "yt-dQw4w9WgXcQ:0"));
+        let quality = StreamQuality { bit_rate: 192, format: "opus".into() };
+        assert_eq!(c.stream_key("yt-dQw4w9WgXcQ".into(), true, quality.clone(), quality), t.key, "the measurer finds the same bytes as playback on either network");
         let ids: Vec<String> = ["yt-a", "yt-b", "yt-c", "yt-d"].map(String::from).to_vec();
         let songs = ids.iter().map(|id| crate::Song { id: id.clone(), ..Default::default() }).collect();
         c.session().register(songs);
