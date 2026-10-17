@@ -126,9 +126,6 @@ impl Stft {
     pub fn bin_to_freq(&self, b: f32) -> f32 {
         (b + 0.5) / self.fft_size as f32
     }
-    pub fn freq_to_bin(&self, f: f32) -> f32 {
-        f * self.fft_size as f32 - 0.5
-    }
 
     pub fn reset(&mut self, product_weight: f32) {
         self.input.pos = self.block;
