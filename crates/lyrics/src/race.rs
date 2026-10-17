@@ -154,7 +154,7 @@ impl Race {
 
     /// `rank`'s lyrics with the offset their check is sure of.
     fn to_screen(&self, rank: usize, mut lyrics: Lyrics) -> Lyrics {
-        lyrics.offset_ms = self.check(rank).map_or(0, |c| c.applied_ms());
+        lyrics.timing = sync::timing(self.check(rank));
         lyrics
     }
 
@@ -398,7 +398,7 @@ pub fn cached_pick(cache: &dyn LyricsCache, song: &Song, server_has_lines: bool,
     let (rank, mut lyrics, _, _) = chosen_before(cache, song, &lookup.services)?;
     let server_timing = if server_has_lines { Timing::Untimed } else { Timing::Empty };
     if timing(&lyrics) <= server_timing { return None; }
-    lyrics.offset_ms = cache.voice(song).and_then(|voice| sync::check(&lyrics, &voice)).map_or(0, |check| check.applied_ms());
+    lyrics.timing = sync::timing(cache.voice(song).and_then(|voice| sync::check(&lyrics, &voice)));
     Some(LyricsPick { lyrics, origin: lookup.services[rank].origin() })
 }
 
@@ -481,7 +481,7 @@ pub async fn lookup(
     if let Some((rank, lyrics, named, was)) = chosen_before(cache, song, &services).filter(|c| timing(&c.1) > server_timing) {
         let check = voice.as_ref().and_then(|v| sync::check(&lyrics, v));
         let mut on_screen = lyrics.clone();
-        on_screen.offset_ms = check.map_or(0, |c| c.applied_ms());
+        on_screen.timing = sync::timing(check);
         shown.show(LyricsPick { lyrics: on_screen, origin: services[rank].origin() });
         let mut line = format!("lyrics: kept {} ({was:.2}, {})", services[rank].title(), timing(&lyrics).words());
         if let Some(c) = &check {
@@ -590,7 +590,7 @@ mod tests {
 
     fn pick(text: &str, origin: LyricsOrigin) -> LyricsPick {
         let line = nori_model::LyricLine { start_ms: 1000, end_ms: 2000, text: text.into(), ..Default::default() };
-        LyricsPick { lyrics: Lyrics { synced: true, word_timed: false, lines: vec![line], offset_ms: 0 }, origin }
+        LyricsPick { lyrics: Lyrics { synced: true, word_timed: false, lines: vec![line], ..Default::default() }, origin }
     }
 
     #[test]
@@ -818,10 +818,10 @@ mod tests {
         r.next(0, 6);
         r.answer(0, Some((late, Named::new("Glass Harbour", "The Lanterns", "", s.duration as f64))));
         let (_, shown) = r.to_show(true).expect("shown");
-        assert!((shown.offset_ms - 1000).abs() < 120, "{}", shown.offset_ms);
+        assert!((shown.timing.offset_ms() - 1000).abs() < 120, "{:?}", shown.timing);
         assert!(sync_words(&r.check(0).unwrap()).starts_with("sync 0."), "{}", sync_words(&r.check(0).unwrap()));
         let pick = |lyrics| LyricsPick { lyrics, origin: LyricsOrigin::Lrclib };
-        assert!(lyrics_replaces(Some(&pick(shown.clone())), &pick(Lyrics { offset_ms: 0, ..shown })), "another offset is other lyrics to show");
+        assert!(lyrics_replaces(Some(&pick(shown.clone())), &pick(Lyrics { timing: Default::default(), ..shown })), "another offset is other lyrics to show");
     }
 
     // ---- the lookup, through the fake web and cache ----------------------------------------------------

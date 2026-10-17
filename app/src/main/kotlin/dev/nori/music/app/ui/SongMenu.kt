@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
@@ -100,13 +101,15 @@ fun SongMenu(
     var picking by remember(open) { mutableStateOf(false) }
     var details by remember(open) { mutableStateOf(false) }
     var sleeping by remember(open) { mutableStateOf(false) }
+    var timing by remember(open) { mutableStateOf(false) }
     NoriSheet(player?.takeIf { open && sleeping }, onDismiss) { p -> SleepChoices(p, onDismiss) }
+    NoriSheet(player?.takeIf { open && timing }?.let { p -> song?.let { p to it.id } }, onDismiss) { (p, id) -> LyricsSheet(p, id) }
     NoriDialog(song?.takeIf { details }, onDismiss) { s -> TrackInfo(s, onDismiss) }
     NoriDialog(song?.takeIf { picking }, onDismiss) { s -> PlaylistPicker(listOf(s), actions, onDismiss) }
 
     // A sheet with a half-open stage swallows the first back gesture to collapse itself, which reads
     // as the menu refusing to close. There is only ever one stage here, so back always dismisses.
-    NoriSheet(song?.takeIf { !picking && !details && !sleeping }, onDismiss) { song ->
+    NoriSheet(song?.takeIf { !picking && !details && !sleeping && !timing }, onDismiss) { song ->
         val downloads by actions.downloads.collectAsState()
         var more by remember { mutableStateOf(false) }
         Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
@@ -146,7 +149,8 @@ fun SongMenu(
                 else -> null
             }
             val rules = LocalRules.current
-            val items = remember(song, starred, download, player != null, rules, jam) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, rules.stars, rules.account, jam) }
+            val lyrics = player?.let { p -> val l by p.lyrics.collectAsState(); hasWords(l, song.id) } == true
+            val items = remember(song, starred, download, player != null, lyrics, rules, jam) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, lyrics, rules.stars, rules.account, jam) }
             val labels = remember(items) { items.map { say.songAction(it.action) } }
             @Composable fun line(i: dev.nori.music.ffi.library.SongMenuItem, label: String) = when (val a = i.action) {
                 is dev.nori.music.ffi.library.SongAction.Favourite -> Item(label, if (a.on) Icons.Filled.FavoriteBorder else Icons.Filled.Favorite) { actions.star(song, a.on); onDismiss() }
@@ -162,6 +166,7 @@ fun SongMenu(
                     nav.artist(a.id, Artist(a.id, a.name, song.coverArt.takeIf { song.artists.size <= 1 }, null, 0u, false, false)); onDismiss()
                 } }
                 dev.nori.music.ffi.library.SongAction.AddToLibrary -> Item(label, Icons.Filled.LibraryAdd) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(label, Icons.Filled.Lyrics) { timing = true }
                 dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(label, Icons.Filled.Bedtime) { sleeping = true }
                 dev.nori.music.ffi.library.SongAction.StartRadio -> Item(label, Icons.Filled.Radio) { actions.startRadio(song); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.InstantMix -> Item(label, Icons.Filled.AutoAwesome) { actions.instantMix(song); onDismiss() }
@@ -194,6 +199,38 @@ fun SongMenu(
             AnimatedVisibility(more, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                 Column { items.forEachIndexed { n, it -> if (it.more) line(it, labels[n]) } }
             }
+        }
+    }
+}
+
+/** Song [id]'s lyrics as [l] has them, when it has words. */
+private fun hasWords(l: dev.nori.music.data.ForSong<dev.nori.music.app.vm.Load<dev.nori.music.data.FoundLyrics>>, id: String): Boolean =
+    (l.of(id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data?.lyrics?.lines?.isNotEmpty() == true
+
+/**
+ * The playing song's lyrics: where they came from, how finely they are timed, who set their timing and
+ * by how much (the core's `LyricsTiming`), and a step earlier or later, kept for these words.
+ */
+@Composable
+private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: String) {
+    val l by player.lyrics.collectAsState()
+    val found = (l.of(id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data ?: return
+    val lyrics = found.lyrics
+    Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
+        SectionTitle(say.lyrics)
+        Text(
+            remember(found.source, lyrics.synced, lyrics.wordTimed) { say.lyricsSource(found.source, lyrics.synced, lyrics.wordTimed) },
+            Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), style = MaterialTheme.typography.bodyLarge,
+        )
+        if (!lyrics.synced) return@Column
+        Text(
+            remember(lyrics.timing) { say.lyricsTiming(lyrics.timing) },
+            Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter - 12.dp, vertical = 8.dp)) {
+            TextAction(say.later, { player.nudgeLyrics(id, -1) })
+            TextAction(say.sooner, { player.nudgeLyrics(id, 1) })
+            if (lyrics.timing is dev.nori.music.ffi.model.LyricsTiming.Yours) TextAction(say.reset, { player.nudgeLyrics(id, 0) })
         }
     }
 }

@@ -103,7 +103,6 @@ fn sample() -> StoredPrefs {
         theme: ThemeMode::Dark,
         hide_status_bar: vec![HideBarWhen::Sideways, HideBarWhen::Upright],
         hide_gesture_bar: vec![HideBarWhen::Sideways],
-        lyrics_timing_button: false,
         keep_awake: vec![AwakeWhen::Sideways, AwakeWhen::Charging],
         burn_in_protection: true,
         dim_when_idle: DimIdle::FiveMinutes,

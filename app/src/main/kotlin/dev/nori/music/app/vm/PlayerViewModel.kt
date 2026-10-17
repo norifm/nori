@@ -70,6 +70,9 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
 
     private val lyricsKept = dev.nori.music.data.SongAnswers<Load<FoundLyrics>>()
 
+    /** The lyrics shown last retimed, and the song they are for. */
+    private val lyricsRetimed = kotlinx.coroutines.flow.MutableStateFlow<dev.nori.music.data.ForSong<FoundLyrics>?>(null)
+
     /**
      * Lyrics of whatever is heard (the page's song, [PlayerState.current]); fetched only while a lyrics
      * view is collecting. Each song starts from Loading, so the view shows its loader and then the new
@@ -86,7 +89,28 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
      * from its words, and is not looked up again once its lookup had finished. The same words read again
      * are equal and not handed on as new ones, which faded them out and in and reset their clock.
      */
-    val lyrics: StateFlow<dev.nori.music.data.ForSong<Load<FoundLyrics>>> = state.map { it.current }
+    val lyrics: StateFlow<dev.nori.music.data.ForSong<Load<FoundLyrics>>> = kotlinx.coroutines.flow.combine(lyricsFound(), lyricsRetimed) { found, retimed ->
+        // The words on screen, given the timing the listener just set: the same words only.
+        val words = (found.value as? Load.Ready)?.data
+        if (retimed != null && retimed.songId == found.songId && words?.source == retimed.value.source && words.lyrics.lines == retimed.value.lyrics.lines) {
+            dev.nori.music.data.ForSong(found.songId, Load.Ready(retimed.value))
+        } else found
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), dev.nori.music.data.ForSong(null, Load.Loading))
+
+    /**
+     * The lyrics shown for [songId] a step sooner ([dir] > 0) or later (< 0), or back to the core's
+     * timing (0); the core keeps it for those words.
+     */
+    fun nudgeLyrics(songId: String, dir: Int) {
+        val found = (lyrics.value.of(songId, Load.Loading) as? Load.Ready)?.data ?: return
+        viewModelScope.launch {
+            val retimed = nori.library.lyricsNudge(songId, found, dir)
+            lyricsKept.replace(songId, Load.Ready(retimed))
+            lyricsRetimed.value = dev.nori.music.data.ForSong(songId, retimed)
+        }
+    }
+
+    private fun lyricsFound() = state.map { it.current }
         .followSong(
             id = { it.id },
             loading = Load.Loading,
@@ -95,7 +119,6 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
             answers = lyricsKept,
             keep = { it is Load.Ready && it.data.lyrics.lines.isNotEmpty() },
         ) { song -> (dev.nori.music.app.testLyrics(song) ?: nori.library.lyricsFor(song)).map<FoundLyrics, Load<FoundLyrics>> { Load.Ready(it) } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), dev.nori.music.data.ForSong(null, Load.Loading))
 
     /**
      * The moving cover of the album playing (Settings, Look): an HLS address, or null when it has none,

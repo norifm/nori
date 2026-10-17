@@ -333,9 +333,14 @@
 
     <!-- Lyrics. -->
     <string name="lyrics_your_server">your server</string>
-    <string name="lyrics_timing">Timing</string>
     <string name="lyrics_not_timed">not timed</string>
-    <string name="lyrics_nudge">%1$s s</string>
+    <string name="lyrics_timed_words">timed word by word</string>
+    <string name="lyrics_timed_lines">timed line by line</string>
+    <string name="lyrics_source">From %1$s · %2$s</string>
+    <string name="lyrics_timing_not_checked">Not checked against the singing yet</string>
+    <string name="lyrics_timing_on_time">Checked against the singing: on time</string>
+    <string name="lyrics_timing_automatic">Adjusted automatically by %1$+d ms</string>
+    <string name="lyrics_timing_yours">Adjusted by you: %1$+d ms</string>
 
     <!-- Downloads. -->
     <string name="stop_all_title">Stop all downloads?</string>

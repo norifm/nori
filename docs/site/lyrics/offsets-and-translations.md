@@ -5,13 +5,20 @@ sidebar:
   order: 3
 ---
 
-Applies to nori 0.6. The display settings are Android's; the terminal's keys are listed below.
+Applies to nori 0.6.3. The display settings are Android's; the terminal's keys are listed below.
 
 ## Lyrics that drift
 
-nori checks lyrics against the song's voice and shifts them when they run late. When they still drift,
-**Source and timing**, the corner under the lyrics, says where they came from and nudges them sooner or
-later. In the terminal, `[` and `]` move the words later or sooner, and `0` puts them back.
+nori checks lyrics against the song's voice once the song is analyzed, and shifts them when they run
+late. On Android, **Lyrics** in the player's ⋯ menu (there when the song has lyrics) says where they came
+from, whether they are timed by the line or the word, and how their timing was set: not checked yet,
+adjusted automatically, or adjusted by you. **Sooner** and **Later** move them a quarter second at a
+time. Your timing replaces the automatic one, is kept for that song and those lyrics, and comes back
+the next time they play; **Reset** returns to the automatic timing. Lyrics from another service, or
+the same service's lyrics timed again, start without your timing.
+
+In the terminal, `[` and `]` move the words later or sooner for as long as the song plays, and `0`
+puts them back.
 
 ## Translations
 

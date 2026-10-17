@@ -485,20 +485,19 @@ class Say(private val r: Resources) {
         LyricsOrigin.YOUTUBE_MUSIC -> "YouTube Music"
     }
 
-    /**
-     * The corner under the lyrics, closed: whose words these are when they are not the server's, and when
-     * they came without timings, that they did. The server's timed words say "Timing" (the corner opens
-     * the nudge buttons); the server's untimed words have no corner at all (null).
-     */
-    fun lyricsCredit(o: LyricsOrigin, synced: Boolean): String? {
-        val source = if (o != LyricsOrigin.SERVER) lyricsOrigin(o) else null
-        if (source == null && !synced) return null
-        val first = source ?: r.getString(R.string.lyrics_timing)
-        return if (synced) first else first + " · " + r.getString(R.string.lyrics_not_timed)
-    }
+    /** Where lyrics came from and how finely they are timed: "From LRCLIB · timed line by line". */
+    fun lyricsSource(o: LyricsOrigin, synced: Boolean, wordTimed: Boolean): String = r.getString(
+        R.string.lyrics_source, lyricsOrigin(o),
+        r.getString(if (!synced) R.string.lyrics_not_timed else if (wordTimed) R.string.lyrics_timed_words else R.string.lyrics_timed_lines),
+    )
 
-    /** How far the lyrics are nudged: "+0.5 s". */
-    fun nudge(ms: Long): String = r.getString(R.string.lyrics_nudge, Fmt.nudge(ms))
+    /** Who moved the lyrics' timing, and by how much (`LyricsTiming`). */
+    fun lyricsTiming(t: dev.nori.music.ffi.model.LyricsTiming): String = when (t) {
+        dev.nori.music.ffi.model.LyricsTiming.NotChecked -> r.getString(R.string.lyrics_timing_not_checked)
+        is dev.nori.music.ffi.model.LyricsTiming.Automatic ->
+            if (t.ms == 0L) r.getString(R.string.lyrics_timing_on_time) else r.getString(R.string.lyrics_timing_automatic, t.ms)
+        is dev.nori.music.ffi.model.LyricsTiming.Yours -> r.getString(R.string.lyrics_timing_yours, t.ms)
+    }
 
     // ---- the core's kinds, named: the fixed words read once per locale, so a row or a frame allocates nothing ----
 
@@ -526,6 +525,7 @@ class Say(private val r: Resources) {
         is SongAction.GoToAlbum -> menuGoToAlbum
         is SongAction.GoToArtist -> if (a.named) r.getString(R.string.menu_go_to_named, a.name) else menuGoToArtist
         SongAction.AddToLibrary -> r.getString(R.string.menu_add_to_library)
+        SongAction.Lyrics -> lyrics
         SongAction.SleepTimer -> menuSleepTimer
         SongAction.StartRadio -> menuStartRadio
         SongAction.InstantMix -> menuInstantMix

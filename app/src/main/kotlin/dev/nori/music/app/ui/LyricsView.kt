@@ -26,7 +26,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -140,6 +139,8 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean)
         val anchor = remember { LyricsAnchor() }
         FrameCrossfade(
             phase, LYRICS_FADE, Modifier.fillMaxSize().weight(1f),
+            // The same words timed anew (the listener moved them) are the same page, on a new clock.
+            key = { p -> if (p is Words) Triple(p.song, p.found.source, p.found.lyrics.lines) else p },
             // The lyrics race put finer words up for the same song (timed by the word where they were
             // timed by the line): the same page, so they cross-fade in place, starting where the words
             // shown were, rather than going out and rising in from below as a new song's do.
@@ -261,7 +262,6 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
     // line back while the song catches up with their timing (see LyricsAnchor.litLine).
     val clock = remember(lyrics) { LyricsClock(lyrics, vm.positionMs).also { c -> anchor.litLine(song, lyrics)?.let(c::land) } }
     DisposableEffect(clock) { onDispose { clock.close() } }
-    var nudgeMs by remember(clock) { mutableLongStateOf(0L) }
     var resumed by remember { mutableStateOf(false) }
     LifecycleResumeEffect(Unit) { resumed = true; onPauseOrDispose { resumed = false } }
     // Put away with the player is the same as paused: nothing to keep in step.
@@ -344,11 +344,9 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
     // redraws them rather than recomposing the lyrics on every frame of it.
     val look = LocalLook.current
     val bright = remember(look) { ColorProducer { look.color(CoverLook.ON) } }
-    val dim = remember(look) { ColorProducer { look.color(CoverLook.ON_35) } }
     val moment = remember(clock) { { shownMs } }
     val peek = remember(clock) { { lastMs[0] } }
     val translated = remember(look) { ColorProducer { look.color(CoverLook.ON_80) } }
-    val accent = remember(look) { ColorProducer { look.color(CoverLook.ACCENT) } }
     // Finer words for the same song start with the line that was on screen where it was (see LyricsAnchor):
     // asked for before the list is first measured, so its first frame is already there.
     val list = remember {
@@ -521,47 +519,6 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
                     if (prefs.lyricsTranslation) line.translation?.let {
                         LookText(it, translated, style = MaterialTheme.typography.bodyMedium, textAlign = align, modifier = Modifier.graphicsLayer { alpha = strength.value })
                     }
-                }
-            }
-        }
-        // Where the words came from, and how to nudge them. Nudging is for the handful of songs whose
-        // timings are wrong, so it is not worth a permanent bar across the bottom of the lyrics: the
-        // corner carries where they came from, and tapping it opens the two buttons. It closes again
-        // on the next tap, and stays open while the offset is not zero so the number can be read.
-        var tuning by remember(lyrics) { mutableStateOf(false) }
-        // Whose words these are and whether they are timed, in the core's words; None: no corner at all.
-        val credit = remember(found.source, lyrics.synced) { say.lyricsCredit(found.source, lyrics.synced) }
-        val open = tuning || nudgeMs != 0L
-        // With the corner turned off (Settings, Lyrics: "Source and timing") there is none at all, neither
-        // where the words came from nor the nudges. A nudge already made keeps it, so it can still be put back.
-        val nudges = prefs.lyricsTimingButton || nudgeMs != 0L
-        val shown = if (nudges) credit else null
-        if (shown != null) androidx.compose.material3.Surface(
-            onClick = { if (lyrics.synced && nudges) tuning = !tuning },
-            enabled = lyrics.synced && nudges,
-            shape = PillShape,
-            // The open pill's plate is drawn rather than composed, so the page changing colour under it
-            // only redraws it.
-            color = Color.Transparent,
-            modifier = Modifier.align(if (open) Alignment.BottomCenter else Alignment.BottomStart).padding(start = 12.dp, bottom = 6.dp),
-        ) {
-            Row(
-                Modifier.then(if (open) Modifier.drawBehind { drawRect(look.color(CoverLook.VEIL_10)) } else Modifier)
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-                Arrangement.spacedBy(2.dp), Alignment.CenterVertically,
-            ) {
-                // Closed, this is the one thing worth saying: whose words these are - and, when they
-                // came without timings, that they did. Unsung words are all one brightness and a tap on
-                // one goes nowhere, which looks broken unless the corner says why.
-                LookText(
-                    shown,
-                    dim, Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.labelSmall,
-                )
-                if (open) {
-                    if (nudgeMs != 0L) LookText(remember(nudgeMs) { say.nudge(nudgeMs) }, bright, style = MaterialTheme.typography.labelSmall)
-                    TextButton({ nudgeMs = clock.nudge(-1) }) { LookText(say.later, accent, style = MaterialTheme.typography.labelLarge) }
-                    TextButton({ nudgeMs = clock.nudge(1) }) { LookText(say.sooner, accent, style = MaterialTheme.typography.labelLarge) }
-                    if (nudgeMs != 0L) TextButton({ nudgeMs = clock.nudge(0) }) { LookText(say.reset, accent, style = MaterialTheme.typography.labelLarge) }
                 }
             }
         }

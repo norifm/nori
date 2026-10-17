@@ -94,6 +94,15 @@ impl SyncCheck {
     }
 }
 
+/// The timing a check gives lyrics: its offset when it is sure of one, else as they are; not checked
+/// without a check, or with one that had too little to go on.
+pub(crate) fn timing(check: Option<SyncCheck>) -> nori_model::LyricsTiming {
+    match check {
+        Some(c) if c.kind != SyncKind::Unsure => nori_model::LyricsTiming::Automatic { ms: c.applied_ms() },
+        _ => nori_model::LyricsTiming::NotChecked,
+    }
+}
+
 /// A timed stretch of the lyrics, in curve frames (fractional): where a voice should sound.
 #[derive(Debug, Clone, Copy)]
 struct Span {

@@ -118,7 +118,7 @@ mod tests {
 
     fn pick() -> LyricsPick {
         let line = |start_ms, end_ms, text: &str| LyricLine { start_ms, end_ms, text: text.into(), ..Default::default() };
-        let lyrics = Lyrics { synced: true, word_timed: false, lines: vec![line(1000, 2000, "one"), line(3000, 4000, "two")], offset_ms: 0 };
+        let lyrics = Lyrics { synced: true, word_timed: false, lines: vec![line(1000, 2000, "one"), line(3000, 4000, "two")], ..Default::default() };
         LyricsPick { lyrics, origin: LyricsOrigin::Server }
     }
 
@@ -139,7 +139,7 @@ mod tests {
         let word = |start_ms, end_ms, start, end| LyricWord { start_ms, end_ms, start, end };
         let line = LyricLine { start_ms: 1000, end_ms: 3000, text: "one two".into(), words: vec![word(1000, 2000, 0, 3), word(2000, 3000, 4, 7)], ..Default::default() };
         let next = LyricLine { start_ms: 6000, end_ms: 7000, text: "three".into(), words: vec![word(6000, 7000, 0, 5)], ..Default::default() };
-        let lyrics = Lyrics { synced: true, word_timed: true, lines: vec![line, next], offset_ms: 0 };
+        let lyrics = Lyrics { synced: true, word_timed: true, lines: vec![line, next], ..Default::default() };
         let l = SongLyrics::new(LyricsPick { lyrics, origin: LyricsOrigin::Server }, 0, None);
         let now = l.advance(2500, true, true);
         assert!(now.sweeping);

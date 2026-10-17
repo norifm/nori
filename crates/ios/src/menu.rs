@@ -34,6 +34,7 @@ fn action_code(a: &SongAction) -> i32 {
         SongAction::Share => 14,
         SongAction::Details => 15,
         SongAction::StartJam => 18,
+        SongAction::Lyrics => 19,
     }
 }
 
@@ -71,7 +72,7 @@ fn details_json(s: &Song) -> Value {
 /// `rules`: whether the profile has the account's things, and whether its menu asks a jam's host
 /// (`JamOffer::Guest`).
 fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, rules: &ProfileRules) -> Value {
-    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, rules.stars, rules.account, rules.asks.then_some(JamOffer::Guest))
+    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, false, rules.stars, rules.account, rules.asks.then_some(JamOffer::Guest))
         .iter()
         .map(item_json)
         .collect();
@@ -351,6 +352,7 @@ mod tests {
             SongAction::Share,
             SongAction::Details,
             SongAction::StartJam,
+            SongAction::Lyrics,
         ];
         let mut seen: Vec<i32> = actions.iter().map(action_code).collect();
         seen.sort_unstable();

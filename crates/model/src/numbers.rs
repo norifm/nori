@@ -29,7 +29,6 @@ pub fn signed_db(db: f32, decimal: &str) -> String {
 }
 
 /// How far the lyrics are nudged, in seconds with its sign: "+0.5", "-0.3".
-#[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn nudge(ms: i64, decimal: &str) -> String {
     fixed((ms as f32 / 1000.0) as f64, 1, true, decimal)
 }

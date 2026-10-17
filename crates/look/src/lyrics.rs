@@ -52,7 +52,7 @@ const WORD_MS_MAX: i64 = 2_000;
 pub(crate) const LAST_LINE_MS: i64 = 5_000;
 
 /// One "Sooner"/"Later" nudge step.
-pub(crate) const NUDGE_STEP_MS: i64 = 250;
+pub const NUDGE_STEP_MS: i64 = 250;
 
 /// After a tap, seeks land imprecisely (a frame or keyframe early, or the playhead is set back).
 /// Positions up to this far before the tapped line still count as on it,

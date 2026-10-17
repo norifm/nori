@@ -256,9 +256,9 @@ object TestActions {
             }
             dev.nori.music.ffi.model.LyricLine(start, start + 3500, text, timedWords, null, false, "", emptyList(), 0u)
         }
-        emit(FoundLyrics(dev.nori.music.ffi.model.Lyrics(true, false, lines(false)), dev.nori.music.ffi.settings.LyricsOrigin.LRCLIB))
+        emit(FoundLyrics(dev.nori.music.ffi.model.Lyrics(true, false, lines(false), dev.nori.music.ffi.model.LyricsTiming.NotChecked), dev.nori.music.ffi.settings.LyricsOrigin.LRCLIB))
         kotlinx.coroutines.delay(slowMs)
-        emit(FoundLyrics(dev.nori.music.ffi.model.Lyrics(true, true, lines(true)), dev.nori.music.ffi.settings.LyricsOrigin.BETTER_LYRICS))
+        emit(FoundLyrics(dev.nori.music.ffi.model.Lyrics(true, true, lines(true), dev.nori.music.ffi.model.LyricsTiming.NotChecked), dev.nori.music.ffi.settings.LyricsOrigin.BETTER_LYRICS))
     }
 
     /** See "car" in [act]. */

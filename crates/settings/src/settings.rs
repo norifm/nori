@@ -547,9 +547,6 @@ pub struct StoredPrefs {
     pub lyrics_size: i32,
     #[setting("lyricsTranslation", FLAG, default = true, show = K::Switch)]
     pub lyrics_translation: bool,
-    /// The button under the lyrics that opens the timing offset controls.
-    #[setting("lyricsTimingButton", FLAG, default = true, show = K::Switch)]
-    pub lyrics_timing_button: bool,
     #[setting("lyricsKeepScreenOn", FLAG, default = true, show = K::Switch)]
     pub lyrics_keep_screen_on: bool,
     /// Look lyrics up online when the server has no timed ones. Stored under its old key "lyricsLrclib".

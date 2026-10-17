@@ -8,7 +8,6 @@ import dev.nori.music.ffi.model.isoBand as coreIsoBand
 import dev.nori.music.ffi.model.khz as coreKhz
 import dev.nori.music.ffi.model.kilohertz as coreKilohertz
 import dev.nori.music.ffi.model.megabytes as coreMegabytes
-import dev.nori.music.ffi.model.nudge as coreNudge
 import dev.nori.music.ffi.model.signedDb as coreSignedDb
 import dev.nori.music.ffi.model.speed as coreSpeed
 
@@ -54,8 +53,6 @@ object Fmt {
     /** A decibel figure with its sign, one decimal: "+3.5", "-1.0", and "+0.0" for nothing at all. */
     fun signedDb(db: Float): String = coreSignedDb(db, point())
 
-    /** How far the lyrics are nudged, "+0.5" (the unit is the caller's). */
-    fun nudge(ms: Long): String = coreNudge(ms, point())
 
     /** A band's frequency as its label says it: "63", "1k", "2.5k", "12.5k". */
     fun hz(f: Float): String = coreHz(f, point())

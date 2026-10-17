@@ -404,7 +404,7 @@ impl Page<'_> {
         }
         display.push(self.setting("lyricsTranslation"));
         if self.phone() {
-            display.extend([self.setting("lyricsTimingButton"), self.setting("lyricsKeepScreenOn")]);
+            display.push(self.setting("lyricsKeepScreenOn"));
         }
         let online = self.on("lyricsOnline");
         let mut sources = vec![self.setting("lyricsOnline"), self.setting("lyricsPreferWords").under().shown(online)];

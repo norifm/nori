@@ -12,4 +12,5 @@ pub mod lyrics;
 pub mod race;
 pub mod services;
 pub mod sync;
+pub mod timing;
 pub mod trust;

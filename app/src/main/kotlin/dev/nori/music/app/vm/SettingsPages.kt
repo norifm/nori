@@ -210,7 +210,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "lyricsSweep" to (R.string.settings_lyrics_sweep to R.string.settings_hint_lyrics_sweep),
     "lyricsSize" to (R.string.settings_lyrics_size to 0),
     "lyricsTranslation" to (R.string.settings_lyrics_translation to R.string.settings_hint_lyrics_translation),
-    "lyricsTimingButton" to (R.string.settings_lyrics_timing_button to R.string.settings_hint_lyrics_timing_button),
     "lyricsKeepScreenOn" to (R.string.settings_lyrics_screen_on to R.string.settings_hint_lyrics_screen_on),
     "lyricsOnline" to (R.string.settings_lyrics_online to R.string.settings_hint_lyrics_online),
     "lyricsPreferWords" to (R.string.settings_lyrics_words to R.string.settings_hint_lyrics_words),
@@ -555,7 +554,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         "motion" -> str(R.string.settings_motion_detail)
         "lyricsSweep" -> str(R.string.settings_lyrics_sweep_detail)
         "lyricsTranslation" -> str(R.string.settings_lyrics_translation_detail)
-        "lyricsTimingButton" -> str(R.string.settings_lyrics_timing_button_detail)
         "lyricsKeepScreenOn" -> str(R.string.settings_lyrics_screen_on_detail)
         "lyricsOnline" -> str(R.string.settings_lyrics_online_detail)
         "lyricsPreferWords" -> str(R.string.settings_lyrics_words_detail)
