@@ -461,6 +461,13 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
     });
     let h = app.borrow().me.clone();
     wire(ui, &h);
+    let me = Rc::downgrade(&app);
+    app.borrow().compositor.on_exit(move || {
+        if let Some(app) = me.upgrade() {
+            stop(&app);
+        }
+        nori_core::background::flush();
+    });
     ui.set_display_position_ms(ui.get_position_ms());
     h.with(|a| {
         ui.set_queue(ModelRc::from(a.queue_rows.clone()));
@@ -525,8 +532,8 @@ fn menu_actions(ui: &AppWindow, compositor: &Compositor) {
     });
 }
 
-/// The window closed: saves the volume and queue, stops the engine.
-pub fn stop(app: &RefCell<App>) {
+/// The app is quitting: saves the volume and queue, stops the engine.
+fn stop(app: &RefCell<App>) {
     if let Some(s) = app.borrow_mut().session.take() {
         session::own::keep(session::own::VOLUME, s.volume().to_string());
         s.close();
