@@ -173,6 +173,9 @@ struct Shared {
     /// Queried each frame for the lyrics focus blur.
     focus: RefCell<Option<FocusSource>>,
     menu: MenuBar,
+    /// Run as the event loop ends, however it ends: on macOS the app menu's and the Dock's Quit, and logging
+    /// out, end the process from inside the loop, which never returns to the caller of `run`.
+    on_exit: RefCell<Option<Box<dyn FnOnce()>>>,
 }
 
 type FocusSource = Box<dyn Fn() -> Option<Focus>>;
@@ -317,6 +320,7 @@ pub fn install() -> Result<Compositor, String> {
         right: Cell::new(0.0),
         focus: RefCell::new(None),
         menu: MenuBar::default(),
+        on_exit: RefCell::new(None),
     });
     slint::platform::set_platform(Box::new(Platform { shared: shared.clone(), event_loop: RefCell::new(Some(event_loop)) })).map_err(|e| format!("the platform: {e}"))?;
     Ok(Compositor(shared))
@@ -404,6 +408,10 @@ impl Compositor {
 
     pub fn menu(&self) -> &MenuBar {
         &self.0.menu
+    }
+
+    pub fn on_exit(&self, f: impl FnOnce() + 'static) {
+        *self.0.on_exit.borrow_mut() = Some(Box::new(f));
     }
 }
 
@@ -623,6 +631,13 @@ impl ApplicationHandler<Wake> for Runner {
         *self.shared.window.borrow_mut() = Some(window);
         relayout(&self.shared);
         self.shared.menu.install();
+    }
+
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        let f = self.shared.on_exit.borrow_mut().take();
+        if let Some(f) = f {
+            f();
+        }
     }
 
     fn user_event(&mut self, el: &ActiveEventLoop, event: Wake) {

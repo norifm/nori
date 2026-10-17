@@ -81,11 +81,9 @@ fn main() -> Result<(), String> {
         ui.set_inset_top(44.0);
         ui.set_font("System Font".into());
     }
-    let app = app::start(&ui, data, compositor);
+    // Held for the whole run: the exit hook only has a weak handle.
+    let _app = app::start(&ui, data, compositor);
     #[cfg(all(feature = "test-control", unix))]
     let _control = control_socket.map(|path| control::start(path, ui.as_weak())).transpose()?;
-    let r = ui.run().map_err(|e| e.to_string());
-    app::stop(&app);
-    nori_core::background::flush();
-    r
+    ui.run().map_err(|e| e.to_string())
 }
