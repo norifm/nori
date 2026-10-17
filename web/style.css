@@ -60,7 +60,7 @@ button { background: none; border: 0; padding: 0; cursor: pointer; }
 #nav a { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 11px; color: var(--fg-2); }
 #nav a.on { color: var(--accent); }
 
-main { padding: 0 16px calc(var(--nav-h) + var(--mini-h) + 24px); max-width: 1200px; }
+main { padding: 0 16px calc(var(--nav-h) + var(--mini-h) + 24px); }
 
 @media (min-width: 900px) {
   #nav { inset: 0 auto 0 0; width: 220px; height: auto; flex-direction: column; padding: 16px 8px; border-top: 0; border-right: 1px solid var(--line); background: var(--bg-2); }
@@ -88,6 +88,7 @@ h2, .section-title { font-size: 22px; font-weight: 700; margin: 24px 0 12px; }
 
 /* Grids and shelves of cards. */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px 16px; }
+@media (min-width: 1600px) { .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
 @media (max-width: 500px) { .grid { grid-template-columns: repeat(2, 1fr); gap: 16px 12px; } }
 .card { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .card .cover { margin-bottom: 4px; }
