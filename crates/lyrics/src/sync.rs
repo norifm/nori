@@ -1,7 +1,8 @@
 //! Whether synced lyrics fit the song's audio, checked against its vocal activity curve (AutoMix
 //! analysis): a score (lines starting where a voice is heard, less for lines over instrumental stretches
-//! and singing with no line), the best global offset within ±[`REACH_MS`] with its confidence, and drift
-//! (two parts of the song wanting different offsets: another version's timing). The result is a
+//! and singing with no line), the best global offset within ±[`REACH_MS`] (further only when clearly
+//! better) with its confidence, put where the line starts sit nearest the voice's onsets, and drift (two
+//! parts of the song wanting different offsets: another version's timing). The result is a
 //! [`SyncKind`]; trust.rs weighs the score and a sure offset is applied when the lyrics are shown.
 
 use nori_model::Lyrics;
@@ -9,6 +10,10 @@ use nori_player::automix::vocal::VocalCurve;
 
 /// How far the lines are slid each way for the best fit.
 pub(crate) const REACH_MS: i64 = 3_000;
+/// Slid this far when the lines fit clearly better beyond [`REACH_MS`]: another version with a longer intro.
+const WIDE_REACH_MS: i64 = 6_000;
+/// ...and only when this share of the lines start at an onset there.
+const FAR_HITS: f64 = 0.85;
 /// Each part is slid further: a version's timing can be off by more than the whole's.
 const PART_REACH_MS: i64 = 5_000;
 /// Fewer timed lines than this say too little.
@@ -32,6 +37,13 @@ const LIFT: f64 = 0.06;
 const LAG_MS: i64 = 100;
 /// ...and services start a line-timed line this much before the voice, to be read.
 const LINE_LEAD_MS: i64 = 100;
+/// A rise this large is the voice starting: an onset.
+const ONSET_RISE: f64 = 0.15;
+/// The best fit is refined this far either way, in steps of [`REFINE_STEP_S`]...
+const REFINE_S: f64 = 0.5;
+const REFINE_STEP_S: f64 = 0.01;
+/// ...a line start's miss of its onset counting up to this much: further, no onset is its.
+const MISS_CAP_S: f64 = 0.25;
 /// How much the voice rising at line starts counts beside the spans being sung.
 const ONSET_WEIGHT: f64 = 1.0;
 /// Seconds of activity either side of a line's start that show the voice starting.
@@ -272,12 +284,19 @@ fn fit(v: &Voice, spans: &[Span], starts: &[(f64, bool)], shift: f64) -> f64 {
     contrast + ONSET_WEIGHT * onsets
 }
 
-/// The best shift in frames within `reach` frames each way (to a fraction of a frame), its fit, and how
-/// clearly it beats every shift more than half a second from it (0 to 1).
-fn best_shift(v: &Voice, spans: &[Span], starts: &[(f64, bool)], reach: i64) -> (f64, f64, f64) {
-    let fits: Vec<f64> = (-reach..=reach).map(|s| fit(v, spans, starts, s as f64)).collect();
-    let (i, best) = fits.iter().enumerate().fold((0, f64::MIN), |b, (i, f)| if *f > b.1 { (i, *f) } else { b });
-    // A parabola through the best and its neighbours puts the peak between frames.
+/// The fit at every whole-frame shift from `-reach` to `reach`.
+fn slide(v: &Voice, spans: &[Span], starts: &[(f64, bool)], reach: i64) -> Vec<f64> {
+    (-reach..=reach).map(|s| fit(v, spans, starts, s as f64)).collect()
+}
+
+/// The best of `fits` (from [`slide`]) within `within` frames of no shift: the shift in frames (to a
+/// fraction of a frame), its fit, and how clearly it beats every shift within `within` more than half a
+/// second from it (0 to 1).
+fn peak(v: &Voice, fits: &[f64], within: usize) -> (f64, f64, f64) {
+    let reach = fits.len() / 2;
+    let (lo, hi) = (reach - within.min(reach), (reach + within).min(fits.len() - 1));
+    let (i, best) = (lo..=hi).fold((lo, f64::MIN), |b, i| if fits[i] > b.1 { (i, fits[i]) } else { b });
+    // A parabola through the best and its neighbors puts the peak between frames.
     let frac = match (i.checked_sub(1).and_then(|j| fits.get(j)), fits.get(i + 1)) {
         (Some(a), Some(c)) => {
             let d = a - 2.0 * best + c;
@@ -290,7 +309,7 @@ fn best_shift(v: &Voice, spans: &[Span], starts: &[(f64, bool)], reach: i64) -> 
         _ => 0.0,
     };
     let apart = (0.5 * v.fps).ceil() as usize;
-    let rival = fits.iter().enumerate().filter(|(j, _)| j.abs_diff(i) > apart).map(|(_, f)| *f).fold(f64::MIN, f64::max);
+    let rival = (lo..=hi).filter(|j| j.abs_diff(i) > apart).map(|j| fits[j]).fold(f64::MIN, f64::max);
     let confidence = if best <= 0.0 {
         0.0
     } else if rival == f64::MIN {
@@ -299,6 +318,61 @@ fn best_shift(v: &Voice, spans: &[Span], starts: &[(f64, bool)], reach: i64) -> 
         ((best - rival) / (0.3 * best)).clamp(0.0, 1.0)
     };
     (i as f64 - reach as f64 + frac, best, confidence)
+}
+
+/// Where the voice starts, in frames (fractional): each rise above [`ONSET_RISE`] that is the largest
+/// within [`RISE_S`] either side.
+fn onsets(v: &Voice) -> Vec<f64> {
+    let rises: Vec<f64> = (0..v.len()).map(|k| rise(v, k as f64)).collect();
+    let w = (RISE_S * v.fps).round() as usize;
+    (1..rises.len().saturating_sub(1))
+        .filter(|&k| rises[k] >= ONSET_RISE && rises[k.saturating_sub(w)..k].iter().all(|r| *r < rises[k]) && rises[k + 1..(k + w + 1).min(rises.len())].iter().all(|r| *r <= rises[k]))
+        .map(|k| {
+            let (a, b, c) = (rises[k - 1], rises[k], rises[k + 1]);
+            let d = a - 2.0 * b + c;
+            k as f64 + if d < -1e-12 { (0.5 * (a - c) / d).clamp(-0.5, 0.5) } else { 0.0 }
+        })
+        .collect()
+}
+
+/// How far the line starts `starts` (frames) shifted by `shift` sit from the nearest onset, each at most
+/// `cap` frames, summed, with how many come within it.
+fn misses(onsets: &[f64], starts: &[f64], shift: f64, cap: f64) -> (f64, usize) {
+    starts.iter().fold((0.0, 0), |(sum, hit), s| {
+        let f = s + shift;
+        let i = onsets.partition_point(|o| *o < f);
+        let near = [i.checked_sub(1).map(|j| onsets[j]), onsets.get(i).copied()].into_iter().flatten().map(|o| (o - f).abs()).fold(f64::INFINITY, f64::min);
+        if near < cap {
+            (sum + near, hit + 1)
+        } else {
+            (sum + cap, hit)
+        }
+    })
+}
+
+/// The shift within [`REFINE_S`] of `coarse` under which the starts of lines that follow a rest (`starts`,
+/// frames) sit nearest the voice's onsets, in steps of [`REFINE_STEP_S`]: their summed miss, each capped,
+/// is least at about the median line's, so a few lines no onset is near (a spoken intro, an ad-lib) do not
+/// pull it. `coarse` when too few lines meet an onset to say. With the share of the lines that meet one.
+fn refine(fps: f64, onsets: &[f64], starts: &[f64], coarse: f64) -> (f64, f64) {
+    let (step, half, cap) = (REFINE_STEP_S * fps, (REFINE_S / REFINE_STEP_S).round() as i64, MISS_CAP_S * fps);
+    let mut best = (f64::INFINITY, 0, coarse, coarse);
+    for k in -half..=half {
+        let shift = coarse + k as f64 * step;
+        let (miss, hit) = misses(onsets, starts, shift, cap);
+        if miss < best.0 - 1e-9 {
+            best = (miss, hit, shift, shift);
+        } else if miss < best.0 + 1e-9 && best.3 + 1.5 * step > shift {
+            best.3 = shift;
+        }
+    }
+    let (_, hit, from, to) = best;
+    let share = hit as f64 / starts.len().max(1) as f64;
+    if hit >= MIN_LINES && 2 * hit >= starts.len() {
+        (0.5 * (from + to), share)
+    } else {
+        (coarse, share)
+    }
 }
 
 /// The score under a shift of `shift` frames: see the module's comment.
@@ -377,7 +451,7 @@ fn drift(v: &Voice, spans: &[Span], starts: &[(f64, bool)], whole: f64) -> Optio
         let keep = |f: f64| (f < cut) == first;
         let sp: Vec<Span> = spans.iter().copied().filter(|s| keep(s.start)).collect();
         let st: Vec<(f64, bool)> = starts.iter().copied().filter(|s| keep(s.0)).collect();
-        let (shift, best, sure) = best_shift(v, &sp, &st, reach);
+        let (shift, best, sure) = peak(v, &slide(v, &sp, &st, reach), reach as usize);
         let k = st.len() as f64;
         (shift, sure, best * k, fit(v, &sp, &st, whole) * k)
     };
@@ -414,8 +488,23 @@ pub fn check(l: &Lyrics, curve: &VocalCurve) -> Option<SyncCheck> {
     if starts.len() < MIN_LINES {
         return Some(SyncCheck { kind: SyncKind::Unsure, score: 0.0, best_score: 0.0, offset_ms: 0, confidence: 0.0, drift_ms: 0 });
     }
-    let reach = (REACH_MS as f64 / 1000.0 * v.fps).round() as i64;
-    let (shift, _, confidence) = best_shift(&v, &spans, &starts, reach);
+    let frames = |ms: i64| (ms as f64 / 1000.0 * v.fps).round() as i64;
+    let fits = slide(&v, &spans, &starts, frames(WIDE_REACH_MS));
+    let (near, _, near_sure) = peak(&v, &fits, frames(REACH_MS) as usize);
+    let (wide, _, wide_sure) = peak(&v, &fits, fits.len() / 2);
+    let onsets = onsets(&v);
+    let rested: Vec<f64> = starts.iter().filter(|(_, run_on)| !run_on).map(|(f, _)| *f).collect();
+    let refine = |coarse| refine(v.fps, &onsets, &rested, coarse);
+    // Beyond the reach only when it clearly fits better and the lines start at the voice's onsets there;
+    // while it fits better, nothing nearer is sure.
+    let (shift, confidence) = if wide.abs() <= frames(REACH_MS) as f64 + 0.5 {
+        (refine(near).0, near_sure)
+    } else {
+        match refine(wide) {
+            (shift, hits) if wide_sure >= OFFSET_SURE && hits >= FAR_HITS => (shift, wide_sure),
+            _ => (refine(near).0, 0.0),
+        }
+    };
     // Lines in place sit later than the fit by the curve's lag, and line-timed ones also lead the voice.
     let bias_ms = LAG_MS + if l.word_timed { 0 } else { LINE_LEAD_MS };
     let offset_ms = bias_ms - (shift / v.fps * 1000.0).round() as i64;
@@ -557,4 +646,76 @@ pub(crate) mod tests {
         assert_eq!(check(&lyrics(&phrases, false, false, &|t| t), &flat), None, "a curve with no voice in it says nothing");
     }
 
+    /// Every line of `l` moved by `by(line index)` ms.
+    fn moved(l: &Lyrics, by: &dyn Fn(usize) -> i64) -> Lyrics {
+        let mut l = l.clone();
+        for (i, line) in l.lines.iter_mut().enumerate() {
+            let d = by(i);
+            line.start_ms += d;
+            line.end_ms += d;
+            for w in &mut line.words {
+                w.start_ms += d;
+                w.end_ms += d;
+            }
+        }
+        l
+    }
+
+    /// The one offset put on timings that are off as real ones are: every line within 20 ms of where the
+    /// curve hears the exact timing (each song's curve hears its voice a little early or late, the same
+    /// for every timing of it), and parts timed apart read as another version, not a compromise.
+    #[test]
+    fn offset_fits_the_line_starts() {
+        let verses = |intro| vec![(intro, FULL), (16, SUNG), (4, FULL), (16, SUNG), (4, FULL), (16, SUNG), (4, FULL)];
+        // A pop song, and a busy band: a noisy funk groove under the voice, hardly a bar without it.
+        let songs = [
+            Song { sections: verses(4), ..Song::new("pop", Style::Backbeat, 112.0, 2, false) },
+            Song { sections: vec![(2, FULL), (16, SUNG), (2, FULL), (16, SUNG), (2, FULL), (16, SUNG), (2, FULL)], noise: 0.05, ..Song::new("busy", Style::Funk, 104.0, 10, false) },
+        ];
+        for song in &songs {
+            let (curve, phrases, _) = sung(song);
+            let exact = lyrics(&phrases, false, false, &|t| t);
+            let heard = check(&exact, &curve).unwrap().offset_ms;
+            if song.name == "pop" {
+                assert!(heard.abs() <= 20, "the pop song's curve hears the voice where it is: {heard}");
+            }
+            let mut rng = Rng(song.seed);
+            let jitter: Vec<i64> = (0..exact.lines.len()).map(|_| (rng.gauss() * 40.0).round() as i64).collect();
+            let mut sorted = jitter.clone();
+            sorted.sort();
+            let median = (sorted[(sorted.len() - 1) / 2] + sorted[sorted.len() / 2]) / 2;
+            let reworded = |late: i64, text: &dyn Fn(&str) -> String| {
+                let mut l = moved(&exact, &|_| late);
+                l.lines.iter_mut().for_each(|x| x.text = text(&x.text));
+                l
+            };
+            // (what, lyrics, how late, how close the offset must come)
+            let cases: Vec<(&str, Lyrics, i64, i64)> = vec![
+                ("early", moved(&exact, &|_| -2600), -2600, 20),
+                ("a little early", moved(&exact, &|_| -1370), -1370, 20),
+                ("a little late", moved(&exact, &|_| 310), 310, 20),
+                ("late", moved(&exact, &|_| 1900), 1900, 20),
+                ("word-timed", lyrics(&phrases, true, true, &|t| t - 1.2), -1200, 20),
+                // The median line's own onset is heard a little off too.
+                ("noisy line starts", moved(&exact, &|i| 1100 + jitter[i]), 1100 + median, 25),
+                ("a few lines far off", moved(&exact, &|i| -700 + [0, 0, 0, 1500, 0, -1800, 0][i % 7]), -700, 20),
+                // The lines' sung spans are guessed from their length, so wordy or terse lines must not move it.
+                ("wordy lines", reworded(600, &|t| format!("{t} {t} {t}")), 600, 20),
+                ("terse lines", reworded(-400, &|_| "oh".into()), -400, 20),
+                ("a version with a longer intro", moved(&exact, &|_| 4200), 4200, 20),
+            ];
+            for (name, l, late, within) in cases {
+                let c = check(&l, &curve).unwrap();
+                let want = if c.offset_ms.abs() >= OFFSET_MIN_MS { SyncKind::Shifted } else { SyncKind::Fits };
+                assert_eq!(c.kind, want, "{}, {name}: {c:?}", song.name);
+                assert!((c.offset_ms - heard - late).abs() <= within, "{}, {name}: {late} ms late read as {c:?}", song.name);
+            }
+            let mid = phrases[phrases.len() / 2][0].0;
+            for late in [-1.2, 1.5] {
+                let half = check(&lyrics(&phrases, true, false, &|t| if t < mid - 0.1 { t } else { t + late }), &curve).unwrap();
+                assert_eq!(half.kind, SyncKind::Drifts, "{}, second half {late} s late: {half:?}", song.name);
+                assert_eq!(half.applied_ms(), 0, "{}: {half:?}", song.name);
+            }
+        }
+    }
 }
