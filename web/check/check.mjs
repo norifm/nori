@@ -184,13 +184,30 @@ if (!only || only.includes("instant")) {
     return all.sort((a, b) => a - b)[2];
   };
   const ms = (s) => Math.round(s * 1000);
+  // The seek bar and its times as shown, and the core's place.
+  const shown = () => page.evaluate(async () => {
+    const bar = Number(document.querySelector(".seek").value);
+    const n = JSON.parse(await window.ask("now"));
+    return { bar, core: n.positionMs, at: document.getElementById("at").textContent, left: document.querySelector(".times span:last-child").textContent, durationMs: n.song.duration * 1000 };
+  });
+  const clock = (x) => `${Math.floor(x / 60000)}:${String(Math.floor(x / 1000) % 60).padStart(2, "0")}`;
+  const s0 = await shown();
+  await settle(2000);
+  const s1 = await shown();
+  const bar = { movedMs: s1.bar - s0.bar, offCoreMs: s1.bar - s1.core, at: [s0.at, s1.at], left: [s0.left, s1.left] };
+  expect(Math.abs(bar.movedMs - 2000) < 250 && Math.abs(bar.offCoreMs) < 250 && s1.at === clock(s1.bar) && s1.left === `-${clock(s1.durationMs - s1.bar)}` && s1.left !== s0.left, "while playing the seek bar and its times move with the core's place");
   const before = await offset();
   const paused = await press(".transport button[aria-label='Pause']");
   await settle(800);
   const p0 = (await facts()).heard;
   const held0 = (await now()).positionMs;
+  const b0 = await shown();
   await settle(500);
   const held1 = (await now()).positionMs;
+  const b1 = await shown();
+  bar.pausedMovedMs = b1.bar - b0.bar;
+  bar.pausedOffCoreMs = b1.bar - b1.core;
+  expect(b1.bar === b0.bar && b1.at === b0.at && Math.abs(bar.pausedOffCoreMs) < 250, "paused, the seek bar and its times stay at the core's place");
   const pauseMs = ms(p0.lastLoud - paused);
   const played = await press(".transport button[aria-label='Play']");
   await page.waitForFunction((t) => (window.nori.heard?.soundAt ?? 0) > t, { timeout: 5000, polling: 20 }, played).catch(() => {});
@@ -205,6 +222,10 @@ if (!only || only.includes("instant")) {
     seek.dispatchEvent(new Event("change"));
     return t;
   }, seekTo);
+  await settle(150);
+  const s2 = await shown();
+  bar.afterSeekMs = s2.bar - seekTo;
+  expect(Math.abs(bar.afterSeekMs) < 250, "after a seek the seek bar is at once at its place");
   await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, sought).catch(() => {});
   const seekHeard = (await facts()).heard.freshAt;
   await settle(1000);
@@ -214,7 +235,7 @@ if (!only || only.includes("instant")) {
   await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, skipped).catch(() => {});
   const nextMs = ms((await facts()).heard.freshAt - skipped);
   const index = (await now()).index;
-  report.instant = { pauseMs, resumeMs, seekMs: ms(seekHeard - sought), nextMs, pausedMovedMs: held1 - held0, offsetMs: [Math.round(before), Math.round(after)], seekPlaceMs, index };
+  report.instant = { pauseMs, resumeMs, seekMs: ms(seekHeard - sought), nextMs, pausedMovedMs: held1 - held0, offsetMs: [Math.round(before), Math.round(after)], seekPlaceMs, index, seekBar: bar };
   expect(pauseMs >= 0 && pauseMs < 50, "a pause is silent within 50 ms");
   expect(resumeMs >= 0 && resumeMs < 50, "play sounds again within 50 ms");
   expect(report.instant.seekMs >= 0 && report.instant.seekMs < 100 && Math.abs(seekPlaceMs) < 100, "a seek is heard from its place within 100 ms");

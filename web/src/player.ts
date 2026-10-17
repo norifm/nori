@@ -108,10 +108,16 @@ async function refresh() {
   if (now && now.id !== was) songChanged();
   const n = now;
   const key = JSON.stringify(n && [n.id, n.state, n.mixing, n.shuffle, n.repeat, n.current, n.queue.map((q) => q.id), (n.song as Song & { starred?: boolean } | null)?.starred]);
-  if (key === shown) return;
-  shown = key;
-  drawMini();
-  if (sheetOpen) drawSheet();
+  if (key !== shown) {
+    shown = key;
+    drawMini();
+    if (sheetOpen) drawSheet();
+  }
+  // A seek or a skip shows at once, playing or not.
+  if (sheetOpen) {
+    drawPlace();
+    tick();
+  }
 }
 
 /** The position now, run on from the last reading while playing. */
@@ -214,7 +220,7 @@ function drawSheet() {
           (now as Now & { jam?: boolean }).jam ? h("span", { class: "badge" }, W.jam) : null,
         ),
         seek,
-        h("div", { class: "times" }, h("span", { id: "at" }, W.time(position())), h("span", null, `-${W.time(s.duration * 1000 - position())}`)),
+        h("div", { class: "times" }, h("span", { id: "at" }, W.time(position())), h("span", { id: "left" }, `-${W.time(s.duration * 1000 - position())}`)),
         h(
           "div",
           { class: "transport" },
@@ -294,23 +300,34 @@ let ticking = false;
 let lit = -2;
 let lyricsAsked = 0;
 
-/** While the sheet shows: the position moves and the sung line is lit, each frame (nothing runs while it
- * is closed). */
+/** The times and the seek bar at the place now. */
+function drawPlace() {
+  const s = now?.song;
+  if (!s) return;
+  const at = position();
+  const t = document.getElementById("at");
+  if (t) t.textContent = W.time(at);
+  const left = document.getElementById("left");
+  if (left) left.textContent = `-${W.time(s.duration * 1000 - at)}`;
+  const seek = document.querySelector<HTMLInputElement>(".seek");
+  if (seek && !seekDragging) seek.value = String(Math.round(at));
+}
+
+/** While the sheet shows, music plays and the page is in sight: the place moves and the sung line is lit,
+ * each frame. Nothing runs otherwise. */
 function tick() {
-  if (ticking) return;
+  const moving = () => sheetOpen && now?.state === "Playing" && !document.hidden;
+  if (ticking || !moving()) return;
   ticking = true;
   const frame = async () => {
-    if (!sheetOpen) {
+    if (!moving()) {
       ticking = false;
       return;
     }
-    const at = position();
-    const t = document.getElementById("at");
-    if (t) t.textContent = W.time(at);
-    const seek = document.querySelector<HTMLInputElement>(".seek");
-    if (seek && !seekDragging) seek.value = String(Math.round(at));
+    drawPlace();
     if (tab === "lyrics" && lyrics?.lyrics.synced && performance.now() >= lyricsAsked) {
-      const step = JSON.parse(await ask<string>("lyrics_now"));
+      // A worker that went (a crash) answers nothing: the place moves on regardless.
+      const step = JSON.parse(await ask<string>("lyrics_now").catch(() => "null"));
       if (step) {
         lyricsAsked = performance.now() + Math.max(30, Math.min(step.wait || 250, 500));
         light(step.active);
@@ -336,6 +353,7 @@ function light(active: number) {
 }
 
 export function setup() {
+  document.addEventListener("visibilitychange", tick);
   // A heart or a playlist changed: the song playing is read again with it.
   window.addEventListener("nori-changed", () => void refresh());
   // The player worker crashed and started again over the saved queue: it plays on if it played.
