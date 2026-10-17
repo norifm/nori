@@ -12,14 +12,14 @@ use crate::dither::Dither;
 use crate::pcm::Encoding;
 
 /// Taps at the lower of the two rates (a 110 dB Kaiser design over the 0.05 transition band needs 142).
-pub const TAPS: usize = 144;
+pub(crate) const TAPS: usize = 144;
 /// Phases of an interpolated table, for a ratio with more steps than [`EXACT_PHASES`].
-pub const PHASES: usize = 256;
+pub(crate) const PHASES: usize = 256;
 /// The most steps a ratio may have for a row of its own per step.
-pub const EXACT_PHASES: usize = 512;
+pub(crate) const EXACT_PHASES: usize = 512;
 /// The passband's edge and the stopband's, as fractions of the lower rate.
-pub const PASS: f64 = 0.45;
-pub const STOP: f64 = 0.5;
+pub(crate) const PASS: f64 = 0.45;
+pub(crate) const STOP: f64 = 0.5;
 /// The stopband's designed depth, dB.
 const ATTENUATION_DB: f64 = 110.0;
 

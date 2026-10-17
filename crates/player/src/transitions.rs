@@ -50,7 +50,7 @@ pub struct TransitionPrefs {
 ///
 /// Track and disc numbers need not be consecutive (real tags skip and omit them); only a known lower
 /// disc or a lower track on the same disc means the album is not playing on.
-pub fn follows_on_album(a: &WindowSong, b: &WindowSong, shuffling: bool) -> bool {
+pub(crate) fn follows_on_album(a: &WindowSong, b: &WindowSong, shuffling: bool) -> bool {
     if shuffling || a.album_id.is_none() || a.album_id != b.album_id {
         return false;
     }

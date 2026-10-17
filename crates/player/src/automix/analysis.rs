@@ -13,7 +13,7 @@ use rustfft::{Fft, FftPlanner};
 use super::loudness::Meter;
 use super::vocal;
 
-pub const TARGET_RATE: f64 = 22050.0;
+pub(crate) const TARGET_RATE: f64 = 22050.0;
 /// What an analysis of a song of unknown length is sized for.
 const UNKNOWN_LENGTH_MS: u64 = 8 * 60_000;
 /// Hop between onset frames, seconds (256 samples at 22.05 kHz, 86 frames/s).
@@ -23,18 +23,18 @@ const BANDS: usize = 40;
 const FLUX_LO_HZ: f64 = 30.0;
 const FLUX_HI_HZ: f64 = 11000.0;
 /// The "kick" band for downbeat voting and bass energy.
-pub const LOW_HZ: f64 = 150.0;
+pub(crate) const LOW_HZ: f64 = 150.0;
 /// The voice band.
-pub const VOCAL_LO_HZ: f64 = 300.0;
-pub const VOCAL_HI_HZ: f64 = 3400.0;
+pub(crate) const VOCAL_LO_HZ: f64 = 300.0;
+pub(crate) const VOCAL_HI_HZ: f64 = 3400.0;
 /// Log compression: linear below -60 dB, logarithmic above, so dither does not become onsets.
 const GAMMA: f32 = 1000.0;
 /// One chroma frame per this many onset frames (about 93 ms), from a 4x longer FFT.
-pub const CHROMA_EVERY: usize = 8;
+pub(crate) const CHROMA_EVERY: usize = 8;
 const CHROMA_LO_HZ: f64 = 100.0;
 const CHROMA_HI_HZ: f64 = 2500.0;
 /// Resolution of the whole-song pitch profile the key is read from: 10 cents.
-pub const PITCH_SLOTS: usize = 120;
+pub(crate) const PITCH_SLOTS: usize = 120;
 /// Peaks below this are too coarsely resolved by the long FFT (5.4 Hz bins) to say where A is.
 const TUNING_LO_HZ: f64 = 250.0;
 /// Where an onset frame sits relative to the end of its window, in hops; measured on click tracks

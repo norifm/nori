@@ -34,7 +34,7 @@ pub fn switch_dip(fade_ms: i32, switch: Switch, playing: bool) -> Option<Dip> {
 
 /// How long a jump's target is shown while the engine dips before making it (longer than any dip plus
 /// command latency).
-pub const JUMP_SHOWN_MS: i64 = 1_000;
+pub(crate) const JUMP_SHOWN_MS: i64 = 1_000;
 
 /// The position to show: the jump's target (`jump`: (ms, age ms)) until the engine has reported since
 /// or, while `switching`, for [`JUMP_SHOWN_MS`]; else the engine's `engine_ms`. A dip unrelated to the

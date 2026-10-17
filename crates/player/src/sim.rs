@@ -17,7 +17,7 @@ use crate::playlist::Playlist;
 use crate::transitions::{engine_plan, pick, whole_song, Skip, TransitionPrefs, WindowSong};
 use crate::types::TrackAnalysis;
 
-pub use crate::pipeline::{Sound, BASE_OFFSET_US, READ_AHEAD_US};
+pub use crate::pipeline::Sound;
 
 /// Virtual clock step per render turn.
 pub const STEP_MS: i64 = 10;
@@ -48,7 +48,7 @@ pub fn samples(bytes: &[u8]) -> Vec<i16> {
 }
 
 /// MPEG-1 layer III frames of a file, skipping ID3 and the Xing/Info frame.
-pub fn mp3_frames(file: &[u8]) -> Vec<&[u8]> {
+pub(crate) fn mp3_frames(file: &[u8]) -> Vec<&[u8]> {
     let mut i = 0;
     if file.starts_with(b"ID3") {
         let size = file[6..10].iter().fold(0usize, |a, &b| (a << 7) | (b & 0x7F) as usize);
@@ -78,7 +78,7 @@ pub fn mp3_frames(file: &[u8]) -> Vec<&[u8]> {
 }
 
 /// Opus packets of an Ogg file and media3's setup (OpusHead, pre-skip ns, 80 ms pre-roll ns).
-pub fn ogg_opus(file: &[u8]) -> (Vec<u8>, Vec<Vec<u8>>) {
+pub(crate) fn ogg_opus(file: &[u8]) -> (Vec<u8>, Vec<Vec<u8>>) {
     let mut packets = Vec::new();
     let mut cur = Vec::new();
     let mut i = 0;

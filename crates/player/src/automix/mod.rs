@@ -43,7 +43,7 @@ use analysis::Features;
 pub const ANALYSIS_VERSION: i32 = 12;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
-pub const GRID_WINDOW_S: f64 = 40.0;
+pub(crate) const GRID_WINDOW_S: f64 = 40.0;
 /// A silence inside the music at least this long is a gap (before a hidden track), not a rest.
 const LONG_GAP_MS: i64 = 6_000;
 /// Below these, cues are placed from the energy envelope instead of the grid.
@@ -77,7 +77,7 @@ pub struct Grid {
 }
 
 /// The beat grid of `[from_s, to_s)` alone, its offset in track time.
-pub fn window_grid(f: &Features, from_s: f64, to_s: f64, meter: i64) -> Grid {
+pub(crate) fn window_grid(f: &Features, from_s: f64, to_s: f64, meter: i64) -> Grid {
     if !(f.fps > 0.0) || to_s - from_s < GRID_WINDOW_S / 2.0 {
         return Grid::default();
     }

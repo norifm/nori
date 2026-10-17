@@ -11,7 +11,7 @@ use std::f64::consts::PI;
 
 const MAX_CHANNELS: usize = 8;
 /// The loudness trim lets go no faster than this, ms per dB (0.67 dB per 100 ms).
-pub const TRIM_GLIDE_MS_PER_DB: f64 = 150.0;
+pub(crate) const TRIM_GLIDE_MS_PER_DB: f64 = 150.0;
 /// Frames between sweep coefficient updates.
 const SWEEP_STEP: u64 = 16;
 /// A sweep's filter is faded in over this long so switching it on does not click.
@@ -21,7 +21,7 @@ const VOX_Q: f64 = 0.35;
 
 /// Where in a transition the incoming song becomes the louder of the two, ms from its start, in 10 ms steps
 /// (from the gain curves only); the whole transition when it never does.
-pub fn crossover_ms(p: &TransitionPlan) -> i64 {
+pub(crate) fn crossover_ms(p: &TransitionPlan) -> i64 {
     let len = p.duration_ms.max(0) as f64;
     let out_fade = span_ms(p.out_fade_start_ms, p.out_fade_end_ms, len);
     let in_fade = span_ms(p.in_fade_start_ms, p.in_fade_end_ms, len);

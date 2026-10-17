@@ -485,7 +485,7 @@ impl Decoder {
 }
 
 /// (rate, channels) from an MPEG audio frame header; `None` if not one.
-pub fn mp3_shape(frame: &[u8]) -> Option<(u32, usize)> {
+pub(crate) fn mp3_shape(frame: &[u8]) -> Option<(u32, usize)> {
     let h = u32::from_be_bytes(frame.get(..4)?.try_into().ok()?);
     let (version, layer, bitrate, rate) = ((h >> 19) & 3, (h >> 17) & 3, (h >> 12) & 0xf, (h >> 10) & 3);
     if h >> 21 != 0x7ff || version == 1 || layer == 0 || bitrate == 0xf || rate == 3 {

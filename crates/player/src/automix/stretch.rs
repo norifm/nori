@@ -18,7 +18,7 @@ const SIGNALSMITH_HOP_S: f64 = 0.04;
 /// The smallest ratio offset Signalsmith Stretch follows cleanly, in frames per hop: closer to 1 it loses up to
 /// 2.6 dB. Such ratios are snapped to 1 or to this offset (0.07 % of tempo at 44.1 kHz).
 const SIGNALSMITH_CLEAR_FRAMES: f64 = 2.5;
-pub const MAX_CHANNELS: usize = 8;
+pub(crate) const MAX_CHANNELS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {

@@ -75,7 +75,7 @@ fn bell(freq: f64, gain_db: f64, q: f64) -> Band {
 }
 
 /// Largest filter gain (a ±12 dB zigzag needs about 28 dB).
-pub const MAX_FILTER_DB: f64 = 30.0;
+pub(crate) const MAX_FILTER_DB: f64 = 30.0;
 /// The gain `B` is first measured at (the paper's prototype gain).
 const PROTOTYPE_DB: f64 = 12.0;
 /// A midpoint's weight against a centre's 1 in the fit.

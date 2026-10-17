@@ -16,7 +16,7 @@ const POINTS: usize = 160;
 const LOW_HZ: f64 = 20.0;
 const HIGH_HZ: f64 = 20_000.0;
 /// Peaking filters besides the two shelves (ten filters, as AutoEQ).
-pub const PEAKS: usize = 8;
+pub(crate) const PEAKS: usize = 8;
 /// Fixed shelf Q, as AutoEQ.
 const SHELF_Q: f64 = 0.7;
 /// Parameter bounds.

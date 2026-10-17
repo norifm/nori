@@ -13,9 +13,9 @@ use crate::transitions::WindowSong;
 pub use crate::sink::{blended, ChainSettings, Remake, Sink, Sound, Track, BLEND_US};
 
 /// Start of the renderer's timeline, as in media3.
-pub const BASE_OFFSET_US: i64 = 1_000_000_000_000;
+pub(crate) const BASE_OFFSET_US: i64 = 1_000_000_000_000;
 /// The next song is read once the current one's end is this close.
-pub const READ_AHEAD_US: i64 = 10_000_000;
+pub(crate) const READ_AHEAD_US: i64 = 10_000_000;
 /// Most buffers offered per turn.
 const BUFFERS_PER_TURN: usize = 256;
 

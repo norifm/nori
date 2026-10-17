@@ -53,7 +53,7 @@ fn f32s(b: &[u8]) -> impl Iterator<Item = f32> + '_ {
 }
 
 /// Decodes interleaved bytes into float samples, appending to `out`.
-pub fn to_f32(bytes: &[u8], enc: Encoding, out: &mut Vec<f32>) {
+pub(crate) fn to_f32(bytes: &[u8], enc: Encoding, out: &mut Vec<f32>) {
     match enc {
         Encoding::Pcm16 => out.extend(i16s(bytes)),
         Encoding::Float => out.extend(f32s(bytes)),
@@ -61,7 +61,7 @@ pub fn to_f32(bytes: &[u8], enc: Encoding, out: &mut Vec<f32>) {
 }
 
 /// Encodes float samples into `out` (which must be exactly the right length).
-pub fn from_f32(samples: &[f32], enc: Encoding, out: &mut [u8]) {
+pub(crate) fn from_f32(samples: &[f32], enc: Encoding, out: &mut [u8]) {
     match enc {
         Encoding::Pcm16 => {
             for (d, v) in out.as_chunks_mut::<2>().0.iter_mut().zip(samples) {
@@ -94,7 +94,7 @@ pub fn scale(bytes: &mut [u8], enc: Encoding, gain: f32) {
 }
 
 /// [`scale`] with 16-bit samples dithered instead of rounded (ReplayGain on the 16-bit path).
-pub fn scale_dithered(bytes: &mut [u8], enc: Encoding, gain: f32, channels: usize, dither: &mut Dither) {
+pub(crate) fn scale_dithered(bytes: &mut [u8], enc: Encoding, gain: f32, channels: usize, dither: &mut Dither) {
     match enc {
         Encoding::Pcm16 => {
             for frame in bytes.as_chunks_mut::<2>().0.chunks_mut(channels.max(1)) {

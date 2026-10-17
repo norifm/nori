@@ -8,8 +8,8 @@
 use rustfft::num_complex::Complex32;
 
 /// The voice band, Hz.
-pub const LO_HZ: f64 = 300.0;
-pub const HI_HZ: f64 = 3000.0;
+pub(crate) const LO_HZ: f64 = 300.0;
+pub(crate) const HI_HZ: f64 = 3000.0;
 /// Log compression of the band's amplitudes, as for the onset curves.
 const GAMMA: f32 = 1000.0;
 /// A peak is this many times the power of the bins three away from it.
@@ -20,9 +20,9 @@ const CENTRE_SMOOTH_S: f64 = 0.1;
 /// A bin whose channels are less alike than this is not in the middle ([`centre`]); tuned on `metal_band`.
 const CENTRE_FLOOR: f32 = 0.6;
 /// Analysis frames per curve frame: about 17 a second, 58 ms each.
-pub const CURVE_EVERY: usize = 5;
+pub(crate) const CURVE_EVERY: usize = 5;
 /// The stored form's version: a curve in another is measured again.
-pub const CURVE_VERSION: u8 = 2;
+pub(crate) const CURVE_VERSION: u8 = 2;
 /// Bytes of the stored form before the levels: the version, the frame rate and the time of frame 0.
 const HEADER: usize = 9;
 /// A curve frame's movement `m` is stored as `ln(1 + m) * LEVEL_SCALE`, clamped to a byte.

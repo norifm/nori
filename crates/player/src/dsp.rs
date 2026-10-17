@@ -22,9 +22,9 @@ pub const ALL_PASS: i32 = 7;
 pub const LOW_SHELF_SLOPE: i32 = 8;
 pub const HIGH_SHELF_SLOPE: i32 = 9;
 
-pub const CH_BOTH: i32 = 0;
-pub const CH_LEFT: i32 = 1;
-pub const CH_RIGHT: i32 = 2;
+pub(crate) const CH_BOTH: i32 = 0;
+pub(crate) const CH_LEFT: i32 = 1;
+pub(crate) const CH_RIGHT: i32 = 2;
 
 const MAX_CHANNELS: usize = 8;
 /// Most stereo filters run in one pass over a block ([`Biquad::run2_chain`]).
@@ -226,13 +226,13 @@ impl Biquad {
 }
 
 /// The normalised `[b0, b1, b2, a1, a2]` the chain uses for `band`, for filter design code.
-pub fn band_coefficients(rate: f64, band: &Band) -> [f64; 5] {
+pub(crate) fn band_coefficients(rate: f64, band: &Band) -> [f64; 5] {
     let b = Biquad::new(rate, band);
     [b.b0, b.b1, b.b2, b.a1, b.a2]
 }
 
 /// The dB gain of `band`'s biquad at `freq` and `rate`.
-pub fn band_db(rate: f64, band: &Band, freq: f64) -> f64 {
+pub(crate) fn band_db(rate: f64, band: &Band, freq: f64) -> f64 {
     let c = band_coefficients(rate, band);
     let w = std::f64::consts::TAU * freq / rate;
     let (c1, s1, c2, s2) = (w.cos(), w.sin(), (2.0 * w).cos(), (2.0 * w).sin());
@@ -248,9 +248,9 @@ pub fn uses_gain(kind: i32) -> bool {
 
 /// bs2b's cutoff and level limits.
 pub const CROSSFEED_CUT_HZ: (f64, f64) = (300.0, 2000.0);
-pub const CROSSFEED_DB: (f64, f64) = (1.0, 15.0);
+pub(crate) const CROSSFEED_DB: (f64, f64) = (1.0, 15.0);
 /// bs2b's default cutoff.
-pub const CROSSFEED_DEFAULT_HZ: f64 = 700.0;
+pub(crate) const CROSSFEED_DEFAULT_HZ: f64 = 700.0;
 
 /// bs2b's standard settings (`BS2B_DEFAULT_CLEVEL`, `BS2B_CMOY_CLEVEL`, `BS2B_JMEIER_CLEVEL`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

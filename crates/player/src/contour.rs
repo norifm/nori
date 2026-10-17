@@ -37,11 +37,11 @@ pub struct Loudness {
 }
 
 /// Range the contours are defined for, phon.
-pub const PHON: (f64, f64) = (20.0, 90.0);
+pub(crate) const PHON: (f64, f64) = (20.0, 90.0);
 /// Selectable reference levels, phon.
-pub const REFERENCE_PHON: (f64, f64) = (60.0, 90.0);
+pub(crate) const REFERENCE_PHON: (f64, f64) = (60.0, 90.0);
 /// Largest shelf boost, dB.
-pub const MAX_DB: f64 = 18.0;
+pub(crate) const MAX_DB: f64 = 18.0;
 
 /// dB SPL at the table's `i`th frequency for `phon` (ISO 226:2003 4.1).
 fn spl_at(i: usize, phon: f64) -> f64 {
@@ -51,7 +51,7 @@ fn spl_at(i: usize, phon: f64) -> f64 {
 
 /// The equal-loudness contour: dB SPL at `freq` as loud as 1 kHz at `phon`. Interpolated in log
 /// frequency, held past the table's ends.
-pub fn spl_db(phon: f64, freq: f64) -> f64 {
+pub(crate) fn spl_db(phon: f64, freq: f64) -> f64 {
     let phon = phon.clamp(PHON.0, PHON.1);
     if !(freq > FREQ[0]) {
         return spl_at(0, phon);
@@ -65,14 +65,14 @@ pub fn spl_db(phon: f64, freq: f64) -> f64 {
 }
 
 /// Boost needed at `freq` to hear `reference`-phon music at `listening` phon, dB (0 at 1 kHz).
-pub fn compensation_db(listening: f64, reference: f64, freq: f64) -> f64 {
+pub(crate) fn compensation_db(listening: f64, reference: f64, freq: f64) -> f64 {
     let l = listening.clamp(PHON.0, PHON.1);
     let r = reference.clamp(PHON.0, PHON.1);
     (spl_db(l, freq) - l) - (spl_db(r, freq) - r)
 }
 
 /// Listening level: `reference` lowered by the volume attenuation, within [`PHON`].
-pub fn listening_phon(reference: f64, volume_db: f64) -> f64 {
+pub(crate) fn listening_phon(reference: f64, volume_db: f64) -> f64 {
     let v = if volume_db.is_finite() { volume_db.min(0.0) } else { 0.0 };
     (reference + v).clamp(PHON.0, PHON.1)
 }

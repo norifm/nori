@@ -103,11 +103,11 @@ pub struct Playhead {
 /// Largest difference glided rather than jumped.
 pub const GLIDE_MS: i64 = 2_000;
 /// Most elapsed time one call counts towards a glide.
-pub const GLIDE_STEP_MS: i64 = 250;
+pub(crate) const GLIDE_STEP_MS: i64 = 250;
 /// A position shown longer ago than this while playing is not glided from (the bar was hidden).
-pub const STALE_MS: i64 = 2_000;
+pub(crate) const STALE_MS: i64 = 2_000;
 /// Longest run-on past the last reading ([`screen_place`], [`Playhead::run_on`]).
-pub const RUN_ON_MS: i64 = 2_000;
+pub(crate) const RUN_ON_MS: i64 = 2_000;
 /// Readings older than this (while playing) should be refreshed.
 pub const LOOK_AFTER_MS: i64 = 1_000;
 /// A controller position further than this from the engine's reading has drifted and must be re-sent.
