@@ -215,8 +215,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        use nori_automix::beat_model::{ModelFile, BEAT_THIS};
-        Settings { kept: RwLock::default(), model: ModelFile::new(&BEAT_THIS) }
+        Settings { kept: RwLock::default(), model: nori_automix::beat_model::ModelFile::default() }
     }
 }
 

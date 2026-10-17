@@ -1223,7 +1223,7 @@ impl BeatModel {
         let file = nori_core::model_download::ensure(client)?;
         let t0 = nori_time::Instant::now();
         let before = nori_core::heap::live_bytes();
-        let loaded = nori_core::model_download::read(&nori_core::beat_model::BEAT_THIS, &file).and_then(|bytes| nori_player::automix::neural::BeatThis::from_weights(&bytes).map_err(|e| e.to_string()));
+        let loaded = nori_core::model_download::read(&file).and_then(|bytes| nori_player::automix::neural::BeatThis::from_weights(&bytes).map_err(|e| e.to_string()));
         match loaded {
             Ok(m) => {
                 let bytes = before.zip(nori_core::heap::live_bytes()).map_or(1, |(a, b)| (b - a).max(1) as u64);

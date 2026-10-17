@@ -386,18 +386,18 @@ mod tests {
     #[test]
     fn state_rules() {
         let d = StoredPrefs::default();
-        let s = state(&d, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS));
+        let s = state(&d, Output::default(), &beat_model::ModelFile::default());
         assert!(!s.untouched && !s.sound_chain_on && !s.offload_paused);
         assert_eq!(s.values["crossfadeSec"], d.crossfade_sec.to_string());
-        assert!(!state(&StoredPrefs { hi_res: true, ..d.clone() }, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).untouched, "high quality output keeps the chain");
-        assert!(state(&d, Output { dac_bit_perfect: true, usb: true }, &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).untouched);
-        assert!(state(&StoredPrefs { mono: true, ..d.clone() }, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).sound_chain_on);
+        assert!(!state(&StoredPrefs { hi_res: true, ..d.clone() }, Output::default(), &beat_model::ModelFile::default()).untouched, "high quality output keeps the chain");
+        assert!(state(&d, Output { dac_bit_perfect: true, usb: true }, &beat_model::ModelFile::default()).untouched);
+        assert!(state(&StoredPrefs { mono: true, ..d.clone() }, Output::default(), &beat_model::ModelFile::default()).sound_chain_on);
         // The battery saver stands down while an effect is on, but not over USB, where it is not offered.
         let eq = StoredPrefs { eq_enabled: true, offload: true, ..d.clone() };
-        assert!(state(&eq, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).offload_paused);
-        assert!(!state(&eq, Output { dac_bit_perfect: false, usb: true }, &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).offload_paused);
+        assert!(state(&eq, Output::default(), &beat_model::ModelFile::default()).offload_paused);
+        assert!(!state(&eq, Output { dac_bit_perfect: false, usb: true }, &beat_model::ModelFile::default()).offload_paused);
         // No processing on this output: the effects are kept but out of the path, so offload comes back.
-        let none = state(&StoredPrefs { sound_bypass: true, ..eq.clone() }, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS));
+        let none = state(&StoredPrefs { sound_bypass: true, ..eq.clone() }, Output::default(), &beat_model::ModelFile::default());
         assert!(!none.sound_chain_on && !none.offload_paused);
         // Every lyrics service, in the order they are asked, each on or off where it stands.
         let order: Vec<&str> = d.lyrics_order.iter().map(|s| s.name()).collect();
@@ -405,7 +405,7 @@ mod tests {
         let on: Vec<&str> = s.lyrics_sources.iter().filter(|l| l.on).map(|l| l.id.as_str()).collect();
         assert_eq!(on, order, "every service on");
         let off = set_by_name(&d, "lyricsService:BINILYRICS", "false").unwrap().prefs;
-        let s2 = state(&off, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS));
+        let s2 = state(&off, Output::default(), &beat_model::ModelFile::default());
         assert_eq!(s2.lyrics_sources[1], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false }, "switched off where it stands");
         assert!(s.lyrics_sources.iter().any(|l| l.needs_key));
         assert_eq!(s.beat_model == BeatModel::Unavailable, !beats::AVAILABLE);
