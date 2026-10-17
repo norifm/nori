@@ -45,6 +45,7 @@ platform opens and re-exports every crate below it by its module name (`nori_cor
 | Cover art: fetched through the `Transport`, kept on disk and in memory, JPEG, PNG, WebP and a GIF's first frame decoded straight to the size drawn and turned as their EXIF says (Android's Bitmaps included) | `nori-covers` |
 | Moving album covers: finding an album's motion artwork in Apple Music's catalog (the search, the web player's token, the square video's address), remembered per album | `nori-core::motion` (`Client::motion_video`, `motion_forget`) |
 | The car browse tree | `nori-library::car` |
+| Remote control and jams: the relay's long polls, nearby devices' doors, the clocks learned, a jam's members and requests; its polls, time keeping and sends are futures on a `Tasks`, natively one thread that sleeps while they wait (a quiet device wakes about once a minute, for the relay's held poll), in a browser the page's event loop | `nori-remote`; `nori-core::remote` (`Remote`); `nori-tasks` (`Tasks`, `Native`, `Local`) |
 
 ## The reference terminal client
 

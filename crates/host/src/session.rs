@@ -25,7 +25,6 @@ use nori_covers::loader::{Config as CoverConfig, Loader, Ticket};
 use nori_covers::memory::Image;
 use nori_engine::core::{settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Downloader, Measurer};
 use nori_engine::{AudioOutput, Body, ByteSource, Cancel, Config, Engine, Event, OpenError, State, Store};
-use nori_http::Http;
 use nori_look::cover::CoverColours;
 
 #[cfg(feature = "desktop")]
@@ -93,15 +92,21 @@ pub enum Chore {
 /// Where a session's reports go.
 pub type Out = Arc<dyn Fn(Said) + Send + Sync>;
 
+/// The platform's HTTP: the core's API and covers, and the engine's audio, over one connection pool
+/// (nori-http's ureq agent natively).
+pub trait Net: Transport + ByteSource {}
+
+impl<T: Transport + ByteSource> Net for T {}
+
 /// Audio bytes over HTTP: refused when offline, requests counted.
 pub struct Audio {
-    http: Arc<Http>,
+    http: Arc<dyn Net>,
     offline: bool,
     pub requests: AtomicU64,
 }
 
 impl Audio {
-    pub fn new(http: Arc<Http>, offline: bool) -> Audio {
+    pub fn new(http: Arc<dyn Net>, offline: bool) -> Audio {
         Audio { http, offline, requests: AtomicU64::new(0) }
     }
 }
@@ -181,7 +186,7 @@ pub struct Open<'a> {
     /// The app's queue session, over its settings.
     pub queue: Arc<nori_core::queue::Session>,
     pub data: &'a Path,
-    pub http: Arc<Http>,
+    pub http: Arc<dyn Net>,
     pub profile: SavedServer,
     /// The sound card. The client built it and owns its device volume.
     pub output: Box<dyn AudioOutput>,
@@ -1309,7 +1314,7 @@ mod tests {
         let s = Session::open(Open {
             queue: queue.clone(),
             data: dir.path(),
-            http: Http::new(),
+            http: nori_http::Http::new(),
             profile: SavedServer { id: "own".into(), url: "http://own".into(), user: "ann".into(), password: "pw".into(), ..Default::default() },
             output: Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)),
             volume: Level::new(1.0, None),
@@ -1344,7 +1349,7 @@ mod tests {
             s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
             let _ = closed.0.send(s.read(&mut buf).ok());
         });
-        let audio = Arc::new(Audio::new(Http::new(), false));
+        let audio = Arc::new(Audio::new(nori_http::Http::new(), false));
         let loader = Loader::start(audio, url, [1_000, 4_000, 0, 0, 1 << 30], None, None);
         asked.1.recv_timeout(Duration::from_secs(10)).expect("the request came");
         drop(loader);

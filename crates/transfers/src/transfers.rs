@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::task::{Poll, Waker};
-use std::time::Instant;
+use nori_time::Instant;
 
 use nori_model::{alog, DownloadPhase, Song};
 use parking_lot::{Mutex, MutexGuard};

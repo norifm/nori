@@ -81,7 +81,7 @@ impl Remotes {
     fn playing(&self, s: &Status) -> Playing {
 
         let buffering = self.buffering.load(Ordering::Relaxed);
-        let (position_ms, mix_position_ms) = s.positions_at(std::time::Instant::now(), buffering);
+        let (position_ms, mix_position_ms) = s.positions_at(nori_time::Instant::now(), buffering);
         Playing {
             playing: s.state == State::Playing,
             buffering,

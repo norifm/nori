@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use nori_time::{Duration, Instant};
 
 use crate::output::{AudioOutput, Feed, OutputFormat};
 

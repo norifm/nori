@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>nori</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header>
+    <h1>nori</h1>
+    <p id="status">loading the core</p>
+  </header>
+  <form id="login">
+    <input name="user" value="admin" autocomplete="username" aria-label="User">
+    <input name="password" type="password" value="admin" autocomplete="current-password" aria-label="Password">
+    <button>Sign in</button>
+  </form>
+  <main>
+    <section id="albums"></section>
+    <ol id="songs"></ol>
+  </main>
+  <footer>
+    <button id="pause">Play/Pause</button>
+    <span id="now"></span>
+  </footer>
+</body>
+</html>

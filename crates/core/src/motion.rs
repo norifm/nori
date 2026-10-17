@@ -5,7 +5,7 @@
 //! album's `editorialVideo` ([motion_square_video]). These shapes are undocumented (observed in 2026);
 //! a change yields no result or a parse error, never a wrong video. Answers go in the response cache.
 
-use std::time::{Duration, Instant};
+use nori_time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -486,7 +486,7 @@ impl Client {
             if r.status != 200 {
                 continue;
             }
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+            let now = nori_time::since_epoch().as_secs() as i64;
             if let Some(t) = motion_token(r.body, now) {
                 return Some(t);
             }
@@ -629,7 +629,7 @@ mod tests {
     fn motion_lookup_caches_and_forgets() {
         use crate::client::tests::{block, client};
         let (c, fake) = client(crate::client::NetProfile { url: "h".into(), ..Default::default() });
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let now = nori_time::since_epoch().as_secs() as i64;
         let web = jwt(r#"{"alg":"ES256","kid":"WebPlayKid"}"#, &format!(r#"{{"iss":"AMPWebPlay","exp":{}}}"#, now + 90_000));
         fake.answer(r#"{"subsonic-response":{"status":"ok","album":{"id":"al-1","name":"Better","artist":"Khalid","songCount":12,"year":2019,"song":[]}}}"#);
         fake.answer(&search(&[hit(3, "Better", "Khalid", 12, "2019-04-01T07:00:00Z")]));

@@ -29,8 +29,8 @@ pub type Got<T> = Result<T, NetError>;
 
 /// Monotonic ms since first use.
 fn mono_ms() -> i64 {
-    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    ORIGIN.get_or_init(std::time::Instant::now).elapsed().as_millis() as i64
+    static ORIGIN: std::sync::OnceLock<nori_time::Instant> = std::sync::OnceLock::new();
+    ORIGIN.get_or_init(nori_time::Instant::now).elapsed().as_millis() as i64
 }
 
 /// The queue's last entry in play order.
@@ -142,7 +142,7 @@ impl Session {
 
 /// A random seed from the clock.
 pub fn seed_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64)
+    (nori_time::since_epoch().as_nanos() as u64).max(1)
 }
 
 /// `v` shuffled with a clock seed.

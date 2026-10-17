@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
+use nori_time::Instant;
 
 use futures_util::lock::Mutex as AsyncMutex;
 use futures_util::stream::{FuturesUnordered, StreamExt};

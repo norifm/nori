@@ -219,7 +219,7 @@ impl Client {
 
 impl Client {
     async fn autofill_as(&self, kind: AutoFillKind, basis: AutoFillBasis, remote: bool) -> Refill {
-        let began = std::time::Instant::now();
+        let began = nori_time::Instant::now();
         let fresh = self.autofill_from(kind, basis, remote).await;
         crate::alog::info(&format!("autofill: {} songs in {} ms (kind {kind:?}, basis {basis:?})", fresh.songs.len(), began.elapsed().as_millis()));
         fresh

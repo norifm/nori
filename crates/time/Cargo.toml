@@ -1,0 +1,13 @@
+[package]
+name = "nori-time"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The one clock the core reads: monotonic instants and the wall clock, on every platform the web included"
+
+[lib]
+name = "nori_time"
+
+# std's clocks panic on wasm32-unknown-unknown; there web-time reads `performance.now()` and `Date.now()`.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+web-time = "1.1"

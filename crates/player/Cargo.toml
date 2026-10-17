@@ -16,6 +16,8 @@ synth = []
 neural-beats = ["dep:tract-onnx", "dep:prost"]
 
 [dependencies]
+# Time, read the same way natively and in a browser.
+nori-time = { path = "../time" }
 # AutoMix: the analysis FFT, and Signalsmith Stretch (MIT, ported to Rust in crates/stretch) for tempo changes.
 rustfft = "6"
 nori-stretch = { path = "../stretch" }
@@ -33,6 +35,7 @@ opus-rs = "0.1.34"
 # measures each song by (automix/loudness.rs).
 ebur128 = "0.1.10"
 serde = { version = "1", features = ["derive"], optional = true }
+
 
 [dev-dependencies]
 # The beat model's weights, checked against their pin in a test (the core checks them the same way).

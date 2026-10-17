@@ -8,7 +8,7 @@ pub mod session;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use nori_time::{Duration, Instant};
 
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Client, NetProfile};
@@ -37,7 +37,8 @@ pub fn net(p: &SavedServer) -> NetProfile {
     NetProfile { url: p.url.clone(), alt_url: p.alt_url.clone(), music_folder_ids: p.music_folder_ids.clone(), alt_max_bit_rate: p.alt_max_bit_rate.max(0) as u32 }
 }
 
-/// This computer's name, as the account's other devices list it (remote control).
+/// This computer's name, as the account's other devices list it (remote control). A browser has none.
+#[cfg(unix)]
 pub fn device_name() -> String {
     let mut buf = [0u8; 256];
     // SAFETY: the buffer is writable for its whole length; gethostname writes a NUL-terminated name into it.
@@ -229,7 +230,7 @@ impl Keeper {
                 match due.0 {
                     None => me.wake.wait(&mut due),
                     Some(at) if Instant::now() < at => {
-                        me.wake.wait_until(&mut due, at);
+                        me.wake.wait_for(&mut due, at.saturating_duration_since(Instant::now()));
                     }
                     Some(_) => {
                         due.0 = None;

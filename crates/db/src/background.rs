@@ -1,15 +1,16 @@
 //! The core's background thread for database writes, so callers (often the main or audio thread) never
 //! wait on the database.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::mpsc::{channel, Sender};
-use std::sync::OnceLock;
-
-type Job = Box<dyn FnOnce() + Send>;
+use std::sync::mpsc::channel;
 
 /// Runs `job` on the background thread, after earlier jobs. A job that panics is logged; the jobs after
 /// it still run.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run(job: impl FnOnce() + Send + 'static) {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::mpsc::Sender;
+    use std::sync::OnceLock;
+    type Job = Box<dyn FnOnce() + Send>;
     // Global: one writer thread per process, reached from callers with no core handle.
     static TX: OnceLock<Sender<Job>> = OnceLock::new();
     let tx = TX.get_or_init(|| {
@@ -27,6 +28,12 @@ pub fn run(job: impl FnOnce() + Send + 'static) {
         tx
     });
     let _ = tx.send(Box::new(job));
+}
+
+/// The web has no threads (and builds without unwinding): there the job runs at once.
+#[cfg(target_arch = "wasm32")]
+pub fn run(job: impl FnOnce() + Send + 'static) {
+    job();
 }
 
 /// Waits until the jobs sent so far have run: a client quitting, so its last writes are kept.

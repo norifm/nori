@@ -10,7 +10,7 @@
 //! with the lyrics. The lookup is one future: no thread.
 
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use nori_time::{Duration, Instant};
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use nori_model::{Lyrics, Song};

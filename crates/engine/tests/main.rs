@@ -9,6 +9,8 @@ mod along;
 mod perf_alloc;
 #[path = "engine.rs"]
 mod engine;
+#[path = "driven.rs"]
+mod driven;
 #[path = "paths.rs"]
 mod paths;
 #[path = "radio.rs"]

@@ -453,7 +453,7 @@ mod tests {
     fn long_queue_shuffles_fast() {
         // Five thousand songs: a shuffle that compared every song with every other would take seconds here.
         let l: Vec<Song> = (0..5_000).map(|i| song(&i.to_string(), "t", &format!("artist {}", i % 1500), "", "", 0)).collect();
-        let started = std::time::Instant::now();
+        let started = nori_time::Instant::now();
         let out = weighted_shuffle(l, 1);
         assert_eq!((out.len(), adjacent_artists(&out)), (5_000, 0));
         assert!(started.elapsed() < std::time::Duration::from_secs(5), "5,000 songs took {:?} to shuffle", started.elapsed());

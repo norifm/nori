@@ -25,7 +25,10 @@ MEMBERS = ['crates/android',
  'crates/settings',
  'crates/settings-derive',
  'crates/stretch',
+ 'crates/tasks',
  'crates/testdir',
+ 'crates/time',
  'crates/transfers',
  'crates/uniffi-bindgen',
- 'crates/uniffi-jni-runtime']
+ 'crates/uniffi-jni-runtime',
+ 'crates/web']

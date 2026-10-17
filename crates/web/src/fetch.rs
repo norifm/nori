@@ -1,0 +1,73 @@
+//! The core's [`Transport`] over the worker's `fetch`.
+
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use nori_core::transport::{Exchange, FailureKind, Network, Transport, TransportError, TransportResponse};
+use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{Request, RequestInit, Response, WorkerGlobalScope};
+
+/// A future holding JS values, which are not `Send`. The page runs the module on one thread (no wasm
+/// threads), so nothing is ever sent anywhere.
+pub struct OneThread<F>(pub F);
+
+// SAFETY: wasm32-unknown-unknown without the atomics feature has a single thread.
+unsafe impl<F> Send for OneThread<F> {}
+
+impl<F: Future> Future for OneThread<F> {
+    type Output = F::Output;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        // SAFETY: the inner future is never moved out of the pinned wrapper.
+        unsafe { self.map_unchecked_mut(|s| &mut s.0) }.poll(cx)
+    }
+}
+
+pub struct Fetch;
+
+fn failed(kind: FailureKind, e: JsValue) -> TransportError {
+    TransportError::Failed { kind, detail: Some(format!("{e:?}")) }
+}
+
+/// The bytes at `url` as the worker's `fetch` answers them.
+pub async fn fetch(x: Exchange) -> Result<TransportResponse, TransportError> {
+    let init = RequestInit::new();
+    if let Some(json) = &x.json {
+        init.set_method("POST");
+        init.set_body(&JsValue::from_str(json));
+    }
+    if x.timeout_ms > 0 {
+        init.set_signal(Some(&web_sys::AbortSignal::timeout_with_u32(x.timeout_ms)));
+    }
+    let req = Request::new_with_str_and_init(&x.url, &init).map_err(|e| failed(FailureKind::Other, e))?;
+    for (k, v) in &x.headers {
+        let _ = req.headers().set(k, v);
+    }
+    if x.json.is_some() {
+        let _ = req.headers().set("Content-Type", "application/json");
+    }
+    let scope: WorkerGlobalScope = js_sys::global().unchecked_into();
+    let answer = JsFuture::from(scope.fetch_with_request(&req)).await.map_err(|e| failed(FailureKind::Connect, e))?;
+    let answer: Response = answer.unchecked_into();
+    let status = answer.status();
+    let body = JsFuture::from(answer.array_buffer().map_err(|e| failed(FailureKind::Other, e))?).await.map_err(|e| failed(FailureKind::Other, e))?;
+    Ok(TransportResponse { status, body: js_sys::Uint8Array::new(&body).to_vec() })
+}
+
+#[async_trait::async_trait]
+impl Transport for Fetch {
+    async fn get(&self, url: String, timeout_ms: u32) -> Result<TransportResponse, TransportError> {
+        OneThread(fetch(Exchange { url, headers: Default::default(), json: None, timeout_ms })).await
+    }
+
+    async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
+        OneThread(fetch(request)).await
+    }
+
+    fn address_changed(&self) {}
+
+    fn network(&self) -> Network {
+        Network::Unmetered
+    }
+}

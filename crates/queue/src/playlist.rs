@@ -34,7 +34,7 @@ impl Queue {
 }
 
 fn seed() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64)
+    (nori_time::since_epoch().as_nanos() as u64).max(1)
 }
 
 /// Where a change landed, for the player to make the same change.

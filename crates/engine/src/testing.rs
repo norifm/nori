@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use std::thread::Thread;
-use std::time::{Duration, Instant};
+use nori_time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex};
 
