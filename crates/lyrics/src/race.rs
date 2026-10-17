@@ -323,7 +323,7 @@ pub(crate) fn sync_words(c: &SyncCheck) -> String {
 
 /// A service's cache key for a song. With a BetterLyrics key given, a miss without one is asked again.
 fn cache_key(service: LyricsService, song: &Song, lookup: &LyricsLookup) -> String {
-    let keyed = matches!(service, LyricsService::BetterLyrics | LyricsService::Portato) && !lookup.better_lyrics_key.is_empty();
+    let keyed = service == LyricsService::BetterLyrics && !lookup.better_lyrics_key.is_empty();
     format!("{CACHE_PREFIX}{}{}|{}|{}|{}", service.name(), if keyed { "+key" } else { "" }, song.artist, song.title, song.duration)
 }
 

@@ -254,12 +254,8 @@
     <string name="lyrics_service_paxsenix_about">Apple Music\'s lyrics, syllable by syllable, looked up another way. Unofficial.</string>
     <string name="lyrics_service_lyrics_plus" translatable="false">LyricsPlus</string>
     <string name="lyrics_service_lyrics_plus_about">Apple Music\'s lyrics and others\', syllable by syllable, from volunteers. Unofficial.</string>
-    <string name="lyrics_service_portato" translatable="false">BetterLyrics Portato</string>
-    <string name="lyrics_service_portato_about">QQ Music\'s lyrics, word by word. Strong on Chinese music. Unofficial.</string>
     <string name="lyrics_service_paxsenix_musixmatch" translatable="false">PaxSenix: Musixmatch</string>
     <string name="lyrics_service_paxsenix_musixmatch_about">Musixmatch\'s lyrics, often word by word. Needs a PaxSenix key.</string>
-    <string name="lyrics_service_simpmusic" translatable="false">SimpMusic</string>
-    <string name="lyrics_service_simpmusic_about">Lyrics timed by listeners, often word by word, matched to the song on YouTube.</string>
     <string name="lyrics_service_unison" translatable="false">Unison</string>
     <string name="lyrics_service_unison_about">Open, written and timed by listeners. Many songs word by word.</string>
     <string name="lyrics_service_netease">NetEase Cloud Music</string>
@@ -270,14 +266,8 @@
     <string name="lyrics_service_lrclib_about">Open and run by volunteers. Timed line by line, some songs word by word.</string>
     <string name="lyrics_service_paxsenix_spotify" translatable="false">PaxSenix: Spotify</string>
     <string name="lyrics_service_paxsenix_spotify_about">Spotify\'s lyrics, timed line by line. Needs a PaxSenix key.</string>
-    <string name="lyrics_service_youtube_captions">YouTube captions</string>
-    <string name="lyrics_service_youtube_captions_about">The captions of the song on YouTube, timed line by line. Unofficial.</string>
-    <string name="lyrics_service_megalobiz" translatable="false">Megalobiz</string>
-    <string name="lyrics_service_megalobiz_about">Lyrics timed line by line by its users, read off its pages.</string>
     <string name="lyrics_service_youtube_music" translatable="false">YouTube Music</string>
     <string name="lyrics_service_youtube_music_about">The words YouTube Music shows for the song. Not timed. Unofficial.</string>
-    <string name="lyrics_service_genius" translatable="false">Genius</string>
-    <string name="lyrics_service_genius_about">The biggest catalog of words, not timed. Asked only when nobody has timed lyrics.</string>
 
     <!-- Library. -->
     <string name="settings_section_lists">Songs in lists</string>
@@ -424,15 +414,12 @@
     <string name="settings_hint_lyrics_sources">Which lyrics services are asked, and in what order</string>
     <string name="settings_hint_service_apple">Lyrics service. Apple Music\'s lyrics, syllable by syllable</string>
     <string name="settings_hint_service_lyrics_plus">Lyrics service. YouLy+, syllable by syllable</string>
-    <string name="settings_hint_service_portato">Lyrics service. QQ Music, word by word</string>
     <string name="settings_hint_service_musixmatch">Lyrics service. Word by word, with a key</string>
-    <string name="settings_hint_service_simpmusic">Lyrics service. Timed by listeners, matched on YouTube</string>
     <string name="settings_hint_service_unison">Lyrics service. Open, written and timed by listeners, word by word</string>
     <string name="settings_hint_service_netease">Lyrics service. Word by word, strong on Chinese music</string>
     <string name="settings_hint_service_kugou">Lyrics service. Word by word, Chinese, Japanese and Korean music</string>
     <string name="settings_hint_service_lrclib">Lyrics service. Open, run by volunteers</string>
     <string name="settings_hint_service_spotify">Lyrics service. Spotify\'s lyrics, with a key</string>
-    <string name="settings_hint_service_lines">Lyrics service. Timed line by line</string>
     <string name="settings_hint_service_untimed">Lyrics service. Not timed</string>
     <string name="settings_hint_paxsenix_key">For its Spotify and Musixmatch lyrics</string>
     <string name="settings_hint_betterlyrics_key">Finds lyrics it has not stored yet</string>

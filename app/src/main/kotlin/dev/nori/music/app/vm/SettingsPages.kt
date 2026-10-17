@@ -140,29 +140,23 @@ private val SERVICES: Map<String, Pair<Int, Int>> = mapOf(
     "BETTER_LYRICS" to (R.string.lyrics_service_better_lyrics to R.string.lyrics_service_better_lyrics_about),
     "PAXSENIX" to (R.string.lyrics_service_paxsenix to R.string.lyrics_service_paxsenix_about),
     "LYRICS_PLUS" to (R.string.lyrics_service_lyrics_plus to R.string.lyrics_service_lyrics_plus_about),
-    "PORTATO" to (R.string.lyrics_service_portato to R.string.lyrics_service_portato_about),
     "PAXSENIX_MUSIXMATCH" to (R.string.lyrics_service_paxsenix_musixmatch to R.string.lyrics_service_paxsenix_musixmatch_about),
-    "SIMPMUSIC" to (R.string.lyrics_service_simpmusic to R.string.lyrics_service_simpmusic_about),
     "UNISON" to (R.string.lyrics_service_unison to R.string.lyrics_service_unison_about),
     "NETEASE" to (R.string.lyrics_service_netease to R.string.lyrics_service_netease_about),
     "KUGOU" to (R.string.lyrics_service_kugou to R.string.lyrics_service_kugou_about),
     "LRCLIB" to (R.string.lyrics_service_lrclib to R.string.lyrics_service_lrclib_about),
     "PAXSENIX_SPOTIFY" to (R.string.lyrics_service_paxsenix_spotify to R.string.lyrics_service_paxsenix_spotify_about),
-    "YOUTUBE_CAPTIONS" to (R.string.lyrics_service_youtube_captions to R.string.lyrics_service_youtube_captions_about),
-    "MEGALOBIZ" to (R.string.lyrics_service_megalobiz to R.string.lyrics_service_megalobiz_about),
     "YOUTUBE_MUSIC" to (R.string.lyrics_service_youtube_music to R.string.lyrics_service_youtube_music_about),
-    "GENIUS" to (R.string.lyrics_service_genius to R.string.lyrics_service_genius_about),
 )
 
 /** What search finds a service by, besides its name. */
 private val SERVICE_HINTS: Map<String, Int> = mapOf(
     "BINILYRICS" to R.string.settings_hint_service_apple, "BETTER_LYRICS" to R.string.settings_hint_service_apple, "PAXSENIX" to R.string.settings_hint_service_apple,
-    "LYRICS_PLUS" to R.string.settings_hint_service_lyrics_plus, "PORTATO" to R.string.settings_hint_service_portato,
-    "PAXSENIX_MUSIXMATCH" to R.string.settings_hint_service_musixmatch, "SIMPMUSIC" to R.string.settings_hint_service_simpmusic,
+    "LYRICS_PLUS" to R.string.settings_hint_service_lyrics_plus,
+    "PAXSENIX_MUSIXMATCH" to R.string.settings_hint_service_musixmatch,
     "UNISON" to R.string.settings_hint_service_unison, "NETEASE" to R.string.settings_hint_service_netease, "KUGOU" to R.string.settings_hint_service_kugou,
     "LRCLIB" to R.string.settings_hint_service_lrclib, "PAXSENIX_SPOTIFY" to R.string.settings_hint_service_spotify,
-    "YOUTUBE_CAPTIONS" to R.string.settings_hint_service_lines, "MEGALOBIZ" to R.string.settings_hint_service_lines,
-    "YOUTUBE_MUSIC" to R.string.settings_hint_service_untimed, "GENIUS" to R.string.settings_hint_service_untimed,
+    "YOUTUBE_MUSIC" to R.string.settings_hint_service_untimed,
 )
 
 /** A setting's title, and the words search also finds it by (0: none). */

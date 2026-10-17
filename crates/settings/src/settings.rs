@@ -559,7 +559,7 @@ pub struct StoredPrefs {
     #[setting("lyricsOrder", LYRICS_ORDER, default = lyrics_sources::default_order())]
     pub lyrics_order: Vec<LyricsService>,
     /// The lyrics services switched on (changed by `lyricsService:<name>`).
-    #[setting("lyricsOn", LYRICS_ON, default = lyrics_sources::default_order(), hidden)]
+    #[setting("lyricsOn", LYRICS_ON, default = lyrics_sources::default_on(), hidden)]
     pub lyrics_on: Vec<LyricsService>,
     /// Keep asking lower-ranked services for word timing after a line-timed answer.
     #[setting("lyricsPreferWords", FLAG, default = true, show = K::Switch)]
@@ -670,13 +670,16 @@ const VOLUME_BOOST_MAX: f32 = nori_player::dsp::VOLUME_BOOST_MAX_DB as f32;
 
 /// The stored ranking, completed with any service it does not name.
 const LYRICS_ORDER: Custom<Vec<LyricsService>> = Custom {
-    load: |t, _| lyrics_sources::complete_order(&lyrics_sources::parse(t.unwrap_or_default())),
+    load: |t, _| lyrics_sources::complete_order(&lyrics_sources::stored_or(t.unwrap_or_default(), lyrics_sources::default_order())),
     save: |o| lyrics_sources::to_names(o),
     set: Some(|v| Some(lyrics_sources::complete_order(&lyrics_sources::parse(v)))),
     show: Some(|o| lyrics_sources::to_names(o)),
 };
 
-const LYRICS_ON: Custom<Vec<LyricsService>> = Custom { load: |t, d| t.map_or(d, lyrics_sources::parse), save: |o| lyrics_sources::to_names(o), set: None, show: None };
+const LYRICS_ON: Custom<Vec<LyricsService>> = Custom { load: |t, d| match t {
+        Some(t) => lyrics_sources::stored_or(t, d),
+        None => d,
+    }, save: |o| lyrics_sources::to_names(o), set: None, show: None };
 
 /// One per line, empty lines dropped.
 const LINES: Custom<Vec<String>> =
@@ -1323,7 +1326,7 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
         // Test bridge: back to the defaults.
         "lyricsSources" if value.trim().eq_ignore_ascii_case("default") => {
             n.lyrics_order = lyrics_sources::default_order();
-            Some(n.lyrics_on = lyrics_sources::default_order())
+            Some(n.lyrics_on = lyrics_sources::default_on())
         }
         // Test bridge: only these services, in this order (`lrclib,unison`).
         "lyricsSources" => {
@@ -2091,10 +2094,10 @@ mod tests {
         // Lyrics services by name.
         let p = StoredPrefs::default();
         let all = p.lyrics_on.len();
-        let off = set_by_name(&p, "lyricsService:portato", "false").unwrap().prefs;
-        assert!(!off.lyrics_on.contains(&LyricsService::Portato) && off.lyrics_on.len() == all - 1);
-        let on = set_by_name(&off, "lyricsService:portato", "true").unwrap().prefs;
-        assert!(on.lyrics_on.contains(&LyricsService::Portato) && on.lyrics_on.len() == all);
+        let off = set_by_name(&p, "lyricsService:kugou", "false").unwrap().prefs;
+        assert!(!off.lyrics_on.contains(&LyricsService::Kugou) && off.lyrics_on.len() == all - 1);
+        let on = set_by_name(&off, "lyricsService:kugou", "true").unwrap().prefs;
+        assert!(on.lyrics_on.contains(&LyricsService::Kugou) && on.lyrics_on.len() == all);
         assert_eq!(on.lyrics_order, p.lyrics_order, "a switch never moves a service");
         let off = set_by_name(&on, "lyricsService:paxsenix", "false").unwrap().prefs;
         assert_eq!((off.lyrics_order.clone(), off.lyrics_on.len()), (p.lyrics_order.clone(), all - 1));
@@ -2114,7 +2117,7 @@ mod tests {
         let keyed = set_by_name(&placed, "paxSenixKey", "  k  ").unwrap().prefs;
         let back = load(&save(&keyed));
         assert_eq!((back.lyrics_on, back.lyrics_order, back.paxsenix_key), (keyed.lyrics_on.clone(), keyed.lyrics_order.clone(), "k".to_string()));
-        assert_eq!(load(&HashMap::new()).lyrics_on, crate::lyrics_sources::default_order(), "nothing stored: the defaults, every service");
+        assert_eq!(load(&HashMap::new()).lyrics_on, crate::lyrics_sources::default_on(), "nothing stored: the default services");
         assert_eq!(load(&HashMap::new()).lyrics_order, crate::lyrics_sources::default_order());
 
         // Effects by name.

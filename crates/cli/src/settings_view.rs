@@ -655,15 +655,10 @@ fn service(id: &str) -> (&'static str, &'static str) {
         "KUGOU" => ("KuGou", "word-timed, CJK · unofficial"),
         "NETEASE" => ("NetEase", "word-timed, Chinese · unofficial"),
         "LYRICS_PLUS" => ("LyricsPlus", "YouLy+, syllable-timed · unofficial"),
-        "SIMPMUSIC" => ("SimpMusic", "community-timed, via YouTube"),
-        "PORTATO" => ("BetterLyrics Portato", "QQ Music, word-timed · unofficial"),
         "PAXSENIX_MUSIXMATCH" => ("PaxSenix Musixmatch", "word-timed · needs a PaxSenix key"),
         "LRCLIB" => ("LRCLIB", "open, line-timed"),
         "PAXSENIX_SPOTIFY" => ("PaxSenix Spotify", "line-timed · needs a PaxSenix key"),
-        "YOUTUBE_CAPTIONS" => ("YouTube captions", "line-timed · unofficial"),
-        "MEGALOBIZ" => ("Megalobiz", "line-timed, scraped"),
         "YOUTUBE_MUSIC" => ("YouTube Music", "untimed · unofficial"),
-        "GENIUS" => ("Genius", "untimed, asked last"),
         _ => ("?", ""),
     }
 }
@@ -1063,12 +1058,12 @@ mod tests {
     fn lyrics_sources_move_and_switch() {
         // All services default on; one is switched off to have an off row.
         let d = StoredPrefs::default();
-        let prefs = StoredPrefs { lyrics_online: true, third_party_lookups: true, lyrics_on: d.lyrics_on.iter().filter(|s| s.name() != "GENIUS").copied().collect(), ..d };
+        let prefs = StoredPrefs { lyrics_online: true, third_party_lookups: true, lyrics_on: d.lyrics_on.iter().filter(|s| s.name() != "UNISON").copied().collect(), ..d };
         let mut v = SettingsView::default();
         let pages = v.pages(&prefs).to_vec();
         let lines = SettingsView::lines(&pages);
         let ranked: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| matches!(l, Line::Row(Row::Ranked { .. }))).map(|(i, _)| i).collect();
-        assert_eq!(ranked.len(), 16);
+        assert_eq!(ranked.len(), nori_core::lyrics_sources::LyricsService::ALL.len());
         assert!(lines.iter().all(|l| !matches!(l, Line::Row(Row::Ranked { title, .. }) if title == "?")), "every service has a name");
         let off = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { on: false, .. }))).unwrap();
         let Line::Row(Row::Ranked { id, name, .. }) = lines[off] else { unreachable!() };

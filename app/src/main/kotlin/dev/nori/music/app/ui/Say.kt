@@ -471,18 +471,14 @@ class Say(private val r: Resources) {
     fun lyricsOrigin(o: LyricsOrigin): String = when (o) {
         LyricsOrigin.SERVER -> r.getString(R.string.lyrics_your_server)
         LyricsOrigin.BINILYRICS -> "BiniLyrics"
-        LyricsOrigin.BETTER_LYRICS, LyricsOrigin.PORTATO -> "BetterLyrics"
+        LyricsOrigin.BETTER_LYRICS -> "BetterLyrics"
         LyricsOrigin.PAXSENIX, LyricsOrigin.PAXSENIX_MUSIXMATCH, LyricsOrigin.PAXSENIX_SPOTIFY -> "PaxSenix"
         LyricsOrigin.LYRICS_PLUS -> "LyricsPlus"
-        LyricsOrigin.SIMPMUSIC -> "SimpMusic"
         LyricsOrigin.UNISON -> "Unison"
         LyricsOrigin.NETEASE -> "NetEase"
         LyricsOrigin.KUGOU -> "KuGou"
         LyricsOrigin.LRCLIB -> "LRCLIB"
-        LyricsOrigin.YOUTUBE_CAPTIONS -> "YouTube"
-        LyricsOrigin.MEGALOBIZ -> "Megalobiz"
         LyricsOrigin.YOUTUBE_MUSIC -> "YouTube Music"
-        LyricsOrigin.GENIUS -> "Genius"
     }
 
     /**

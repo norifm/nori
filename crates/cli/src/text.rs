@@ -185,18 +185,14 @@ pub fn lyrics_origin(origin: LyricsOrigin) -> &'static str {
     match origin {
         LyricsOrigin::Server => "your server",
         LyricsOrigin::Binilyrics => "BiniLyrics",
-        LyricsOrigin::BetterLyrics | LyricsOrigin::Portato => "BetterLyrics",
+        LyricsOrigin::BetterLyrics => "BetterLyrics",
         LyricsOrigin::Paxsenix | LyricsOrigin::PaxsenixMusixmatch | LyricsOrigin::PaxsenixSpotify => "PaxSenix",
         LyricsOrigin::LyricsPlus => "LyricsPlus",
-        LyricsOrigin::Simpmusic => "SimpMusic",
         LyricsOrigin::Unison => "Unison",
         LyricsOrigin::Netease => "NetEase",
         LyricsOrigin::Kugou => "KuGou",
         LyricsOrigin::Lrclib => "LRCLIB",
-        LyricsOrigin::YoutubeCaptions => "YouTube",
-        LyricsOrigin::Megalobiz => "Megalobiz",
         LyricsOrigin::YoutubeMusic => "YouTube Music",
-        LyricsOrigin::Genius => "Genius",
     }
 }
 

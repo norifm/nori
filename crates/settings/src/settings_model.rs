@@ -460,10 +460,11 @@ mod tests {
         let order: Vec<&str> = d.lyrics_order.iter().map(|s| s.name()).collect();
         assert_eq!(s.lyrics_sources.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), order);
         let on: Vec<&str> = s.lyrics_sources.iter().filter(|l| l.on).map(|l| l.id.as_str()).collect();
-        assert_eq!(on, order, "every service on");
+        let defaults: Vec<&str> = crate::lyrics_sources::default_on().iter().map(|s| s.name()).collect();
+        assert_eq!(on, defaults, "the default services on");
         let off = set_by_name(&d, "lyricsService:BINILYRICS", "false").unwrap().prefs;
         let s2 = state(&off, Output::default(), &beat_model::ModelFile::default());
-        assert_eq!(s2.lyrics_sources[1], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false }, "switched off where it stands");
+        assert_eq!(s2.lyrics_sources[5], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false }, "switched off where it stands");
         assert!(s.lyrics_sources.iter().any(|l| l.needs_key));
         assert_eq!(s.beat_model == BeatModel::Unavailable, !beats::AVAILABLE);
     }

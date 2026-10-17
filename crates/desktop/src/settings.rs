@@ -432,18 +432,13 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
         "BETTER_LYRICS" => ("BetterLyrics", "Apple Music's lyrics, syllable by syllable. Finds more with a key. Unofficial."),
         "PAXSENIX" => ("PaxSenix", "Apple Music's lyrics, syllable by syllable, looked up another way. Unofficial."),
         "LYRICS_PLUS" => ("LyricsPlus", "Apple Music's lyrics and others', syllable by syllable, from volunteers. Unofficial."),
-        "PORTATO" => ("BetterLyrics Portato", "QQ Music's lyrics, word by word. Strong on Chinese music. Unofficial."),
         "PAXSENIX_MUSIXMATCH" => ("PaxSenix: Musixmatch", "Musixmatch's lyrics, often word by word. Needs a PaxSenix key."),
-        "SIMPMUSIC" => ("SimpMusic", "Lyrics timed by listeners, often word by word, matched to the song on YouTube."),
         "UNISON" => ("Unison", "Open, written and timed by listeners. Many songs word by word."),
         "NETEASE" => ("NetEase Cloud Music", "The Chinese streaming service's own lyrics, often word by word. Unofficial."),
         "KUGOU" => ("KuGou", "Strong on Chinese, Japanese and Korean music, often word by word. Unofficial."),
         "LRCLIB" => ("LRCLIB", "Open and run by volunteers. Timed line by line, some songs word by word."),
         "PAXSENIX_SPOTIFY" => ("PaxSenix: Spotify", "Spotify's lyrics, timed line by line. Needs a PaxSenix key."),
-        "YOUTUBE_CAPTIONS" => ("YouTube captions", "The captions of the song on YouTube, timed line by line. Unofficial."),
-        "MEGALOBIZ" => ("Megalobiz", "Lyrics timed line by line by its users, read off its pages."),
         "YOUTUBE_MUSIC" => ("YouTube Music", "The words YouTube Music shows for the song. Not timed. Unofficial."),
-        "GENIUS" => ("Genius", "The biggest catalogue of words, not timed. Asked only when nobody has timed lyrics."),
         _ => return None,
     })
 }

@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use crate::fit::norm;
 use crate::lrclib::{self, clean, form_encode, DURATION_SLACK_S};
 use crate::trust::{latin, Named};
-use crate::{formats, html, json as answers, lyrics};
+use crate::{formats, json as answers, lyrics};
 
 /// A service's answer. `Failed` (unreachable, refused, unknown shape, too slow) is never kept as a miss.
 #[derive(Debug, Clone, PartialEq)]
@@ -329,19 +329,14 @@ pub async fn ask(service: LyricsService, a: &Ask<'_>, song: &Song) -> Lookup {
         LyricsService::Lrclib => return lrclib(a, song).await,
         LyricsService::Binilyrics => bini_lyrics(a, song).await,
         LyricsService::BetterLyrics => better_lyrics(a, song, "/getLyrics", &keys.better_lyrics_key).await,
-        LyricsService::Portato => better_lyrics(a, song, "/qq/getLyrics", &keys.better_lyrics_key).await,
         LyricsService::Paxsenix => paxsenix(a, song).await,
         LyricsService::PaxsenixSpotify => paxsenix_spotify(a, song, &keys.paxsenix_key).await,
         LyricsService::PaxsenixMusixmatch => paxsenix_musixmatch(a, song, &keys.paxsenix_key).await,
         LyricsService::LyricsPlus => return lyrics_plus(a, song).await,
-        LyricsService::Simpmusic => simpmusic(a, song).await,
         LyricsService::Unison => unison(a, song).await,
         LyricsService::Netease => netease(a, song).await,
         LyricsService::Kugou => kugou(a, song).await,
-        LyricsService::YoutubeCaptions => youtube_captions(a, song).await,
-        LyricsService::Megalobiz => megalobiz(a, song).await,
         LyricsService::YoutubeMusic => youtube_music(a, song).await,
-        LyricsService::Genius => genius(a, song).await,
     };
     settle(service, r)
 }
@@ -483,7 +478,7 @@ async fn bini_lyrics(a: &Ask<'_>, song: &Song) -> Asked<Lookup> {
 /// cannot be reached.
 const BETTER_LYRICS_HOSTS: [&str; 2] = ["https://api.betterlyrics.org", "https://lyrics-api.boidu.dev"];
 
-/// BetterLyrics: Apple Music's TTML (`/getLyrics`) or QQ Music's QRC (`/qq/getLyrics`, "Portato").
+/// BetterLyrics: Apple Music's TTML (`/getLyrics`).
 /// A song not stored yet needs a key; without one its 401 is a miss (race.rs keys the cache on the key).
 async fn better_lyrics(a: &Ask<'_>, song: &Song, path: &str, key: &str) -> Asked<Lookup> {
     let query = song_query(song, "s", "a", Some("al"), Some("d"));
@@ -648,7 +643,7 @@ async fn youtube(a: &Ask<'_>, endpoint: &str, mut body: Value) -> Asked<String> 
 /// How many songs' YouTube matches [`LyricsMemory`] keeps.
 const YOUTUBE_KEPT: usize = 32;
 
-/// This song's YouTube Music video, for SimpMusic, the captions and the lyrics tab: a Songs search, the
+/// This song's YouTube Music video, for the lyrics tab: a Songs search, the
 /// closest fitting result. Found once per lookup and remembered per client; a failed search is not.
 async fn youtube_id(a: &Ask<'_>, song: &Song) -> Asked<Option<String>> {
     let mut mine = a.shared.youtube.lock().await;
@@ -673,49 +668,6 @@ async fn youtube_id(a: &Ask<'_>, song: &Song) -> Asked<Option<String>> {
     Ok(id)
 }
 
-/// SimpMusic's lyrics database, keyed on the YouTube video: of the entries within the length slack, the
-/// closest, and its finest timed text (served HTML-escaped).
-async fn simpmusic(a: &Ask<'_>, song: &Song) -> Asked<Lookup> {
-    let Some(id) = youtube_id(a, song).await? else { return Ok(Lookup::Missing) };
-    let o = a.get_json(&format!("https://api-lyrics.simpmusic.org/v1/{}", enc(&id)), &[]).await?;
-    let Some(entries) = list(&o, "data").filter(|_| truthy(&o, "success")) else { return Ok(Lookup::Missing) };
-    let fitting = entries.iter().filter(|e| same_length(num(e, "duration"), song)).collect();
-    let Some(entry) = closest_first(song, fitting, |e| num(e, "duration")).into_iter().next() else { return Ok(Lookup::Missing) };
-    let best = ["richSyncLyrics", "syncedLyrics", "plainLyrics"]
-        .iter()
-        .filter_map(|k| text(entry, k))
-        .map(html::from_escaped_lrc)
-        .filter(|l| !l.lines.is_empty())
-        .max_by_key(formats::timing);
-    Ok(best.map_or(Lookup::Missing, |l| Lookup::Found(l, Named { duration_s: Some(num(entry, "duration")).filter(|d| *d > 0.0), ..Named::default() })))
-}
-
-/// Standard padded base64.
-pub(crate) fn base64(bytes: &[u8]) -> String {
-    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = chunk.iter().enumerate().fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
-        for k in 0..4 {
-            out.push(if k <= chunk.len() { ABC[(n >> (18 - 6 * k) & 63) as usize] as char } else { '=' });
-        }
-    }
-    out
-}
-
-/// The captions of the song's YouTube video, a line at a time (often a speech recogniser's).
-async fn youtube_captions(a: &Ask<'_>, song: &Song) -> Asked<Lookup> {
-    let Some(id) = youtube_id(a, song).await? else { return Ok(Lookup::Missing) };
-    // get_transcript takes a one-field protobuf message (field 1: the video id), base64.
-    let mut message = vec![0x0a, id.len() as u8];
-    message.extend_from_slice(id.as_bytes());
-    match youtube(a, "get_transcript", json!({ "params": base64(&message) })).await {
-        // A video without a transcript is refused with a 400.
-        Err(Fail::Status(400)) => Ok(Lookup::Missing),
-        other => Ok(found(answers::from_youtube_captions(&other?), Named::default())),
-    }
-}
-
 /// The untimed words of YouTube Music's Lyrics tab, found from the `next` call and then browsed.
 async fn youtube_music(a: &Ask<'_>, song: &Song) -> Asked<Lookup> {
     let Some(id) = youtube_id(a, song).await? else { return Ok(Lookup::Missing) };
@@ -726,38 +678,6 @@ async fn youtube_music(a: &Ask<'_>, song: &Song) -> Asked<Lookup> {
         request["params"] = Value::String(params);
     }
     Ok(found(answers::from_youtube_music(&youtube(a, "browse", request).await?), Named::default()))
-}
-
-/// Megalobiz: user-made LRC shown on pages. The first two result pages naming the song; a page gives no
-/// length, so its last line must come before the song ends.
-async fn megalobiz(a: &Ask<'_>, song: &Song) -> Asked<Lookup> {
-    let title = clean(&song.title);
-    let search = a.get(&format!("https://www.megalobiz.com/searchall?qry={}", enc(&format!("{} {title}", song.artist))), &[]).await?;
-    for link in html::megalobiz_links(&search, &title, &song.artist).into_iter().take(2) {
-        let words = html::from_megalobiz(&a.get(&format!("https://www.megalobiz.com{link}"), &[]).await?);
-        let Some(last) = words.lines.last().map(|l| l.start_ms) else { continue };
-        if song.duration == 0 || last <= song.duration as i64 * 1000 + 4_000 {
-            return Ok(Lookup::Found(words, Named::default()));
-        }
-    }
-    Ok(Lookup::Missing)
-}
-
-/// Genius: untimed words, asked last. Its site search, the first song result with this title and artist
-/// that is not a translation or an instrumental, then that page's words.
-async fn genius(a: &Ask<'_>, song: &Song) -> Asked<Lookup> {
-    let title = clean(&song.title);
-    let o = a.get_json(&format!("https://genius.com/api/search/multi?q={}", enc(&format!("{} {title}", song.artist))), &[]).await?;
-    let sections = o.get("response").and_then(|r| list(r, "sections")).ok_or_else(|| shape("no sections"))?;
-    let url = sections
-        .iter()
-        .filter(|x| str_of(x, "type") == "song")
-        .flat_map(|x| list(x, "hits").into_iter().flatten())
-        .filter_map(|h| h.get("result"))
-        .filter(|r| alike(&str_of(r, "title"), &title) && alike(&str_of(r, "artist_names"), &song.artist) && !truthy(r, "instrumental") && !str_of(r, "path").to_lowercase().contains("translation"))
-        .find_map(|r| text(r, "url").filter(|u| u.starts_with("https://genius.com/")).map(|u| (u, Named::new(&str_of(r, "title"), &str_of(r, "artist_names"), "", 0.0))));
-    let Some((url, named)) = url else { return Ok(Lookup::Missing) };
-    Ok(found(html::from_genius(&a.get(url, &[]).await?), named))
 }
 
 #[cfg(test)]
@@ -837,7 +757,6 @@ pub(crate) mod tests {
         let s = Song { duration: 200, ..Default::default() };
         assert!(same_length(203.0, &s) && same_length(203_500.0, &s) && !same_length(205.0, &s));
         assert!(same_length(0.0, &s) && same_length(f64::NAN, &s), "unknown passes");
-        assert_eq!(base64(b"hello"), "aGVsbG8=");
         assert_eq!(bearer("Bearer  k "), "Bearer k");
 
         // Names this rejects other songs.
@@ -967,18 +886,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn youtube_search_shared() {
+    fn youtube_music_lyrics() {
         let web = Web::default();
         web.answer("https://music.youtube.com/youtubei/v1/search", 200, include_str!("../testdata/youtube-search.json"));
-        web.answer("https://music.youtube.com/youtubei/v1/get_transcript", 400, "");
-        web.answer("https://api-lyrics.simpmusic.org/v1/AbCdEfGhIjK", 200, &json!({"success": true, "data": [{"duration": 239, "syncedLyrics": "[00:01.00]It&#x27;s here"}]}).to_string());
-        let (k, shared) = (keys(), Shared::default());
+        web.answer("https://music.youtube.com/youtubei/v1/next", 404, "");
         let s = Song { title: "Glass Harbour".into(), ..song() };
-        let caption = block(ask(LyricsService::YoutubeCaptions, &Ask::new(&web, &k, &shared, LyricsService::YoutubeCaptions), &s));
-        assert_eq!(caption, Lookup::Missing, "no transcript");
-        let Lookup::Found(l, _) = block(ask(LyricsService::Simpmusic, &Ask::new(&web, &k, &shared, LyricsService::Simpmusic), &s)) else { panic!("found") };
-        assert_eq!(l.lines[0].text, "It's here");
-        assert_eq!(web.asked().iter().filter(|u| u.contains("/search")).count(), 1);
+        assert_eq!(block(ask(LyricsService::YoutubeMusic, &Ask::new(&web, &keys(), &Shared::default(), LyricsService::YoutubeMusic), &s)), Lookup::Missing, "no lyrics tab");
+        assert!(web.asked().iter().any(|u| u.contains("/next")), "the song's video was found and asked about: {:?}", web.asked());
         let body: Value = serde_json::from_str(web.sent.lock()[0].json.as_deref().unwrap()).unwrap();
         assert_eq!(body["context"]["client"]["clientName"], "WEB_REMIX");
     }
