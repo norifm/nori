@@ -131,16 +131,23 @@ fn place(songs: &[Song], index: u32, position_ms: u64) -> Option<QueuePlace> {
     songs.get(index as usize).map(|s| QueuePlace { song: s.id.clone(), position_ms })
 }
 
-/// The queue `saved` on the server by the app named `by`, offered to a device playing its song `here`
-/// (or nothing) unless something plays, its song is the one here already, it stands where this device
-/// left it (`ours`), or it was offered before (`seen`).
+/// The queue `saved` on the server by the app named `by`, offered to a device showing its song `here`
+/// (or nothing) unless the offer does not stand ([`offer_stands`]), it stands where this device left it
+/// (`ours`), or it was offered before (`seen`).
 pub fn queue_offer(saved: PlayQueue, by: &str, here: Option<&str>, playing: bool, ours: Option<&QueuePlace>, seen: Option<&QueuePlace>) -> Option<QueueOffer> {
     let at = place(&saved.songs, saved.index, saved.position_ms)?;
-    if playing || here == Some(at.song.as_str()) || ours == Some(&at) || seen == Some(&at) {
+    if !offer_stands(&at.song, here.map(String::from), playing) || ours == Some(&at) || seen == Some(&at) {
         return None;
     }
     let by = if by == nori_net::api::CLIENT { QueueBy::Nori } else { QueueBy::App { name: by.to_string() } };
     Some(QueueOffer { by, songs: saved.songs, index: saved.index, position_ms: saved.position_ms })
+}
+
+/// Whether an offer of a queue at the song `offered` is still worth showing on a device that shows the song
+/// `here` (its own, or another device's it controls) and is `playing` or not.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn offer_stands(offered: &str, here: Option<String>, playing: bool) -> bool {
+    !playing && here.as_deref() != Some(offered)
 }
 
 /// The favourites handed to the mixes from the stored answer, and what `mix_favourites_refresh` needs.
