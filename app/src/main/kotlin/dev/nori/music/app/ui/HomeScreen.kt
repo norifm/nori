@@ -65,6 +65,8 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
     val noLibrary = LocalRules.current.sections.isEmpty()
     val closed by vm.closedToGuests.collectAsStateWithLifecycle()
     val offer by vm.offer.collectAsStateWithLifecycle()
+    // The last offer shown, drawn while its card leaves after the offer itself is gone.
+    val shownOffer = remember { arrayOfNulls<dev.nori.music.ffi.library.QueueOffer>(1) }
     // Each time the page comes into sight: back from another app, or the phone unlocked.
     androidx.lifecycle.compose.LifecycleStartEffect(Unit) { vm.lookForOffer(); onStopOrDispose {} }
     LoadBox(load) { ui ->
@@ -84,7 +86,27 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             // Only the title, as Apple's: shuffling the library lives in Library, and which rows this page has
             // in Settings, Appearance.
             item(key = "title") { LargeTitle(say.listenNow, Modifier.arriving(arrival, 0, rise)) }
-            offer?.let { o -> item(key = "offer") { QueueOfferCard(o, actions, vm::takeOffer, vm::dismissOffer) } }
+            // The card stays in the list while it goes: taken or turned down, it fades and settles back as its
+            // room folds away and the page below rises into it. Arriving, it is simply there. Taken, the queue
+            // starts once the card has gone: starting playback holds the main thread for a few frames, which
+            // would cut the card's leaving short.
+            if (offer != null) shownOffer[0] = offer
+            shownOffer[0]?.let { o ->
+                item(key = "offer") {
+                    val ms = if (reduceMotion()) 0 else 320
+                    var taking by remember(o) { mutableStateOf(false) }
+                    val shown = remember { androidx.compose.animation.core.MutableTransitionState(true) }
+                    shown.targetState = offer != null && !taking
+                    if (taking && shown.isIdle && !shown.currentState) LaunchedEffect(o) { vm.takeOffer() }
+                    androidx.compose.animation.AnimatedVisibility(
+                        shown,
+                        enter = androidx.compose.animation.EnterTransition.None,
+                        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms * 2 / 3)) +
+                            androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(ms), targetScale = 0.94f) +
+                            androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(ms, easing = androidx.compose.animation.core.FastOutSlowInEasing)),
+                    ) { QueueOfferCard(o, actions, { taking = true }, vm::dismissOffer) }
+                }
+            }
             if (closed && ui.rows.all { it.isEmpty }) item(key = "closed") {
                 Text(say.homeClosedToGuests, Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
