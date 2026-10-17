@@ -207,16 +207,11 @@ impl SettingsStore {
 
 /// The live settings of one app, empty (the defaults) until opened, and the beat model's file, which
 /// follows its switch. The platform holds one for the app and hands it to the queue's session.
+#[derive(Default)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
 pub struct Settings {
     kept: RwLock<Option<SettingsStore>>,
     pub model: nori_automix::beat_model::ModelFile,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings { kept: RwLock::default(), model: nori_automix::beat_model::ModelFile::default() }
-    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
