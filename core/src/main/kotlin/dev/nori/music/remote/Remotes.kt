@@ -390,6 +390,9 @@ class Remotes(private val context: Context, private val nori: Nori) {
     /** Leaves the jam this guest profile is in; its music stops here at once (the core's `jam_leave`). */
     fun leave() = work { remote?.jamLeave() }
 
+    /** The phone is on a network again: a poll that failed asks again now (the core's `network_back`). */
+    fun networkBack() = work { remote?.networkBack() }
+
     /**
      * The remote for the profile in use as it asks now: one of a profile no longer in use goes (a jam
      * guest's with its jam, so the player is this phone's own again), and one is built if asked for. Called
