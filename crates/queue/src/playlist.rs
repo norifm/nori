@@ -179,80 +179,6 @@ impl Session {
         self.edit_splice(|p| p.unbridge(), Vec::new())
     }
 
-    pub fn bridge_state(&self) -> BridgeState {
-        self.playlist(|p| BridgeState { bridging: p.bridging(), next_is_parked: p.next_is_parked(), parked: p.parked_id().map(str::to_string), current: p.current_id().map(str::to_string) })
-    }
-
-    /// Sets a new queue starting at `start` (None: wherever shuffle starts), from page `origin`.
-    pub fn set(&self, ids: Vec<String>, start: Option<u32>, shuffle: bool, origin: Option<PageOrigin>) -> QueueChange {
-        let mut q = self.queue.lock();
-        q.set_origin(origin);
-        let at = q.list.set(ids, start.map(|s| s as usize), shuffle, seed());
-        q.change(at)
-    }
-
-    /// Sets a queue already in play order (a weighted shuffle), shown as shuffled.
-    pub fn set_ordered(&self, ids: Vec<String>, origin: Option<PageOrigin>) -> QueueChange {
-        let mut q = self.queue.lock();
-        q.set_origin(origin);
-        let at = q.list.set_ordered(ids);
-        q.change(at)
-    }
-
-    /// A queue handed over from another device: from list index `index`, under `shuffle` in `order`
-    /// (shuffled here, from wherever that starts, when there is none), repeating as `repeat` says.
-    pub fn handed(&self, ids: Vec<String>, index: u32, order: Option<Vec<u32>>, shuffle: bool, repeat: u8) -> QueueChange {
-        let mut q = self.queue.lock();
-        q.set_origin(None);
-        let at = match (shuffle, order) {
-            (true, Some(order)) => q.list.set_in_order(ids, index as usize, order.into_iter().map(|i| i as usize).collect(), seed()),
-            (true, None) => q.list.set(ids, None, true, seed()),
-            (false, _) => q.list.set(ids, Some(index as usize), false, seed()),
-        };
-        q.list.set_repeat(repeat);
-        q.change(at)
-    }
-
-    /// Inserts songs near `at`, each marked with how it was added (`hands`); `Playlist::take` picks the
-    /// spot.
-    pub fn take(&self, at: u32, ids: Vec<String>, hands: Vec<Hand>) -> QueueChange {
-        self.edit(|p| Some(p.take(at as usize, ids, &hands)))
-    }
-
-    /// Removes `from..to`; a single song is kept for [`Session::restore`]. Removing the current song
-    /// plays the next.
-    pub fn remove(&self, from: u32, to: u32) -> QueueChange {
-        self.edit(|p| {
-            p.remove_undoably(from as usize, to as usize);
-            p.current()
-        })
-    }
-
-    /// Undo: puts back `id` if it is the last song removed on its own (same index, shuffle turn and
-    /// hand). `at` is None when it is not; the caller then inserts it itself.
-    pub fn restore(&self, id: String) -> QueueChange {
-        self.edit(|p| p.restore_taken(&id))
-    }
-
-    pub fn move_range(&self, from: u32, to: u32, new_index: u32) -> QueueChange {
-        self.edit(|p| {
-            p.move_range(from as usize, to as usize, new_index as usize);
-            p.current()
-        })
-    }
-
-    pub fn shuffle(&self, on: bool) -> QueueChange {
-        self.edit(|p| {
-            p.set_shuffle(on, seed());
-            p.current()
-        })
-    }
-
-    /// Shows shuffle as `on` right away, before the queue change that follows.
-    pub fn show_shuffle(&self, on: bool) {
-        self.queue.lock().list.show_shuffle(on);
-    }
-
     /// Whether shuffle is shown as on (`Playlist::lit`).
     pub fn shuffle_shown(&self) -> bool {
         self.playlist(|p| p.lit())
@@ -261,11 +187,6 @@ impl Session {
     /// The play order while shuffling (list indexes), lent to `f`; None when not shuffling.
     pub fn shuffle_order<R>(&self, f: impl FnOnce(Option<&[usize]>) -> R) -> R {
         self.playlist(|p| f(p.shuffle_order()))
-    }
-
-    /// Sets repeat (media3 numbering: off 0, one 1, all 2).
-    pub fn repeat(&self, mode: u8) {
-        self.queue.lock().list.set_repeat(mode);
     }
 
     /// The player moved to `index` on its own (song ended, seek to another song).
@@ -316,12 +237,6 @@ impl Session {
         true
     }
 
-    /// The current song's ReplayGain volume (`Session::queue_gain`); `bit_perfect`: the output is untouched.
-    pub fn gain(&self, bit_perfect: bool) -> f32 {
-        let around = self.playlist(|p| p.current().map(|c| Around::of(p, c)));
-        self.gain_around(around, bit_perfect)
-    }
-
     /// [`Session::gain`] for index `index` of `list`, the queue as a player last took it (its indexes name
     /// that list's songs while the live one is edited), so it can set the next song's volume ahead of time.
     pub fn gain_of(&self, list: &Playlist, index: usize, bit_perfect: bool) -> f32 {
@@ -355,27 +270,6 @@ impl Session {
             view.songs = self.songs(ids);
         }
         view
-    }
-
-    /// [`Session::view`] only if the queue has `len` songs: while the platform player trails the core
-    /// after a change, its index must not be paired with the core's songs (use [`Session::view_of`] then).
-    pub fn view_for(&self, held: u64, len: u32) -> Option<PlaylistView> {
-        let v = self.view(held);
-        (v.len == len).then_some(v)
-    }
-
-    /// A view built from the platform player's own list while it trails the core's: `ids`, `hands` and
-    /// its play `order` (the list order if `order` is not a permutation). Songs are always sent;
-    /// `list_rev` 0 and `rev` `u64::MAX` keep readers from mistaking it for the core's list.
-    pub fn view_of(&self, ids: Vec<String>, hands: Vec<Hand>, order: Vec<u32>) -> PlaylistView {
-        let len = ids.len();
-        let mut seen = vec![false; len];
-        let permutation = order.len() == len && order.iter().all(|&i| seen.get_mut(i as usize).is_some_and(|s| !std::mem::replace(s, true)));
-        let order = if permutation { order } else { (0..len as u32).collect() };
-        let queued = (0..len as u32).filter(|&i| hands.get(i as usize).is_some_and(|h| *h != Hand::No)).collect();
-        let (shuffle, repeat, bridging) = self.playlist(|p| (p.lit(), p.repeat(), p.bridging()));
-        let songs = if ids.is_empty() { Vec::new() } else { self.songs(ids) };
-        PlaylistView { songs, len: len as u32, list_rev: 0, order, queued, index: -1, shuffle, repeat, bridging, rev: u64::MAX }
     }
 
     /// Changes whenever the list or its order does.
@@ -425,79 +319,124 @@ impl Session {
         self.from_page(&page)
     }
 
-    /// [`Session::unbridge`].
-    pub fn playlist_unbridge(&self) -> Option<QueueEdit> {
-        self.unbridge()
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_bridge_state"))]
+    pub fn bridge_state(&self) -> BridgeState {
+        self.playlist(|p| BridgeState { bridging: p.bridging(), next_is_parked: p.next_is_parked(), parked: p.parked_id().map(str::to_string), current: p.current_id().map(str::to_string) })
     }
 
-    /// [`Session::bridge_state`].
-    pub fn playlist_bridge_state(&self) -> BridgeState {
-        self.bridge_state()
+    /// Sets a new queue starting at `start` (None: wherever shuffle starts), from page `origin`.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set"))]
+    pub fn set(&self, ids: Vec<String>, start: Option<u32>, shuffle: bool, origin: Option<PageOrigin>) -> QueueChange {
+        let mut q = self.queue.lock();
+        q.set_origin(origin);
+        let at = q.list.set(ids, start.map(|s| s as usize), shuffle, seed());
+        q.change(at)
     }
 
-    /// [`Session::set`].
-    pub fn playlist_set(&self, ids: Vec<String>, start: Option<u32>, shuffle: bool, origin: Option<PageOrigin>) -> QueueChange {
-        self.set(ids, start, shuffle, origin)
+    /// Sets a queue already in play order (a weighted shuffle), shown as shuffled.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set_ordered"))]
+    pub fn set_ordered(&self, ids: Vec<String>, origin: Option<PageOrigin>) -> QueueChange {
+        let mut q = self.queue.lock();
+        q.set_origin(origin);
+        let at = q.list.set_ordered(ids);
+        q.change(at)
     }
 
-    /// [`Session::set_ordered`].
-    pub fn playlist_set_ordered(&self, ids: Vec<String>, origin: Option<PageOrigin>) -> QueueChange {
-        self.set_ordered(ids, origin)
+    /// A queue handed over from another device: from list index `index`, under `shuffle` in `order`
+    /// (shuffled here, from wherever that starts, when there is none), repeating as `repeat` says.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_handed"))]
+    pub fn handed(&self, ids: Vec<String>, index: u32, order: Option<Vec<u32>>, shuffle: bool, repeat: u8) -> QueueChange {
+        let mut q = self.queue.lock();
+        q.set_origin(None);
+        let at = match (shuffle, order) {
+            (true, Some(order)) => q.list.set_in_order(ids, index as usize, order.into_iter().map(|i| i as usize).collect(), seed()),
+            (true, None) => q.list.set(ids, None, true, seed()),
+            (false, _) => q.list.set(ids, Some(index as usize), false, seed()),
+        };
+        q.list.set_repeat(repeat);
+        q.change(at)
     }
 
-    /// [`Session::handed`].
-    pub fn playlist_handed(&self, ids: Vec<String>, index: u32, order: Option<Vec<u32>>, shuffle: bool, repeat: u8) -> QueueChange {
-        self.handed(ids, index, order, shuffle, repeat)
+    /// Inserts songs near `at`, each marked with how it was added (`hands`); `Playlist::take` picks the
+    /// spot.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_take"))]
+    pub fn take(&self, at: u32, ids: Vec<String>, hands: Vec<Hand>) -> QueueChange {
+        self.edit(|p| Some(p.take(at as usize, ids, &hands)))
     }
 
-    /// [`Session::take`].
-    pub fn playlist_take(&self, at: u32, ids: Vec<String>, hands: Vec<Hand>) -> QueueChange {
-        self.take(at, ids, hands)
+    /// Removes `from..to`; a single song is kept for [`Session::restore`]. Removing the current song
+    /// plays the next.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_remove"))]
+    pub fn remove(&self, from: u32, to: u32) -> QueueChange {
+        self.edit(|p| {
+            p.remove_undoably(from as usize, to as usize);
+            p.current()
+        })
     }
 
-    /// [`Session::remove`].
-    pub fn playlist_remove(&self, from: u32, to: u32) -> QueueChange {
-        self.remove(from, to)
+    /// Undo: puts back `id` if it is the last song removed on its own (same index, shuffle turn and
+    /// hand). `at` is None when it is not; the caller then inserts it itself.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_restore"))]
+    pub fn restore(&self, id: String) -> QueueChange {
+        self.edit(|p| p.restore_taken(&id))
     }
 
-    /// [`Session::restore`].
-    pub fn playlist_restore(&self, id: String) -> QueueChange {
-        self.restore(id)
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_move"))]
+    pub fn move_range(&self, from: u32, to: u32, new_index: u32) -> QueueChange {
+        self.edit(|p| {
+            p.move_range(from as usize, to as usize, new_index as usize);
+            p.current()
+        })
     }
 
-    /// [`Session::move_range`].
-    pub fn playlist_move(&self, from: u32, to: u32, new_index: u32) -> QueueChange {
-        self.move_range(from, to, new_index)
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_shuffle"))]
+    pub fn shuffle(&self, on: bool) -> QueueChange {
+        self.edit(|p| {
+            p.set_shuffle(on, seed());
+            p.current()
+        })
     }
 
-    /// [`Session::shuffle`].
-    pub fn playlist_shuffle(&self, on: bool) -> QueueChange {
-        self.shuffle(on)
+    /// Shows shuffle as `on` right away, before the queue change that follows.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_show_shuffle"))]
+    pub fn show_shuffle(&self, on: bool) {
+        self.queue.lock().list.show_shuffle(on);
     }
 
-    /// [`Session::show_shuffle`].
-    pub fn playlist_show_shuffle(&self, on: bool) {
-        self.show_shuffle(on)
+    /// Sets repeat (media3 numbering: off 0, one 1, all 2).
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_repeat"))]
+    pub fn repeat(&self, mode: u8) {
+        self.queue.lock().list.set_repeat(mode);
     }
 
-    /// [`Session::repeat`].
-    pub fn playlist_repeat(&self, mode: u8) {
-        self.repeat(mode)
+    /// The current song's ReplayGain volume (`Session::queue_gain`); `bit_perfect`: the output is untouched.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_gain"))]
+    pub fn gain(&self, bit_perfect: bool) -> f32 {
+        let around = self.playlist(|p| p.current().map(|c| Around::of(p, c)));
+        self.gain_around(around, bit_perfect)
     }
 
-    /// [`Session::gain`].
-    pub fn playlist_gain(&self, bit_perfect: bool) -> f32 {
-        self.gain(bit_perfect)
+    /// [`Session::view`] only if the queue has `len` songs: while the platform player trails the core
+    /// after a change, its index must not be paired with the core's songs (use [`Session::view_of`] then).
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_view_for"))]
+    pub fn view_for(&self, held: u64, len: u32) -> Option<PlaylistView> {
+        let v = self.view(held);
+        (v.len == len).then_some(v)
     }
 
-    /// [`Session::view_for`].
-    pub fn playlist_view_for(&self, held: u64, len: u32) -> Option<PlaylistView> {
-        self.view_for(held, len)
-    }
-
-    /// [`Session::view_of`].
-    pub fn playlist_view_of(&self, ids: Vec<String>, hands: Vec<Hand>, order: Vec<u32>) -> PlaylistView {
-        self.view_of(ids, hands, order)
+    /// A view built from the platform player's own list while it trails the core's: `ids`, `hands` and
+    /// its play `order` (the list order if `order` is not a permutation). Songs are always sent;
+    /// `list_rev` 0 and `rev` `u64::MAX` keep readers from mistaking it for the core's list.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_view_of"))]
+    pub fn view_of(&self, ids: Vec<String>, hands: Vec<Hand>, order: Vec<u32>) -> PlaylistView {
+        let len = ids.len();
+        let mut seen = vec![false; len];
+        let permutation = order.len() == len && order.iter().all(|&i| seen.get_mut(i as usize).is_some_and(|s| !std::mem::replace(s, true)));
+        let order = if permutation { order } else { (0..len as u32).collect() };
+        let queued = (0..len as u32).filter(|&i| hands.get(i as usize).is_some_and(|h| *h != Hand::No)).collect();
+        let (shuffle, repeat, bridging) = self.playlist(|p| (p.lit(), p.repeat(), p.bridging()));
+        let songs = if ids.is_empty() { Vec::new() } else { self.songs(ids) };
+        PlaylistView { songs, len: len as u32, list_rev: 0, order, queued, index: -1, shuffle, repeat, bridging, rev: u64::MAX }
     }
 }
 

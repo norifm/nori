@@ -89,25 +89,6 @@ impl Session {
         self.controls.lock().played();
     }
 
-    /// The last playback error until music plays again, so a player that stopped after an error run can
-    /// say why.
-    pub fn last_error(&self) -> Option<PlaybackError> {
-        self.controls.lock().last_error
-    }
-
-    /// The offline bridge could not take a network failure: whether to skip it.
-    pub fn bridge_failed(&self) -> bool {
-        let skip = self.settings.prefs(|p| p.skip_on_error);
-        let has_next = self.playlist(|p| p.next().is_some());
-        self.controls.lock().errors.bridge_failed(skip, has_next)
-    }
-
-    /// Music is actually playing: ends the error run. A new song alone does not, since an error's skip is one.
-    pub fn playing(&self) {
-        self.controls.lock().played();
-    }
-
-
     /// The song changed: whether the sleep timer now pauses at its end.
     pub fn sleep_song_changed(&self) -> bool {
         let mut c = self.controls.lock();
@@ -120,19 +101,25 @@ impl Session {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Session {
-    /// [`Session::last_error`].
-    pub fn queue_last_error(&self) -> Option<PlaybackError> {
-        self.last_error()
+    /// The last playback error until music plays again, so a player that stopped after an error run can
+    /// say why.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "queue_last_error"))]
+    pub fn last_error(&self) -> Option<PlaybackError> {
+        self.controls.lock().last_error
     }
 
-    /// [`Session::bridge_failed`].
-    pub fn queue_bridge_failed(&self) -> bool {
-        self.bridge_failed()
+    /// The offline bridge could not take a network failure: whether to skip it.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "queue_bridge_failed"))]
+    pub fn bridge_failed(&self) -> bool {
+        let skip = self.settings.prefs(|p| p.skip_on_error);
+        let has_next = self.playlist(|p| p.next().is_some());
+        self.controls.lock().errors.bridge_failed(skip, has_next)
     }
 
-    /// [`Session::playing`].
-    pub fn queue_playing(&self) {
-        self.playing()
+    /// Music is actually playing: ends the error run. A new song alone does not, since an error's skip is one.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "queue_playing"))]
+    pub fn playing(&self) {
+        self.controls.lock().played();
     }
 
     /// Sets the sleep timer to `songs` songs or the end of this one (0/false cancel). Returns whether to
