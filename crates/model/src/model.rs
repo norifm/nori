@@ -760,41 +760,7 @@ pub enum FadeCurve {
     SineSquared,
 }
 
-pub use nori_player::policy::{AudioPolicy, AudioPrefs, GainMode, GainTags, OutputState};
-
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Record)]
-pub struct AudioPrefs {
-    pub dsp: bool,
-    pub skip_silence: bool,
-    pub offload: bool,
-    pub crossfade_s: i32,
-    pub auto_mix: bool,
-    pub speed: f32,
-    pub pitch: f32,
-}
-
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Record)]
-pub struct OutputState {
-    pub hi_res: bool,
-    pub bit_perfect: bool,
-    pub usb: bool,
-    pub offload_refused: bool,
-}
-
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Record)]
-pub struct AudioPolicy {
-    pub untouched: bool,
-    pub float: bool,
-    pub processing: bool,
-    pub transitions_off: bool,
-    pub lock_rate: bool,
-    pub skip_silence: bool,
-    pub offload: bool,
-    pub processor_in_chain: bool,
-}
+pub use nori_player::policy::{AudioPrefs, GainMode, OutputState};
 
 #[cfg(feature = "ffi")]
 #[uniffi::remote(Enum)]
@@ -803,15 +769,6 @@ pub enum GainMode {
     Track,
     Album,
     Auto,
-}
-
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Record)]
-pub struct GainTags {
-    pub track_gain: Option<f32>,
-    pub album_gain: Option<f32>,
-    pub track_peak: Option<f32>,
-    pub album_peak: Option<f32>,
 }
 
 pub use nori_player::device::{Arrival, ArrivalPlan, CurveStep};

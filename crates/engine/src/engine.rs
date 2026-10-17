@@ -1762,8 +1762,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             self.p.tracks.encoding = encoding;
             self.p.sink.track.exact = policy.untouched;
             self.p.gain_off = bit_perfect;
-            self.p.engine.lock_rate = policy.lock_rate;
-            self.p.app.transitions_off(policy.transitions_off);
+            self.p.engine.lock_rate = !policy.untouched;
+            self.p.app.transitions_off(policy.untouched);
             self.gain_changed |= was.bit_perfect != now.bit_perfect;
         }
         // The equalizer stays in (flat) but for bit-perfect output.

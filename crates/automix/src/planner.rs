@@ -92,7 +92,7 @@ impl Planner {
         Arc::new(Planner { state: Mutex::new(State::new()), db, read_settings, worker: OnceLock::new(), planned: Mutex::new(None) })
     }
 
-    /// Whether the output forbids touching samples (`AudioPolicy::transitions_off`); set whenever the
+    /// Whether the output forbids touching samples (`AudioPolicy::untouched`); set whenever the
     /// policy changes.
     pub fn transition_setup(&self, transitions_off: bool) {
         let mut p = self.state.lock();

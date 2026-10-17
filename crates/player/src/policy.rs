@@ -36,37 +36,25 @@ pub struct OutputState {
 /// What the chain may do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioPolicy {
-    /// The file's samples must reach the output unchanged.
+    /// The file's samples must reach the output unchanged: no crossfades or AutoMix, and the output
+    /// format follows each track (the transition engine's `lock_rate` is off).
     pub untouched: bool,
     /// Decode to float, process in float, open the device for float (hi-res or bit-perfect).
     pub float: bool,
-    /// The sound chain processes the samples.
-    pub processing: bool,
-    /// Crossfades and AutoMix are disabled.
-    pub transitions_off: bool,
-    /// Latch the output format to the first track's (see the transition engine).
-    pub lock_rate: bool,
     pub skip_silence: bool,
     /// The audio chip decodes.
     pub offload: bool,
-    /// Keep the (possibly flat) sound chain in the path so enabling it later needs no rebuild.
-    pub processor_in_chain: bool,
 }
 
 /// Bit-perfect disables everything that touches samples; hi-res only raises precision. Offload needs
 /// nothing to touch the samples and no USB output.
 pub fn audio_policy(p: &AudioPrefs, o: &OutputState) -> AudioPolicy {
     let untouched = o.bit_perfect;
-    let offload = offload_blocked(p, o).is_none();
     AudioPolicy {
         untouched,
         float: o.hi_res || o.bit_perfect,
-        processing: p.dsp && !untouched,
-        transitions_off: untouched,
-        lock_rate: !untouched,
         skip_silence: p.skip_silence && !untouched,
-        offload,
-        processor_in_chain: !offload && !untouched,
+        offload: offload_blocked(p, o).is_none(),
     }
 }
 
@@ -136,7 +124,7 @@ mod tests {
     #[test]
     fn offload_decision() {
         let p = audio_policy(&prefs(), &OutputState::default());
-        assert!(p.offload && !p.processor_in_chain && p.lock_rate && !p.transitions_off);
+        assert!(p.offload && !p.untouched);
 
         // Sample features block offload.
         for p in [
@@ -148,7 +136,7 @@ mod tests {
             AudioPrefs { pitch: 0.95, ..prefs() },
         ] {
             let a = audio_policy(&p, &OutputState::default());
-            assert!(!a.offload && a.processor_in_chain, "{p:?}");
+            assert!(!a.offload && !a.untouched, "{p:?}");
         }
 
         // Usb or refusal blocks offload.
@@ -184,7 +172,7 @@ mod tests {
     fn bit_perfect_disables_processing() {
         let p = AudioPrefs { dsp: true, skip_silence: true, auto_mix: true, ..prefs() };
         let a = audio_policy(&p, &OutputState { bit_perfect: true, ..Default::default() });
-        assert!(a.untouched && a.float && !a.processing && a.transitions_off && !a.lock_rate && !a.skip_silence && !a.processor_in_chain);
+        assert!(a.untouched && a.float && !a.skip_silence);
     }
 
     #[test]
@@ -192,14 +180,14 @@ mod tests {
         let p = AudioPrefs { dsp: true, skip_silence: true, auto_mix: true, ..prefs() };
         let hi = OutputState { hi_res: true, ..Default::default() };
         let a = audio_policy(&p, &hi);
-        assert!(!a.untouched && a.float && a.processing && !a.transitions_off && a.lock_rate && a.skip_silence && a.processor_in_chain, "{a:?}");
+        assert!(!a.untouched && a.float && a.skip_silence && !a.offload, "{a:?}");
         assert!(audio_policy(&prefs(), &hi).offload);
         assert_eq!(offload_blocked(&p, &hi), Some("the equalizer or another sound setting is on"));
 
         // Without hi res chain is 16 bit.
         for p in [prefs(), AudioPrefs { dsp: true, ..prefs() }, AudioPrefs { dsp: true, auto_mix: true, skip_silence: true, ..prefs() }] {
             let a = audio_policy(&p, &OutputState::default());
-            assert!(!a.float && !a.untouched && a.lock_rate, "{p:?}");
+            assert!(!a.float && !a.untouched, "{p:?}");
         }
     }
 
