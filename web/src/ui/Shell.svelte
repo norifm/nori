@@ -1,8 +1,11 @@
 <script lang="ts">
   // The app signed in: on a wide screen the sidebar, the page, the panel beside it and the player bar
   // under them, as the desktop app and Apple Music have them; on a phone the page, the mini player and
-  // the tab bar, the full player a sheet over them.
-  import { library } from "../state/library.svelte";
+  // the tab bar, the full player a sheet over them. Home comes with the shell; the other pages, the full
+  // player and the panel load once the first page has drawn, so the first paint carries only what it
+  // shows.
+  import type { Component } from "svelte";
+  import { drawn, library } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
   import { route } from "../state/route.svelte";
   import { ui } from "../state/ui.svelte";
@@ -10,49 +13,62 @@
   import TabBar from "./TabBar.svelte";
   import PlayerBar from "./PlayerBar.svelte";
   import MiniPlayer from "./MiniPlayer.svelte";
-  import NowPlaying from "./NowPlaying.svelte";
-  import Panel from "./Panel.svelte";
   import Sheet from "./Sheet.svelte";
   import Prompt from "./Prompt.svelte";
-  import LyricsInfo from "./LyricsInfo.svelte";
   import Home from "../pages/Home.svelte";
-  import Library from "../pages/Library.svelte";
-  import Albums from "../pages/Albums.svelte";
-  import Album from "../pages/Album.svelte";
-  import Artists from "../pages/Artists.svelte";
-  import Artist from "../pages/Artist.svelte";
-  import Playlists from "../pages/Playlists.svelte";
-  import Playlist from "../pages/Playlist.svelte";
-  import Genres from "../pages/Genres.svelte";
-  import Genre from "../pages/Genre.svelte";
-  import Songs from "../pages/Songs.svelte";
-  import Favorites from "../pages/Favorites.svelte";
-  import Search from "../pages/Search.svelte";
-  import Settings from "../pages/Settings.svelte";
+
+  type Loaded = Promise<{ default: Component<any> }>;
+  const pages: Record<string, () => Loaded> = {
+    library: () => import("../pages/Library.svelte"),
+    albums: () => import("../pages/Albums.svelte"),
+    album: () => import("../pages/Album.svelte"),
+    artists: () => import("../pages/Artists.svelte"),
+    artist: () => import("../pages/Artist.svelte"),
+    playlists: () => import("../pages/Playlists.svelte"),
+    playlist: () => import("../pages/Playlist.svelte"),
+    genres: () => import("../pages/Genres.svelte"),
+    genre: () => import("../pages/Genre.svelte"),
+    songs: () => import("../pages/Songs.svelte"),
+    favorites: () => import("../pages/Favorites.svelte"),
+    search: () => import("../pages/Search.svelte"),
+    settings: () => import("../pages/Settings.svelte"),
+  };
+  const nowPlaying = () => import("./NowPlaying.svelte");
+  const panel = () => import("./Panel.svelte");
+  const lyricsInfo = () => import("./LyricsInfo.svelte");
+  // Fetched while the browser is idle after the first page, so nothing waits for them later.
+  void drawn.then(() => {
+    const all = () => [...Object.values(pages), nowPlaying, panel, lyricsInfo].forEach((f) => void f());
+    if ("requestIdleCallback" in window) requestIdleCallback(all, { timeout: 3000 });
+    else setTimeout(all, 300);
+  });
 
   void library.readPlaylists().catch(() => {});
   const playing = $derived(!!player.song);
+  /** The page's props, by its address. */
+  const props = $derived.by(() => {
+    const a = route.arg;
+    switch (route.top) {
+      case "albums":
+        return { sort: a || "alphabeticalByName" };
+      case "genre":
+        return { name: a };
+      case "search":
+        return { query: a };
+      default:
+        return { id: a };
+    }
+  });
 </script>
 
 <div class="shell" class:wide={ui.wide} class:playing class:paneled={ui.wide && !!ui.panel}>
   {#if ui.wide}<Sidebar />{/if}
   <main id="main">
-    {#if route.top === "library"}<Library />
-    {:else if route.top === "albums"}<Albums sort={route.arg || "alphabeticalByName"} />
-    {:else if route.top === "album"}<Album id={route.arg} />
-    {:else if route.top === "artists"}<Artists />
-    {:else if route.top === "artist"}<Artist id={route.arg} />
-    {:else if route.top === "playlists"}<Playlists />
-    {:else if route.top === "playlist"}<Playlist id={route.arg} />
-    {:else if route.top === "genres"}<Genres />
-    {:else if route.top === "genre"}<Genre name={route.arg} />
-    {:else if route.top === "songs"}<Songs />
-    {:else if route.top === "favorites"}<Favorites />
-    {:else if route.top === "search"}<Search query={route.arg} />
-    {:else if route.top === "settings"}<Settings />
+    {#if pages[route.top]}
+      {#await pages[route.top]() then m}<m.default {...props} />{/await}
     {:else}<Home />{/if}
   </main>
-  {#if ui.wide && ui.panel}<Panel />{/if}
+  {#if ui.wide && ui.panel}{#await panel() then m}<m.default />{/await}{/if}
   {#if ui.wide}
     <PlayerBar />
   {:else}
@@ -60,8 +76,8 @@
     <TabBar />
   {/if}
 </div>
-{#if ui.full && playing}<NowPlaying />{/if}
-{#if ui.lyricsInfo}<LyricsInfo />{/if}
+{#if ui.full && playing}{#await nowPlaying() then m}<m.default />{/await}{/if}
+{#if ui.lyricsInfo}{#await lyricsInfo() then m}<m.default />{/await}{/if}
 {#if ui.sheet}<Sheet />{/if}
 {#if ui.prompt}<Prompt />{/if}
 {#if ui.toast}<div class="toast" role="status">{ui.toast}</div>{/if}

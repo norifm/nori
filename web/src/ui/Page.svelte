@@ -24,7 +24,6 @@
 <style>
   .page {
     padding: 28px var(--page-pad) 48px;
-    max-width: 1400px;
   }
   .back {
     margin: -8px 0 6px -8px;

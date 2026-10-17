@@ -42,6 +42,11 @@
   .row > :global(*) {
     scroll-snap-align: start;
   }
+  @media (min-width: 1600px) {
+    .grid {
+      grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
+    }
+  }
   @media (max-width: 899px) {
     .grid {
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

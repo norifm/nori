@@ -8,7 +8,10 @@
 # Needs: the wasm32-unknown-unknown target, wasm-bindgen-cli matching Cargo.lock, wasm-opt (binaryen),
 # brotli, node 20 or later with npm, and a clang that targets wasm32 for SQLite's C (Homebrew LLVM, or
 # the Android NDK's; Apple's clang has no wasm32 backend).
+# `web/build.sh --shell` builds the shell again over the modules already in web/dist/pkg.
 set -euo pipefail
+shell_only=false
+[ "${1:-}" = "--shell" ] && shell_only=true
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$here/.."
 dist="$here/dist"
@@ -21,7 +24,7 @@ if [ -z "${CC_wasm32_unknown_unknown:-}" ]; then
     fi
   done
 fi
-[ -n "${CC_wasm32_unknown_unknown:-}" ] || { echo "no clang with a wasm32 target: brew install llvm" >&2; exit 1; }
+$shell_only || [ -n "${CC_wasm32_unknown_unknown:-}" ] || { echo "no clang with a wasm32 target: brew install llvm" >&2; exit 1; }
 
 # SQLite as the core uses it (FTS5, JSON): sqlite-wasm-rs's extras it never asks for left out (R-tree,
 # sessions, the introspection tables, UTF-16, column metadata), and its C optimized for size.
@@ -34,7 +37,12 @@ export CFLAGS_wasm32_unknown_unknown="${CFLAGS_wasm32_unknown_unknown:-} -USQLIT
 
 size() { printf '%-22s %9d raw %8d br\n' "$1" "$(wc -c < "$2")" "$(brotli -q 11 -c "$2" | wc -c)"; }
 
-rm -rf "$dist"
+if $shell_only; then
+  [ -f "$dist/pkg/player.wasm" ] || { echo "no modules in $dist/pkg: build them first (web/build.sh)" >&2; exit 1; }
+  find "$dist" -mindepth 1 -maxdepth 1 ! -name pkg -exec rm -rf {} +
+else
+  rm -rf "$dist"
+fi
 mkdir -p "$dist/pkg" "$here/src/pkg"
 
 # One module: `name` built with cargo's `flags`.
@@ -50,9 +58,11 @@ module() {
   sed -i.bak "s/${name}_bg\.wasm/$name.wasm/g" "$dist/pkg/$name.js" && rm "$dist/pkg/$name.js.bak"
 }
 
-module core --no-default-features
-module player
-module player-codecs --features rust-codecs
+if ! $shell_only; then
+  module core --no-default-features
+  module player
+  module player-codecs --features rust-codecs
+fi
 
 (
   cd "$here"
