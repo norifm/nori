@@ -346,10 +346,7 @@ impl Store {
             }
             h.limit
         };
-        while self.held.lock().bytes.is_some_and(|b| b > limit) {
-            let Some(key) = self.order.lock().pop_oldest() else { return };
-            self.remove(&key);
-        }
+        self.order.lock().trim(limit as i64, || self.held.lock().bytes.map_or(0, |b| b as i64), |key| self.remove(key));
     }
 
     /// `key` is fully written: turns the part into an entry.
