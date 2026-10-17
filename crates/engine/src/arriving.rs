@@ -344,18 +344,23 @@ impl Turned {
                 }
                 (s.bytes.len(), s.ended)
             };
+            // The fetch broke off: the song is not measured, so the rest is not decoded.
+            if ended == Some(false) {
+                return self.over(false);
+            }
             if let Some(decoded) = self.decoded {
                 return match ended {
                     Some(whole) => self.over(whole && decoded),
                     None => Turn::Waits,
                 };
             }
-            if Instant::now() >= until {
-                return Turn::Ready;
-            }
+            // Out of time only with something to do: a song waiting for bytes waits.
             let Some(d) = self.decoding.as_mut() else {
                 if waiting < OPEN_AFTER && ended.is_none() {
                     return Turn::Waits;
+                }
+                if Instant::now() >= until {
+                    return Turn::Ready;
                 }
                 let reader = Reader { pipe: self.pipe.clone(), at: 0, taken: 0, head: Vec::with_capacity(HEAD) };
                 match Decoding::open(Box::new(reader), self.hint.as_deref(), false) {
@@ -366,6 +371,9 @@ impl Turned {
             };
             if waiting < READ_AFTER && ended.is_none() {
                 return Turn::Waits;
+            }
+            if Instant::now() >= until {
+                return Turn::Ready;
             }
             match d.next() {
                 Some((rate, channels, samples)) => {
