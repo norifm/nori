@@ -150,7 +150,7 @@ fun SongMenu(
             }
             val rules = LocalRules.current
             val lyrics = player?.let { p -> val l by p.lyrics.collectAsState(); hasWords(l, song.id) } == true
-            val items = remember(song, starred, download, player != null, lyrics, rules, jam) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, lyrics, rules.stars, rules.account, jam) }
+            val items = remember(song, starred, download, player != null, lyrics, rules, jam) { dev.nori.music.ffi.library.songMenu(song, starred, download, player != null, lyrics, rules.stars, rules.account, rules.downloads, rules.radio, jam) }
             val labels = remember(items) { items.map { say.songAction(it.action) } }
             @Composable fun line(i: dev.nori.music.ffi.library.SongMenuItem, label: String) = when (val a = i.action) {
                 is dev.nori.music.ffi.library.SongAction.Favourite -> Item(label, if (a.on) Icons.Filled.FavoriteBorder else Icons.Filled.Favorite) { actions.star(song, a.on); onDismiss() }
@@ -312,11 +312,8 @@ fun SelectionBar(actions: ActionsViewModel) {
                 BarAction(say.play) { actions.play(songs); actions.clearSelection() }
                 BarAction(say.next) { actions.playNext(songs); actions.clearSelection() }
                 BarAction(say.queue) { actions.enqueue(songs); actions.clearSelection() }
-                // Playlists and downloads are the account's.
-                if (LocalRules.current.account) {
-                    BarAction(say.playlist) { picking = true }
-                    BarAction(say.get) { actions.download(songs); actions.clearSelection() }
-                }
+                if (LocalRules.current.account) BarAction(say.playlist) { picking = true }
+                if (LocalRules.current.downloads) BarAction(say.get) { actions.download(songs); actions.clearSelection() }
                 IconButton(actions::clearSelection) { Icon(androidx.compose.material.icons.Icons.Filled.Close, say.clearSelection) }
             }
         }

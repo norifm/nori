@@ -76,7 +76,7 @@ impl Client {
     /// The URL and cache key of `id`'s download.
     pub fn download_target(&self, id: String, quality: StreamQuality) -> StreamTarget {
         let key = download_key(id.clone());
-        StreamTarget { url: self.core.stream_url(id, quality.bit_rate, quality.format), key }
+        StreamTarget { url: self.core.provider().stream(self, id, quality).url, key }
     }
 }
 

@@ -354,6 +354,16 @@ impl InnerTube {
         Ok(parse::playlist(&self.browse(http, id).await?, id))
     }
 
+    /// A song's radio queue, without resolving or fetching any audio.
+    pub async fn radio<H: Http + Sync>(&self, http: &H, video: &str) -> Result<Vec<Song>, H::Error> {
+        let answer = self.call(&WEB_REMIX, http, "next", json!({
+            "videoId": video, "playlistId": format!("RDAMVM{video}"), "params": "wAEB",
+            "enablePersistentPlaylistPanel": true, "isAudioOnly": true,
+            "tunerSettingValue": "AUTOMIX_SETTING_NORMAL"
+        })).await?;
+        Ok(parse::watch_queue(&answer))
+    }
+
     /// The home feed's shelves, its first page and the one after: the account's own when signed in,
     /// everyone's otherwise.
     pub async fn home<H: Http + Sync>(&self, http: &H) -> Result<Vec<Shelf>, H::Error> {
@@ -573,6 +583,23 @@ pub(crate) mod tests {
         let page = ready(InnerTube::default().album(&fake, "MPREb_K8qWMWVqXGi")).unwrap();
         assert_eq!(page.album.id, "MPREb_K8qWMWVqXGi");
         assert_eq!(body(&fake.asked()[0])["browseId"], "MPREb_K8qWMWVqXGi");
+    }
+
+    #[test]
+    fn radio_asks_for_related_tracks_without_audio() {
+        let fake = Fake::answering(&[(200, &fixture("radio"))]);
+        let songs = ready(InnerTube::default().radio(&fake, "dQw4w9WgXcQ")).unwrap();
+        assert_eq!(songs.iter().map(|s| (s.video_id.as_str(), s.title.as_str(), s.artist.as_str(), s.duration)).collect::<Vec<_>>(), [
+            ("dQw4w9WgXcQ", "Never Gonna Give You Up", "Artist", 212),
+            ("djV11Xbc914", "Take On Me", "Artist", 212),
+        ]);
+        assert_eq!(songs[0].album.as_ref().unwrap().id, "MPREb_album");
+        assert_eq!(songs[0].artists[0].id, "UCartist");
+        let asked = fake.asked();
+        assert_eq!(asked.len(), 1);
+        assert!(asked[0].url.contains("/next?"));
+        assert_eq!(body(&asked[0])["videoId"], "dQw4w9WgXcQ");
+        assert_eq!(body(&asked[0])["playlistId"], "RDAMVMdQw4w9WgXcQ");
     }
 
     /// The three searches are in flight together: none waits for another's answer.

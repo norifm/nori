@@ -61,7 +61,10 @@ impl Client {
     /// A radio from song `id`: similar songs, else random songs of its genre ([radio_queue]).
     pub async fn radio(&self, id: String) -> NetResult<Vec<Song>> {
         let similar = self.songs(Read::SimilarSongs { id: id.clone(), count: RADIO }).await?;
-        let seed = self.song_of(id).await?;
+        let seed = match self.stored_song_of(&id).or_else(|| similar.iter().find(|s| s.id == id).cloned()) {
+            Some(seed) => seed,
+            None => self.song_of(id).await?,
+        };
         if let Some(queue) = radio_queue(seed.clone(), similar) {
             return Ok(queue);
         }

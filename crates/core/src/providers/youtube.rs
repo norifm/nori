@@ -64,15 +64,15 @@ fn cover_address(cover: &str, size: u32) -> String {
     yt::thumbnail_url(cover, size)
 }
 
-/// The rules of a YouTube Music profile: Home is YouTube's feed, songs play and mix here, and nothing is
-/// offered to other devices. Signed out there is no library, so search is the way in; `signed_in`, the
-/// account's albums, liked songs and playlists are its library, and songs carry its likes as hearts.
-/// The rest of an account's work (downloads, scrobbles, history, mixes) stays off.
+/// Local playback, downloads and history are available signed out. Signing in adds the account's
+/// library and likes. Remote control and jams use paired LAN devices without a server.
 fn rules(signed_in: bool) -> ProfileRules {
     use SettingsPart::*;
-    let settings = vec![Profiles, ServerOptions, Look, Playback, Sound, Lyrics, Storage, About];
-    let sections = if signed_in { vec![LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists] } else { Vec::new() };
-    ProfileRules { asks: false, account: false, indexed: false, sections, settings, remote: false, measures: true, stars: signed_in, feed: true }
+    let settings = vec![Profiles, ServerOptions, Look, Playback, Sound, Lyrics, Downloads, Storage, About];
+    let mut sections = if signed_in { vec![LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists] } else { Vec::new() };
+    sections.push(LibrarySection::Downloads);
+    sections.push(LibrarySection::History);
+    ProfileRules { asks: false, account: false, downloads: true, radio: true, indexed: false, sections, settings, remote: true, measures: true, stars: signed_in, feed: true }
 }
 
 /// The platform's transport as innertube-music's HTTP client.
@@ -251,11 +251,22 @@ impl State {
     /// library's reads are the account's: its saved albums (one page), its playlists and its liked songs
     /// as the favorites.
     async fn read(&self, c: &Client, read: Read) -> NetResult<Option<Page>> {
+        if let Read::SongById { id } = &read {
+            if let Some(song) = c.stored_song_of(id) {
+                return Ok(Some(Page::OneSong { v: Some(song) }));
+            }
+        }
         let (api, t) = (&self.api, &Wire(&*c.transport));
         let n = |count: i32| count.max(0) as usize;
         self.fresh_session(c, account::unix_now()).await;
         let signed_in = self.signed_in(c);
         Ok(Some(match read {
+            Read::SimilarSongs { id, count } => Page::Songs { v: self.after(c, api.radio(t, raw(&id)?).await)?.into_iter().take(n(count)).map(song).collect() },
+            Read::SongById { id } => {
+                let video = raw(&id)?;
+                let found = self.after(c, api.radio(t, video).await)?.into_iter().find(|s| s.video_id == video);
+                Page::OneSong { v: found.map(song) }
+            },
             Read::Search { query, songs, albums, artists } => Page::Found { v: found(self.after(c, api.search(t, &query).await)?, n(songs), n(albums), n(artists)) },
             Read::AlbumById { id } => Page::AlbumPage { v: album_detail(self.after(c, api.album(t, raw(&id)?).await)?) },
             Read::AlbumSongs { id } => Page::Songs { v: album_detail(self.after(c, api.album(t, raw(&id)?).await)?).songs },
@@ -307,15 +318,25 @@ impl Provider for YouTube {
     }
 
     /// Signed in when the profile names its account (`user`, kept at sign-in); never a jam guest's.
-    fn rules(&self, profile: &SavedServer, _guest: bool) -> ProfileRules {
-        rules(!profile.user.is_empty())
+    fn rules(&self, profile: &SavedServer, guest: bool) -> ProfileRules {
+        let mut shown = rules(!profile.user.is_empty() && !guest);
+        if guest {
+            shown.asks = true;
+            shown.downloads = false;
+            shown.radio = false;
+            shown.measures = false;
+            shown.stars = false;
+            shown.sections.clear();
+            shown.settings.retain(|p| !matches!(p, SettingsPart::ServerOptions | SettingsPart::Downloads));
+        }
+        shown
     }
 
     /// No server and no Subsonic account. Clears the library when the profile was a server's.
     fn configure(&self, core: &Core, profile: &SavedServer) -> nori_model::Result<()> {
         core.serves(IDENT)?;
         *core.server.write() = crate::api::Server::default();
-        core.set_rules(rules(!profile.user.is_empty()));
+        core.set_rules(self.rules(profile, nori_remote::is_guest_key(&profile.api_key)));
         *core.native_login.write() = None;
         *core.account.write() = None;
         Ok(())
@@ -470,6 +491,68 @@ mod tests {
     const BROWSE: &str = "https://music.youtube.com/youtubei/v1/browse";
 
     #[test]
+    fn a_queued_song_is_read_without_a_request() {
+        let (c, t) = youtube(&[]);
+        let expected = Song { id: "yt-queued".into(), title: "Queued song".into(), duration: 200, ..Default::default() };
+        c.core.session.register(vec![expected.clone()]);
+        let Page::OneSong { v } = block(c.read_now(Read::SongById { id: expected.id.clone() })).unwrap() else { panic!() };
+        assert_eq!(v, Some(expected));
+        assert!(t.asked.lock().is_empty());
+    }
+
+    #[test]
+    fn radio_reads_youtubes_watch_queue() {
+        let (c, t) = youtube(&[&fixture("radio")]);
+        let songs = block(c.songs(Read::SimilarSongs { id: "yt-dQw4w9WgXcQ".into(), count: 2 })).unwrap();
+        assert_eq!(songs.iter().map(|s| (s.id.as_str(), s.title.as_str(), s.duration)).collect::<Vec<_>>(), [
+            ("yt-dQw4w9WgXcQ", "Never Gonna Give You Up", 212),
+            ("yt-djV11Xbc914", "Take On Me", 212),
+        ]);
+        assert!(t.asked.lock()[0].url.contains("/next?"));
+    }
+
+    #[test]
+    fn radio_reuses_the_watch_queues_seed() {
+        let (c, t) = youtube(&[&fixture("radio")]);
+        let songs = block(c.radio("yt-dQw4w9WgXcQ".into())).unwrap();
+        assert_eq!(songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["yt-dQw4w9WgXcQ", "yt-djV11Xbc914"]);
+        assert_eq!(t.asked.lock().len(), 1);
+    }
+
+    #[test]
+    fn a_song_not_kept_locally_uses_watch_metadata() {
+        let (c, t) = youtube(&[&fixture("radio")]);
+        let Page::OneSong { v: Some(s) } = block(c.read_now(Read::SongById { id: "yt-djV11Xbc914".into() })).unwrap() else { panic!() };
+        assert_eq!((s.id.as_str(), s.title.as_str(), s.duration), ("yt-djV11Xbc914", "Take On Me", 212));
+        assert_eq!(t.asked.lock().len(), 1);
+    }
+
+    #[test]
+    fn the_car_lists_the_home_feed_and_available_library() {
+        let (c, _) = youtube(&[&fixture("home"), &fixture("home_more")]);
+        let home = block(c.browse_children("home".into(), 0, 100));
+        assert!(!home.failed);
+        assert_eq!(home.songs[0].id, "yt-hHZ4ej144rc");
+        assert!(!home.folders.is_empty());
+        let library = block(c.browse_children("library".into(), 0, 100));
+        assert!(library.folders.is_empty(), "a signed-out profile has no account library");
+        let root = c.car_root(4, false, 0, 100);
+        assert_eq!(root.folders.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["home", "downloads"]);
+    }
+
+    #[test]
+    fn featured_collections_come_from_the_feed() {
+        let (c, t) = youtube(&[&fixture("home"), &fixture("home_more")]);
+        let albums = block(c.featured_albums(1)).unwrap();
+        assert_eq!(albums.len(), 1);
+        assert!(albums[0].id.starts_with("yt-MPREb_"));
+        let playlists = block(c.featured_playlists()).unwrap();
+        assert_eq!(playlists.len(), 4);
+        assert_eq!(playlists[0].id, "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA");
+        assert_eq!(t.asked.lock().len(), 2, "the feed is shared and no playlist or audio is opened");
+    }
+
+    #[test]
     fn ids_and_addresses() {
         assert_eq!(id("dQw4w9WgXcQ"), "yt-dQw4w9WgXcQ");
         assert_eq!(raw_id("yt-MPREb_x"), Some("MPREb_x"));
@@ -492,6 +575,29 @@ mod tests {
         assert_eq!((a.id.as_str(), a.artist_id.as_deref(), a.subtitle.as_str(), a.release_types.as_slice()), ("yt-MPREb_x", Some("yt-UCa"), "A · 2013", &["Album".to_string()][..]));
         let d = playlist_detail(yt::PlaylistPage { playlist: yt::Playlist { id: "VLp".into(), ..Default::default() }, songs: vec![yt::Song { video_id: "v".into(), duration: 7, ..Default::default() }] });
         assert_eq!((d.playlist.id.as_str(), d.playlist.song_count, d.playlist.duration, d.playlist.public), ("yt-VLp", 1, 7, true));
+    }
+
+    #[test]
+    fn a_lan_guest_never_uses_the_owners_cookies() {
+        let dir = nori_testdir::TempDir::new("yt-jam-cookie-isolation");
+        let path = dir.path().join("library.db").to_string_lossy().into_owned();
+        let settings = crate::settings_store::Settings::new();
+        settings.open(&path).unwrap();
+        let session = Arc::new(crate::queue::Session::new(settings));
+        let own = crate::Core::new(path.clone(), "owner".into(), session.clone()).unwrap();
+        own.configure_profile(SavedServer { id: "owner".into(), kind: ServerKind::YouTubeMusic, user: "private".into(), ..Default::default() }).unwrap();
+        let transport = Arc::new(InnerTube { answers: parking_lot::Mutex::new(vec![answer(200, "search_artists", &[]), answer(200, "search_albums", &[]), answer(200, "search_songs", &[])]), ..Default::default() });
+        let owner = Client::new(own, transport.clone(), Default::default());
+        account::tests::store(&owner, &account::tests::session(SESSION, 30));
+        let profile = crate::remote::jam_profile(crate::remote::JamPass { url: "http://192.168.1.2:1234".into(), api_key: nori_remote::guest_key("lan-guest") }, "guest".into(), "Jam".into());
+        let guest = crate::Core::new(path, profile.id.clone(), session).unwrap();
+        guest.configure_profile(profile).unwrap();
+        let guest = Client::new(guest, transport.clone(), Default::default());
+        let Page::Found { v } = block(guest.read_now(Read::Search { query: "daft punk".into(), songs: 1, albums: 0, artists: 0 })).unwrap() else { panic!() };
+        assert!(!v.songs.is_empty());
+        assert!(transport.asked.lock().iter().all(|request| !request.headers.contains_key("Cookie")));
+        assert_eq!(account::tests::stored(&owner).unwrap().cookies(), SESSION);
+        assert!(account::tests::stored(&guest).is_none());
     }
 
     /// A search keeps at most as many of each kind as asked.
@@ -544,11 +650,19 @@ mod tests {
         assert!(matches!(block(c.sync_library()), Err(NetError::Api { .. })), "no server to sync");
         assert!(t.asked.lock().is_empty());
         let rules = c.core.rules();
-        assert!(!rules.account && !rules.remote && rules.measures);
+        assert!(!rules.account && rules.remote && rules.measures);
     }
 
     /// A song streams from its YouTube address under a key that ignores the quality settings; nothing
     /// past the next song is fetched ahead.
+    #[test]
+    fn downloads_use_the_provider() {
+        let (c, _) = youtube(&[]);
+        let target = c.download_target("yt-dQw4w9WgXcQ".into(), StreamQuality { bit_rate: 192, format: "mp3".into() });
+        assert_eq!(target.url, "youtube:dQw4w9WgXcQ");
+        assert_eq!(target.key, "dl:yt-dQw4w9WgXcQ");
+    }
+
     #[test]
     fn songs_stream_from_youtube_addresses() {
         let (c, _) = youtube(&[]);
@@ -756,18 +870,19 @@ mod tests {
         assert!(matches!(block(c.read_now(Read::StarredItems)), Ok(Page::StarredPage { v }) if v.songs.is_empty()));
     }
 
-    /// Home is YouTube's feed, signed in or not; signed out there is no library, nor an account's
-    /// work, settings for the library, downloads or streaming, or remote control.
+    /// Signed-in library features and a temporary guest's requests follow the profile rules.
     #[test]
     fn its_rules_follow_the_account() {
         let (out, signed) = (rules(false), rules(true));
-        assert!(out.feed && signed.feed && out.measures && !out.remote && !out.account && !out.indexed);
-        assert!(out.sections.is_empty() && !out.stars);
-        assert!(!out.settings.iter().any(|p| matches!(p, SettingsPart::Library | SettingsPart::Downloads | SettingsPart::Streaming)));
-        assert!(signed.stars && signed.sections == [LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists]);
-        assert!(!signed.account && !signed.remote, "still no account's work");
+        assert!(out.feed && signed.feed && out.measures && out.remote && !out.account && !out.indexed);
+        assert_eq!(out.sections, [LibrarySection::Downloads, LibrarySection::History]);
+        assert!(out.downloads && !out.stars);
+        assert!(!out.settings.iter().any(|p| matches!(p, SettingsPart::Library | SettingsPart::Streaming)));
+        assert!(signed.downloads && signed.stars && signed.sections == [LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists, LibrarySection::Downloads, LibrarySection::History]);
+        assert!(!signed.account && signed.remote, "LAN remote is independent of a server account");
         let of = |user: &str, guest| super::super::rules_of(SavedServer { kind: ServerKind::YouTubeMusic, user: user.into(), ..Default::default() }, guest);
-        assert_eq!(of("", true), out);
+        let guest = of("", true);
+        assert!(guest.asks && guest.remote && !guest.downloads && !guest.radio && !guest.stars && !guest.measures && guest.sections.is_empty());
         assert_eq!(of("Ann", false), signed, "signed in as Ann");
         assert!(of("", false).settings.contains(&SettingsPart::ServerOptions), "profiles are added from it");
     }

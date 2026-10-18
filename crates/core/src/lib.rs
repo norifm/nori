@@ -399,6 +399,8 @@ pub struct Core {
     /// The user and the Subsonic secret (password or API key) the LAN's remote control proves the account
     /// with; None for a jam guest.
     account: RwLock<Option<(String, String)>>,
+    /// Endpoint and scoped credential of a temporary LAN jam guest.
+    lan_jam: RwLock<Option<(String, String)>>,
     /// The user and password Navidrome's own API logs in with; None with an API key.
     native_login: RwLock<Option<(String, String)>>,
     /// What the app offers over the profile (a jam guest's: the host's library, read only).
@@ -509,7 +511,7 @@ impl Core {
             cache_revision: AtomicU64::new(0),
             kept: Mutex::default(),
             session,
-            account: RwLock::new(None),
+            account: RwLock::new(None), lan_jam: RwLock::new(None),
             native_login: RwLock::new(None),
             rules: RwLock::new(browse::profile_rules(false)),
             provider: RwLock::default(),

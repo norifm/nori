@@ -243,6 +243,7 @@ fun AlbumScreen(id: String, actions: ActionsViewModel, vm: AlbumViewModel = view
 @Composable
 private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actions: ActionsViewModel, vm: AlbumViewModel) {
     val account = LocalRules.current.account
+    val downloads = LocalRules.current.downloads
     val list = rememberSongListState(actions)
     val nav = LocalNav.current
     val arrival = rememberArrival(detail != null)
@@ -273,7 +274,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
             LateMore(detail != null) {
                 listOfNotNull(
                     say.addToQueue to { actions.enqueue(detail!!.songs) },
-                    downloadEntry(detail!!.songs, list.downloaded, actions).takeIf { account },
+                    downloadEntry(detail!!.songs, list.downloaded, actions).takeIf { downloads },
                     jamStartEntry { actions.play(detail!!.songs, from = from) }.takeIf { account },
                 )
             }
@@ -324,6 +325,7 @@ fun ArtistScreen(id: String, actions: ActionsViewModel, vm: ArtistViewModel = vi
 @Composable
 private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: ActionsViewModel, vm: ArtistViewModel, leave: (String) -> Unit) {
     val account = LocalRules.current.account
+    val downloads = LocalRules.current.downloads
     val list = rememberSongListState(actions)
     val nav = LocalNav.current
     val arrival = rememberArrival(ui != null)
@@ -350,7 +352,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
             LateMore(ui != null) {
                 listOfNotNull(
                     say.addToQueue to { actions.queueArtist(ui!!.detail.artist.id); Unit },
-                    (say.downloadEverything to { actions.downloadArtist(ui!!.detail.artist.id); Unit }).takeIf { account },
+                    (say.downloadEverything to { actions.downloadArtist(ui!!.detail.artist.id); Unit }).takeIf { downloads },
                 )
             }
         },
@@ -456,11 +458,12 @@ private fun PlaylistPage(
             // and the home page's shelf of them reads it.
             // The home page that shows them is the account's.
             val account = LocalRules.current.account
+    val downloads = LocalRules.current.downloads
             if (account) FavoriteCircle(pinned) { settings.pin(id, !pinned); Unit }
             LateMore(detail != null) {
                 listOfNotNull(
                     say.addToQueue to { actions.enqueue(detail!!.songs) },
-                    downloadEntry(detail!!.songs, list.downloaded, actions).takeIf { account },
+                    downloadEntry(detail!!.songs, list.downloaded, actions).takeIf { downloads },
                     jamStartEntry { actions.play(detail!!.songs, from = from) },
                     say.exportPlaylistFile to { export(playlist.name) },
                 )

@@ -2,12 +2,54 @@
 
 Internal planning note, not published. Written 2026-10-17 against `master` at `06e615c9`.
 
-Owner decisions this follows (final): YouTube Music is its own server-less profile kind, added like a
-server and never mixed into a Navidrome profile; pure Rust, no JavaScript engine and no WebView; playback
-only through the InnerTube **visionOS** client; search and browse through the WEB_REMIX
-(music.youtube.com) JSON endpoints; v1 is search, browse (artist, album, playlist), play, lyrics and
-AutoMix; no login, no library sync, no remote control or jams, nothing on the web client. Best effort:
-the words say so, since YouTube can break it overnight.
+Owner decisions, updated 2026-10-18: YouTube Music is its own serverless profile, separate from a
+Navidrome profile. The provider is pure Rust, with no JavaScript engine. Playback uses InnerTube's
+**visionOS** client; search and browse use WEB_REMIX JSON. Android's visible Google sign-in WebView is
+only for signing in. Search, browse, playback, lyrics, AutoMix and native downloads use the shared
+provider and engine. Signed-in profiles expose the account's library and song likes. There is no
+YouTube profile in the web client. YouTube can change these unofficial APIs at any time.
+
+## LAN pairing and jams: approved design, implementation pending
+
+The owner now wants LAN crossplay and jams for YouTube profiles. Devices pair explicitly with a QR
+code or link carrying a random shared secret. Discovery advertises a keyed hash of the pairing realm,
+not a Google account ID. Hashing a public account ID alone would not authenticate a controller. LAN
+requests use the existing HMAC authentication with the pairing secret, and pairing exchanges no Google
+cookies or account identifiers. Pairing must survive restarts and offer a way to forget a device.
+
+A jam has a separate temporary invite secret. A guest gets a temporary, signed-out YouTube profile
+and resolves each `yt-` song locally. Existing profiles and their sign-in sessions stay intact and the
+previous profile returns when the guest leaves. No Navidrome profile or server is required. Reusing an
+existing server profile for relay transport is a separate, undecided option.
+
+## Feature audit (2026-10-18, `slim`)
+
+This table distinguishes the shared implementation from platform verification. Android and CLI have
+been exercised with a real signed-out YouTube profile. Desktop and iPod share the tested native host;
+their current integration has compiled, but this audit does not claim a live iPod or desktop run.
+The web client intentionally has no YouTube profile.
+
+| Feature | Android | Desktop | CLI | iPod | Evidence or remaining limit |
+|---|---|---|---|---|---|
+| Search, albums, artists, playlists, Home | Implemented | Implemented | Implemented | Implemented | Provider fixtures; signed-out search/play checked live |
+| Radio from a song | Song menu | Song menu | Player's Radio control | Song menu | `next` watch queue, provider and parser tests; live metadata request returned 50 tracks without fetching audio |
+| Autofill from similar songs | Implemented | Shared host | Shared host | Shared host | Uses the same metadata-only related-track read; genre/era choices depend on metadata YouTube supplies |
+| Instant mix and local smart mixes | Account-only UI | Existing account-only UI | Existing account-only UI | Existing account-only UI | No broken YouTube action is exposed; radio supplies YouTube's recommendations |
+| Local listening history | Library history and stats | Recorded | Recorded | Recorded | Shared queue records listens independently of Subsonic scrobbling; native clients without history screens have the same limitation with Navidrome |
+| Account listening history and scrobbling | Not implemented | Not implemented | Not implemented | Not implemented | YouTube's account history endpoints are not mapped; local history remains available |
+| Save and restore this device's queue | Implemented | Implemented | Implemented | Implemented | Queue serialization is provider-neutral; server queue pushes remain Subsonic-only |
+| AutoMix and automatic lyric alignment | Implemented | Shared engine | Shared engine | Shared engine | WebM pair/voice tests and Android live mix; analysis reads fetched playback bytes |
+| Download songs, albums and playlists | Implemented | Implemented | Implemented | Implemented | Provider resolves the download URL; CLI real download/offline replay passes; Android verification tracked in the batch checks |
+| Playback, cover and lyric widgets | Implemented | — | — | — | Provider-neutral media-session/lyric data; Android glue needs the batch's YouTube check |
+| For You and album widgets | Provider playlists and feed albums | — | — | — | Metadata-only feed reads; tap fetches the selected collection |
+| Android Auto browse/search/voice/offline | Provider Home/library, generic search/voice/downloads | — | — | — | Car regression covers signed-out Home and removes unavailable account folders; live car glue remains in batch checks |
+| Hearts and library | Sign-in WebView | Paste cookies | Cookie file | Paste cookies | Signed-in fixture tests cover session rotation, saved albums/playlists, liked songs and likes; no real signed-in account was supplied for this audit |
+| Edit playlists, save albums, library artists | Not implemented | Not implemented | Not implemented | Not implemented | Account mutation UI stays hidden; library and liked-song pagination beyond the initial page remain incomplete |
+| LAN crossplay and jams | In progress | In progress | In progress | In progress | See pairing design below; relay reuse remains undecided |
+
+The signed-out `SongById` path first uses queue or finished-download metadata without a network
+request. If the song has not been kept here, the watch queue supplies its metadata. This also keeps
+song actions and restored requests from silently receiving an empty Subsonic-shaped answer.
 
 ## Sources
 
@@ -61,7 +103,7 @@ A profile kind answers the same reads the clients already make (`cache_policy::R
 | stream address | signed `stream?id=` (`Core::stream_url`) | `youtube:<videoId>`, resolved when opened (below) |
 | covers | signed `getCoverArt&id=&size=` (`Core::cover_address`) | the thumbnail's own URL at the asked size (`innertube_music::thumbnail_url`) |
 | lyrics | `getLyricsBySongId` plus the lyrics services | the lyrics services only (the server read is empty) |
-| writes (stars, scrobbles, playlists, queue push) | Subsonic writes, queued offline | none: `Client::get` refuses every Subsonic call for this kind, so nothing is queued |
+| writes | Subsonic writes, queued offline | signed-in song likes; Subsonic scrobbles, playlist edits and queue pushes are refused |
 | sync | `search3` pages | none (`ProfileRules::indexed` false) |
 
 In code the seam is the `Provider` trait (`crates/core/src/providers/`, docs/site/developers/providers.md):
@@ -83,14 +125,14 @@ what was seen). Records are nori's own (`Song`, `Album`, `Artist`, `Playlist`, `
 
 ### Rules (`crates/library/src/browse.rs`)
 
-`ProfileRules` gains `remote` (remote control and jams offered) and `measures` (AutoMix measures songs
-ahead), and `youtube_rules()` is the kind's: `asks` false, `account` false (no hearts, ratings,
-playlists, downloads, history, scrobbles, queue pushes), `indexed` false (no sync; the songs list reads
-nothing), `sections` empty (no library to list; search is the way in), settings without
-`ServerOptions`, `Library`, `Downloads` and `Streaming` (no transcode qualities, and fetching ahead is
-fixed), `remote` false, `measures` true. `crates/host/src/session.rs`
-reads `measures` for the measurer and `remote` before making a `Remote`; a jam guest keeps `remote` true
-(it is in a jam) and `measures` false, an account has both, so Navidrome profiles behave as before.
+`ProfileRules::downloads` is independent of `account`: local downloads need no Subsonic account.
+YouTube profiles offer Downloads and Storage settings, their own Home feed and AutoMix analysis.
+Signed-in profiles also offer albums, favorites and playlists. Subsonic-only account work stays off.
+Remote control remains off until the pairing and local jam transport above are implemented.
+
+The cache key is always the provider's, including when a platform looks up a whole cached song for
+analysis. Download addresses also come from the provider and resolve on the download worker. The same
+WebM bytes feed playback analysis; no analysis-only network request is made.
 
 ## Playing: from id to bytes
 
@@ -119,8 +161,9 @@ in the background (no timers while playing, AGENTS.md).
 - One player request per song played, when its bytes are first needed; none for songs shown in a list.
 - Fetching ahead (`Client::precache_targets`) is capped at the next song (`youtube::AHEAD` in the core), whatever
   the precache settings say: each one costs a player request and a whole download.
-- No autofill (`account` false; its reads are Subsonic's), no mixes, no similar songs, no sync, no cover
-  prefetching beyond what a page shows.
+- Radio requests only metadata from WEB_REMIX `next` (`RDAMVM<videoId>`); no audio is resolved until
+  playback or an explicit download asks for it. Subsonic-only library sync and account queue pushes
+  stay off. Covers are fetched for what is shown.
 - Browse reads are not cached in the response cache in v1 (`read_stored` has nothing for this kind); the
   pages are indexed. Caching them is the first follow-up if YouTube starts answering 429.
 - A 429 or a "Sign in to confirm you're not a bot" playability answer comes back as an error for that
@@ -133,8 +176,8 @@ in the background (no timers while playing, AGENTS.md).
   JS-less client is found; search and browse keep working.
 - The WEB_REMIX shapes change (the unfiltered search did in 2026). Parsing is defensive (a missing field
   drops the item, not the page) and the fixtures in `crates/youtube/tests/fixtures` say what was parsed.
-- Terms of service: unofficial clients are against YouTube's. The words say "best effort", no account
-  is used, and nothing is prefetched that the user did not queue.
+- Terms of service: unofficial clients are against YouTube's. The words say "best effort"; playback
+  uses the anonymous client even while the library is signed in.
 - `ip=`-bound URLs break when the network changes mid-song; the 403 path above covers the next open.
 - The visitor id requirement may tighten into PO tokens for visionOS too (it did for WEB and MWEB).
   That would end JS-free playback.
@@ -282,8 +325,8 @@ continuation, `Read::HomeFeed`, `Page::Feed` of `FeedShelf`s); signed in, Librar
 (`FEmusic_liked_albums`, one page), Favourites (the "Liked music" playlist, `VLLM`, its first page,
 hearted) and Playlists (`FEmusic_liked_playlists`); a song's heart is a like (`like/like`,
 `like/removelike`, never queued offline). `ProfileRules` gained `stars` (hearts shown and sent) and
-`feed` (Home is the service's feed); `account` (playlists, downloads, scrobbles, history, mixes) stays
-off for YouTube. `rules_of` reads the profile's `user` for whether it is signed in.
+`feed` (Home is the service's feed); `account` (Subsonic playlist mutations, scrobbles, queue pushes and library mixes) stays
+off for YouTube. Local downloads, radio and history have independent capabilities. `rules_of` reads the profile's `user` for whether it is signed in.
 
 Left out: editing playlists and adding to them, saving albums to the library, more than the first page
 of liked songs and library albums, artists in the library, the account's history, liked state of songs
@@ -324,3 +367,8 @@ and the visitor id replaced). The signed-in ones (`library_playlists.json`, `lib
 `account_menu.json`, `signed_out.json`) were written by hand after ytmusicapi's parsers (`parsers/library.py`,
 `get_library_contents`) with public ids and a made-up name: no account was used. A real sign-in is still
 to be tried by the owner (`nori-cli --script --youtube-music --sign-in cookies.txt --home`).
+
+The radio request fields and watch-queue shape follow the primary implementation in
+[ytmusicapi watch.py](https://github.com/sigma67/ytmusicapi/blob/main/ytmusicapi/mixins/watch.py).
+`radio.json` is a hand-written fixture with public video ids and invented artist/album metadata; it
+contains no account data or tracking values.

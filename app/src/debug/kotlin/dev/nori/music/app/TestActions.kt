@@ -114,6 +114,11 @@ object TestActions {
         val ref = what.substringAfter(' ', "")
         if (verb == "lyrics") lastLyrics = null
         when (verb) {
+            "widgetalbums" -> {
+                val albums = dev.nori.music.app.widget.AlbumsWidget.albums(nori, ref.toIntOrNull() ?: 6)
+                android.util.Log.i("noriwidget", "albums ${albums.joinToString(",") { it.id }}")
+                return@attempt
+            }
             // Settings' "Analyse downloaded songs".
             "analysedownloads" -> { actions.analyseDownloads(); return@attempt }
             // "car root|tree <id>|search <q>|play <id>|voice <query>[|artist|album|playlist|genre|song]": the car's
@@ -139,6 +144,7 @@ object TestActions {
                     view.draw(android.graphics.Canvas(shot))
                     java.io.File(context.cacheDir, "widget-${face.name.lowercase()}-${w}x${h}.png").outputStream().use { shot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
                 }
+                dev.nori.music.NoriLog.i("rendered six faces for ${nori.player.state.value.current?.id}")
                 return@attempt
             }
             // "pinwidget player|cover|mixes|albums|lyrics": the launcher's own "add to home screen" for that widget.

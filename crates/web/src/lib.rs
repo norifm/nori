@@ -183,7 +183,7 @@ impl Nori {
         use nori_core::menus::{song_menu, SongAction, SongDownload};
         let song: nori_core::Song = serde_json::from_str(&song).map_err(error)?;
         let rules = self.rules();
-        let items: Vec<Value> = song_menu(song.clone(), song.starred, SongDownload::None, player, lyrics, rules.stars, rules.account, self.jam_offer())
+        let items: Vec<Value> = song_menu(song.clone(), song.starred, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.jam_offer())
             .into_iter()
             .map(|m| {
                 let mut v = json!({ "more": m.more });

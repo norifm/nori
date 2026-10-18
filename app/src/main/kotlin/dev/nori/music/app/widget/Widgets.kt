@@ -229,6 +229,7 @@ object Widgets {
         val nori = Nori.get(context)
         val songs = when (origin.kind) {
             OriginKind.ALBUM -> nori.library.album(origin.id).first().songs
+            OriginKind.PLAYLIST -> nori.library.playlist(origin.id).first().songs
             OriginKind.MIX -> withContext(Dispatchers.IO) {
                 // As the mix's page: favourites once the starred songs are handed over, a mix once drawn for today.
                 if (origin.id == dev.nori.music.app.vm.FAVOURITES_MIX) runCatching { nori.library.handFavourites().firstOrNull() }

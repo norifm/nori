@@ -27,6 +27,24 @@ tapnode_now() { # $1 = text|content-desc, $2 = that value, $3 = which of several
 tapnode() { wait_until 10 tapnode_now "$@"; }
 on_screen() { ui | grep -q -- "$1"; }
 off_screen() { local tree; tree=$(ui) || return 1; ! printf '%s' "$tree" | grep -q -- "$1"; }
+car_read() {
+  local parent="$1" before
+  before=$(adb logcat -d -v brief -s noricar:I | wc -l | tr -d ' ')
+  "$app" do "car tree $parent" >/dev/null
+  car_done() {
+    adb logcat -d -v brief -s noricar:I | tail -n "+$((before + 1))" > "$car_log"
+    grep -Fq "done tree $parent" "$car_log"
+  }
+  wait_until 20 car_done && grep -Fq "tree $parent: code=0" "$car_log"
+}
+widget_albums() {
+  local before
+  before=$(adb logcat -d -v brief -s noriwidget:I | wc -l)
+  "$app" do 'widgetalbums 6' >/dev/null
+  widget_read() { adb logcat -d -v brief -s noriwidget:I | tail -n "+$((before + 1))" | grep -q 'albums '; }
+  wait_until 30 widget_read || return 1
+  adb logcat -d -v brief -s noriwidget:I | tail -1 | sed 's/.*albums //'
+}
 # Chrome may keep the landing page until its explicit app link is tapped.
 open_invite() {
   local link="$1"
@@ -173,8 +191,16 @@ fi
 if want youtube-music; then section "a YouTube Music profile, then the server's again (YouTube's to answer)"
   # The song's address is resolved through the core and its bytes come through media3's data source
   # from googlevideo: the glue Rust's tests stand in for. Opt-in, since YouTube may refuse on any day.
+  server_widget_albums=$(widget_albums)
+  check "the album widget has server albums before switching" test -n "$server_widget_albums"
   "$app" login kind:YOU_TUBE_MUSIC >/dev/null
   check "the YouTube Music profile opens" wait_for kind YOU_TUBE_MUSIC 20
+  yt_widget_albums=$(widget_albums)
+  check "the album widget replaces the server's albums with YouTube albums" python3 - "$yt_widget_albums" <<'WIDGET'
+import sys
+ids = sys.argv[1].split(',')
+assert ids and all(id.startswith('yt-') for id in ids), ids
+WIDGET
   # Google's sign-in page is the provider's sign-in page, a WebView of the app's own; when it is done is
   # Rust's (the provider's sign_in_done, auth::signed_in_at).
   # That it opens, and that Cancel leaves the WebView no cookies, only a device can say.
@@ -189,12 +215,50 @@ if want youtube-music; then section "a YouTube Music profile, then the server's 
   check "Cancel closes it" wait_for signInPage False 10
   no_web_cookies() { [ "$("$app" webcookies)" = "cookies 0" ]; }
   check "and leaves the WebView no cookies" wait_until 10 no_web_cookies
+  remember_settings autoMix autoFill lyricsOnline
+  "$app" set autoMix true >/dev/null
+  "$app" set autoFill false >/dev/null
+  "$app" set lyricsOnline true >/dev/null
+  watch_from_now
   "$app" play "search:daft punk one more time" >/dev/null
   check "a song found on YouTube Music plays through the AudioTrack" sounds 45
   at=$(field positionMs); written=$(field sinkBytes)
   check "its position advances" wait_for positionMs ">$((at + 3000))" 15
   check "and the sink takes its bytes" wait_for sinkBytes ">$written" 10
   echo "     playing '$(field title)' by '$(field artist)'"
+  yt_first=$(field songId); yt_title=$(field title)
+  "$app" do 'playnext search:daft punk harder better faster stronger' >/dev/null
+  yt_analyzed() { [ "$(adb shell "run-as $pkg sqlite3 files/nori.db \"select count(*) from vocal_curve join track_analysis using(server,song_id) where song_id='$1' and length(curve)>0\"" | tr -d '\r')" -gt 0 ]; }
+  check "YouTube playback bytes are analyzed" wait_until 120 yt_analyzed "$yt_first"
+  "$app" open lyrics >/dev/null
+  check "YouTube lyrics arrive" wait_for lyricLines '>0' 40
+  "$app" do "lyrics song:$yt_first" >/dev/null
+  yt_timing_checked() { [[ "$(field lyricsAnswerTiming)" == auto:* ]]; }
+  check "the analyzed YouTube song gets a vocal timing check" wait_until 30 yt_timing_checked
+  dur=$(field durationMs)
+  "$app" do "seek $((dur - 30000))" >/dev/null
+  check "the YouTube pair mixes" wait_for mixing True 45
+  check "the next YouTube song takes over" wait_for title "!$yt_title" 30
+  check "the incoming YouTube song has analysis and a vocal curve" wait_until 120 yt_analyzed "$(field songId)"
+  check "and keeps sounding" sounds 10
+  check "the incoming song plays beyond the transition" wait_for positionMs '>15000' 30
+  "$app" do "undownload song:$yt_first" >/dev/null
+  yt_saved() { [ "$(adb shell "run-as $pkg sqlite3 files/nori.db \"select count(*) from downloads where id='$yt_first' and done=1\"" | tr -d '\r')" = "$1" ]; }
+  check "the YouTube fixture has no download" wait_until 10 yt_saved 0
+  "$app" do "download song:$yt_first" >/dev/null
+  check "a YouTube song downloads through its resolver" wait_until 60 yt_saved 1
+  offline
+  watch_from_now
+  "$app" play "downloaded:$yt_first" >/dev/null
+  check "the saved YouTube song is selected offline" wait_for songId "$yt_first" 10
+  check "the downloaded YouTube song plays offline" sounds 20
+  check "playback opens its downloaded files" waitfor_log 'yt-.*opens from its download' 10
+  car_log=$(mktemp)
+  check "Android Auto opens YouTube downloads offline" car_read downloads
+  check "Android Auto lists the saved YouTube album" grep -Fq 'browse=true' "$car_log"
+  "$app" do widgetfaces >/dev/null
+  check "YouTube metadata renders in every widget face" waitfor_log "rendered six faces for $yt_first" 20
+  online
   # Signed out, Home is YouTube's feed for everyone: its first song shelf plays from there.
   before=$(field title)
   "$app" play home >/dev/null
@@ -211,6 +275,12 @@ if want youtube-music; then section "a YouTube Music profile, then the server's 
   for _ in 1 2 3 4; do adb shell input swipe $((w / 2)) $((h / 4)) $((w / 2)) $((h * 3 / 4)) 200; done
   home_same() { [ "$(home_top)" = "$first_home" ]; }
   check "scrolled down and back up, Home's first shelf shows the same" wait_until 10 home_same
+  "$app" open player >/dev/null
+  check "the YouTube song menu opens" tapnode content-desc More
+  check "its additional actions open" tapnode text More
+  check "YouTube offers song radio" tapnode text 'Start radio from this song'
+  check "YouTube radio fills the queue" wait_for queue '>1' 30
+  check "YouTube radio plays through the AudioTrack" sounds 20
   "$app" login "$APP_URL|$USER|$PASS" >/dev/null
   check "the server's profile opens again" wait_for server "$APP_URL" 30
   "$app" play "$SONG" >/dev/null
@@ -459,16 +529,6 @@ if want download-albums; then section "downloaded albums on the phone and throug
   "$app" set autoMixBetterBeats false >/dev/null
   album_id=$(mix_album); first_id=$(song_id "Long Track 01"); third_id=$(song_id "Long Track 03")
   car_log=$(mktemp)
-  car_read() {
-    local parent="$1" before
-    before=$(adb logcat -d -v brief -s noricar:I | wc -l | tr -d ' ')
-    "$app" do "car tree $parent" >/dev/null
-    car_done() {
-      adb logcat -d -v brief -s noricar:I | tail -n "+$((before + 1))" > "$car_log"
-      grep -Fq "done tree $parent" "$car_log"
-    }
-    wait_until 20 car_done && grep -Fq "tree $parent: code=0" "$car_log"
-  }
   "$app" do "undownload album:$album_id" >/dev/null
   removed_album() { car_read downloads && ! grep -Fq "downloaded:$album_id |" "$car_log"; }
   check "the fixture album starts without saved tracks" wait_until 20 removed_album
@@ -784,7 +844,6 @@ jam_checks() {
     check "Invite shows the code and the link" wait_until 10 on_screen 'text="Copy link"'
     ui > "$here/../build/e2e/$ANDROID_SERIAL/jam-invite.xml"
     link=$(cat "$here/../build/e2e/$ANDROID_SERIAL/jam-invite.xml" | grep -oE 'text="https?://[^"]*/nori/jam#[^"]*"' | head -1 | cut -d'"' -f2 | sed 's/&amp;/\&/g')
-    echo "     the invite: $link"
     tapnode text Back
     check "Invite returns to the existing room drawer" wait_until 10 on_screen 'text="Your Jam"'
     check "the invite content is replaced" off_screen 'text="Copy link"'
