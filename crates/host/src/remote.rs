@@ -13,7 +13,7 @@ use nori_core::remote::{JamControls, Mirror, MirrorRow, Playing, Reach, Remote, 
 use nori_core::remote::{Announcement, Discovery};
 use nori_core::playlist::PlaylistView;
 use nori_core::Song;
-use nori_engine::{Engine, State, Status};
+use nori_engine::{Engine, Status};
 use nori_remote::wire::Op;
 use parking_lot::Mutex;
 
@@ -24,15 +24,13 @@ use crate::Level;
 pub struct Remotes {
     slot: Mutex<Option<Arc<Remote>>>,
     level: Arc<Level>,
-    /// The engine waits for a song's bytes with nothing left to play.
-    buffering: AtomicBool,
     /// Another device plays, as last seen.
     mirroring: AtomicBool,
 }
 
 impl Remotes {
     pub(crate) fn new(level: Arc<Level>) -> Remotes {
-        Remotes { slot: Mutex::default(), level, buffering: AtomicBool::new(false), mirroring: AtomicBool::new(false) }
+        Remotes { slot: Mutex::default(), level, mirroring: AtomicBool::new(false) }
     }
 
     /// The active device while it is another one: the player shows and controls it instead of this one.
@@ -42,7 +40,7 @@ impl Remotes {
         Some(Elsewhere { mirror, remote })
     }
 
-    /// The jam this device is a guest in, as [`crate::session::Session::jam_playing`] shows it.
+    /// The jam this device is a guest in, as [`crate::session::Handle::jam_playing`] shows it.
     pub(crate) fn jam_playing(&self) -> Option<Elsewhere> {
         let remote = self.get()?;
         let mirror = remote.jam_playing()?;
@@ -53,10 +51,6 @@ impl Remotes {
     fn mirroring(&self, on: bool) -> bool {
         let was = self.mirroring.swap(on, Ordering::Relaxed);
         on && !was
-    }
-
-    pub(crate) fn buffering(&self, on: bool) {
-        self.buffering.store(on, Ordering::Relaxed);
     }
 
     pub fn get(&self) -> Option<Arc<Remote>> {
@@ -79,21 +73,7 @@ impl Remotes {
 
     /// The playback other devices see, from the engine's status `s`.
     fn playing(&self, s: &Status) -> Playing {
-
-        let buffering = self.buffering.load(Ordering::Relaxed);
-        let (position_ms, mix_position_ms) = s.positions_at(nori_time::Instant::now(), buffering);
-        Playing {
-            playing: s.state == State::Playing,
-            buffering,
-            mixing: s.mixing,
-            mix_from: s.mix_from.map(|i| i as u32),
-            mix_position_ms,
-            mix_rate: s.speed,
-            position_ms: position_ms.max(0),
-            rate: s.pace,
-            index: s.index.map(|i| i as u32),
-            volume: self.level.percent(),
-        }
+        nori_engine::core::playing(s, self.level.percent())
     }
 }
 
@@ -134,16 +114,16 @@ impl RemotePlayer for HostPlayer {
             Op::Jump { index, .. } => {
                 h.engine.play_at(index as usize, 0);
             }
-            Op::Remove { index, .. } => h.remove(index as usize),
-            Op::Move { from, to, .. } => h.move_song(from as usize, to as usize),
-            Op::Restore { song, index } => h.put_back(song, index as usize),
-            Op::Add { songs, next } => h.enqueue(songs, next),
+            Op::Remove { index, .. } => h.remove_here(index as usize),
+            Op::Move { from, to, .. } => h.move_here(from as usize, to as usize),
+            Op::Restore { song, index } => h.put_back_from_afar(song, index as usize),
+            Op::Add { songs, next } => h.enqueue_here(songs, next),
             Op::Replace { songs, index, position_ms, play, order, shuffle, repeat, .. } => h.replace(songs, index as usize, position_ms, play, order, shuffle, repeat),
-            Op::Shuffle { on } => h.shuffle(on),
-            Op::Repeat { mode } => h.repeat(mode),
+            Op::Shuffle { on } => h.shuffle_here(on),
+            Op::Repeat { mode } => h.repeat_here(mode),
             Op::Volume { percent } => return h.volume_from_afar(percent as f32 / 100.0),
             // The devices see it once the core has marked it.
-            Op::Star { id, on } => return h.star(id, on),
+            Op::Star { id, on } => return h.star_from_afar(id, on),
             // The core keeps transfers, pages, time exchanges and jam ops to itself.
             Op::Transfer { .. } | Op::Clear | Op::LibraryMarks { .. } | Op::Page { .. } | Op::Clock { .. } | Op::Request { .. } | Op::Decide { .. } | Op::Promote { .. } | Op::Kick { .. } => {}
         }
@@ -179,28 +159,6 @@ impl RemoteShown for Shown {
     }
 }
 
-/// What a client's player asks of the music.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Press {
-    Toggle,
-    Next,
-    Previous,
-    Seek(i64),
-    /// The song at this list index (a queue row's).
-    Jump(u32),
-    Shuffle(bool),
-    /// Off 0, one 1, all 2.
-    Repeat(u8),
-    /// 0 to 1.
-    Volume(f32),
-    /// The song at this list index leaves the queue.
-    Remove(u32),
-    /// The song at list index `.0` moves to `.1`.
-    Move(u32, u32),
-    /// Everything after the song playing leaves the queue.
-    Clear,
-}
-
 /// The account's active device while it is another one, as read at one moment: what the player shows
 /// instead of this device's own playback, and where its controls go.
 #[derive(Clone)]
@@ -225,19 +183,13 @@ impl Elsewhere {
         self.remote.clone().star_where_playing(id.to_string(), on)
     }
 
-    fn row(&self) -> Option<&MirrorRow> {
+    pub(crate) fn row(&self) -> Option<&MirrorRow> {
         self.mirror.at.and_then(|a| self.mirror.rows.get(a as usize))
     }
 
     /// Where the song is now: what the device's listener hears at this moment ([`Mirror::position_now`]).
     pub fn position_ms(&self) -> i64 {
         self.mirror.position_now()
-    }
-
-    /// The songs after the one playing, in play order.
-    pub fn upcoming(&self) -> &[MirrorRow] {
-        let from = self.mirror.at.map_or(0, |a| a as usize + 1);
-        self.mirror.rows.get(from..).unwrap_or_default()
     }
 
     /// The device's queue as this client reads its own: each song at its list index there (left default
@@ -265,36 +217,6 @@ impl Elsewhere {
     /// The device's volume, 0 to 1, when it can be set.
     pub fn volume(&self) -> Option<f32> {
         self.mirror.volume.map(|v| v as f32 / 100.0)
-    }
-
-    /// `press` as a command for the device; None when there is nothing to ask.
-    pub(crate) fn op(&self, press: Press) -> Option<Op> {
-        let m = &self.mirror;
-        Some(match press {
-            Press::Toggle if m.playing => Op::Pause,
-            Press::Toggle => Op::Play,
-            Press::Next => Op::Next,
-            Press::Previous => Op::Previous,
-            Press::Seek(ms) => Op::Seek { ms: ms.max(0) },
-            Press::Jump(index) => Op::Jump { index, rev: m.rev },
-            Press::Remove(index) => Op::Remove { index, rev: m.rev },
-            Press::Move(from, to) => Op::Move { from, to, rev: m.rev },
-            Press::Clear => Op::Clear,
-            Press::Shuffle(on) => Op::Shuffle { on },
-            Press::Repeat(mode) => Op::Repeat { mode },
-            Press::Volume(v) => {
-                let percent = (v.clamp(0.0, 1.0) * 100.0).round() as u8;
-                m.volume.filter(|&now| now != percent)?;
-                Op::Volume { percent }
-            }
-        })
-    }
-
-    /// Asks the device for `press`; it shows at once, as it is expected to come out.
-    pub(crate) fn press(&self, press: Press) {
-        if let Some(op) = self.op(press) {
-            self.send(op);
-        }
     }
 
     /// `songs` from `start` (or shuffled) as the device's queue, playing, its repeat kept.
@@ -326,25 +248,31 @@ impl Elsewhere {
     }
 }
 
-/// The media keys and the system's media controls: the active device while it is another one, else this
-/// one's engine.
+/// The process's media controls while a session drives them: what they last saw, and the cover they
+/// show.
 #[cfg(feature = "desktop")]
-pub(crate) struct Keys {
-    pub(crate) here: crate::Controls,
-    pub(crate) remotes: Arc<Remotes>,
-    /// Hearts this device's songs.
-    pub(crate) hearts: Handle,
+pub(crate) struct Media {
+    pub(crate) mpris: Arc<nori_mpris::Mpris>,
+    pub(crate) seen: Mutex<crate::PlaceSeen>,
     pub(crate) cover: NowCover,
+}
+
+#[cfg(feature = "desktop")]
+impl Media {
+    pub(crate) fn new(mpris: Arc<nori_mpris::Mpris>, covers: Option<Arc<nori_covers::loader::Loader>>, core: Arc<nori_core::Core>) -> Media {
+        let cover = NowCover::new(covers, core, Arc::downgrade(&mpris));
+        Media { mpris, seen: Mutex::default(), cover }
+    }
 }
 
 /// The cover of the song the media controls show: its file for macOS's Now Playing to draw, and for MPRIS
 /// where the cover cache keeps it, never the signed server address.
 #[cfg(feature = "desktop")]
 pub(crate) struct NowCover {
-    pub(crate) covers: Option<Arc<nori_covers::loader::Loader>>,
-    pub(crate) core: Arc<nori_core::Core>,
+    covers: Option<Arc<nori_covers::loader::Loader>>,
+    core: Arc<nori_core::Core>,
     /// Told when the file is read.
-    pub(crate) media: Weak<nori_mpris::Mpris>,
+    media: Weak<nori_mpris::Mpris>,
     shown: Arc<Mutex<CoverShown>>,
 }
 
@@ -360,22 +288,22 @@ struct CoverShown {
 /// A cover read for the media controls.
 #[cfg(feature = "desktop")]
 #[derive(Clone)]
-struct CoverFile {
+pub(crate) struct CoverFile {
     /// Its bytes, kept only where Now Playing draws them (macOS).
-    bytes: Option<Arc<[u8]>>,
+    pub(crate) bytes: Option<Arc<[u8]>>,
     /// Its file in the cover cache; none for a cover the cache does not keep (a provider's).
-    path: Option<std::path::PathBuf>,
+    pub(crate) path: Option<std::path::PathBuf>,
 }
 
 #[cfg(feature = "desktop")]
 impl NowCover {
-    pub(crate) fn new(covers: Option<Arc<nori_covers::loader::Loader>>, core: Arc<nori_core::Core>, media: Weak<nori_mpris::Mpris>) -> NowCover {
+    fn new(covers: Option<Arc<nori_covers::loader::Loader>>, core: Arc<nori_core::Core>, media: Weak<nori_mpris::Mpris>) -> NowCover {
         NowCover { covers, core, media, shown: Arc::default() }
     }
 
     /// Cover `id`'s file once read; asked for another cover, it is read on a thread of its own and the
     /// media controls are told when it is in.
-    fn of(&self, id: &str) -> Option<CoverFile> {
+    pub(crate) fn of(&self, id: &str) -> Option<CoverFile> {
         let covers = self.covers.clone()?;
         let mut shown = self.shown.lock();
         if shown.id == id {
@@ -414,88 +342,6 @@ fn read_cover(covers: &nori_covers::loader::Loader, url: &str) -> Option<CoverFi
 /// Now Playing's cover size, in pixels.
 #[cfg(feature = "desktop")]
 const NOW_COVER_PX: u32 = 600;
-
-#[cfg(feature = "desktop")]
-impl Keys {
-    fn on(&self, press: Press, here: impl FnOnce(&crate::Controls)) {
-        match self.remotes.elsewhere() {
-            Some(e) => e.press(press),
-            None => here(&self.here),
-        }
-    }
-}
-
-#[cfg(feature = "desktop")]
-impl nori_mpris::Controls for Keys {
-    fn play(&self) {
-        match self.remotes.elsewhere() {
-            Some(e) => e.send(Op::Play),
-            None => self.here.play(),
-        }
-    }
-    fn pause(&self) {
-        match self.remotes.elsewhere() {
-            Some(e) => e.send(Op::Pause),
-            None => self.here.pause(),
-        }
-    }
-    fn toggle(&self) {
-        self.on(Press::Toggle, |c| c.toggle());
-    }
-    fn next(&self) {
-        self.on(Press::Next, |c| c.next());
-    }
-    fn previous(&self) {
-        self.on(Press::Previous, |c| c.previous());
-    }
-    fn seek(&self, ms: i64) {
-        self.on(Press::Seek(ms), |c| c.seek(ms));
-    }
-    fn like(&self) {
-        match self.remotes.elsewhere() {
-            Some(e) => {
-                if let Some(s) = e.song() {
-                    e.send(Op::Star { id: s.id.clone(), on: !s.starred });
-                }
-            }
-            None => {
-                let Some(song) = (self.here.song)(&self.here.engine.status()) else { return };
-                let on = !self.hearts.starred(&song);
-                self.hearts.star(song.id, on);
-            }
-        }
-    }
-    fn now(&self) -> nori_mpris::Now {
-        let (mut now, song) = match self.remotes.elsewhere() {
-            None => {
-                let song = (self.here.song)(&self.here.engine.status());
-                (nori_mpris::Now { starred: song.as_ref().is_some_and(|s| self.hearts.starred(s)), ..self.here.now() }, song)
-            }
-            Some(e) => {
-                let row = e.row();
-                let song = row.map(|r| r.song.clone()).unwrap_or_default();
-                let now = nori_mpris::Now {
-                    playing: e.mirror.playing,
-                    loaded: row.is_some() && !e.mirror.playing,
-                    index: row.map(|r| r.index as usize),
-                    length_ms: song.duration as i64 * 1000,
-                    position_ms: e.position_ms(),
-                    title: song.title.clone(),
-                    artist: song.artist.clone(),
-                    album: song.album.clone(),
-                    starred: song.starred,
-                    art: None,
-                    art_file: None,
-                };
-                (now, row.map(|_| song))
-            }
-        };
-        if let Some(cover) = song.and_then(|s| s.cover_art).and_then(|id| self.cover.of(&id)) {
-            (now.art, now.art_file) = (cover.bytes, cover.path);
-        }
-        now
-    }
-}
 
 /// mDNS for nearby doors, over mdns-sd's own thread; made with the remote, so nothing runs while it is off.
 #[cfg(feature = "desktop")]
@@ -569,8 +415,9 @@ impl Discovery for Mdns {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use nori_engine::State;
 
     /// A server whose every answer is one small PNG.
     #[cfg(feature = "desktop")]
@@ -621,8 +468,10 @@ mod tests {
         assert_eq!(remotes.playing(&status).volume, Some(40));
         assert!(remotes.level.set(0.25), "loudness moves with it");
         assert_eq!((*card.lock(), remotes.playing(&status).volume), (0.25, Some(25)));
-        remotes.buffering(true);
-        assert!(remotes.playing(&status).buffering);
+        // Waiting for audio as the status says it: the place is held, whenever the event is followed.
+        let waiting = Status { state: State::Playing, buffering: true, position_ms: 5_000, at: nori_time::Instant::now() - nori_time::Duration::from_secs(2), ..Default::default() };
+        let p = remotes.playing(&waiting);
+        assert_eq!((p.buffering, p.position_ms), (true, 5_000));
 
         // A volume this client cannot set is followed, not offered.
         let system = Remotes::new(Level::new(0.4, None));
@@ -643,7 +492,7 @@ mod tests {
     }
 
     /// The desk mirrored playing the second of three songs (200 s each) 10 s in, at volume 40.
-    fn desk() -> Elsewhere {
+    pub(crate) fn desk() -> Elsewhere {
         let core = nori_core::Core::new(String::new(), "t".into(), Default::default()).unwrap();
         let client = nori_core::client::Client::new(core, Arc::new(crate::session::Offline), Default::default());
         let me = nori_core::remote::RemoteMe { name: "Mac".into(), kind: nori_remote::wire::DeviceKind::Desktop };
@@ -676,7 +525,6 @@ mod tests {
     fn a_device_elsewhere_runs_on_within_its_song() {
         let mut e = desk();
         assert_eq!(e.song().map(|s| s.id.as_str()), Some("b"));
-        assert_eq!(e.upcoming().iter().map(|r| r.index).collect::<Vec<_>>(), [1], "after the song playing, in play order");
         assert_eq!((e.mirror.position_at(2_500_000), e.mirror.position_at(500_000_000)), (12_500, 200_000), "held at the song's end");
         e.mirror.playing = false;
         assert_eq!(e.mirror.position_at(2_500_000), 10_000, "paused");
@@ -688,35 +536,15 @@ mod tests {
         assert_eq!(known.view().songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["b", "c"], "as far as the rows are known");
         e.mirror.at = None;
         assert_eq!(e.view().index, -1);
-        assert_eq!(e.upcoming().len(), 3, "nothing playing: the whole queue is to come");
         assert_eq!(e.volume(), Some(0.4));
         e.mirror.rows[2].song.starred = true;
         assert_eq!((e.starred("c"), e.starred("a"), e.starred("x")), (Some(true), Some(false), None), "hearts of its queue only");
     }
 
     #[test]
-    fn the_players_controls_become_the_devices_commands() {
-        let mut e = desk();
-        let pressed = [
-            (Press::Toggle, Some(Op::Pause)),
-            (Press::Seek(-40), Some(Op::Seek { ms: 0 })),
-            (Press::Jump(1), Some(Op::Jump { index: 1, rev: 7 })),
-            (Press::Repeat(2), Some(Op::Repeat { mode: 2 })),
-            (Press::Remove(2), Some(Op::Remove { index: 2, rev: 7 })),
-            (Press::Move(2, 0), Some(Op::Move { from: 2, to: 0, rev: 7 })),
-            (Press::Clear, Some(Op::Clear)),
-            (Press::Volume(0.254), Some(Op::Volume { percent: 25 })),
-            (Press::Volume(0.4), None),
-        ];
-        for (press, op) in pressed {
-            assert_eq!(e.op(press), op, "{press:?}");
-        }
-        e.mirror.playing = false;
-        assert_eq!(e.op(Press::Toggle), Some(Op::Play));
-        e.mirror.volume = None;
-        assert_eq!(e.op(Press::Volume(0.9)), None, "a volume the device does not offer");
+    fn a_replace_keeps_the_devices_repeat() {
         let songs = vec![Song { id: "x".into(), ..Default::default() }];
-        assert!(matches!(e.replace(songs, 0, false), Op::Replace { play: true, position_ms: 0, shuffle: false, repeat: 0, .. }));
+        assert!(matches!(desk().replace(songs, 0, false), Op::Replace { play: true, position_ms: 0, shuffle: false, repeat: 0, .. }));
     }
 
     #[test]

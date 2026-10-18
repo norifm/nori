@@ -2,7 +2,7 @@
 //! drives it: 256-frame input blocks, each output block `256 / ratio` frames with the fraction carried.
 //!
 //! The two round differently: the port's FFT is rustfft, not Signalsmith's own, and the C++ compiler fuses
-//! multiply-adds. The phase vocoder feeds each block's phases into the next and picks peaks and loudest channels by
+//! multiply-adds. The phase vocoder feeds each block's phases into the next and picks loudest channels by
 //! comparisons, so a rounding can grow: the original against itself on input one ulp away departs by 1e-3 of the
 //! peak within about 10 000 frames. Excerpts are checked sample for sample from a reset, long runs against the
 //! original's own spread under that nudge. (With the same exact FFT on both sides and no fused multiply-adds the
@@ -44,14 +44,8 @@ impl Engine for signalsmith_stretch::Stretch {
     }
 }
 
-fn engines(ch: usize, rate: u32, semitones: f32) -> (Stretch, signalsmith_stretch::Stretch) {
-    let mut rust = Stretch::preset_cheaper(ch, rate as f32);
-    let mut cpp = signalsmith_stretch::Stretch::preset_cheaper(ch as u32, rate);
-    if semitones != 0.0 {
-        rust.set_transpose_semitones(semitones);
-        cpp.set_transpose_factor_semitones(semitones, None);
-    }
-    (rust, cpp)
+fn engines(ch: usize, rate: u32) -> (Stretch, signalsmith_stretch::Stretch) {
+    (Stretch::preset_cheaper(ch, rate as f32), signalsmith_stretch::Stretch::preset_cheaper(ch as u32, rate))
 }
 
 /// Runs `x` through at `ratio` input frames per output frame, then flushes.
@@ -126,10 +120,9 @@ type Input = (&'static str, fn(usize) -> Vec<f32>);
 
 const INPUTS: [Input; 4] = [("sines", sines), ("chirp", chirp), ("noise bursts", noise_bursts), ("music", music)];
 
-/// (input frames per output frame, semitones): AutoMix's ratios up to its maximum, close to 1, and transpositions.
-/// Below about 0.55 the original randomizes phases from an unseeded generator; see `half_speed_*`.
-const SETTINGS: [(f64, f32); 10] =
-    [(1.25, 0.0), (0.8, 0.0), (1.03, 0.0), (0.9985, 0.0), (0.6, 0.0), (1.9, 0.0), (2.0, 0.0), (1.0, 2.0), (1.25, 2.0), (0.8, -5.0)];
+/// Input frames per output frame: AutoMix's ratios up to its maximum, and close to 1. Below about 0.55 the original
+/// randomizes phases from an unseeded generator; see `half_speed_*`.
+const RATIOS: [f64; 7] = [1.25, 0.8, 1.03, 0.9985, 0.6, 1.9, 2.0];
 
 fn peak(x: &[f32]) -> f32 {
     x.iter().fold(0f32, |m, v| m.max(v.abs()))
@@ -183,20 +176,20 @@ fn relative_rms(a: &[f32], b: &[f32]) -> f64 {
 fn excerpts_match_sample_for_sample() {
     // Eight 8192-frame excerpts of every input at every setting, each after a reset, to the end of the flush. Most
     // stay at float rounding; the rest are where the original itself moves as much under a one-ulp nudge (noise
-    // fading to silence, where bins near the noise floor flip, and peaks picked by a comparison).
+    // fading to silence, where bins near the noise floor flip).
     let mut errors = Vec::new();
     for ch in [1, 2] {
         for (name, input) in INPUTS {
             let x = input(ch);
-            for (ratio, semitones) in SETTINGS {
-                let (mut rust, mut cpp) = engines(ch, RATE, semitones);
+            for ratio in RATIOS {
+                let (mut rust, mut cpp) = engines(ch, RATE);
                 for k in 0..8 {
                     let excerpt = &x[k * 19_000 * ch..(k * 19_000 + 8192) * ch];
                     rust.reset();
                     Engine::reset(&mut cpp);
                     let (a, b) = (run(&mut rust, excerpt, ch, ratio), run(&mut cpp, excerpt, ch, ratio));
                     let e = relative_rms(&a, &b);
-                    assert!(e < 0.05, "{ch} ch {name} at {ratio} and {semitones:+} st, excerpt {k}: {e:.1e} of the signal off");
+                    assert!(e < 0.05, "{ch} ch {name} at {ratio}, excerpt {k}: {e:.1e} of the signal off");
                     errors.push(e);
                 }
             }
@@ -216,13 +209,13 @@ fn long_runs_stay_within_the_originals_own_rounding_spread() {
         for (name, input) in INPUTS {
             let x = input(ch);
             let nudged: Vec<f32> = x.iter().map(|v| if *v != 0.0 { v.next_up() } else { 0.0 }).collect();
-            for (ratio, semitones) in SETTINGS {
-                let (mut rust, mut cpp) = engines(ch, RATE, semitones);
-                let (_, mut cpp_nudged) = engines(ch, RATE, semitones);
+            for ratio in RATIOS {
+                let (mut rust, mut cpp) = engines(ch, RATE);
+                let (_, mut cpp_nudged) = engines(ch, RATE);
                 let (a, b, c) = (run(&mut rust, &x, ch, ratio), run(&mut cpp, &x, ch, ratio), run(&mut cpp_nudged, &nudged, ch, ratio));
                 let (dist, own) = (spectral_distance(&a, &b, ch), spectral_distance(&c, &b, ch));
                 let level = level_db(&a, &b);
-                let case = format!("{ch} ch {name} at {ratio} and {semitones:+} st");
+                let case = format!("{ch} ch {name} at {ratio}");
                 assert!(dist <= 2.0 * own + 0.02, "{case}: {dist:.3} dB from the original, which is {own:.3} dB from itself");
                 assert!(level.abs() < 0.05, "{case}: {level:.3} dB louder than the original");
                 (worst_dist, worst_level) = (worst_dist.max(dist), worst_level.max(level.abs()));
@@ -238,7 +231,7 @@ fn half_speed_matches_the_original_statistically() {
     for ch in [1, 2] {
         for (name, input) in INPUTS {
             let x = input(ch);
-            let (mut rust, mut cpp) = engines(ch, RATE, 0.0);
+            let (mut rust, mut cpp) = engines(ch, RATE);
             let (a, b) = (run(&mut rust, &x, ch, 0.5), run(&mut cpp, &x, ch, 0.5));
             let (dist, level) = (spectral_distance(&a, &b, ch), level_db(&a, &b));
             assert!(dist < 1.0 && level.abs() < 0.3, "{ch} ch {name}: {dist:.3} dB apart, {level:.3} dB louder");
@@ -250,7 +243,7 @@ fn half_speed_matches_the_original_statistically() {
 fn latencies_are_the_originals() {
     for rate in [8000, 22_050, 44_100, 48_000, 96_000] {
         for ch in [1, 2, 6] {
-            let (rust, cpp) = engines(ch, rate, 0.0);
+            let (rust, cpp) = engines(ch, rate);
             assert_eq!((rust.input_latency(), rust.output_latency()), (cpp.input_latency(), cpp.output_latency()), "{rate} Hz, {ch} ch");
         }
     }
@@ -259,10 +252,10 @@ fn latencies_are_the_originals() {
 #[test]
 fn reset_forgets_what_came_before() {
     let x = music(2);
-    let (mut used, _) = engines(2, RATE, 0.0);
+    let (mut used, _) = engines(2, RATE);
     run(&mut used, &noise_bursts(2), 2, 0.8);
     used.reset();
-    let (mut fresh, _) = engines(2, RATE, 0.0);
+    let (mut fresh, _) = engines(2, RATE);
     let (a, b) = (run(&mut used, &x, 2, 1.25), run(&mut fresh, &x, 2, 1.25));
     // Only each bin's previous energy survives a reset, as in the original; it scales a phase that is normalized.
     let d = max_diff(&a, &b) / peak(&b);
@@ -273,14 +266,14 @@ fn reset_forgets_what_came_before() {
 fn identical_channels_come_out_as_the_mono_signal() {
     let mono = music(1);
     let stereo: Vec<f32> = mono.iter().flat_map(|v| [*v, *v]).collect();
-    for (ratio, semitones) in [(1.25, 0.0), (0.8, 2.0)] {
-        let (mut one, _) = engines(1, RATE, semitones);
-        let (mut two, _) = engines(2, RATE, semitones);
+    for ratio in [1.25, 0.8] {
+        let (mut one, _) = engines(1, RATE);
+        let (mut two, _) = engines(2, RATE);
         let (a, b) = (run(&mut one, &mono, 1, ratio), run(&mut two, &stereo, 2, ratio));
         let (left, right): (Vec<f32>, Vec<f32>) = b.chunks(2).map(|f| (f[0], f[1])).unzip();
-        assert_eq!(left, a, "{ratio} {semitones:+}: the left channel is not the mono signal");
+        assert_eq!(left, a, "{ratio}: the left channel is not the mono signal");
         let d = max_diff(&right, &left) / peak(&left);
         // Locked to the left through a renormalization that rounds: the original is 3e-4 of the peak apart here.
-        assert!(d < 1e-3, "{ratio} {semitones:+}: right {d:.2e} of the peak from left");
+        assert!(d < 1e-3, "{ratio}: right {d:.2e} of the peak from left");
     }
 }

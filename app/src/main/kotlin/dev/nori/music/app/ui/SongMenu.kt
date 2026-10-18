@@ -41,7 +41,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -89,8 +88,8 @@ fun SongMenu(
     onDismiss: () -> Unit,
     /**
      * Set when the player's own ⋯ opened this. The sleep timer is a property of the evening, not of
-     * the song, so it has no business on a row's menu in a list - but the player needs it somewhere
-     * now that the bottom of that screen belongs to the output switcher, the way Apple's does.
+     * the song, so it has no business on a row's menu in a list - but the player needs it somewhere,
+     * and the bottom of that screen belongs to the output switcher, the way Apple's does.
      */
     player: dev.nori.music.app.vm.PlayerViewModel? = null,
 ) {
@@ -222,12 +221,12 @@ fun PlaylistPicker(songs: List<Song>, actions: ActionsViewModel, onDone: () -> U
         title = { Text(say.addToPlaylist) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                OutlinedTextField(name, { name = it }, label = { Text(say.newPlaylist) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                FormField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text(say.newPlaylist) }, singleLine = true)
                 playlists?.forEach { p -> Text(p.name, Modifier.fillMaxWidth().clickable { actions.addToPlaylist(p, songs); onDone() }.padding(vertical = 12.dp)) }
             }
         },
-        confirmButton = { TextButton({ actions.addToNewPlaylist(name.trim(), songs); onDone() }, enabled = name.isNotBlank()) { Text(say.create) } },
-        dismissButton = { TextButton(onDone) { Text(say.cancel) } },
+        confirmButton = { TextAction(say.create, { actions.addToNewPlaylist(name.trim(), songs); onDone() }, enabled = name.isNotBlank()) },
+        dismissButton = { TextAction(say.cancel, onDone) },
     )
 }
 
@@ -239,7 +238,7 @@ fun TrackInfo(song: Song, onDone: () -> Unit) {
     AlertCard(
         title = { Text(say.details) },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) { rows.forEach { (label, value) -> Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(value, Modifier.padding(bottom = 8.dp)) } } },
-        confirmButton = { TextButton(onDone) { Text(say.close) } },
+        confirmButton = { TextAction(say.close, onDone) },
     )
 }
 

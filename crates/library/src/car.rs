@@ -30,6 +30,19 @@ pub enum CarFolder {
     Genres,
 }
 
+/// What a folder is, for the car's media type and glyph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum CarMedia {
+    /// One of the tree's own folders.
+    Folder,
+    Album,
+    Artist,
+    /// A playlist or a mix.
+    Playlist,
+    Genre,
+}
+
 /// A heading a folder's rows are listed under, which the client words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -66,6 +79,7 @@ pub struct BrowseFolder {
     pub id: String,
     /// Which of the tree's own folders this is; none for the library's things, named by `title` or `mix`.
     pub kind: Option<CarFolder>,
+    pub media: CarMedia,
     /// A mix's name, for the client to word.
     pub mix: Option<MixName>,
     /// The album's, artist's, playlist's or genre's name; empty for the tree's own folders and the mixes.
@@ -121,6 +135,7 @@ pub fn folder(id: &str, kind: CarFolder) -> BrowseFolder {
     BrowseFolder {
         id: id.into(),
         kind: Some(kind),
+        media: CarMedia::Folder,
         mix: None,
         title: String::new(),
         subtitle: None,
@@ -176,6 +191,7 @@ pub fn album_folder(a: &Album, group: Option<CarGroup>) -> BrowseFolder {
     BrowseFolder {
         id: format!("album:{}", a.id),
         kind: None,
+        media: CarMedia::Album,
         mix: None,
         title: a.name.clone(),
         subtitle: Some(a.artist.clone()),
@@ -191,6 +207,7 @@ pub fn artist_folder(a: &Artist, group: Option<CarGroup>) -> BrowseFolder {
     BrowseFolder {
         id: format!("artist:{}", a.id),
         kind: None,
+        media: CarMedia::Artist,
         mix: None,
         title: a.name.clone(),
         subtitle: None,
@@ -206,6 +223,7 @@ pub fn playlist_folder(p: &Playlist) -> BrowseFolder {
     BrowseFolder {
         id: format!("playlist:{}", p.id),
         kind: None,
+        media: CarMedia::Playlist,
         mix: None,
         title: p.name.clone(),
         subtitle: None,
@@ -221,6 +239,7 @@ pub fn genre_folder(g: &Genre) -> BrowseFolder {
     BrowseFolder {
         id: format!("genre:{}", g.name),
         kind: None,
+        media: CarMedia::Genre,
         mix: None,
         title: g.name.clone(),
         subtitle: None,
@@ -238,6 +257,7 @@ pub fn mix_folder(t: &MixTile) -> BrowseFolder {
     BrowseFolder {
         id: format!("mix:{}", t.id),
         kind: None,
+        media: CarMedia::Playlist,
         mix: Some(t.name),
         title: String::new(),
         subtitle: None,

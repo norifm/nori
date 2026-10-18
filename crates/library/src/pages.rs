@@ -22,7 +22,7 @@ pub fn album_discs(album: &Album, songs: &[Song], disc_titles: &[DiscTitle]) -> 
     let mut discs: Vec<DiscGroup> = Vec::new();
     for (i, s) in songs.iter().enumerate() {
         let disc = s.disc_number.max(1);
-        let line = nori_model::lines::song_line(&s.explicit_status, &s.artist, Some(&album.artist));
+        let line = nori_model::lines::song_line(s.explicit_status, &s.artist, Some(&album.artist));
         match discs.iter_mut().find(|d| d.disc == disc) {
             Some(d) => {
                 d.songs.push(i as u32);
@@ -467,8 +467,8 @@ mod tests {
 
         // Album rows omit album artist.
         let album = Album { artist: "Björk".into(), ..Default::default() };
-        let by = |artist: &str, explicit: &str| Song { artist: artist.into(), explicit_status: explicit.into(), ..Default::default() };
-        let d = AlbumDetail::new(album, vec![by("BJÖRK", ""), by("Björk", "explicit"), by("Thom Yorke", "")], vec![]);
+        let by = |artist: &str, explicit_status| Song { artist: artist.into(), explicit_status, ..Default::default() };
+        let d = AlbumDetail::new(album, vec![by("BJÖRK", nori_model::ExplicitStatus::Unmarked), by("Björk", nori_model::ExplicitStatus::Explicit), by("Thom Yorke", nori_model::ExplicitStatus::Clean)], vec![]);
         assert_eq!(d.discs[0].lines, ["", "🅴 ", "Thom Yorke"]);
         assert_eq!(d.seconds, 0);
     }

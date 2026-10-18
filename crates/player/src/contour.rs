@@ -6,7 +6,8 @@
 //! shelf ([`design`]; the small mid dip is ignored) with a pre-gain that prevents clipping. Computed on
 //! volume or setting changes, never per buffer.
 
-use crate::dsp::{band_db, Band, CH_BOTH, HIGH_SHELF_SLOPE, LOW_SHELF_SLOPE};
+use crate::dsp::{band_db, Band, CH_BOTH};
+use crate::types::EqKind;
 
 /// ISO 226:2003 table 1: the frequencies, the exponent of loudness perception `αf`, the magnitude of the
 /// linear transfer function normalised at 1 kHz `Lu` (dB) and the threshold of hearing `Tf` (dB).
@@ -37,11 +38,11 @@ pub struct Loudness {
 }
 
 /// Range the contours are defined for, phon.
-pub const PHON: (f64, f64) = (20.0, 90.0);
+pub(crate) const PHON: (f64, f64) = (20.0, 90.0);
 /// Selectable reference levels, phon.
-pub const REFERENCE_PHON: (f64, f64) = (60.0, 90.0);
+pub(crate) const REFERENCE_PHON: (f64, f64) = (60.0, 90.0);
 /// Largest shelf boost, dB.
-pub const MAX_DB: f64 = 18.0;
+pub(crate) const MAX_DB: f64 = 18.0;
 
 /// dB SPL at the table's `i`th frequency for `phon` (ISO 226:2003 4.1).
 fn spl_at(i: usize, phon: f64) -> f64 {
@@ -51,7 +52,7 @@ fn spl_at(i: usize, phon: f64) -> f64 {
 
 /// The equal-loudness contour: dB SPL at `freq` as loud as 1 kHz at `phon`. Interpolated in log
 /// frequency, held past the table's ends.
-pub fn spl_db(phon: f64, freq: f64) -> f64 {
+pub(crate) fn spl_db(phon: f64, freq: f64) -> f64 {
     let phon = phon.clamp(PHON.0, PHON.1);
     if !(freq > FREQ[0]) {
         return spl_at(0, phon);
@@ -65,14 +66,14 @@ pub fn spl_db(phon: f64, freq: f64) -> f64 {
 }
 
 /// Boost needed at `freq` to hear `reference`-phon music at `listening` phon, dB (0 at 1 kHz).
-pub fn compensation_db(listening: f64, reference: f64, freq: f64) -> f64 {
+pub(crate) fn compensation_db(listening: f64, reference: f64, freq: f64) -> f64 {
     let l = listening.clamp(PHON.0, PHON.1);
     let r = reference.clamp(PHON.0, PHON.1);
     (spl_db(l, freq) - l) - (spl_db(r, freq) - r)
 }
 
 /// Listening level: `reference` lowered by the volume attenuation, within [`PHON`].
-pub fn listening_phon(reference: f64, volume_db: f64) -> f64 {
+pub(crate) fn listening_phon(reference: f64, volume_db: f64) -> f64 {
     let v = if volume_db.is_finite() { volume_db.min(0.0) } else { 0.0 };
     (reference + v).clamp(PHON.0, PHON.1)
 }
@@ -117,7 +118,7 @@ const ABOVE_TABLE: [f64; 2] = [16_000.0, 20_000.0];
 
 /// Fits a shelf to `target` over the table points in `span` plus `extra`: per corner the least-squares
 /// gain (the dB response scales almost linearly with gain), keeping the corner with the least error.
-fn fit(kind: i32, corners: &[f64], slope: f64, span: (f64, f64), extra: &[f64], target: impl Fn(f64) -> f64) -> Option<Band> {
+fn fit(kind: EqKind, corners: &[f64], slope: f64, span: (f64, f64), extra: &[f64], target: impl Fn(f64) -> f64) -> Option<Band> {
     let points: Vec<f64> = FREQ.iter().copied().filter(|f| *f >= span.0 && *f <= span.1).chain(extra.iter().copied()).collect();
     let want: Vec<f64> = points.iter().map(|f| target(*f)).collect();
     let mut best: Option<(f64, Band)> = None;
@@ -144,8 +145,8 @@ pub fn design(reference: f64, volume_db: f64) -> Shelves {
         return Shelves { low: None, high: None, pre_db: 0.0 };
     }
     let c = |f: f64| compensation_db(listening, reference, f);
-    let low = fit(LOW_SHELF_SLOPE, &LOW_CORNERS, LOW_SLOPE, LOW_FIT, &[], c);
-    let high = fit(HIGH_SHELF_SLOPE, &HIGH_CORNERS, HIGH_SLOPE, HIGH_FIT, &ABOVE_TABLE, c);
+    let low = fit(EqKind::LowShelfSlope, &LOW_CORNERS, LOW_SLOPE, LOW_FIT, &[], c);
+    let high = fit(EqKind::HighShelfSlope, &HIGH_CORNERS, HIGH_SLOPE, HIGH_FIT, &ABOVE_TABLE, c);
     // Peak combined boost on a sixth-octave grid, 20 Hz up.
     let bands: Vec<&Band> = low.iter().chain(high.iter()).collect();
     let most = (0..=60).map(|k| 20.0 * 2f64.powf(k as f64 / 6.0)).map(|f| bands.iter().map(|b| band_db(FIT_RATE, b, f)).sum::<f64>()).fold(0.0, f64::max);

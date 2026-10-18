@@ -390,7 +390,7 @@ class Say(private val r: Resources) {
         songsAlwaysPlural(d.songs.size),
         Fmt.duration(d.seconds.toLong()),
         d.songs.firstOrNull()?.let(::quality),
-        if (d.album.explicitStatus == "explicit") r.getString(R.string.caption_explicit) else null,
+        if (d.album.explicitStatus == dev.nori.music.ffi.model.ExplicitStatus.EXPLICIT) r.getString(R.string.caption_explicit) else null,
     ).joinToString(" · ")
 
     /** The format of a record, from its first song: "FLAC 24/96.0", "MP3 320 kbps". */

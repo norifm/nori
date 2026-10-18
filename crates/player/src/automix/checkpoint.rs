@@ -22,7 +22,7 @@ impl Tensor {
 
 /// The state_dict's float32 tensors by key, Lightning's "model." prefix removed; other tensors are checked and
 /// left out.
-pub fn state_dict(ckpt: &[u8]) -> Result<HashMap<String, Tensor>, String> {
+pub(crate) fn state_dict(ckpt: &[u8]) -> Result<HashMap<String, Tensor>, String> {
     let zip = entries(ckpt)?;
     let pkl = zip.keys().filter(|n| n.ends_with("/data.pkl") && n.matches('/').count() == 1).collect::<Vec<_>>();
     let [pkl] = pkl[..] else { return Err("not one data.pkl in the archive".into()) };

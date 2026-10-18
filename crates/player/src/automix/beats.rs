@@ -10,18 +10,18 @@ use super::plan::{MIN_BPM_CONFIDENCE, MIN_STABILITY};
 pub const AVAILABLE: bool = cfg!(feature = "neural-beats");
 
 /// The grid is the classical tracker's, and the model has not looked at this end yet.
-pub const GRID_CLASSICAL: i32 = 0;
+pub(crate) const GRID_CLASSICAL: i32 = 0;
 /// The model looked at this end and was not sure enough, so the classical grid stays.
 pub const GRID_CHECKED: i32 = 1;
 /// The grid is Beat This!'s.
 pub const GRID_NEURAL: i32 = 2;
 
 /// How much of each end the model reads (its training window).
-pub const WINDOW_MS: i64 = 30_000;
+pub(crate) const WINDOW_MS: i64 = 30_000;
 /// Less music than this at an end is not worth a run.
 const MIN_WINDOW_MS: i64 = 8_000;
 /// How much of each end [`Ends`] keeps: the window plus room for leading or trailing silence.
-pub const ENDS_MS: i64 = 35_000;
+pub(crate) const ENDS_MS: i64 = 35_000;
 
 /// One end of a song, where a mix happens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +65,7 @@ fn classical(row: &TrackAnalysis, end: MixEnd) -> (f64, f64, i32, i32) {
 
 /// A grid with two candidate bar starts (the model marks every other beat where only drums play) takes the one the
 /// classical grid agrees with at the same tempo and metre; `None` when it cannot tell.
-pub fn settle_bar(row: &TrackAnalysis, end: MixEnd, g: EndGrid) -> Option<EndGrid> {
+pub(crate) fn settle_bar(row: &TrackAnalysis, end: MixEnd, g: EndGrid) -> Option<EndGrid> {
     let Some(other_phase) = g.other_phase else { return Some(g) };
     let (bpm, offset, phase, meter) = classical(row, end);
     if !(bpm > 0.0 && bpm.is_finite()) || (bpm / g.bpm - 1.0).abs() > 0.03 || meter != g.beats_per_bar {

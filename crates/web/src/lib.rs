@@ -21,7 +21,6 @@ use std::sync::Arc;
 use nori_core::client::Client;
 use nori_core::settings::SavedServer;
 use nori_core::settings_store::Settings;
-use nori_core::ServerConfig;
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 
@@ -88,20 +87,13 @@ impl Nori {
     }
 
     fn active(&self) -> Option<SavedServer> {
-        self.app.settings.prefs(|p| p.servers.iter().find(|s| s.id == p.active_server_id).cloned())
+        self.app.settings.prefs(|p| p.active_server().cloned())
     }
 
-    /// Signs in to `url` and keeps the profile, the active one from now on.
+    /// Signs in to `url` and keeps the profile, the active one from now on (`providers::log_in`).
     pub async fn login(&self, url: String, user: String, password: String) -> Result<(), JsValue> {
-        let config = ServerConfig { url: url.clone(), user: user.clone(), password: password.clone(), api_key: None, legacy_auth: false };
-        let legacy = nori_core::client::login_check(Arc::new(Fetch), config, String::new()).await.map_err(error)?;
-        let mut prefs = self.app.settings.current().unwrap_or_default();
-        let saved = prefs.servers.iter().find(|s| s.url == url && s.user == user).cloned();
-        let profile = SavedServer { password, legacy_auth: legacy, ..saved.unwrap_or_else(|| SavedServer { id: nori_core::settings::new_server_id(), name: user.clone(), url, user, ..Default::default() }) };
-        prefs.servers.retain(|s| s.id != profile.id);
-        prefs.servers.push(profile.clone());
-        prefs.active_server_id = profile.id.clone();
-        self.app.settings.put(prefs);
+        let form = SavedServer { id: nori_core::settings::new_server_id(), name: user.clone(), url, user, password, ..Default::default() };
+        let profile = nori_core::providers::log_in(Arc::new(Fetch(())), &self.app.settings, form).await.map_err(error)?;
         self.enter(profile)
     }
 
@@ -159,7 +151,7 @@ impl Nori {
     fn enter(&self, profile: SavedServer) -> Result<(), JsValue> {
         let core = nori_core::Core::new(db(), nori_core::settings::server_db_id(&profile.id), self.app.clone()).map_err(error)?;
         core.configure(nori_core::server_config(&profile)).map_err(error)?;
-        let client = Client::new(core, Arc::new(Fetch), nori_core::covers::CoverNet::new());
+        let client = Client::new(core, Arc::new(Fetch(())), nori_core::covers::CoverNet::new());
         client.set_profile(nori_core::net_profile(&profile));
         *self.client.borrow_mut() = Some(client);
         Ok(())

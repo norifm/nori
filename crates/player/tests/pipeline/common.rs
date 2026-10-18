@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use nori_player::automix::mixer::Mixer;
 use nori_player::automix::plan;
-use nori_player::automix::synth::Rng;
+use nori_player::automix::eval::Rng;
 use nori_player::sim::{prefs_off, Audio, Track};
 use nori_player::transitions::TransitionPrefs;
 use nori_player::types::{AutoMixSettings, TransitionPlan};
@@ -39,7 +39,7 @@ pub fn centred(hz: f64, amp: f64, secs: f64) -> Vec<i16> {
 /// Stereo white noise at `amp` of full scale (uniform), the same every time for the same seed.
 pub fn noise(amp: f64, secs: f64, seed: u64) -> Vec<i16> {
     let mut r = Rng(seed);
-    (0..frames(secs) * 2).map(|_| (r.next() * amp * 32767.0).round() as i16).collect()
+    (0..frames(secs) * 2).map(|_| (r.signed() * amp * 32767.0).round() as i16).collect()
 }
 
 /// A sine by rotation (`sin` per sample is slow in debug builds).
@@ -91,8 +91,8 @@ fn make_music(secs: f64, seed: u64) -> Vec<i16> {
         let [a, b, c, d, e] = [0, 1, 2, 3, 4].map(|k| o[k].next());
         let swell = 0.6 + 0.4 * e;
         let base = 0.25 * a + 0.12 * b + 0.06 * c;
-        let l = swell * base + 0.02 * r.next();
-        let rr = swell * (base * 0.8 + 0.1 * d) + 0.02 * r.next();
+        let l = swell * base + 0.02 * r.signed();
+        let rr = swell * (base * 0.8 + 0.1 * d) + 0.02 * r.signed();
         out.push((l * 32767.0).round() as i16);
         out.push((rr * 32767.0).round() as i16);
     }

@@ -244,7 +244,7 @@ fn gain_rounded_once_with_a_sound_on() {
     // The equalizer applies the song's gain as it runs: every sample as the chain makes it from the
     // song at its gain, rounded to 16 bits once.
     let song = music(10.0, 45);
-    let sound = Sound { bands: vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }], ..Sound::default() };
+    let sound = Sound { bands: vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }], ..Sound::default() };
     let mut p = Player::new(vec![track("a", &song)]);
     p.app.gains.insert("a".into(), minus_6db());
     p.set_sound(sound.clone());
@@ -270,7 +270,7 @@ fn with_gains(mut p: Player, gains: &[(&str, f32)]) -> Player {
 }
 
 fn boost() -> Sound {
-    Sound { bands: vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }], ..Sound::default() }
+    Sound { bands: vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }], ..Sound::default() }
 }
 
 fn sound_off_mid_song(a: &[i16], _: &[i16], gains: &[(&str, f32)]) -> Vec<i16> {

@@ -95,7 +95,7 @@ fn edit(r: &mut (impl Read + Seek), elst: &Atom) -> io::Result<Option<(u64, i64)
 }
 
 /// Parses iTunes' ` 00000000 00000840 000001CA 0000000000059E36 ...` into delay and padding.
-pub fn smpb(text: &str) -> Option<(u64, u64)> {
+pub(crate) fn smpb(text: &str) -> Option<(u64, u64)> {
     let mut parts = text.split_whitespace();
     parts.next()?;
     let delay = u64::from_str_radix(parts.next()?, 16).ok()?;

@@ -38,12 +38,10 @@ impl SongLyrics {
 
     /// Source credit; empty for the server's own lyrics.
     pub fn credit(&self) -> String {
-        let name = match self.pick.origin {
-            LyricsOrigin::Server => return String::new(),
-            LyricsOrigin::Lrclib => "LRCLIB".to_string(),
-            other => format!("{other:?}"),
-        };
-        format!("Lyrics from {name}")
+        match self.pick.origin {
+            LyricsOrigin::Server => String::new(),
+            other => format!("Lyrics from {}", crate::words::lyrics_origin(other)),
+        }
     }
 
     /// Whether `next` should replace these (`lyrics_replaces`).
@@ -56,12 +54,8 @@ impl SongLyrics {
     pub fn advance(&self, position_ms: i64, sweep: bool, force: bool) -> Now {
         let step = self.clock.advance(position_ms, sweep, true, force);
         let sweeping = self.clock.timing().sweeps();
-        let wait = match step.wait {
-            0 => None,
-            // While a word fills, the clock counts 60 Hz frames.
-            n if sweep && sweeping && !step.still => Some((n as u64 * 16).max(16)),
-            n => Some(n as u64),
-        };
+        // While a word fills, the clock counts 60 Hz frames.
+        let wait = self.clock.wait_ms(&step, sweep, 16);
         let line = usize::try_from(step.frame.active).ok().and_then(|i| self.pick.lyrics.lines.get(i));
         let (sung, now, mix, rest) = match line {
             Some(l) if sweeping => split(&l.text, step.frame.sung),

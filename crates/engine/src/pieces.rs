@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use symphonia::core::io::MediaSource;
 
 /// Bytes read from disk at a time; the demuxer's small reads are served from this buffer.
-pub const READ: usize = 512 * 1024;
+pub(crate) const READ: usize = 512 * 1024;
 
 /// A song's pieces in order, with their lengths, read through one buffer.
 pub struct Pieces<F = File> {

@@ -43,7 +43,7 @@ fn entry(line: &str) -> Option<AutoEqEntry> {
 }
 
 /// An entry's parametric preset URL (the file name repeats the folder name).
-pub fn preset_url(e: &AutoEqEntry) -> String {
+pub(crate) fn preset_url(e: &AutoEqEntry) -> String {
     file_url(e, "ParametricEQ")
 }
 

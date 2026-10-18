@@ -60,12 +60,12 @@ impl Default for CompressorSettings {
 }
 
 /// Control ranges.
-pub const THRESHOLD_DB: (f64, f64) = (-60.0, 0.0);
-pub const RATIO: (f64, f64) = (1.0, 20.0);
-pub const ATTACK_MS: (f64, f64) = (0.1, 200.0);
-pub const RELEASE_MS: (f64, f64) = (10.0, 2000.0);
-pub const MAKEUP_DB: (f64, f64) = (0.0, 24.0);
-pub const KNEE_DB: (f64, f64) = (0.0, 24.0);
+pub(crate) const THRESHOLD_DB: (f64, f64) = (-60.0, 0.0);
+pub(crate) const RATIO: (f64, f64) = (1.0, 20.0);
+pub(crate) const ATTACK_MS: (f64, f64) = (0.1, 200.0);
+pub(crate) const RELEASE_MS: (f64, f64) = (10.0, 2000.0);
+pub(crate) const MAKEUP_DB: (f64, f64) = (0.0, 24.0);
+pub(crate) const KNEE_DB: (f64, f64) = (0.0, 24.0);
 
 fn held(v: f64, (lo, hi): (f64, f64), fallback: f64) -> f64 {
     if v.is_finite() { v.clamp(lo, hi) } else { fallback }
@@ -204,14 +204,14 @@ impl Default for ExpanderSettings {
     }
 }
 
-pub const EXP_THRESHOLD_DB: (f64, f64) = (-90.0, -10.0);
-pub const EXP_RATIO: (f64, f64) = (1.0, 20.0);
-pub const EXP_ATTACK_MS: (f64, f64) = (0.1, 100.0);
-pub const EXP_RELEASE_MS: (f64, f64) = (10.0, 2000.0);
+pub(crate) const EXP_THRESHOLD_DB: (f64, f64) = (-90.0, -10.0);
+pub(crate) const EXP_RATIO: (f64, f64) = (1.0, 20.0);
+pub(crate) const EXP_ATTACK_MS: (f64, f64) = (0.1, 100.0);
+pub(crate) const EXP_RELEASE_MS: (f64, f64) = (10.0, 2000.0);
 /// Knee width, dB (prevents chatter at the threshold).
 const EXP_KNEE_DB: f64 = 6.0;
 /// Maximum reduction, dB.
-pub const EXP_RANGE_DB: f64 = 80.0;
+pub(crate) const EXP_RANGE_DB: f64 = 80.0;
 
 impl ExpanderSettings {
     /// Clamped to the ranges; NaN takes the default.

@@ -61,18 +61,9 @@ impl Library for Songs {
 /// A 3 s mix out of `a` at 8 s into `b` played 4 % fast (pitch not kept), ramped back over a second.
 fn beat_matched() -> Plan {
     let s = AutoMixSettings { max_transition_s: 3.0, ..Default::default() };
-    let t = plan::plan(None, None, 12_000, 30_000, &s);
-    Plan {
-        incoming_id: "b".into(),
-        out_start_us: 8_000_000,
-        duration_us: 3_000_000,
-        in_skip_us: 0,
-        mixer: t.clone(),
-        tempo_ratio: 1.04,
-        keep_pitch: false,
-        ramp_us: 1_000_000,
-        out_loop_us: 0,
-    }
+    let mut t = plan::plan(None, None, 12_000, 30_000, &s);
+    (t.out_start_ms, t.in_start_ms, t.tempo_ratio, t.keep_pitch, t.tempo_ramp_ms) = (8_000, 0, 1.04, false, 1_000);
+    Plan { incoming_id: "b".into(), mixer: t }
 }
 
 /// The simulated app, planning [`beat_matched`] out of `a`.
@@ -115,7 +106,7 @@ impl App for Planned {
 }
 
 struct Rig {
-    engine: Engine,
+    engine: common::Running,
     time: Stepper<Pull>,
     card: Card,
 }
@@ -129,7 +120,7 @@ impl Rig {
         let clock = Virtual::default();
         let mut app = sim::App::new();
         app.prefs = sim::prefs_off();
-        let engine = Engine::start_on(Songs::new(), Planned(app), queue, Box::new(card.clone()), None, Config::default(), clock.clone(), |_| {});
+        let engine = common::Running(Engine::start_on(Songs::new(), Planned(app), queue, Box::new(card.clone()), None, Config::default(), clock.clone(), |_| {}));
         engine.queue_changed();
         engine.play_at(0, 0);
         let rig = Rig { engine, time: Stepper::new(clock, card.pull.clone()), card };
@@ -148,12 +139,6 @@ impl Rig {
     fn assert_own_pitch(&self, what: &str) {
         let hz = self.card.last_second_hz();
         assert!((hz - HZ).abs() < 3.0, "{what}: the song plays at {hz} Hz, not {HZ} (x{:.4})", hz / HZ);
-    }
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        self.engine.stop();
     }
 }
 

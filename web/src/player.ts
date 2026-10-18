@@ -218,7 +218,7 @@ function drawSheet() {
           iconButton("previous", W.previous, () => void control("previous"), "plain big"),
           iconButton(playing ? "pause" : "play", playing ? W.pause : W.play, () => void control("toggle"), "plain huge"),
           iconButton("next", W.next, () => void control("next"), "plain big"),
-          iconButton(now.repeat === 1 ? "repeat-one" : "repeat", W.repeat, () => void control("repeat", (now!.repeat + 1) % 3), now.repeat ? "plain on" : "plain"),
+          iconButton(now.repeat === 1 ? "repeat-one" : "repeat", W.repeat, () => void control("cycle_repeat"), now.repeat ? "plain on" : "plain"),
         ),
         soundRow(),
         h(

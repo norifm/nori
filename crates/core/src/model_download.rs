@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use nori_automix::beat_model::{BeatFailure, Model, State};
+use nori_automix::beat_model::{BeatFailure, State, BYTES, CHECKPOINT_BYTES, CHECKPOINT_SHA256, CHECKPOINT_URL, FILE_NAME, SHA256};
 use sha2::{Digest, Sha256};
 
 /// The checkpoint comes a piece at a time, so its download shows progress and a stalled piece fails alone.
@@ -31,13 +31,12 @@ pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
     if !model.begin_download() {
         return None;
     }
-    let spec = model.model;
     let t0 = nori_time::Instant::now();
-    let got = fetch(&*client.transport, spec.checkpoint_url, spec.checkpoint_bytes, wanted)
+    let got = fetch(&*client.transport, CHECKPOINT_URL, CHECKPOINT_BYTES, wanted)
         .map_err(|e| (BeatFailure::Network, e))
         .and_then(|ckpt| {
             let fetched = t0.elapsed();
-            let weights = make(spec, &ckpt)?;
+            let weights = make(&ckpt)?;
             drop(ckpt);
             store(&file, &weights).map_err(|e| (BeatFailure::Storage, e.to_string()))?;
             Ok((fetched, t0.elapsed()))
@@ -50,12 +49,12 @@ pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
             None
         }
         Ok((fetched, all)) => {
-            crate::alog::info(&format!("{}: checkpoint fetched in {} ms, weights made and kept in {} ms", spec.file_name, fetched.as_millis(), all.as_millis()));
+            crate::alog::info(&format!("{FILE_NAME}: checkpoint fetched in {} ms, weights made and kept in {} ms", fetched.as_millis(), all.as_millis()));
             model.set_state(State::Ready);
             Some(file)
         }
         Err((why, detail)) => {
-            crate::alog::info(&format!("{} not made: {detail}", spec.file_name));
+            crate::alog::info(&format!("{FILE_NAME} not made: {detail}"));
             model.set_state(State::Failed(why));
             None
         }
@@ -83,13 +82,13 @@ fn fetch(transport: &dyn nori_net::transport::Transport, url: &str, total: u64, 
     Ok(out)
 }
 
-/// Converts a checkpoint to the weights the graph reads, verifying both against `model`'s pins.
-pub fn make(model: &Model, ckpt: &[u8]) -> Result<Vec<u8>, (BeatFailure, String)> {
-    if !pinned(ckpt, model.checkpoint_bytes, model.checkpoint_sha256) {
+/// Converts a checkpoint to the weights the graph reads, verifying both against their pins.
+pub fn make(ckpt: &[u8]) -> Result<Vec<u8>, (BeatFailure, String)> {
+    if !pinned(ckpt, CHECKPOINT_BYTES, CHECKPOINT_SHA256) {
         return Err((BeatFailure::WrongFile, format!("{} bytes, not the pinned checkpoint", ckpt.len())));
     }
     let weights = nori_player::automix::weights::convert(ckpt).map_err(|e| (BeatFailure::WrongFile, format!("converting the checkpoint: {e}")))?;
-    if !pinned(&weights, model.bytes, model.sha256) {
+    if !pinned(&weights, BYTES, SHA256) {
         return Err((BeatFailure::WrongFile, format!("the checkpoint made {} bytes, not the pinned weights", weights.len())));
     }
     Ok(weights)
@@ -105,10 +104,10 @@ fn store(file: &Path, weights: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&part, file)
 }
 
-/// Reads `model`'s weights file, verifying it against the pin.
-pub fn read(model: &Model, file: &Path) -> Result<Vec<u8>, String> {
+/// Reads the weights file, verifying it against the pin.
+pub fn read(file: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
-    if !pinned(&bytes, model.bytes, model.sha256) {
+    if !pinned(&bytes, BYTES, SHA256) {
         return Err(format!("{} is not the pinned weights", file.display()));
     }
     Ok(bytes)
@@ -122,12 +121,11 @@ fn pinned(bytes: &[u8], len: u64, sha: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nori_automix::beat_model::BEAT_THIS;
 
     #[test]
     fn make_rejects_unpinned_checkpoint() {
-        assert_eq!(make(&BEAT_THIS, b"<html>not found</html>").unwrap_err().0, BeatFailure::WrongFile);
-        assert_eq!(make(&BEAT_THIS, &vec![0u8; BEAT_THIS.checkpoint_bytes as usize]).unwrap_err().0, BeatFailure::WrongFile);
+        assert_eq!(make(b"<html>not found</html>").unwrap_err().0, BeatFailure::WrongFile);
+        assert_eq!(make(&vec![0u8; CHECKPOINT_BYTES as usize]).unwrap_err().0, BeatFailure::WrongFile);
     }
 
     #[test]

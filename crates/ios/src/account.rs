@@ -3,10 +3,8 @@
 use std::ffi::{c_char, CStr, CString};
 use std::path::Path;
 
-use nori_core::providers::{check_profile, providers, server_for_login, server_ready, FormField};
-use nori_core::settings::{
-    servers_activated, servers_removed, SavedServer, ServerKind, ServerList, StoredPrefs,
-};
+use nori_core::providers::{log_in, profile_activated, providers, server_ready, FormField};
+use nori_core::settings::{servers_removed, SavedServer, ServerKind, ServerList, StoredPrefs};
 use nori_core::settings_store::Settings;
 use nori_core::transport::{block_on, FailureKind, NetError};
 use nori_http::Http;
@@ -74,24 +72,8 @@ fn label(s: &SavedServer) -> String {
 /// The active server's label and kind; None when none are saved.
 pub(crate) fn active(dir: &Path) -> Result<Option<(String, ServerKind)>, String> {
     let (_, prefs) = opened(dir)?;
-    let id = &prefs.active_server_id;
-    let server = prefs
-        .servers
-        .iter()
-        .find(|s| &s.id == id)
-        .or_else(|| prefs.servers.first());
+    let server = prefs.active_server().or_else(|| prefs.servers.first());
     Ok(server.map(|s| (label(s), s.kind)))
-}
-
-/// Writes `profile` as the active server and waits until the database has it.
-pub(crate) fn keep(dir: &Path, profile: SavedServer) -> Result<(), String> {
-    let (settings, mut prefs) = opened(dir)?;
-    let list = servers_activated(list_of(&mut prefs), profile);
-    prefs.servers = list.servers;
-    prefs.active_server_id = list.active_server_id;
-    settings.put(prefs);
-    nori_core::background::flush();
-    Ok(())
 }
 
 fn list_of(prefs: &mut StoredPrefs) -> ServerList {
@@ -116,14 +98,11 @@ pub(crate) fn servers(dir: &Path) -> Result<Vec<serde_json::Value>, String> {
 
 /// Makes saved server `id` the active one. False when no server has that id.
 pub(crate) fn pick(dir: &Path, id: &str) -> Result<bool, String> {
-    let (settings, mut prefs) = opened(dir)?;
+    let (settings, prefs) = opened(dir)?;
     let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else {
         return Ok(false);
     };
-    let list = servers_activated(list_of(&mut prefs), profile);
-    prefs.servers = list.servers;
-    prefs.active_server_id = list.active_server_id;
-    settings.put(prefs);
+    settings.put(profile_activated(prefs, profile));
     nori_core::background::flush();
     Ok(true)
 }
@@ -247,24 +226,16 @@ pub(crate) fn login(dir: &Path, form: &Form) -> (i32, Option<String>) {
     let Some(draft) = draft(form) else {
         return (LOGIN_INCOMPLETE, None);
     };
-    let (_, prefs) = match opened(dir) {
+    let (settings, _) = match opened(dir) {
         Ok(v) => v,
         Err(e) => return (LOGIN_DATABASE, Some(e)),
     };
-    let draft = server_for_login(
-        ServerList {
-            servers: prefs.servers,
-            active_server_id: prefs.active_server_id,
-        },
-        draft,
-    );
-    let profile = match block_on(check_profile(Http::new(), draft)) {
-        Ok(p) => p,
-        Err(e) => return fail(e),
-    };
-    match keep(dir, profile) {
-        Ok(()) => (LOGIN_OK, None),
-        Err(e) => (LOGIN_DATABASE, Some(e)),
+    match block_on(log_in(Http::new(), &settings, draft)) {
+        Ok(_) => {
+            nori_core::background::flush();
+            (LOGIN_OK, None)
+        }
+        Err(e) => fail(e),
     }
 }
 
@@ -351,6 +322,14 @@ pub unsafe extern "C" fn nori_ios_remove_server(data_dir: *const c_char, id: *co
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Writes `profile` as the active server and waits until the database has it.
+    fn keep(dir: &Path, profile: SavedServer) -> Result<(), String> {
+        let (settings, prefs) = opened(dir)?;
+        settings.put(profile_activated(prefs, profile));
+        nori_core::background::flush();
+        Ok(())
+    }
 
     fn profile(id: &str, user: &str) -> SavedServer {
         SavedServer {

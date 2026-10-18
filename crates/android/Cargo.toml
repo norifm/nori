@@ -30,7 +30,7 @@ nori-transfers = { path = "../transfers", features = ["ffi"] }
 nori-perf = { path = "../perf", features = ["ffi"] }
 nori-remote = { path = "../remote", features = ["ffi"] }
 nori-player = { path = "../player" }
-nori-look = { path = "../look" }
+nori-look = { path = "../look", features = ["ffi"] }
 nori-covers = { path = "../covers" }
 async-trait = "0.1"
 nori-engine = { path = "../engine", features = ["core"] }

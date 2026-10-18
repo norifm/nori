@@ -446,19 +446,11 @@ impl Drop for Watched {
 pub trait ByteSource: Send + Sync {
     fn open(&self, url: &str, from: u64) -> Result<Body, OpenError>;
 
-    /// [`ByteSource::open`] cached under `key` by a client whose HTTP stack caches (media3 on Android).
-    fn open_keyed(&self, url: &str, _key: &str, from: u64) -> Result<Body, OpenError> {
+    /// [`ByteSource::open`] that `cancel` can abort, cached under `key` by a client whose HTTP stack caches
+    /// (media3 on Android): the client should hook [`Cancel::on_cancel`] so a hung request frees its
+    /// connection and dispatcher slot. By default the request is neither cancellable nor cached.
+    fn open_cancellable(&self, url: &str, _key: Option<&str>, from: u64, _cancel: &Cancel) -> Result<Body, OpenError> {
         self.open(url, from)
-    }
-
-    /// [`ByteSource::open`] (or `open_keyed`) that `cancel` can abort: the client should hook
-    /// [`Cancel::on_cancel`] so a hung request frees its connection and dispatcher slot. By default the
-    /// request is not cancellable.
-    fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, _cancel: &Cancel) -> Result<Body, OpenError> {
-        match key {
-            Some(k) => self.open_keyed(url, k, from),
-            None => self.open(url, from),
-        }
     }
 
     /// A live stream with `Icy-MetaData: 1`: the body and the answer's `icy-metaint`, if any.

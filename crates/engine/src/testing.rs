@@ -12,9 +12,9 @@ use parking_lot::{Condvar, Mutex};
 use crate::Clock;
 
 /// Real time the clock waits per sleep for bytes the engine awaits; longer than any in-memory server takes.
-pub const BYTES_WAIT: Duration = Duration::from_millis(2_000);
+pub(crate) const BYTES_WAIT: Duration = Duration::from_millis(2_000);
 /// The shorter wait while a server itself waits for the clock (a paced transcode).
-pub const TIME_WAIT: Duration = Duration::from_millis(20);
+pub(crate) const TIME_WAIT: Duration = Duration::from_millis(20);
 /// Real time after which an engine that never sleeps is taken as stuck.
 const STUCK: Duration = Duration::from_secs(120);
 

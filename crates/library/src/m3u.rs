@@ -115,7 +115,7 @@ fn words(text: &str) -> Option<String> {
 fn candidates(c: &Connection, query: Option<String>) -> rusqlite::Result<Vec<Song>> {
     let Some(q) = query else { return Ok(Vec::new()) };
     let mut st = c.prepare_cached("SELECT i.json FROM fts JOIN items i ON i.rowid = fts.rowid WHERE fts MATCH ?1 AND i.server = sid() AND i.kind = ?2 ORDER BY rank LIMIT 25")?;
-    let rows = st.query_map(params![q, db::SONG], |r| r.get::<_, String>(0))?;
+    let rows = st.query_map(params![q, db::ItemKind::Song], |r| r.get::<_, String>(0))?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?.iter().filter_map(|j| serde_json::from_str(j).ok()).collect())
 }
 

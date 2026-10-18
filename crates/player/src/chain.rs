@@ -11,7 +11,7 @@ use crate::silence::SilenceSkipper;
 use crate::speed::SpeedPitch;
 
 /// Input frames between kept states: the most that is run again to reach a splice.
-pub const MARK_FRAMES: u64 = 8192;
+pub(crate) const MARK_FRAMES: u64 = 8192;
 
 /// The chain in media3's order: equalizer, silence skipping, speed.
 #[derive(Default)]

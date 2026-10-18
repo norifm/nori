@@ -50,7 +50,7 @@ pub struct TransitionPrefs {
 ///
 /// Track and disc numbers need not be consecutive (real tags skip and omit them); only a known lower
 /// disc or a lower track on the same disc means the album is not playing on.
-pub fn follows_on_album(a: &WindowSong, b: &WindowSong, shuffling: bool) -> bool {
+pub(crate) fn follows_on_album(a: &WindowSong, b: &WindowSong, shuffling: bool) -> bool {
     if shuffling || a.album_id.is_none() || a.album_id != b.album_id {
         return false;
     }
@@ -157,17 +157,7 @@ pub fn engine_plan(p: &TransitionPlan, incoming_id: &str) -> Option<Plan> {
     if p.kind == TransitionKind::Gapless {
         return None;
     }
-    Some(Plan {
-        incoming_id: incoming_id.to_string(),
-        out_start_us: p.out_start_ms * 1000,
-        duration_us: p.duration_ms * 1000,
-        in_skip_us: p.in_start_ms * 1000,
-        mixer: p.clone(),
-        tempo_ratio: p.tempo_ratio as f32,
-        keep_pitch: p.keep_pitch,
-        ramp_us: p.tempo_ramp_ms * 1000,
-        out_loop_us: p.out_loop_ms.unwrap_or(0) * 1000,
-    })
+    Some(Plan { incoming_id: incoming_id.to_string(), mixer: p.clone() })
 }
 
 /// An analysis of `heard_ms` covers the whole `expected_ms` song (0: unknown). A cut-short analysis must
@@ -307,9 +297,9 @@ mod tests {
     fn curve_levels_mid_fade() {
         use crate::automix::mixer::Mixer;
         let n = 48_000usize;
-        let mut rng = crate::automix::synth::Rng(0x9E37_79B9_7F4A_7C15);
-        let a: Vec<f32> = (0..n).map(|_| rng.next() as f32 * 0.25).collect();
-        let b: Vec<f32> = (0..n).map(|_| rng.next() as f32 * 0.25).collect();
+        let mut rng = crate::automix::eval::Rng(0x9E37_79B9_7F4A_7C15);
+        let a: Vec<f32> = (0..n).map(|_| rng.signed() as f32 * 0.25).collect();
+        let b: Vec<f32> = (0..n).map(|_| rng.signed() as f32 * 0.25).collect();
         let rms = |x: &[f32]| (x.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / x.len() as f64).sqrt();
         let middle = |curve: FadeCurve| {
             let plain = TransitionPrefs { auto_mix: false, crossfade_s: 1, fade_curve: curve, ..prefs() };

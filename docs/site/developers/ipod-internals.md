@@ -453,9 +453,9 @@ Each ends with something that runs on the iPod; nothing moves on until the one b
 In the tree, uncommitted:
 
 - `crates/ios` (`nori-ios`): a staticlib over `nori-host`, in the workspace. Its C ABI today is
-  `nori_ios_version`, `nori_ios_probe(data_dir)` (opens the settings database; proves SQLite and the
-  filesystem on the device) and `nori_ios_free`. Two tests (`cargo test -p nori-ios`) cover the ABI's
-  string handling and the probe.
+  `nori_ios_version`, a probe that opened the settings database (it proved SQLite and the filesystem on
+  the device, and has gone since) and `nori_ios_free`. Tests (`cargo test -p nori-ios`) cover the ABI's
+  string handling.
 - `ios/`: `Sources/main.swift`, `AppDelegate.swift` (the data directory under Application Support,
   excluded from backup), `ProbeViewController.swift` (one label: the version and the probe's note, the
   core called off the main thread), `Sources/nori_ios.h` (the bridging header, kept in step with lib.rs by
@@ -550,10 +550,10 @@ through the jack with no underrun for a minute at 93 ms, at 10 ms, and across a 
 `crates/ios/src/session.rs` holds one `nori_host::Session` in a `OnceLock` (the C entry points have no
 handle). `nori_ios_open(data_dir, server_id)` loads the saved server — an empty id is the active one —
 with `IosOutput` on device, `nori_http::Http`, covers on and `memory_mb` 96. No saved server returns an
-error and leaves the slot empty. Every `Said` is queued and delivered on `nori-ios-out`, which calls
-`Session::followed` and then the Swift callback; engine events are a `repr(C)` `NoriReport` (state,
+error and leaves the slot empty. The session follows its engine's events itself; every `Said` is queued
+and delivered on `nori-ios-out` to the Swift callback; engine events are a `repr(C)` `NoriReport` (state,
 index, ms, jumps, and a kind for the rest). The controls (`play_at`, `toggle`, `next`, `previous`,
-`seek`, `go_to`, `set_repeat`, `shuffle`, `remove`, `put_back`, `move`, `clear_upcoming`) are thin
+`seek`, `cycle_repeat`, `shuffle`, `remove`, `put_back`, `move`, `clear_upcoming`) are thin
 wrappers. `nori_ios_background` saves now (`QueueMoment::Closing`, no push). `nori_ios_memory_warning`
 calls `Loader::trim`, which drops the decoded-cover cache and rests the workers.
 

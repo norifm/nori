@@ -29,9 +29,7 @@ pub fn now_us() -> i64 {
 
 #[cfg(not(unix))]
 pub fn now_us() -> i64 {
-    // The clock's start: a static, as every caller on the device reads the one clock.
-    static START: std::sync::OnceLock<nori_time::Instant> = std::sync::OnceLock::new();
-    START.get_or_init(nori_time::Instant::now).elapsed().as_micros() as i64
+    nori_time::monotonic().as_micros() as i64
 }
 
 /// One time exchange, µs: sent (`t1`) and answered (`t4`) on the controller's clock, received (`t2`) and

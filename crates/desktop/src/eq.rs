@@ -40,10 +40,6 @@ fn kind_name(k: EqKind) -> &'static str {
     }
 }
 
-fn uses_gain(k: EqKind) -> bool {
-    matches!(k, EqKind::Peaking | EqKind::LowShelf | EqKind::HighShelf | EqKind::LowShelfSlope | EqKind::HighShelfSlope)
-}
-
 /// The graphic EQ response as an SVG path in a `w` x `h` box (20 Hz..20 kHz, ±15 dB).
 fn curve(sliders: &[f32], w: f32, h: f32) -> String {
     let freqs: Vec<f32> = (0..97).map(|i| 20.0 * 1000f32.powf(i as f32 / 96.0)).collect();
@@ -88,8 +84,8 @@ pub fn fill(ui: &AppWindow, p: &StoredPrefs) {
                 EqBandRow {
                     label: format!("{}{side}", numbers::hz(b.freq, POINT)).into(),
                     gain: b.gain_db,
-                    value: if uses_gain(b.kind) { signed(b.gain_db).into() } else { kind_name(b.kind).into() },
-                    uses_gain: uses_gain(b.kind),
+                    value: if b.kind.uses_gain() { signed(b.gain_db).into() } else { kind_name(b.kind).into() },
+                    uses_gain: b.kind.uses_gain(),
                 }
             })
             .collect()

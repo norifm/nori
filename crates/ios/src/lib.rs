@@ -63,53 +63,13 @@ pub(crate) mod counting {
     }
 }
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, CString};
 
 /// The workspace version, for the about page and the log. A static string: never freed.
 #[no_mangle]
 pub extern "C" fn nori_ios_version() -> *const c_char {
     static VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
     VERSION.as_ptr() as *const c_char
-}
-
-/// Opens the app database under `data_dir` (UTF-8 path, created if missing) and answers a short English
-/// note of what it found: the settings loaded, how many servers are saved, the database file's size.
-/// Tooling, for the first screen; `NULL` only for an unreadable path.
-///
-/// # Safety
-/// `data_dir` is a NUL-terminated string.
-#[no_mangle]
-pub unsafe extern "C" fn nori_ios_probe(data_dir: *const c_char) -> *mut c_char {
-    if data_dir.is_null() {
-        return std::ptr::null_mut();
-    }
-    // SAFETY: the caller's promise above.
-    let Ok(dir) = unsafe { CStr::from_ptr(data_dir) }.to_str() else {
-        return std::ptr::null_mut();
-    };
-    let note = probe(std::path::Path::new(dir));
-    CString::new(note).map_or(std::ptr::null_mut(), CString::into_raw)
-}
-
-fn probe(dir: &std::path::Path) -> String {
-    if let Err(e) = std::fs::create_dir_all(dir) {
-        return format!("cannot make {}: {e}", dir.display());
-    }
-    let db = nori_host::db_path(dir);
-    let settings = nori_core::settings_store::Settings::new();
-    match settings.open(&db) {
-        Ok(prefs) => {
-            let size = std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
-            format!(
-                "settings open: {} server(s) saved, theme {:?}, database {} bytes at {}",
-                prefs.servers.len(),
-                prefs.theme,
-                size,
-                db
-            )
-        }
-        Err(e) => format!("the database would not open: {e}"),
-    }
 }
 
 /// Frees a string this library handed out.
@@ -127,24 +87,15 @@ pub unsafe extern "C" fn nori_ios_free(s: *mut c_char) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn probe_opens_a_fresh_database() {
-        let dir = nori_testdir::TempDir::new("ios-probe");
-        let note = probe(dir.path());
-        assert!(note.starts_with("settings open: 0 server(s)"), "{note}");
-        assert!(dir.path().join(nori_core::db::DB_FILE).exists());
-    }
+    use std::ffi::CStr;
 
     #[test]
     fn strings_round_trip_through_the_abi() {
-        let dir = nori_testdir::TempDir::new("ios-abi");
-        let path = CString::new(dir.path().to_str().unwrap()).unwrap();
-        let s = unsafe { nori_ios_probe(path.as_ptr()) };
+        let s = crate::pages::owned(&serde_json::json!({ "t": "héllo" }));
         assert!(!s.is_null());
-        let note = unsafe { CStr::from_ptr(s) }.to_str().unwrap().to_string();
+        let back = unsafe { CStr::from_ptr(s) }.to_str().unwrap().to_string();
         unsafe { nori_ios_free(s) };
-        assert!(note.contains("database"), "{note}");
+        assert_eq!(back, r#"{"t":"héllo"}"#);
         assert_eq!(
             unsafe { CStr::from_ptr(nori_ios_version()) }
                 .to_str()

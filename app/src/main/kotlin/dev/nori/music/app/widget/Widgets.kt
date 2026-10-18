@@ -122,7 +122,7 @@ object Widgets {
         val prefs = Nori.get(context).settings.value
         val system = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val dark = dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system)
-        return Theme(dev.nori.music.ffi.pageBlack(dark, prefs.amoled, false), dev.nori.music.app.ui.plainLook(dev.nori.music.app.ui.schemeOf(context, prefs, dark)))
+        return Theme(dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, false), dev.nori.music.app.ui.plainLook(dev.nori.music.app.ui.schemeOf(context, prefs, dark)))
     }
 
     /** A cover's look and its wash, as its page in the app has them. */

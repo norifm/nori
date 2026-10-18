@@ -20,8 +20,7 @@ sealed interface Load<out T> {
 }
 
 /**
- * A list that pages grow at the end. Each page used to copy everything before it into a new list (the
- * thousandth page of a long list copied 999 pages to add one); here each page is added to one shared
+ * A list that pages grow at the end. Each page is added to one shared
  * array and published as a new view of it, whose [size] fixes what it shows, so a page costs its own
  * length. Views already handed out never change: only the newest view appends in place, and anything
  * else (a page answered twice, a stale view growing) starts a new array.

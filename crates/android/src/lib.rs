@@ -230,6 +230,15 @@ pub(crate) fn kept<T>(h: jni::sys::jlong) -> std::sync::Arc<T> {
     }
 }
 
+/// What handle `h` points at; None for 0.
+///
+/// # Safety
+/// `h` is 0 or a pointer to a `T` that lives for `'a`, shared only as `&T`.
+pub(crate) unsafe fn handle<'a, T>(h: jni::sys::jlong) -> Option<&'a T> {
+    // SAFETY: the caller's promise.
+    (h != 0).then(|| unsafe { &*(h as *const T) })
+}
+
 /// The core object behind a handle Kotlin took with `uniffiCloneHandle()`, taken over: uniffi's handle
 /// for a Rust object is its `Arc`'s raw pointer, and the cloned reference is this side's to drop.
 ///
