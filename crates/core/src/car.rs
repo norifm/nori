@@ -456,7 +456,7 @@ pub(crate) mod tests {
     #[test]
     fn album_opens_offline_from_cache() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
-        c.core.cache_put("getAlbum&id=a".into(), br#"{"subsonic-response":{"status":"ok","album":{"id":"a","name":"A","song":[{"id":"s","isDir":false}]}}}"#.to_vec()).unwrap();
+        c.core.cache_put("page:album/a".into(), br#"{"subsonic-response":{"status":"ok","album":{"id":"a","name":"A","song":[{"id":"s","isDir":false}]}}}"#.to_vec()).unwrap();
         c.core.db.lock().execute("UPDATE cache SET ts=0", []).unwrap();
         fake.fail(crate::transport::FailureKind::Connect);
         assert_eq!(block(c.browse_children("album:a".into(), 0, 10)).songs.len(), 1);
@@ -465,7 +465,7 @@ pub(crate) mod tests {
     #[test]
     fn stale_favorites_refresh_in_the_car() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
-        c.core.cache_put("getStarred2".into(), br#"{"subsonic-response":{"status":"ok","starred2":{}}}"#.to_vec()).unwrap();
+        c.core.cache_put("page:starred".into(), br#"{"subsonic-response":{"status":"ok","starred2":{}}}"#.to_vec()).unwrap();
         c.core.db.lock().execute("UPDATE cache SET ts=0", []).unwrap();
         fake.answer(r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"favorite","title":"Favorite"}]}}}"#);
         let page = block(c.browse_children("starred".into(), 0, 100));

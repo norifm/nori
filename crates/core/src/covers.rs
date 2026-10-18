@@ -102,15 +102,8 @@ const DOWNLOAD_COVERS: u32 = 500;
 impl Core {
     /// Cover URLs to warm for songs being downloaded, so they have artwork offline ([`cover_wants`]).
     pub fn download_cover_urls(&self, arts: Vec<String>) -> Vec<String> {
-        let prefix = self.url_prefix("getCoverArt".into());
-        cover_wants(arts, DOWNLOAD_COVERS)
-            .into_iter()
-            .map(|w| {
-                let mut out = String::new();
-                cover_url_into(&mut out, &prefix, &w.id, w.size as i32);
-                out
-            })
-            .collect()
+        let provider = self.provider();
+        cover_wants(arts, DOWNLOAD_COVERS).into_iter().map(|w| provider.cover_address(self, &w.id, w.size)).collect()
     }
 
     /// The URL of cover `id` at `size` px, as the profile's provider makes it.
@@ -335,7 +328,7 @@ mod tests {
         let core = crate::Core::new(String::new(), "t".into(), Default::default()).unwrap();
         core.configure(crate::ServerConfig { url: "http://m".into(), user: "u".into(), password: "p".into(), ..Default::default() }).unwrap();
         let urls = core.download_cover_urls(["al 1", "ext-2", "al 1"].map(String::from).to_vec());
-        let prefix = core.url_prefix("getCoverArt".into());
+        let prefix = core.url_prefix("getCoverArt");
         assert_eq!(urls, [format!("{prefix}&id=al%201&size=320"), format!("{prefix}&id=al%201&size=800")]);
         assert_eq!(core.cover_address("al 1".into(), 320), urls[0]);
 
