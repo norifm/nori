@@ -60,7 +60,10 @@ await host.evaluate((id) => (location.hash = `#/album/${id}`), album);
 await host.waitForSelector(".songs li .play");
 await (await host.$$(".songs li .play"))[0].click();
 await until(host, () => (window.nori.heard?.seconds ?? 0) > 1).catch(async (e) => {
-  console.log("host", JSON.stringify(await host.evaluate(() => window.nori)), await ask(host, "now"), logs.join("\n"));
+  console.log("host playback", await host.evaluate(async () => {
+    const n = JSON.parse(await window.ask("now"));
+    return { heard: window.nori.heard, state: n.state, positionMs: n.positionMs, song: n.song?.title };
+  }), logs.join("\n"));
   throw e;
 });
 
@@ -165,7 +168,7 @@ if (!only || only.includes("jam")) {
 }
 
 report.failures = failures;
-console.log(JSON.stringify(report, null, 1));
+console.log(JSON.stringify(report, (key, value) => key === "link" ? !!value : value, 1));
 if (logs.length) console.log(logs.slice(0, 30).join("\n"));
 await browser.close();
 process.exit(failures.length ? 1 : 0);

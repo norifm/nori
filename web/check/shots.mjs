@@ -28,7 +28,10 @@ async function go(h, top) {
     location.hash = x;
   }, h);
   await page.waitForFunction((t) => window.nori.page === t, { timeout: 30000 }, top);
-  await page.waitForFunction(() => [...document.images].every((i) => i.complete), { timeout: 10000 }).catch(() => {});
+  await page.waitForFunction(() => [...document.images].every((i) => {
+    const r = i.getBoundingClientRect();
+    return i.complete || r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth;
+  }), { timeout: 10000 }).catch(() => {});
   await wait(250);
 }
 
@@ -38,12 +41,16 @@ if (await page.$("#login")) await page.click("#login button");
 await page.waitForFunction(() => window.nori.page === "home" && window.nori.playerReadyAt !== undefined, { timeout: 60000 });
 const albums = (await read({ kind: "albums", sort: "alphabeticalByName", size: 500, offset: 0 })).albums;
 const sung = albums.find((a) => a.name === "Sung Album") ?? albums[0];
+const scrollAlbum = albums.find((a) => a.name === "Second Wind" && a.artist === "Alpha Waves") ?? sung;
 const artist = sung.artistId ?? (await read({ kind: "artists" })).artists[0].id;
 
 // Something plays, with lyrics, and a jam is hosted.
 await go(`#/album/${sung.id}`, "album");
 await (await page.$$(".songs li .play"))[0].click();
-await page.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 1 && window.nori.lyrics, { timeout: 60000 });
+await page.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 1, { timeout: 60000 });
+await page.click("#bar [data-pane=lyrics]");
+await page.waitForFunction(() => window.nori.lyrics, { timeout: 30000 });
+await page.click("#panel [aria-label=Close]");
 await ask("jam_open").catch(() => {});
 await wait(1500);
 
@@ -59,6 +66,17 @@ for (const scheme of ["light", "dark"]) {
     await shot(name("library"));
     await go(`#/album/${sung.id}`, "album");
     await shot(name("album"));
+    if (size === "phone") {
+      if (scrollAlbum.id !== sung.id) await go(`#/album/${scrollAlbum.id}`, "album");
+      const reachable = await page.$$eval(".songs li .play", (rows) => {
+        const last = rows.at(-1);
+        last.scrollIntoView({ block: "center" });
+        const r = last.getBoundingClientRect();
+        return last.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+      });
+      if (!reachable) throw new Error("the phone's last song is covered by the mini-player");
+      await shot(name("album-bottom"));
+    }
     await go(`#/artist/${artist}`, "artist");
     await shot(name("artist"));
     await go("#/search/light", "search");

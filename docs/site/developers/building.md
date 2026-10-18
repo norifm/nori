@@ -886,16 +886,16 @@ not be used as the compilation cost. Sampled compiler CPU includes that work.
 
 ## The web client
 
-Applies to the `web-v1` development branch (not in a release yet). The web client is `crates/web`
+Applies to the `slim` development branch (not in a release yet). The web client is `crates/web`
 (nori-web, built for `wasm32-unknown-unknown` with wasm-bindgen; natively an empty library, so the
-workspace's tests and clippy do not see it) and `web/` (plain TypeScript, HTML and CSS, no framework).
+workspace's tests and clippy do not see it) and `web/` (Svelte 5 with runes, TypeScript and Vite).
 `docs/research/web-client.md` has how it works and what remains.
 
 ### What it needs
 
 - the `wasm32-unknown-unknown` Rust target: `rustup target add wasm32-unknown-unknown`;
 - `wasm-bindgen-cli` at the version in `Cargo.lock`: `cargo install wasm-bindgen-cli --version 0.2.128`;
-- `wasm-opt` (binaryen), `brotli` and node (`npx` fetches TypeScript 5.6.3);
+- `wasm-opt` (binaryen), `brotli`, node and npm (dependencies are pinned in `web/package-lock.json`);
 - a clang that targets wasm32 for SQLite's C: Homebrew LLVM (`brew install llvm`) or the Android NDK's
   clang, which `web/build.sh` finds by itself. Apple's clang has no wasm32 backend.
 
@@ -903,6 +903,7 @@ workspace's tests and clippy do not see it) and `web/` (plain TypeScript, HTML a
 
 ```sh
 web/build.sh                                  # web/dist: three wasm modules, the shell, a size table
+web/build.sh --shell                          # rebuild only the Svelte shell, keeping the wasm modules
 tools/dev-server.sh                           # the local Navidrome, admin/admin
 python3 web/serve.py                          # http://localhost:8080, /rest/ passed on to localhost:4533
 python3 web/serve.py --log --kbps 400         # each API request printed, its answers at most 400 kbit/s
@@ -912,13 +913,21 @@ python3 web/serve.py --log --kbps 400         # each API request printed, its an
 `web/build.sh` builds `core.wasm` (sign-in and the library), `player.wasm` (the shared session and the
 engine, decoding with the browser's WebCodecs) and `player-codecs.wasm` (the same with Vorbis, ALAC and
 Opus decoded in Rust, for a browser without them), each run through `wasm-opt -Oz`, compiles the
-TypeScript, copies the static files and prints every piece's size raw and brotli-compressed. SQLite is
+Svelte shell with Vite, copies the static files and prints every piece's size raw and brotli-compressed. SQLite is
 built without the extras the core never uses (`CFLAGS_wasm32_unknown_unknown` in the script).
 
 A service worker keeps the shell and modules of the build it came with: after a rebuild, a page loaded
 once more picks up the new build (it loads twice). `web/dist` is static: any server that serves it from the same origin as the Subsonic API works (the
 page signs requests itself; there are no CORS headers to set). `web/serve.py` is for development only.
 Serve `.wasm` as `application/wasm` and, in production, precompressed with brotli.
+
+The shell loads the other pages and the full player on demand. Wide windows have a sidebar, player
+bar and side panel; phones have a tab bar, mini player and full-screen player. Settings pages and
+playback rules come from Rust. To capture both layouts against a relay-backed development server:
+
+```sh
+node web/check/shots.mjs http://localhost:8081/ /private/tmp/nori-web-shots
+```
 
 To check only that it compiles:
 
@@ -934,7 +943,7 @@ cargo check -j4 --target wasm32-unknown-unknown -p nori-web --no-default-feature
 ```sh
 npm --prefix web/check install
 node web/check/check.mjs http://localhost:8080/          # every phase; or add one: browse, play, lyrics,
-                                                         # skip, instant, automix, crossfade, codecs, speed, edit,
+                                                         # skip, instant, automix, crossfade, codecs, speed, seekbar, edit,
                                                          # crash, tabs, offline, slowstart, early
 ```
 

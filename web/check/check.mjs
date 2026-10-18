@@ -101,6 +101,8 @@ expect(loaded.playerEarly && !loaded.heard, "the player worker is up before any 
  * the player module may still load. */
 async function early(at) {
   const p = await browser.newPage();
+  p.on("pageerror", (e) => logs.push(`early pageerror: ${e}`));
+  await p.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
   await p.setCacheEnabled(false);
   await p.goto(at, { waitUntil: "load" });
   await p.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 120000 });
@@ -110,10 +112,19 @@ async function early(at) {
   const id = (await p.evaluate(async () => JSON.parse(await window.ask("read", JSON.stringify({ kind: "albums", sort: "alphabeticalByName", size: 50, offset: 0 }))).albums.find((a) => a.name === "Second Wind")?.id));
   await p.evaluate((x) => (location.hash = `#/album/${x}`), id);
   await p.waitForSelector(".songs li .play");
+  // A restored queue already shows the fixed mini-player on a phone.
+  await p.$eval(".songs li .play", (e) => e.scrollIntoView({ block: "center" }));
   const before = await p.evaluate(() => window.nori.playerReadyAt);
   const clicked = await p.evaluate(() => performance.now());
   await (await p.$$(".songs li .play"))[0].click();
-  await p.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 2, { timeout: 120000, polling: 50 });
+  await p.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 2, { timeout: 120000, polling: 50 }).catch(async (e) => {
+    console.error("early playback", await p.evaluate(async () => {
+      const n = JSON.parse(await window.ask("now"));
+      const f = window.nori;
+      return { playerReadyAt: f.playerReadyAt, heard: f.heard, error: f.error, crashes: f.crashes, state: n.state, positionMs: n.positionMs, queue: n.queue.length, song: n.song?.title };
+    }), logs);
+    throw e;
+  });
   const f = await p.evaluate(() => JSON.parse(JSON.stringify(window.nori)));
   const n = JSON.parse(await p.evaluate(() => window.ask("now")));
   const songs = (await p.evaluate(async (x) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "album", id: x }))).songs.length, id));
@@ -564,6 +575,7 @@ if (!only || only.includes("early")) {
  * album: the time from the click to the first sound, and 20 s heard after it. */
 async function slowStart(at) {
   const p = await browser.newPage();
+  await p.setViewport({ width: 1280, height: 800 });
   await p.goto(at, { waitUntil: "load" });
   await p.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 60000 });
   if (await p.$("#login")) await p.click("#login button");

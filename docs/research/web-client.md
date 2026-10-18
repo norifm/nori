@@ -1,7 +1,7 @@
 # The web client
 
-Internal planning note, not published. Issue #25. Branch `web-v1` (on the spike branch, with the Rust
-Signalsmith port merged in). How to build, serve and check it: `docs/site/developers/building.md`, "The
+Internal planning note, not published. Issue #25, now integrated into the `slim` development branch.
+How to build, serve and check it: `docs/site/developers/building.md`, "The
 web client".
 
 Labels: **[measured]** = measured for this note, with how; **[verified]** = run in headless Chrome over
@@ -125,11 +125,12 @@ A browser plays the library through the same session and engine as the other cli
   AudioWorklet's card, the session's reports to the page, the lyric clock; `stream.rs` each loader's
   fetching as a task over `fetch` (an `AbortController` per request); `later.rs` WebCodecs through
   `web/src/decoder.ts`.
-- `web/`: `app.ts` sign-in and routing, `views.ts` the pages, `player.ts` the mini bar, sheet, lyrics and
-  queue, `rpc.ts` the worker (calls by promise, reports), `worker.ts` the Dedicated Worker (runs a module,
+- `web/src/`: `ui/App.svelte` sign-in, `state/route.svelte.ts` routing, `pages/` the pages, `ui/` the
+  player bars, full player, lyrics and queue, `state/` their state, `rpc.ts` the worker (calls by promise,
+  reports), `worker.ts` the Dedicated Worker (runs a module,
   feeds the worklet, turns the engine when it asks), `worklet.ts` the AudioWorklet (a 4096-frame start
   threshold, counts running dry and silences), `decoder.ts` WebCodecs, `words.ts` every word.
-- Loading in pieces: the shell (19 KB br); `core.wasm` in a worker for sign-in and the library, so the
+- Loading in pieces: the shell (36.9 KB br); `core.wasm` in a worker for sign-in and the library, so the
   first page is quick; then, once that page has drawn and the browser is idle (`requestIdleCallback`,
   `setTimeout` where Safari has none), the page downloads and compiles the player build
   (`WebAssembly.compileStreaming`, the build chosen by the same WebCodecs probe the worker makes) while
@@ -138,13 +139,38 @@ A browser plays the library through the same session and engine as the other cli
   anything; a Play pressed during the load waits for that same load. With `navigator.connection.saveData`
   the player is loaded on the first Play instead. The AudioContext is still made on the first Play (it
   needs the click) and handed to the player worker then.
-  [verified] Player worker up 370 ms after navigation on localhost, before any Play; the switch itself
+  Earlier-shell measurements [verified]: player worker up 370 ms after navigation on localhost, before any Play; the switch itself
   40 ms; first Play to sound 275 ms. Through `web/serve.py --kbps 4000 --files-kbps 4000` (4 Mbit/s, files sent
   uncompressed: player.wasm is 4.2 MB raw), the background load took 8.6 s after the first page; a Play
   pressed 0.1 s after that page waited 8.5 s for it and played the album once (queue 4 of 4 songs).
   With brotli on a real server that is 1.38 MB, about 2.8 s at 4 Mbit/s [inferred].
 
-## Measured sizes
+## Svelte shell (October 18, 2026)
+
+The shell uses Svelte 5 runes and Vite. `web/src/state/` holds the library, route, playback and remote
+state; `web/src/pages/` and `web/src/ui/` draw it and forward actions to the Rust modules. Settings
+pages are laid out by the core. The shared host session drives playback, including Play On, lyric
+seeking and saved 250 ms timing adjustments; the guest's role determines whether a lyric tap seeks.
+
+Wide windows use a sidebar, bottom player bar and optional side panel. Phones use tabs, a mini player
+and a full-screen player. Other pages and the full player load after the first paint.
+`web/build.sh --shell` rebuilds just the shell.
+
+October 18, 2026, build `f2a2d692017863f9` [measured with `web/build.sh`]:
+
+| file | raw bytes | brotli bytes |
+|---|---:|---:|
+| first paint (HTML, CSS, initial scripts) | 113 507 | 36 863 |
+| core.wasm | 1 658 122 | 576 089 |
+| core.js | 38 932 | 6 818 |
+| player.wasm (WebCodecs) | 4 521 430 | 1 457 125 |
+| player.js | 60 378 | 9 849 |
+| player-codecs.wasm (Rust decoders) | 4 756 831 | 1 537 850 |
+
+The first-paint count excludes the wasm modules, their glue and deferred pages. The earlier shell's
+sizes below remain for comparison.
+
+## Earlier measured sizes
 
 `web/build.sh` (`--profile web`: release, `opt-level = "s"`, `panic = "abort"`; wasm-bindgen 0.2.128;
 `wasm-opt -Oz`; `brotli -q 11`), October 17, 2026 [measured]:
@@ -169,17 +195,30 @@ nori-settings 107 000, Rust's core/alloc 140 000, serde_json 67 000, nori-lyrics
 
 ## Verified in headless Chrome
 
-`node web/check/check.mjs` against the local Navidrome, all phases passing [verified]: library 6 sections,
-19 albums, 11 artists, 4 genres, 78 songs; search "light" 4 albums and 19 songs; 10 s of FLAC with no dry
-quantum and no engine underrun; lyrics lit lines -1, 0, 1 over 15 s; next to index 1, previous back to 0;
-crossfade (6 s, two albums) mixing for 6 s, AutoMix (a measured `MixRampFade`, 5 s) mixing for 5 s, both
-without a silence over 20 ms or
-running dry; an ALAC song 8 s without running dry; speed 1.5 and 0.75 at 1.50 and 0.75 song-seconds per
-second, pitch 1.1 at 1.00; with `THROTTLED_URL` (`web/serve.py --port 8082 --kbps 400`), first sound 1.0 s
-after the click and 20 s without running dry or an engine underrun.
+October 18, 2026, `node web/check/check.mjs http://localhost:8081/`, every default phase passing
+[verified]: 6 library sections, 20 albums, 12 artists, 4 genres, 79 songs; first sound in 294 ms and
+10 s of FLAC with no dry quantum or engine underrun. Lyrics lit lines -1, 0, 1; tapping a line lit it
+in 13 ms and sounded from its place in 23 ms. Pause took 15 ms, seek 46 ms, next 23 ms. A measured
+`MixRampFade` mixed for 5 s and crossfade for 6 s, both without a silence over 20 ms or running dry.
+ALAC played 8 s without running dry. Speed 1.5 and 0.75 ran at 1.51 and 0.75 song-seconds per second;
+pitch 1.1 ran at 1.00. Paused and hidden seek bars held no timer. Worker crash recovery, tab takeover,
+offline shell reload (114 ms), build replacement, playlist edits and a fresh phone startup over a
+saved queue passed too.
+
+The phone startup also passed at 4 Mbit/s (`SLOW_URL`, `--kbps 4000 --files-kbps 4000`): Play was
+pressed while the player module loaded, waited 8.8 s and started exactly one four-song album queue.
+`web/check/jam.mjs` passed Play On in both directions, accepted a guest request, and played 3.75 s
+for the listening guest with no dry quantum.
+
+`web/check/shots.mjs` captures 46 desktop/phone screenshots in light/dark modes, including the
+full player, lyrics, queue, jam, settings and the last album row above the phone's mini-player.
+
+Earlier throttled-network check [verified]: with `THROTTLED_URL`
+(`web/serve.py --port 8082 --kbps 400`), first sound came 1.0 s after the click and 20 s played without
+running dry or an engine underrun.
 
 Not verifiable headless: iOS Safari (background audio and a locked screen; its WebCodecs set), Firefox,
-what a speaker plays (headless is muted: the worklet's samples are checked), mobile networks, a second tab.
+what a speaker plays (headless is muted: the worklet's samples are checked), and mobile networks.
 
 ## What remains for v1
 
@@ -225,6 +264,7 @@ Smaller notes:
 
 ## The async remote and jam client
 
-Being built on `async-remote`: `crates/core/src/remote.rs` as tasks on `nori-tasks` (one native thread for
-all of them; `spawn_local` and `setTimeout` on the web). This branch took its `nori-tasks` crate unchanged
-and runs the host's work on it; the remote's rewrite merges separately.
+`crates/core/src/remote.rs` runs as tasks on `nori-tasks` (one native thread for all of them;
+`spawn_local` and `setTimeout` on the web). The browser uses the shared host session for remote
+playback and jams. `web/check/jam.mjs` exercises Play On in both directions and a host/guest jam
+using separate browser profiles against the local relay.
