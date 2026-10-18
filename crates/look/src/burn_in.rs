@@ -12,14 +12,14 @@ const RAMP: i64 = 4;
 /// faint smear instead of its shape.
 const REACH_DP: f32 = 6.0;
 
-/// Where the screen is drawn: offsets within ±`reach_dp`, the reach growing over the first minutes.
-/// The client enlarges what it draws by `reach_dp` on each side so no edge comes into view.
+/// Where the screen is drawn: offsets within ±[`REACH_DP`], the reach growing over the first minutes.
+/// The client moves what it draws by them and no more: enlarged to keep the screen's edges out of view,
+/// what stands near an edge went as far again, and the floating bar reached the edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Drift {
     pub x_dp: f32,
     pub y_dp: f32,
-    pub reach_dp: f32,
 }
 
 /// The drift at `now_ms` for protection that started at `since_ms` (both wall clock).
@@ -28,7 +28,7 @@ pub fn drift(now_ms: i64, since_ms: i64) -> Drift {
     let minute = now_ms.div_euclid(MINUTE_MS);
     let ramp = (minute - since_ms.div_euclid(MINUTE_MS)).clamp(0, RAMP) as f32 / RAMP as f32;
     let reach = REACH_DP * ramp;
-    Drift { x_dp: reach * wave(minute, PERIOD_X), y_dp: reach * wave(minute, PERIOD_Y), reach_dp: reach }
+    Drift { x_dp: reach * wave(minute, PERIOD_X), y_dp: reach * wave(minute, PERIOD_Y) }
 }
 
 /// Milliseconds until the drift next moves: the next whole minute.
@@ -56,18 +56,21 @@ mod tests {
 
     #[test]
     fn starts_still_and_grows_to_full_reach() {
-        assert_eq!(at(0), Drift { x_dp: 0.0, y_dp: 0.0, reach_dp: 0.0 });
-        let reach: Vec<f32> = (0..=RAMP + 2).map(|m| at(m).reach_dp).collect();
-        assert!(reach.windows(2).all(|w| w[1] >= w[0]), "{reach:?}");
-        assert_eq!(reach[RAMP as usize], REACH_DP);
-        assert_eq!(reach[RAMP as usize + 2], REACH_DP);
+        assert_eq!(at(0), Drift { x_dp: 0.0, y_dp: 0.0 });
+        // During the ramp each minute reaches only its share of the way.
+        for m in 0..=RAMP {
+            let share = REACH_DP * m as f32 / RAMP as f32;
+            assert!(at(m).x_dp.abs() <= share && at(m).y_dp.abs() <= share, "{m}: {:?}", at(m));
+        }
+        let far = (RAMP..RAMP + PERIOD_Y).map(|m| at(m).y_dp.abs()).fold(0f32, f32::max);
+        assert!(far > 0.95 * REACH_DP, "{far}");
     }
 
     #[test]
     fn stays_within_reach_and_moves_little_each_minute() {
         let path: Vec<Drift> = (0..2 * PERIOD_Y).map(at).collect();
         for d in &path {
-            assert!(d.x_dp.abs() <= d.reach_dp && d.y_dp.abs() <= d.reach_dp, "{d:?}");
+            assert!(d.x_dp.abs() <= REACH_DP && d.y_dp.abs() <= REACH_DP, "{d:?}");
         }
         // Past the ramp a step is a fraction of a dp: never a visible jump.
         for w in path[RAMP as usize..].windows(2) {

@@ -956,8 +956,8 @@ private fun rememberCharging(watch: Boolean): Boolean {
 }
 
 /**
- * Burn-in protection over the whole app: what is drawn moves by [drift] and is enlarged by its reach on each
- * side, so no edge comes into view; [dim] darkens it, and every touch or lift is told to [touches] without
+ * Burn-in protection over the whole app: what is drawn moves by [drift], a few dp, the app's own background
+ * showing at the edge it leaves; [dim] darkens it, and every touch or lift is told to [touches] without
  * being taken from what it lands on.
  */
 private fun Modifier.burnInProtection(
@@ -980,9 +980,6 @@ private fun Modifier.burnInProtection(
     }
     .graphicsLayer {
         val d = drift() ?: return@graphicsLayer
-        val reach = d.reachDp.dp.toPx()
-        scaleX = 1f + 2f * reach / size.width
-        scaleY = 1f + 2f * reach / size.height
         translationX = d.xDp.dp.toPx()
         translationY = d.yDp.dp.toPx()
     }
