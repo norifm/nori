@@ -787,6 +787,14 @@ mod tests {
         }
     }
 
+    /// A server has no home feed: Home is the empty feed, and nothing is asked.
+    #[test]
+    fn a_server_is_not_asked_for_a_feed() {
+        let (c, fake) = setup();
+        assert!(matches!(block(c.cached_or_fetched(Read::HomeFeed)), Ok(Some(Page::Feed { v })) if v.is_empty()));
+        assert!(fake.asked().is_empty());
+    }
+
     #[test]
     fn failures_reach_the_caller() {
         let (c, fake) = setup();

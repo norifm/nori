@@ -58,7 +58,11 @@ impl Provider for Subsonic {
         true
     }
 
+    /// A server has no home feed.
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Page>> {
+        if matches!(read, Read::HomeFeed) {
+            return Ok(None);
+        }
         client.subsonic_read(read).await.map(Some)
     }
 

@@ -73,7 +73,6 @@ asked getMusicDirectory&id=d1
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
 ended: ok
-asked homeFeed
 == stored
 stored AlbumList { kind: Newest, size: 20, offset: 0, genre: None }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
 stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
@@ -478,7 +477,6 @@ asked getInternetRadioStations
 asked getLyricsBySongId&id=s1&enhanced=true
 asked getIndexes&musicFolderId=7
 asked getMusicDirectory&id=d1
-asked homeFeed
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al2*/1] #ec85722c6e335ae5
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
