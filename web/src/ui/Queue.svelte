@@ -13,6 +13,15 @@
   const rows = $derived(n?.queue ?? []);
   const current = $derived(n?.current ?? -1);
   let dragged = $state<number | null>(null);
+  let list = $state<HTMLOListElement>();
+  let placed = false;
+  // Opened with the song heard at the top and what played above it, as Android's queue opens; once.
+  $effect(() => {
+    const el = list?.querySelector<HTMLElement>(".current");
+    if (placed || !list || !el) return;
+    placed = true;
+    list.scrollTop += el.getBoundingClientRect().top - list.getBoundingClientRect().top;
+  });
   let over = $state<number | null>(null);
 
   const move = (from: number, to: number) => player.control("move_song", from, to);
@@ -24,7 +33,7 @@
 </script>
 
 <JamQueue />
-<ol class="queue" id="queue">
+<ol class="queue" id="queue" bind:this={list}>
   {#each rows as q, at (`${q.index}:${q.id}`)}
     {#if at === 0 && current > 0}<li class="head">{W.history}</li>{/if}
     {#if at === current + 1}<li class="head">{W.queue}</li>{/if}
