@@ -30,4 +30,5 @@ system's media controls, notification and lock screen.
 - **Moving covers** (off by default): some albums on Apple Music have a short looping video of their
   cover, and the player can play it in place of the still cover, only while the player is open and at
   rest. Finding the video asks Apple's public search and its catalog for the album, sending the artist
-  and album name; it is unofficial, and by default only on Wi-Fi. See [Privacy and network](../privacy.md).
+  and album name; it is unofficial. One choice sets it: Off, On Wi-Fi or Always (from 0.6.3; before, a
+  switch and a separate mobile data switch). See [Privacy and network](../privacy.md).

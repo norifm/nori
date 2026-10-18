@@ -206,10 +206,10 @@
     <string name="settings_cover_colours_pages">Pages</string>
     <string name="settings_cover_colours_player">Player</string>
     <string name="settings_moving_covers">Moving covers</string>
-    <string name="settings_moving_covers_detail">Animated album art in the player, when Apple Music has it. Sends the artist and album name.</string>
+    <string name="settings_moving_covers_detail">Animated album art in the player, when Apple Music has it. Sends the artist and album name. Each one is a few megabytes.</string>
     <string name="settings_moving_covers_still">Still while motion is reduced.</string>
-    <string name="settings_moving_covers_mobile">Moving covers on mobile data</string>
-    <string name="settings_moving_covers_mobile_detail">Each one is a few megabytes.</string>
+    <string name="settings_moving_covers_wifi">On Wi-Fi</string>
+    <string name="settings_moving_covers_always">Always</string>
 
     <!-- Lyrics. -->
     <string name="settings_section_display">Display</string>
@@ -409,7 +409,6 @@
     <string name="settings_hint_wallpaper">Material You. Accent color from your wallpaper</string>
     <string name="settings_hint_cover_colours">Pages and the player take their colors from the artwork. AMOLED, black player</string>
     <string name="settings_hint_moving_covers">Animated album art in the player, when Apple Music has it. Sends the artist and album name</string>
-    <string name="settings_hint_moving_covers_mobile">Each one is a few megabytes</string>
     <string name="settings_hint_keep_awake">Screen timeout. Stay awake while sideways or charging</string>
     <string name="settings_hint_burn_in">OLED, dock, stand, charger. Moves pixels so nothing burns in</string>
     <string name="settings_hint_dim_idle">Dock, stand. Darken an untouched screen</string>

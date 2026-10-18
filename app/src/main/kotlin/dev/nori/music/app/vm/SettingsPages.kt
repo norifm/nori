@@ -200,8 +200,7 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "dynamicColor" to (R.string.settings_wallpaper to R.string.settings_hint_wallpaper),
     "accent" to (R.string.settings_accent to 0),
     "coverColors" to (R.string.settings_cover_colours to R.string.settings_hint_cover_colours),
-    "motionArtwork" to (R.string.settings_moving_covers to R.string.settings_hint_moving_covers),
-    "motionArtworkMobile" to (R.string.settings_moving_covers_mobile to R.string.settings_hint_moving_covers_mobile),
+    "movingCovers" to (R.string.settings_moving_covers to R.string.settings_hint_moving_covers),
     "hideStatusBar" to (R.string.settings_hide_status_bar to R.string.settings_hint_hide_status_bar),
     "hideGestureBar" to (R.string.settings_hide_gesture_bar to R.string.settings_hint_hide_gesture_bar),
     "keepAwake" to (R.string.settings_keep_awake to R.string.settings_hint_keep_awake),
@@ -242,6 +241,7 @@ private val NAMED: Map<String, IntArray> = mapOf(
     "autoFillKind" to intArrayOf(R.string.settings_auto_fill_kind_songs, R.string.settings_auto_fill_kind_albums),
     "autoFillBasis" to intArrayOf(R.string.settings_auto_fill_basis_similar, R.string.settings_auto_fill_basis_artist, R.string.settings_auto_fill_basis_genre, R.string.settings_auto_fill_basis_era),
     "headphoneSound" to intArrayOf(R.string.settings_off, R.string.settings_headphone_natural, R.string.settings_headphone_wide),
+    "movingCovers" to intArrayOf(R.string.settings_off, R.string.settings_moving_covers_wifi, R.string.settings_moving_covers_always),
     "compressorPreset" to intArrayOf(R.string.settings_compressor_light, R.string.settings_compressor_car, R.string.settings_compressor_night),
     "replayGain" to intArrayOf(R.string.settings_off, R.string.settings_leveling_song, R.string.settings_leveling_album, R.string.settings_leveling_auto),
     "loudnessLevel" to intArrayOf(R.string.settings_level_quiet, R.string.settings_level_normal, R.string.settings_level_loud),
@@ -547,8 +547,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         "amoled" -> str(R.string.settings_amoled_detail)
         "dynamicColor" -> str(R.string.settings_wallpaper_detail)
         "coverColors" -> str(R.string.settings_cover_colours_detail)
-        "motionArtwork" -> str(if (s.values["motionArtwork"] == "true" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) R.string.settings_moving_covers_still else R.string.settings_moving_covers_detail)
-        "motionArtworkMobile" -> str(R.string.settings_moving_covers_mobile_detail)
+        "movingCovers" -> str(if (s.values["movingCovers"] != "off" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) R.string.settings_moving_covers_still else R.string.settings_moving_covers_detail)
         "hideStatusBar" -> str(R.string.settings_hide_status_bar_detail)
         "hideGestureBar" -> str(R.string.settings_hide_gesture_bar_detail)
         "keepAwake" -> str(R.string.settings_keep_awake_detail)

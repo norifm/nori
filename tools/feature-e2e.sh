@@ -208,17 +208,17 @@ fi
 
 if want motion; then section "moving covers"
   # Off, which is the default, opening the player builds nothing: no video player and no lookup.
-  "$app" set motionArtwork false >/dev/null; "$app" open player >/dev/null
+  "$app" set movingCovers off >/dev/null; "$app" open player >/dev/null
   wait_for route player 5 >/dev/null
   check "switched off, the open player makes no video player" test "$(field motionPlayers)" = 0
   # On, over any network. Whether an album has one is Apple's to say, and a test server's generated
   # music has none, so a video found is reported here rather than required.
-  "$app" set motionArtwork true >/dev/null; "$app" set motionArtworkWifiOnly false >/dev/null
+  "$app" set movingCovers always >/dev/null
   wait_for motionPlayers ">0" 8 2>/dev/null
   echo "     video for this album: '$(field motionVideo)', players: $(field motionPlayers)"
   "$app" open home >/dev/null
   check "put away, the video player is let go" wait_for motionPlayers 0 5
-  "$app" set motionArtwork false >/dev/null; "$app" set motionArtworkWifiOnly true >/dev/null
+  "$app" set movingCovers off >/dev/null
   "$app" set thirdPartyLookups true >/dev/null
 fi
 

@@ -438,7 +438,6 @@ mod tests {
         assert_eq!(value_of(&d, "lyricsOnline").as_deref(), Some("true"));
         assert_eq!(value_of(&off, "lyricsOnline").as_deref(), Some("false"));
         assert_eq!(value_of(&off, "autoEqDownload").as_deref(), Some("false"));
-        assert_eq!(value_of(&StoredPrefs { motion_artwork: true, ..off }, "motionArtwork").as_deref(), Some("false"));
     }
 
     #[test]

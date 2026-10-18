@@ -374,8 +374,7 @@ impl Page<'_> {
         theme.push(self.setting("accent").shown(!(self.phone() && self.f.wallpaper_colors && p.dynamic_color)));
         let mut cover = vec![self.setting("coverColors")];
         if self.phone() {
-            let moving = self.on("motionArtwork");
-            cover.extend([self.setting("motionArtwork"), self.setting("motionArtworkMobile").under().shown(moving)]);
+            cover.push(self.setting("movingCovers"));
         }
         let mut out = vec![(SectionId::Theme, theme), (SectionId::Cover, cover)];
         if self.phone() {
@@ -598,7 +597,7 @@ mod tests {
         for client in [SettingsClient::Desktop, SettingsClient::Terminal] {
             let rows = every_row(client, &d, &facts());
             let has = names(&rows, false);
-            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "motionArtwork", "amoled", "dynamicColor", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "altMaxBitRate"] {
+            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "dynamicColor", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "altMaxBitRate"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");
