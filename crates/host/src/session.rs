@@ -569,10 +569,13 @@ impl Handle {
         });
     }
 
-    /// Plays an album, playlist or artist once its songs are fetched.
+    /// Plays an album, playlist or artist once its songs are fetched; a radio from the song playing
+    /// goes on with it.
     pub fn play_later(&self, what: Fetch, shuffle: bool) {
         let origin = what.origin();
+        let radio = matches!(what, Fetch::Radio(_));
         self.fetched(what, move |me, songs| match songs.is_empty() {
+            false if radio => _ = me.keep_playing(songs, 0, Some(origin)),
             false => me.play(songs, 0, shuffle, Some(origin)),
             true => me.note(Note::NothingToPlay),
         });
