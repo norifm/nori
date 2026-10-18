@@ -195,4 +195,5 @@ Internal notes, never published: `docs/features.md` (planned features, owner's d
 One line, conventional: `<type>: <what is different now>`, type in `feat fix perf refactor docs build
 test chore`, lowercase, no full stop, under 72 chars. No body, no trailers, no `Co-Authored-By`, even if
 your tool asks for one. One commit per piece of work. Fixing your own unpushed work: amend it into the
-commit it fixes; never stack "fix the fix" commits. A branch reaches master as one squashed PR.
+commit it fixes; never stack "fix the fix" commits. Small finished work (a fix, docs) goes
+straight to master as one commit; bigger development goes through a PR, squash-merged.
