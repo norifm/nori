@@ -14,7 +14,9 @@ fn main() {
     let renamed = lines[on_load].replacen("unsafe extern \"system\" fn JNI_OnLoad(", "pub(crate) unsafe extern \"system\" fn uniffi_on_load(", 1);
     lines[on_load] = &renamed;
     lines.remove(on_load - 1);
-    let mut scaffolding = retain_async_objects(&lines.join("\n"));
+    let mut scaffolding = cancellable_calls(&retain_async_objects(&lines.join("\n")));
+    let end = scaffolding.rfind('}').expect("the generated scaffolding closes its module");
+    scaffolding.insert_str(end, "include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/kotlin_calls.rs\"));\n");
     let end = scaffolding.rfind('}').expect("the generated scaffolding closes its module");
     scaffolding.insert_str(end, "#[cfg(test)] mod receiver_tests { include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/receiver_tests.rs\")); }\n");
     assert!(!scaffolding.contains("JNI_OnLoad"), "the generated scaffolding has a second JNI_OnLoad");
@@ -27,6 +29,32 @@ fn main() {
             println!("cargo:rerun-if-changed=../{krate}/{input}");
         }
     }
+}
+
+// NORI: a Rust future is dropped when Kotlin frees it, not once the last waker lets go, so a call Kotlin
+// cancelled stops at once; an async Kotlin call it was waiting for is cancelled with it (kotlin_calls.rs).
+fn cancellable_calls(scaffolding: &str) -> String {
+    const FREE: &str = "::std::sync::Arc::decrement_strong_count(ptr);";
+    const SENDER: &str = "uniffi_sender.into_raw().expose_provenance() as ::std::primitive::i64";
+    const ATTACH: &str = "uniffi_jni::attach_current_thread(uniffi_get_global_jvm(), |uniffi_env| -> uniffi::Result<()> {";
+    let (mut freed, mut calls) = (0, 0);
+    let out = scaffolding.split("#[unsafe(no_mangle)]").map(|function| {
+        if function.contains("fn Java_uniffi_Scaffolding_rustFutureFree") {
+            assert_eq!(function.matches(FREE).count(), 1, "a generated future free drops one handle");
+            freed += 1;
+            return function.replacen(FREE, &format!("let uniffi_dropped = ::std::mem::replace(&mut *(*ptr).future.lock().unwrap(), ::std::boxed::Box::pin(::std::future::pending()));\n        drop(uniffi_dropped);\n        {FREE}"), 1);
+        }
+        function.split("let (uniffi_sender, uniffi_receiver)").enumerate().map(|(i, part)| {
+            if i == 0 { return part.to_string(); }
+            assert!(part.contains(ATTACH) && part.contains(SENDER) && part.contains("uniffi_receiver.await"), "a generated async Kotlin call has the expected shape");
+            calls += 1;
+            part.replacen(SENDER, "uniffi_oneshot", 1)
+                .replacen(ATTACH, &format!("let uniffi_oneshot = {SENDER};\n        {ATTACH}"), 1)
+                .replacen("uniffi_receiver.await", "UniffiKotlinCall { oneshot: uniffi_oneshot, answer: uniffi_receiver, answered: false }.await", 1)
+        }).collect::<Vec<_>>().join("let (uniffi_sender, uniffi_receiver)")
+    }).collect::<Vec<_>>().join("#[unsafe(no_mangle)]");
+    assert!(freed > 0 && calls > 0, "the generated scaffolding frees futures and makes async Kotlin calls");
+    out
 }
 
 // NORI: borrowed JNI objects need owned handles while an async call is outstanding.
