@@ -345,13 +345,18 @@ pub async fn ask(service: LyricsService, a: &Ask<'_>, song: &Song) -> Lookup {
 /// otherwise a search, ranked by closeness of length as every service's is, the finest timing first.
 async fn lrclib(a: &Ask<'_>, song: &Song) -> Lookup {
     let title = clean(&song.title);
-    // "Not found" is a 404 with a JSON body: an answer, not a failure.
-    let exact = match a.fetch(&lrclib::get_url(song, &title), &[], None, REQUEST_MS).await.and_then(|(_, b)| parse(&b)) {
-        Ok(o) if o.is_object() => o,
-        Ok(_) => return settle(LyricsService::Lrclib, Err(shape("not an object"))),
+    // "Not found" is a 404: an answer, not a failure.
+    let exact = match a.fetch(&lrclib::get_url(song, &title), &[], None, REQUEST_MS).await {
+        Ok((404, _)) => None,
+        Ok((status, _)) if !(200..300).contains(&status) => return settle(LyricsService::Lrclib, Err(Fail::Status(status))),
+        Ok((_, b)) => match parse(&b) {
+            Ok(o) if o.is_object() => Some(o),
+            Ok(_) => return settle(LyricsService::Lrclib, Err(shape("not an object"))),
+            Err(e) => return settle(LyricsService::Lrclib, Err(e)),
+        },
         Err(e) => return settle(LyricsService::Lrclib, Err(e)),
     };
-    let exact_hit = if exact.get("statusCode").is_some() { None } else { lrclib::pick(&exact).map(|l| (l, named_in(&exact))) };
+    let exact_hit = exact.and_then(|o| lrclib::pick(&o).map(|l| (l, named_in(&o))));
     if let Some((hit, n)) = exact_hit.as_ref().filter(|h| h.0.synced) {
         return Lookup::Found(hit.clone(), n.clone());
     }
@@ -883,6 +888,10 @@ pub(crate) mod tests {
         assert!(web.asked()[0].contains("track_name=Glass+Harbour&"), "the title cleaned");
         let web = Web::default();
         assert_eq!(asking(&web, LyricsService::Lrclib), Lookup::Failed, "unreachable");
+        let web = Web::default();
+        web.answer("https://lrclib.net/api/get", 503, r#"{"message":"The server is busy","name":"ServerOverloaded","statusCode":503}"#);
+        web.answer("https://lrclib.net/api/search", 200, "[]");
+        assert_eq!(asking(&web, LyricsService::Lrclib), Lookup::Failed, "a busy server is not a miss");
     }
 
     #[test]
