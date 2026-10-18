@@ -559,7 +559,7 @@ pub(crate) mod tests {
         assert_eq!(pick.lyrics.timing, LyricsTiming::NotChecked);
         let once = c.core.lyrics_nudge(s.id.clone(), pick.clone(), 1);
         let twice = c.core.lyrics_nudge(s.id.clone(), once, 1);
-        assert_eq!(twice.lyrics.timing, LyricsTiming::Yours { ms: 500, automatic: None });
+        assert_eq!(twice.lyrics.timing, LyricsTiming::Yours { ms: 2 * nori_look::lyrics::NUDGE_STEP_MS, automatic: None });
         assert_eq!(shown().lyrics.timing, twice.lyrics.timing, "shown again, still yours");
         assert_eq!(c.core.lyrics_yours(&s.id, &LyricsPick { origin: LyricsOrigin::Netease, ..pick.clone() }), None, "another source's words");
         assert_eq!(c.core.lyrics_yours("other", &pick), None, "another song");
