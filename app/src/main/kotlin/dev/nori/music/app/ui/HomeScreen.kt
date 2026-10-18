@@ -82,7 +82,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
         ) {
         // The page follows the pull down, and stays down while the refresh runs, so the ring has a gap of its
         // own above the title rather than landing on whatever comes first.
-        LazyColumn(Modifier.pageToEdges().graphicsLayer { translationY = pullGap(pull).toPx() }, contentPadding = pagePadding(LocalChromeInset.current)) {
+        LazyColumn(Modifier.pageToEdges().underStatusBar().graphicsLayer { translationY = pullGap(pull).toPx() }, contentPadding = pagePadding(LocalChromeInset.current, top = LocalStatusRoom.current)) {
             // Only the title, as Apple's: shuffling the library lives in Library, and which rows this page has
             // in Settings, Appearance.
             item(key = "title") { LargeTitle(say.listenNow, Modifier.arriving(arrival, 0, rise)) }

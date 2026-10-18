@@ -135,7 +135,7 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
     androidx.compose.foundation.layout.BoxWithConstraints {
     // As many across as the Albums page has (its grid's own count, [albumColumns]): two upright.
     val across = albumColumns(LocalWide.current, maxWidth)
-    LazyColumn(contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current)) {
+    LazyColumn(Modifier.underStatusBar(), contentPadding = PaddingValues(top = LocalStatusRoom.current, bottom = Space.gutter + LocalChromeInset.current)) {
         item(key = "title") {
             // What was played and what is kept on the phone: places rather than kinds of music, so buttons
             // in the corner rather than rows of the list.

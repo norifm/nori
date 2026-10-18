@@ -72,7 +72,31 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 
 /** Plain screens sit below the status bar; album, artist and playlist pages draw under it. */
 @Composable
-private fun Inset(content: @Composable () -> Unit) = androidx.compose.foundation.layout.Box(Modifier.windowInsetsPadding(statusBarRoom)) { content() }
+private fun Inset(content: @Composable () -> Unit) {
+    val room = statusBarRoom
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val top = with(density) { room.getTop(this).toDp() }
+    val page = MaterialTheme.colorScheme.background
+    val outStart = LocalPageStart.current
+    val outEnd = LocalPageEnd.current
+    // What scrolls up under the status bar ([underStatusBar]) fades out into the page's colour across the bar's
+    // room, as a sideways row fades out under the strip beside it; below the room nothing is touched.
+    androidx.compose.foundation.layout.Box(
+        Modifier.drawWithCache {
+            val h = top.toPx()
+            val l = outStart.toPx()
+            val fade = androidx.compose.ui.graphics.Brush.verticalGradient(
+                0f to page, 0.4f to page.copy(alpha = 0.85f), 0.75f to page.copy(alpha = 0.35f), 1f to page.copy(alpha = 0f),
+                startY = 0f, endY = h,
+            )
+            val area = androidx.compose.ui.geometry.Size(size.width + l + outEnd.toPx(), h)
+            onDrawWithContent {
+                drawContent()
+                if (h > 0f) drawRect(fade, topLeft = androidx.compose.ui.geometry.Offset(-l, 0f), size = area)
+            }
+        }.windowInsetsPadding(room),
+    ) { CompositionLocalProvider(LocalStatusRoom provides top) { content() } }
+}
 
 /**
  * Navigation as the screens see it; they never touch the NavController. Going anywhere puts the player

@@ -395,9 +395,30 @@ fun Modifier.pageToEdges(): Modifier {
     }
 }
 
+/**
+ * A page's scroller that starts at the page's top, run on up under the status bar the page is kept below
+ * ([LocalStatusRoom]), where what scrolls up fades out into the page's colour instead of stopping on a line.
+ * Its content still starts where the page does: the scroller's top padding takes the room back. Nothing
+ * where a page drawn under the status bar (an album's) is.
+ */
+@Composable
+fun Modifier.underStatusBar(): Modifier {
+    val room = LocalStatusRoom.current
+    if (room == 0.dp) return this
+    return layout { measurable, constraints ->
+        val top = room.roundToPx()
+        val tall = if (constraints.hasBoundedHeight) constraints.maxHeight + top else constraints.maxHeight
+        val placeable = measurable.measure(constraints.copy(minHeight = (constraints.minHeight + top).coerceAtMost(tall), maxHeight = tall))
+        layout(placeable.width, placeable.height - top) { placeable.place(0, -top) }
+    }
+}
+
+/** The room a page is kept below the status bar by, which an [underStatusBar] scroller pads its content by. */
+val LocalStatusRoom = androidx.compose.runtime.compositionLocalOf { 0.dp }
+
 /** A [pageToEdges] list's padding: the strips it runs over at its sides (the camera's, the rail's), and [bottom]. */
 @Composable
-fun pagePadding(bottom: Dp): PaddingValues = PaddingValues(start = LocalPageStart.current, end = LocalPageEnd.current, bottom = bottom)
+fun pagePadding(bottom: Dp, top: Dp = 0.dp): PaddingValues = PaddingValues(start = LocalPageStart.current, end = LocalPageEnd.current, top = top, bottom = bottom)
 
 /** How far into the page a sideways row's edge fade reaches past the strip beside it ([bleedsToEdges]). */
 private val EDGE_REACH = 56.dp
