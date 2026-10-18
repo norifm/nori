@@ -10,15 +10,9 @@ type Module = {
 const scope = self as unknown as Worker;
 /** Interleaved frames pulled per message to the worklet. */
 const CHUNK = 4096;
-/** How far ahead of the ear the worklet is kept fed, s. */
-const AHEAD_S = 0.5;
 
 let nori: Record<string, (...a: unknown[]) => unknown> | undefined;
 let worklet: MessagePort | undefined;
-let rate = 48000;
-/** Frames sent to the worklet and frames it played. */
-let sent = 0;
-let played = 0;
 let timer: number | undefined;
 let woken = false;
 /** What the worklet was last told: the player holds (paused or stopped). */
@@ -40,6 +34,11 @@ function tell(said: string) {
   scope.postMessage({ said: JSON.parse(said) });
 }
 
+/** A module's glue in dist/pkg, from this worker's place in dist/assets. */
+function pkg(name: string): string {
+  return new URL(`../pkg/${name}.js`, self.location.href).href;
+}
+
 /** The player module as the page compiled it while it downloaded, and its build's name. */
 type Handed = { module: WebAssembly.Module; file: string };
 let hand: (h: Handed) => void = () => {};
@@ -48,9 +47,10 @@ const handed = new Promise<Handed>((r) => (hand = r));
 const ready = (async () => {
   const t0 = performance.now();
   // The browser's own decoders, asked before the player starts: it decodes with them what they can.
-  const codecs = player ? await (await import("./decoder.js")).probe(wake) : [];
+  // dist/decoder.js, the very module the player's glue imports (so the codecs probed are its).
+  const codecs = player ? await ((await import(/* @vite-ignore */ new URL("../decoder.js", self.location.href).href)) as typeof import("./decoder")).probe(wake) : [];
   const given = player ? await handed : undefined;
-  const m = (await import(`./pkg/${given?.file ?? "core"}.js`)) as Module;
+  const m = (await import(/* @vite-ignore */ pkg(given?.file ?? "core"))) as Module;
   await m.default(given && { module_or_path: given.module });
   nori = await m.Nori.open(tell, wake);
   scope.postMessage({ ready: { ms: Math.round(performance.now() - t0), stored: nori.stored, player, codecs } });
@@ -62,15 +62,16 @@ function pump() {
   if (timer !== undefined) clearTimeout(timer);
   timer = undefined;
   let next = nori.turn() as number;
+  order();
   const channels = nori.channels() as number;
-  while (worklet && channels > 0 && sent - played < AHEAD_S * rate) {
+  while (worklet && channels > 0) {
     const out = new Float32Array(CHUNK * channels);
     const frames = nori.pull(out) as number;
     if (frames === 0) break;
     const pcm = frames === CHUNK ? out : out.slice(0, frames * channels);
     worklet.postMessage({ pcm, channels }, [pcm.buffer]);
-    sent += frames;
     next = nori.turn() as number;
+    order();
   }
   const nowHeld = !(nori.playing() as boolean);
   if (worklet && nowHeld !== held) {
@@ -81,13 +82,21 @@ function pump() {
   if (next >= 0) timer = setTimeout(pump, Math.max(next, 1)) as unknown as number;
 }
 
-/** The sound card's port and rate, from the page on the first Play. */
-function audio(port: MessagePort, r: number) {
-  rate = r;
-  nori!.set_rate(r);
+/** Hands the worklet what the engine's output told it. */
+function order() {
+  if (!worklet) return;
+  const orders = nori!.orders() as string;
+  if (orders) for (const o of JSON.parse(orders)) worklet.postMessage(o);
+}
+
+/** The sound card's port, rate and latency to the ear (s), from the page on the first Play. */
+function audio(port: MessagePort, rate: number, ear: number) {
+  nori!.set_card(rate, ear * 1000);
   worklet = port;
   worklet.onmessage = (w: MessageEvent) => {
-    played = w.data.played;
+    const { played, flushed } = w.data;
+    if (flushed) nori!.flushed(played, flushed.dropped, flushed.flushes);
+    else nori!.played(played);
     scope.postMessage({ heard: w.data });
     pump();
   };
@@ -99,7 +108,7 @@ scope.onmessage = async (e: MessageEvent) => {
   const { id, call, args } = e.data as { id: number; call: string; args: unknown[] };
   try {
     let value: unknown;
-    if (call === "audio") audio(args[0] as MessagePort, args[1] as number);
+    if (call === "audio") audio(args[0] as MessagePort, args[1] as number, args[2] as number);
     else {
       const f = nori![call];
       if (typeof f !== "function") throw new Error(`no call ${call}`);

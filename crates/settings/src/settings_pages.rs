@@ -12,6 +12,8 @@ pub enum SettingsClient {
     Phone,
     Desktop,
     Terminal,
+    /// A browser: the settings its session and engine apply there.
+    Web,
 }
 
 /// The parts of the settings a profile opens (`nori_library::browse::ProfileRules::settings`).
@@ -208,7 +210,12 @@ pub struct PageFacts {
 
 /// The pages `client` has, in the order the root lists them; those the profile opens.
 pub fn pages(client: SettingsClient, parts: &[SettingsPart]) -> Vec<SettingsPage> {
-    SettingsPage::ALL.into_iter().filter(|p| !page_parts(*p).iter().all(|part| !parts.contains(part)) && (client == SettingsClient::Phone || *p != SettingsPage::LyricsSources)).collect()
+    let offered = |p: SettingsPage| match client {
+        SettingsClient::Phone => true,
+        SettingsClient::Desktop | SettingsClient::Terminal => p != SettingsPage::LyricsSources,
+        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Lyrics | SettingsPage::Library),
+    };
+    SettingsPage::ALL.into_iter().filter(|p| !page_parts(*p).iter().all(|part| !parts.contains(part)) && offered(*p)).collect()
 }
 
 fn page_parts(page: SettingsPage) -> &'static [SettingsPart] {
@@ -275,7 +282,13 @@ impl Page<'_> {
 
     /// Phone and desktop: the clients with a window of their own.
     fn windowed(&self) -> bool {
-        self.client != SettingsClient::Terminal
+        matches!(self.client, SettingsClient::Phone | SettingsClient::Desktop)
+    }
+
+    /// A browser: no files of its own (no downloads, stream cache or measuring from disk) and no
+    /// outputs to tell apart.
+    fn web(&self) -> bool {
+        self.client == SettingsClient::Web
     }
 
     fn sections(&self, page: SettingsPage) -> Vec<(SectionId, Vec<SettingsRow>)> {
@@ -322,22 +335,37 @@ impl Page<'_> {
         if s.beat_model != BeatModel::Unavailable {
             between.push(self.setting("autoMixBetterBeats").under().shown(p.auto_mix).enabled(live));
         }
-        between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().shown(p.auto_mix).enabled(self.f.analysed > 0));
+        if !self.web() {
+            between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().shown(p.auto_mix).enabled(self.f.analysed > 0));
+        }
+        between.push(self.setting("crossfadeKeepAlbums").shown(p.auto_mix || p.crossfade_sec > 0).enabled(live));
         between.push(self.setting("fadeMs"));
         let controls = vec![self.setting("previousAlwaysSkips"), self.setting("speed"), self.setting("pitch"), self.setting("skipSilence").enabled(live)];
-        let queue = vec![
+        let mut queue = vec![
             self.setting("skipExplicit"),
             self.setting("autoFill"),
             self.chips("autoFillKind").under().shown(p.auto_fill),
             self.setting("autoFillBasis").under().shown(p.auto_fill),
             self.setting("autoFillRemote").under().shown(p.auto_fill),
-            self.setting("bridgeOffline"),
         ];
+        if !self.web() {
+            queue.push(self.setting("bridgeOffline"));
+        }
         vec![(SectionId::Between, between), (SectionId::Controls, controls), (SectionId::Queue, queue)]
     }
 
     fn sound(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let p = self.p;
+        let volume = vec![
+            self.chips("replayGain"),
+            self.chips("loudnessLevel").under().shown(p.replay_gain != GainMode::Off),
+            self.setting("volumeBoostDb"),
+            row(RowItem::Note { note: SettingsNote::Boost }),
+        ];
+        if self.web() {
+            let effects = vec![self.setting("compressor"), self.chips("compressorPreset").under().shown(p.compressor)];
+            return vec![(SectionId::Effects, effects), (SectionId::Volume, volume)];
+        }
         let mut eq = vec![row(RowItem::Link { to: SettingsLink::Equalizer })];
         if self.windowed() {
             eq.extend([self.setting("autoEqAuto"), self.setting("autoEqDownload"), self.setting("profilePerOutput"), self.setting("soundBypass")]);
@@ -349,12 +377,6 @@ impl Page<'_> {
         if self.phone() {
             effects.push(row(RowItem::CompressionMeter).under().shown(p.compressor));
         }
-        let volume = vec![
-            self.chips("replayGain"),
-            self.chips("loudnessLevel").under().shown(p.replay_gain != GainMode::Off),
-            self.setting("volumeBoostDb"),
-            row(RowItem::Note { note: SettingsNote::Boost }),
-        ];
         let mut output = vec![self.setting("hiRes"), self.setting("maxRate")];
         if self.phone() {
             output.extend([self.setting("bitPerfect"), row(RowItem::Note { note: SettingsNote::Dac }), self.setting("offload")]);
@@ -412,6 +434,8 @@ impl Page<'_> {
         if self.phone() {
             sources.push(row(RowItem::Link { to: SettingsLink::LyricsSources }).shown(online));
             out.push((SectionId::Sources, sources));
+        } else if self.web() {
+            out.push((SectionId::Sources, sources));
         } else {
             out.push((SectionId::Sources, sources));
             out.extend(self.lyrics_sources().into_iter().map(|(id, rows)| (id, rows.into_iter().map(|r| SettingsRow { shown: r.shown && online, ..r }).collect())));
@@ -432,14 +456,16 @@ impl Page<'_> {
             out.push((SectionId::Lists, vec![self.chips("tapAction"), self.setting("swipeRight"), self.setting("swipeLeft")]));
             out.push((SectionId::Playlists, vec![self.setting("playlistNotes")]));
         }
-        out.push((SectionId::Search, vec![row(RowItem::Action { action: SettingsAction::SyncLibrary }).enabled(!self.f.syncing)]));
+        if !self.web() {
+            out.push((SectionId::Search, vec![row(RowItem::Action { action: SettingsAction::SyncLibrary }).enabled(!self.f.syncing)]));
+        }
         out.push((SectionId::History, vec![self.setting("tasteModel"), self.setting("scrobble")]));
         out.push((SectionId::Online, vec![self.setting("thirdPartyLookups")]));
         let mut devices = vec![self.setting("remoteControl")];
         match self.client {
             SettingsClient::Phone => devices.push(self.setting("queueOffer")),
             SettingsClient::Terminal => devices.push(row(RowItem::Action { action: SettingsAction::JoinJam })),
-            SettingsClient::Desktop => {}
+            SettingsClient::Desktop | SettingsClient::Web => {}
         }
         out.push((SectionId::Devices, devices));
         out
@@ -459,7 +485,7 @@ impl Page<'_> {
         match self.client {
             SettingsClient::Phone => downloads.push(row(RowItem::Action { action: SettingsAction::AnalyseDownloads }).enabled(f.download_songs > 0)),
             SettingsClient::Terminal => downloads.push(row(RowItem::Link { to: SettingsLink::Downloads })),
-            SettingsClient::Desktop => {}
+            SettingsClient::Desktop | SettingsClient::Web => {}
         }
         let clear = |action, bytes: i64| row(RowItem::Action { action }).enabled(!f.storage_busy && bytes > 0);
         let mut storage = vec![
@@ -582,6 +608,8 @@ mod tests {
         let shown = |p: &StoredPrefs, name: &str| names(&every_row(SettingsClient::Phone, p, &facts()), true).iter().any(|n| n == name);
         let d = StoredPrefs::default();
         assert!(shown(&d, "crossfadeSec") && !shown(&StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
+        let mixing = [StoredPrefs { auto_mix: true, ..d.clone() }, StoredPrefs { crossfade_sec: 4, ..d.clone() }];
+        assert!(!shown(&d, "crossfadeKeepAlbums") && mixing.iter().all(|p| shown(p, "crossfadeKeepAlbums")), "only while songs mix");
         assert!(!shown(&d, "compressorPreset") && shown(&StoredPrefs { compressor: true, ..d.clone() }, "compressorPreset"));
         assert!(shown(&d, "loudnessLevel") && !shown(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
         assert!(!shown(&StoredPrefs { auto_fill: false, ..d.clone() }, "autoFillKind"));
@@ -613,6 +641,23 @@ mod tests {
         // Not on a car's screen: no side for the controls.
         let parked = PageFacts { car: false, ..facts() };
         assert!(!names(&every_row(SettingsClient::Phone, &d, &parked), false).iter().any(|n| n == "controlsSide"));
+    }
+
+    #[test]
+    fn a_browser_offers_what_applies_there() {
+        let d = StoredPrefs::default();
+        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Lyrics, SettingsPage::Library]);
+        let rows = every_row(SettingsClient::Web, &d, &facts());
+        let has = names(&rows, false);
+        for kept in ["autoMix", "crossfadeSec", "speed", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl"] {
+            assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
+        }
+        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
+            assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
+        }
+        assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::Link { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");
+        let shown = names(&every_row(SettingsClient::Web, &StoredPrefs { auto_mix: true, ..d.clone() }, &facts()), true);
+        assert!(!shown.iter().any(|n| n == "crossfadeSec"), "AutoMix plans its own");
     }
 
     #[test]

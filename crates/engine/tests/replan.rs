@@ -42,8 +42,9 @@ struct Rig {
 }
 
 impl Rig {
-    /// `ids` queued in order, AutoMix on, each from an album of its own; not playing.
-    fn new(name: &str, ids: &[&str]) -> Rig {
+    /// `ids` queued in order, AutoMix on, all from one album if `one_album`, else each from its own;
+    /// not playing.
+    fn new(name: &str, ids: &[&str], one_album: bool) -> Rig {
         let dir = nori_testdir::TempDir::new(name);
         let (core, client) = common::own_core(&dir, |p| p.auto_mix = true);
         let prefs = core.session.settings.current().unwrap();
@@ -54,7 +55,7 @@ impl Rig {
             .map(|(k, id)| Song {
                 id: id.to_string(),
                 title: id.to_string(),
-                album_id: Some(format!("al-{id}")),
+                album_id: Some(if one_album { "al".into() } else { format!("al-{id}") }),
                 track: k as u32 + 1,
                 disc_number: 1,
                 duration: SECS as u32,
@@ -116,8 +117,34 @@ impl Rig {
 }
 
 #[test]
+fn keep_albums_off() {
+    let rig = Rig::new("replan-keep", &["a1", "a2", "a3"], true);
+    rig.engine.play_at(0, 0);
+    assert!(!rig.mixes_into(1), "kept gapless while the setting says so");
+    // Early in the second song, before its ending is made.
+    rig.set("crossfadeKeepAlbums", "false");
+    assert!(rig.mixes_into(2), "mixed into the third song once the album is no longer kept gapless");
+    let note = rig.core.session.planner.transition_note("a2").expect("a2's ending was planned");
+    assert_ne!(note.kind, nori_player::types::TransitionKind::Gapless, "{note:?}");
+
+    // Keep albums off remakes gapless ending.
+    let rig = Rig::new("replan-late", &["d1", "d2"], true);
+    rig.engine.play_at(0, 0);
+    assert!(rig.until(20, |r| r.engine.status().index == Some(0) && r.engine.status().position_ms > 1_000));
+    rig.engine.seek(SECS as i64 * 1000 - 15_000);
+    // The ending is already made gapless.
+    // Looked at: the status is otherwise as old as the last burst.
+    assert!(rig.until(20, |r| {
+        r.engine.look();
+        r.engine.status().position_ms > SECS as i64 * 1000 - 13_000
+    }), "{:?}", rig.engine.status());
+    rig.set("crossfadeKeepAlbums", "false");
+    assert!(rig.mixes_into(1), "the ending is made again as a mix");
+}
+
+#[test]
 fn each_setting_change_is_planned_with() {
-    let rig = Rig::new("replan-each", &["b1", "b2", "b3", "b4", "b5"]);
+    let rig = Rig::new("replan-each", &["b1", "b2", "b3", "b4", "b5"], false);
     rig.set("autoMix", "false");
     rig.set("crossfadeSec", "6");
     rig.engine.play_at(0, 0);
@@ -139,7 +166,7 @@ fn each_setting_change_is_planned_with() {
 
 #[test]
 fn play_after_change_uses_it() {
-    let rig = Rig::new("replan-play", &["c1", "c2"]);
+    let rig = Rig::new("replan-play", &["c1", "c2"], false);
     rig.set("autoMix", "false");
     rig.set("crossfadeSec", "4");
     rig.engine.play_at(0, 0);
@@ -150,7 +177,7 @@ fn play_after_change_uses_it() {
 /// the setting only after the play.
 #[test]
 fn automix_on_before_play_mixes() {
-    let rig = Rig::new("replan-smoke", &["e1", "e2", "e3"]);
+    let rig = Rig::new("replan-smoke", &["e1", "e2", "e3"], false);
     let mut prefs = rig.core.session.settings.current().unwrap();
     prefs.auto_mix = false;
     rig.core.session.settings.put(prefs.clone());
@@ -170,7 +197,7 @@ fn automix_on_before_play_mixes() {
 #[test]
 fn measure_again_plans_the_ending_again() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let rig = Rig::new("replan-measure", &["f1", "f2"]);
+    let rig = Rig::new("replan-measure", &["f1", "f2"], false);
     rig.engine.play_at(0, 0);
     assert!(rig.until(20, |r| r.engine.status().index == Some(0) && r.engine.status().position_ms > 1_000));
     rig.engine.seek(SECS as i64 * 1000 - 20_000);

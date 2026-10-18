@@ -1,5 +1,6 @@
-// The sound card: plays the interleaved chunks the worker sends over this node's port, and says how
-// many frames it played so the worker keeps it fed. Nothing here decides anything.
+// The sound card: plays the interleaved chunks the worker sends over this node's port, does what the
+// engine's output tells it (pause, resume, flush, fade), and says how many frames it played and dropped
+// so the engine knows what was heard. Nothing here decides anything.
 
 declare abstract class AudioWorkletProcessor {
   readonly port: MessagePort;
@@ -7,15 +8,22 @@ declare abstract class AudioWorkletProcessor {
 }
 declare function registerProcessor(name: string, processor: unknown): void;
 declare const sampleRate: number;
+declare const currentTime: number;
 
 /** Frames between reports to the worker. */
 const REPORT = 2048;
 /** Frames held before playing starts, and again after running dry: a little slack for the worker. */
 const START = 4096;
+/** The fade a pause, a resume or a flush makes so nothing clicks, per frame (15 ms). */
+const EDGE_STEP = 1 / (0.015 * sampleRate);
 
 type Chunk = { pcm: Float32Array; channels: number };
-/** From the worker: music, or whether the player is holding (paused or stopped: running out is no fault). */
-type Message = Chunk | { held: boolean };
+/** From the engine's output: stop where it is keeping the music held, go on from there, drop the music
+ * held (answered with the frames dropped), or fade to `to` over `ms` (from `from`, or where it is). */
+type Order = { do: "pause" } | { do: "resume" } | { do: "flush" } | { do: "ramp"; from: number | null; to: number; ms: number };
+/** From the worker: music, an order, or whether the player is holding (paused or stopped: running out
+ * is no fault). */
+type Message = Chunk | Order | { held: boolean };
 
 class Out extends AudioWorkletProcessor {
   private chunks: Chunk[] = [];
@@ -26,6 +34,16 @@ class Out extends AudioWorkletProcessor {
   /** Playing, as opposed to filling up to START. */
   private running = false;
   private held = true;
+  /** Paused: stopped where it is, once the edge has closed. */
+  private paused = true;
+  /** Flushes told: the music held goes once the edge has closed. */
+  private flushes = 0;
+  /** The short fade of a pause or flush: 0 closed, 1 open. */
+  private edge = 0;
+  /** The engine's fade: the level, where it goes and its step per frame. */
+  private level = 1;
+  private levelTo = 1;
+  private levelStep = 0;
   /** Times the music ran out while playing, and the seconds played at the first of them. */
   private dry = 0;
   private dryAt: number[] = [];
@@ -34,6 +52,12 @@ class Out extends AudioWorkletProcessor {
    * long]: a gap between songs shows. */
   private quiet = 0;
   private silences: [number, number][] = [];
+  /** On the sound card's clock: the last frame with sound, the first after more than 10 ms without, and
+   * the first frame played after the last flush. */
+  private lastLoud = 0;
+  private soundAt = 0;
+  private freshAt = 0;
+  private fresh = false;
   private worker?: MessagePort;
 
   constructor() {
@@ -48,35 +72,63 @@ class Out extends AudioWorkletProcessor {
       this.played = 0;
       this.reported = 0;
       this.running = false;
+      this.paused = true;
+      this.flushes = 0;
+      this.edge = 0;
+      this.level = this.levelTo = 1;
+      this.levelStep = 0;
       this.worker.onmessage = (m: MessageEvent) => this.take(m.data as Message);
     };
   }
 
   private take(m: Message) {
-    if ("held" in m) {
-      this.held = m.held;
-      return;
+    if ("held" in m) this.held = m.held;
+    else if ("pcm" in m) {
+      this.chunks.push(m);
+      this.queued += m.pcm.length / m.channels;
+    } else if (m.do === "pause") this.paused = true;
+    else if (m.do === "resume") this.paused = false;
+    else if (m.do === "flush") this.flushes++;
+    else {
+      if (m.from !== null) this.level = m.from;
+      this.levelTo = m.to;
+      this.levelStep = (m.to - this.level) / Math.max(1, (m.ms * sampleRate) / 1000);
     }
-    this.chunks.push(m);
-    this.queued += m.pcm.length / m.channels;
   }
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const out = outputs[0];
     const frames = out[0].length;
     if (!this.running && (this.queued >= START || (this.held && this.queued > 0))) this.running = true;
+    const closing = this.paused || this.flushes > 0;
     let made = 0;
-    while (this.running && made < frames && this.chunks.length > 0) {
+    while (this.running && made < frames && this.chunks.length > 0 && !(closing && this.edge === 0)) {
       const { pcm, channels } = this.chunks[0];
-      const left = pcm.length / channels - this.at;
-      const n = Math.min(left, frames - made);
-      for (let f = 0; f < n; f++) {
+      const n = Math.min(pcm.length / channels - this.at, frames - made);
+      let f = 0;
+      for (; f < n; f++) {
+        this.edge = closing ? Math.max(0, this.edge - EDGE_STEP) : Math.min(1, this.edge + EDGE_STEP);
+        if (closing && this.edge === 0) break;
+        if (this.level !== this.levelTo) {
+          this.level += this.levelStep;
+          if ((this.levelStep >= 0 && this.level >= this.levelTo) || (this.levelStep < 0 && this.level <= this.levelTo)) this.level = this.levelTo;
+        }
+        const gain = this.level * this.edge;
+        const t = currentTime + (made + f) / sampleRate;
+        if (this.fresh) {
+          this.fresh = false;
+          this.freshAt = t;
+        }
         let loud = false;
         for (let c = 0; c < out.length; c++) {
-          const v = pcm[(this.at + f) * channels + Math.min(c, channels - 1)];
+          const v = pcm[(this.at + f) * channels + Math.min(c, channels - 1)] * gain;
           out[c][made + f] = v;
           if (v > this.peak) this.peak = v;
           if (v > 1e-4 || v < -1e-4) loud = true;
+        }
+        if (loud) {
+          if (t - this.lastLoud > 0.01) this.soundAt = t;
+          this.lastLoud = t;
         }
         if (!loud) this.quiet++;
         else if (this.quiet > 0) {
@@ -88,27 +140,42 @@ class Out extends AudioWorkletProcessor {
           this.quiet = 0;
         }
       }
-      made += n;
-      this.at += n;
+      made += f;
+      this.at += f;
       if (this.at * channels >= pcm.length) {
         this.chunks.shift();
         this.at = 0;
       }
     }
     this.queued -= made;
-    if (this.running && made < frames) {
+    this.played += made;
+    if (this.running && made < frames && !closing) {
       this.running = false;
       if (!this.held) {
         this.dry++;
         if (this.dryAt.length < 32) this.dryAt.push(Math.round((this.played / sampleRate) * 1000) / 1000);
       }
     }
-    this.played += made;
-    if (this.worker && (this.played - this.reported >= REPORT || (made < frames && this.played > this.reported))) {
-      this.reported = this.played;
-      this.worker.postMessage({ played: this.played, dry: this.dry, dryAt: this.dryAt, peak: this.peak, silences: this.silences });
-    }
+    // Closed, or nothing sounding to close: the music held goes, and what follows fades in.
+    if (this.flushes > 0 && (this.edge === 0 || !this.running || this.chunks.length === 0)) {
+      const [dropped, flushes] = [this.queued, this.flushes];
+      this.chunks = [];
+      this.queued = 0;
+      this.at = 0;
+      this.running = false;
+      this.edge = 0;
+      this.fresh = true;
+      this.flushes = 0;
+      this.report({ dropped, flushes });
+    } else if (this.played - this.reported >= REPORT || (made < frames && this.played > this.reported)) this.report();
     return true;
+  }
+
+  /** Tells the worker what was played, and with `flushed` the flushes done and the frames they dropped. */
+  private report(flushed?: { dropped: number; flushes: number }) {
+    if (!this.worker) return;
+    this.reported = this.played;
+    this.worker.postMessage({ played: this.played, flushed, dry: this.dry, dryAt: this.dryAt, peak: this.peak, silences: this.silences, lastLoud: this.lastLoud, soundAt: this.soundAt, freshAt: this.freshAt });
   }
 }
 

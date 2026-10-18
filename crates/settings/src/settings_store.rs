@@ -640,7 +640,7 @@ mod tests {
             assert_eq!(stored, save(&prefs));
         }
         let (prefs, _) = open_old("old-changed", &stored_062(true));
-        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb), (1, crate::settings::ThemeMode::Dark, 4096), "the rest as it was");
+        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), (1, crate::settings::ThemeMode::Dark, 4096, false), "the rest as it was");
     }
 
     #[test]

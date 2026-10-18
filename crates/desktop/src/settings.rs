@@ -189,19 +189,20 @@ fn section_title(id: SectionId) -> &'static str {
 /// A setting's title and the line under it.
 fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
-        "crossfadeSec" => ("Crossfade", "Songs fade into each other, not within an album."),
+        "crossfadeSec" => ("Crossfade", "Songs fade into each other."),
         "autoMix" => ("AutoMix", "Blends songs like a DJ, matching the beat."),
         "autoMixBetterBeats" => {
             let mb = s.beat_model_mb;
             let detail = match &s.beat_model {
-                BeatModel::Ready => "On. Each song is listened to once, just before it plays.".into(),
+                BeatModel::Ready => "On. Each song is listened to once, just before it plays, which uses more battery.".into(),
                 BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
                 BeatModel::Failed { .. } => "The download didn't work. It tries again at the next song.".into(),
                 BeatModel::WaitingForWifi => format!("Waits for Wi-Fi to download (about {mb} MB)."),
-                _ => format!("Listens to the start and end of each song so mixes land on the beat. A one-time download of about {mb} MB over Wi-Fi, from the model's authors."),
+                _ => format!("Listens to the start and end of each song so mixes land on the beat. Uses more battery. A one-time download of about {mb} MB over Wi-Fi, from the model's authors."),
             };
             return ("Better beat detection".into(), detail);
         }
+        "crossfadeKeepAlbums" => ("Keep albums gapless", "Songs of one album that follow each other in order play without mixing."),
         "fadeMs" => ("Fade on play and pause", ""),
         "previousAlwaysSkips" => ("Previous goes back a song", "Instead of restarting the current one."),
         "speed" => ("Speed", ""),

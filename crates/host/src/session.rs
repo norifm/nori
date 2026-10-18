@@ -248,9 +248,6 @@ pub struct Open<'a> {
     pub keeps_music: bool,
     /// The platform's own decoders, preferred to those here.
     pub decoders: nori_engine::Platform,
-    /// Looks for the account's playing device at the start and has its controls reach it (remote
-    /// control). Off where this client controls no other device (the web, for now): it plays here.
-    pub finds_active: bool,
     pub out: Out,
 }
 
@@ -315,7 +312,6 @@ pub struct Parts {
     /// The AutoEQ notice said last, waiting for an answer.
     curve: parking_lot::Mutex<Option<CurveNotice>>,
     tasks: Arc<dyn Tasks>,
-    finds_active: bool,
     out: Out,
 }
 
@@ -417,7 +413,6 @@ impl Session {
             discovery: o.discovery,
             curve: Default::default(),
             tasks: o.tasks,
-            finds_active: o.finds_active,
             out: o.out,
         };
         let h = Handle(Arc::new(parts));
@@ -712,7 +707,7 @@ impl Handle {
             }
             self.remotes.set(Some(r.clone()));
             self.remotes.played(&self.engine);
-            if prefs.remote_control && !self.guest && self.finds_active {
+            if prefs.remote_control && !self.guest {
                 r.clone().discover_active(true);
             }
             r
@@ -1419,7 +1414,6 @@ fn test_open<'a>(queue: Arc<nori_core::queue::Session>, data: &'a Path, profile:
         tasks: crate::tasks(),
         keeps_music: true,
         decoders: Default::default(),
-        finds_active: true,
         out: Arc::new(|_| {}),
     }
 }

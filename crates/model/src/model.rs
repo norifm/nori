@@ -436,6 +436,8 @@ pub enum LyricsTiming {
     NotChecked,
     /// Heard against the voice and moved by `ms` (0: they were on time).
     Automatic { ms: i64 },
+    /// Heard against the voice and found not to fit it: another song's or another version's timing.
+    DoesNotFit,
     /// Moved by the listener to `ms`; `automatic` is what the check gave, none if it has not run.
     Yours { ms: i64, automatic: Option<i64> },
 }
@@ -444,7 +446,7 @@ impl LyricsTiming {
     /// What the clock adds to the playhead to find the lyrics' time.
     pub fn offset_ms(self) -> i64 {
         match self {
-            LyricsTiming::NotChecked => 0,
+            LyricsTiming::NotChecked | LyricsTiming::DoesNotFit => 0,
             LyricsTiming::Automatic { ms } | LyricsTiming::Yours { ms, .. } => ms,
         }
     }

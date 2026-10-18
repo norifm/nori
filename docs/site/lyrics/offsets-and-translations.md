@@ -13,7 +13,8 @@ nori checks lyrics against the song's voice once the song is analyzed, and shift
 late. A song playing for the first time is analyzed once all of it has arrived, whether AutoMix is on
 or not; lyrics already on screen are checked then, while it plays. Lyrics from your server are shown as they are. On Android, **Lyrics** in the player's ⋯ menu (there when the song has lyrics) says where they came
 from, whether they are timed by the line or the word, and how their timing was set: not checked yet,
-adjusted automatically, or adjusted by you. The **−** and **+** buttons beside the offset move them
+adjusted automatically, adjusted by you, or checked and found not to fit the singing (another song's
+or another version's timing, shown as the service sent them and asked about again later). The **−** and **+** buttons beside the offset move them
 later or sooner in 50 ms steps (250 ms before 0.6.3). Manual offsets round to the nearest 50 ms. Your timing replaces
 the automatic one, is kept for that song and those lyrics, and comes back
 the next time they play; **Reset** returns to the automatic timing. Lyrics from another service, or

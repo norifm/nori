@@ -485,7 +485,6 @@ fn start_queue(
         tasks: nori_host::tasks(),
         keeps_music: true,
         decoders: Default::default(),
-        finds_active: true,
         out,
     })?;
     if !offline {
