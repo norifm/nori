@@ -661,14 +661,14 @@ pub(crate) mod tests {
     }
 
     /// Lyrics shown while the playing song is not measured yet are checked against its voice as soon as
-    /// it is; a song that leaves the play window is no longer waited for.
+    /// it is, with AutoMix off too; a song that leaves the play window is no longer waited for.
     #[test]
     fn lyrics_are_checked_once_the_playing_song_is_measured() {
         use std::future::Future;
         use std::task::{Context, Waker};
         let (c, fake) = setup();
         c.core.session.settings.open("").unwrap();
-        c.core.session.settings.put(StoredPrefs { auto_mix: true, ..StoredPrefs::default() });
+        c.core.session.settings.put(StoredPrefs { auto_mix: false, ..StoredPrefs::default() });
         let (a, _, answer, secs) = late_lyrics();
         let s = Song { id: "sync2".into(), title: "Offset".into(), duration: secs, ..song() };
         let other = Song { id: "other".into(), ..s.clone() };

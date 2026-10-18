@@ -78,8 +78,8 @@ impl Core {
         Ok(get_voice(&self.db.lock(), song_id)?)
     }
 
-    /// The song's vocal curve once it is measured; None once it will not be while it plays (AutoMix
-    /// off, an analysis without a curve, or out of the play window).
+    /// The song's vocal curve once it is measured; None once it will not be while it plays (a profile
+    /// that measures nothing, an analysis without a curve, or out of the play window).
     pub(crate) async fn voice_measured(&self, song_id: &str) -> Option<nori_player::automix::vocal::VocalCurve> {
         let planner = &self.session.planner;
         loop {

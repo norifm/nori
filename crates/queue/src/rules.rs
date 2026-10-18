@@ -69,9 +69,10 @@ impl Session {
         ids
     }
 
-    /// The upcoming analysable ids to analyse for AutoMix; empty while AutoMix is off.
+    /// The upcoming analysable ids to analyse, for AutoMix and the lyrics' timing; empty when the
+    /// profile measures nothing.
     pub fn measure(&self) -> Vec<String> {
-        let n = self.settings.prefs(|p| q::measure_ahead(p.auto_mix));
+        let n = q::measure_ahead(self.planner.measures());
         self.playlist(|p| p.upcoming().take(UPCOMING).take(n).map(|i| &p.ids()[i]).filter(|id| crate::queue::analysable(id)).cloned().collect())
     }
 
@@ -336,7 +337,9 @@ mod tests {
         // Three ahead on Wi-Fi, one on metered; the player buffers the next song itself.
         assert_eq!(s.precache(false), ["pc3", "pc4"], "never a provider's");
         assert!(s.precache(true).is_empty());
-        assert!(s.measure().is_empty(), "AutoMix off");
+        assert_eq!(s.measure(), ["pc1", "pc2", "pc3"], "AutoMix off: the current song and those after it");
+        s.planner.set_measures(false);
+        assert!(s.measure().is_empty(), "a profile that measures nothing");
 
         // Precache list skips downloads and providers.
         let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();

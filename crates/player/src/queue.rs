@@ -90,9 +90,9 @@ pub fn precache_count(metered: bool, wifi: i32, mobile: i32) -> usize {
 /// Upcoming songs (0 = playing) measured ahead for AutoMix.
 pub(crate) const MEASURE_AHEAD: usize = 3;
 
-/// Songs to measure ahead: none with AutoMix off.
-pub fn measure_ahead(auto_mix: bool) -> usize {
-    if auto_mix {
+/// Songs to measure ahead: none when nothing is measured.
+pub fn measure_ahead(measures: bool) -> usize {
+    if measures {
         MEASURE_AHEAD
     } else {
         0

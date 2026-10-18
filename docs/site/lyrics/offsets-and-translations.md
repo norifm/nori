@@ -10,8 +10,8 @@ Applies to nori 0.6.3. The display settings are Android's; the terminal's keys a
 ## Lyrics that drift
 
 nori checks lyrics against the song's voice once the song is analyzed, and shifts them when they run
-late. A song playing for the first time is analyzed once all of it has arrived; lyrics already on
-screen are checked then, while it plays. Lyrics from your server are shown as they are. On Android, **Lyrics** in the player's ⋯ menu (there when the song has lyrics) says where they came
+late. A song playing for the first time is analyzed once all of it has arrived, whether AutoMix is on
+or not; lyrics already on screen are checked then, while it plays. Lyrics from your server are shown as they are. On Android, **Lyrics** in the player's ⋯ menu (there when the song has lyrics) says where they came
 from, whether they are timed by the line or the word, and how their timing was set: not checked yet,
 adjusted automatically, or adjusted by you. The **−** and **+** buttons beside the offset move them
 later or sooner in 50 ms steps (250 ms before 0.6.3). Manual offsets round to the nearest 50 ms. Your timing replaces
