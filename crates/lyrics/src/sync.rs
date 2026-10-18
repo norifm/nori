@@ -28,6 +28,8 @@ pub const DRIFT_MS: i64 = 700;
 const PART_SURE: f64 = 0.3;
 /// ...and they fit this much better apart, per line, than together.
 const PART_GAIN: f64 = 0.1;
+/// A move is not sure when a smaller one fits this share as well.
+const NEAR_TIE: f64 = 0.75;
 /// Below this score the lines do not fit the voice...
 pub(crate) const POOR: f64 = 0.35;
 /// ...nor when they fit less than this better than slid far off: with a band as busy as the voice,
@@ -325,6 +327,18 @@ fn peak(v: &Voice, fits: &[f64], within: usize) -> (f64, f64, f64) {
     (i as f64 - reach as f64 + frac, best, confidence)
 }
 
+/// A peak of `fits` (from [`slide`]) more than half a second nearer no shift than `shift` (frames) that fits
+/// within [`NEAR_TIE`] as well: in a song that repeats itself, lines a line off fit about as well.
+fn nearer_peak(v: &Voice, fits: &[f64], shift: f64) -> Option<f64> {
+    let center = (fits.len() / 2) as f64;
+    let at = fits.get((center + shift).round() as usize).copied().filter(|f| *f > 0.0)?;
+    let apart = (0.5 * v.fps).ceil();
+    (1..fits.len() - 1)
+        .filter(|&j| (j as f64 - center).abs() + apart < shift.abs() && fits[j] >= fits[j - 1] && fits[j] >= fits[j + 1] && fits[j] >= NEAR_TIE * at)
+        .max_by(|a, b| fits[*a].total_cmp(&fits[*b]))
+        .map(|j| j as f64 - center)
+}
+
 /// Where the voice starts, in frames (fractional): each rise above [`ONSET_RISE`] that is the largest
 /// within [`RISE_S`] either side.
 fn onsets(v: &Voice) -> Vec<f64> {
@@ -510,6 +524,8 @@ pub fn check(l: &Lyrics, curve: &VocalCurve) -> Option<SyncCheck> {
             _ => (refine(near).0, 0.0),
         }
     };
+    // Neither is sure when a smaller move fits nearly as well.
+    let (shift, confidence) = nearer_peak(&v, &fits, shift).map_or((shift, confidence), |s| (refine(s).0, 0.0));
     // Lines in place sit later than the fit by the curve's lag, and line-timed ones also lead the voice.
     let bias_ms = LAG_MS + if l.word_timed { 0 } else { LINE_LEAD_MS };
     let offset_ms = bias_ms - (shift / v.fps * 1000.0).round() as i64;
@@ -722,5 +738,25 @@ pub(crate) mod tests {
                 assert_eq!(half.applied_ms(), 0, "{}: {half:?}", song.name);
             }
         }
+    }
+
+    /// A song that repeats itself: a line every 3.6 s, the first heard faintly, and sung once more after
+    /// the last (no line of its own). Lyrics half a second late fit nearly as well a line later, and must
+    /// not be moved there.
+    #[test]
+    fn a_line_off_is_not_taken() {
+        let (fps, period, first, lines) = (20.0, 3.6, 10.0, 6);
+        let mut level = vec![40u8; 130 * 20];
+        for k in 0..=lines {
+            let a = ((first + k as f64 * period) * fps) as usize;
+            level[a..a + 48].fill(if k == 0 { 50 } else { 200 });
+        }
+        let line = |k: usize| {
+            let start_ms = ((first + k as f64 * period) * 1000.0) as i64 - LAG_MS - LINE_LEAD_MS + 500;
+            LyricLine { start_ms, end_ms: start_ms + 3_600, text: "lomira teshvan korupel".into(), ..Default::default() }
+        };
+        let late = Lyrics { synced: true, lines: (0..lines).map(line).collect(), ..Default::default() };
+        let c = check(&late, &VocalCurve { fps: fps as f32, t0: 0.0, level }).unwrap();
+        assert!((0..=500).contains(&c.applied_ms()), "half a second late, not a line early: {c:?}");
     }
 }
