@@ -484,4 +484,7 @@
     <string name="settings_accent">Accent color</string>
     <string name="jam_remote_songs">Allow remote songs</string>
     <string name="jam_remote_songs_line">Guests can request songs from external providers.</string>
+    <string name="download_mobile_title">Download on mobile data?</string>
+    <string name="download_mobile_text">You’re not on Wi-Fi. The songs will download over mobile data now.</string>
+    <string name="download_mobile_yes">Download</string>
 </resources>

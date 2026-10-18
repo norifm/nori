@@ -22,6 +22,7 @@ import dev.nori.music.ffi.model.Song
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import dev.nori.music.ffi.settings.SwipeAction
 import kotlinx.coroutines.flow.first
@@ -169,7 +170,24 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     val shares = _shares.receiveAsFlow()
     fun share(id: String) = attempt(null) { _shares.send(nori.library.share(id)) }
 
+    private val _mobileDownload = MutableStateFlow<List<Song>?>(null)
+    /** Songs asked for on mobile data, waiting for a yes before they download. */
+    val mobileDownload: StateFlow<List<Song>?> = _mobileDownload.asStateFlow()
+
     fun download(songs: List<Song>) {
+        viewModelScope.launch {
+            if (withContext(Dispatchers.IO) { nori.http.metered }) _mobileDownload.value = songs else downloadNow(songs)
+        }
+    }
+
+    /** The answer to downloading [mobileDownload] over mobile data. */
+    fun downloadOnMobileData(yes: Boolean) {
+        val songs = _mobileDownload.value ?: return
+        _mobileDownload.value = null
+        if (yes) downloadNow(songs)
+    }
+
+    private fun downloadNow(songs: List<Song>) {
         nori.downloads.download(songs)
         warmCovers(songs)
         _messages.trySend(say.downloadingSongs(songs.size))

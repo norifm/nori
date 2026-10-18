@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="lyrics motion notification album-page bridge download-notification downloads car-art foryou dac device-sound sheets remote jam"
+SECTIONS="lyrics motion notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -373,6 +373,31 @@ if want download-notification; then section "the download queue from its notific
   "$app" open home >/dev/null
   adb shell am start -a dev.nori.music.OPEN_DOWNLOADS -n "$pkg/dev.nori.music.app.MainActivity" >/dev/null 2>&1
   check "tapping the download notification opens the queue" wait_for route downloads 8
+fi
+
+if want mobile-data; then section "a download asked for on mobile data waits for a yes"
+  # Whether the phone is on mobile data is Android's (ConnectivityManager); asking first is the app's.
+  check "the emulator starts on Wi-Fi" wait_until 30 active_network WIFI
+  dl=$(song_id "Long Track 02")
+  saved() { [ "$(adb shell "run-as $pkg sqlite3 files/nori.db \"select count(*) from downloads where id='$dl' and done=1\"" | tr -d '\r')" = "$1" ]; }
+  "$app" do "undownload song:$dl" >/dev/null
+  check "the song starts with no download" wait_until 10 saved 0
+  "$app" open home >/dev/null
+  "$app" do "download song:$dl" >/dev/null
+  check "on Wi-Fi it downloads without asking" wait_until 60 saved 1
+  check "and nothing asks" off_screen 'text="Download on mobile data?"'
+  "$app" do "undownload song:$dl" >/dev/null
+  wait_until 10 saved 0
+  adb shell svc wifi disable; adb shell svc data enable
+  check "the emulator is on mobile data" wait_until 30 active_network MOBILE
+  "$app" do "download song:$dl" >/dev/null
+  check "on mobile data it asks first" wait_until 10 on_screen 'text="Download on mobile data?"'
+  check "and has not downloaded" saved 0
+  tapnode text "Download"
+  check "a yes downloads it" wait_until 60 saved 1
+  online
+  check "and Wi-Fi is back" active_network WIFI
+  "$app" do "undownload song:$dl" >/dev/null
 fi
 
 if want downloads; then section "downloads run side by side through media3 and survive a force stop"

@@ -351,6 +351,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LocalEinkScreen provides (prefs.motion == dev.nori.music.ffi.settings.Motion.EINK),
             LocalHiddenBars provides hiddenBars,
         ) {
+            MobileDownloadQuestion(actions)
             val route = controller.currentBackStackEntryAsState().value?.destination?.route
             // The tab the page on screen belongs to, which is the one that stays lit, as Apple's does: a
             // settings group, or an album opened from Home, is still inside that tab. Lit only on the tab
@@ -942,3 +943,17 @@ private fun Modifier.burnInProtection(
         translationX = d.xDp.dp.toPx()
         translationY = d.yDp.dp.toPx()
     }
+
+/** Songs asked for while on mobile data download only after a yes. */
+@Composable
+private fun MobileDownloadQuestion(actions: ActionsViewModel) {
+    val songs by actions.mobileDownload.collectAsStateWithLifecycle()
+    NoriDialog(songs, { actions.downloadOnMobileData(false) }) {
+        AlertCard(
+            title = { androidx.compose.material3.Text(words(dev.nori.music.app.R.string.download_mobile_title)) },
+            text = { androidx.compose.material3.Text(words(dev.nori.music.app.R.string.download_mobile_text)) },
+            confirmButton = { TextAction(words(dev.nori.music.app.R.string.download_mobile_yes), { actions.downloadOnMobileData(true) }) },
+            dismissButton = { TextAction(words(dev.nori.music.app.R.string.cancel), { actions.downloadOnMobileData(false) }) },
+        )
+    }
+}
