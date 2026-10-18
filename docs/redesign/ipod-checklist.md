@@ -1,0 +1,50 @@
+# iPod client: theme picker and season following (colours only): checklist
+
+Client: `ios/` (Swift, UIKit, iOS 12; `ios/Sources/Theme.swift`, `Shell.swift`, `Pages.swift`, `Player.swift`,
+`Glyphs.swift`, `Say.swift`) over `crates/ios` / `crates/host` (a C ABI). Docs: `docs/site/developers/ipod-internals.md`.
+Contract: `docs/redesign-contract.md` (only C1-C5 apply here). Branch/worktree: `feat/ipod-theme` in
+`~/Documents/Projects/Apps/nori-ipod`.
+Scope is deliberately small: **color changes only. No layout redesign, no new features, no new fonts or icons, no
+blur, no seal.** The iPod keeps its monochrome structure; the theme just gives it the season's colours, and the
+season setting works exactly as on the other clients.
+
+## 0. Setup
+- [ ] Read AGENTS.md, the contract C1-C5, `docs/site/developers/ipod-internals.md`, `ios/Sources/Theme.swift`
+      (today: monochrome greys, `Theme.light`, `accent = label`), and how settings reach the iPod (the core lays
+      settings pages out; `Pages.swift`/`Shell.swift` render rows from `crates/host`).
+- [ ] The iPod build is Docker-based (`tools/ipod.sh`); check whether it can build here (Docker running?). If not,
+      verify with the Rust side tests and a careful read, and say so.
+
+## 1. Season in the C ABI (C1, C3)
+- [ ] Expose from `crates/ios` (the C header `ios/Sources/nori_ios.h`) a function returning the palette for the
+      current settings: `nori_ios_palette(dark, amoled) -> struct {page, surface, ink, accent, on, ...}` computed with
+      `nori_look::theme::palette(season setting, today's month/day, southern hemisphere from the time zone, ...)`.
+      No hexes in Swift. Rust test for the mapping. Keep the header and the Swift bridge in step.
+- [ ] The device's date comes from the system (as the other clients); recompute on app launch, on becoming active,
+      and on setting change; never a timer.
+
+## 2. Theme.swift (colours only)
+- [ ] Replace the grey constants with the palette: `background` = page, `row` = surface, `label` = ink, `secondary` = ink 62 %
+      over page, `hairline`/`track` from ink alpha, `accent` = season accent (used where the current code uses `accent`:
+      tab tint, nav tint, the playing row, lit shuffle/repeat, switches' on-colour = `on`), `dim` = quiet ink.
+      Keep `Theme.light` semantic (light vs dark appearance); AMOLED = black page.
+- [ ] `Theme.Card` (player card/queue/lyrics): keep its structure; page-coloured per appearance (as today it is
+      black/white regardless of cover), ink/secondary from the palette.
+- [ ] Views rebuild on change as they already do for the light/dark mode.
+
+## 3. Settings: picker and follow (C2)
+- [ ] The Theme settings page gets: **Season** picker with Spring, Summer, Autumn, Winter (English names, 春 夏 秋 冬 beside
+      them as in the other clients' pickers) and a **Follow the seasons** toggle (Follow = the core's `season` setting
+      value `Follow`; off = a fixed season, defaulting to the one in effect). Use the core's settings model so the setting
+      name/values are the same as Android's (`season`); only add the row if the core page doesn't already render it.
+- [ ] Words in `Say.swift` (English); appearance setting (light/dark; AMOLED if the setting is shown on the iPod).
+- [ ] Show the current season in the row's detail ("Autumn now · Winter from 7 November") if the core gives it
+      (`season_now`), as Android's settings do.
+
+## 4. Check and docs
+- [ ] Every screen reads its colours from `Theme` (grep for hard-coded `UIColor(` / `rgb:` in `ios/Sources` and move any
+      that are theme colours).
+- [ ] `cargo test -j4 -p nori-ios -p nori-look`; build the iPod app with `tools/ipod.sh build` if Docker works.
+- [ ] `docs/site` iPod page: mention seasons and the setting.
+
+## 5. Design notes (written last: what was done for C1-C5, what was left alone and why)
