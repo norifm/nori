@@ -4,6 +4,11 @@ import android.content.Intent
 import android.media.audiofx.AudioEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -109,7 +114,7 @@ fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = tru
     ) {
         Column(Modifier.weight(1f).padding(end = 14.dp).alpha(if (enabled) 1f else DIMMED)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         NoriSwitch(value, onChange, enabled = enabled)
     }
@@ -124,7 +129,7 @@ private fun ChipChoice(row: SettingRow.ChipChoice, onChange: (String) -> Unit) {
     Column {
         Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
-            Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             androidx.compose.foundation.layout.FlowRow(
                 Modifier.padding(top = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -154,6 +159,44 @@ private fun Flags(row: SettingRow.Flags, onChange: (String) -> Unit) {
             }
         }
         Hairline(startIndent = 16.dp)
+    }
+}
+
+/**
+ * The four themes as tiles, each its season's page with its kanji in its accent, the one worn ringed in
+ * that accent; under them, following the calendar as a switch. Picking a tile stops following; following
+ * again lets the calendar choose.
+ */
+@Composable
+private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
+    val following = row.chosen == row.following
+    val worn = if (following) row.now else row.tiles.indexOfFirst { it.value == row.chosen }
+    Column(Modifier.spotlight(row.key)) {
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp), Arrangement.spacedBy(10.dp)) {
+            row.tiles.forEachIndexed { i, t ->
+                val accent = androidx.compose.ui.graphics.Color(t.accent)
+                val ring by androidx.compose.animation.core.animateDpAsState(if (i == worn) 2.dp else androidx.compose.ui.unit.Dp.Hairline, label = "season ring")
+                val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    androidx.compose.foundation.layout.Box(
+                        Modifier.fillMaxWidth().aspectRatio(0.84f).clip(shape)
+                            .background(androidx.compose.ui.graphics.Color(t.page))
+                            .border(ring, if (i == worn) accent else MaterialTheme.colorScheme.outlineVariant, shape)
+                            .clickable { if (t.value != row.chosen) onChange(t.value) }
+                            .semantics { contentDescription = t.label; selected = i == worn },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Kanji.seasons[t.season.ordinal], null, Modifier.size(34.dp), tint = accent)
+                    }
+                    Text(
+                        t.label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium,
+                        color = if (i == worn) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        Toggle(row.followTitle, row.follow, following) { on -> onChange(if (on) row.following else row.tiles[row.now].value) }
     }
 }
 
@@ -492,18 +535,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     NoriSlider(row.value, row.min..row.max, { v -> row.level?.let { vm.setLevel(it, v) } ?: vm.set(row.name, v.toString()) }, Modifier.padding(horizontal = 16.dp), centred = row.centred)
                 }
                 is SettingRow.CompressionMeter -> CompressionMeter()
-                // Each swatch gets an equal share of the row, so all of them fit and stay round.
-                is SettingRow.Palette -> Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    row.colours.forEach { c ->
-                        androidx.compose.foundation.layout.Box(Modifier.weight(1f).height(36.dp).clickable { vm.set(row.name, c.toString()) }, contentAlignment = Alignment.Center) {
-                            androidx.compose.foundation.layout.Box(
-                                Modifier.size(if (row.chosen == c) 36.dp else 30.dp).background(androidx.compose.ui.graphics.Color(c), androidx.compose.foundation.shape.CircleShape)
-                                    // The rim keeps the white swatch visible on a light page.
-                                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, androidx.compose.foundation.shape.CircleShape),
-                            )
-                        }
-                    }
-                }
+                is SettingRow.Seasons -> SeasonPicker(row) { v -> vm.set(row.name, v) }
                 is SettingRow.Server -> {
                     Row(Modifier.fillMaxWidth().clickable(enabled = !row.active) { p.servers.firstOrNull { it.id == row.id }?.let(vm::switchServer) }.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {

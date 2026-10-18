@@ -53,4 +53,4 @@ using another profile's server relay is not supported.
 Switched on, it costs one held request a minute while music plays or another device is shown; off,
 nothing at all.
 
-In 0.6.0-beta.3 and later, nearby devices signed in to the same account share song, album, and artist favorite changes while Remote control is on. The receiving device updates its hearts and favorite lists without a notification. Updates use the authenticated local connection; older clients keep their existing remote playback controls. Discovery for these updates runs while the app is in the foreground and stops during background playback.
+In 0.6.0-beta.3 and later, nearby devices signed in to the same account share song, album, and artist favorite changes while Remote control is on. The receiving device updates its favorite seals and lists without a notification. Updates use the authenticated local connection; older clients keep their existing remote playback controls. Discovery for these updates runs while the app is in the foreground and stops during background playback.

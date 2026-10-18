@@ -62,8 +62,15 @@ sealed interface SettingRow {
     data class Info(val key: String, val title: String, val detail: String) : SettingRow
     /** [level]: dragged through the core's in-place level edit instead of by [name]. */
     data class Slider(val name: String, val label: String, val value: Float, val min: Float, val max: Float, val centred: Boolean, val level: EqLevel?) : SettingRow
-    /** Colour swatches, ARGB; the chosen one is drawn larger. */
-    data class Palette(val name: String, val colours: List<Long>, val chosen: Long) : SettingRow
+    /**
+     * The four seasons' themes as tiles, each in its own colors, and following the calendar as a switch
+     * under them: [chosen] is the core's value, [following] the value that follows, [now] the season the
+     * calendar is in (as [tiles] index), and [follow] what following says.
+     */
+    data class Seasons(
+        val key: String, val name: String, val title: String, val tiles: List<SeasonTile>, val chosen: String,
+        val following: String, val now: Int, val followTitle: String, val follow: String,
+    ) : SettingRow
     /** A saved server; the one in use carries its [libraries] when it has more than one, under [note]. */
     data class Server(val id: String, val label: String, val detail: String, val active: Boolean, val libraries: List<Pick> = emptyList(), val note: String = "") : SettingRow
     data class Button(val title: String, val action: String) : SettingRow
@@ -83,6 +90,9 @@ sealed interface SettingRow {
     data class Text(val key: String, val name: String, val title: String, val detail: String, val value: String, val secret: Boolean) : SettingRow
 }
 
+/** One season's tile: its value, its name, and the colors of its theme in the mode the app is in (ARGB). */
+data class SeasonTile(val season: dev.nori.music.ffi.look.Season, val value: String, val label: String, val page: Int, val accent: Int)
+
 data class SettingsSection(val title: String, val rows: List<SettingRow>)
 
 /** Empty [sections] for a page the screen draws itself (About, Licences). */
@@ -94,8 +104,6 @@ data class ActionAsk(val title: String, val text: String, val confirm: String)
 /** What a page depends on besides the settings, from this phone. */
 data class SettingsFacts(
     val dac: DacState = DacState(),
-    /** Wallpaper colours need Android 12. */
-    val wallpaperColours: Boolean = false,
     /** Songs AutoMix has measured. */
     val analysed: Int = 0,
     val sync: SyncUi = SyncUi(),
@@ -194,10 +202,9 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "maxRate" to (R.string.settings_max_rate to R.string.settings_hint_max_rate),
     "bitPerfect" to (R.string.settings_bit_perfect to R.string.settings_hint_bit_perfect),
     "offload" to (R.string.settings_offload to R.string.settings_hint_offload),
-    "theme" to (R.string.settings_theme to R.string.settings_hint_theme),
+    "season" to (R.string.settings_season to R.string.settings_hint_season),
+    "theme" to (R.string.settings_mode to R.string.settings_hint_theme),
     "amoled" to (R.string.settings_amoled to R.string.settings_hint_amoled),
-    "dynamicColor" to (R.string.settings_wallpaper to R.string.settings_hint_wallpaper),
-    "accent" to (R.string.settings_accent to 0),
     "coverColors" to (R.string.settings_cover_colours to R.string.settings_hint_cover_colours),
     "movingCovers" to (R.string.settings_moving_covers to R.string.settings_hint_moving_covers),
     "hideStatusBar" to (R.string.settings_hide_status_bar to R.string.settings_hint_hide_status_bar),
@@ -245,6 +252,7 @@ private val NAMED: Map<String, IntArray> = mapOf(
     "replayGain" to intArrayOf(R.string.settings_off, R.string.settings_leveling_song, R.string.settings_leveling_album, R.string.settings_leveling_auto),
     "loudnessLevel" to intArrayOf(R.string.settings_level_quiet, R.string.settings_level_normal, R.string.settings_level_loud),
     "maxRate" to intArrayOf(R.string.settings_max_rate_auto, R.string.settings_max_rate_48, R.string.settings_max_rate_96, R.string.settings_max_rate_192),
+    "season" to intArrayOf(R.string.settings_season_follow, R.string.settings_season_spring, R.string.settings_season_summer, R.string.settings_season_autumn, R.string.settings_season_winter),
     "theme" to intArrayOf(R.string.settings_theme_system, R.string.settings_theme_light, R.string.settings_theme_dark),
     "coverColors" to intArrayOf(R.string.settings_cover_colours_pages, R.string.settings_cover_colours_player),
     "motion" to intArrayOf(R.string.settings_motion_full, R.string.settings_motion_reduced, R.string.settings_motion_eink),
@@ -291,7 +299,6 @@ private fun itemWords(item: RowItem): Pair<Int, Int>? = when (item) {
 /** The core's facts for a page, from this phone's. */
 private fun pageFacts(res: Resources, f: SettingsFacts, parts: List<SettingsPart>) = PageFacts(
     parts = parts,
-    wallpaperColors = f.wallpaperColours,
     car = res.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK == android.content.res.Configuration.UI_MODE_TYPE_CAR,
     folders = f.folders.map { it.id },
     analysed = f.analysed.toUInt(),
@@ -544,9 +551,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         "hiRes" -> str(R.string.settings_hi_res_detail)
         "bitPerfect" -> bitPerfectWords(f.dac)
         "offload" -> str(if (f.dac.device != null) R.string.settings_offload_usb else if (s.offloadPaused) R.string.settings_offload_paused else R.string.settings_offload_detail)
-        "theme" -> str(R.string.settings_hint_theme)
-        "amoled" -> str(R.string.settings_amoled_detail)
-        "dynamicColor" -> str(R.string.settings_wallpaper_detail)
         "coverColors" -> str(R.string.settings_cover_colours_detail)
         "movingCovers" -> str(if (s.values["movingCovers"] != "off" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) R.string.settings_moving_covers_still else R.string.settings_moving_covers_detail)
         "hideStatusBar" -> str(R.string.settings_hide_status_bar_detail)
@@ -613,6 +617,29 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         is RowItem.MusicFolder -> null
     }
 
+    /** The season row: [options] are the core's, Follow first and then the seasons in their order. */
+    fun seasons(key: String, title: String, options: List<SettingOption>, value: String): SettingRow {
+        val system = res.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val dark = dev.nori.music.ffi.settings.themeIsDark(p.theme, system)
+        val today = java.time.LocalDate.now()
+        val southern = dev.nori.music.ffi.look.southern(java.util.TimeZone.getDefault().id)
+        val tiles = options.mapNotNull { o ->
+            val season = dev.nori.music.ffi.settings.seasonOf(dev.nori.music.ffi.settings.ThemeSeason.valueOf(o.value)) ?: return@mapNotNull null
+            // Its dark palette rather than black: on black every tile would be the same.
+            val c = dev.nori.music.ffi.look.palette(season, 1u, 1u, false, dark, false)
+            SeasonTile(season, o.value, o.label, c.page.toInt(), c.accent.toInt())
+        }
+        val now = dev.nori.music.ffi.look.seasonNow(today.monthValue.toUInt(), today.dayOfMonth.toUInt(), southern)
+        val following = value == options.first().value
+        val follow = if (!following) str(R.string.settings_season_fixed) else {
+            val next = java.time.MonthDay.of(now.nextMonth.toInt(), now.nextDay.toInt())
+            val date = java.time.format.DateTimeFormatter.ofPattern(android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "dMMMM"))
+            val label = { s: dev.nori.music.ffi.look.Season -> tiles.first { it.season == s }.label }
+            str(R.string.settings_season_now, label(now.season), label(now.next), next.atYear(today.year).format(date))
+        }
+        return SettingRow.Seasons(key, "season", title, tiles, value, options.first().value, tiles.indexOfFirst { it.season == now.season }, options.first().label, follow)
+    }
+
     fun setting(spec: SettingSpec, value: String, chips: Boolean, enabled: Boolean): SettingRow? {
         val name = spec.name
         val title = SETTING_WORDS[name]?.first?.let(::str) ?: name
@@ -621,7 +648,8 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             SettingKind.SWITCH -> SettingRow.Toggle(key, name, title, detail(name), value == "true", enabled)
             SettingKind.CHOICE -> {
                 val options = spec.options.map { SettingOption(valueWords(name, it, spec.options), it) }
-                if (chips) SettingRow.ChipChoice(key, name, title, detail(name), options, value)
+                if (name == "season") seasons(key, title, options, value)
+                else if (chips) SettingRow.ChipChoice(key, name, title, detail(name), options, value)
                 else SettingRow.Choice(key, name, title, options, options.firstOrNull { it.value == value }?.label ?: valueWords(name, value, spec.options), enabled)
             }
             SettingKind.FLAGS -> SettingRow.Flags(key, name, title, detail(name), spec.options.map { SettingOption(valueWords(name, it, spec.options), it) }, value, enabled)
@@ -631,7 +659,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 SettingRow.Slider(name, str(R.string.settings_volume_boost, shown), db, spec.min, spec.max, false, if (name == "volumeBoostDb") EqLevel.VOLUME_BOOST else null)
             }
             SettingKind.TEXT -> SettingRow.Text(key, name, title, detail(name), value, secret = true)
-            SettingKind.COLOUR -> SettingRow.Palette(name, spec.options.map { it.toLong() }, p.accent)
         }
     }
 

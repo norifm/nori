@@ -112,17 +112,30 @@ pub fn blend(a: Color, b: Color, t: f32) -> Color {
 }
 
 impl Theme {
-    /// The terminal's own colours with the ARGB `accent`.
-    pub fn plain(accent: i64) -> Theme {
-        Theme { accent: argb(accent as u32), text: Color::Reset, dim: Color::DarkGray, page: None }
+    /// The terminal's own colors with the theme's ARGB `accent`.
+    pub fn plain(accent: u32) -> Theme {
+        Theme { accent: argb(accent), text: Color::Reset, dim: Color::DarkGray, page: None }
     }
 
-    /// Colours derived from a cover.
-    pub fn from_cover(c: &CoverColours) -> Theme {
+    /// Colors derived from a cover, wearing the theme's `accents` (for a pale page and a dark one) as they
+    /// read on the cover's page.
+    pub fn from_cover(c: &CoverColours, (light, dark): (u32, u32)) -> Theme {
         let text = argb(c.on);
         let page = argb(c.background);
-        Theme { accent: argb(c.accent), text, dim: blend(page, text, 0.62), page: Some(page) }
+        let accent = nori_look::theme::accent_on(c.background, c.on, light, dark);
+        Theme { accent: argb(accent), text, dim: blend(page, text, 0.62), page: Some(page) }
     }
+}
+
+/// The theme's accents now, for a pale page and a dark one: by the UTC date and north of the equator, as a
+/// terminal knows no time zone.
+pub fn accents(p: &nori_core::settings::StoredPrefs) -> (u32, u32) {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let (month, day) = nori_look::theme::utc_date(now);
+    nori_look::theme::accents(nori_core::settings::season_of(p.season), month, day, false)
+}
+
+impl Theme {
 
     /// Text colour at `strength` (1 = full); on the terminal's background only full or dim.
     pub fn lit(&self, strength: f32) -> Color {
@@ -146,10 +159,12 @@ mod tests {
         }
         let image = Image { width: 32, height: 32, pixels: px.into_boxed_slice() };
         let c = nori_host::derive(&image);
-        let t = Theme::from_cover(&c);
+        let t = Theme::from_cover(&c, (0xFFBE_5526, 0xFFE8_743B));
         let Some(Color::Rgb(r, g, b)) = t.page else { panic!("a page colour") };
         assert!(r > g && r > b, "the page is the record's red: {r} {g} {b}");
-        assert_ne!(t.accent, Theme::plain(0xff3478f6).accent);
+        // The theme's persimmon, not the cover's own accent, lifted to read on the red.
+        let Color::Rgb(ar, ag, ab) = t.accent else { panic!("an accent") };
+        assert!(ar > ab && ag > ab && (ar, ag, ab) != (0xE8, 0x74, 0x3B), "accent {ar} {ag} {ab}");
 
         // Cover renders in every protocol.
         let image = Arc::new(Image { width: 8, height: 8, pixels: vec![200u8; 8 * 8 * 4].into_boxed_slice() });

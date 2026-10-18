@@ -726,11 +726,6 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_setting_slid, h, |a, name, v, last| a.slid(&name, v, last));
     on!(ui.on_setting_typed, h, |a, name, text| a.setting(&name, &text));
     on!(ui.on_source_moved, h, |a, id, up| a.source_moved(&id, up));
-    on!(ui.on_accent_chosen, h, |a, i| {
-        if let Some(v) = crate::settings::option_value(Target::Setting("accent"), i.max(0) as usize, &a.facts) {
-            a.setting("accent", &v);
-        }
-    });
     on!(ui.on_eq_set, h, |a, name, value| {
         a.setting(&name, &value);
         a.tune();
@@ -1002,16 +997,17 @@ impl App {
     /// Page colours from its cover, or the defaults. The desktop's pages are dark under white text.
     fn page_colours(&self, c: Option<&CoverColours>) {
         let ui = self.ui();
+        let (light, dark) = crate::settings::accents(&crate::session::app().settings.current().unwrap_or_default());
         match c {
             Some(c) => {
                 let c = &nori_look::cover::under_white(c);
                 ui.set_page_bg(colour(c.background));
-                ui.set_page_accent(colour(c.accent));
+                ui.set_page_accent(colour(nori_look::theme::accent_on(c.background, c.on, light, dark)));
                 ui.set_page_wash(wash(c));
             }
             None => {
                 ui.set_page_bg(Color::from_rgb_u8(0x1c, 0x1c, 0x1e));
-                ui.set_page_accent(Color::from_rgb_u8(0xfa, 0x2d, 0x48));
+                ui.set_page_accent(Color::from_argb_encoded(dark));
                 ui.set_page_wash(Image::default());
             }
         }
@@ -1785,7 +1781,7 @@ impl App {
         self.devices_shown();
         ui.set_autoplay(prefs.auto_fill);
         ui.set_automix(prefs.auto_mix);
-        ui.global::<crate::Theme>().set_accent(slint::Color::from_argb_encoded(crate::settings::accent_shown(prefs.accent as u32)));
+        ui.global::<crate::Theme>().set_accent(slint::Color::from_argb_encoded(crate::settings::accents(&prefs).1));
         let view = ui.get_view();
         if view == SETTINGS {
             ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab()));

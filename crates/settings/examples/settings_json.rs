@@ -14,7 +14,6 @@ fn main() {
                 SettingKind::Flags => "flags",
                 SettingKind::Level => "level",
                 SettingKind::Text => "text",
-                SettingKind::Colour => "colour",
             };
             json!({ "name": s.name, "kind": kind, "options": s.options, "min": s.min, "max": s.max, "default": s.default })
         })

@@ -175,9 +175,10 @@ private fun OutlineCircleButton(icon: androidx.compose.ui.graphics.vector.ImageV
     ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, description, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface) } }
 
 /** What each section is drawn with. */
+@Composable
 private fun sectionIcon(s: LibrarySection): androidx.compose.ui.graphics.vector.ImageVector = when (s) {
     LibrarySection.ALBUMS -> Icons.Rounded.Album
-    LibrarySection.FAVOURITES -> Icons.Rounded.FavoriteBorder
+    LibrarySection.FAVOURITES -> Kanji.Seal
     LibrarySection.ARTISTS -> Icons.Rounded.Person
     LibrarySection.SONGS -> Icons.Rounded.MusicNote
     LibrarySection.PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic
@@ -401,7 +402,7 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
                 NavRow(
                     say.favouriteSongs, { nav.mix(dev.nori.music.app.vm.FAVOURITES_MIX) }, chevron = true,
                     subtitle = remember(s.librarySongs) { say.songs(s.librarySongs.toInt()) },
-                    leading = { Icon(Icons.Filled.Favorite, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                    leading = { Icon(Kanji.Sealed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
                 )
             }
             if (s.albums.isNotEmpty()) item(key = "albums") {

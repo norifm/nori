@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, CompressorPreset, ControlsSide, CoverPlace, DimIdle, DimLevel, EqMode, GainMode, HeadphoneSound, Level, Motion, HideBarWhen, HomeRow, AwakeWhen, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode};
+use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, CompressorPreset, ControlsSide, CoverPlace, DimIdle, DimLevel, EqMode, GainMode, HeadphoneSound, Level, Motion, HideBarWhen, HomeRow, AwakeWhen, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode, ThemeSeason};
 use nori_settings::settings_model::{specs, value_of};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/stored_format.txt");
@@ -103,6 +103,7 @@ fn sample() -> StoredPrefs {
         lyrics_prefer_words: false,
         paxsenix_key: "pax".into(),
         better_lyrics_key: "better".into(),
+        season: ThemeSeason::Winter,
         theme: ThemeMode::Dark,
         hide_status_bar: vec![HideBarWhen::Sideways, HideBarWhen::Upright],
         hide_gesture_bar: vec![HideBarWhen::Sideways],
@@ -112,8 +113,6 @@ fn sample() -> StoredPrefs {
         dim_level: DimLevel::Strong,
         controls_side: ControlsSide::Left,
         amoled: true,
-        dynamic_color: false,
-        accent: 0xFF1E88E5,
         tap_action: TapAction::PlayNext,
         swipe_right: SwipeAction::Download,
         swipe_left: SwipeAction::PlayNext,

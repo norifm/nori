@@ -469,7 +469,9 @@ class PlaybackService : MediaLibraryService() {
         repeatShown = shown.repeatMode
         val buttons = ArrayList<CommandButton>(4)
         if (b.heart) {
-            buttons += CommandButton.Builder(if (b.starred) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
+            // Nori's seal, not the system's heart: no icon a controller would draw its own glyph for.
+            buttons += CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+                .setCustomIconResId(if (b.starred) R.drawable.seal else R.drawable.seal_outline)
                 .setDisplayName(getString(if (b.starred) R.string.session_remove_favourite else R.string.session_add_favourite))
                 .setSessionCommand(SessionCommand(CMD_FAVOURITE, Bundle.EMPTY))
                 .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW).build()

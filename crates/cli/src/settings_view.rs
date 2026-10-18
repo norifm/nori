@@ -88,8 +88,6 @@ pub enum Row {
     Info { title: String, detail: String },
     /// With `level`, changed through `edit_level` instead of by `name`.
     Slider { name: String, label: String, value: f32, min: f32, max: f32, centred: bool, level: Option<EqLevel> },
-    /// Colour swatches, ARGB.
-    Palette { name: String, colours: Vec<i64>, chosen: i64 },
     Server { id: String, label: String, detail: String, active: bool },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it.
@@ -272,10 +270,6 @@ impl SettingsView {
             }
             Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
             Row::Text { name, title, value, secret, .. } => Opened::Overlay(Overlay::Input { title, text: value, secret, name }),
-            Row::Palette { name, colours, chosen } => {
-                let at = colours.iter().position(|c| *c == chosen).map_or(0, |i| (i + 1) % colours.len());
-                Opened::Cmds(vec![Cmd::Setting(name, colours[at].to_string())])
-            }
             _ => return None,
         })
     }
@@ -316,11 +310,6 @@ impl SettingsView {
                     Some(l) => vec![Cmd::Level(l, v)],
                     None => vec![Cmd::Setting(name, v.to_string())],
                 }
-            }
-            Row::Palette { name, colours, chosen } => {
-                let at = colours.iter().position(|c| *c == chosen).unwrap_or(0) as isize + if up { 1 } else { -1 };
-                let at = at.rem_euclid(colours.len() as isize) as usize;
-                vec![Cmd::Setting(name, colours[at].to_string())]
             }
             Row::Ranked { id, .. } => vec![Cmd::Setting("lyricsMove".into(), format!("{id}:{}", if up { 1 } else { -1 }))],
             _ => Vec::new(),
@@ -490,7 +479,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "volumeBoostDb" => ("Volume boost", ""),
         "hiRes" => ("High quality output", "Float samples to the device; 24-bit files kept whole, effects in float"),
         "maxRate" => ("Highest sample rate", ""),
-        "accent" => ("Accent color", ""),
+        "season" => ("Season", "The theme's colors; following the seasons, they change with the calendar"),
         "coverColors" => ("Colors from the cover", "Where the artwork's colors show (with covers on)"),
         "lyricsSweep" => ("Word fill", "Color words in as they are sung (word-timed lyrics)"),
         "lyricsTranslation" => ("Translations", "When the server has them"),
@@ -517,6 +506,11 @@ fn option_words(name: &str, v: &str) -> String {
         ("crossfadeSec", v) => off_or(v, &|v| format!("{v} s")),
         ("fadeMs", v) => off_or(v, &|v| format!("{v} ms")),
         ("speed" | "pitch", v) => format!("{v}×"),
+        ("season", "FOLLOW") => "following the seasons".into(),
+        ("season", "SPRING") => "spring".into(),
+        ("season", "SUMMER") => "summer".into(),
+        ("season", "AUTUMN") => "autumn".into(),
+        ("season", "WINTER") => "winter".into(),
         ("autoFillKind", "SONGS") => "songs".into(),
         ("autoFillKind", "ALBUMS") => "albums".into(),
         ("autoFillBasis", "SIMILAR") => "similarity".into(),
@@ -591,7 +585,6 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                     Row::Slider { name: spec.name, label, value: v, min: spec.min, max: spec.max, centred: false, level }
                 }
                 SettingKind::Text => Row::Text { name: spec.name, title, detail, value, secret: true },
-                SettingKind::Colour => Row::Palette { name: spec.name, colours: spec.options.iter().filter_map(|c| c.parse().ok()).collect(), chosen: p.accent },
                 // Drawn by `flag_rows`.
                 SettingKind::Flags => return None,
             }
@@ -729,7 +722,6 @@ pub fn row_words(row: &Row) -> (String, String) {
         Row::Note { text } => (String::new(), text.clone()),
         Row::Action { title, detail, .. } => (title.clone(), detail.clone()),
         Row::Slider { label, .. } => (label.clone(), String::new()),
-        Row::Palette { .. } => ("Accent color".into(), String::new()),
         Row::Server { label, detail, .. } => (label.clone(), detail.clone()),
         Row::Button { .. } => (String::new(), String::new()),
     }
@@ -1043,7 +1035,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        for phone in ["swipeLeft", "swipeRight", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "dynamicColor", "lyricsKeepScreenOn", "motion", "soundBypass", "altMaxBitRate"] {
+        for phone in ["swipeLeft", "swipeRight", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "lyricsKeepScreenOn", "motion", "soundBypass", "altMaxBitRate"] {
             assert!(!names.iter().any(|n| n == phone), "{phone} offered in a terminal");
         }
     }

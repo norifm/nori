@@ -110,7 +110,7 @@ export struct SongRow {
 }
 
 // A row of the settings page: 0 a group's heading, 1 a switch, 2 a choice, 3 a button, 4 a fact, 5 a slider,
-// 6 a lyrics source in its ranked list, 7 a key typed in, 8 a server, 9 a note, 10 the accent's swatches,
+// 6 a lyrics source in its ranked list, 7 a key typed in, 8 a server, 9 a note,
 // 11 a page it opens, 12 a lone button. `first` and `last` round the group's corners.
 export struct SettingRow {
     kind: int,
@@ -126,7 +126,6 @@ export struct SettingRow {
     min: float,
     max: float,
     centred: bool,
-    swatches: [color],
     first: bool,
     last: bool,
 }
@@ -2724,7 +2723,6 @@ component SettingLine inherits VerticalLayout {
     callback typed(string, string);
     callback moved(string, bool);
     callback source(string, bool);
-    callback swatch(int);
     if root.item.kind == 0: Text {
         text: root.item.title;
         color: Theme.text;
@@ -2861,21 +2859,6 @@ component SettingLine inherits VerticalLayout {
                     weight: 2.2px;
                     width: 12px;
                     height: 12px;
-                }
-                if root.item.kind == 10: HorizontalLayout {
-                    spacing: 8px;
-                    for c[i] in root.item.swatches: Rectangle {
-                        y: (parent.height - self.height) / 2;
-                        width: 20px;
-                        height: 20px;
-                        border-radius: 10px;
-                        background: c;
-                        border-width: i == root.item.chosen ? 2px : 0;
-                        border-color: white;
-                        TouchArea {
-                            clicked => { root.swatch(i); }
-                        }
-                    }
                 }
             }
             if root.item.kind == 5: Bar {
@@ -3679,7 +3662,6 @@ export component AppWindow inherits Window {
     callback setting-slid(string, float, bool);
     callback setting-typed(string, string);
     callback source-moved(string, bool);
-    callback accent-chosen(int);
     callback eq-set(string, string);
     callback eq-gain(int, float, bool);
     callback eq-tool(string, int);
@@ -4549,7 +4531,6 @@ export component AppWindow inherits Window {
                                         typed(name, text) => { root.setting-typed(name, text); }
                                         moved(id, up) => { root.source-moved(id, up); }
                                         source(id, on) => { root.setting-toggled("lyricsService:" + id, on); }
-                                        swatch(i) => { root.accent-chosen(i); }
                                     }
                                 }
                             }

@@ -5,7 +5,7 @@ use nori_core::numbers::{self, POINT};
 use nori_core::settings::{EqLevel, StoredPrefs};
 use nori_core::settings_model::{self, BeatModel, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsRow};
-use slint::{Color, ModelRc, SharedString, VecModel};
+use slint::{ModelRc, SharedString, VecModel};
 
 use crate::{words, SettingRow};
 
@@ -20,7 +20,6 @@ const RANKED: i32 = 6;
 const TEXT: i32 = 7;
 const SERVER: i32 = 8;
 const NOTE: i32 = 9;
-const PALETTE: i32 = 10;
 const LINK: i32 = 11;
 const BUTTON: i32 = 12;
 
@@ -122,7 +121,6 @@ struct Row {
     min: f32,
     max: f32,
     centred: bool,
-    swatches: Vec<u32>,
 }
 
 fn options(name: &str) -> Vec<String> {
@@ -133,10 +131,11 @@ fn minus(v: &str) -> String {
     v.replace('-', "−")
 }
 
-/// The accent to draw: the core's default (Android purple) becomes red here; others as picked.
-pub fn accent_shown(argb: u32) -> u32 {
-    let default = StoredPrefs::default().accent as u32;
-    if argb == default { 0xFFFA2D48 } else { argb }
+/// The theme's accents now, for a pale page and a dark one: by the UTC date, north of the equator.
+pub fn accents(p: &StoredPrefs) -> (u32, u32) {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let (month, day) = nori_look::theme::utc_date(now);
+    nori_look::theme::accents(nori_core::settings::season_of(p.season), month, day, false)
 }
 
 /// The settings page a tab shows.
@@ -226,7 +225,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "volumeBoostDb" => ("Volume boost", ""),
         "hiRes" => ("High quality output", "Plays 24-bit files in full, and runs the equalizer and effects in floating point. Starts with the next song."),
         "maxRate" => ("Highest sample rate", ""),
-        "accent" => ("Accent color", ""),
+        "season" => ("Season", "The theme's colors. Following the seasons, they change with the calendar."),
         "coverColors" => ("Colors from the cover", "Where the artwork's colors show."),
         "lyricsSweep" => ("Fill in words as they're sung", "For lyrics timed word by word."),
         "lyricsTranslation" => ("Show translations", "When your server has them."),
@@ -262,6 +261,11 @@ fn option_words(name: &str, v: &str) -> String {
             let pct = ((v.parse::<f32>().unwrap_or(1.0) - 1.0) * 100.0).round() as i32;
             if pct < 0 { format!("−{} %", -pct) } else { format!("+{pct} %") }
         }
+        ("season", "FOLLOW") => "Follow the seasons".into(),
+        ("season", "SPRING") => "Spring".into(),
+        ("season", "SUMMER") => "Summer".into(),
+        ("season", "AUTUMN") => "Autumn".into(),
+        ("season", "WINTER") => "Winter".into(),
         ("autoFillKind", "SONGS") => "Songs".into(),
         ("autoFillKind", "ALBUMS") => "Albums".into(),
         ("autoFillBasis", "SIMILAR") => "Similar music".into(),
@@ -354,10 +358,6 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                     Row { kind: SLIDER, name: spec.name, title, value: v.clamp(spec.min, spec.max), min: spec.min, max: spec.max, enabled: true, ..Default::default() }
                 }
                 SettingKind::Text => Row { kind: TEXT, name: spec.name, title, detail, button: value, enabled: true, ..Default::default() },
-                SettingKind::Colour => {
-                    let swatches = spec.options.iter().filter_map(|c| c.parse::<i64>().ok()).map(|c| c as u32).collect();
-                    Row { kind: PALETTE, name: spec.name, title, swatches, value: p.accent as u32 as f32, enabled: true, ..Default::default() }
-                }
                 // Drawn by `flag_rows`.
                 SettingKind::Flags => return None,
             }
@@ -501,8 +501,6 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32) -> ModelRc<SettingRow> {
             };
             let chosen = r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32);
             let labels: Vec<SharedString> = r.options.iter().map(|o| o.0.as_str().into()).collect();
-            let swatches: Vec<Color> = r.swatches.iter().map(|c| Color::from_argb_encoded(accent_shown(*c))).collect();
-            let picked = r.swatches.iter().position(|c| *c == p.accent as u32).map_or(-1, |i| i as i32);
             out.push(SettingRow {
                 kind: r.kind,
                 name: r.name.into(),
@@ -511,13 +509,12 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32) -> ModelRc<SettingRow> {
                 on: r.on,
                 enabled: r.enabled,
                 options: ModelRc::new(VecModel::from(labels)),
-                chosen: if r.kind == PALETTE { picked } else { chosen },
+                chosen,
                 button: r.button.into(),
                 value: r.value,
                 min: r.min,
                 max: r.max,
                 centred: r.centred,
-                swatches: ModelRc::new(VecModel::from(swatches)),
                 first: i == 0,
                 last: i + 1 == n,
             });

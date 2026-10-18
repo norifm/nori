@@ -30,7 +30,7 @@ your servers the same way. Adding it again opens the same profile.
 ## Signing in (optional)
 
 Signed in, Home is your own YouTube Music Home, Library has your saved albums, your liked songs (as
-Favorites) and your playlists, and the heart on a song likes it on YouTube Music.
+Favorites) and your playlists, and the favorite seal on a song likes it on YouTube Music.
 
 nori signs in with the cookies of a browser session, since YouTube no longer lets other apps sign in
 with an account's password or a code.
@@ -82,7 +82,7 @@ matters to you, use YouTube Music signed out.
   Home stays as it is until the app starts again. Pulling to refresh (Android) keeps every shelf and
   pick where it was and adds only what YouTube has new, at the end of its shelf or as a new shelf below.
 - Searching songs, albums and artists, and opening albums, artists and playlists.
-- Signed in: your saved albums, liked songs and playlists in Library, and hearts that like songs.
+- Signed in: your saved albums, liked songs and playlists in Library, and favorite seals that like songs.
 - Playing, the queue, AutoMix, the equalizer and the rest of the sound settings.
 - Lyrics from the lyrics services (there is no server to ask).
 - Songs played once are kept in the stream cache like any other, and play again from there.

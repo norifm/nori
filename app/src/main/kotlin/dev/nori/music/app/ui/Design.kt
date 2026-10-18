@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
@@ -134,6 +135,7 @@ private fun inter(weight: FontWeight) = Font(
 
 val Inter = FontFamily(inter(FontWeight.Normal), inter(FontWeight.Medium), inter(FontWeight.SemiBold), inter(FontWeight.Bold))
 
+
 /**
  * Tighter and heavier than stock Material, which is what makes a music app read as a music app:
  * screen and album titles are display-weight with negative tracking, list rows are plain text, and
@@ -178,6 +180,15 @@ class PagePalette(val look: IntArray, val wash: androidx.compose.ui.graphics.Ima
     val edge: Color get() = Color(look[CoverLook.EDGE])
     /** The page under it. */
     val background: Color get() = Color(look[CoverLook.BACKGROUND])
+    // The last accents asked for and the page wearing them, so each composition gets the same one back.
+    private var accentedFor: Accents? = null
+    private var accentedPage: PagePalette? = null
+
+    /** This page wearing the theme's [accents] instead of its cover's (nori_look::dress::accented). */
+    fun accented(accents: Accents): PagePalette {
+        accentedPage?.let { if (accentedFor == accents) return it }
+        return PagePalette(dev.nori.music.look.CoverLook.accented(look, accents.light, accents.dark), wash).also { accentedFor = accents; accentedPage = it }
+    }
     override fun equals(other: Any?): Boolean = other is PagePalette && other.wash == wash && other.look.contentEquals(look)
     override fun hashCode(): Int = look.contentHashCode() * 31 + (wash?.hashCode() ?: 0)
 }
@@ -511,17 +522,18 @@ fun PillButton(
 }
 
 /**
- * A short message on a pill dressed as the tab bar and the mini player are (the chrome's slab, edge and
- * shadow), its action and its optional × in [accent]: the app's messages at the top and the queue's undo
- * at its foot. Colours are read while drawing, so a look cross-fading under it redraws it without
- * recomposing. [behind] sits under the words.
+ * A short message on a pill lifted off the page (the chrome's slab, edge and shadow: it floats over
+ * whatever is under it), its action and its optional × in the accent: the app's messages at the top and
+ * the queue's undo at its foot. Colors are read while drawing, so a look cross-fading under it redraws it
+ * without recomposing. [behind] sits under the words.
  */
 @Composable
 fun MessagePill(
-    text: String, look: Look, modifier: Modifier = Modifier, accent: ColorProducer = ColorProducer { look.color(CoverLook.ACCENT) },
+    text: String, look: Look, modifier: Modifier = Modifier,
     maxLines: Int = 1, action: String? = null, actionEnabled: Boolean = true, onAction: () -> Unit = {},
     onDismiss: (() -> Unit)? = null, behind: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
 ) {
+    val accent = ColorProducer { look.color(CoverLook.ACCENT) }
     Box(
         modifier.shadow(12.dp, PillShape).drawBehind {
             val round = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
@@ -854,7 +866,7 @@ fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Bo
 fun CircleButton(
     icon: ImageVector, description: String, modifier: Modifier = Modifier,
     enabled: Boolean = true, selected: Boolean = false, lit: Boolean = false,
-    iconModifier: Modifier = Modifier, onClick: () -> Unit,
+    iconModifier: Modifier = Modifier, iconTint: Color = Color.Unspecified, onClick: () -> Unit,
 ) {
     // Keep the plate and icon at full strength while disabled: washing them out made Shuffle look
     // absent on a dark page, so the row still "popped" when Play became tappable. The plates are the
@@ -867,64 +879,73 @@ fun CircleButton(
         color = plate,
         contentColor = look.color(if (lit) CoverLook.ON_PRIMARY else CoverLook.TINT_INK),
         modifier = modifier.size(46.dp),
-    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, description, Modifier.size(20.dp).then(iconModifier)) } }
+    ) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            Icon(icon, description, Modifier.size(20.dp).then(iconModifier), tint = if (iconTint.isSpecified) iconTint else LocalContentColor.current)
+        }
+    }
 }
 
 /**
- * Heart that fills and gives a short jump when favourited. [starred] is what is shown; the jump runs
- * on a change, not on every recomposition of an already-hearted song.
+ * A favorite's seal being stamped down by a tap ([down]): it lands from half as big again and settles,
+ * with a firm tap under the finger. Taken off, it goes at once, and a seal that comes or goes by itself
+ * (another song, another device) is simply drawn.
  */
+@androidx.compose.runtime.Stable
+class Stamp(private val scope: kotlinx.coroutines.CoroutineScope, private val haptics: androidx.compose.ui.hapticfeedback.HapticFeedback, private val plain: Boolean) {
+    val scale = androidx.compose.animation.core.Animatable(1f)
+
+    fun down() {
+        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Confirm)
+        if (plain) return
+        scope.launch {
+            scale.snapTo(1.5f)
+            scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 700f))
+        }
+    }
+}
+
 @Composable
-fun FavoriteHeart(
+fun rememberStamp(): Stamp {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val plain = reduceMotion()
+    return remember(scope, haptics, plain) { Stamp(scope, haptics, plain) }
+}
+
+/** A favorite's seal ([Kanji.Sealed]), a tap away from being stamped or taken off; [tint] when it is one, [muted] its outline when not. */
+@Composable
+fun FavoriteSeal(
     starred: Boolean,
     modifier: Modifier = Modifier,
     size: Dp = 22.dp,
     tint: Color = MaterialTheme.colorScheme.primary,
-    muted: Color = tint.copy(alpha = 0.75f),
+    muted: Color = LocalContentColor.current.copy(alpha = 0.75f),
     onClick: () -> Unit,
 ) {
-    val plain = reduceMotion()
-    val scale = remember { androidx.compose.animation.core.Animatable(1f) }
-    var ready by remember { mutableStateOf(false) }
-    LaunchedEffect(starred) {
-        if (!ready) { ready = true; return@LaunchedEffect }
-        if (plain) return@LaunchedEffect
-        scale.snapTo(1f)
-        // Stiff springs: a quick jump that does not hang at the top.
-        scale.animateTo(1.28f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 1350f))
-        scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 900f))
-    }
-    IconButton(onClick, modifier) {
+    val stamp = rememberStamp()
+    IconButton({ if (!starred) stamp.down(); onClick() }, modifier) {
         Icon(
-            if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+            if (starred) Kanji.Sealed else Kanji.Seal,
             if (starred) say.removeFromFavourites else say.addToFavourites,
-            Modifier.size(size).graphicsLayer { scaleX = scale.value; scaleY = scale.value },
+            Modifier.size(size).graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value },
             tint = if (starred) tint else muted,
         )
     }
 }
 
-/** Favourite as a [CircleButton] with the same fill/jump as [FavoriteHeart]. */
+/** Favorite as a [CircleButton], the seal in the page's accent when it is one, stamped as [FavoriteSeal] is. */
 @Composable
 fun FavoriteCircle(starred: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val plain = reduceMotion()
-    val scale = remember { androidx.compose.animation.core.Animatable(1f) }
-    var ready by remember { mutableStateOf(false) }
-    LaunchedEffect(starred) {
-        if (!ready) { ready = true; return@LaunchedEffect }
-        if (plain) return@LaunchedEffect
-        scale.snapTo(1f)
-        // Stiff springs: a quick jump that does not hang at the top.
-        scale.animateTo(1.22f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 1350f))
-        scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 900f))
-    }
-    // The jump is the heart's alone: only the glyph moves, and the plate holds its place.
+    val stamp = rememberStamp()
+    // Only the seal moves; the plate holds its place.
     CircleButton(
-        if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+        if (starred) Kanji.Sealed else Kanji.Seal,
         if (starred) say.removeFromFavourites else say.favourite,
-        modifier, selected = starred,
-        iconModifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value },
-        onClick = onClick,
+        modifier,
+        iconModifier = Modifier.graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value },
+        iconTint = if (starred) LocalLook.current.color(CoverLook.ACCENT) else Color.Unspecified,
+        onClick = { if (!starred) stamp.down(); onClick() },
     )
 }
 
@@ -992,13 +1013,14 @@ fun NoriSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier
     val t by androidx.compose.animation.core.animateFloatAsState(
         if (checked) 1f else 0f, androidx.compose.animation.core.tween(if (reduceMotion()) 0 else 180), label = "switch",
     )
-    val on = scheme.primary
+    // The season's color for what is on, not its accent: the accent is kept for the one current thing.
+    val on = scheme.secondary
     val off = LocalLook.current.color(CoverLook.SWITCH_OFF)
     val track = androidx.compose.ui.graphics.lerp(off, on, t).let { if (enabled) it else it.copy(alpha = 0.4f) }
     // The thumb is white, except over a near-white track (the monochrome theme's), where it would vanish.
     val thumb = when {
         !enabled -> Color(0xFFE0E0E0)
-        on.luminance() > 0.8f -> androidx.compose.ui.graphics.lerp(Color.White, scheme.onPrimary, t)
+        on.luminance() > 0.8f -> androidx.compose.ui.graphics.lerp(Color.White, scheme.onSecondary, t)
         else -> Color.White
     }
     Box(

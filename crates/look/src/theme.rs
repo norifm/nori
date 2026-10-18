@@ -1,48 +1,250 @@
-//! Light or dark tones from one seed colour (a tiny Material-style generator).
+//! The app's four themes, one per season, each a small palette of traditional Japanese colors in light
+//! and dark, and the rule that follows the calendar from one to the next.
 
-use crate::color::{color_to_hsl, hsl_to_color, WHITE};
+use crate::color::{luminance, BLACK, WHITE};
+use crate::compose::{blend, veil};
+use crate::dress::ink_on;
 
-/// Tones in order: primary, on primary, primary container, on primary container, secondary, secondary
-/// container, on secondary container, surface, background, surface variant, on surface variant.
-pub fn seeded(seed: u32, dark: bool) -> [u32; 11] {
-    let hsl = color_to_hsl(seed);
-    let tone = |l: f32, s: f32| hsl_to_color([hsl[0], s.clamp(0.0, 1.0), l]);
-    let s = hsl[1];
-    // A grey seed is the monochrome theme: its accent is the text colour itself.
-    let grey = s == 0.0;
-    if dark {
-        [
-            tone(if grey { 1.0 } else { 0.80 }, s),
-            tone(0.20, s),
-            tone(0.30, s),
-            tone(0.90, s),
-            tone(0.78, s * 0.4),
-            tone(0.28, s * 0.4),
-            tone(0.90, s * 0.4),
-            tone(0.07, s * 0.12),
-            tone(0.07, s * 0.12),
-            tone(0.22, s * 0.15),
-            tone(0.80, s * 0.15),
-        ]
-    } else {
-        [
-            tone(if grey { 0.0 } else { 0.40 }, s),
-            WHITE,
-            tone(0.90, s),
-            tone(0.12, s),
-            tone(0.40, s * 0.4),
-            tone(0.90, s * 0.4),
-            tone(0.12, s * 0.4),
-            tone(0.98, s * 0.2),
-            tone(0.98, s * 0.2),
-            tone(0.90, s * 0.15),
-            tone(0.30, s * 0.15),
-        ]
+/// A theme, named for the season it is drawn from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Season {
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+/// The seasons in the calendar's order.
+const SEASONS: [Season; 4] = [Season::Spring, Season::Summer, Season::Autumn, Season::Winter];
+
+/// What a theme is made of: the page, a raised surface (sheets, menus), the ink, the accent for the
+/// one thing that is "you, now" (the current tab, a favorite, what is playing) and the color of a
+/// switch that is on. ARGB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Palette {
+    pub page: u32,
+    pub surface: u32,
+    pub ink: u32,
+    pub accent: u32,
+    pub on: u32,
+}
+
+const fn p(page: u32, surface: u32, ink: u32, accent: u32, on: u32) -> Palette {
+    Palette { page, surface, ink, accent, on }
+}
+
+impl Season {
+    /// Light and dark. Spring: sakura-nezumi paper, kōbai plum, wakatake bamboo. Summer: shiro-ai, tsuyukusa
+    /// dayflower blue, aotake green. Autumn: kinari, kaki persimmon, chitose-midori pine. Winter: shironeri
+    /// and sumi, with one tsubaki camellia and ginnezumi grey for what is on.
+    pub fn palette(self, dark: bool) -> Palette {
+        match (self, dark) {
+            (Season::Spring, false) => p(0xFFFB_F4F3, WHITE, 0xFF2B_2226, 0xFFC2_4F72, 0xFF4E_9A6A),
+            (Season::Spring, true) => p(0xFF16_1013, 0xFF21_191C, 0xFFF7_EEF0, 0xFFEE_8BA8, 0xFF7C_C59A),
+            (Season::Summer, false) => p(0xFFF1_F6F7, WHITE, 0xFF13_212B, 0xFF1C_79B8, 0xFF00_896C),
+            (Season::Summer, true) => p(0xFF0A_1217, 0xFF12_1D24, 0xFFEA_F2F5, 0xFF52_B5E9, 0xFF2F_B596),
+            (Season::Autumn, false) => p(0xFFF6_F0E6, 0xFFFF_FDF8, 0xFF24_1D16, 0xFFBE_5526, 0xFF36_563C),
+            (Season::Autumn, true) => p(0xFF11_0E0A, 0xFF1C_1813, 0xFFF3_EDE3, 0xFFE8_743B, 0xFF7F_A27F),
+            (Season::Winter, false) => p(0xFFF3_F3F1, WHITE, 0xFF1B_1B1B, 0xFFA8_262E, 0xFF6B_6D6F),
+            (Season::Winter, true) => p(0xFF0D_0D0D, 0xFF17_1717, 0xFFEC_ECEA, 0xFFE0_565B, 0xFF8E_9194),
+        }
+    }
+
+    /// The day of a 365-day year (0 for 1 January) it begins on: the old calendar's risshun, rikka,
+    /// risshū and rittō.
+    fn starts(self) -> u32 {
+        match self {
+            Season::Spring => 34,
+            Season::Summer => 124,
+            Season::Autumn => 218,
+            Season::Winter => 310,
+        }
+    }
+
+    fn before(self) -> Season {
+        SEASONS[(self as usize + 3) % 4]
+    }
+
+    fn after(self) -> Season {
+        SEASONS[(self as usize + 1) % 4]
     }
 }
 
-/// Accent choices when not using wallpaper colours, in display order; the first is the default.
-pub const ACCENTS: [u32; 9] = [0xFF67_50A4, 0xFF1E_88E5, 0xFF00_897B, 0xFF43_A047, 0xFFF4_511E, 0xFFE5_3935, 0xFFD8_1B60, 0xFF8E_24AA, WHITE];
+/// How many days a season takes to come in, blending from the one before.
+const BLEND_DAYS: u32 = 7;
+
+/// AMOLED: a dark palette on black, its surface brought a third of the way down with it.
+fn on_black(p: Palette) -> Palette {
+    Palette { page: BLACK, surface: blend(p.surface, BLACK, 0.35), ..p }
+}
+
+fn mixed(a: Palette, b: Palette, t: f32) -> Palette {
+    Palette {
+        page: blend(a.page, b.page, t),
+        surface: blend(a.surface, b.surface, t),
+        ink: blend(a.ink, b.ink, t),
+        accent: blend(a.accent, b.accent, t),
+        on: blend(a.on, b.on, t),
+    }
+}
+
+const MONTHS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/// `month` (1-12) and `day` as the day of a 365-day year, so a season starts on the same date every
+/// year (29 February counts as the 28th).
+fn day_of_year(month: u32, day: u32) -> u32 {
+    let m = month.clamp(1, 12) as usize - 1;
+    MONTHS[..m].iter().sum::<u32>() + day.clamp(1, MONTHS[m]) - 1
+}
+
+fn date_of(day: u32) -> (u32, u32) {
+    let mut left = day % 365;
+    for (i, n) in MONTHS.iter().enumerate() {
+        if left < *n {
+            return (i as u32 + 1, left + 1);
+        }
+        left -= n;
+    }
+    unreachable!("the months make 365 days")
+}
+
+/// The UTC month and day of a time in seconds since 1970, for a client with no time zone to hand.
+pub fn utc_date(unix_s: i64) -> (u32, u32) {
+    // Howard Hinnant's days-to-civil.
+    let z = unix_s.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    (month as u32, day as u32)
+}
+
+/// Where the calendar is on a date: the season, how far it has come in from the one before (1 once it
+/// has fully arrived), and the next one with the date it starts on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct SeasonNow {
+    pub season: Season,
+    pub arrived: f32,
+    pub next: Season,
+    pub next_month: u32,
+    pub next_day: u32,
+}
+
+/// The season on a date. South of the equator the calendar is half a year round.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn season_now(month: u32, day: u32, southern: bool) -> SeasonNow {
+    let shift = if southern { 182 } else { 0 };
+    let today = (day_of_year(month, day) + shift) % 365;
+    let season = SEASONS.iter().rev().copied().find(|s| today >= s.starts()).unwrap_or(Season::Winter);
+    let since = (today + 365 - season.starts()) % 365;
+    let next = season.after();
+    let (next_month, next_day) = date_of(next.starts() + 365 - shift);
+    SeasonNow { season, arrived: ((since + 1) as f32 / BLEND_DAYS as f32).min(1.0), next, next_month, next_day }
+}
+
+/// The palette the app wears: `season`'s, or with none the calendar's on that date, each season blended
+/// in over its first week.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn palette(season: Option<Season>, month: u32, day: u32, southern: bool, dark: bool, amoled: bool) -> Palette {
+    let of = |s: Season| {
+        let p = s.palette(dark);
+        if dark && amoled { on_black(p) } else { p }
+    };
+    match season {
+        Some(s) => of(s),
+        None => {
+            let now = season_now(month, day, southern);
+            if now.arrived >= 1.0 { of(now.season) } else { mixed(of(now.season.before()), of(now.season), now.arrived) }
+        }
+    }
+}
+
+/// Whether a time zone (an IANA id, "Australia/Sydney") lies south of the equator.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn southern(zone: &str) -> bool {
+    const SOUTH: &[&str] = &[
+        "Australia/", "Antarctica/", "Pacific/Auckland", "Pacific/Chatham", "Pacific/Fiji", "Pacific/Tongatapu", "Pacific/Apia",
+        "Pacific/Noumea", "Pacific/Efate", "Pacific/Port_Moresby", "Pacific/Tahiti", "Pacific/Rarotonga", "Pacific/Easter",
+        "America/Argentina/", "America/Buenos_Aires", "America/Santiago", "America/Punta_Arenas", "America/Montevideo",
+        "America/Asuncion", "America/Sao_Paulo", "America/Rio_Branco", "America/Porto_Velho", "America/Cuiaba",
+        "America/Campo_Grande", "America/Maceio", "America/Recife", "America/Bahia", "America/Araguaina", "America/Lima",
+        "America/La_Paz", "Africa/Johannesburg", "Africa/Maputo", "Africa/Harare", "Africa/Lusaka", "Africa/Windhoek",
+        "Africa/Gaborone", "Africa/Maseru", "Africa/Mbabane", "Africa/Blantyre", "Africa/Lubumbashi", "Africa/Luanda",
+        "Africa/Dar_es_Salaam", "Indian/Antananarivo", "Indian/Mauritius", "Indian/Reunion", "Asia/Jakarta", "Asia/Makassar",
+        "Asia/Jayapura", "Asia/Dili",
+    ];
+    SOUTH.iter().any(|s| zone.starts_with(s))
+}
+
+/// The accents of `season`'s palette (the calendar's on a date with none) for a pale page and a dark one,
+/// which [`accent_on`] picks from.
+pub fn accents(season: Option<Season>, month: u32, day: u32, southern: bool) -> (u32, u32) {
+    let accent = |dark| palette(season, month, day, southern, dark, false).accent;
+    (accent(false), accent(true))
+}
+
+/// The theme's accent on a page of any color (a cover's): `light` on a pale page, `dark` on a dark one,
+/// moved in its own hue until it reads there as text, else the page's `ink`.
+pub fn accent_on(page: u32, ink: u32, light: u32, dark: u32) -> u32 {
+    let accent = if luminance(page) < crate::cover::DARK_PAGE { dark } else { light };
+    crate::cover::text_either_way(accent, page, ink)
+}
+
+/// A palette as a Material scheme's roles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Roles {
+    pub background: u32,
+    pub on_background: u32,
+    pub on_surface_variant: u32,
+    pub primary: u32,
+    pub on_primary: u32,
+    pub primary_container: u32,
+    pub on_primary_container: u32,
+    pub secondary: u32,
+    pub on_secondary: u32,
+    pub secondary_container: u32,
+    pub surface_variant: u32,
+    pub outline: u32,
+    pub outline_variant: u32,
+    pub container_lowest: u32,
+    pub container_low: u32,
+    pub container: u32,
+    pub container_high: u32,
+    pub container_highest: u32,
+}
+
+/// The palette as a Material scheme's roles: the page under everything, sheets and menus on the surface
+/// and lifted from it by the ink, the accent as the primary and the switch color as the secondary.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn roles(p: Palette) -> Roles {
+    Roles {
+        background: p.page,
+        on_background: p.ink,
+        on_surface_variant: veil(p.ink, 0.62, p.page),
+        primary: p.accent,
+        on_primary: ink_on(p.accent),
+        primary_container: veil(p.accent, 0.18, p.page),
+        on_primary_container: p.ink,
+        secondary: p.on,
+        on_secondary: ink_on(p.on),
+        secondary_container: veil(p.ink, 0.12, p.surface),
+        surface_variant: veil(p.ink, 0.08, p.page),
+        outline: veil(p.ink, 0.36, p.page),
+        outline_variant: veil(p.ink, 0.14, p.page),
+        container_lowest: p.page,
+        container_low: p.surface,
+        container: p.surface,
+        container_high: veil(p.ink, 0.05, p.surface),
+        container_highest: veil(p.ink, 0.09, p.surface),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -50,23 +252,81 @@ mod tests {
     use crate::color::calculate_contrast;
 
     #[test]
-    fn seeded_tones_have_readable_contrast() {
-        for dark in [true, false] {
-            let t = seeded(0xFF3F_51B5, dark);
-            assert!(calculate_contrast(t[0], t[1]) >= 4.5, "primary / on primary, dark={dark}");
-            assert!(calculate_contrast(t[10], t[9]) >= 3.0, "on surface variant, dark={dark}");
+    fn every_palette_reads() {
+        for s in SEASONS {
+            for (dark, amoled) in [(false, false), (true, false), (true, true)] {
+                let p = palette(Some(s), 1, 1, false, dark, amoled);
+                let accent = calculate_contrast(p.accent, p.page);
+                assert!(accent >= 4.0, "{s:?} dark {dark} amoled {amoled}: accent reads at {accent:.2}");
+                assert!(calculate_contrast(p.ink, p.page) >= 12.0, "{s:?} dark {dark}: ink");
+                assert!(calculate_contrast(p.on, p.page) >= 3.0, "{s:?} dark {dark}: on");
+                let r = roles(p);
+                assert!(calculate_contrast(r.on_primary, r.primary) >= 3.0, "{s:?} dark {dark}: on primary");
+                assert!(calculate_contrast(r.on_secondary, r.secondary) >= 3.0, "{s:?} dark {dark}: on secondary");
+                assert_eq!(luminance(p.page) < 0.5, dark);
+            }
         }
     }
 
     #[test]
-    fn white_seed_is_monochrome() {
-        for dark in [true, false] {
-            for tone in seeded(WHITE, dark) {
-                let [r, g, b] = [tone >> 16, tone >> 8, tone].map(|c| c & 0xFF);
-                assert!(r == g && g == b, "{tone:08X} is not grey, dark={dark}");
-            }
+    fn amoled_is_black_with_the_dark_colours() {
+        let (dark, black) = (Season::Autumn.palette(true), palette(Some(Season::Autumn), 1, 1, false, true, true));
+        assert_eq!((black.page, black.accent, black.ink), (BLACK, dark.accent, dark.ink));
+        assert!(luminance(black.surface) < luminance(dark.surface) && black.surface != BLACK);
+        assert_eq!(palette(Some(Season::Autumn), 1, 1, false, false, true), Season::Autumn.palette(false), "AMOLED is a dark theme's");
+    }
+
+    #[test]
+    fn the_calendar_turns_on_the_first_days_of_the_seasons() {
+        for (m, d, season) in [
+            (2, 3, Season::Winter), (2, 4, Season::Spring), (5, 4, Season::Spring), (5, 5, Season::Summer), (8, 6, Season::Summer),
+            (8, 7, Season::Autumn), (11, 6, Season::Autumn), (11, 7, Season::Winter), (1, 1, Season::Winter), (12, 31, Season::Winter),
+        ] {
+            assert_eq!(season_now(m, d, false).season, season, "{d}/{m}");
         }
-        assert_eq!(seeded(WHITE, true)[0], WHITE);
-        assert_eq!(seeded(WHITE, false)[0], crate::color::BLACK);
+        let autumn = season_now(10, 18, false);
+        assert_eq!((autumn.next, autumn.next_month, autumn.next_day, autumn.arrived), (Season::Winter, 11, 7, 1.0));
+        let winter = season_now(12, 1, false);
+        assert_eq!((winter.next, winter.next_month, winter.next_day), (Season::Spring, 2, 4));
+        // South of the equator October is spring, and summer comes in at the start of November.
+        let south = season_now(10, 18, true);
+        assert_eq!((south.season, south.next, south.next_month, south.next_day), (Season::Spring, Season::Summer, 11, 4));
+    }
+
+    #[test]
+    fn a_season_comes_in_over_its_first_week() {
+        let follow = |d| palette(None, 11, d, false, true, false);
+        let (autumn, winter) = (Season::Autumn.palette(true), Season::Winter.palette(true));
+        assert_eq!(follow(6), autumn);
+        assert_eq!(follow(13), winter);
+        assert_eq!(follow(10), mixed(autumn, winter, 4.0 / 7.0));
+        assert_eq!(season_now(11, 9, false).arrived, 3.0 / 7.0);
+    }
+
+    #[test]
+    fn the_accent_reads_as_text_on_any_page() {
+        let (light, dark) = (0xFFBE_5526, 0xFFE8_743B);
+        for page in [0xFF10_1010u32, 0xFF62_8040, 0xFF20_3A60, 0xFF80_8080, 0xFFE8_7040, WHITE] {
+            let ink = if luminance(page) < 0.5 { WHITE } else { 0xFF11_1111 };
+            let a = accent_on(page, ink, light, dark);
+            // Where no shade of it reads, the page's own ink, which reads as well as anything can.
+            assert!(calculate_contrast(a, page) >= 4.5f64.min(calculate_contrast(ink, page)), "{a:08x} on {page:08x}");
+        }
+        assert_eq!(accent_on(0xFF10_1010, WHITE, light, dark), dark);
+        assert_eq!(accent_on(WHITE, 0xFF11_1111, light, dark), light);
+    }
+
+    #[test]
+    fn utc_dates() {
+        assert_eq!(utc_date(0), (1, 1));
+        assert_eq!(utc_date(1_792_281_600), (10, 18)); // 2026-10-18
+        assert_eq!(utc_date(1_709_164_800), (2, 29)); // 2024-02-29
+        assert_eq!(utc_date(-1), (12, 31));
+    }
+
+    #[test]
+    fn southern_zones() {
+        assert!(southern("Australia/Sydney") && southern("America/Argentina/Cordoba") && southern("Pacific/Auckland"));
+        assert!(!southern("Europe/Warsaw") && !southern("Asia/Tokyo") && !southern("America/New_York") && !southern(""));
     }
 }

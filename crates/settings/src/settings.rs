@@ -7,7 +7,7 @@ use nori_model::{EqBand, EqKind, EqPreset, NamedPreset, TransitionPrefs};
 pub use nori_model::CompressorPreset;
 use serde_json::{Map, Value};
 
-use crate::codec::{clamped, on, within, Choice, Custom, Flags, Picks, Preamp, Quality, Raw, Row, FLAG, FLOAT, K, LONG, PICK, PICK_NEAREST, TEXT};
+use crate::codec::{clamped, on, within, Choice, Custom, Flags, Picks, Preamp, Quality, Raw, Row, FLAG, FLOAT, K, PICK, PICK_NEAREST, TEXT};
 use crate::lyrics_sources::{self, LyricsService};
 use crate::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 
@@ -175,6 +175,30 @@ pub enum ThemeMode {
     System,
     Light,
     Dark,
+}
+
+/// Which season's theme the app wears ([`nori_look::theme::palette`]); `Follow` turns with the calendar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum ThemeSeason {
+    Follow,
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+/// The season a pick names, none for the calendar's.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn season_of(pick: ThemeSeason) -> Option<nori_look::theme::Season> {
+    use nori_look::theme::Season;
+    match pick {
+        ThemeSeason::Follow => None,
+        ThemeSeason::Spring => Some(Season::Spring),
+        ThemeSeason::Summer => Some(Season::Summer),
+        ThemeSeason::Autumn => Some(Season::Autumn),
+        ThemeSeason::Winter => Some(Season::Winter),
+    }
 }
 
 /// A condition that hides a system bar (status or gesture); the bar is hidden while any chosen one holds.
@@ -509,6 +533,8 @@ pub struct StoredPrefs {
     #[setting("offload", FLAG, default = true, show = K::Switch, effect = APPLY_AUDIO)]
     pub offload: bool,
     // Appearance.
+    #[setting("season", PICK, default = ThemeSeason::Follow, show = K::Choice(ThemeSeason::NAMES))]
+    pub season: ThemeSeason,
     #[setting("theme", PICK, default = ThemeMode::System, show = K::Choice(ThemeMode::NAMES))]
     pub theme: ThemeMode,
     #[setting("hideStatusBarWhen", Flags, default = vec![HideBarWhen::Sideways], name = "hideStatusBar", show = K::Flags(HideBarWhen::NAMES))]
@@ -528,10 +554,6 @@ pub struct StoredPrefs {
     pub controls_side: ControlsSide,
     #[setting("amoled", FLAG, default = false, show = K::Switch)]
     pub amoled: bool,
-    #[setting("dynamicColor", FLAG, default = true, show = K::Switch)]
-    pub dynamic_color: bool,
-    #[setting("accent", LONG, default = 0xFF6750A4, show = K::Colour)]
-    pub accent: i64,
     /// Where covers' colors are worn ([`CoverPlace`]).
     #[setting("coverColorsOn", Flags, default = vec![CoverPlace::Pages, CoverPlace::Player], name = "coverColors", show = K::Flags(CoverPlace::NAMES))]
     pub cover_colors: Vec<CoverPlace>,
@@ -2087,7 +2109,7 @@ mod tests {
         assert_eq!(set("wifi", "320:mp3").wifi, SavedQuality { bit_rate: 320, format: "mp3".into() });
         assert_eq!(set("mobile", "0:").mobile, SavedQuality::default());
         assert_eq!(set_by_name(&p, "download", "flac"), None);
-        assert_eq!(set("accent", "4280191205").accent, 0xFF1E88E5);
+        assert_eq!(set("season", "WINTER").season, ThemeSeason::Winter);
         assert_eq!(set("speed", "0.75").speed, 0.75);
         assert_eq!(set("lyricsSize", "7").lyrics_size, 2);
         assert_eq!(set("loudnessLevel", "loud").level, Level::Loud);

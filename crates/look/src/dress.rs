@@ -62,17 +62,19 @@ pub const ON_35: usize = 32;
 pub const ON_80: usize = 33;
 pub const ON_VARIANT_70: usize = 34;
 
-// Floating chrome (now-playing bar and tabs).
+// Floating chrome: the now-playing bar and tabs are outlines over the page; a message floats on the slab.
 pub const CHROME_SLAB: usize = 35;
 pub const CHROME_CONTENT: usize = 36;
 pub const CHROME_PAGE: usize = 37;
-/// Slab outline.
+/// The slab's outline.
 pub const CHROME_EDGE: usize = 38;
 /// Chrome secondary text (65 %) and icon (75 %).
 pub const CHROME_CONTENT_65: usize = 39;
 pub const CHROME_CONTENT_75: usize = 40;
 /// List fade under the chrome: page at 75 %.
 pub const CHROME_FADE: usize = 41;
+/// The see-through chrome's outline: text at 20 %.
+pub const CHROME_OUTLINE: usize = 52;
 
 /// 1 for dark status bar icons (dark text), else 0.
 pub const STATUS_LIGHT: usize = 42;
@@ -91,7 +93,7 @@ pub const FLOOR_0: usize = 49;
 pub const FLOOR_22: usize = 50;
 pub const FLOOR_75: usize = 51;
 
-pub const LEN: usize = 52;
+pub const LEN: usize = 53;
 
 /// Entries that are not colours (mixed as numbers).
 pub(crate) const NOT_COLOURS: [usize; 6] = [PAPER, STATUS_LIGHT, BAND_TINT, BAND_KR, BAND_KG, BAND_KB];
@@ -101,7 +103,7 @@ const PILL_ON_PAPER: u32 = 0xFF1A_1A1A;
 const INK_ON_LIGHT: u32 = 0xFF0D_0D0D;
 
 /// White ink on `fill` when it reads at 3:1 (WCAG's floor for large bold text), else near-black.
-fn ink_on(fill: u32) -> u32 {
+pub(crate) fn ink_on(fill: u32) -> u32 {
     if calculate_contrast(WHITE, fill) >= 3.0 { WHITE } else { INK_ON_LIGHT }
 }
 
@@ -189,7 +191,7 @@ fn dress(s: &Scheme, edge: Option<u32>, out: &mut [u32; LEN]) {
     }
     out[ON_VARIANT_70] = with_alpha(s.on_variant, 0.7);
 
-    // Chrome slab: page lifted by the text colour (more on dark pages to stand out from AMOLED black),
+    // The slab: page lifted by the text colour (more on dark pages to stand out from AMOLED black),
     // with some of the cover's edge colour on tinted pages.
     let dark = luminance(bg) < 0.5;
     let lift = if dark { 0.20 } else { 0.11 };
@@ -200,6 +202,7 @@ fn dress(s: &Scheme, edge: Option<u32>, out: &mut [u32; LEN]) {
     out[CHROME_CONTENT_65] = with_alpha(on, 0.65);
     out[CHROME_CONTENT_75] = with_alpha(on, 0.75);
     out[CHROME_FADE] = with_alpha(bg, 0.75);
+    out[CHROME_OUTLINE] = with_alpha(on, 0.20);
 
     out[STATUS_LIGHT] = (luminance(on) < 0.5) as u32;
     // White, cream and black pages have a single-tint wash, so the blurred band takes that tint too.
@@ -221,9 +224,29 @@ fn dress(s: &Scheme, edge: Option<u32>, out: &mut [u32; LEN]) {
     out[FLOOR_75] = with_alpha(bg, 0.75);
 }
 
-/// AMOLED replacements for dark scheme surfaces: background, surface, surface dim, container lowest,
-/// low, container, high, highest.
-pub const AMOLED: [u32; 8] = [BLACK, BLACK, BLACK, BLACK, 0xFF0A_0A0A, 0xFF11_1111, 0xFF18_1818, 0xFF20_2020];
+/// `t` with the theme's accent in place of its cover's ([`crate::theme::accent_on`]), and everything
+/// dressed in the accent dressed again.
+pub fn accented(t: &[u32; LEN], light: u32, dark: u32) -> [u32; LEN] {
+    let (bg, on) = (t[BACKGROUND], t[ON]);
+    let primary = crate::theme::accent_on(bg, on, light, dark);
+    let s = Scheme {
+        background: bg,
+        on,
+        on_variant: t[ON_VARIANT],
+        primary,
+        on_primary: ink_on(primary),
+        surface_variant: t[SURFACE_VARIANT],
+        surface_container: t[SURFACE_CONTAINER],
+        surface_container_high: t[SURFACE_CONTAINER_HIGH],
+        secondary_container: t[SECONDARY_CONTAINER],
+        outline_variant: t[OUTLINE_VARIANT],
+    };
+    let mut out = [0u32; LEN];
+    out[EDGE] = t[EDGE];
+    out[MELT] = t[MELT];
+    dress(&s, Some(t[EDGE]), &mut out);
+    out
+}
 
 /// Cross-fade from `a` to `b` into `out` (no allocation): colours via Compose `lerp`, numbers linearly,
 /// status bar icons switching at half way.
@@ -290,6 +313,22 @@ mod tests {
         assert_eq!(mid[STATUS_LIGHT], 1);
         assert_eq!((f32::from_bits(dark[BAND_TINT]), f32::from_bits(white[BAND_TINT])), (0.0, 1.0));
         assert_eq!(f32::from_bits(white[BAND_KG]), 1.0);
+    }
+
+    #[test]
+    fn the_theme_accent_reads_on_any_cover() {
+        let (light, dark) = (0xFFBE_5526, 0xFFE8_743B);
+        for bg in [0xFF10_1010u32, 0xFF20_3A60, 0xFF55_5555, 0xFFE8_7040, 0xFFB0_A080, WHITE] {
+            let on = if luminance(bg) < 0.5 { WHITE } else { 0xFF11_1111 };
+            let cover = page(bg, bg, on, 0xFF30_C0F0, bg);
+            let t = accented(&cover, light, dark);
+            assert!(calculate_contrast(t[ACCENT], bg) >= 4.5, "accent {:08x} on {bg:08x}", t[ACCENT]);
+            assert_eq!((t[BACKGROUND], t[ON], t[EDGE], t[MELT], t[CHROME_SLAB]), (cover[BACKGROUND], cover[ON], cover[EDGE], cover[MELT], cover[CHROME_SLAB]));
+            assert_eq!(t[TINT_INK], lerp(t[ACCENT], on, f32::from_bits(t[PAPER])));
+        }
+        // The dark theme's accent on a dark cover, the light one's on a pale one, as they are where they read.
+        assert_eq!(accented(&page(0xFF10_1010, 0xFF10_1010, WHITE, 0xFF30_C0F0, 0xFF10_1010), light, dark)[ACCENT], dark);
+        assert_eq!(accented(&page(WHITE, WHITE, 0xFF11_1111, 0xFF30_C0F0, WHITE), light, dark)[ACCENT], light);
     }
 
     #[test]

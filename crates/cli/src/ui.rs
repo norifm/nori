@@ -365,7 +365,7 @@ fn song_line(s: &Song, marks: &Marks, number: usize, w: usize, t: &Theme, playin
 pub fn draw(f: &mut Frame, app: &mut App, mut art: Option<&mut Art>) {
     app.hits.clear();
     let area = f.area();
-    let ui = Theme::plain(app.prefs.accent);
+    let ui = app.plain;
     if app.view == View::Login {
         login(f, area, app, &ui);
         overlay(f, area, app, &ui);
@@ -409,7 +409,7 @@ fn toast(f: &mut Frame, area: Rect, app: &App) {
         return;
     }
     let r = Rect { x: area.x + area.width.saturating_sub(w + 1), y: area.y + area.height - 3, width: w, height: 3 };
-    let colour = if *error { Color::LightRed } else { crate::art::argb(app.prefs.accent as u32) };
+    let colour = if *error { Color::LightRed } else { app.theme.accent };
     let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(colour));
     let inner = block.inner(r);
     put(f, Clear, r);
@@ -1153,14 +1153,6 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
     let (title, detail) = settings_view::row_words(row);
     let live = settings_view::row_enabled(row);
     let text_style = if live { Style::default().fg(t.text) } else { dim(t) };
-    if let settings_view::Row::Palette { colours, chosen, .. } = row {
-        let mut spans = vec![Span::styled("    Accent color  ", text_style)];
-        for c in colours {
-            let colour = crate::art::argb(*c as u32);
-            spans.push(Span::styled(if c == chosen { "[●]" } else { " ● " }, Style::default().fg(colour)));
-        }
-        return Line::from(spans);
-    }
     if let Some((share, centred)) = settings_view::slider_share(row) {
         let bar_w = (w / 3).clamp(8, 30);
         let at = (share * (bar_w - 1) as f32).round() as usize;

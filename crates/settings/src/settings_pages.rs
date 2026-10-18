@@ -189,8 +189,6 @@ pub struct SettingsSection {
 pub struct PageFacts {
     /// The parts of the settings the open profile offers.
     pub parts: Vec<SettingsPart>,
-    /// The wallpaper's colors can be the theme's (Android 12).
-    pub wallpaper_colors: bool,
     /// Drawn on a car's own screen.
     pub car: bool,
     /// The active server's music folders, by id.
@@ -386,14 +384,10 @@ impl Page<'_> {
 
     fn look(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let p = self.p;
-        let mut theme = Vec::new();
+        let mut theme = vec![self.chips("season")];
         if self.phone() {
-            theme.extend([self.chips("theme"), self.setting("amoled")]);
-            if self.f.wallpaper_colors {
-                theme.push(self.setting("dynamicColor"));
-            }
+            theme.extend([self.chips("theme"), self.setting("amoled").under().shown(p.theme != crate::settings::ThemeMode::Light)]);
         }
-        theme.push(self.setting("accent").shown(!(self.phone() && self.f.wallpaper_colors && p.dynamic_color)));
         let mut cover = vec![self.setting("coverColors")];
         if self.phone() {
             cover.push(self.setting("movingCovers"));
@@ -563,7 +557,7 @@ mod tests {
     };
 
     fn facts() -> PageFacts {
-        PageFacts { parts: ALL_PARTS.to_vec(), folders: vec!["1".into(), "2".into()], wallpaper_colors: true, car: true, ..PageFacts::default() }
+        PageFacts { parts: ALL_PARTS.to_vec(), folders: vec!["1".into(), "2".into()], car: true, ..PageFacts::default() }
     }
 
     fn model() -> nori_automix::beat_model::ModelFile {
@@ -618,8 +612,8 @@ mod tests {
         // A setting's row that is not on the page keeps its place, so the search finds it.
         let all = names(&every_row(SettingsClient::Phone, &StoredPrefs { compressor: false, ..d.clone() }, &facts()), false);
         assert!(all.iter().any(|n| n == "compressorPreset"));
-        // The accent gives way to the wallpaper's colors where there are some.
-        assert!(!shown(&d, "accent") && shown(&StoredPrefs { dynamic_color: false, ..d.clone() }, "accent"));
+        // Black is a dark theme's.
+        assert!(shown(&d, "amoled") && !shown(&StoredPrefs { theme: crate::settings::ThemeMode::Light, ..d.clone() }, "amoled"));
     }
 
     #[test]
@@ -629,7 +623,7 @@ mod tests {
         for client in [SettingsClient::Desktop, SettingsClient::Terminal] {
             let rows = every_row(client, &d, &facts());
             let has = names(&rows, false);
-            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "dynamicColor", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
+            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");

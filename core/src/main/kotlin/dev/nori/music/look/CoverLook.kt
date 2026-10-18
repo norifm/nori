@@ -69,7 +69,9 @@ object CoverLook {
     const val FLOOR_0 = 49
     const val FLOOR_22 = 50
     const val FLOOR_75 = 51
-    const val LEN = 52
+    /** The see-through chrome's outline. */
+    const val CHROME_OUTLINE = 52
+    const val LEN = 53
 
     /**
      * Looks [from] and [to] mixed at [t] into [out], all [LEN] entries (`nori_look::dress::mix`): one frame
@@ -90,13 +92,11 @@ object CoverLook {
      */
     fun plain(roles: IntArray): IntArray = IntArray(LEN).also { plain(roles, it) }
 
-    /** Primary, on primary, primary container, on primary container, secondary, secondary container,
-     *  on secondary container, surface, background, surface variant, on surface variant. */
-    fun tones(seed: Int, dark: Boolean): IntArray = IntArray(11).also { tones(seed, dark, it) }
-
-    /** What AMOLED black puts in a dark scheme: background, surface, surface dim, container lowest,
-     *  low, container, high, highest. */
-    fun amoled(): IntArray = IntArray(8).also { amoled(it) }
+    /**
+     * [look] wearing the theme's accent in place of its cover's: [light] on a pale page, [dark] on a dark
+     * one, moved until it reads there (`nori_look::dress::accented`).
+     */
+    fun accented(look: IntArray, light: Int, dark: Int): IntArray = IntArray(LEN).also { accented(look, light, dark, it) }
 
     /**
      * One step of the seek bar towards where the song is (`nori_look::motion::seek_step`): the new place,
@@ -119,12 +119,6 @@ object CoverLook {
     @JvmStatic @CriticalNative external fun seekPaceHold(h: Long, bar: Float, positionMs: Long, durationMs: Long)
     @JvmStatic @CriticalNative external fun seekPaceStep(h: Long, positionMs: Long, durationMs: Long, dtS: Float, widthPx: Float, rate: Float): Int
 
-    /**
-     * [color] moved lighter or darker in its own hue until it reads on [background], trying the other way
-     * when the first runs out (`nori_look::cover::readable_either_way`), else [fallback]. ARGB ints.
-     */
-    @JvmStatic @CriticalNative external fun readable(color: Int, background: Int, fallback: Int): Int
-
     /** Which glyph the play button shows (`nori-core stage::transport_glyph`): 0 play, 1 pause, 2 spinner. */
     @JvmStatic @CriticalNative external fun transportGlyph(playing: Boolean, buffering: Boolean, waited: Boolean): Int
 
@@ -136,6 +130,5 @@ object CoverLook {
     @JvmStatic @CriticalNative external fun heroButtons(here: Boolean, shuffle: Boolean, playing: Boolean, buffering: Boolean, canPlay: Boolean, canShuffle: Boolean): Int
 
     @JvmStatic @FastNative private external fun plain(roles: IntArray, out: IntArray)
-    @JvmStatic @FastNative private external fun tones(seed: Int, dark: Boolean, out: IntArray)
-    @JvmStatic @FastNative private external fun amoled(out: IntArray)
+    @JvmStatic @FastNative private external fun accented(look: IntArray, light: Int, dark: Int, out: IntArray)
 }

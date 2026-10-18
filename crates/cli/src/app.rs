@@ -834,6 +834,10 @@ pub struct App {
     pub colours: Option<Box<CoverColours>>,
     /// Theme of the panel and full player (from the cover); the rest uses the terminal's colours.
     pub theme: Theme,
+    /// The terminal's own colors with the theme's accent, for everything else.
+    pub plain: Theme,
+    /// The theme's accents ([`crate::art::accents`]), read when the settings change.
+    pub accents: (u32, u32),
     pub prefs: StoredPrefs,
     pub volume: f32,
     pub mouse: bool,
@@ -871,7 +875,9 @@ impl App {
         App {
             side: Sel { at: 1, top: 0 },
             panel: Some(Panel::Playing),
-            theme: Theme::plain(prefs.accent),
+            theme: Theme::plain(crate::art::accents(&prefs).1),
+            plain: Theme::plain(crate::art::accents(&prefs).1),
+            accents: crate::art::accents(&prefs),
             prefs,
             volume: 1.0,
             mouse: true,
@@ -899,9 +905,11 @@ impl App {
     }
 
     fn retheme(&mut self) {
+        self.accents = crate::art::accents(&self.prefs);
+        self.plain = Theme::plain(self.accents.1);
         self.theme = match &self.colours {
-            Some(c) if self.prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player) && self.images => Theme::from_cover(c),
-            _ => Theme::plain(self.prefs.accent),
+            Some(c) if self.prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player) && self.images => Theme::from_cover(c, self.accents),
+            _ => self.plain,
         };
     }
 

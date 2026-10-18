@@ -547,9 +547,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
               // The tab bar is over the player, not under it: as the player rises it slides down off the
               // screen instead of vanishing under the sheet in one frame. See BottomChrome.
               if (wide) Box(Modifier.align(if (railLeft) Alignment.CenterStart else Alignment.CenterEnd).fillMaxHeight()) {
-                  TabRail(tabRoute, tabs, nav::tab, chromeLook, player, railLeft)
+                  TabRail(tabRoute, tabs, nav::tab, chromeLook, railLeft)
               }
-              else Box(Modifier.align(Alignment.BottomCenter)) { TabBar(tabRoute, tabs, nav::tab, chromeLook, player) { tabsHeight = it } }
+              else Box(Modifier.align(Alignment.BottomCenter)) { TabBar(tabRoute, tabs, nav::tab, chromeLook) { tabsHeight = it } }
               }
               // Top: less in the way of the now-playing bar; swipe or the X dismisses.
               SnackbarHost(
@@ -571,11 +571,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                       enableDismissFromEndToStart = true,
                   ) {
                       val v = data.visuals
-                      // The bottom bars' colours, and the accent their lit tab wears.
-                      val accent = rememberTabAccent(player, chromeLook.color(CoverLook.CHROME_SLAB), chromeLook.color(CoverLook.CHROME_CONTENT))
                       Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                           MessagePill(
-                              v.message, chromeLook, Modifier.widthIn(max = 560.dp), accent = { accent }, maxLines = 3,
+                              v.message, chromeLook, Modifier.widthIn(max = 560.dp), maxLines = 3,
                               action = v.actionLabel, onAction = data::performAction,
                               onDismiss = if (v.withDismissAction) data::dismiss else null,
                           )

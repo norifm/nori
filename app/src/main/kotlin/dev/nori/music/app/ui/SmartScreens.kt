@@ -115,7 +115,7 @@ private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp, onClick: ((
         )
         Column(Modifier.align(Alignment.BottomStart).padding(if (large) 18.dp else 12.dp)) {
             Icon(
-                if (card.favourites) Icons.Filled.Favorite else Icons.Filled.AutoAwesome, null,
+                if (card.favourites) Kanji.Sealed else Icons.Filled.AutoAwesome, null,
                 Modifier.size(if (large) 22.dp else 16.dp), tint = white.copy(alpha = 0.9f),
             )
             Text(
