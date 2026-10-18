@@ -58,7 +58,7 @@ object CoverLook {
     const val CHROME_EDGE = 38
     const val CHROME_CONTENT_65 = 39
     const val CHROME_CONTENT_75 = 40
-    const val CHROME_FADE = 41
+    const val CHROME_FILL = 41
     const val STATUS_LIGHT = 42
     const val BAND_TINT = 43
     const val BAND_KR = 44

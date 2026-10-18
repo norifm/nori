@@ -71,8 +71,8 @@ pub const CHROME_EDGE: usize = 38;
 /// Chrome secondary text (65 %) and icon (75 %).
 pub const CHROME_CONTENT_65: usize = 39;
 pub const CHROME_CONTENT_75: usize = 40;
-/// List fade under the chrome: page at 75 %.
-pub const CHROME_FADE: usize = 41;
+/// Inside the chrome's outline: page at 88 %, the page under it showing faintly through.
+pub const CHROME_FILL: usize = 41;
 /// The see-through chrome's outline: text at 20 %.
 pub const CHROME_OUTLINE: usize = 52;
 
@@ -201,7 +201,7 @@ fn dress(s: &Scheme, edge: Option<u32>, out: &mut [u32; LEN]) {
     out[CHROME_EDGE] = with_alpha(on, if dark { 0.14 } else { 0.07 });
     out[CHROME_CONTENT_65] = with_alpha(on, 0.65);
     out[CHROME_CONTENT_75] = with_alpha(on, 0.75);
-    out[CHROME_FADE] = with_alpha(bg, 0.75);
+    out[CHROME_FILL] = with_alpha(bg, 0.88);
     out[CHROME_OUTLINE] = with_alpha(on, 0.20);
 
     out[STATUS_LIGHT] = (luminance(on) < 0.5) as u32;

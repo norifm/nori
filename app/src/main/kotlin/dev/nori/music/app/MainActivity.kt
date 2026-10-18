@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         // A turn of the phone dissolves the old layout into the new one rather than spinning a picture of the
-        // whole screen round, bar and all; the tab glyphs then turn upright in place (App). Seamless, as this
+        // whole screen round, bar and all. Seamless, as this
         // was, is not honoured with the status bar shown, and the system cut to black instead.
         window.attributes = window.attributes.apply { rotationAnimation = android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_CROSSFADE }
         if (Build.VERSION.SDK_INT >= 33 && savedInstanceState == null) askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)

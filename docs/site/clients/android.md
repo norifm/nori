@@ -19,7 +19,8 @@ system's media controls, notification and lock screen.
   seasons (4 February, 5 May, 7 August, 7 November; half a year round south of the equator) over a
   week. The theme's accent marks the current tab, a favorite and what is playing, on every page and in
   the player, whatever the cover; a favorite is a seal stamped with 好. The now-playing bar and the tabs
-  share one outline over the page; on its side the bar stands on the rail's foot. **Colors
+  share one outline over the page, which shows blurred inside it (Android 12 and later); on its side
+  they sit in one row along the bottom. **Colors
   from the cover** is two switches, Pages and Player: where one is off it stays black in dark mode.
   **Keep the screen on** and hiding the status or navigation bar work the same way: each condition
   (sideways, upright, charging, burn-in protection) is a button of its own, and any one lit that holds
