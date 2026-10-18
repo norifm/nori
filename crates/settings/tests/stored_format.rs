@@ -36,6 +36,8 @@ fn sample() -> StoredPrefs {
         wifi: SavedQuality { bit_rate: 320, format: "mp3".into() },
         mobile: SavedQuality { bit_rate: 96, format: "opus".into() },
         download: SavedQuality { bit_rate: 128, format: "opus".into() },
+        songs_ahead_wifi: 5,
+        songs_ahead_mobile: 2,
         cache_mb: 4096,
         replay_gain: GainMode::Album,
         level: Level::Loud,

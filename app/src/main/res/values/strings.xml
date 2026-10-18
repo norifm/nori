@@ -322,11 +322,19 @@
     <string name="settings_lookups_detail">Missing lyrics (sends the artist, song and album name), the AutoEQ headphone list and moving covers, each with its own switch. Off, nothing is asked.</string>
 
     <!-- Downloads and storage. -->
-    <string name="settings_section_streaming">Streaming quality</string>
+    <string name="settings_section_streaming">Streaming</string>
     <string name="settings_section_downloads">Downloads</string>
     <string name="settings_section_storage">Storage</string>
     <string name="settings_quality_wifi">Quality on Wi-Fi</string>
     <string name="settings_quality_mobile">Quality on mobile data</string>
+    <string name="settings_ahead_wifi">Prepare songs ahead on Wi-Fi</string>
+    <string name="settings_ahead_mobile">On mobile data</string>
+    <string name="settings_ahead_detail">Upcoming songs and their lyrics are fetched before you get to them.</string>
+    <string name="settings_ahead_next">Next song</string>
+    <plurals name="settings_ahead_songs">
+        <item quantity="one">%1$d song</item>
+        <item quantity="other">%1$d songs</item>
+    </plurals>
     <string name="settings_quality_download">Quality for downloads</string>
     <string name="settings_quality_original">Original</string>
     <string name="settings_quality_mp3" translatable="false">MP3 %1$d</string>
@@ -427,6 +435,7 @@
     <string name="settings_hint_taste_model">Stored on this device. Powers mixes and stats</string>
     <string name="settings_hint_scrobble">Scrobbling. Sends your plays to your server</string>
     <string name="settings_hint_lookups">Missing lyrics, the AutoEQ headphone list and moving covers. Third-party lookups</string>
+    <string name="settings_hint_ahead">Preload, prefetch, buffer and cache upcoming songs and lyrics</string>
     <string name="settings_hint_cache_size">How much streamed music to keep on this device</string>
     <string name="settings_hint_stored">Streamed music, covers, downloads and the library</string>
     <string name="settings_hint_streamed">Clear the streamed music. Downloads stay</string>

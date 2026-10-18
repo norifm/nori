@@ -82,9 +82,9 @@ pub fn mixing(transitions_off: bool, crossfade_s: i32, auto_mix: bool) -> bool {
     !transitions_off && (crossfade_s > 0 || auto_mix)
 }
 
-/// Songs fetched ahead on the current network: three on Wi-Fi, the next one on mobile data.
-pub fn precache_count(metered: bool) -> usize {
-    if metered { 1 } else { 3 }
+/// Songs prepared ahead on the current network, from the settings for Wi-Fi and mobile data.
+pub fn precache_count(metered: bool, wifi: i32, mobile: i32) -> usize {
+    (if metered { mobile } else { wifi }).max(0) as usize
 }
 
 /// Upcoming songs (0 = playing) measured ahead for AutoMix.

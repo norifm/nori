@@ -613,6 +613,12 @@ pub struct StoredPrefs {
     pub mobile: SavedQuality,
     #[setting("download", Quality, default = SavedQuality::default(), show = K::Choice(QUALITIES))]
     pub download: SavedQuality,
+    /// Upcoming songs prepared ahead (audio and lyrics) on Wi-Fi and on mobile data; the next song
+    /// always is, so the player can go on without a gap.
+    #[setting("songsAheadWifi", within(1, 10), default = 3, show = K::Choice(&["1", "2", "3", "5", "10"]))]
+    pub songs_ahead_wifi: i32,
+    #[setting("songsAheadMobile", within(1, 10), default = 1, show = K::Choice(&["1", "2", "3", "5"]))]
+    pub songs_ahead_mobile: i32,
     #[setting("cacheMb", within(256, 16384), default = 1024, show = K::Choice(&["256", "1024", "4096", "16384"]), effect = CACHE_LIMIT)]
     pub cache_mb: i32,
 }

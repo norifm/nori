@@ -451,6 +451,10 @@ impl Page<'_> {
         if self.phone() {
             streaming.push(self.setting("mobile"));
         }
+        streaming.push(self.setting("songsAheadWifi"));
+        if self.phone() {
+            streaming.push(self.setting("songsAheadMobile").under());
+        }
         let mut downloads = vec![self.setting("download"), row(RowItem::Action { action: SettingsAction::DownloadLibrary }).enabled(f.indexed_songs > 0)];
         match self.client {
             SettingsClient::Phone => downloads.push(row(RowItem::Action { action: SettingsAction::AnalyseDownloads }).enabled(f.download_songs > 0)),
@@ -597,7 +601,7 @@ mod tests {
         for client in [SettingsClient::Desktop, SettingsClient::Terminal] {
             let rows = every_row(client, &d, &facts());
             let has = names(&rows, false);
-            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "dynamicColor", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "altMaxBitRate"] {
+            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "dynamicColor", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");

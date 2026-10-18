@@ -179,7 +179,7 @@ fn section_title(id: SectionId) -> &'static str {
         History => "Listening history",
         Online => "Online",
         Devices => "Other devices",
-        Streaming => "Streaming quality",
+        Streaming => "Streaming",
         Downloads => "Downloads",
         Storage => "Storage",
         Updates => "Updates",
@@ -238,6 +238,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "remoteControl" => ("Remote control and jams", "Control playback on your other devices, or invite guests to a jam. Uses your network directly or the octo-fiesta relay."),
         "wifi" => ("Streaming quality", ""),
         "download" => ("Quality for downloads", ""),
+        "songsAheadWifi" => ("Prepare songs ahead", "Upcoming songs and their lyrics are fetched before you get to them."),
         "cacheMb" => ("Space for streamed music", ""),
         other => (other, ""),
     };
@@ -293,6 +294,8 @@ fn option_words(name: &str, v: &str) -> String {
                 _ => format!("{rate} {format}"),
             }
         }
+        ("songsAheadWifi", "1") => "Next song".into(),
+        ("songsAheadWifi", v) => format!("{v} songs"),
         ("cacheMb", v) => match v.parse::<u32>() {
             Ok(mb) if mb >= 1024 && mb % 1024 == 0 => format!("{} GB", mb / 1024),
             _ => format!("{v} MB"),

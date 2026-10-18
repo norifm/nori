@@ -226,6 +226,8 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "wifi" to (R.string.settings_quality_wifi to 0),
     "mobile" to (R.string.settings_quality_mobile to 0),
     "download" to (R.string.settings_quality_download to 0),
+    "songsAheadWifi" to (R.string.settings_ahead_wifi to R.string.settings_hint_ahead),
+    "songsAheadMobile" to (R.string.settings_ahead_mobile to 0),
     "cacheMb" to (R.string.settings_cache_size to R.string.settings_hint_cache_size),
     "altMaxBitRate" to (R.string.settings_alt_bitrate to 0),
     "updateCheck" to (R.string.settings_update_auto to R.string.settings_update_auto_detail),
@@ -497,6 +499,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 }
             }
             "cacheMb" -> v.toInt().let { mb -> if (mb >= 1024 && mb % 1024 == 0) str(R.string.settings_gigabytes, mb / 1024) else str(R.string.settings_megabytes, mb) }
+            "songsAheadWifi", "songsAheadMobile" -> if (v == "1") str(R.string.settings_ahead_next) else res.getQuantityString(R.plurals.settings_ahead_songs, v.toInt(), v.toInt())
             "altMaxBitRate" -> if (v == "0") str(R.string.settings_alt_bitrate_none) else str(R.string.settings_kbps, v.toInt())
             else -> v
         }
@@ -565,6 +568,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         "queueOffer" -> str(R.string.settings_queue_offer_detail)
         "thirdPartyLookups" -> str(R.string.settings_lookups_detail)
         "remoteControl" -> str(R.string.settings_remote_control_detail)
+        "songsAheadWifi" -> str(R.string.settings_ahead_detail)
         "updateCheck" -> str(R.string.settings_update_auto_detail)
         "updateBeta" -> str(R.string.settings_update_beta_detail)
         else -> ""

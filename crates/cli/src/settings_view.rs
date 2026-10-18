@@ -502,6 +502,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "remoteControl" => ("Remote control and jams", "Control playback on your other devices (C), or invite guests to a jam. Uses your network directly or the octo-fiesta relay"),
         "wifi" => ("Streaming quality", ""),
         "download" => ("Download quality", ""),
+        "songsAheadWifi" => ("Prepare ahead", "Upcoming songs and their lyrics, fetched before their turn"),
         "cacheMb" => ("Stream cache limit", ""),
         other => (other, ""),
     };
@@ -540,6 +541,8 @@ fn option_words(name: &str, v: &str) -> String {
         ("coverColors", "PAGES") => "pages".into(),
         ("coverColors", "PLAYER") => "player".into(),
         ("wifi" | "download", v) => quality(v),
+        ("songsAheadWifi", "1") => "next song".into(),
+        ("songsAheadWifi", v) => format!("{v} songs"),
         ("cacheMb", v) => match v.parse::<i32>() {
             Ok(mb) if mb % 1024 == 0 => format!("{} GB", mb / 1024),
             _ => format!("{v} MB"),

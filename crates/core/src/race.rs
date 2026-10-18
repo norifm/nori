@@ -30,28 +30,36 @@ impl LyricsCache for Core {
 
 #[derive(Default)]
 pub(crate) struct Prefetch {
-    entry: Option<u64>,
+    /// The queue entries asked for, in order.
+    entries: Vec<u64>,
+    /// Those of them already warmed.
+    warmed: Vec<u64>,
     cancel: Option<futures_util::future::AbortHandle>,
 }
 
-// A cancelled caller releases its entry so a later visit can warm it again.
+// A cancelled caller releases its entries so a later visit can warm them again.
 struct PrefetchRun<'a> {
     work: &'a parking_lot::Mutex<Prefetch>,
-    entry: u64,
+    entries: Vec<u64>,
 }
 
 impl PrefetchRun<'_> {
+    fn warmed(&self, entry: u64) {
+        let mut work = self.work.lock();
+        if work.entries == self.entries { work.warmed.push(entry); }
+    }
+
     fn finish(self) {
         let mut work = self.work.lock();
-        if work.entry == Some(self.entry) { work.cancel = None; }
+        if work.entries == self.entries { work.cancel = None; }
     }
 }
 
 impl Drop for PrefetchRun<'_> {
     fn drop(&mut self) {
         let mut work = self.work.lock();
-        if work.entry == Some(self.entry) && work.cancel.take().is_some() {
-            work.entry = None;
+        if work.entries == self.entries && work.cancel.take().is_some() {
+            work.entries.clear();
         }
     }
 }
@@ -82,30 +90,44 @@ impl LyricsShown for Screen {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// Warms the next queue entry's lyrics without publishing them to a screen.
+    /// Warms the lyrics of the songs prepared ahead ([`nori_queue::Session::lyrics_ahead`]) one after
+    /// another, without publishing them to a screen.
     pub async fn lyrics_prefetch(&self) {
         use futures_util::future::{AbortHandle, Abortable};
-        let next = self.core.session.lyrics_ahead();
-        let (old, registration) = {
+        let next = self.core.session.lyrics_ahead(self.metered());
+        let entries: Vec<u64> = next.iter().map(|(entry, _)| *entry).collect();
+        let (old, todo, registration) = {
             let mut work = self.prefetch.lock();
-            let entry = next.as_ref().map(|(entry, _)| *entry);
-            if work.entry == entry { return; }
-            work.entry = entry;
+            if work.entries == entries { return; }
+            work.warmed.retain(|e| entries.contains(e));
+            let todo: Vec<(u64, String)> = next.into_iter().filter(|(e, _)| !work.warmed.contains(e)).collect();
+            work.entries = entries.clone();
             let old = work.cancel.take();
-            let registration = next.as_ref().map(|_| {
+            let registration = (!todo.is_empty()).then(|| {
                 let (cancel, registration) = AbortHandle::new_pair();
                 work.cancel = Some(cancel);
                 registration
             });
-            (old, registration)
+            (old, todo, registration)
         };
         if let Some(old) = old { old.abort(); }
-        if let (Some((entry, id)), Some(registration)) = (next, registration) {
-            let run = PrefetchRun { work: &self.prefetch, entry };
-            if matches!(Abortable::new(self.lyrics_for(id.clone(), Arc::new(Unseen)), registration).await, Ok(Ok(()))) {
-                crate::alog::info(&format!("lyrics: prefetched {id}"));
-                run.finish();
+        let Some(registration) = registration else { return };
+        let run = PrefetchRun { work: &self.prefetch, entries };
+        let warm = async {
+            let mut all = true;
+            for (entry, id) in todo {
+                if self.lyrics_for(id.clone(), Arc::new(Unseen)).await.is_ok() {
+                    crate::alog::info(&format!("lyrics: prefetched {id}"));
+                    run.warmed(entry);
+                } else {
+                    all = false;
+                }
             }
+            all
+        };
+        // A failed song is tried again at the next visit.
+        if Abortable::new(warm, registration).await == Ok(true) {
+            run.finish();
         }
     }
 
@@ -334,17 +356,20 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn prefetch_warms_only_the_next_library_song() {
+    fn prefetch_warms_the_library_songs_prepared_ahead() {
+        let stored = |c: &Client, id: &str| matches!(c.read_stored(crate::cache_policy::Read::LyricsBySong { song_id: id.into() }).ok().and_then(|s| s.page),
+            Some(crate::cache_policy::Page::LyricsPage { v }) if !v.lines.is_empty());
+        // Mobile data: the next song only, by default.
         for next in ["ahead", "ext-ahead"] {
             let (c, fake) = setup();
+            *fake.metered.lock() = true;
             let ahead = Song { id: next.into(), ..song() };
             c.core.session.register(vec![Song { id: "current".into(), ..song() }, ahead]);
             c.core.session.set(vec!["current".into(), next.into(), "later".into()], Some(0), false, None);
             fake.answer(SYNCED);
             block(c.lyrics_prefetch());
             if next == "ahead" {
-                let stored = c.read_stored(crate::cache_policy::Read::LyricsBySong { song_id: next.into() }).unwrap();
-                assert!(matches!(stored.page, Some(crate::cache_policy::Page::LyricsPage { v }) if !v.lines.is_empty()), "prefetch must store the next song's words before it is played");
+                assert!(stored(&c, next), "prefetch must store the next song's words before it is played");
                 let shown = Arc::new(Screen::default());
                 block(c.lyrics_for(next.into(), shown.clone())).unwrap();
                 assert_eq!(shown.0.lock()[0].lyrics.lines[0].text, "timed");
@@ -355,6 +380,20 @@ pub(crate) mod tests {
                 assert!(fake.asked().is_empty(), "a provider's: no prefetch requests");
             }
         }
+        // Wi-Fi: as many as the songs prepared ahead there, three by default.
+        let (c, fake) = setup();
+        let queue = ["current", "s1", "s2", "s3", "s4"];
+        c.core.session.register(queue.iter().map(|id| Song { id: id.to_string(), ..song() }).collect());
+        c.core.session.set(queue.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
+        (0..3).for_each(|_| fake.answer(SYNCED));
+        block(c.lyrics_prefetch());
+        assert_eq!(queue.map(|id| stored(&c, id)), [false, true, true, true, false]);
+        // The next song moves on: only the newly prepared one is asked for.
+        c.core.session.moved_to(1);
+        fake.answer(SYNCED);
+        block(c.lyrics_prefetch());
+        assert!(stored(&c, "s4"));
+        assert_eq!(fake.asked().len(), 4);
     }
 
     #[test]
