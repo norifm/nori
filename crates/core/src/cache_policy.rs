@@ -455,12 +455,17 @@ impl Client {
 
     /// [`Client::read_fetch`] of a provider that stores nothing: asked anew, and kept ([`Client::kept_stored`]).
     pub(crate) async fn kept_fetch(&self, read: Read) -> NetResult<Option<Page>> {
-        let sp = spec(read.clone());
-        let page = self.read_now(read).await?;
-        if sp.fresh_ms.is_some() {
-            self.core.kept.lock().insert(key(sp.endpoint, &sp.params), (page.clone(), crate::db::now_ms()));
-        }
+        let page = self.read_now(read.clone()).await?;
+        self.keep(read, page.clone());
         Ok(Some(page))
+    }
+
+    /// Keeps `page` as `read`'s answer this session ([`Client::kept_stored`]); cached reads only.
+    pub(crate) fn keep(&self, read: Read, page: Page) {
+        let sp = spec(read);
+        if sp.fresh_ms.is_some() {
+            self.core.kept.lock().insert(key(sp.endpoint, &sp.params), (page, crate::db::now_ms()));
+        }
     }
 
     /// [`Client::read_fetch`] of the Subsonic server, whose answers are cached whole.

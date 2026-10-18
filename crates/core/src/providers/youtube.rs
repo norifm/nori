@@ -12,7 +12,7 @@ use innertube_music as yt;
 
 use super::{AccountState, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{LibrarySection, ProfileRules, SettingsPart};
-use crate::cache_policy::{Page, Read};
+use crate::cache_policy::{Page, Read, Stored};
 use crate::client::{Client, NetResult, Starrable, Write};
 use crate::settings::{SavedServer, ServerKind};
 use crate::stream::{StreamQuality, StreamTarget};
@@ -205,6 +205,27 @@ fn shelf(s: yt::Shelf) -> FeedShelf {
     f
 }
 
+/// `shown` with what `fresh` adds: items new to a shelf at its end, new shelves at the end, so nothing
+/// shown moves or leaves.
+fn merged(mut shown: Vec<FeedShelf>, fresh: Vec<FeedShelf>) -> Vec<FeedShelf> {
+    fn add<T>(to: &mut Vec<T>, from: Vec<T>, id: impl Fn(&T) -> &str) {
+        let new: Vec<T> = from.into_iter().filter(|f| !to.iter().any(|t| id(t) == id(f))).collect();
+        to.extend(new);
+    }
+    for f in fresh {
+        match shown.iter_mut().find(|s| s.title == f.title) {
+            Some(s) => {
+                add(&mut s.songs, f.songs, |x| &x.id);
+                add(&mut s.albums, f.albums, |x| &x.id);
+                add(&mut s.playlists, f.playlists, |x| &x.id);
+                add(&mut s.artists, f.artists, |x| &x.id);
+            }
+            None => shown.push(f),
+        }
+    }
+    shown
+}
+
 /// A stream is asked again this long before YouTube stops serving it, so a song opened just before
 /// still loads whole.
 const MARGIN: Duration = Duration::from_secs(5 * 60);
@@ -240,6 +261,9 @@ struct State {
     api: yt::InnerTube,
     session: account::Session,
     streams: Streams,
+    /// Home as last shown this session: a refresh drops the kept page, and the new feed is merged into
+    /// this one.
+    home: parking_lot::Mutex<Option<Vec<FeedShelf>>>,
 }
 
 /// The YouTube Music provider, over the profile's [`State`].
@@ -352,6 +376,36 @@ impl Provider for YouTube {
 
     fn stream(&self, _: &Client, id: String, _: StreamQuality) -> StreamTarget {
         stream_target(id)
+    }
+
+    /// Home stays as first shown for the whole session; after a refresh dropped it, the last one shows
+    /// until the merged one comes.
+    fn read_stored(&self, client: &Client, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
+        if !matches!(read, Read::HomeFeed) {
+            return Ok(client.kept_stored(read, within_ms));
+        }
+        let kept = client.kept_stored(read, Some(i64::MAX));
+        if kept.page.is_some() {
+            return Ok(kept);
+        }
+        Ok(Stored { page: self.0.home.lock().clone().map(|v| Page::Feed { v }), digest: None, fresh: false })
+    }
+
+    /// YouTube reshuffles Home on every request: a refresh keeps what was shown and adds what is new.
+    async fn read_fetch(&self, client: &Client, read: Read, _digest: Option<u64>) -> NetResult<Option<Page>> {
+        if !matches!(read, Read::HomeFeed) {
+            return client.kept_fetch(read).await;
+        }
+        let Page::Feed { v } = client.read_now(read.clone()).await? else { return Ok(None) };
+        let shown = self.0.home.lock().take();
+        let v = match shown {
+            Some(shown) => merged(shown, v),
+            None => v,
+        };
+        *self.0.home.lock() = Some(v.clone());
+        let page = Page::Feed { v };
+        client.keep(read, page.clone());
+        Ok(Some(page))
     }
 
     fn ahead(&self) -> Option<usize> {
@@ -593,6 +647,66 @@ mod tests {
         };
         assert_eq!(session(), None);
         assert_eq!(session().as_deref(), Some("CgtGSVhUVVJFX0lEKAA%3D"));
+    }
+
+    /// Home's fixture as YouTube reshuffles it: its two shelves swapped, and Quick picks without its
+    /// first song.
+    fn reshuffled_home() -> String {
+        let mut home: serde_json::Value = serde_json::from_str(&fixture("home")).unwrap();
+        let shelves = home.pointer_mut("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents").unwrap().as_array_mut().unwrap();
+        shelves.swap(0, 1);
+        shelves[1].pointer_mut("/musicCarouselShelfRenderer/contents").unwrap().as_array_mut().unwrap().remove(0);
+        home.to_string()
+    }
+
+    fn feed(c: &Client) -> Vec<(String, Vec<String>)> {
+        let mut shown = Vec::new();
+        block(c.read_each(Read::HomeFeed, |p| if let Page::Feed { v } = p { shown = v.iter().map(|s| (s.title.clone(), s.songs.iter().map(|x| x.id.clone()).collect())).collect() })).unwrap();
+        shown
+    }
+
+    /// Home read again in the session is the page first shown, however long ago, without a request.
+    #[test]
+    fn home_stays_for_the_session() {
+        let (c, t) = youtube(&[&fixture("home"), &fixture("home_more"), &reshuffled_home(), &fixture("home_more")]);
+        let first = feed(&c);
+        c.core.kept.lock().values_mut().for_each(|(_, at)| *at = 0);
+        assert_eq!(feed(&c), first);
+        assert_eq!(t.asked.lock().len(), 2);
+    }
+
+    /// The app started again takes YouTube's feed as it is now.
+    #[test]
+    fn a_new_session_takes_a_fresh_home() {
+        let dir = nori_testdir::TempDir::new("yt-home-session");
+        let path = dir.path().join("library.db").to_string_lossy().into_owned();
+        let session = |home: String| {
+            let core = crate::Core::new(path.clone(), "yt".into(), Default::default()).unwrap();
+            core.configure_profile(SavedServer { id: "yt".into(), kind: ServerKind::YouTubeMusic, ..Default::default() }).unwrap();
+            let answers = [home, fixture("home_more")].map(|b| TransportResponse { status: 200, body: b.into_bytes(), set_cookies: Vec::new() });
+            let t = Arc::new(InnerTube { answers: parking_lot::Mutex::new(answers.into_iter().rev().collect()), ..Default::default() });
+            feed(&Client::new(core, t, Default::default()))[0].0.clone()
+        };
+        assert_eq!(session(fixture("home")), "Quick picks");
+        assert_eq!(session(reshuffled_home()), "All hits");
+    }
+
+    /// A refresh asks YouTube again but keeps every shelf and item where it was; only new ones are
+    /// added, at the end.
+    #[test]
+    fn a_refresh_adds_new_picks_without_reshuffling() {
+        let (c, t) = youtube(&[&reshuffled_home(), &fixture("home_more"), &fixture("home"), &fixture("home_more"), &reshuffled_home(), &fixture("home_more")]);
+        let first = feed(&c);
+        assert_eq!(first[0].0, "All hits");
+        let picks = first[1].1.clone();
+        c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
+        let merged = feed(&c);
+        assert_eq!(t.asked.lock().len(), 4);
+        assert_eq!(merged.iter().map(|s| &s.0).collect::<Vec<_>>(), first.iter().map(|s| &s.0).collect::<Vec<_>>(), "no shelf moves");
+        assert_eq!(merged[1].1[..picks.len()], picks[..], "shown picks keep their places");
+        assert_eq!(merged[1].1[picks.len()..], ["yt-hHZ4ej144rc".to_string()], "the new pick goes last");
+        c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
+        assert_eq!(feed(&c), merged, "a feed only rearranged changes nothing");
     }
 
     #[test]
