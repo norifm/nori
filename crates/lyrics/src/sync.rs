@@ -115,6 +115,11 @@ pub(crate) fn timing(check: Option<SyncCheck>) -> nori_model::LyricsTiming {
     }
 }
 
+/// The timing `lyrics` are shown with against the song's `voice`.
+pub fn timing_against(lyrics: &Lyrics, voice: &VocalCurve) -> nori_model::LyricsTiming {
+    timing(check(lyrics, voice))
+}
+
 /// A timed stretch of the lyrics, in curve frames (fractional): where a voice should sound.
 #[derive(Debug, Clone, Copy)]
 struct Span {

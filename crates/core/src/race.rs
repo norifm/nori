@@ -116,7 +116,7 @@ impl Client {
         let warm = async {
             let mut all = true;
             for (entry, id) in todo {
-                if self.lyrics_for(id.clone(), Arc::new(Unseen)).await.is_ok() {
+                if self.lyrics_warm(id.clone()).await.is_ok() {
                     crate::alog::info(&format!("lyrics: prefetched {id}"));
                     run.warmed(entry);
                 } else {
@@ -133,16 +133,40 @@ impl Client {
 
     /// Streams song `id`'s lyrics to `shown`: the server's (cached, then changed), then the services'
     /// when those are not timed, and an empty server answer last if nobody had any. No pick is shown
-    /// twice. Dropping the future cancels its requests.
+    /// twice. A service's timed lyrics shown before the song playing is measured are shown again once
+    /// it is, checked against its voice. Dropping the future cancels its requests.
     pub async fn lyrics_for(&self, id: String, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
-        let asked = self.settings().with_prefs(lyrics_lookup).unwrap_or_else(|| lyrics_lookup(&StoredPrefs::default()));
-        self.lyrics_for_with(id, &asked, shown).await
+        self.lyrics_for_with(id, &self.lyrics_asked(), shown).await
     }
 }
 
 impl Client {
+    fn lyrics_asked(&self) -> LyricsLookup {
+        self.settings().with_prefs(lyrics_lookup).unwrap_or_else(|| lyrics_lookup(&StoredPrefs::default()))
+    }
+
+    /// Song `id`'s lyrics looked up and cached, shown nowhere.
+    async fn lyrics_warm(&self, id: String) -> NetResult<()> {
+        self.lyrics_look_up(id, &self.lyrics_asked(), Arc::new(Unseen)).await.map(drop)
+    }
+
     /// [`Client::lyrics_for`] with the services given.
     async fn lyrics_for_with(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
+        let screen = self.lyrics_look_up(id.clone(), asked, shown).await?;
+        let last = screen.last.lock().clone();
+        let Some(mut pick) = last.filter(|p| p.origin != nori_settings::lyrics_sources::LyricsOrigin::Server && p.lyrics.synced) else { return Ok(()) };
+        if !matches!(pick.lyrics.timing, nori_model::LyricsTiming::NotChecked | nori_model::LyricsTiming::Yours { automatic: None, .. }) {
+            return Ok(());
+        }
+        if let Some(voice) = self.core.voice_measured(&id).await {
+            pick.lyrics.timing = nori_lyrics::sync::timing_against(&pick.lyrics, &voice);
+            screen.show(pick);
+        }
+        Ok(())
+    }
+
+    /// The lookup of [`Client::lyrics_for`], up to its last answer; returns where they were shown.
+    async fn lyrics_look_up(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<Arc<Screen>> {
         use crate::cache_policy::{Page, Read};
         let screen = Arc::new(Screen { to: shown, last: parking_lot::Mutex::new(None), core: self.core.clone(), song_id: id.clone() });
         let read = || Read::LyricsBySong { song_id: id.clone() };
@@ -206,7 +230,7 @@ impl Client {
                 }
             }
         }
-        Ok(())
+        Ok(screen)
     }
 }
 
@@ -277,7 +301,7 @@ impl Client {
         for id in ids.into_iter().filter(|id| !crate::is_provider_id(id)) {
             let downloads = &self.core.downloads;
             downloads.with(|t| t.working(&id, crate::transfers::Work::Lyrics));
-            let _ = self.lyrics_for(id.clone(), Arc::new(Unseen)).await;
+            let _ = self.lyrics_warm(id.clone()).await;
             downloads.with(|t| t.work_done(&id, crate::transfers::Work::Lyrics));
         }
     }
@@ -599,18 +623,15 @@ pub(crate) mod tests {
         assert!(c.core.cache_get("getAlbum|1".into()).unwrap().is_some(), "other cache entries stay");
     }
 
-    /// Lyrics of an analysed song get the offset of their times against its vocal curve.
-    #[test]
-    fn analysed_lyrics_get_sync_offset() {
+    /// A sung song measured into an analyser, its first line's time, and LRCLIB's answer for it: a line
+    /// per sung phrase, 1.2 s late (plus the 0.2 s lead sync.rs expects).
+    fn late_lyrics() -> (nori_player::automix::analysis::Analyzer, f64, String, u32) {
         use nori_player::automix::analysis::Analyzer;
         use nori_player::automix::eval::{Song as Synthetic, Style, FULL, SUNG};
-        let (c, fake) = setup();
         let synthetic = Synthetic { sections: vec![(4, FULL), (12, SUNG), (6, FULL), (12, SUNG), (4, FULL)], ..Synthetic::new("offset", Style::Backbeat, 112.0, 2, false) };
         let (x, truth) = synthetic.render();
         let mut a = Analyzer::new(synthetic.rate, 0);
         a.feed(&x);
-        nori_automix::store::put_voice(&c.core.db.lock(), "sync1", &a.take_features().voice_curve()).unwrap();
-        // A line per sung phrase, 1.2 s late (plus the 0.2 s lead sync.rs expects).
         let mut lrc = String::new();
         let mut last = f64::MIN;
         for (i, (start, _)) in truth.voice.iter().enumerate() {
@@ -621,12 +642,61 @@ pub(crate) mod tests {
             last = truth.voice[i].1;
         }
         let secs = (x.len() / synthetic.rate as usize) as u32;
-        fake.answer(&serde_json::json!({"syncedLyrics": lrc, "duration": secs, "trackName": "Offset", "artistName": "Pink Floyd"}).to_string());
+        let answer = serde_json::json!({"syncedLyrics": lrc, "duration": secs, "trackName": "Offset", "artistName": "Pink Floyd"}).to_string();
+        (a, truth.voice[0].0, answer, secs)
+    }
+
+    /// Lyrics of an analysed song get the offset of their times against its vocal curve.
+    #[test]
+    fn analysed_lyrics_get_sync_offset() {
+        let (c, fake) = setup();
+        let (mut a, first, answer, secs) = late_lyrics();
+        nori_automix::store::put_voice(&c.core.db.lock(), "sync1", &a.take_features().voice_curve()).unwrap();
+        fake.answer(&answer);
         let s = Song { id: "sync1".into(), title: "Offset".into(), duration: secs, ..song() };
         let got = run(&c, &s, false, false, &lrclib());
         let l = &got.last().expect("lyrics").lyrics;
         assert!(matches!(l.timing, LyricsTiming::Automatic { ms } if (ms - 1200).abs() < 150), "{:?}", l.timing);
-        assert_eq!(l.lines[0].start_ms, ((truth.voice[0].0 - 0.2 + 1.2) * 1000.0 / 10.0).round() as i64 * 10, "times unchanged");
+        assert_eq!(l.lines[0].start_ms, ((first - 0.2 + 1.2) * 1000.0 / 10.0).round() as i64 * 10, "times unchanged");
+    }
+
+    /// Lyrics shown while the playing song is not measured yet are checked against its voice as soon as
+    /// it is; a song that leaves the play window is no longer waited for.
+    #[test]
+    fn lyrics_are_checked_once_the_playing_song_is_measured() {
+        use std::future::Future;
+        use std::task::{Context, Waker};
+        let (c, fake) = setup();
+        c.core.session.settings.open("").unwrap();
+        c.core.session.settings.put(StoredPrefs { auto_mix: true, ..StoredPrefs::default() });
+        let (a, _, answer, secs) = late_lyrics();
+        let s = Song { id: "sync2".into(), title: "Offset".into(), duration: secs, ..song() };
+        let other = Song { id: "other".into(), ..s.clone() };
+        c.core.session.register(vec![s.clone(), other.clone()]);
+        c.core.session.set(vec![s.id.clone()], Some(0), false, None);
+        c.core.session.window();
+        fake.answer(NONE);
+        fake.answer(&answer);
+        let screen = Arc::new(Screen::default());
+        let asked = lrclib();
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut lookup = Box::pin(c.lyrics_for_with(s.id.clone(), &asked, screen.clone()));
+        assert!(lookup.as_mut().poll(&mut cx).is_pending(), "waits for the measurement");
+        assert_eq!(screen.0.lock().last().map(|p| p.lyrics.timing), Some(LyricsTiming::NotChecked));
+        c.core.analysis_finish(&s.id, a).unwrap().expect("stored");
+        assert!(lookup.as_mut().poll(&mut cx).is_ready());
+        let timing = screen.0.lock().last().unwrap().lyrics.timing;
+        assert!(matches!(timing, LyricsTiming::Automatic { ms } if (ms - 1200).abs() < 150), "{timing:?}");
+
+        c.core.session.set(vec![other.id.clone()], Some(0), false, None);
+        c.core.session.window();
+        fake.answer(NONE);
+        fake.answer(&answer);
+        let mut lookup = Box::pin(c.lyrics_for_with(other.id.clone(), &asked, screen.clone()));
+        assert!(lookup.as_mut().poll(&mut cx).is_pending());
+        c.core.session.set(vec![s.id.clone()], Some(0), false, None);
+        c.core.session.window();
+        assert!(lookup.as_mut().poll(&mut cx).is_ready(), "out of the play window: no longer waited for");
     }
 
     #[test]

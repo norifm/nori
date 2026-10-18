@@ -78,6 +78,22 @@ impl Core {
         Ok(get_voice(&self.db.lock(), song_id)?)
     }
 
+    /// The song's vocal curve once it is measured; None once it will not be while it plays (AutoMix
+    /// off, an analysis without a curve, or out of the play window).
+    pub(crate) async fn voice_measured(&self, song_id: &str) -> Option<nori_player::automix::vocal::VocalCurve> {
+        let planner = &self.session.planner;
+        loop {
+            let changed = planner.changed.notified();
+            if let Some(voice) = self.analysis_voice(song_id).ok().flatten() {
+                return Some(voice);
+            }
+            if !planner.may_measure(song_id) {
+                return None;
+            }
+            changed.await;
+        }
+    }
+
     /// The ids of `song_ids` with a current analysis that has an end the beat model has not checked.
     pub fn analysis_neural_missing(&self, song_ids: Vec<String>) -> Result<Vec<String>> {
         let song_ids: Vec<String> = song_ids.into_iter().filter(|id| crate::queue::analysable(id)).collect();

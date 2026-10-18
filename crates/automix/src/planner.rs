@@ -72,6 +72,8 @@ pub struct Planner {
     worker: OnceLock<Mutex<Sender<Finished>>>,
     /// Told after each plan made.
     planned: Mutex<Option<Planned>>,
+    /// Told when an analysis is stored or forgotten, or the window moves: what [`Planner::may_measure`] reads.
+    pub changed: nori_tasks::Notify,
 }
 
 /// What is told of each plan made (a jam host's guests play its transitions).
@@ -79,7 +81,7 @@ pub type Planned = Box<dyn Fn() + Send + Sync>;
 
 impl Planner {
     pub fn new(db: Arc<nori_db::Profile>, read_settings: ReadSettings) -> Arc<Planner> {
-        Arc::new(Planner { state: Mutex::new(State::new()), db, read_settings, worker: OnceLock::new(), planned: Mutex::new(None) })
+        Arc::new(Planner { state: Mutex::new(State::new()), db, read_settings, worker: OnceLock::new(), planned: Mutex::new(None), changed: Default::default() })
     }
 
     /// Whether the output forbids touching samples (`AudioPolicy::untouched`); set whenever the
@@ -94,10 +96,10 @@ impl Planner {
         self.state.lock().transitions_off
     }
 
-    /// An analysis was stored outside the engine's tap (the measurer ahead, the beat model): a cached
-    /// "no transition" may no longer hold.
+    /// An analysis was stored or forgotten: a cached "no transition" may no longer hold.
     pub fn analyses_changed(&self) {
         self.state.lock().generation += 1;
+        self.changed.notify();
     }
 
     /// The songs in play order: the one before the current one, the current one, and those after it.
@@ -106,6 +108,8 @@ impl Planner {
         p.window = window;
         p.shuffling = shuffling;
         p.generation += 1;
+        drop(p);
+        self.changed.notify();
     }
 
     /// The engine's question: how to mix out of `outgoing_id`, if at all.
@@ -212,6 +216,12 @@ impl Planner {
         wanted.then_some(duration)
     }
 
+    /// Whether `song_id` may yet be measured as it plays: it is in the window and wants measuring.
+    pub fn may_measure(&self, song_id: &str) -> bool {
+        let in_window = self.state.lock().window.iter().any(|s| s.id == song_id);
+        in_window && self.wants_analysis(song_id).is_some()
+    }
+
     /// The engine heard `song_id` from its first sample to its last. Finished on the planner's thread,
     /// which ends with the planner.
     #[cfg(not(target_arch = "wasm32"))]
@@ -255,7 +265,7 @@ impl Planner {
                 return;
             }
         };
-        self.state.lock().generation += 1;
+        self.analyses_changed();
         alog::info(&format!(
             "analysed {}: {:.2} bpm (conf {:.2}, stab {:.2}), key {}, heard {} ms of {} ms, {} frames at {} Hz",
             f.song_id,

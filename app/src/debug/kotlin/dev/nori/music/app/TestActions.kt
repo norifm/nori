@@ -15,7 +15,6 @@ import dev.nori.music.ffi.queue.testRef
 import dev.nori.music.playback.DeviceSound
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -164,9 +163,9 @@ object TestActions {
             // this asks for them the same way the panel does and parks the answer for the state dump.
             "lyrics" -> {
                 val song = songs.firstOrNull() ?: nori.player.state.value.current ?: return@attempt
-                // The flow emits the server's answer first and the LRCLIB fallback second; the last one
-                // is the one the screen would end up showing.
-                lastLyrics = dev.nori.music.data.ForSong(song.id, nori.library.lyricsFor(song).last())
+                // The flow emits each better answer, then the same words checked once the song is measured,
+                // as the screen shows them; it ends when nothing more can come.
+                nori.library.lyricsFor(song).collect { lastLyrics = dev.nori.music.data.ForSong(song.id, it) }
             }
             "seek" -> nori.player.seekTo(ref.toLongOrNull() ?: 0L)
             // "tracelyrics on|off": the lyrics panel logs each reading it takes and the moment it shows (tag norilyrics).

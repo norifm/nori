@@ -18,6 +18,7 @@ parking_lot = "0.12"
 nori-model = { path = "../model" }
 nori-db = { path = "../db" }
 nori-player = { path = "../player" }
+nori-tasks = { path = "../tasks" }
 
 [dev-dependencies]
 nori-testdir = { path = "../testdir" }
