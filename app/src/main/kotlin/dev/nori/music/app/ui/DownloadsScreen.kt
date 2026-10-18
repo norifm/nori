@@ -22,7 +22,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -49,7 +48,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
@@ -265,14 +263,14 @@ fun DownloadsScreen(actions: ActionsViewModel) {
     var confirm by remember { mutableStateOf(false) }
     val s = sections
     val unfinished = s?.let { it.active.size + it.queued.size + it.failed.size } ?: 0
-    // Whether stopping everything asks first, and what it says, are the core's (`words_stop_all`).
-    val stop = remember(unfinished) { StopAll(unfinished > 1, say.stopAllTitle, say.stopAllText(unfinished)) }
+    // Whether stopping everything asks first is the core's (`stop_all_asks`).
+    val asks = remember(unfinished) { dev.nori.music.ffi.library.stopAllAsks(unfinished.toUInt()) }
     NoriDialog(confirm, { confirm = false }) {
         AlertCard(
-            title = { Text(stop.title) },
-            text = { Text(stop.text) },
-            confirmButton = { TextButton({ actions.cancelAllDownloads(); confirm = false }) { Text(say.stopAll) } },
-            dismissButton = { TextButton({ confirm = false }) { Text(say.cancel) } },
+            title = { Text(say.stopAllTitle) },
+            text = { Text(say.stopAllText(unfinished)) },
+            confirmButton = { TextAction(say.stopAll, { actions.cancelAllDownloads(); confirm = false }) },
+            dismissButton = { TextAction(say.cancel, { confirm = false }) },
         )
     }
     Column {
@@ -282,7 +280,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
             AnimatedVisibility(unfinished > 0, enter = fadeIn(tween(if (plain) 0 else 200)), exit = fadeOut(tween(if (plain) 0 else 200))) {
                 Text(
                     say.stopAll,
-                    Modifier.clip8().clickable { if (stop.asks) confirm = true else actions.cancelAllDownloads() }.padding(horizontal = 8.dp, vertical = 8.dp),
+                    Modifier.clip8().clickable { if (asks) confirm = true else actions.cancelAllDownloads() }.padding(horizontal = 8.dp, vertical = 8.dp),
                     style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
                 )
             }
@@ -374,9 +372,6 @@ private fun activeSub(song: Song): String {
     return progress.let { _ -> DownloadLines.row(LocalContext.current.resources, song.id) }
 }
 
-/** Stopping every download: whether it asks first (more than one song would leave the queue), and how. */
-private class StopAll(val asks: Boolean, val title: String, val text: String)
-
 /** A song on the downloads screen: the same proportions as a row in any song list. */
 @Composable
 private fun DownloadRow(
@@ -464,16 +459,16 @@ fun BeatsQuestion(actions: ActionsViewModel) {
                 Column {
                     Text(say.beatsAskText)
                     Row(
-                        Modifier.padding(top = 12.dp).clip8().clickable { keep = !keep }.padding(end = 8.dp),
+                        Modifier.padding(top = 12.dp).clip8().clickable { keep = !keep }.padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        androidx.compose.material3.Checkbox(keep, { keep = it })
-                        Text(say.beatsAskRemember)
+                        Text(say.beatsAskRemember, Modifier.weight(1f).padding(end = 12.dp))
+                        NoriSwitch(keep, { keep = it })
                     }
                 }
             },
-            confirmButton = { TextButton({ actions.answerBeats(true, keep); keep = false }) { Text(say.beatsAskYes) } },
-            dismissButton = { TextButton({ actions.answerBeats(false, keep); keep = false }) { Text(say.beatsAskNo) } },
+            confirmButton = { TextAction(say.beatsAskYes, { actions.answerBeats(true, keep); keep = false }) },
+            dismissButton = { TextAction(say.beatsAskNo, { actions.answerBeats(false, keep); keep = false }) },
         )
     }
 }

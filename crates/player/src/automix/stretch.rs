@@ -18,7 +18,7 @@ const SIGNALSMITH_HOP_S: f64 = 0.04;
 /// The smallest ratio offset Signalsmith Stretch follows cleanly, in frames per hop: closer to 1 it loses up to
 /// 2.6 dB. Such ratios are snapped to 1 or to this offset (0.07 % of tempo at 44.1 kHz).
 const SIGNALSMITH_CLEAR_FRAMES: f64 = 2.5;
-pub const MAX_CHANNELS: usize = 8;
+pub(crate) const MAX_CHANNELS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
@@ -487,8 +487,8 @@ mod tests {
         let rate = 44100;
         let mut s = Stretcher::new(rate, 2, keep);
         s.configure(ratio, (hold * rate as f64) as u64, (ramp * rate as f64) as u64);
-        let mut r = crate::automix::synth::Rng(5);
-        let x: Vec<f32> = (0..((hold + ramp + 3.0) * rate as f64) as usize * 2).map(|_| (r.next() * 0.3) as f32).collect();
+        let mut r = crate::automix::eval::Rng(5);
+        let x: Vec<f32> = (0..((hold + ramp + 3.0) * rate as f64) as usize * 2).map(|_| (r.signed() * 0.3) as f32).collect();
         let mut out = Vec::new();
         let mut buf = vec![0f32; 2048 * 2];
         let mut pos = 0;

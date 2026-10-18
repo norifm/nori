@@ -2,7 +2,28 @@ use super::*;
 use nori_core::remote::RemotePlayer;
 use nori_engine::testing::{sine, wav, Stepper, Virtual};
 use super::test_card::Card;
+use std::io::Read as _;
 use std::time::Duration;
+
+/// A server that takes every request and never answers: the paths asked for come out of the receiver.
+fn silent_server() -> (String, std::sync::mpsc::Receiver<String>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (asked, paths) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for mut c in listener.incoming().flatten() {
+            let mut buf = [0u8; 2048];
+            let n = c.read(&mut buf).unwrap_or(0);
+            let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or_default().to_string();
+            held.push(c);
+            if asked.send(line).is_err() {
+                return;
+            }
+        }
+    });
+    (url, paths)
+}
 
 #[test]
 fn late_autofill_respects_playback_and_new_queues() {
@@ -19,25 +40,9 @@ fn late_autofill_respects_playback_and_new_queues() {
         let card = Card::new();
         let clock = Virtual::default();
         let time = Stepper::new(clock.clone(), card.pull.clone());
-        let s = Session::open_on(Open {
-            queue,
-            data: dir.path(),
-            http: nori_http::Http::new(),
-            profile: SavedServer { id: "test".into(), url: "http://127.0.0.1:9".into(), user: "ann".into(), password: "pw".into(), ..Default::default() },
-            output: Box::new(card.clone()),
-            volume: Level::new(1.0, None),
-            memory_mb: 16,
-            covers: None,
-            offline: false,
-            mpris: None,
-            device: nori_core::remote::RemoteMe { name: "iPod".into(), kind: nori_remote::wire::DeviceKind::Phone },
-            discovery: None,
-            tasks: crate::Threads::new(),
-            keeps_music: true,
-            decoders: Default::default(),
-            finds_active: true,
-            out: Arc::new(|_| {}),
-        }, clock).unwrap();
+        let (url, asked) = silent_server();
+        let profile = SavedServer { id: "test".into(), url, user: "ann".into(), password: "pw".into(), ..Default::default() };
+        let s = Session::open_on(test_open(queue, dir.path(), profile, Box::new(card.clone())), clock).unwrap();
         let songs: Vec<_> = ["a", "b", "c", "d"].into_iter().enumerate().map(|(i, id)| Song {
             id: id.into(), title: id.into(), duration: 1, suffix: "wav".into(), album_id: Some(if i < 2 { "album" } else { id }.into()), ..Default::default()
         }).collect();
@@ -51,7 +56,9 @@ fn late_autofill_respects_playback_and_new_queues() {
         s.core.session.register(songs.clone());
         s.play(songs[..2].to_vec(), 0, false, Some(PageOrigin::new(nori_core::OriginKind::Album, "album")));
         time.clock.settle();
-        assert!(s.core.session.song_arrived().fill, "the album begins its autofill request");
+        // The session's own request, which this test answers itself (`filled`) once the queue has moved on.
+        let fill = asked.iter().find(|line| !line.contains("scrobble"));
+        assert!(fill.is_some(), "the album begins its autofill request");
         let previous_end = s.core.session.playlist(|p| p.seqs()[1]);
         if action == "paused" {
             time.run(Duration::from_millis(1_200));
@@ -62,14 +69,14 @@ fn late_autofill_respects_playback_and_new_queues() {
         }
         if action == "replaced" {
             let before = card.heard.lock().len();
-            crate::remote::HostPlayer(s.handle()).apply(nori_remote::wire::Op::Replace {
+            crate::remote::HostPlayer((*s).clone()).apply(nori_remote::wire::Op::Replace {
                 songs: vec![songs[3].clone()], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None,
             });
             assert!(time.until(Duration::from_secs(3), || card.heard.lock().len() >= before + 88_200), "a remote play starts without local playback");
             assert!((card.last_second_hz() - 880.0).abs() <= 1.0);
         }
         if action == "stale_resume" {
-            crate::remote::HostPlayer(s.handle()).apply(nori_remote::wire::Op::Replace {
+            crate::remote::HostPlayer((*s).clone()).apply(nori_remote::wire::Op::Replace {
                 songs: vec![songs[3].clone(), songs[1].clone()], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None,
             });
             assert!(time.until(Duration::from_secs(2), || s.engine.status().state == State::Playing));
@@ -80,7 +87,7 @@ fn late_autofill_respects_playback_and_new_queues() {
             s.engine.resume_after_refill(previous_end);
         }
         let before = card.heard.lock().len();
-        s.handle().filled(nori_core::autofill::Refill { songs: vec![songs[2].clone()], picked: None, album: None });
+        s.filled(nori_core::autofill::Refill { songs: vec![songs[2].clone()], picked: None, album: None });
         time.run(Duration::from_secs(2));
         let heard = card.heard.lock().len() - before;
         let ids = s.core.session.playlist(|p| p.ids().to_vec());
@@ -94,3 +101,58 @@ fn late_autofill_respects_playback_and_new_queues() {
         }
     }
 }
+
+/// A session of the server at `url` over four one-second songs, kept as downloads under `dir`.
+fn session_of_songs(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: Virtual) -> (Session, Vec<Song>) {
+    let prefs = nori_core::settings_store::Settings::new();
+    let mut p = prefs.open(&db_path(dir.path())).unwrap();
+    p.remote_control = false;
+    p.auto_fill = false;
+    p.auto_mix = false;
+    p.lyrics_prefetch = false;
+    prefs.put(p);
+    let queue = Arc::new(nori_core::queue::Session::new(prefs));
+    let profile = SavedServer { id: "test".into(), url: url.into(), user: "ann".into(), password: "pw".into(), ..Default::default() };
+    let s = Session::open_on(test_open(queue, dir.path(), profile, Box::new(card.clone())), clock).unwrap();
+    let songs: Vec<Song> = ["a", "b", "c", "d"].into_iter().map(|id| Song { id: id.into(), title: id.into(), duration: 1, suffix: "wav".into(), album_id: Some("album".into()), ..Default::default() }).collect();
+    s.core.download_queue(songs.clone()).unwrap();
+    s.core.download_settle(songs.iter().map(|s| s.id.clone()).collect(), vec![true; songs.len()]).unwrap();
+    for (i, song) in songs.iter().enumerate() {
+        let path = s.store.as_ref().expect("a store").download_path(&song.id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, wav(44_100, &sine(44_100, 220.0 * (i + 1) as f64, 1.0, 16_000.0))).unwrap();
+    }
+    s.core.session.register(songs.clone());
+    (s, songs)
+}
+
+/// The media keys are the session's controls: play on a queue restored but never started starts it
+/// where it was, and next at the queue's end asks for autofill songs.
+#[cfg(feature = "desktop")]
+#[test]
+fn media_keys_start_a_restored_queue_and_fill_at_its_end() {
+    let dir = nori_testdir::TempDir::new("host-keys");
+    let (url, asked) = silent_server();
+    let (card, clock) = (Card::new(), Virtual::default());
+    let time = Stepper::new(clock.clone(), card.pull.clone());
+    let (s, songs) = session_of_songs(&dir, &url, &card, clock);
+    s.play(songs[..2].to_vec(), 1, false, None);
+    s.engine.pause();
+    assert!(time.until(Duration::from_secs(2), || s.engine.status().state == State::Paused));
+    s.close();
+
+    let (card, clock) = (Card::new(), Virtual::default());
+    let time = Stepper::new(clock.clone(), card.pull.clone());
+    let (s, _) = session_of_songs(&dir, &url, &card, clock);
+    nori_mpris::Controls::toggle(&*s);
+    assert!(time.until(Duration::from_secs(3), || card.heard.lock().len() >= 88_200), "the restored queue plays");
+    assert!((card.last_second_hz() - 440.0).abs() <= 1.0, "from its own song: {} Hz", card.last_second_hz());
+
+    // Switched on only now: the songs arriving asked for nothing, so the press is what asks.
+    s.setting("autoFill", "true").expect("a setting");
+    nori_mpris::Controls::next(&*s);
+    let mut asked = std::iter::from_fn(|| asked.recv_timeout(Duration::from_secs(5)).ok());
+    assert!(asked.any(|line| line.contains("getSimilarSongs2")), "next at the end asks for more songs");
+    s.close();
+}
+

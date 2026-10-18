@@ -4049,6 +4049,7 @@ dependencies = [
  "nori-http",
  "nori-look",
  "nori-mpris",
+ "nori-output-cpal",
  "nori-remote",
  "nori-tasks",
  "nori-testdir",
@@ -4104,6 +4105,9 @@ dependencies = [
 [[package]]
 name = "nori-look"
 version = "0.6.2"
+dependencies = [
+ "uniffi",
+]
 
 [[package]]
 name = "nori-lyrics"
@@ -4135,6 +4139,7 @@ dependencies = [
  "nori-time",
  "rusqlite",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "uniffi",
 ]
@@ -4174,6 +4179,7 @@ version = "0.6.2"
 dependencies = [
  "cpal",
  "nori-engine",
+ "parking_lot",
 ]
 
 [[package]]

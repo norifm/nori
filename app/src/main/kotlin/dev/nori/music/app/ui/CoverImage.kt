@@ -37,7 +37,7 @@ class CoverImage internal constructor(val url: String?, loader: CoverLoader?) {
     var image by mutableStateOf(kept?.bitmap?.asImageBitmap())
         private set
 
-    /** It was in memory when the view was composed: drawn at once, not faded in. */
+    /** In memory when the view was composed: drawn at once, not faded in. */
     val fromMemory: Boolean = kept != null
 
     var state by mutableStateOf(if (url == null) MISSING else if (kept != null) READY else LOADING)

@@ -1,24 +1,14 @@
 //! The planner runs on the engine thread over rows read from the database: no row, however corrupt, may make it
 //! panic (that silenced playback until restart). Seeded random rows, sensible to absurd.
 
+use crate::automix::eval::Rng;
 use crate::automix::plan::plan;
 use crate::transitions::engine_plan;
 use crate::types::{AutoMixSettings, TrackAnalysis};
 
-/// Seeded xorshift: the same rows every run.
-struct R(u64);
-
-impl R {
-    fn n(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-
-    fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
-        xs[(self.n() % xs.len() as u64) as usize]
-    }
+/// One of `xs`, seeded: the same rows every run.
+fn pick<T: Copy>(r: &mut Rng, xs: &[T]) -> T {
+    xs[(r.bits() % xs.len() as u64) as usize]
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -31,23 +21,23 @@ enum Rows {
     Absurd,
 }
 
-fn row(r: &mut R, dur: i64, how: Rows) -> TrackAnalysis {
-    let ms = |r: &mut R| match how {
-        Rows::Anywhere => (r.n() % (dur.max(1) as u64 + 22_000)) as i64 - 2000,
-        Rows::Absurd => r.pick(&[0i64, -1, 1, dur / 2, dur - 1, dur, dur + 5000, 30_000, 3_000_000, -30_000, i64::MAX / 4, i64::MIN / 4]),
-        Rows::Sensible => r.pick(&[0i64, 1, dur / 2, dur - 1, dur, dur - 30_000, 30_000, 1000, dur - 5000, dur / 10]),
+fn row(r: &mut Rng, dur: i64, how: Rows) -> TrackAnalysis {
+    let ms = |r: &mut Rng| match how {
+        Rows::Anywhere => (r.bits() % (dur.max(1) as u64 + 22_000)) as i64 - 2000,
+        Rows::Absurd => pick(r, &[0i64, -1, 1, dur / 2, dur - 1, dur, dur + 5000, 30_000, 3_000_000, -30_000, i64::MAX / 4, i64::MIN / 4]),
+        Rows::Sensible => pick(r, &[0i64, 1, dur / 2, dur - 1, dur, dur - 30_000, 30_000, 1000, dur - 5000, dur / 10]),
     };
-    let f = |r: &mut R| match how {
-        Rows::Anywhere => if r.n() % 5 == 0 { 0.0 } else { (r.n() % 5_000_000) as f64 / 1000.0 },
-        Rows::Absurd => r.pick(&[0.0f64, 120.0, 60.0, 240.0, 1.0, 0.001, 1e9, -5.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 33.3, 400.0]),
-        Rows::Sensible => r.pick(&[0.0f64, 120.0, 60.0, 240.0, 33.3, 400.0, 71.3, 180.0, 12.0, 500.0, 0.5]),
+    let f = |r: &mut Rng| match how {
+        Rows::Anywhere => if r.bits().is_multiple_of(5) { 0.0 } else { (r.bits() % 5_000_000) as f64 / 1000.0 },
+        Rows::Absurd => pick(r, &[0.0f64, 120.0, 60.0, 240.0, 1.0, 0.001, 1e9, -5.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 33.3, 400.0]),
+        Rows::Sensible => pick(r, &[0.0f64, 120.0, 60.0, 240.0, 33.3, 400.0, 71.3, 180.0, 12.0, 500.0, 0.5]),
     };
-    let c = |r: &mut R| if how == Rows::Absurd { r.pick(&[0.0f32, 1.0, 0.5, 0.9, -1.0, f32::NAN, f32::INFINITY, 2.0]) } else { r.pick(&[0.0f32, 1.0, 0.5, 0.9, 0.1]) };
-    let i = |r: &mut R| if how == Rows::Absurd { r.pick(&[0i32, 1, 2, 3, 4, 5, 7, -1, 12, 24, 100, i32::MIN, i32::MAX]) } else { r.pick(&[0i32, 1, 2, 3, 4, 5, 7, 12, 24]) };
+    let c = |r: &mut Rng| if how == Rows::Absurd { pick(r, &[0.0f32, 1.0, 0.5, 0.9, -1.0, f32::NAN, f32::INFINITY, 2.0]) } else { pick(r, &[0.0f32, 1.0, 0.5, 0.9, 0.1]) };
+    let i = |r: &mut Rng| if how == Rows::Absurd { pick(r, &[0i32, 1, 2, 3, 4, 5, 7, -1, 12, 24, 100, i32::MIN, i32::MAX]) } else { pick(r, &[0i32, 1, 2, 3, 4, 5, 7, 12, 24]) };
     TrackAnalysis {
         song_id: "x".into(),
         analysis_version: 99,
-        duration_ms: r.pick(&[dur, 0, dur + 1000, dur / 3, dur - 400]),
+        duration_ms: pick(r, &[dur, 0, dur + 1000, dur / 3, dur - 400]),
         bpm: f(r),
         bpm_confidence: c(r),
         beat_offset_ms: f(r),
@@ -55,7 +45,7 @@ fn row(r: &mut R, dur: i64, how: Rows) -> TrackAnalysis {
         downbeat_phase: i(r),
         downbeat_confidence: c(r),
         beats_per_bar: i(r),
-        lufs: r.pick(&[-70.0f32, -14.0, 0.0, -30.0, -40.0]),
+        lufs: pick(r, &[-70.0f32, -14.0, 0.0, -30.0, -40.0]),
         key: i(r),
         key_confidence: c(r),
         silence_start_ms: ms(r),
@@ -96,14 +86,14 @@ fn row(r: &mut R, dur: i64, how: Rows) -> TrackAnalysis {
 
 /// Plans `n` pairs of rows drawn `how` and reports each distinct panic with its first pair.
 fn planned(how: Rows, seed: u64, n: usize) {
-    let mut r = R(seed);
+    let mut r = Rng(seed);
     let mut panics = std::collections::BTreeMap::new();
     for k in 0..n {
         let durations = [240_000i64, 900_000, 60_000, 31_000, 0, 1_200_000];
-        let (d1, d2) = (r.pick(&durations), r.pick(&durations));
+        let (d1, d2) = (pick(&mut r, &durations), pick(&mut r, &durations));
         let (a, b) = (row(&mut r, d1, how), row(&mut r, d2, how));
-        let s = AutoMixSettings { max_transition_s: r.pick(&[16.0f32, 8.0, 30.0, 1.0]), keep_pitch: r.pick(&[true, false]), beat_match: r.pick(&[true, false]), ..AutoMixSettings::default() };
-        let (told1, told2) = (r.pick(&[d1, d1 + 2000, 0]), r.pick(&[d2, d2 - 2000, 0]));
+        let s = AutoMixSettings { max_transition_s: pick(&mut r, &[16.0f32, 8.0, 30.0, 1.0]), keep_pitch: pick(&mut r, &[true, false]), beat_match: pick(&mut r, &[true, false]), ..AutoMixSettings::default() };
+        let (told1, told2) = (pick(&mut r, &[d1, d1 + 2000, 0]), pick(&mut r, &[d2, d2 - 2000, 0]));
         let made = std::panic::catch_unwind(|| {
             let t = plan(Some(&a), Some(&b), told1, told2, &s);
             engine_plan(&t, "y")

@@ -2,6 +2,7 @@ package dev.nori.music.app.ui
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Pause
@@ -218,11 +219,9 @@ fun androidx.compose.ui.draw.CacheDrawScope.sleeveWash(
     // even than under the artwork. So the stripes give way, slowly at first, to a deeper page colour,
     // and arrive at it exactly at the bottom edge of the screen, where there is nothing to meet.
     //
-    // The page ends on its own colour, not on a darkened version of it. Taking a third of the way
-    // to black off the bottom was barely visible while every page was dark; now that a bright
-    // record gets a bright page it split the screen in two - the record's colour across the top
-    // and something close to black under the controls. The gradient below still calms the stripes;
-    // it no longer changes how light the page is. Made once per page and sleeve, not per frame.
+    // The page ends on its own colour, not on a darkened version of it: a bright record gets a bright
+    // page, and darkening its bottom would split the screen in two. The gradient below calms the
+    // stripes without changing how light the page is. Made once per page and sleeve, not per frame.
     val look = palette.look
     val floor = if (endY - bottom > 1f) Brush.verticalGradient(
         // The colours stay through the controls and settle into one only towards the bottom:
@@ -409,7 +408,7 @@ val MELT: Float get() = stage.melt
  * A gradient of [color] at the core's [stops], from [startY] to [endY] - or, [across], from x [startY] to
  * [endY]. Made once per size, never per frame.
  */
-fun alphaGradient(stops: List<dev.nori.music.ffi.GradientStop>, color: Color, startY: Float, endY: Float, across: Boolean = false): Brush {
+fun alphaGradient(stops: List<dev.nori.music.ffi.look.Stop>, color: Color, startY: Float, endY: Float, across: Boolean = false): Brush {
     val at = Array(stops.size) { stops[it].at to color.copy(alpha = stops[it].alpha) }
     return if (across) Brush.horizontalGradient(*at, startX = startY, endX = endY) else Brush.verticalGradient(*at, startY = startY, endY = endY)
 }
@@ -622,20 +621,13 @@ fun SearchField(
     // Asked for by hand: opening search focuses the field so the keyboard is already there.
     val focus = remember(autofocus) { if (autofocus) FocusRequester() else null }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    LaunchedEffect(focus, focusKey) {
-        if (focus == null) return@LaunchedEffect
-        // The field's node is not attached on the frame this first runs, and requestFocus on an
-        // unattached one throws and leaves the screen with no keyboard at all - which is what tapping
-        // Search used to do about half the time. Ask again for a few frames until it takes.
-        repeat(12) {
-            androidx.compose.runtime.withFrameNanos {}
-            if (runCatching { focus.requestFocus() }.isSuccess) {
-                // Focus alone does not always raise the keyboard when it lands before the window is
-                // ready; ask for it explicitly, which is the whole point of autofocus.
-                keyboard?.show()
-                return@LaunchedEffect
-            }
-        }
+    // A focus request needs the field's node attached, which it is once the field is placed.
+    var placed by remember { mutableStateOf(false) }
+    LaunchedEffect(focus, focusKey, placed) {
+        if (focus == null || !placed) return@LaunchedEffect
+        focus.requestFocus()
+        // Focus alone does not raise the keyboard when it lands before the window is ready.
+        keyboard?.show()
     }
     Surface(
         shape = PillShape, color = LocalLook.current.color(CoverLook.FIELD),
@@ -653,7 +645,7 @@ fun SearchField(
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
                     modifier = Modifier.fillMaxWidth()
                         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
-                        .then(if (focus != null) Modifier.focusRequester(focus) else Modifier),
+                        .then(if (focus != null) Modifier.focusRequester(focus).onPlaced { placed = true } else Modifier),
                 )
             }
             if (value.isNotEmpty()) androidx.compose.material3.IconButton({ onValue("") }, Modifier.size(28.dp)) {
@@ -769,47 +761,64 @@ fun FormField(
 }
 
 /**
- * The list row every browsing screen shares: something on the left, a title (and maybe a second line),
- * a value or a chevron on the right, and a hairline that starts where the text does. Genres, decades,
- * folders, playlists and stations all used to draw their own row, each with its own padding, which is
- * what made the library feel like several apps stitched together.
+ * The list row every screen shares: something on the left (a picture, or a few characters such as a
+ * rank), a title and maybe a second line, a value or a chevron on the right, and a hairline that starts
+ * where the text does. Without [onClick] it only says something.
  */
 @Composable
 fun NavRow(
     title: String,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     trailing: String? = null,
     leading: (@Composable () -> Unit)? = null,
+    leadingText: String? = null,
     chevron: Boolean = false,
     divider: Boolean = true,
+    /** How many lines the subtitle may take. */
+    subtitleLines: Int = 1,
+    /** [trailing] in the accent, as a count or a tap's word. */
+    trailingAccent: Boolean = false,
     action: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().clickable(onClick = onClick)
+            Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .padding(start = Space.gutter, end = if (action != null) 4.dp else Space.gutter, top = 11.dp, bottom = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (leading != null) { leading(); Spacer(Modifier.size(12.dp)) }
+            if (leadingText != null) Text(leadingText, Modifier.width(LEADING_TEXT), style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (!subtitle.isNullOrEmpty()) Text(
                     subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    maxLines = subtitleLines, overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (!trailing.isNullOrEmpty()) Text(trailing, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
+            if (!trailing.isNullOrEmpty()) Text(
+                trailing, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium,
+                color = if (trailingAccent) scheme.primary else scheme.onSurfaceVariant,
+            )
             action?.invoke(this)
             if (chevron) Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
                 Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
         }
-        if (divider) Hairline(startIndent = Space.gutter + (if (leading != null) 60.dp else 0.dp))
+        if (divider) Hairline(startIndent = Space.gutter + when { leading != null -> 60.dp; leadingText != null -> LEADING_TEXT; else -> 0.dp })
     }
+}
+
+/** The width a row's leading characters (a rank) stand in. */
+private val LEADING_TEXT = 28.dp
+
+/** A word in the accent that does something when tapped: a dialog's buttons, a row's "Edit". */
+@Composable
+fun TextAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    androidx.compose.material3.TextButton(onClick, modifier, enabled = enabled) { Text(label) }
 }
 
 /** A row that does something rather than going somewhere: "New playlist", "Import M3U…". */
@@ -881,7 +890,7 @@ fun FavoriteHeart(
         if (!ready) { ready = true; return@LaunchedEffect }
         if (plain) return@LaunchedEffect
         scale.snapTo(1f)
-        // Stiffer springs than they were: same jump, a beat quicker - the old one hung at the top.
+        // Stiff springs: a quick jump that does not hang at the top.
         scale.animateTo(1.28f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 1350f))
         scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 900f))
     }
@@ -905,12 +914,11 @@ fun FavoriteCircle(starred: Boolean, modifier: Modifier = Modifier, onClick: () 
         if (!ready) { ready = true; return@LaunchedEffect }
         if (plain) return@LaunchedEffect
         scale.snapTo(1f)
-        // Stiffer springs than they were: same jump, a beat quicker - the old one hung at the top.
+        // Stiff springs: a quick jump that does not hang at the top.
         scale.animateTo(1.22f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 1350f))
         scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 900f))
     }
-    // The jump is the heart's alone. It used to scale the whole Box, disc included, so the circle
-    // around the heart bulged with it; only the glyph moves now, and the plate holds its place.
+    // The jump is the heart's alone: only the glyph moves, and the plate holds its place.
     CircleButton(
         if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
         if (starred) say.removeFromFavourites else say.favourite,
@@ -1102,8 +1110,8 @@ fun Modifier.loadingSheen(active: Boolean, leaving: Boolean = false): Modifier =
     )
     val look = LocalLook.current
     drawWithCache {
-        // One band, made once per size and colour and slid across by translation: the band used to be a
-        // new gradient on every frame of every loading cover.
+        // One band, made once per size and colour and slid across by translation, not a new gradient on
+        // every frame of every loading cover.
         val color = look.color(dev.nori.music.look.CoverLook.ON)
         val band = size.width * 0.9f
         val sheen = Brush.linearGradient(

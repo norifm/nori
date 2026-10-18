@@ -222,31 +222,6 @@ pub(crate) fn motion_bundle_paths(html: String) -> Vec<String> {
     out
 }
 
-/// base64url (or plain base64), padding optional.
-fn b64(s: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(s.len() * 3 / 4);
-    let (mut acc, mut bits) = (0u32, 0u32);
-    for c in s.bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'-' | b'+' => 62,
-            b'_' | b'/' => 63,
-            b'=' => break,
-            _ => return None,
-        } as u32;
-        acc = (acc << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-            acc &= (1 << bits) - 1;
-        }
-    }
-    Some(out)
-}
-
 /// The web player's developer token in a script: a JWT unexpired for another minute at `now_s`, issued
 /// by `AMPWebPlay` if any (other JWTs are refused by the catalogue), else the first readable one.
 pub(crate) fn motion_token(js: Vec<u8>, now_s: i64) -> Option<String> {
@@ -270,7 +245,7 @@ pub(crate) fn motion_token(js: Vec<u8>, now_s: i64) -> Option<String> {
         if dots != 2 || token.len() < 80 || parts.iter().any(|p| p.is_empty()) {
             continue;
         }
-        let read = |p: &str| b64(p).and_then(|b| serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object);
+        let read = |p: &str| crate::formats::base64(p).and_then(|b| serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object);
         let (Some(header), Some(payload)) = (read(parts[0]), read(parts[1])) else { continue };
         if payload.get("exp").and_then(Value::as_i64).is_some_and(|exp| exp <= now_s + 60) {
             continue;

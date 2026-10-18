@@ -31,16 +31,14 @@ struct State {
     generation: u64,
     /// The last "no transition" answer: song, generation, and why (`None`: the planner chose gapless).
     none: Option<(String, u64, Option<Skip>)>,
-    /// The last few plans, newest last.
-    notes: Vec<TransitionNote>,
-    /// The last few plans made, newest last, out of which song (None: gapless): a jam's guests still
+    /// The last few plans made, newest last, each told and as made (None: gapless): a jam's guests still
     /// learn the plan out of the song heard once the host's decoder has planned the next one.
-    made: Vec<(String, Option<Plan>)>,
+    made: Vec<(TransitionNote, Option<Plan>)>,
 }
 
 impl State {
     const fn new() -> Self {
-        State { prefs: None, transitions_off: false, window: Vec::new(), shuffling: false, generation: 0, none: None, notes: Vec::new(), made: Vec::new() }
+        State { prefs: None, transitions_off: false, window: Vec::new(), shuffling: false, generation: 0, none: None, made: Vec::new() }
     }
 
     fn take_prefs(&mut self, prefs: TransitionPrefs) {
@@ -54,20 +52,12 @@ impl State {
         self.window.iter().find(|s| s.id == song_id).map_or(0, |s| s.duration_ms)
     }
 
-    fn keep_made(&mut self, outgoing_id: &str, plan: Option<Plan>) {
-        self.made.retain(|(id, _)| id != outgoing_id);
+    fn keep(&mut self, n: TransitionNote, plan: Option<Plan>) {
+        self.made.retain(|(k, _)| k.outgoing_id != n.outgoing_id);
         if self.made.len() >= NOTES_KEPT {
             self.made.remove(0);
         }
-        self.made.push((outgoing_id.to_string(), plan));
-    }
-
-    fn note(&mut self, n: TransitionNote) {
-        self.notes.retain(|k| k.outgoing_id != n.outgoing_id);
-        if self.notes.len() >= NOTES_KEPT {
-            self.notes.remove(0);
-        }
-        self.notes.push(n);
+        self.made.push((n, plan));
     }
 }
 
@@ -92,7 +82,7 @@ impl Planner {
         Arc::new(Planner { state: Mutex::new(State::new()), db, read_settings, worker: OnceLock::new(), planned: Mutex::new(None) })
     }
 
-    /// Whether the output forbids touching samples (`AudioPolicy::transitions_off`); set whenever the
+    /// Whether the output forbids touching samples (`AudioPolicy::untouched`); set whenever the
     /// policy changes.
     pub fn transition_setup(&self, transitions_off: bool) {
         let mut p = self.state.lock();
@@ -167,8 +157,7 @@ impl Planner {
         {
             let mut p = self.state.lock();
             p.none = plan.is_none().then(|| (outgoing_id.to_string(), generation, None));
-            p.note(note);
-            p.keep_made(outgoing_id, plan.clone());
+            p.keep(note, plan.clone());
         }
         if let Some(told) = &*self.planned.lock() {
             told();
@@ -191,7 +180,7 @@ impl Planner {
 
     /// The plan last made out of `outgoing_id`: None while none was, Some(None) when gapless.
     pub fn made(&self, outgoing_id: &str) -> Option<Option<Plan>> {
-        self.state.lock().made.iter().rev().find(|(id, _)| id == outgoing_id).map(|(_, p)| p.clone())
+        self.state.lock().made.iter().rev().find(|(n, _)| n.outgoing_id == outgoing_id).map(|(_, p)| p.clone())
     }
 
     /// Tells `told` after each plan made, from the thread that asked for it; None stops.
@@ -201,12 +190,12 @@ impl Planner {
 
     /// The last plan out of `outgoing_id`.
     pub fn transition_note(&self, outgoing_id: &str) -> Option<TransitionNote> {
-        self.state.lock().notes.iter().rev().find(|n| n.outgoing_id == outgoing_id).cloned()
+        self.state.lock().made.iter().rev().find(|(n, _)| n.outgoing_id == outgoing_id).map(|(n, _)| n.clone())
     }
 
     /// The last plan into `incoming_id`.
     pub fn transition_into(&self, incoming_id: &str) -> Option<TransitionNote> {
-        self.state.lock().notes.iter().rev().find(|n| n.incoming_id == incoming_id).cloned()
+        self.state.lock().made.iter().rev().find(|(n, _)| n.incoming_id == incoming_id).map(|(n, _)| n.clone())
     }
 
     /// Whether `song_id` should be measured as it plays, and its length in ms (0 unknown) to size the measurement.
@@ -438,14 +427,14 @@ mod tests {
     #[test]
     fn notes() {
         let mut p = State::new();
-        p.note(n("a", "b"));
-        p.note(TransitionNote { kind: TransitionKind::EchoOut, ..n("a", "b") });
-        assert_eq!(p.notes.iter().map(|n| n.kind).collect::<Vec<_>>(), [TransitionKind::EchoOut], "a replan replaces the note");
+        p.keep(n("a", "b"), None);
+        p.keep(TransitionNote { kind: TransitionKind::EchoOut, ..n("a", "b") }, None);
+        assert_eq!(p.made.iter().map(|(n, _)| n.kind).collect::<Vec<_>>(), [TransitionKind::EchoOut], "a replan replaces the note");
         for i in 0..8 {
-            p.note(n(&format!("x{i}"), "y"));
+            p.keep(n(&format!("x{i}"), "y"), None);
         }
-        assert_eq!(p.notes.len(), NOTES_KEPT);
-        assert_eq!(p.notes.last().unwrap().outgoing_id, "x7");
+        assert_eq!(p.made.len(), NOTES_KEPT);
+        assert_eq!(p.made.last().unwrap().0.outgoing_id, "x7");
 
         // Kind names log as screaming snake.
         assert_eq!(screaming_snake("BeatMatched"), "BEAT_MATCHED");

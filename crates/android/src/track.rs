@@ -2166,7 +2166,7 @@ mod tests {
             let a = nori_player::types::TrackAnalysis { song_id: id.clone(), analysis_version: nori_player::automix::ANALYSIS_VERSION, duration_ms: ms, bpm: 120.0, bpm_confidence: 1.0, lufs: -14.0, silence_end_ms: ms, mixramp_end_ms: ms, outro_start_ms: ms - 8_000, ..Default::default() };
             app.analyses.insert(id.clone(), a);
         }
-        let bands = vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }];
+        let bands = vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }];
         let settings = nori_engine::Settings { sound: nori_engine::Sound { bands, ..Default::default() }, auto_mix: true, ..Default::default() };
         let config = nori_engine::Config { settings, ..Default::default() };
         let phone_like = |ticks| Live { bounded: true, threshold: RATE as u64 / 4, defer: 40_000_000, ..Live::new(ticks) };
@@ -2888,7 +2888,7 @@ mod tests {
             let ms = |t: libc::timeval| t.tv_sec as f64 * 1000.0 + t.tv_usec as f64 / 1000.0;
             ms(u.ru_utime) + ms(u.ru_stime)
         };
-        let loud = nori_engine::Sound { bands: vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }], ..Default::default() };
+        let loud = nori_engine::Sound { bands: vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }], ..Default::default() };
         for (name, settings) in [("plain", nori_engine::Settings::default()), ("equalizer", nori_engine::Settings { sound: loud, ..Default::default() })] {
             let queue = nori_engine::SharedQueue::default();
             queue.0.lock().set(vec!["a".into()], Some(0), false, 0);

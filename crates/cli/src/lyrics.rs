@@ -57,12 +57,7 @@ impl SongLyrics {
     /// Advances the clock to `position_ms`: what to draw, and ms until the next wake (None: never).
     pub fn advance(&self, position_ms: i64, sweep: bool, force: bool) -> (Step, Option<u64>) {
         let step = self.clock.advance(position_ms, sweep, false, force);
-        let wait = match step.wait {
-            0 => None,
-            w if step.still || !(sweep && self.clock.timing().sweeps()) => Some(w as u64),
-            frames => Some(frames as u64 * FRAME_MS),
-        };
-        (step, wait)
+        (step, self.clock.wait_ms(&step, sweep, FRAME_MS))
     }
 }
 

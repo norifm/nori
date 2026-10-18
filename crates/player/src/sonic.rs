@@ -207,11 +207,6 @@ impl<T: Sample> Sonic<T> {
         }
     }
 
-    /// Input that is queued but not processed yet, in frames.
-    pub fn pending_input_frames(&self) -> usize {
-        self.input_frames
-    }
-
     fn ensure(buf: &mut Vec<T>, ch: usize, frames: usize, additional: usize) {
         let cap = buf.len() / ch;
         if frames + additional > cap {

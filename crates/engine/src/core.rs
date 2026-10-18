@@ -1223,7 +1223,7 @@ impl BeatModel {
         let file = nori_core::model_download::ensure(client)?;
         let t0 = nori_time::Instant::now();
         let before = nori_core::heap::live_bytes();
-        let loaded = nori_core::model_download::read(&nori_core::beat_model::BEAT_THIS, &file).and_then(|bytes| nori_player::automix::neural::BeatThis::from_weights(&bytes).map_err(|e| e.to_string()));
+        let loaded = nori_core::model_download::read(&file).and_then(|bytes| nori_player::automix::neural::BeatThis::from_weights(&bytes).map_err(|e| e.to_string()));
         match loaded {
             Ok(m) => {
                 let bytes = before.zip(nori_core::heap::live_bytes()).map_or(1, |(a, b)| (b - a).max(1) as u64);
@@ -1300,6 +1300,24 @@ pub fn follow(engine: &crate::Engine, session: &Session, lead: Option<nori_core:
         mix_place}));
 }
 
+/// The playback the account's other devices see, from the engine's status `s` run on to now (held while
+/// it waits for audio), at `volume` (0 to 100) where it can be set.
+pub fn playing(s: &crate::Status, volume: Option<u8>) -> nori_core::remote::Playing {
+    let (position_ms, mix_position_ms) = s.positions_at(nori_time::Instant::now(), s.buffering);
+    nori_core::remote::Playing {
+        playing: s.state == crate::State::Playing,
+        buffering: s.buffering,
+        mixing: s.mixing,
+        mix_from: s.mix_from.map(|i| i as u32),
+        mix_position_ms,
+        mix_rate: s.speed,
+        position_ms: position_ms.max(0),
+        rate: s.pace,
+        index: s.index.map(|i| i as u32),
+        volume,
+    }
+}
+
 /// Where the host's song is in this session's queue, followed by the one after it there, and whether
 /// the queue was set to the host's songs for it. The queue is set anew only when those two are not in it
 /// in a row already, so the song playing here and the one read ahead stay as they are.
@@ -1331,7 +1349,7 @@ pub fn queued_for(session: &Session, l: &nori_core::remote::Lead) -> (usize, boo
 }
 
 pub fn settings(s: &StoredPrefs, volume_db: f64) -> Settings {
-    let bands = if s.eq_enabled { s.eq_bands.iter().map(|b| Band { kind: b.kind as i32, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }).collect() } else { Vec::new() };
+    let bands = if s.eq_enabled { s.eq_bands.iter().map(|b| Band { kind: b.kind, freq: b.freq as f64, gain_db: b.gain_db as f64, q: b.q as f64, channel: b.channel as i32 }).collect() } else { Vec::new() };
     let sound = if s.sound_bypass { Sound::default() } else { Sound {
         // The graphic equalizer replaces the parametric bands.
         graphic: nori_core::dsp::graphic_sliders(s),

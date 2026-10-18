@@ -12,7 +12,7 @@ use nori_core::{PageOrigin, Song};
 use nori_engine::{AudioOutput, Body, ByteSource, Feed, Filling, OpenError, OutputFormat, State};
 use nori_host::session::{Driven, Note, Open, Said, Session};
 use nori_look::lyrics::LyricClock;
-use nori_tasks::Local;
+use nori_tasks::{Local, OneThread};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -66,11 +66,7 @@ impl AudioOutput for Output {
 
 /// A function of the page's, called from the module's one thread.
 #[derive(Clone)]
-pub struct Js(js_sys::Function);
-
-// SAFETY: wasm32-unknown-unknown without the atomics feature has a single thread; nothing is ever sent.
-unsafe impl Send for Js {}
-unsafe impl Sync for Js {}
+pub struct Js(OneThread<js_sys::Function>);
 
 impl Js {
     fn call(&self) {
@@ -82,35 +78,14 @@ impl Js {
     }
 }
 
-/// The browser's HTTP: the core's API over `fetch`, songs streamed into their loaders.
-struct Web {
-    wake: Js,
-}
-
-#[async_trait::async_trait]
-impl nori_core::transport::Transport for Web {
-    async fn get(&self, url: String, timeout_ms: u32) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
-        Fetch.get(url, timeout_ms).await
-    }
-
-    async fn send(&self, request: nori_core::transport::Exchange) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
-        Fetch.send(request).await
-    }
-
-    fn address_changed(&self) {}
-
-    fn network(&self) -> nori_core::transport::Network {
-        nori_core::transport::Network::Unmetered
-    }
-}
-
-impl ByteSource for Web {
+/// The player's songs are streamed into their loaders.
+impl ByteSource for Fetch<Js> {
     fn open(&self, _: &str, _: u64) -> Result<Body, OpenError> {
         Err("nothing blocks in a browser: the bytes are pushed".into())
     }
 
     fn push(&self, fill: Filling) -> Option<Filling> {
-        let wake = self.wake.clone();
+        let wake = self.0.clone();
         crate::stream::push(fill, move || wake.call());
         None
     }
@@ -136,7 +111,7 @@ pub struct Live {
 
 impl Live {
     pub fn new(tell: js_sys::Function, wake: js_sys::Function) -> Live {
-        Live { tell: Js(tell), wake: Js(wake), card: Arc::new(Mutex::new(Card { rate: 48_000, ..Card::default() })), said: Arc::default(), open: RefCell::default(), lyrics: RefCell::default() }
+        Live { tell: Js(OneThread(tell)), wake: Js(OneThread(wake)), card: Arc::new(Mutex::new(Card { rate: 48_000, ..Card::default() })), said: Arc::default(), open: RefCell::default(), lyrics: RefCell::default() }
     }
 }
 
@@ -152,7 +127,7 @@ impl Nori {
         let open = Open {
             queue: self.app.clone(),
             data: Path::new(""),
-            http: Arc::new(Web { wake: live.wake.clone() }),
+            http: Arc::new(Fetch(live.wake.clone())),
             profile,
             output: Box::new(Output(live.card.clone())),
             volume: nori_host::Level::new(1.0, None),
@@ -194,9 +169,6 @@ impl Nori {
     fn drain(&self) {
         let said = std::mem::take(&mut *self.live.said.lock());
         for s in said {
-            if let Said::Engine(e) = &s {
-                self.with(|h| h.followed(e));
-            }
             if let Said::Lyrics { song, pick } = &s {
                 let at = self.with(|h| h.engine.status().position_now()).unwrap_or(0);
                 *self.live.lyrics.borrow_mut() = Some((song.clone(), clock_on(&pick.lyrics, at)));
@@ -231,15 +203,15 @@ impl Nori {
     }
 
     pub fn toggle(&self) {
-        self.with(Session::toggle);
+        self.with(|h| h.toggle());
     }
 
     pub fn next(&self) {
-        self.with(Session::next);
+        self.with(|h| h.next());
     }
 
     pub fn previous(&self) {
-        self.with(Session::previous);
+        self.with(|h| h.previous());
     }
 
     pub fn seek(&self, ms: f64) {
@@ -263,8 +235,9 @@ impl Nori {
         self.with(|h| h.shuffle(on));
     }
 
-    pub fn repeat(&self, mode: u8) {
-        self.with(|h| h.repeat(mode));
+    /// The next repeat mode after the one shown: off, all, one.
+    pub fn cycle_repeat(&self) {
+        self.with(|h| h.cycle_repeat());
     }
 
     /// Sets a setting by name and applies it; false if there is no such setting.
@@ -443,7 +416,7 @@ impl Nori {
     pub async fn jam_join(&self, link: String, name: String) -> Result<String, JsValue> {
         use nori_core::remote::JamJoin;
         let remote = self.with(|h| h.remote()).flatten();
-        let transport: Arc<dyn nori_core::transport::Transport> = Arc::new(Web { wake: self.live.wake.clone() });
+        let transport: Arc<dyn nori_core::transport::Transport> = Arc::new(Fetch(()));
         let pass = match nori_core::remote::jam_join(transport, self.app.settings.clone(), remote, link, name.clone()).await.map_err(error)? {
             JamJoin::Joined { pass } => pass,
             JamJoin::Own => return Ok("own".into()),

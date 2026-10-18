@@ -1,13 +1,13 @@
 //! Where the core's async work runs. A [`Tasks`] spawns futures and makes timers: natively [`Native`],
 //! one thread that parks while no task is ready and no timer is due; in a browser `Local`, the page's
 //! event loop and `setTimeout`. Work waits on futures (a request, a [`Tasks::sleep`], a [`Notify`]),
-//! picks the first of two with [`first`], and is cancelled by dropping what it waits on.
+//! picks the first of two with `futures_util::future::select`, and is cancelled by dropping what it waits on.
 //!
 //! A task's futures must not block the thread they are polled on: a request answers from the
 //! platform's own threads or event loop and wakes its task then.
 
 use std::future::Future;
-use std::pin::{pin, Pin};
+use std::pin::Pin;
 use std::sync::Mutex;
 use std::task::{Context, Poll, Waker};
 
@@ -20,7 +20,7 @@ pub use native::Native;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod web;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::Local;
+pub use web::{Local, OneThread};
 
 /// A spawned piece of work.
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
@@ -55,6 +55,17 @@ impl Notify {
         waiting.into_iter().for_each(Waker::wake);
     }
 
+    /// Ready once `done` holds, checked now and after each notice.
+    pub async fn until(&self, done: impl Fn() -> bool) {
+        loop {
+            let notified = self.notified();
+            if done() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     /// Ready at the next notice after now.
     pub fn notified(&self) -> Notified<'_> {
         let seen = self.inner.lock().unwrap_or_else(|e| e.into_inner()).0;
@@ -83,28 +94,10 @@ impl Future for Notified<'_> {
     }
 }
 
-/// Which of [`first`]'s futures was ready.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Either<A, B> {
-    Left(A),
-    Right(B),
-}
-
-/// The first of `a` and `b` to be ready (`a` when both are); the other is dropped.
-pub async fn first<A: Future, B: Future>(a: A, b: B) -> Either<A::Output, B::Output> {
-    let (mut a, mut b) = (pin!(a), pin!(b));
-    std::future::poll_fn(|cx| {
-        if let Poll::Ready(v) = a.as_mut().poll(cx) {
-            return Poll::Ready(Either::Left(v));
-        }
-        b.as_mut().poll(cx).map(Either::Right)
-    })
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::pin;
     use std::sync::Arc;
     use std::task::Wake;
 

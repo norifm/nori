@@ -8,4 +8,10 @@ description = "How nori looks: the colours a page takes from its cover, shared b
 [lib]
 name = "nori_look"
 
+[features]
+# The uniffi exports the Android app's Kotlin bindings are generated from. A Rust client links the
+# crate without them.
+ffi = ["dep:uniffi"]
+
 [dependencies]
+uniffi = { workspace = true, optional = true }

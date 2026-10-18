@@ -18,7 +18,7 @@ use common::{Stepper, Virtual};
 use nori_engine::{AudioOutput, Body, ByteSource, Config, Engine, Event, Feed, Followed, Lead, Library, Located, OpenError, OutputFormat, Settings, SharedQueue, Source};
 use nori_player::automix::analysis::Analyzer;
 use nori_player::automix::plan;
-use nori_player::automix::synth::Rng;
+use nori_player::automix::eval::Rng;
 use nori_player::engine::{Host, Plan};
 use nori_player::pipeline::App;
 use nori_player::playlist::Playlist;
@@ -48,7 +48,7 @@ fn song(secs: f64, seed: u64, quiet: Option<(i64, i64)>) -> Vec<i16> {
         }
         let tone = (std::f64::consts::TAU * 220.0 * (1.0 + seed as f64 * 0.01) * t).sin() * 0.2 + (std::f64::consts::TAU * 1250.0 * t).sin() * 0.1;
         let phase = (i as f64 * 1000.0 / RATE as f64 % SAW_MS as f64) / SAW_MS as f64;
-        out.push(((tone + 0.1 * r.next()) * 32767.0) as i16);
+        out.push(((tone + 0.1 * r.signed()) * 32767.0) as i16);
         out.push((-SAW + 2.0 * SAW * phase) as i16);
     }
     out
@@ -118,19 +118,9 @@ fn mix(at_ms: i64, secs: f64, tempo: f32, ramp_s: f64) -> Plan {
     t.out_start_ms = at_ms;
     t.tempo_ratio = tempo as f64;
     t.tempo_ramp_ms = (ramp_s * 1000.0) as i64;
+    // Varispeed: a stretch keeping the pitch smears the sawtooth.
     t.keep_pitch = false;
-    Plan {
-        incoming_id: "b".into(),
-        out_start_us: at_ms * 1000,
-        duration_us: (secs * 1e6) as i64,
-        in_skip_us: 0,
-        mixer: t,
-        tempo_ratio: tempo,
-        // Varispeed: a stretch keeping the pitch smears the sawtooth.
-        keep_pitch: false,
-        ramp_us: (ramp_s * 1e6) as i64,
-        out_loop_us: 0,
-    }
+    Plan { incoming_id: "b".into(), mixer: t }
 }
 
 /// The simulated app, planning a fixed mix out of `a` (or none), keeping the engine's log lines.
@@ -629,6 +619,17 @@ impl Jam {
         Jam { host, host_skew_us: 4_000_000, mix, speed, guests, told: 0, exchanges: 0, plan_from_ns: 0 }
     }
 
+    /// [`Jam::new`] with the host playing the first song from `from_ms` for a second, then every guest joined.
+    fn joined(songs: &[(&str, &[i16])], mix: Option<Plan>, settings: Settings, ways: &[Way], from_ms: i64) -> Jam {
+        let mut jam = Jam::new(songs, mix, settings, ways);
+        jam.host.engine.play_at(0, from_ms);
+        jam.run(1_000);
+        for g in 0..jam.guests.len() {
+            jam.join(g);
+        }
+        jam
+    }
+
     fn now_ns(&self) -> i64 {
         self.host.now_ns()
     }
@@ -767,22 +768,14 @@ fn in_step(jam: &mut Jam, settle_ms: u64, ms: u64, mean_ms: f64, worst_ms: f64) 
 #[test]
 fn guests_play_in_step_through_skewed_clocks() {
     let a = song(60.0, 1, None);
-    let mut jam = Jam::new(&[("a", &a)], None, Settings::default(), &two_ways());
-    jam.host.engine.play_at(0, 0);
-    jam.run(1_000);
-    jam.join(0);
-    jam.join(1);
+    let mut jam = Jam::joined(&[("a", &a)], None, Settings::default(), &two_ways(), 0);
     in_step(&mut jam, 2_000, 20_000, 2.5, 5.0);
 }
 
 #[test]
 fn guests_play_at_the_host_speed() {
     let a = song(60.0, 1, None);
-    let mut jam = Jam::new(&[("a", &a)], None, Settings { speed: 1.25, ..Settings::default() }, &two_ways());
-    jam.host.engine.play_at(0, 0);
-    jam.run(1_000);
-    jam.join(0);
-    jam.join(1);
+    let mut jam = Jam::joined(&[("a", &a)], None, Settings { speed: 1.25, ..Settings::default() }, &two_ways(), 0);
     // Each card's stretch moves what it plays by up to a pitch period either way.
     in_step(&mut jam, 2_000, 20_000, 3.5, 15.0);
 }
@@ -790,11 +783,7 @@ fn guests_play_at_the_host_speed() {
 #[test]
 fn guests_follow_the_host_changing_speed() {
     let a = song(60.0, 1, None);
-    let mut jam = Jam::new(&[("a", &a)], None, Settings::default(), &two_ways());
-    jam.host.engine.play_at(0, 0);
-    jam.run(1_000);
-    jam.join(0);
-    jam.join(1);
+    let mut jam = Jam::joined(&[("a", &a)], None, Settings::default(), &two_ways(), 0);
     in_step(&mut jam, 2_000, 4_000, 2.5, 5.0);
     jam.speed = 1.25;
     jam.host.engine.set_settings(Settings { speed: 1.25, ..Settings::default() });
@@ -804,11 +793,7 @@ fn guests_follow_the_host_changing_speed() {
 #[test]
 fn guests_skip_the_silence_the_host_skips() {
     let a = song(60.0, 1, Some((12_000, 15_000)));
-    let mut jam = Jam::new(&[("a", &a)], None, Settings { skip_silence: true, ..Settings::default() }, &two_ways());
-    jam.host.engine.play_at(0, 5_000);
-    jam.run(1_000);
-    jam.join(0);
-    jam.join(1);
+    let mut jam = Jam::joined(&[("a", &a)], None, Settings { skip_silence: true, ..Settings::default() }, &two_ways(), 5_000);
     in_step(&mut jam, 2_000, 4_000, 2.5, 5.0);
     // Past the silence (shortened to 0.6 s there).
     in_step(&mut jam, 2_000, 8_000, 2.5, 5.0);
@@ -820,7 +805,7 @@ fn guests_keep_their_own_equalizers() {
     let settings = |db| Settings {
         sound: nori_player::sink::Sound {
             bands: vec![nori_player::dsp::Band {
-                kind: nori_player::dsp::PEAKING,
+                kind: nori_player::types::EqKind::Peaking,
                 freq: 222.0,
                 gain_db: db,
                 q: 1.0,
@@ -860,11 +845,7 @@ fn guests_keep_their_own_equalizers() {
 fn guests_play_the_host_mix() {
     let (a, b) = (song(30.0, 1, None), song(40.0, 2, None));
     for (what, plan) in [("crossfade", mix(20_000, 4.0, 1.0, 0.0)), ("beat-matched", mix(20_000, 3.0, 1.04, 4.0))] {
-        let mut jam = Jam::new(&[("a", &a), ("b", &b)], Some(plan), Settings::default(), &two_ways());
-        jam.host.engine.play_at(0, 12_000);
-        jam.run(1_000);
-        jam.join(0);
-        jam.join(1);
+        let mut jam = Jam::joined(&[("a", &a), ("b", &b)], Some(plan), Settings::default(), &two_ways(), 12_000);
         in_step(&mut jam, 2_000, 4_000, 2.5, 5.0);
         // Through the mix each guest's card plays what the host's does, read off the music itself.
         let mut through = [Vec::new(), Vec::new()];
@@ -919,11 +900,7 @@ fn a_late_plan_rejoins_the_remaining_mix() {
 #[test]
 fn guests_follow_seeks_pauses_and_skips() {
     let (a, b) = (song(60.0, 1, None), song(60.0, 2, None));
-    let mut jam = Jam::new(&[("a", &a), ("b", &b)], None, Settings::default(), &two_ways());
-    jam.host.engine.play_at(0, 0);
-    jam.run(1_000);
-    jam.join(0);
-    jam.join(1);
+    let mut jam = Jam::joined(&[("a", &a), ("b", &b)], None, Settings::default(), &two_ways(), 0);
     in_step(&mut jam, 2_000, 3_000, 2.5, 5.0);
     jam.host.engine.seek(30_000);
     in_step(&mut jam, 1_500, 3_000, 2.5, 5.0);
@@ -985,7 +962,6 @@ fn a_guest_joins_mid_mix() {
 fn a_guest_rejoins_an_outro_loop() {
     let (a, b) = (song(6.0, 1, None), song(30.0, 2, None));
     let mut plan = mix(4_000, 4.0, 1.0, 0.0);
-    plan.out_loop_us = 2_000_000;
     plan.mixer.out_loop_ms = Some(2_000);
     let mut jam = Jam::new(
         &[("a", &a), ("b", &b)],
@@ -1044,10 +1020,7 @@ fn followed(jam: &Jam, g: usize) -> Option<Option<Followed>> {
 #[test]
 fn a_guest_paused_here_joins_again_where_the_host_is() {
     let a = song(120.0, 1, None);
-    let mut jam = Jam::new(&[("a", &a)], None, Settings::default(), &two_ways()[..1]);
-    jam.host.engine.play_at(0, 0);
-    jam.run(1_000);
-    jam.join(0);
+    let mut jam = Jam::joined(&[("a", &a)], None, Settings::default(), &two_ways()[..1], 0);
     in_step(&mut jam, 2_000, 2_000, 2.5, 5.0);
     let g = jam.guests[0].rig.engine.clone();
     g.seek(40_000);
@@ -1074,11 +1047,7 @@ fn a_guest_paused_here_joins_again_where_the_host_is() {
 #[test]
 fn an_admins_pause_pauses_every_guest() {
     let a = song(120.0, 1, None);
-    let mut jam = Jam::new(&[("a", &a)], None, Settings::default(), &two_ways());
-    jam.host.engine.play_at(0, 0);
-    jam.run(1_000);
-    jam.join(0);
-    jam.join(1);
+    let mut jam = Jam::joined(&[("a", &a)], None, Settings::default(), &two_ways(), 0);
     in_step(&mut jam, 2_000, 2_000, 2.5, 5.0);
     // Guest 0 is the admin: its pause takes its way to the host.
     jam.run(jam.guests[0].word_ms as u64);
@@ -1099,10 +1068,7 @@ fn an_admins_pause_pauses_every_guest() {
 #[test]
 fn a_guests_output_let_go_comes_back_in_step() {
     let a = song(500.0, 1, None);
-    let mut jam = Jam::new(&[("a", &a)], None, Settings::default(), &two_ways()[..1]);
-    jam.host.engine.play_at(0, 0);
-    jam.run(1_000);
-    jam.join(0);
+    let mut jam = Jam::joined(&[("a", &a)], None, Settings::default(), &two_ways()[..1], 0);
     in_step(&mut jam, 2_000, 2_000, 2.5, 5.0);
     let g = jam.guests[0].rig.engine.clone();
     g.release_now();
@@ -1126,10 +1092,7 @@ fn a_guests_output_let_go_comes_back_in_step() {
 #[test]
 fn a_guest_that_stops_following_plays_on_its_own_again() {
     let a = song(60.0, 1, None);
-    let mut jam = Jam::new(&[("a", &a)], None, Settings::default(), &two_ways()[..1]);
-    jam.host.engine.play_at(0, 0);
-    jam.run(1_000);
-    jam.join(0);
+    let mut jam = Jam::joined(&[("a", &a)], None, Settings::default(), &two_ways()[..1], 0);
     jam.run(3_000);
     jam.guests[0].listening = false;
     jam.guests[0].inbox.clear();

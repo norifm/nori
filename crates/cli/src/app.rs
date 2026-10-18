@@ -22,7 +22,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, M
 use ratatui::layout::{Position, Rect};
 
 use crate::art::Theme;
-use crate::backend::{Data, Downloads, Fetch, Msg, Req, ALBUM_PAGE, HOME_ROWS};
+use crate::backend::{Data, Downloads, Fetch, Msg, Req, ALBUM_PAGE};
 use crate::keys::{action, Action, Scope};
 use crate::lyrics::SongLyrics;
 use crate::settings_view::{Chore, Opened, SettingsView, Switch};
@@ -138,7 +138,8 @@ pub enum Cmd {
     Restore(String),
     Move(usize, usize),
     Shuffle(bool),
-    Repeat(u8),
+    /// The next repeat mode after the one shown.
+    CycleRepeat,
     Download(Vec<Song>),
     DownloadFetch(Fetch),
     DownloadRemove(String),
@@ -201,7 +202,7 @@ impl Cmd {
             Cmd::Volume(v) => format!("volume {v}"),
             Cmd::Jump(i) => format!("jump {i}"),
             Cmd::Shuffle(on) => format!("shuffle {on}"),
-            Cmd::Repeat(m) => format!("repeat {m}"),
+            Cmd::CycleRepeat => "repeat".into(),
             Cmd::Setting(k, v) => format!("setting {k}={v}"),
             Cmd::Action(a) => format!("action {a:?}"),
             Cmd::Curve => "curve".into(),
@@ -355,11 +356,11 @@ pub enum Item {
 /// The home page: album shelves, each scrolled independently.
 #[derive(Default)]
 pub struct Home {
-    /// Indexed like `HOME_ROWS`; None until loaded.
+    /// Indexed like the session's `home_album_rows`; None until loaded.
     pub rows: Vec<Option<(String, Vec<Album>)>>,
     pub error: Option<String>,
     pub asked: bool,
-    /// Selected shelf, indexed like `HOME_ROWS`.
+    /// Selected shelf, indexed like `rows`.
     pub shelf: usize,
     /// Per shelf: the selected album and the first visible one.
     pub pos: Vec<usize>,
@@ -688,7 +689,7 @@ pub enum Hit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListRef {
     Side,
-    /// Home shelf, indexed like `HOME_ROWS`.
+    /// Home shelf, indexed like `Home::rows`.
     Shelf(usize),
     Albums,
     Artists,
@@ -848,8 +849,6 @@ pub struct App {
     /// The sound was changed on the equalizer since it was opened.
     pub touched: bool,
     pub drag: Option<Drag>,
-    /// A pending seek target and when it was asked: the engine's status lags it for a few frames.
-    pub seek_hold: Option<(i64, Instant)>,
     /// Equalizer fader track top row and height, for mouse hits.
     pub eq_track: (u16, u16),
     pub seek_rect: Rect,
@@ -966,9 +965,9 @@ impl App {
         match view {
             View::Home if !self.home.asked => {
                 self.home.asked = true;
-                self.home.rows = (0..HOME_ROWS.len()).map(|_| None).collect();
-                self.home.pos = vec![0; HOME_ROWS.len()];
-                self.home.left = vec![0; HOME_ROWS.len()];
+                self.home.rows = Vec::new();
+                self.home.pos = Vec::new();
+                self.home.left = Vec::new();
                 self.cmds.push(Cmd::Load(Req::Home));
             }
             View::Albums if matches!(l.albums, Load::Idle) => {
@@ -1236,7 +1235,6 @@ impl App {
             return;
         }
         self.transition = None;
-        self.seek_hold = None;
         let art = self.song.as_ref().and_then(|s| s.cover_art.clone());
         if art != self.cover_art {
             self.colours = None;
@@ -1676,15 +1674,7 @@ impl App {
                 self.cmds.push(Cmd::Shuffle(on));
                 self.say(if on { "Shuffle on" } else { "Shuffle off" }, false);
             }
-            Action::Repeat => {
-                let (next, said) = match self.repeat() {
-                    REPEAT_OFF => (REPEAT_ALL, "Repeat all"),
-                    REPEAT_ALL => (REPEAT_ONE, "Repeat one"),
-                    _ => (REPEAT_OFF, "Repeat off"),
-                };
-                self.cmds.push(Cmd::Repeat(next));
-                self.say(said, false);
-            }
+            Action::Repeat => self.cmds.push(Cmd::CycleRepeat),
             Action::Go(n) => {
                 if let Some(v) = GO.get(n as usize).filter(|v| self.nav().contains(&nav_of(**v))) {
                     self.go(*v);
@@ -1767,28 +1757,15 @@ impl App {
         self.sought(to);
     }
 
-    /// Seeks to `to`, shown at once and held until the engine's status catches up.
+    /// Seeks to `to`, shown at once (the engine's status says it from the seek on).
     fn sought(&mut self, to: i64) {
-        let now = Instant::now();
         self.now.position_ms = to;
-        self.now.at = now;
-        self.seek_hold = Some((to, now));
+        self.now.at = Instant::now();
         self.cmds.push(Cmd::Seek(to));
     }
 
-    /// Takes the engine's status. After a seek the status lags: the target is kept until the status is
-    /// near it, or `SEEK_HOLD` passes (the seek landed elsewhere).
+    /// Takes the engine's status.
     pub fn follow_now(&mut self, n: Now) {
-        if let Some((to, at)) = self.seek_hold {
-            let t = Instant::now();
-            let there = (n.position(t) - to).abs() < 1_500;
-            if !there && at.elapsed() < SEEK_HOLD {
-                let held = self.now.position(t).max(to);
-                self.now = Now { position_ms: held, at: t, ..n };
-                return;
-            }
-            self.seek_hold = None;
-        }
         self.now = n;
     }
 
@@ -2779,10 +2756,3 @@ pub enum DownloadRow<'a> {
 /// How long a status note shows.
 pub const NOTE_FOR: Duration = Duration::from_secs(4);
 
-/// Longest a seek target overrides a lagging engine status.
-const SEEK_HOLD: Duration = Duration::from_secs(3);
-
-/// Repeat modes, numbered as `nori_player::playlist`.
-pub const REPEAT_OFF: u8 = 0;
-pub const REPEAT_ONE: u8 = 1;
-pub const REPEAT_ALL: u8 = 2;

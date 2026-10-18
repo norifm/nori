@@ -55,16 +55,6 @@ impl Session {
         f(&mut self.store.lock())
     }
 
-    /// Registers songs about to be queued.
-    pub fn register(&self, songs: Vec<Song>) {
-        let now = db::now_ms();
-        self.store(|s| {
-            for song in songs {
-                s.songs.insert(song.id.clone(), (song, now));
-            }
-        });
-    }
-
     /// The cover art id of queued song `id`, if known.
     pub fn cover_art(&self, id: &str) -> Option<String> {
         self.store(|s| s.songs.get(id).and_then(|(song, _)| song.cover_art.clone()))
@@ -73,12 +63,6 @@ impl Session {
     /// A registered song.
     pub fn song(&self, id: &str) -> Option<Song> {
         self.store(|s| s.songs.get(id).map(|(song, _)| song.clone()))
-    }
-
-    /// The songs for `ids` in order (unknown ones as id only). Prunes the store to `ids`, the queue, the
-    /// song an undo would put back, and songs registered within [`KEEP_MS`].
-    pub fn songs(&self, ids: Vec<String>) -> Vec<Song> {
-        self.songs_at(ids, db::now_ms())
     }
 
     fn songs_at(&self, ids: Vec<String>, now: i64) -> Vec<Song> {
@@ -136,7 +120,7 @@ impl Session {
 
     /// Whether registered song `id` is marked explicit; false if unknown.
     pub fn explicit(&self, id: &str) -> bool {
-        self.store(|s| s.songs.get(id).is_some_and(|(song, _)| song.explicit_status == "explicit"))
+        self.store(|s| s.songs.get(id).is_some_and(|(song, _)| song.explicit_status == nori_model::ExplicitStatus::Explicit))
     }
 
     /// The distinct album ids of `ids`.
@@ -156,14 +140,22 @@ impl Session {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Session {
-    /// [`Session::register`].
-    pub fn queue_register(&self, songs: Vec<Song>) {
-        self.register(songs)
+    /// Registers songs about to be queued.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "queue_register"))]
+    pub fn register(&self, songs: Vec<Song>) {
+        let now = db::now_ms();
+        self.store(|s| {
+            for song in songs {
+                s.songs.insert(song.id.clone(), (song, now));
+            }
+        });
     }
 
-    /// [`Session::songs`].
-    pub fn queue_songs(&self, ids: Vec<String>) -> Vec<Song> {
-        self.songs(ids)
+    /// The songs for `ids` in order (unknown ones as id only). Prunes the store to `ids`, the queue, the
+    /// song an undo would put back, and songs registered within [`KEEP_MS`].
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "queue_songs"))]
+    pub fn songs(&self, ids: Vec<String>) -> Vec<Song> {
+        self.songs_at(ids, db::now_ms())
     }
 
     /// Whether registered song `id` is starred, as the server said when it was queued; false if unknown.

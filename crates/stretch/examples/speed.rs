@@ -35,20 +35,16 @@ fn time(x: &[f32], ratio: f64, mut process: impl FnMut(&[f32], &mut [f32])) -> D
 
 fn main() {
     let x = input();
-    for (ratio, semitones) in [(1.25, 0.0), (1.25, 2.0), (0.8, 0.0)] {
+    for ratio in [1.25, 0.8] {
         let (mut rust, mut cpp) = (Duration::MAX, Duration::MAX);
         for _ in 0..5 {
             let mut r = nori_stretch::Stretch::preset_cheaper(CH, RATE as f32);
             let mut c = signalsmith_stretch::Stretch::preset_cheaper(CH as u32, RATE as u32);
-            if semitones != 0.0 {
-                r.set_transpose_semitones(semitones);
-                c.set_transpose_factor_semitones(semitones, None);
-            }
             rust = rust.min(time(&x, ratio, |i, o| r.process(i, o)));
             cpp = cpp.min(time(&x, ratio, |i, o| c.process(i, o)));
         }
         println!(
-            "60 s stereo at {ratio}x, {semitones:+} semitones: Rust {:.0} ms, C++ {:.0} ms, Rust/C++ {:.2}",
+            "60 s stereo at {ratio}x: Rust {:.0} ms, C++ {:.0} ms, Rust/C++ {:.2}",
             rust.as_secs_f64() * 1000.0,
             cpp.as_secs_f64() * 1000.0,
             rust.as_secs_f64() / cpp.as_secs_f64()

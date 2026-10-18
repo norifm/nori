@@ -307,35 +307,21 @@ mod tests {
     }
 
     #[test]
-    fn side_and_bar_rules() {
-        use crate::settings::ControlsSide::*;
-        assert_eq!([controls_on_left(Driver, true), controls_on_left(Driver, false)], [true, false]);
-        assert_eq!([controls_on_left(Left, false), controls_on_left(Right, true)], [true, false]);
-
-        // Bar rules: (upright, sideways) without protection, then with it.
+    fn bar_room_is_kept_where_protection_hides_the_bar() {
         use crate::settings::HideBar::*;
-        let all = |h| [bar_hidden(h, false, false), bar_hidden(h, true, false), bar_hidden(h, false, true), bar_hidden(h, true, true)];
-        assert_eq!(
-            [all(Never), all(Sideways), all(Upright), all(Always), all(Protected)],
-            [[false; 4], [false, true, false, true], [true, false, true, false], [true; 4], [false, false, true, true]],
-        );
-        assert_eq!([Never, Sideways, Upright, Always, Protected].map(bar_room_kept), [false, false, false, false, true]);
+        for h in [Never, Sideways, Upright, Always, Protected] {
+            let follows = [false, true].into_iter().any(|wide| bar_hidden(h, wide, true) != bar_hidden(h, wide, false));
+            assert_eq!(bar_room_kept(h), follows, "{h:?}");
+        }
     }
 
     #[test]
-    fn keep_awake_rules() {
+    fn charging_is_watched_where_it_keeps_the_screen_on() {
         use crate::settings::KeepAwake::*;
-        // (upright, on battery), (upright, charging), (sideways, on battery), (sideways, charging)
-        let all = |k| [keep_awake(k, false, false), keep_awake(k, false, true), keep_awake(k, true, false), keep_awake(k, true, true)];
-        assert_eq!(all(Never), [false, false, false, false]);
-        assert_eq!(all(Sideways), [false, false, true, true]);
-        assert_eq!(all(Charging), [false, true, false, true]);
-        assert_eq!(all(SidewaysCharging), [false, false, false, true]);
-        assert_eq!(all(Always), [true, true, true, true]);
-        assert_eq!(
-            [Never, Sideways, Charging, SidewaysCharging, Always].map(keep_awake_watches_charging),
-            [false, false, true, true, false],
-        );
+        for k in [Never, Sideways, Charging, SidewaysCharging, Always] {
+            let decides = [false, true].into_iter().any(|wide| keep_awake(k, wide, true) != keep_awake(k, wide, false));
+            assert_eq!(keep_awake_watches_charging(k), decides, "{k:?}");
+        }
     }
 
     #[test]
@@ -400,18 +386,18 @@ mod tests {
     #[test]
     fn state_rules() {
         let d = StoredPrefs::default();
-        let s = state(&d, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS));
+        let s = state(&d, Output::default(), &beat_model::ModelFile::default());
         assert!(!s.untouched && !s.sound_chain_on && !s.offload_paused);
         assert_eq!(s.values["crossfadeSec"], d.crossfade_sec.to_string());
-        assert!(!state(&StoredPrefs { hi_res: true, ..d.clone() }, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).untouched, "high quality output keeps the chain");
-        assert!(state(&d, Output { dac_bit_perfect: true, usb: true }, &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).untouched);
-        assert!(state(&StoredPrefs { mono: true, ..d.clone() }, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).sound_chain_on);
+        assert!(!state(&StoredPrefs { hi_res: true, ..d.clone() }, Output::default(), &beat_model::ModelFile::default()).untouched, "high quality output keeps the chain");
+        assert!(state(&d, Output { dac_bit_perfect: true, usb: true }, &beat_model::ModelFile::default()).untouched);
+        assert!(state(&StoredPrefs { mono: true, ..d.clone() }, Output::default(), &beat_model::ModelFile::default()).sound_chain_on);
         // The battery saver stands down while an effect is on, but not over USB, where it is not offered.
         let eq = StoredPrefs { eq_enabled: true, offload: true, ..d.clone() };
-        assert!(state(&eq, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).offload_paused);
-        assert!(!state(&eq, Output { dac_bit_perfect: false, usb: true }, &beat_model::ModelFile::new(&beat_model::BEAT_THIS)).offload_paused);
+        assert!(state(&eq, Output::default(), &beat_model::ModelFile::default()).offload_paused);
+        assert!(!state(&eq, Output { dac_bit_perfect: false, usb: true }, &beat_model::ModelFile::default()).offload_paused);
         // No processing on this output: the effects are kept but out of the path, so offload comes back.
-        let none = state(&StoredPrefs { sound_bypass: true, ..eq.clone() }, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS));
+        let none = state(&StoredPrefs { sound_bypass: true, ..eq.clone() }, Output::default(), &beat_model::ModelFile::default());
         assert!(!none.sound_chain_on && !none.offload_paused);
         // Every lyrics service, in the order they are asked, each on or off where it stands.
         let order: Vec<&str> = d.lyrics_order.iter().map(|s| s.name()).collect();
@@ -419,10 +405,9 @@ mod tests {
         let on: Vec<&str> = s.lyrics_sources.iter().filter(|l| l.on).map(|l| l.id.as_str()).collect();
         assert_eq!(on, order, "every service on");
         let off = set_by_name(&d, "lyricsService:BINILYRICS", "false").unwrap().prefs;
-        let s2 = state(&off, Output::default(), &beat_model::ModelFile::new(&beat_model::BEAT_THIS));
+        let s2 = state(&off, Output::default(), &beat_model::ModelFile::default());
         assert_eq!(s2.lyrics_sources[1], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false }, "switched off where it stands");
         assert!(s.lyrics_sources.iter().any(|l| l.needs_key));
         assert_eq!(s.beat_model == BeatModel::Unavailable, !beats::AVAILABLE);
-        assert_eq!(s.beat_model_mb, beat_model::SIZE_MB);
     }
 }

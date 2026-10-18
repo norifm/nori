@@ -11,7 +11,7 @@
 pub use crate::policy::{GainMode, GainTags};
 
 /// ReplayGain 2.0 reference, LUFS.
-pub const RG2_REFERENCE_LUFS: f32 = -18.0;
+pub(crate) const RG2_REFERENCE_LUFS: f32 = -18.0;
 /// Targets are clamped to within this of -18.
 const TARGET_RANGE_DB: f32 = 12.0;
 /// Largest boost any cap allows, dB.

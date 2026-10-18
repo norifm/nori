@@ -70,6 +70,30 @@ pub fn feed_shelf(f: &nori_core::FeedShelf) -> String {
 pub const LYRICS_PREFETCH: &str = "Prepare next song’s lyrics";
 pub const LYRICS_PREFETCH_DETAIL: &str = "Fetch lyrics for one upcoming library song while the current song plays";
 
+/// A Home shelf's title.
+pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
+    use nori_core::settings::HomeRow;
+    match row {
+        HomeRow::Recent => "Recently played",
+        HomeRow::Newest => "Recently added",
+        HomeRow::Frequent => "Most played",
+        HomeRow::Starred => "Favorites",
+        HomeRow::Random => "Something random",
+        HomeRow::Playlists => "Playlists",
+        HomeRow::Pinned => "Pinned",
+        HomeRow::TopSongs => "Top songs",
+    }
+}
+
+/// The repeat mode `mode` as said when it is chosen.
+pub fn repeat(mode: u8) -> &'static str {
+    match mode {
+        nori_core::rules::REPEAT_ONE => "Repeat one",
+        nori_core::rules::REPEAT_ALL => "Repeat all",
+        _ => "Repeat off",
+    }
+}
+
 /// A playback position or length in ms: "3:07".
 pub fn clock(ms: i64) -> String {
     numbers::clock(ms / 1000, false)
@@ -109,7 +133,7 @@ pub fn album_caption(d: &AlbumDetail) -> String {
     if let Some(q) = d.songs.first().and_then(quality) {
         parts.push(q);
     }
-    if d.album.explicit_status == "explicit" {
+    if d.album.explicit_status == nori_core::model::ExplicitStatus::Explicit {
         parts.push("explicit".into());
     }
     parts.join(" · ")

@@ -101,6 +101,20 @@ data class StorageUi(
 
 class SettingsViewModel(app: Application) : NoriViewModel(app) {
     val prefs: StateFlow<StoredPrefs> = nori.settings.prefs
+
+    /** What the limiter is pulling back now, in dB, read on the meter's beat while collected. */
+    val limiterDb = meter { dev.nori.music.playback.Equalizer.meterDb }
+
+    /** What the compressor is taking off now, in dB, read on the meter's beat while collected. */
+    val compressionDb = meter { dev.nori.music.playback.Equalizer.compressionDb }
+
+    private fun meter(read: () -> Float) = kotlinx.coroutines.flow.flow {
+        val beat = dev.nori.music.ffi.stage().meterMs
+        while (true) {
+            emit(read())
+            kotlinx.coroutines.delay(beat)
+        }
+    }
     val dac: StateFlow<DacState> = nori.dac.state
     private val _login = MutableStateFlow(LoginUi())
     val login: StateFlow<LoginUi> = _login

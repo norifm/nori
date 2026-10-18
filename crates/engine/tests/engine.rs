@@ -12,7 +12,7 @@ use std::time::Duration;
 use common::{Signal, Stepper, Virtual};
 use nori_engine::{App, AudioOutput, Body, ByteSource, Config, Device, DeviceWatch, Engine, Event, Feed, Library, Located, OutputFacts, OutputFormat, OutputKind, Settings, Source, State, Store};
 use nori_player::automix::analysis::Analyzer;
-use nori_player::automix::synth::Rng;
+use nori_player::automix::eval::Rng;
 use nori_player::automix::ANALYSIS_VERSION;
 use nori_player::engine::{Host, Plan};
 use nori_player::playlist::Playlist;
@@ -51,8 +51,8 @@ fn make_music(secs: f64, seed: u64) -> Vec<i16> {
         for (k, h) in hz.iter().enumerate() {
             v += (std::f64::consts::TAU * h * t).sin() * 0.2 / (k + 1) as f64;
         }
-        out.push(((v + 0.02 * r.next()) * 32767.0) as i16);
-        out.push(((v * 0.8 - 0.02 * r.next()) * 32767.0) as i16);
+        out.push(((v + 0.02 * r.signed()) * 32767.0) as i16);
+        out.push(((v * 0.8 - 0.02 * r.signed()) * 32767.0) as i16);
     }
     out
 }
@@ -169,7 +169,11 @@ impl ByteSource for Server {
             if self.ignores_offsets.load(Ordering::Relaxed) {
                 let mut c = Cursor::new(Bytes(file.clone()));
                 c.set_position(from);
-                return Ok(Body { start: from, len: Some(file.len() as u64), reader: Box::new(c) });
+                let len = Some(file.len() as u64);
+                if let (Some(steps), Some(clock)) = (self.paced.lock().iter().find(|(u, _)| u == id).map(|p| p.1.clone()), self.clock.lock().clone()) {
+                    return Ok(Body { start: from, len, reader: Box::new(Paced { inner: c, delivery: clock.delivery(), steps, at_ns: clock.now_ns() }) });
+                }
+                return Ok(Body { start: from, len, reader: Box::new(c) });
             }
             let skip = secs.parse::<usize>().map_err(|e| e.to_string())? * RATE as usize * 4;
             let samples: Vec<i16> = file[44 + skip..].as_chunks::<2>().0.iter().map(|&b| i16::from_le_bytes(b)).collect();
@@ -732,6 +736,8 @@ fn transcode_opened_mid_way_streams_from_there() {
         let extra = Extra::default();
         extra.server.transcodes.lock().push("a".into());
         extra.server.ignores_offsets.store(ignored, Ordering::Relaxed);
+        // The whole file comes on the clock, so the reader's seek always finds its place still to come.
+        extra.server.paced.lock().push(("a".into(), vec![(0, 2_000_000)]));
         let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
         rig.engine.play_at(0, 40_500);
         assert!(rig.wait_for(10, |r| r.heard.lock().len() > 2 * RATE as usize * 2));
@@ -947,17 +953,19 @@ fn seeks_land() {
     }
 }
 
+/// A seek's place is the status's at once, and through the switch's dip.
 #[test]
-fn seek_reports_switching_during_dip() {
+fn a_seek_shows_its_place_at_once() {
     let a = music(30.0, 22);
     let songs: [(&str, &[i16]); 1] = [("a", &a)];
     let rig = Rig::new(&songs, prefs_off(), Settings { fade_ms: 400, ..Settings::default() });
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2));
     rig.engine.seek(20_000);
+    assert_eq!(rig.engine.status().position_ms, 20_000, "asked");
     assert!(rig.wait_for(5, |r| r.engine.status().switching), "the dip is on");
-    assert!(rig.engine.status().position_ms < 5_000, "and the place is still the one before the seek");
-    assert!(rig.wait_for(5, |r| !r.engine.status().switching && r.engine.status().position_ms >= 20_000), "then it is the one asked for");
+    assert_eq!(rig.engine.status().position_ms, 20_000, "and the place is the one asked for");
+    assert!(rig.wait_for(5, |r| !r.engine.status().switching && r.engine.status().position_ms >= 20_000), "then the music is there");
 }
 
 #[test]
@@ -1340,7 +1348,7 @@ fn music24(secs: f64, seed: u64) -> Vec<i32> {
 }
 
 fn loud_eq() -> Settings {
-    let bands = vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }];
+    let bands = vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }];
     Settings { sound: nori_engine::Sound { bands, ..Default::default() }, ..Settings::default() }
 }
 
@@ -2182,7 +2190,7 @@ enum Step {
 }
 
 fn eq_at(db: f64) -> Settings {
-    let bands = vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: db, q: 1.0, channel: 0 }];
+    let bands = vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: db, q: 1.0, channel: 0 }];
     with_sound(nori_engine::Sound { bands, ..Default::default() })
 }
 
@@ -2770,7 +2778,7 @@ fn next_spam_keeps_playing() {
     let ms = (SECS * 1000.0) as i64;
     for round in 0..4u64 {
         let mut rng = Rng(0x9E37_79B9 + round * 7919);
-        let mut roll = |max: u64| ((rng.next() + 1.0) / 2.0 * max as f64) as u64;
+        let mut roll = |max: u64| ((rng.signed() + 1.0) / 2.0 * max as f64) as u64;
         let dir = nori_testdir::TempDir::new("skips");
         let store = Store::open(dir.path(), 256 << 20).unwrap();
         let extra = Extra { store: Some(store.clone()), ..Extra::default() };
@@ -3479,7 +3487,7 @@ fn mixramp_fades_out_after_seek() {
     let x = common::sine(RATE, 3_000.0, 12.0, 6_000.0);
     let (a, b) = (common::sine(48_000, 200.0, 40.0, 6_000.0), common::sine(48_000, 900.0, 40.0, 6_000.0));
     let gentler = || {
-        let bands = vec![nori_player::dsp::Band { kind: nori_player::dsp::PEAKING, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }];
+        let bands = vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 3.0, q: 1.0, channel: 0 }];
         Settings { auto_mix: true, sound: nori_engine::Sound { bands, ..Default::default() }, ..Settings::default() }
     };
     use Meanwhile::*;

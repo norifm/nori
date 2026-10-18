@@ -5,33 +5,21 @@ use nori_look::sleeve;
 
 use crate::Core;
 
-/// A gradient stop: position (0..1) and opacity.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
-pub struct GradientStop {
-    pub at: f32,
-    pub alpha: f32,
-}
-
-fn stops(s: &[sleeve::Stop]) -> Vec<GradientStop> {
-    s.iter().map(|s| GradientStop { at: s.at, alpha: s.alpha }).collect()
-}
-
 /// UI constants, read once.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Stage {
     /// Share of the sleeve height that fades at the bottom (also the colour sampling share).
     pub melt: f32,
-    pub rub_out: Vec<GradientStop>,
-    pub soft: Vec<GradientStop>,
+    pub rub_out: Vec<sleeve::Stop>,
+    pub soft: Vec<sleeve::Stop>,
     pub soft_from: f32,
     pub soft_to: f32,
     pub status_shade: f32,
     pub status_shade_to: f32,
     pub hero_stops: Vec<f32>,
     pub floor_stops: Vec<f32>,
-    pub lyrics_mask: Vec<GradientStop>,
+    pub lyrics_mask: Vec<sleeve::Stop>,
 
     /// Buffering time before Play shows a spinner (most skips start within it).
     pub spinner_after_ms: i64,
@@ -62,15 +50,15 @@ pub struct Stage {
 pub fn stage() -> Stage {
     Stage {
         melt: nori_look::cover::MELT,
-        rub_out: stops(&sleeve::RUB_OUT),
-        soft: stops(&sleeve::SOFT),
+        rub_out: sleeve::RUB_OUT.to_vec(),
+        soft: sleeve::SOFT.to_vec(),
         soft_from: sleeve::SOFT_FROM,
         soft_to: sleeve::SOFT_TO,
         status_shade: sleeve::STATUS_SHADE,
         status_shade_to: sleeve::STATUS_SHADE_TO,
         hero_stops: sleeve::HERO_STOPS.to_vec(),
         floor_stops: sleeve::FLOOR_STOPS.to_vec(),
-        lyrics_mask: stops(&sleeve::LYRICS_MASK),
+        lyrics_mask: sleeve::LYRICS_MASK.to_vec(),
         spinner_after_ms: 300,
         panel_ms: 360,
         sleeve_hold_ms: 180,
@@ -114,46 +102,6 @@ pub fn transport_glyph(playing: bool, buffering: bool, waited: bool) -> Transpor
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn motion_reduced(reduce: bool, ignore_system: bool, system_off: bool) -> bool {
     reduce || (system_off && !ignore_system)
-}
-
-/// See `nori_look::sleeve::page_black`.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn page_black(dark: bool, amoled: bool, cover_colours: bool) -> bool {
-    sleeve::page_black(dark, amoled, cover_colours)
-}
-
-/// See `nori_look::sleeve::band_matrix`.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn band_matrix(strength: f32, kr: f32, kg: f32, kb: f32) -> Vec<f32> {
-    sleeve::band_matrix(strength, kr, kg, kb).to_vec()
-}
-
-/// Whether the screen stays on for the lyrics.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn lyrics_keep_screen_on(asked: bool, shown: bool, playing: bool) -> bool {
-    nori_look::lyrics::keeps_screen_on(asked, shown, playing)
-}
-
-/// Where burn-in protection draws the screen; see `nori_look::burn_in::Drift`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
-pub struct BurnInDrift {
-    pub x_dp: f32,
-    pub y_dp: f32,
-    pub reach_dp: f32,
-}
-
-/// The drift at `now_ms` for protection that started at `since_ms` (wall clock).
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn burn_in_drift(now_ms: i64, since_ms: i64) -> BurnInDrift {
-    let d = nori_look::burn_in::drift(now_ms, since_ms);
-    BurnInDrift { x_dp: d.x_dp, y_dp: d.y_dp, reach_dp: d.reach_dp }
-}
-
-/// Milliseconds until the burn-in drift next moves.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn burn_in_next_move_ms(now_ms: i64) -> i64 {
-    nori_look::burn_in::next_move_ms(now_ms)
 }
 
 /// The times either side of the seek bar, in whole seconds.

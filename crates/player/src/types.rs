@@ -17,6 +17,13 @@ pub enum EqKind {
     HighShelfSlope,
 }
 
+impl EqKind {
+    /// Whether a band's gain matters for this kind (shelves and peaks; pass filters have none).
+    pub fn uses_gain(self) -> bool {
+        matches!(self, EqKind::Peaking | EqKind::LowShelf | EqKind::HighShelf | EqKind::LowShelfSlope | EqKind::HighShelfSlope)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct EqBand {
     pub kind: EqKind,

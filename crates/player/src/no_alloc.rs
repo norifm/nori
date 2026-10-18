@@ -154,18 +154,9 @@ fn holding_and_mixing() {
     // Equal gains, and each song at its own gain.
     for (a, b) in [(1.0, 1.0), (0.5, 0.8)] {
         let s = AutoMixSettings { max_transition_s: 6.0, ..Default::default() };
-        let t = plan::plan(None, None, 60_000, 60_000, &s);
-        let p = Plan {
-            incoming_id: "b".into(),
-            out_start_us: 4_000_000,
-            duration_us: t.duration_ms * 1000,
-            in_skip_us: 0,
-            mixer: t.clone(),
-            tempo_ratio: 1.0,
-            keep_pitch: true,
-            ramp_us: 0,
-            out_loop_us: 0,
-        };
+        let mut t = plan::plan(None, None, 60_000, 60_000, &s);
+        (t.out_start_ms, t.tempo_ratio, t.keep_pitch) = (4_000, 1.0, true);
+        let p = Plan { incoming_id: "b".into(), mixer: t.clone() };
         let (mut e, mut d, mut h) = (TransitionEngine::new(), Sink { bytes: 0 }, App { plan: Some(p), analyse: false });
         e.configure(&mut d, &mut h, stream("a", FMT));
         e.set_gain(a);
@@ -185,7 +176,7 @@ fn holding_and_mixing() {
 #[test]
 fn parametric_equalizer() {
     let mut eq = Equalizer::new(RATE, 2);
-    let bands = [Band { kind: 0, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }, Band { kind: 1, freq: 90.0, gain_db: 3.0, q: 0.7, channel: 0 }];
+    let bands = [Band { kind: crate::types::EqKind::Peaking, freq: 1000.0, gain_db: 4.0, q: 1.0, channel: 0 }, Band { kind: crate::types::EqKind::LowShelf, freq: 90.0, gain_db: 3.0, q: 0.7, channel: 0 }];
     eq.configure(&bands, -3.0, -6.0);
     eq.configure_output(0.1, false, -1.0, 120.0, 5.0);
     let x: Vec<i16> = tone(2.0, 440.0).chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
@@ -290,17 +281,12 @@ fn mp3_decoding() {
     let file = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/tone440.mp3")).unwrap();
     let frames = crate::sim::mp3_frames(&file);
     let mut d = Decoder::new(Codec::Mp3, 44_100, 2, None, true).unwrap();
-    let mut out = vec![0i16; 1152 * 2];
-    let mut outf = vec![0f32; 1152 * 2];
     for f in &frames[..4] {
-        d.decode_i16(f, &mut out).unwrap();
+        d.decode_lent(f).unwrap();
     }
     let n = allocations(|| {
         for f in &frames[4..] {
-            d.decode_i16(f, &mut out).unwrap();
-        }
-        for f in &frames[4..] {
-            d.decode_f32(f, &mut outf).unwrap();
+            d.decode_lent(f).unwrap();
         }
     });
     assert_eq!(n, 0);
@@ -312,13 +298,12 @@ fn opus_decoding() {
     let file = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/tone440.opus")).unwrap();
     let (setup, packets) = crate::sim::ogg_opus(&file);
     let mut d = Decoder::new(Codec::Opus, 48_000, 2, Some(&setup), false).unwrap();
-    let mut out = vec![0i16; 5760 * 2];
     for p in &packets[..4] {
-        d.decode_i16(p, &mut out).unwrap();
+        d.decode_lent(p).unwrap();
     }
     let n = allocations(|| {
         for p in &packets[4..] {
-            d.decode_i16(p, &mut out).unwrap();
+            d.decode_lent(p).unwrap();
         }
     });
     assert_eq!(n, 0);

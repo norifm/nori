@@ -477,7 +477,7 @@ fn listens_with_a_real_model(core: &Arc<Core>, current: &Mutex<Arc<Client>>, dir
     let kept = dir.join("models").join(beat_model::FILE_NAME);
     assert_eq!(model.ready(), Some(kept.clone()));
     assert_eq!(std::fs::read_dir(dir.join("models")).unwrap().count(), 1, "the weights file only: no checkpoint left");
-    assert!(nori_core::model_download::read(&nori_core::beat_model::BEAT_THIS, &kept).is_ok());
+    assert!(nori_core::model_download::read(&kept).is_ok());
     for id in ["m-3", "m-4"] {
         let a = core.analysis_get(id.into()).unwrap().unwrap();
         assert!(a.intro_grid_source >= GRID_CHECKED && a.outro_grid_source >= GRID_CHECKED, "{id}: both ends read");
@@ -488,7 +488,7 @@ fn listens_with_a_real_model(core: &Arc<Core>, current: &Mutex<Arc<Client>>, dir
     let mut bytes = std::fs::read(&kept).unwrap();
     bytes[1000] ^= 1;
     std::fs::write(&kept, &bytes).unwrap();
-    assert!(nori_core::model_download::read(&nori_core::beat_model::BEAT_THIS, &kept).is_err());
+    assert!(nori_core::model_download::read(&kept).is_err());
 }
 
 /// A jam guest's queue: the host's songs, set anew only when its song and the next are not in a row.

@@ -59,6 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -156,7 +157,7 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
         if (AppMotion.reduce) fade.snapTo(1f) else fade.animateTo(1f, tween(260, easing = androidx.compose.animation.core.LinearEasing))
     }
     Box(
-        // Without a size it fills what it is given, as the picture it used to hold did.
+        // Without a size it fills what it is given.
         (if (px > 0) modifier.size(size) else modifier.fillMaxSize().onSizeChanged {
             measured[0] = it.width; measured[1] = it.height
             if (it.width > 0 && it.height > 0) cover.want(it.width, it.height)
@@ -506,13 +507,28 @@ fun PlayingBars(tint: Color, modifier: Modifier = Modifier) {
 /** What the bars stand at while the music is paused: a shape, not a flat line. */
 private val RESTING = floatArrayOf(0.35f, 0.8f, 0.5f, 0.65f)
 
+/** What every song list draws its rows with: the song playing, the songs downloaded and selected, and the row's menu. */
+@androidx.compose.runtime.Immutable
+data class SongListState(val playingId: String?, val downloaded: Set<String>, val selected: Set<String>, val menu: (Song) -> Unit)
+
+@Composable
+fun rememberSongListState(actions: ActionsViewModel): SongListState {
+    val player: dev.nori.music.app.vm.PlayerViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val playing by player.currentId.collectAsStateWithLifecycle()
+    val done = actions.downloads.collectAsState().value.doneIds
+    val selection by actions.selection.collectAsStateWithLifecycle()
+    val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
+    val menu = LocalSongMenu.current
+    return remember(playing, done, selected, menu) { SongListState(playing, done, selected, menu) }
+}
+
 /**
  * A song list wired to the configured tap, swipe and selection behaviour; every screen that lists songs uses
  * this. Each row is an item of its own, so only the rows on screen are composed, however long the list:
  * a thousand-song playlist costs a page the same few rows a ten-song album does.
  */
 fun LazyListScope.songRows(
-    songs: List<Song>, actions: ActionsViewModel, playingId: String?, downloaded: Set<String>, selected: Set<String>, menu: (Song) -> Unit,
+    songs: List<Song>, actions: ActionsViewModel, list: SongListState,
     numbered: Boolean = false, cover: (Song) -> String? = { null }, keyPrefix: String = "",
     /**
      * Which of [songs] are listed, in order, as places in it: one disc of an album, a filtered view. All of
@@ -538,6 +554,7 @@ fun LazyListScope.songRows(
     from: dev.nori.music.ffi.model.PageOrigin? = null,
 ) {
     val (onRight, onLeft) = actions.swipes
+    val (playingId, downloaded, selected, menu) = list
     val count = rows?.size ?: songs.size
     items(
         count,
@@ -694,7 +711,7 @@ fun rememberArrival(ready: Boolean): State<Float> {
 /** How long a page's body takes to arrive, ms. */
 private const val ARRIVE_MS = 320
 
-/** How far a page's body rises as it arrives: what the old whole-body slide (6 % of its height) was for an album. */
+/** How far a page's body rises as it arrives: 6 % of an album page's height. */
 private val ARRIVE_RISE = 36.dp
 
 /**

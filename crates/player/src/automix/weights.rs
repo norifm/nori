@@ -106,7 +106,7 @@ fn bn_scale(sd: &HashMap<String, Tensor>, bn: &str, eps: f32) -> Result<Vec<f32>
 }
 
 /// The graph with the weights file's bytes in it, for tract.
-pub fn assemble(weights: &[u8]) -> Result<ModelProto, String> {
+pub(crate) fn assemble(weights: &[u8]) -> Result<ModelProto, String> {
     let mut model = graph()?;
     let graph = model.graph.as_mut().ok_or("no graph")?;
     let mut end = 0;

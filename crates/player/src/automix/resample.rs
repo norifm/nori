@@ -8,18 +8,18 @@
 
 use std::sync::Arc;
 
-use super::{PCM_16, PCM_FLOAT};
 use crate::dither::Dither;
+use crate::pcm::Encoding;
 
 /// Taps at the lower of the two rates (a 110 dB Kaiser design over the 0.05 transition band needs 142).
-pub const TAPS: usize = 144;
+pub(crate) const TAPS: usize = 144;
 /// Phases of an interpolated table, for a ratio with more steps than [`EXACT_PHASES`].
-pub const PHASES: usize = 256;
+pub(crate) const PHASES: usize = 256;
 /// The most steps a ratio may have for a row of its own per step.
-pub const EXACT_PHASES: usize = 512;
+pub(crate) const EXACT_PHASES: usize = 512;
 /// The passband's edge and the stopband's, as fractions of the lower rate.
-pub const PASS: f64 = 0.45;
-pub const STOP: f64 = 0.5;
+pub(crate) const PASS: f64 = 0.45;
+pub(crate) const STOP: f64 = 0.5;
 /// The stopband's designed depth, dB.
 const ATTENUATION_DB: f64 = 110.0;
 
@@ -171,18 +171,9 @@ impl Resampler {
     }
 
     /// Converts all of `input` (interleaved, `in_enc`) into the start of `output`. Returns (consumed, produced)
-    /// bytes; None when the output is too small (nothing taken) or an encoding is not PCM.
-    pub fn process(&mut self, input: &[u8], in_enc: i32, output: &mut [u8], out_enc: i32) -> Option<(usize, usize)> {
-        let wi = match in_enc {
-            PCM_16 => 2,
-            PCM_FLOAT => 4,
-            _ => return None,
-        };
-        let wo = match out_enc {
-            PCM_16 => 2,
-            PCM_FLOAT => 4,
-            _ => return None,
-        };
+    /// bytes; None when the output is too small (nothing taken).
+    pub fn process(&mut self, input: &[u8], in_enc: Encoding, output: &mut [u8], out_enc: Encoding) -> Option<(usize, usize)> {
+        let (wi, wo) = (in_enc.width(), out_enc.width());
         let n = input.len() / (wi * self.in_ch);
         if n == 0 {
             return Some((0, 0));
@@ -340,7 +331,7 @@ mod tests {
         let mut buf = vec![0u8; (chunk * b as usize / a as usize + 8) * 4];
         for c in x.chunks(chunk) {
             let bytes: Vec<u8> = c.iter().flat_map(|v| (*v as f32).to_le_bytes()).collect();
-            let (_, made) = r.process(&bytes, PCM_FLOAT, &mut buf, PCM_FLOAT).unwrap();
+            let (_, made) = r.process(&bytes, Encoding::Float, &mut buf, Encoding::Float).unwrap();
             out.extend(floats(&buf[..made]));
         }
         out
@@ -383,7 +374,7 @@ mod tests {
         let stereo: Vec<i16> = l.iter().flat_map(|v| [*v, (*v / 2)]).collect();
         let input = bytes_of(&stereo);
         let mut out = vec![0u8; 20000];
-        let (used, made) = r.process(&input, PCM_16, &mut out, PCM_16).unwrap();
+        let (used, made) = r.process(&input, Encoding::Pcm16, &mut out, Encoding::Pcm16).unwrap();
         assert_eq!(used, input.len());
         assert_eq!(shorts_of(&out[..made]), stereo, "sample for sample, nothing held back");
     }
@@ -393,7 +384,7 @@ mod tests {
         let mut r = Resampler::new(&mut Tables::default(), 44100, 1, 48000, 1).unwrap();
         let input = bytes_of(&sine(44100, 1000.0, 4410));
         let mut out = vec![0u8; 20000];
-        let (used, made) = r.process(&input, PCM_16, &mut out, PCM_16).unwrap();
+        let (used, made) = r.process(&input, Encoding::Pcm16, &mut out, Encoding::Pcm16).unwrap();
         assert_eq!(used, input.len());
         // Everything but the filter's look-ahead.
         let frames = made / 2;
@@ -422,11 +413,11 @@ mod tests {
             let (first, then) = (stereo(440.0), stereo(1234.0));
             let mut out = vec![0u8; 40000];
             let mut used = Resampler::new(&mut Tables::default(), a as i32, 2, b, 2).unwrap();
-            used.process(&first, PCM_16, &mut out, PCM_16).unwrap();
+            used.process(&first, Encoding::Pcm16, &mut out, Encoding::Pcm16).unwrap();
             used.reset();
-            let (_, made) = used.process(&then, PCM_16, &mut out, PCM_16).unwrap();
+            let (_, made) = used.process(&then, Encoding::Pcm16, &mut out, Encoding::Pcm16).unwrap();
             let mut fresh_out = vec![0u8; 40000];
-            let (_, fresh) = Resampler::new(&mut Tables::default(), a as i32, 2, b, 2).unwrap().process(&then, PCM_16, &mut fresh_out, PCM_16).unwrap();
+            let (_, fresh) = Resampler::new(&mut Tables::default(), a as i32, 2, b, 2).unwrap().process(&then, Encoding::Pcm16, &mut fresh_out, Encoding::Pcm16).unwrap();
             assert_eq!(out[..made], fresh_out[..fresh], "{a} -> {b}");
         }
     }
@@ -436,13 +427,13 @@ mod tests {
         let mut r = Resampler::new(&mut Tables::default(), 44100, 1, 44100, 2).unwrap();
         let input = bytes_of(&sine(44100, 440.0, 500));
         let mut out = vec![0u8; 20000];
-        let (_, made) = r.process(&input, PCM_16, &mut out, PCM_16).unwrap();
+        let (_, made) = r.process(&input, Encoding::Pcm16, &mut out, Encoding::Pcm16).unwrap();
         assert_eq!(made, 500 * 2 * 2);
         let back = shorts_of(&out[..made]);
         assert!(back.as_chunks::<2>().0.iter().all(|c| c[0] == c[1]));
         let mut r = Resampler::new(&mut Tables::default(), 44100, 2, 44100, 1).unwrap();
         let mut mono = vec![0u8; 20000];
-        let (_, made) = r.process(&out[..made], PCM_16, &mut mono, PCM_16).unwrap();
+        let (_, made) = r.process(&out[..made], Encoding::Pcm16, &mut mono, Encoding::Pcm16).unwrap();
         assert_eq!(made, 500 * 2);
         assert_eq!(shorts_of(&mono[..made]), shorts_of(&input));
         // And across rates: stereo 48 kHz to mono 44.1 kHz is the two sides' average, converted.
@@ -450,7 +441,7 @@ mod tests {
         let x = sine(48000, 1000.0, 9600);
         let st: Vec<i16> = x.iter().flat_map(|v| [*v, *v / 3]).collect();
         let mut out = vec![0u8; 40000];
-        let (_, made) = r.process(&bytes_of(&st), PCM_16, &mut out, PCM_16).unwrap();
+        let (_, made) = r.process(&bytes_of(&st), Encoding::Pcm16, &mut out, Encoding::Pcm16).unwrap();
         let (amp, _) = fit(&shorts_of(&out[..made]).iter().map(|v| *v as f64).collect::<Vec<_>>(), 44100, 1000.0);
         assert!((amp - 20000.0 * 2.0 / 3.0).abs() < 20.0, "{amp}");
     }
@@ -516,7 +507,7 @@ mod tests {
         let bytes: Vec<u8> = x.iter().flat_map(|v| (*v as f32).to_le_bytes()).collect();
         let mut r = Resampler::new(&mut Tables::default(), 48000, 1, 44100, 1).unwrap();
         let mut out = vec![0u8; 40000];
-        let (_, made) = r.process(&bytes, PCM_FLOAT, &mut out, PCM_16).unwrap();
+        let (_, made) = r.process(&bytes, Encoding::Float, &mut out, Encoding::Pcm16).unwrap();
         let y: Vec<f64> = shorts_of(&out[..made]).iter().map(|v| *v as f64 / 32768.0).collect();
         let (amp, resid) = fit(&y, 44100, 1000.0);
         // TPDF plus rounding: a quarter of a step squared of noise, against the tone.
@@ -530,7 +521,6 @@ mod tests {
         assert!(Resampler::new(&mut Tables::default(), 44100, 6, 44100, 2).is_none());
         assert!(Resampler::new(&mut Tables::default(), 44100, 2, 44100, 6).is_none());
         let mut r = Resampler::new(&mut Tables::default(), 44100, 2, 48000, 2).unwrap();
-        assert!(r.process(&[0u8; 100], 7, &mut [0u8; 10000], PCM_16).is_none());
-        assert!(r.process(&[0u8; 4000], PCM_16, &mut [0u8; 4], PCM_16).is_none());
+        assert!(r.process(&[0u8; 4000], Encoding::Pcm16, &mut [0u8; 4], Encoding::Pcm16).is_none());
     }
 }

@@ -53,7 +53,7 @@ pub fn fold(reference: f64, bpm: f64) -> f64 {
 
 /// Speed the incoming track must play at to lock to the outgoing one, after folding ×2/×½: `out / fold(out, in)`.
 /// 1.0 when either tempo is unknown.
-pub fn match_ratio(out_bpm: f64, in_bpm: f64) -> f64 {
+pub(crate) fn match_ratio(out_bpm: f64, in_bpm: f64) -> f64 {
     let f = fold(out_bpm, in_bpm);
     if out_bpm > 0.0 && f > 0.0 && out_bpm.is_finite() && f.is_finite() {
         out_bpm / f
@@ -316,7 +316,7 @@ pub(super) fn stability(beats: &[f64], period: f64, rms: f64) -> f32 {
 
 /// Least-squares line `t = a + b k` through the beats, `k` counting periods (so a dropped beat does not bend it),
 /// with one pass of outlier rejection. Returns (a, b, robust residual spread in seconds).
-pub fn fit_grid(beats: &[f64], period: f64) -> (f64, f64, f64) {
+pub(crate) fn fit_grid(beats: &[f64], period: f64) -> (f64, f64, f64) {
     let mut d: Vec<f64> = beats.windows(2).map(|w| w[1] - w[0]).collect();
     let p = {
         let m = median(&mut d);

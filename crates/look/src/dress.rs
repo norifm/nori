@@ -101,7 +101,7 @@ const PILL_ON_PAPER: u32 = 0xFF1A_1A1A;
 const INK_ON_LIGHT: u32 = 0xFF0D_0D0D;
 
 /// White ink on `fill` when it reads at 3:1 (WCAG's floor for large bold text), else near-black.
-pub fn ink_on(fill: u32) -> u32 {
+fn ink_on(fill: u32) -> u32 {
     if calculate_contrast(WHITE, fill) >= 3.0 { WHITE } else { INK_ON_LIGHT }
 }
 

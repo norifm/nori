@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,23 +26,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,11 +51,9 @@ import dev.nori.music.app.vm.HistoryViewModel
 import dev.nori.music.app.vm.MixesViewModel
 import dev.nori.music.app.vm.MixViewModel
 import dev.nori.music.app.vm.MixCard
-import dev.nori.music.app.vm.FAVOURITES_MIX
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.layout.fillMaxSize
-import dev.nori.music.app.vm.PlayerViewModel
 
 import dev.nori.music.ffi.library.SmartEditRule
 import dev.nori.music.ffi.library.StatsSource
@@ -82,7 +72,7 @@ private fun <T> Pick(value: T, options: List<T>, modifier: Modifier = Modifier, 
  * never changes in one frame. Nothing here moves on its own: it is drawn once and then only redrawn
  * when its covers change.
  */
-/** Mix tiles' colours by mix id, kept across scrolling: a tile scrolled back into view used to ask the core again. */
+/** Mix tiles' colours by mix id, kept across scrolling so a tile scrolled back into view does not ask the core again. */
 private val tileColours = android.util.LruCache<String, List<androidx.compose.ui.graphics.Color>>(64)
 
 @Composable
@@ -156,12 +146,7 @@ fun MixTiles(vm: MixesViewModel = viewModel()) {
 fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewModel()) {
     LaunchedEffect(id) { vm.open(id) }
     val load by vm.ui.collectAsStateWithLifecycle()
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selection by actions.selection.collectAsStateWithLifecycle()
-    val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
-    val player: PlayerViewModel = viewModel()
-    val playing by player.currentId.collectAsStateWithLifecycle()
-    val menu = LocalSongMenu.current
+    val list = rememberSongListState(actions)
     LoadBox(load) { m ->
         HeroPage(
             coverUrl = null,
@@ -177,13 +162,13 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp, large = true) },
             actions = {
                 if (m.refreshable) CircleButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
-                MoreCircle(listOf(say.addToQueue to { actions.enqueue(m.songs) }, downloadEntry(m.songs, done, actions)))
+                MoreCircle(songsMore(m.songs, list.downloaded, actions))
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {
                 EmptyNote(if (m.favourites) Note.NO_FAVOURITE_SONGS else Note.NOTHING_TO_MIX)
             }
-            songRows(m.songs, actions, playing, done, selected, menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, animated = true, from = m.origin)
+            songRows(m.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, animated = true, from = m.origin)
         }
     }
 }
@@ -198,16 +183,14 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
             NavRow(
                 remember(p) { say.smartName(p) }, { nav.smart(p.id) },
                 action = {
-                    TextButton({ nav.smartEdit(p.id) }) { Text(say.edit) }
+                    TextAction(say.edit, { nav.smartEdit(p.id) })
                     IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Close, say.delete, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 },
             )
         }
         item { SectionTitle(say.readyMade) }
         items(vm.defaults, key = { it.id }) { p ->
-            Row(Modifier.fillMaxWidth().clickable { nav.smart(p.id) }.padding(start = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-                Text(remember(p) { say.smartName(p) }, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge); TextButton({ nav.smartEdit(p.id) }) { Text(say.copyIt) }
-            }
+            NavRow(remember(p) { say.smartName(p) }, { nav.smart(p.id) }, action = { TextAction(say.copyIt, { nav.smartEdit(p.id) }) })
         }
         item { Text(noteText(Note.SMART_HELP), Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
@@ -220,32 +203,16 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
     LaunchedEffect(playlist?.json) { playlist?.let { vm.open(it.json) } }
     val load by vm.songs.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    val menu = LocalSongMenu.current
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selection by actions.selection.collectAsStateWithLifecycle()
-    val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
-    val player: PlayerViewModel = viewModel()
-    val playing by player.currentId.collectAsStateWithLifecycle()
+    val list = rememberSongListState(actions)
     val from = remember(id) { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SMART, id) }
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-            Text(remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist }, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-            TextButton({ nav.smartEdit(id) }) { Text(say.edit) }
-        }
-        LoadBox(load) { page ->
-            val songs = page.songs
-            LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-                item {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), Arrangement.spacedBy(8.dp)) {
-                        Button({ actions.play(songs, from = from) }, Modifier.weight(1f), enabled = songs.isNotEmpty()) { Icon(Icons.Filled.PlayArrow, null); Text(say.play) }
-                        OutlinedButton({ actions.shuffle(songs, from) }, Modifier.weight(1f), enabled = songs.isNotEmpty()) { Icon(Icons.Filled.Shuffle, null); Text(say.shuffle) }
-                        TextButton({ actions.download(songs) }, enabled = songs.isNotEmpty()) { Text(say.get) }
-                    }
-                    Text(remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) }, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
-                }
-                songRows(songs, actions, playing, done, selected, menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
-            }
+    LoadBox(load) { page ->
+        SongListPage(
+            remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist },
+            remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) },
+            page.songs, list.downloaded, from, actions,
+            pageActions = { CircleButton(Icons.Filled.Edit, say.edit) { nav.smartEdit(id) } },
+        ) {
+            songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
     }
 }
@@ -263,7 +230,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
             IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
             Text(say.smartPlaylist, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
-            TextButton({ error = vm.save(draft) { nav.back() } }) { Text(say.save, style = MaterialTheme.typography.titleSmall) }
+            TextAction(say.save, { error = vm.save(draft) { nav.back() } })
         }
         FormField(draft.name, { draft = draft.copy(name = it) }, Modifier.fillMaxWidth().padding(horizontal = Space.gutter), label = { Text(say.name) }, singleLine = true)
         Row(Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), Arrangement.spacedBy(8.dp)) {
@@ -318,14 +285,14 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
 fun HistoryList(actions: ActionsViewModel, vm: HistoryViewModel = viewModel()) {
     val entries by vm.entries.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    val menu = LocalSongMenu.current
+    val rows = rememberSongListState(actions)
     val list = rememberLazyListState()
     LaunchedEffect(list, entries.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= entries.size - 30 }.collect { if (it) vm.loadMore() } }
     val songs = remember(entries) { entries.map { it.song } }
     LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-        item { Row(Modifier.padding(horizontal = 8.dp)) { TextButton(nav::stats) { Text(say.listeningStats) }; TextButton(vm::clear) { Text(say.clearHistory) } } }
+        item { Row(Modifier.padding(horizontal = 8.dp)) { TextAction(say.listeningStats, nav::stats); TextAction(say.clearHistory, vm::clear) } }
         if (entries.isEmpty()) item { Text(noteText(Note.NO_HISTORY), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        songRows(songs, actions, null, emptySet(), emptySet(), menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "h")
+        songRows(songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "h")
     }
 }
 
@@ -440,22 +407,5 @@ private fun HourChart(perHour: List<Float>) {
 
 /** A place in a chart: rank, what it is, and how often. */
 @Composable
-private fun RankRow(rank: Int, title: String, subtitle: String, count: String) {
-    Column {
-        Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "$rank", Modifier.width(28.dp), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Column(Modifier.weight(1f).padding(end = 10.dp)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                if (subtitle.isNotEmpty()) Text(
-                    subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
-            }
-            Text(count, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-        }
-        Hairline(startIndent = Space.gutter + 28.dp)
-    }
-}
+private fun RankRow(rank: Int, title: String, subtitle: String, count: String) =
+    NavRow(title, subtitle = subtitle, trailing = count, leadingText = "$rank", trailingAccent = true)

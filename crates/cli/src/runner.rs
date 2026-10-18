@@ -8,7 +8,7 @@ use std::time::Instant;
 use nori_core::remote::wire::Op;
 use nori_core::remote::RelaySupport;
 use nori_core::settings::SavedServer;
-use nori_engine::State;
+use nori_host::player::{Playback, QueueShown};
 use nori_host::remote::Elsewhere;
 use nori_http::Http;
 use ratatui::crossterm::event::{self, Event as TermEvent};
@@ -135,9 +135,11 @@ struct Runner {
     focused: bool,
     /// A cover arrived while unfocused: repaint when focus returns.
     unseen_cover: bool,
-    /// The device playing while it is another one, as last read: the player shows it and its controls
-    /// go there.
-    elsewhere: Option<Elsewhere>,
+    /// Whose playback the player shows, as last read: this computer's, the device playing while it is
+    /// another one (its controls go there), or a guest's jam.
+    playback: Playback,
+    /// The queue shown, as last read.
+    queue: Option<QueueShown>,
 }
 
 pub fn run(o: Options) -> Result<(), String> {
@@ -158,12 +160,9 @@ pub fn run(o: Options) -> Result<(), String> {
         crate::backend::app().settings.put(prefs.clone());
     }
     if let Some(kind) = o.provider {
-        use nori_core::providers::server_for_login;
-        use nori_core::settings::{servers_activated, ServerList};
-        let list = ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
+        let list = nori_core::settings::ServerList { servers: prefs.servers.clone(), active_server_id: prefs.active_server_id.clone() };
         let form = SavedServer { id: nori_core::settings::new_server_id(), kind, ..Default::default() };
-        let list = servers_activated(list.clone(), server_for_login(list, form));
-        (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
+        prefs = nori_core::providers::profile_activated(prefs, nori_core::providers::server_for_login(list, form));
         crate::backend::app().settings.put(prefs.clone());
     }
     let mouse = o.mouse.unwrap_or_else(|| own::flag(own::MOUSE, true));
@@ -194,8 +193,8 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, focused: true, unseen_cover: false, elsewhere: None, o };
-    match prefs.servers.iter().find(|s| s.id == prefs.active_server_id).cloned() {
+    let mut r = Runner { http: Http::new(), tx, session: None, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, focused: true, unseen_cover: false, playback: Playback::Here, queue: None, o };
+    match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => app.view = View::Login,
     }
@@ -216,7 +215,7 @@ impl Runner {
         if let Some(s) = self.session.take() {
             s.close();
         }
-        self.elsewhere = None;
+        (self.playback, self.queue) = (Playback::Here, None);
         let name = nori_core::settings::label(&profile.name, &profile.url);
         let o = Open {
             data: &self.o.data,
@@ -300,13 +299,6 @@ impl Runner {
         crate::term::debug!("took {}", m.brief());
         let Some(m) = current(self.session.as_ref().map(|s| s.id), m) else { return };
         match &m {
-            Msg::Engine(e) => {
-                if let Some(s) = &self.session {
-                    s.mpris_heard(e);
-                    // Every event: a seek landing or the place moving is news for the account's other devices.
-                    s.followed(e);
-                }
-            }
             Msg::Cover { art, image, .. } => {
                 if let Some(a) = &mut self.art {
                     a.put(art.clone(), image);
@@ -347,12 +339,7 @@ impl Runner {
                 return app.say(said.clone(), false);
             }
             Msg::LoggedIn(Ok(p)) => {
-                let mut prefs = crate::backend::app().settings.current().unwrap_or_default();
-                prefs.servers.retain(|s| !(s.url == p.url && s.user == p.user));
-                prefs.servers.push(p.clone());
-                prefs.active_server_id = p.id.clone();
-                crate::backend::app().settings.put(prefs.clone());
-                app.prefs_changed(prefs);
+                prefs_changed(app);
                 self.open(app, p.clone());
                 app.go(View::Home);
                 return;
@@ -383,94 +370,72 @@ impl Runner {
         }
         let jam = remote.as_ref().filter(|_| jams).and_then(|r| r.jam_view().map(|v| (v, r.jam_added())));
         (d.jam, d.added) = jam.map_or_else(Default::default, |(v, added)| (Some(v), added));
-        let e = if guest { s.jam_playing() } else { s.elsewhere() };
-        d.controls = e.as_ref().filter(|_| guest).and_then(|e| e.jam_controls());
-        let moved = e.is_some() != self.elsewhere.is_some();
-        let device = e.as_ref().filter(|_| !guest);
+        let playback = s.playback();
+        let e = playback.mirrored();
+        d.controls = e.filter(|_| guest).and_then(|e| e.jam_controls());
+        let moved = e.is_some() != self.playback.mirrored().is_some();
+        let device = e.filter(|_| !guest);
         d.active = device.map(|e| (e.mirror.id.clone(), e.mirror.name.clone()));
         d.hearts = device.map(|e| e.mirror.rows.iter().map(|r| (r.song.id.clone(), r.song.starred)).collect()).unwrap_or_default();
-        match &e {
-            Some(e) => {
-                app.queue = Some(e.view());
-                if let Some(v) = e.volume() {
-                    app.volume = v;
-                }
-            }
-            None if moved => {
-                app.queue = None;
-                app.volume = s.volume();
-            }
-            None => {}
+        if let Some(v) = e.and_then(|e| e.volume()) {
+            app.volume = v;
         }
         if moved {
+            if e.is_none() {
+                app.volume = s.volume();
+            }
+            self.queue = None;
             self.heard = None;
             app.heard(None);
         }
         if moved || e.is_some() {
             s.mpris_changed();
         }
-        self.elsewhere = e;
+        self.playback = playback;
     }
 
-    /// Reads the playback into `app`: the engine's status and the queue, copying strings only when the
-    /// song changed; or another device's while it plays.
+    /// The device playing while it is another one, which the controls reach.
+    fn there(&self) -> Option<&Elsewhere> {
+        match &self.playback {
+            Playback::There(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Reads the playback the player shows into `app`: this computer's, the device's playing elsewhere
+    /// or the jam's, with its queue, copying strings only when the song or the queue changed.
     fn follow(&mut self, app: &mut App) {
         let Some(s) = &self.session else { return };
         // A guest follows its jam all along.
         if let Some(r) = s.remote().filter(|_| !s.guest) {
             r.watch(app.panel == Some(Panel::Devices));
         }
-        if let Some(e) = &self.elsewhere {
-            let m = &e.mirror;
-            // The displayed playback follows the host even while this guest only watches.
-            let playing = m.playing;
-            let state = match (playing, e.song()) {
-                (true, _) => State::Playing,
-                (false, Some(_)) => State::Paused,
-                (false, None) => State::Idle,
-            };
-            app.follow_now(Now { state, position_ms: e.position_ms(), at: Instant::now(), speed: m.rate as f32, mixing: m.playing && m.mixing, buffering: m.buffering && m.playing });
-            let id = e.song().map(|s| s.id.clone());
-            if id != self.heard {
-                self.heard = id;
-                app.heard(e.song().cloned());
-            }
-            app.transition = None;
-            app.mixed_in = None;
-            if app.lyrics_shown() {
-                self.lyrics_step(app);
-            }
-            return;
+        let now = s.now();
+        app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
+        let id = now.song.as_ref().map(|s| s.id.clone());
+        if id != self.heard {
+            self.heard = id;
+            app.heard(now.song);
         }
-        let (now, id_changed) = s.engine.status_with(|st| {
-            let changed = st.id.as_deref() != self.heard.as_deref();
-            (crate::app::Now { state: st.state, position_ms: st.position_ms, at: st.at, speed: st.pace, mixing: st.mixing, buffering: app.now.buffering }, changed.then(|| st.id.clone()))
-        });
-        app.follow_now(now);
-        if let Some(id) = id_changed {
-            self.heard = id.clone();
-            app.heard(id.and_then(|id| crate::backend::app().song(&id)));
+        if s.queue_stale(self.queue.as_ref()) {
+            let q = s.queue_shown(self.queue.as_ref().map(|q| &q.view));
+            app.queue = Some(q.view.clone());
+            self.queue = Some(q);
         }
-        // Refresh the queue copy on change; the engine advancing does not bump `rev`, so compare the index too.
-        let (rev, repeat, index) = crate::backend::app().playlist(|p| (p.rev(), p.repeat(), p.current().map_or(-1, |c| c as i32)));
-        if app.queue.as_ref().is_none_or(|q| q.rev != rev || q.repeat != repeat || q.index != index) {
-            let held = app.queue.as_ref().map_or(u64::MAX, |q| q.list_rev);
-            let mut v = crate::backend::app().view(held);
-            if v.songs.is_empty() && v.len > 0 {
-                if let Some(q) = &app.queue {
-                    v.songs = q.songs.clone();
-                }
-            }
-            app.queue = Some(v);
-        }
-        if app.transition_shown() {
-            if let Some(id) = &self.heard {
+        let here = matches!(self.playback, Playback::Here);
+        match &self.heard {
+            Some(id) if here && app.transition_shown() => {
                 let note = crate::backend::app().planner.transition_note(id);
                 if note != app.transition {
                     app.transition = note;
                 }
                 app.mixed_in = if app.now.mixing { crate::backend::app().planner.transition_into(id) } else { None };
             }
+            _ if !here => {
+                app.transition = None;
+                app.mixed_in = None;
+            }
+            _ => {}
         }
         if app.lyrics_shown() {
             self.lyrics_step(app);
@@ -595,7 +560,7 @@ impl Runner {
             Cmd::Volume(v) => {
                 s.set_volume(v);
                 // A guest's volume is this computer's, while the player shows the jam.
-                if self.elsewhere.is_none() || s.guest {
+                if !matches!(self.playback, Playback::There(_)) {
                     own::keep(own::VOLUME, v.to_string());
                 }
                 app.volume = v;
@@ -606,14 +571,17 @@ impl Runner {
             Cmd::Restore(id) => s.put_back(&id),
             Cmd::Move(from, to) => s.move_song(from, to),
             Cmd::Shuffle(on) => s.shuffle(on),
-            Cmd::Repeat(m) => s.repeat(m),
+            Cmd::CycleRepeat => {
+                s.cycle_repeat();
+                app.say(crate::text::repeat(s.now().repeat), false);
+            }
             Cmd::Download(songs) => s.download(songs),
             Cmd::DownloadFetch(what) => s.download_later(what),
             Cmd::DownloadRemove(id) => {
                 s.download_remove(&id);
                 s.load(crate::backend::Req::Downloads);
             }
-            Cmd::Star(nori_core::client::Starrable::Song, id, on) => s.star_song(id, on, self.elsewhere.as_ref()),
+            Cmd::Star(nori_core::client::Starrable::Song, id, on) => s.star_song(id, on, self.there()),
             Cmd::Star(kind, id, on) => s.star(kind, id, on),
             Cmd::Pick(device) => {
                 if let Some(r) = s.remote() {

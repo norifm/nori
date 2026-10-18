@@ -9,7 +9,7 @@ use std::net::{Shutdown, TcpStream};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::task::{Context, Poll, Waker};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use nori_core::transport::{Exchange, FailureKind, Transport, TransportError, TransportResponse, USER_AGENT};
 use nori_engine::{Body, ByteSource, Cancel, OpenError};
@@ -32,7 +32,7 @@ impl Http {
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
             .build();
-        let connector = ().chain(ConnectProxyConnector::default()).chain(Sockets).chain(RustlsConnector::default()).chain(Cancellable);
+        let connector = ().chain(ConnectProxyConnector::default()).chain(Sockets).chain(RustlsConnector::default());
         let agent = Agent::with_parts(config, connector, DefaultResolver::default());
         Arc::new(Http { agent })
     }
@@ -191,7 +191,7 @@ impl Call {
     }
 
     fn state(&self) -> MutexGuard<'_, CallState> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.0)
     }
 
     /// The request goes on over `stream`; Err once it was given up.
@@ -239,21 +239,25 @@ thread_local! {
     /// The core request this thread runs: a [`Call`]'s thread.
     static CALL: RefCell<Option<Arc<Call>>> = const { RefCell::new(None) };
 
-    /// The engine request this thread is currently blocked on. Thread-local because ureq pools
-    /// connections across requests and has no per-call hook into the transport.
-    static CURRENT_CANCEL: RefCell<Option<Cancel>> = const { RefCell::new(None) };
+    /// The engine request this thread opens or reads. Thread-local because ureq pools connections
+    /// across requests and has no per-call hook into the transport.
+    static REQUEST: RefCell<Option<Arc<Request>>> = const { RefCell::new(None) };
 }
 
-/// Runs `f` with `cancel` as this thread's current request.
-fn with_cancel<R>(cancel: &Cancel, f: impl FnOnce() -> R) -> R {
-    let before = CURRENT_CANCEL.with(|c| c.replace(Some(cancel.clone())));
-    let r = f();
-    CURRENT_CANCEL.with(|c| *c.borrow_mut() = before);
-    r
+/// An engine request ([`ByteSource::open_cancellable`]): cancelling it shuts the socket it uses.
+struct Request {
+    cancel: Cancel,
 }
 
-/// Poll interval for cancellation while blocked on a socket (ureq cannot be cancelled from another thread).
-const CANCEL_POLL: Duration = Duration::from_millis(250);
+impl Request {
+    /// Runs `f` as this thread's current request.
+    fn during<R>(self: &Arc<Self>, f: impl FnOnce() -> R) -> R {
+        let before = REQUEST.with(|r| r.replace(Some(self.clone())));
+        let r = f();
+        REQUEST.with(|r| *r.borrow_mut() = before);
+        r
+    }
+}
 
 /// Opens TCP connections as [`Socket`]s (ureq's own TCP connector keeps its socket to itself); a CONNECT
 /// proxy's connection, made before, goes on as it is.
@@ -278,7 +282,7 @@ impl<In: ureq::unversioned::transport::Transport> Connector<In> for Sockets {
                 Ok(stream) => {
                     stream.set_nodelay(details.config.no_delay())?;
                     let buffers = LazyBuffers::new(details.config.input_buffer_size(), details.config.output_buffer_size());
-                    return Ok(Some(Either::B(Socket { stream, buffers, call: Weak::new(), read_timeout: None, write_timeout: None })));
+                    return Ok(Some(Either::B(Socket { stream, buffers, call: Weak::new(), request: Arc::default(), read_timeout: None, write_timeout: None })));
                 }
                 Err(e) if e.kind() == io::ErrorKind::TimedOut => failed = Some(ureq::Error::Timeout(ureq::Timeout::Connect)),
                 Err(e) => failed = Some(e.into()),
@@ -295,6 +299,8 @@ struct Socket {
     buffers: LazyBuffers,
     /// The call last given the handle.
     call: Weak<Call>,
+    /// The engine request using it now; a request's cancel shuts it only while this is that request.
+    request: Arc<Mutex<Weak<Request>>>,
     /// The socket's timeouts as last set, so they are set only when they change.
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
@@ -322,6 +328,34 @@ impl Socket {
             Ok(())
         })
     }
+
+    /// Lets this thread's engine request (if any) shut the socket when it is cancelled.
+    fn in_request(&mut self) -> io::Result<()> {
+        let now = REQUEST.with(|r| r.borrow().as_ref().map_or_else(Weak::new, Arc::downgrade));
+        let mut using = lock(&self.request);
+        if using.ptr_eq(&now) {
+            return Ok(());
+        }
+        *using = now.clone();
+        drop(using);
+        let Some(request) = now.upgrade() else { return Ok(()) };
+        let (stream, using) = (self.stream.try_clone()?, self.request.clone());
+        request.cancel.on_cancel(move || {
+            if lock(&using).ptr_eq(&now) {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+        });
+        Ok(())
+    }
+
+    fn in_use(&mut self) -> io::Result<()> {
+        self.in_call()?;
+        self.in_request()
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 fn timed_out(e: io::Error, timeout: NextTimeout) -> ureq::Error {
@@ -337,13 +371,13 @@ impl ureq::unversioned::transport::Transport for Socket {
     }
 
     fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
-        self.in_call()?;
+        self.in_use()?;
         set_timeout(&mut self.write_timeout, timeout, |t| self.stream.set_write_timeout(t))?;
         self.stream.write_all(&self.buffers.output()[..amount]).map_err(|e| timed_out(e, timeout))
     }
 
     fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
-        self.in_call()?;
+        self.in_use()?;
         set_timeout(&mut self.read_timeout, timeout, |t| self.stream.set_read_timeout(t))?;
         let read = self.stream.read(self.buffers.input_append_buf()).map_err(|e| timed_out(e, timeout))?;
         self.buffers.input_appended(read);
@@ -360,68 +394,19 @@ impl ureq::unversioned::transport::Transport for Socket {
     }
 }
 
-/// Connector wrapping every connection in [`CancellableTransport`].
-#[derive(Debug)]
-struct Cancellable;
-
-impl<In: ureq::unversioned::transport::Transport> Connector<In> for Cancellable {
-    type Out = CancellableTransport;
-
-    fn connect(&self, _: &ConnectionDetails, chained: Option<In>) -> Result<Option<CancellableTransport>, ureq::Error> {
-        Ok(chained.map(|t| CancellableTransport(Box::new(t))))
-    }
-}
-
-/// Splits input waits into [`CANCEL_POLL`] slices and fails with `Interrupted` once the thread's
-/// current request is cancelled.
-#[derive(Debug)]
-struct CancellableTransport(Box<dyn ureq::unversioned::transport::Transport>);
-
-impl ureq::unversioned::transport::Transport for CancellableTransport {
-    fn buffers(&mut self) -> &mut dyn Buffers {
-        self.0.buffers()
-    }
-
-    fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
-        self.0.transmit_output(amount, timeout)
-    }
-
-    fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
-        let Some(cancel) = CURRENT_CANCEL.with(|c| c.borrow().clone()) else { return self.0.await_input(timeout) };
-        let until = (!timeout.after.is_not_happening()).then(|| Instant::now() + *timeout.after);
-        loop {
-            if cancel.cancelled() {
-                return Err(ureq::Error::Io(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled")));
-            }
-            let left = until.map(|u| u.saturating_duration_since(Instant::now()));
-            let step = left.map_or(CANCEL_POLL, |l| l.min(CANCEL_POLL));
-            let piece = NextTimeout { after: ureq::unversioned::transport::time::Duration::Exact(step), reason: timeout.reason };
-            match self.0.await_input(piece) {
-                Err(ureq::Error::Timeout(_)) if left.is_none_or(|l| l > step) => continue,
-                other => return other,
-            }
-        }
-    }
-
-    fn is_open(&mut self) -> bool {
-        self.0.is_open()
-    }
-
-    fn is_tls(&self) -> bool {
-        self.0.is_tls()
-    }
-}
-
-/// A response body whose reads run under its request's cancel.
+/// A response body whose reads run under its request; once that is cancelled, its end is an error.
 struct CancellableBody {
     inner: Box<dyn Read + Send>,
-    cancel: Cancel,
+    request: Arc<Request>,
 }
 
 impl Read for CancellableBody {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let (inner, cancel) = (&mut self.inner, &self.cancel);
-        with_cancel(cancel, || inner.read(buf))
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let (inner, request) = (&mut self.inner, &self.request);
+        match request.during(|| inner.read(buf)) {
+            Ok(0) | Err(_) if request.cancel.cancelled() => Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
+            read => read,
+        }
     }
 }
 
@@ -431,8 +416,9 @@ impl ByteSource for Http {
     }
 
     fn open_cancellable(&self, url: &str, _key: Option<&str>, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
-        let mut b = with_cancel(cancel, || self.open_now(url, from))?;
-        b.reader = Box::new(CancellableBody { inner: b.reader, cancel: cancel.clone() });
+        let request = Arc::new(Request { cancel: cancel.clone() });
+        let mut b = request.during(|| self.open_now(url, from))?;
+        b.reader = Box::new(CancellableBody { inner: b.reader, request });
         Ok(b)
     }
 
