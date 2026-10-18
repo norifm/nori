@@ -11,7 +11,7 @@ const BASE: &str = "https://lrclib.net/api";
 pub(crate) const DURATION_SLACK_S: f64 = 4.0;
 
 // ---- cleaning titles ------------------------------------------------------------------------------------
-// A port of the regular expressions the Kotlin app used, kept to the same matches.
+// Regular expressions written out by hand, from the ones the Kotlin app used.
 
 /// `\s` as Java's regular expressions have it.
 fn regex_space(c: char) -> bool {
@@ -54,12 +54,12 @@ fn starts_with_any(s: &str, words: &[&str]) -> Option<usize> {
     words.iter().find_map(|w| starts_with(s, w))
 }
 
-/// What may open a bracketed note: `feat.?|ft.?|with|remaster(ed)?|\d{4} remaster|live|mono|stereo`.
-const BRACKETED: [&str; 8] = ["feat", "ft", "with", "remaster", "#### remaster", "live", "mono", "stereo"];
+/// What may open a bracketed note: `feat.?|ft.?|with|re-?master(ed)?|\d{4} re-?master|live|mono|stereo|album version|explicit`.
+const BRACKETED: [&str; 12] = ["feat", "ft", "with", "remaster", "re-master", "#### remaster", "#### re-master", "live", "mono", "stereo", "album version", "explicit"];
 /// What may follow " - ": `remaster(ed)?|\d{4} remaster|live|single version|radio edit`.
 const DASHED: [&str; 5] = ["remaster", "#### remaster", "live", "single version", "radio edit"];
 
-/// Drops every `\s*[(\[](<BRACKETED>)[^)\]]*[)\]]`.
+/// Drops every `\s*[(\[](<BRACKETED>)…[)\]]`, brackets inside it included: "(Album Version (Explicit))".
 fn drop_bracketed(title: &str) -> String {
     let mut out = String::with_capacity(title.len());
     let mut i = 0;
@@ -68,7 +68,16 @@ fn drop_bracketed(title: &str) -> String {
         let ws = rest.find(|c| !regex_space(c)).unwrap_or(rest.len());
         let open = &rest[ws..];
         if open.starts_with(['(', '[']) && starts_with_any(&open[1..], &BRACKETED).is_some() {
-            if let Some(close) = open[1..].find([')', ']']) {
+            let mut depth = 1;
+            let close = open[1..].char_indices().find(|(_, c)| {
+                depth += match c {
+                    '(' | '[' => 1,
+                    ')' | ']' => -1,
+                    _ => 0,
+                };
+                depth == 0
+            });
+            if let Some((close, _)) = close {
                 i += ws + 1 + close + 1;
                 continue;
             }
@@ -188,6 +197,10 @@ mod tests {
             // Any closing bracket; `with` starts `without`.
             ("Song (Without You]", "Song"),
             ("Song (Acoustic)", "Song (Acoustic)"),
+            ("Song (Album Version)", "Song"),
+            ("Song (2007 Remaster) (2007 Re-mastered Album Version)", "Song"),
+            ("Song (Album Version (Explicit)) (x)", "Song (x)"),
+            ("Song (Explicit)", "Song"),
             ("Song (feat. unclosed", "Song (feat. unclosed"),
             // A dash needs space on both sides.
             ("Song -Live", "Song -Live"),
