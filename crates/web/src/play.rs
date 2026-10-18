@@ -199,7 +199,6 @@ impl Nori {
             tasks: Arc::new(Local),
             keeps_music: false,
             decoders: nori_engine::Platform { aac: None, later: Some(crate::later::decoder) },
-            finds_active: false,
             out,
         };
         let wake = live.wake.clone();

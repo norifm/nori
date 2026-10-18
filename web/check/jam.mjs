@@ -68,6 +68,18 @@ await until(host, () => (window.nori.heard?.seconds ?? 0) > 1).catch(async (e) =
 });
 
 if (!only || only.includes("playon")) {
+  // A browser opened while another device plays shows that playback, and its Pause reaches it.
+  const late = await open("late");
+  await until(late, async () => !!JSON.parse(await window.ask("now"))?.device, null, 30000).catch(() => {});
+  const follows = (await json(late, "now")).device;
+  await ask(late, "toggle");
+  await until(host, async () => JSON.parse(await window.ask("now"))?.state === "Paused", null, 15000).catch(() => {});
+  const paused = (await json(host, "now")).state;
+  await ask(late, "toggle");
+  await until(host, async () => JSON.parse(await window.ask("now"))?.state === "Playing", null, 15000).catch(() => {});
+  report.lateBrowser = { follows, hostAfterPause: paused, hostAfterPlay: (await json(host, "now")).state };
+  expect(!!follows && paused === "Paused" && report.lateBrowser.hostAfterPlay === "Playing", "a browser opened later shows the playing device and pauses and plays it");
+  await late.browserContext().close();
   // The other browser shows in the devices pane once the relay has it; a click moves the music there.
   await pane(host, "devices");
   // The other browser by its id (the relay may still list browsers of earlier runs).
