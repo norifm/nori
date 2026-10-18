@@ -85,7 +85,7 @@ fn perf_report() {
     // A ten-band graphic equalizer (an AutoEQ profile is about as many).
     let bands = (0..10).map(|k| nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 31.25 * 2f64.powi(k), gain_db: if k % 2 == 0 { 3.0 } else { -2.0 }, q: 1.4, channel: 0 }).collect();
     perf_case("eq10", &one, perf_app(prefs_off()), with_sound(nori_engine::Sound { bands, ..Default::default() }), 4);
-    let compressor = nori_engine::Sound { effects: Effects { compressor: Some(CompressorPreset::Balanced.settings()), ..Effects::default() }, limiter: true, ..Default::default() };
+    let compressor = nori_engine::Sound { effects: Effects { compressor: Some(CompressorPreset::Light.settings()), ..Effects::default() }, limiter: true, ..Default::default() };
     perf_case("compressor", &one, perf_app(prefs_off()), with_sound(compressor), 4);
     // Compressed, as a server keeps music: the decoder's cost.
     for (name, args) in [("mp3", ["-c:a", "libmp3lame", "-b:a", "320k", "-f", "mp3"]), ("flac", ["-c:a", "flac", "-compression_level", "5", "-f", "flac"])] {

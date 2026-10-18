@@ -33,7 +33,7 @@ developer settings: see [Install](../start/install.md#android).
 ## AutoMix does not mix
 
 A song has to be measured before it can be mixed, which happens as it streams or downloads; albums in
-order stay gapless with **Keep albums gapless** on. See
+order always stay gapless. See
 [When AutoMix does not mix](../sound/automix.md#when-automix-does-not-mix).
 
 ## Battery use is higher than expected

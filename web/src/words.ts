@@ -88,7 +88,6 @@ export const W = {
   seconds: (n: number) => `${n} s`,
   speed: "Speed",
   pitch: "Pitch",
-  keepPitch: "Keep pitch while mixing",
   reset: "Reset",
   account: "Account",
   signedInAs: (user: string, url: string) => `${user} on ${url}`,

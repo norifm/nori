@@ -13,6 +13,14 @@ use rusqlite::Connection;
 
 /// Finished songs the downloads screen keeps listing this session.
 pub const RECENT: usize = 50;
+/// Songs downloaded at once; the rest queue in order.
+pub const DOWNLOADS_AT_ONCE: usize = 4;
+
+/// [`DOWNLOADS_AT_ONCE`], for the platform.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn downloads_at_once() -> u32 {
+    DOWNLOADS_AT_ONCE as u32
+}
 /// Progress is passed on at most this often, and only after a whole percent.
 const GATE_MS: i64 = 250;
 const GATE_STEP: f32 = 0.01;
@@ -130,7 +138,7 @@ pub struct Saved {
     pub analysed: bool,
     /// The beat model is available and enabled.
     pub model_on: bool,
-    /// The beat model is wanted for this download ([`beats_offer`]).
+    /// The beat model is wanted for this download (it was on when it was asked for).
     pub beats_wanted: bool,
     /// The model has read both ends of the current analysis.
     pub beats_done: bool,
@@ -151,35 +159,6 @@ pub fn needs(s: Saved) -> Needs {
     }
     let fresh = s.measuring || !s.analysed;
     Needs { analysis: fresh, beats: s.model_on && s.beats_wanted && (fresh || !s.beats_done) }
-}
-
-/// What pressing Download does about the beat model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
-pub enum BeatsOffer {
-    /// The model is off or not in this build.
-    Off,
-    /// Ask, with a way to remember the answer.
-    Ask,
-    Yes,
-    No,
-}
-
-pub fn beats_offer(model_on: bool, choice: nori_settings::settings::DownloadBeats) -> BeatsOffer {
-    use nori_settings::settings::DownloadBeats;
-    match (model_on, choice) {
-        (false, _) => BeatsOffer::Off,
-        (true, DownloadBeats::Ask) => BeatsOffer::Ask,
-        (true, DownloadBeats::Always) => BeatsOffer::Yes,
-        (true, DownloadBeats::Never) => BeatsOffer::No,
-    }
-}
-
-/// The "ML beats for downloads" setting a remembered answer sets.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn download_beats_remembered(yes: bool) -> nori_settings::settings::DownloadBeats {
-    use nori_settings::settings::DownloadBeats;
-    if yes { DownloadBeats::Always } else { DownloadBeats::Never }
 }
 
 /// Monotonic ms for timing steps.

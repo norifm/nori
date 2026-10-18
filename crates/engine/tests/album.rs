@@ -1,4 +1,4 @@
-//! With AutoMix (or a crossfade) and "keep albums gapless" on, an album in order plays sample-exact
+//! With AutoMix (or a crossfade) on, an album in order plays sample-exact
 //! gapless however its plans came about; other joins (another album, shuffle) still mix. Runs over the
 //! test's own core.
 
@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use common::card::{Card, Pull};
 use common::{Stepper, Virtual};
-use nori_core::settings_store::{APPLY_AUDIO, REPLAN};
 use nori_core::{Core, Song};
 use nori_engine::core::{settings, Analyses, CoreApp, CoreLibrary, CoreQueue, Measurer};
 use nori_engine::{Body, ByteSource, Config, Engine, State, Store};
@@ -82,17 +81,16 @@ struct Rig {
 }
 
 impl Rig {
-    /// `songs` queued (shuffled if `shuffle`) and cached, AutoMix on (or a `crossfade`), albums kept
-    /// gapless as `keep`.
-    fn new(name: &str, songs: &[S], auto_mix: bool, crossfade: i32, keep: bool, measured: Measured, shuffle: bool) -> Rig {
-        Rig::tagged(name, songs, auto_mix, crossfade, keep, measured, shuffle, &Tags::default())
+    /// `songs` queued (shuffled if `shuffle`) and cached, AutoMix on (or a `crossfade`).
+    fn new(name: &str, songs: &[S], auto_mix: bool, crossfade: i32, measured: Measured, shuffle: bool) -> Rig {
+        Rig::tagged(name, songs, auto_mix, crossfade, measured, shuffle, &Tags::default())
     }
 
     /// [`Rig::new`] with `tags`.
     #[allow(clippy::too_many_arguments)]
-    fn tagged(name: &str, songs: &[S], auto_mix: bool, crossfade: i32, keep: bool, measured: Measured, shuffle: bool, tags: &Tags) -> Rig {
+    fn tagged(name: &str, songs: &[S], auto_mix: bool, crossfade: i32, measured: Measured, shuffle: bool, tags: &Tags) -> Rig {
         let dir = nori_testdir::TempDir::new(name);
-        let (core, client) = common::own_core(&dir, |p| (p.auto_mix, p.crossfade_sec, p.crossfade_keep_albums, p.auto_mix_max_s) = (auto_mix, crossfade, keep, 8));
+        let (core, client) = common::own_core(&dir, |p| (p.auto_mix, p.crossfade_sec, p.replay_gain) = (auto_mix, crossfade, nori_core::settings::GainMode::Off));
         let prefs = core.session.settings.current().unwrap();
         let store = Store::open(dir.join("music"), 512 << 20).unwrap();
         let mut tracks: HashMap<(&str, u32), u32> = HashMap::new();
@@ -147,7 +145,7 @@ impl Rig {
         };
         let card = Card::new();
         let clock = Virtual::default();
-        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs, 0.0), ..Config::default() }, clock.clone(), |_| {}));
+        let engine = common::Running(Engine::start_on(library, app, CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 256, settings: settings(&prefs), ..Config::default() }, clock.clone(), |_| {}));
         engine.queue_changed();
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), card, core, store, analyses, measurer, songs: made, _dir: dir }
     }
@@ -163,17 +161,6 @@ impl Rig {
     fn settle(&self) {
         if let Some(m) = &self.measurer {
             common::settle(&self.store, &self.analyses, m);
-        }
-    }
-
-    /// Sets a setting by name and relays its effects.
-    fn set(&self, name: &str, value: &str) {
-        let effect = self.core.session.settings.edit_by_name(name, value).unwrap_or_else(|| panic!("{name} is a setting")).effect;
-        if effect & APPLY_AUDIO != 0 {
-            self.engine.set_settings(settings(&self.core.session.settings.current().unwrap(), 0.0));
-        }
-        if effect & REPLAN != 0 {
-            self.engine.replan();
         }
     }
 
@@ -364,7 +351,7 @@ fn gapless_with_automix_or_crossfade() {
 }
 
 fn gapless_measured_before(auto_mix: bool, crossfade: i32) {
-    let rig = Rig::new(&format!("album-before-{auto_mix}"), &ALBUM, auto_mix, crossfade, true, Measured::Before, false);
+    let rig = Rig::new(&format!("album-before-{auto_mix}"), &ALBUM, auto_mix, crossfade, Measured::Before, false);
     rig.engine.play_at(0, 0);
     let (mixed, order) = rig.to_the_end();
     rig.heard_as(&order, 0, 0, &[true, true], 0);
@@ -373,7 +360,7 @@ fn gapless_measured_before(auto_mix: bool, crossfade: i32) {
 
 #[test]
 fn gapless_measured_while_playing() {
-    let rig = Rig::new("album-while", &ALBUM, true, 0, true, Measured::WhilePlaying, false);
+    let rig = Rig::new("album-while", &ALBUM, true, 0, Measured::WhilePlaying, false);
     rig.engine.play_at(0, 0);
     let (mixed, order) = rig.to_the_end();
     for (s, _) in &rig.songs {
@@ -385,7 +372,7 @@ fn gapless_measured_while_playing() {
 
 #[test]
 fn joins_whole() {
-    let rig = Rig::new("album-seek", &ALBUM, true, 0, true, Measured::Before, false);
+    let rig = Rig::new("album-seek", &ALBUM, true, 0, Measured::Before, false);
     rig.engine.play_at(0, 0);
     assert!(rig.until(20, |r| r.engine.status().position_ms > 2_000));
     // Inside a1's would-be mix.
@@ -395,34 +382,13 @@ fn joins_whole() {
     let (_, order) = rig.to_the_end();
     // a1's last seconds, then a2 and a3 whole.
     rig.heard_as(&order, from, 0, &[true, true], 0);
-
-    // Keep albums switched on joins whole.
-    // Before a1's mix is made (34 s) up to just before it is heard.
-    for at_ms in [26_000, 32_000, 33_500] {
-        keep_albums_switched_on_at(at_ms);
-    }
-}
-
-fn keep_albums_switched_on_at(at_ms: i64) {
-    let rig = Rig::new(&format!("album-switched-{at_ms}"), &ALBUM, true, 0, false, Measured::Before, false);
-    // The place read as a screen reads it, so the switch lands where asked.
-    rig.engine.position_updates(Some(std::time::Duration::from_millis(100)));
-    rig.engine.play_at(0, 0);
-    // a1 is planned as a mix, then albums are kept gapless.
-    assert!(rig.until(40, |r| r.engine.status().position_ms >= at_ms), "{:?}", rig.engine.status());
-    assert!(!rig.engine.status().mixing, "switched at {} ms, before the mix is heard", rig.engine.status().position_ms);
-    assert!(rig.core.session.planner.transition_note("a1").is_some_and(|n| n.kind != nori_player::types::TransitionKind::Gapless), "a1 is planned as a mix first: {:?}", rig.core.session.planner.transition_note("a1"));
-    rig.set("crossfadeKeepAlbums", "true");
-    let (mixed, order) = rig.to_the_end();
-    rig.heard_as(&order, 0, 0, &[true, true], 1);
-    assert!(!mixed, "nothing mixed");
 }
 
 /// Gapless across the discs of a double album.
 #[test]
 fn double_album_gapless() {
     let songs = [S("d1", "dl", 1), S("d2", "dl", 1), S("d3", "dl", 2)];
-    let rig = Rig::new("album-discs", &songs, true, 0, true, Measured::Before, false);
+    let rig = Rig::new("album-discs", &songs, true, 0, Measured::Before, false);
     rig.engine.play_at(0, 0);
     let (mixed, order) = rig.to_the_end();
     rig.heard_as(&order, 0, 0, &[true, true], 0);
@@ -434,7 +400,7 @@ fn double_album_gapless() {
 fn gapless_however_queued() {
     let songs = [S("m1", "al", 1), S("m2", "al", 1), S("n1", "bl", 1), S("n2", "bl", 1)];
     for how in [Queued::AsAlbums, Queued::FromArtist, Queued::OneByOne, Queued::Autofill] {
-        let rig = Rig::tagged("album-queued", &songs, true, 0, true, Measured::Before, false, &Tags { queued: how, ..Tags::default() });
+        let rig = Rig::tagged("album-queued", &songs, true, 0, Measured::Before, false, &Tags { queued: how, ..Tags::default() });
         rig.engine.play_at(0, 0);
         let (mixed, order) = rig.to_the_end();
         assert!(mixed, "the albums are mixed into each other");
@@ -449,7 +415,7 @@ fn gapless_however_queued() {
 #[test]
 fn album_apart_mixes() {
     // Shuffled album mixes.
-    let rig = Rig::new("album-shuffled", &ALBUM, true, 0, true, Measured::Before, true);
+    let rig = Rig::new("album-shuffled", &ALBUM, true, 0, Measured::Before, true);
     rig.engine.play_at(0, 0);
     let (mixed, order) = rig.to_the_end();
     assert!(mixed, "a shuffled album is mixed");
@@ -496,14 +462,14 @@ fn odd_tags_play_gapless() {
         ("quiet-ends", Tags { tag: no_tracks, quiet_ends: true, ..Tags::default() }),
     ];
     for (name, tags) in stories {
-        let rig = Rig::tagged(&format!("album-tags-{name}"), &ALBUM, true, 0, true, Measured::Before, false, &tags);
+        let rig = Rig::tagged(&format!("album-tags-{name}"), &ALBUM, true, 0, Measured::Before, false, &tags);
         rig.engine.play_at(0, 0);
         let (mixed, order) = rig.to_the_end();
         rig.heard_as(&order, 0, 0, &[true, true], 0);
         assert!(!mixed, "{name}: nothing mixed");
     }
     // Re-registered without track numbers: still in order.
-    let rig = Rig::tagged("album-tags-again", &ALBUM, true, 0, true, Measured::Before, false, &Tags { again: Some(no_tracks), ..Tags::default() });
+    let rig = Rig::tagged("album-tags-again", &ALBUM, true, 0, Measured::Before, false, &Tags { again: Some(no_tracks), ..Tags::default() });
     rig.engine.play_at(0, 0);
     let (mixed, order) = rig.to_the_end();
     rig.heard_as(&order, 0, 0, &[true, true], 0);

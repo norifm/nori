@@ -98,12 +98,6 @@ pub fn transport_glyph(playing: bool, buffering: bool, waited: bool) -> Transpor
     }
 }
 
-/// Reduced motion: the app setting, or system animations off unless `ignore_system`.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn motion_reduced(reduce: bool, ignore_system: bool, system_off: bool) -> bool {
-    reduce || (system_off && !ignore_system)
-}
-
 /// The times either side of the seek bar, in whole seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -179,10 +173,6 @@ mod tests {
         assert_eq!(transport_glyph(false, true, true), TransportGlyph::Spinner);
         assert_eq!(transport_glyph(true, false, false), TransportGlyph::Pause);
         assert_eq!(transport_glyph(false, false, false), TransportGlyph::Play);
-        assert!(motion_reduced(true, true, false));
-        assert!(motion_reduced(false, false, true));
-        assert!(!motion_reduced(false, true, true));
-        assert!(!motion_reduced(false, false, false));
 
         // Seek times prefer drag then held then position.
         assert_eq!(seek_times(true, 0.5, 9_000, 1_000, 200_000), SeekTimes { at_s: 100, left_s: 100 });

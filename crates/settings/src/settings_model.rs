@@ -19,6 +19,9 @@ pub enum SettingKind {
     Switch,
     /// One of [`SettingSpec::options`] (for the music folder: the server's folder ids, "" for all).
     Choice,
+    /// Any of [`SettingSpec::options`], independent of each other: the value names those on, comma
+    /// separated in the options' order ("" for none).
+    Flags,
     /// A number from [`SettingSpec::min`] to [`SettingSpec::max`].
     Level,
     Text,
@@ -42,7 +45,8 @@ pub struct SettingSpec {
 fn spec(name: &str, k: &K) -> SettingSpec {
     let (kind, options, (min, max)): (SettingKind, Vec<String>, (f32, f32)) = match k {
         K::Switch => (SettingKind::Switch, vec!["false".into(), "true".into()], (0.0, 0.0)),
-        K::Choice(o) | K::Named(o) => (SettingKind::Choice, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
+        K::Choice(o) => (SettingKind::Choice, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
+        K::Flags(o) => (SettingKind::Flags, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Level(lo, hi) => (SettingKind::Level, Vec::new(), (*lo, *hi)),
         K::Text => (SettingKind::Text, Vec::new(), (0.0, 0.0)),
         K::Colour => (SettingKind::Colour, nori_look::theme::ACCENTS.iter().map(|c| (*c as i64).to_string()).collect(), (0.0, 0.0)),
@@ -184,6 +188,25 @@ pub fn setting_specs() -> Vec<SettingSpec> {
     specs()
 }
 
+/// A [`SettingKind::Flags`] value with `flag` switched: on when it was off, off when on.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn flag_toggled(value: String, flag: String) -> String {
+    let mut on: Vec<&str> = value.split(',').filter(|f| !f.is_empty()).collect();
+    match on.iter().position(|f| *f == flag) {
+        Some(i) => {
+            on.remove(i);
+        }
+        None => on.push(&flag),
+    }
+    on.join(",")
+}
+
+/// Whether `flag` is on in a [`SettingKind::Flags`] value.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn flag_on(value: String, flag: String) -> bool {
+    value.split(',').any(|f| f == flag)
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Settings {
     /// [`changed`] for the live settings.
@@ -213,37 +236,36 @@ pub fn theme_is_dark(theme: crate::settings::ThemeMode, system_dark: bool) -> bo
     }
 }
 
-/// Whether a system bar is hidden; `wide` is sideways, `protecting` is burn-in protection at work.
+/// Whether the turn of the phone hides a bar: `wide` is sideways.
+fn turned_away(hide: &[crate::settings::HideBarWhen], wide: bool) -> bool {
+    use crate::settings::HideBarWhen::*;
+    hide.contains(if wide { &Sideways } else { &Upright })
+}
+
+/// Whether a system bar is hidden: while any of `hide` holds. `wide` is sideways, `protecting` is
+/// burn-in protection at work.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn bar_hidden(hide: crate::settings::HideBar, wide: bool, protecting: bool) -> bool {
-    use crate::settings::HideBar::*;
-    match hide {
-        Never => false,
-        Sideways => wide,
-        Upright => !wide,
-        Always => true,
-        Protected => protecting,
-    }
+pub fn bar_hidden(hide: Vec<crate::settings::HideBarWhen>, wide: bool, protecting: bool) -> bool {
+    turned_away(&hide, wide) || protecting && hide.contains(&crate::settings::HideBarWhen::Protected)
 }
 
 /// Whether the page keeps a bar's room while the bar is away: where it comes and goes in front of the
-/// page rather than with a turn of the phone, so nothing on the page moves when it does.
+/// page with burn-in protection rather than with a turn of the phone, so nothing on the page moves
+/// when it does.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn bar_room_kept(hide: crate::settings::HideBar) -> bool {
-    matches!(hide, crate::settings::HideBar::Protected)
+pub fn bar_room_kept(hide: Vec<crate::settings::HideBarWhen>, wide: bool) -> bool {
+    hide.contains(&crate::settings::HideBarWhen::Protected) && !turned_away(&hide, wide)
 }
 
-/// Whether the screen is kept on; `wide` is sideways.
+/// Whether the screen is kept on: while any of `keep` holds. `wide` is sideways.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn keep_awake(keep: crate::settings::KeepAwake, wide: bool, charging: bool) -> bool {
-    use crate::settings::KeepAwake::*;
-    match keep {
-        Never => false,
+pub fn keep_awake(keep: Vec<crate::settings::AwakeWhen>, wide: bool, charging: bool) -> bool {
+    use crate::settings::AwakeWhen::*;
+    keep.iter().any(|k| match k {
         Sideways => wide,
+        Upright => !wide,
         Charging => charging,
-        SidewaysCharging => wide && charging,
-        Always => true,
-    }
+    })
 }
 
 /// How long burn-in protection waits for a touch before dimming; `None`: it never dims.
@@ -282,15 +304,28 @@ pub fn controls_on_left(side: crate::settings::ControlsSide, driver_on_left: boo
 
 /// Whether the setting depends on charging (only then is the charger watched).
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn keep_awake_watches_charging(keep: crate::settings::KeepAwake) -> bool {
-    use crate::settings::KeepAwake::*;
-    matches!(keep, Charging | SidewaysCharging)
+pub fn keep_awake_watches_charging(keep: Vec<crate::settings::AwakeWhen>) -> bool {
+    use crate::settings::AwakeWhen::*;
+    keep.contains(&Charging) && !(keep.contains(&Sideways) && keep.contains(&Upright))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::settings::{set_by_name, SavedServer};
+
+    #[test]
+    fn a_flag_toggles_on_and_off_in_its_set() {
+        let p = StoredPrefs::default();
+        let toggled = |name: &str, flag: &str| {
+            let v = flag_toggled(value_of(&p, name).unwrap(), flag.into());
+            value_of(&set_by_name(&p, name, &v).unwrap().prefs, name).unwrap()
+        };
+        assert_eq!(toggled("coverColors", "PAGES"), "PLAYER");
+        assert_eq!(toggled("keepAwake", "CHARGING"), "CHARGING");
+        assert_eq!(toggled("hideStatusBar", "PROTECTED"), "SIDEWAYS,PROTECTED");
+        assert!(flag_on("SIDEWAYS,PROTECTED".into(), "PROTECTED".into()) && !flag_on("SIDEWAYS".into(), "SIDE".into()));
+    }
 
     #[test]
     fn changed_report_skips_text() {
@@ -306,21 +341,44 @@ mod tests {
         assert!(!said.contains("secret-key"), "{said}");
     }
 
+    /// Every set of `all`.
+    fn sets<T: Copy>(all: &[T]) -> Vec<Vec<T>> {
+        (0..1u32 << all.len()).map(|m| all.iter().enumerate().filter(|(i, _)| m & (1 << i) != 0).map(|(_, t)| *t).collect()).collect()
+    }
+
     #[test]
-    fn bar_room_is_kept_where_protection_hides_the_bar() {
-        use crate::settings::HideBar::*;
-        for h in [Never, Sideways, Upright, Always, Protected] {
-            let follows = [false, true].into_iter().any(|wide| bar_hidden(h, wide, true) != bar_hidden(h, wide, false));
-            assert_eq!(bar_room_kept(h), follows, "{h:?}");
+    fn a_bar_hides_while_any_chosen_condition_holds() {
+        use crate::settings::HideBarWhen::*;
+        for h in sets(&[Sideways, Upright, Protected]) {
+            for (wide, protecting) in [(false, false), (false, true), (true, false), (true, true)] {
+                let any = h.iter().any(|c| match c {
+                    Sideways => wide,
+                    Upright => !wide,
+                    Protected => protecting,
+                });
+                assert_eq!(bar_hidden(h.clone(), wide, protecting), any, "{h:?} wide {wide} protecting {protecting}");
+                // The room is kept where protection alone decides.
+                let follows = bar_hidden(h.clone(), wide, true) != bar_hidden(h.clone(), wide, false);
+                assert_eq!(bar_room_kept(h.clone(), wide), follows, "{h:?} wide {wide}");
+            }
         }
     }
 
     #[test]
-    fn charging_is_watched_where_it_keeps_the_screen_on() {
-        use crate::settings::KeepAwake::*;
-        for k in [Never, Sideways, Charging, SidewaysCharging, Always] {
-            let decides = [false, true].into_iter().any(|wide| keep_awake(k, wide, true) != keep_awake(k, wide, false));
-            assert_eq!(keep_awake_watches_charging(k), decides, "{k:?}");
+    fn the_screen_stays_on_while_any_chosen_condition_holds() {
+        use crate::settings::AwakeWhen::*;
+        for k in sets(&[Sideways, Upright, Charging]) {
+            for (wide, charging) in [(false, false), (false, true), (true, false), (true, true)] {
+                let any = k.iter().any(|c| match c {
+                    Sideways => wide,
+                    Upright => !wide,
+                    Charging => charging,
+                });
+                assert_eq!(keep_awake(k.clone(), wide, charging), any, "{k:?} wide {wide} charging {charging}");
+            }
+            // The charger is watched where it decides.
+            let decides = [false, true].into_iter().any(|wide| keep_awake(k.clone(), wide, true) != keep_awake(k.clone(), wide, false));
+            assert_eq!(keep_awake_watches_charging(k.clone()), decides, "{k:?}");
         }
     }
 
@@ -380,7 +438,6 @@ mod tests {
         assert_eq!(value_of(&d, "lyricsOnline").as_deref(), Some("true"));
         assert_eq!(value_of(&off, "lyricsOnline").as_deref(), Some("false"));
         assert_eq!(value_of(&off, "autoEqDownload").as_deref(), Some("false"));
-        assert_eq!(value_of(&StoredPrefs { motion_artwork: true, ..off }, "motionArtwork").as_deref(), Some("false"));
     }
 
     #[test]

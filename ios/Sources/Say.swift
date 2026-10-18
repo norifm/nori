@@ -85,8 +85,6 @@ enum Say {
         case NORI_NOTE_NOTHING_TO_PUT_BACK: return "Nothing to put back"
         case NORI_NOTE_DOWNLOADING: return "Downloading \(songs(count))"
         case NORI_NOTE_DOWNLOAD_FAILED: return "Could not download"
-        case NORI_NOTE_STARRED: return "Added to favorites"
-        case NORI_NOTE_UNSTARRED: return "Removed from favorites"
         case NORI_NOTE_STAR_FAILED: return "Could not change the favorite"
         case NORI_NOTE_INDEXING: return "Filling the offline index…"
         case NORI_NOTE_INDEXED: return "Offline index: \(songs(count))"
@@ -125,10 +123,7 @@ enum Say {
     static let settings: [(section: String, rows: [(name: String, label: String)])] = [
         ("Playback", [
             ("crossfadeSec", "Crossfade (seconds)"),
-            ("crossfadeKeepAlbums", "Keep albums gapless"),
             ("autoMix", "AutoMix"),
-            ("autoMixMaxS", "AutoMix longest mix (seconds)"),
-            ("autoMixBeatMatch", "Match beats"),
             ("skipSilence", "Skip silence"),
             ("previousAlwaysSkips", "Previous always skips"),
         ]),
@@ -140,15 +135,12 @@ enum Say {
             ("autoFillRemote", "Include remote songs"),
         ]),
         ("When something goes wrong", [
-            ("skipOnError", "Skip songs that won't play"),
             ("bridgeOffline", "Play downloads when offline"),
         ]),
         ("Sound", [
-            ("replayGain", "ReplayGain"),
-            ("loudnessTarget", "Loudness target (LUFS)"),
-            ("gainBoostDb", "Gain boost (dB)"),
-            ("loudness", "Loudness compensation"),
-            ("crossfeedDb", "Crossfeed (dB)"),
+            ("replayGain", "Volume leveling"),
+            ("loudnessLevel", "Level"),
+            ("headphoneSound", "Headphone sound"),
             ("mono", "Mono"),
             ("limiter", "Limiter"),
             ("compressor", "Compressor"),
@@ -162,16 +154,11 @@ enum Say {
             ("swipeRight", "Swipe right"),
             ("swipeLeft", "Swipe left"),
         ]),
-        ("Messages", [
-            ("favouriteNotice", "Confirm favorites"),
-        ]),
         ("Remote control", [
             ("remoteControl", "Remote control and jams"),
         ]),
         ("Server", [
             ("scrobble", "Scrobble plays"),
-            ("scrobblePercent", "Scrobble after (percent)"),
-            ("liveSearchDelayMs", "Search the server after (ms)"),
             ("thirdPartyLookups", "Look up artist info and lyrics online"),
         ]),
     ]

@@ -3042,11 +3042,6 @@ component EqualizerPage inherits Flickable {
     in property <bool> limiter;
     in property <float> ceiling;
     in property <string> ceiling-label;
-    in property <string> crossfeed-preset;
-    in property <float> crossfeed;
-    in property <string> crossfeed-label;
-    in property <float> cut;
-    in property <string> cut-label;
     in property <string> bypass;
     in property <[float]> ranges;
     callback back;
@@ -3283,41 +3278,6 @@ component EqualizerPage inherits Flickable {
             lo: root.ranges.length > 7 ? root.ranges[6] : -12;
             hi: root.ranges.length > 7 ? root.ranges[7] : 0;
             moved(v, last) => { root.level("limiter", v, last); }
-        }
-        EqSection {
-            text: "Crossfeed";
-        }
-        HorizontalLayout {
-            spacing: 8px;
-            alignment: start;
-            for c in [{ v: "OFF", t: "Off" }, { v: "DEFAULT", t: "Default" }, { v: "CHU_MOY", t: "Chu Moy" }, { v: "JAN_MEIER", t: "Jan Meier" }]: Chip {
-                text: c.t;
-                lit: root.crossfeed-preset == c.v;
-                clicked => { root.set("crossfeedPreset", c.v); }
-            }
-        }
-        Text {
-            text: root.crossfeed-label;
-            color: Theme.dim;
-            font-size: 12px;
-            wrap: word-wrap;
-        }
-        LevelRow {
-            value: root.crossfeed;
-            lo: root.ranges.length > 9 ? root.ranges[8] : 0;
-            hi: root.ranges.length > 9 ? root.ranges[9] : 12;
-            moved(v, last) => { root.level("crossfeed", v, last); }
-        }
-        if root.crossfeed > 0: Text {
-            text: root.cut-label;
-            color: Theme.dim;
-            font-size: 12px;
-        }
-        if root.crossfeed > 0: LevelRow {
-            value: root.cut;
-            lo: root.ranges.length > 11 ? root.ranges[10] : 300;
-            hi: root.ranges.length > 11 ? root.ranges[11] : 2000;
-            moved(v, last) => { root.level("crossfeedCut", v, last); }
         }
     }
 }
@@ -3681,11 +3641,6 @@ export component AppWindow inherits Window {
     in property <bool> eq-limiter;
     in property <float> eq-ceiling;
     in property <string> eq-ceiling-label;
-    in property <string> eq-crossfeed-preset;
-    in property <float> eq-crossfeed;
-    in property <string> eq-crossfeed-label;
-    in property <float> eq-cut;
-    in property <string> eq-cut-label;
     in property <string> eq-bypass;
     in property <[float]> eq-ranges;
     callback setting-slid(string, float, bool);
@@ -4559,7 +4514,7 @@ export component AppWindow inherits Window {
                 }
 
                 // The equalizer, as the Android app's: the switch, graphic or parametric, the bands, the presets,
-                // the pre-amp, then the output and the crossfeed.
+                // the pre-amp, then the output.
                 if root.view == 9: Fade {
                     EqualizerPage {
                         on: root.eq-on;
@@ -4577,11 +4532,6 @@ export component AppWindow inherits Window {
                         limiter: root.eq-limiter;
                         ceiling: root.eq-ceiling;
                         ceiling-label: root.eq-ceiling-label;
-                        crossfeed-preset: root.eq-crossfeed-preset;
-                        crossfeed: root.eq-crossfeed;
-                        crossfeed-label: root.eq-crossfeed-label;
-                        cut: root.eq-cut;
-                        cut-label: root.eq-cut-label;
                         bypass: root.eq-bypass;
                         ranges: root.eq-ranges;
                         back => { root.go(8); }

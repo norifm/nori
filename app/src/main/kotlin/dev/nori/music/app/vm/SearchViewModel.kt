@@ -69,7 +69,7 @@ class SearchViewModel(app: Application) : NoriViewModel(app) {
             }
         }
         viewModelScope.launch {
-            query.debounce { if (it.isBlank()) 0L else nori.settings.value.liveSearchDelayMs.toLong() }.collectLatest { q ->
+            query.debounce { if (it.isBlank()) 0L else dev.nori.music.ffi.library.liveSearchDelayMs() }.collectLatest { q ->
                 if (q.isBlank()) return@collectLatest
                 val v = try {
                     // The core asks and takes the answer itself: it never comes out here to be handed back.

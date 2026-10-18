@@ -261,16 +261,14 @@ pub(crate) mod tests {
 
     #[test]
     fn prefetch_warms_only_the_next_library_song() {
-        for (on, next) in [(true, "ahead"), (false, "ahead"), (true, "ext-ahead")] {
+        for next in ["ahead", "ext-ahead"] {
             let (c, fake) = setup();
             let ahead = Song { id: next.into(), ..song() };
             c.core.session.register(vec![Song { id: "current".into(), ..song() }, ahead]);
             c.core.session.set(vec!["current".into(), next.into(), "later".into()], Some(0), false, None);
-            c.settings().open("").unwrap();
-            c.settings().edit_by_name("lyricsPrefetch", &on.to_string()).unwrap();
             fake.answer(SYNCED);
             block(c.lyrics_prefetch());
-            if on && next == "ahead" {
+            if next == "ahead" {
                 let stored = c.read_stored(crate::cache_policy::Read::LyricsBySong { song_id: next.into() }).unwrap();
                 assert!(matches!(stored.page, Some(crate::cache_policy::Page::LyricsPage { v }) if !v.lines.is_empty()), "prefetch must store the next song's words before it is played");
                 let shown = Arc::new(Screen::default());
@@ -280,7 +278,7 @@ pub(crate) mod tests {
                 assert!(fake.asked()[0].contains("id=ahead"));
                 assert!(c.core.cache_get("getLyricsBySongId&id=later&enhanced=true".into()).unwrap().is_none());
             } else {
-                assert!(fake.asked().is_empty(), "disabled or provider: no prefetch requests");
+                assert!(fake.asked().is_empty(), "a provider's: no prefetch requests");
             }
         }
     }
@@ -345,19 +343,9 @@ pub(crate) mod tests {
         let mut removed = Box::pin(c.lyrics_prefetch());
         assert!(removed.as_mut().poll(&mut cx).is_pending());
         c.core.session.set(vec!["now".into()], Some(0), false, None);
-        assert!(c.core.session.lyrics_prefetch_ready(), "queue edits reconcile a removed next entry");
         block(c.lyrics_prefetch());
         assert!(removed.as_mut().poll(&mut cx).is_ready());
         assert_eq!(active.load(Ordering::SeqCst), 0, "removing the upcoming entry cancels its request");
-        c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
-        let mut disabled = Box::pin(c.lyrics_prefetch());
-        assert!(disabled.as_mut().poll(&mut cx).is_pending());
-        c.settings().open("").unwrap();
-        c.settings().edit_by_name("lyricsPrefetch", "false").unwrap();
-        assert!(!c.core.session.lyrics_prefetch_ready());
-        block(c.lyrics_prefetch());
-        assert!(disabled.as_mut().poll(&mut cx).is_ready());
-        assert_eq!(active.load(Ordering::SeqCst), 0, "turning prefetch off cancels its request");
         assert_eq!(fake.asked().len(), 1);
     }
 
