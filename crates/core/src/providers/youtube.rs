@@ -573,6 +573,15 @@ mod tests {
         assert_eq!(t.asked.lock().len(), 1);
     }
 
+    /// A Home row says no length; the radio's own copy of its seed does.
+    #[test]
+    fn a_radio_seed_from_home_takes_the_watch_queues_length() {
+        let (c, _) = youtube(&[&fixture("radio")]);
+        c.core.session.register(vec![Song { id: "yt-dQw4w9WgXcQ".into(), title: "From Home".into(), ..Default::default() }]);
+        let songs = block(c.radio("yt-dQw4w9WgXcQ".into())).unwrap();
+        assert_eq!((songs[0].title.as_str(), songs[0].duration), ("From Home", 212));
+    }
+
     #[test]
     fn a_song_not_kept_locally_uses_watch_metadata() {
         let (c, t) = youtube(&[&fixture("radio")]);
