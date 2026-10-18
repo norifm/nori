@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.union
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.draw.clip
@@ -85,56 +88,96 @@ import dev.nori.music.app.vm.PlayerViewModel
  * The chrome that never leaves: what is playing and where to go, in one outline - the mini player and the
  * tabs with a hairline between them, no shadow, no Material indicator pill - over the page, which the list
  * scrolls under. Inside the outline the page's own color, a little see-through, keeps it readable; nothing
- * reaches past its edges. Upright the mini player stands over the tabs; on its side ([LocalWide]) it sits
- * beside them in one row along the bottom, the tabs first when [tabsFirst] (a car's controls on the left).
- * While nothing plays the tabs are a pill of their own.
+ * reaches past its edges. Upright it runs along the bottom, the mini player over the tabs; on its side
+ * ([LocalWide]) the same pill stands on an edge instead ([SideChrome]) and only the selection's bar stays
+ * here. While nothing plays the tabs are a pill of their own.
  *
- * All of it is under the player sheet, which rises from the mini player's top edge and covers everything
- * below that at once: the chrome goes under it as one piece.
+ * All of it is under the player sheet, which comes in from the mini player's inner edge and covers
+ * everything beyond that at once: the chrome goes under it as one piece.
  */
 @Composable
 fun BottomChrome(
     player: PlayerViewModel, actions: ActionsViewModel, onOpenPlayer: () -> Unit,
-    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look, tabsFirst: Boolean,
+    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look,
 ) {
-    val wide = LocalWide.current
-    val chrome = ChromeColours(look)
-    val state by player.state.collectAsStateWithLifecycle()
-    val playing = (state.current?.title ?: state.radio) != null
-    val shape = if (playing) RoundedCornerShape(CHROME_CORNER) else PillShape
-    val hairline = with(androidx.compose.ui.platform.LocalDensity.current) { 1f.toDp() }
     Column {
         SelectionBar(actions)
-        Box(Modifier.fillMaxWidth().padding(horizontal = BAR_END), Alignment.Center) {
-            when {
-                // Across a wide window four tabs spread over all of it would be a long way apart.
-                !playing -> Pill(shape, chrome, (if (wide) Modifier.widthIn(max = WIDE_TABS) else Modifier).fillMaxWidth()) {
-                    TabRow(route, tabs, onTab, chrome, Modifier.fillMaxWidth())
-                }
-                !wide -> Pill(shape, chrome, Modifier.fillMaxWidth()) {
-                    Column {
-                        MiniPlayer(player, actions, onOpenPlayer, look)
-                        Box(Modifier.fillMaxWidth().height(hairline).background(chrome.divider))
-                        TabRow(route, tabs, onTab, chrome, Modifier.fillMaxWidth())
-                    }
-                }
-                else -> Pill(shape, chrome, Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val parts = listOf<@Composable (Modifier) -> Unit>(
-                            { m -> Box(m) { MiniPlayer(player, actions, onOpenPlayer, look) } },
-                            { m -> TabRow(route, tabs, onTab, chrome, m) },
-                        )
-                        (if (tabsFirst) parts.reversed() else parts).forEachIndexed { i, part ->
-                            if (i > 0) Box(Modifier.width(hairline).height(MINI_ROW).background(chrome.divider))
-                            part(Modifier.weight(1f))
-                        }
-                    }
-                }
-            }
+        if (!LocalWide.current) Box(Modifier.fillMaxWidth().padding(horizontal = BAR_END)) {
+            ChromePill(player, actions, onOpenPlayer, route, tabs, onTab, look, named = true)
         }
         // The gesture bar's room is gap enough above its handle; without one the pill keeps off the edge.
         val room = with(androidx.compose.ui.platform.LocalDensity.current) { gestureBarRoom.getBottom(this).toDp() }
         Spacer(Modifier.height(room.coerceAtLeast(BAR_OFF)))
+    }
+}
+
+/**
+ * On its side the upright pill stands on the edge the phone's bottom turned to: the right, or the left
+ * when [left]. It is laid out as it is upright, along the window's height, and turned a quarter onto that
+ * edge, so a turn of the phone leaves it where it lay: its words run along it like a spine and only its
+ * glyphs turn, to stand upright ([LocalGlyphTurn]). The page under it is kept clear of it (App), so there
+ * is nothing to blur.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun SideChrome(
+    player: PlayerViewModel, actions: ActionsViewModel, onOpenPlayer: () -> Unit,
+    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look, left: Boolean, modifier: Modifier,
+) {
+    val turn = LocalGlyphTurn.current
+    val stand = if (left) -90f else 90f
+    // Off the edge it stands on by what it stood off the bottom (BottomChrome), so a turn leaves it in place.
+    val edge = with(androidx.compose.ui.platform.LocalDensity.current) { gestureBarRoom.getBottom(this).toDp() }.coerceAtLeast(BAR_OFF)
+    // Clear of a status bar the app keeps, by its room whether it is showing yet or not: the bar going away
+    // just after a turn would otherwise slide the whole pill up, a second motion after the turn.
+    val top = if (LocalHiddenBars.current.value.status) WindowInsets(0) else WindowInsets.statusBarsIgnoringVisibility.only(WindowInsetsSides.Top)
+    Box(
+        modifier.fillMaxHeight()
+            .windowInsetsPadding(top.union(gestureBarRoom.only(WindowInsetsSides.Horizontal)))
+            .padding(top = BAR_END, bottom = BAR_END, start = if (left) edge else BAR_END, end = if (left) BAR_END else edge),
+        Alignment.Center,
+    ) {
+        Box(Modifier.laidOnSide(left)) {
+            CompositionLocalProvider(LocalGlyphTurn provides { stand + turn() }, LocalBackdrop provides null) {
+                ChromePill(player, actions, onOpenPlayer, route, tabs, onTab, look, named = false)
+            }
+        }
+    }
+}
+
+/** Measures this as if the height it is given were its width, and turns it a quarter: onto the right edge, or the left when [left]. */
+private fun Modifier.laidOnSide(left: Boolean): Modifier = layout { measurable, constraints ->
+    val p = measurable.measure(androidx.compose.ui.unit.Constraints(maxWidth = constraints.maxHeight, maxHeight = constraints.maxWidth))
+    layout(p.height, p.width) {
+        p.placeWithLayer((p.height - p.width) / 2, (p.width - p.height) / 2) { rotationZ = if (left) 90f else -90f }
+    }
+}
+
+/**
+ * How far the chrome's glyphs are turned from the chrome's own upright: on its side a quarter back, so they
+ * stand, plus what is left of a turn of the phone (App), which starts them where they were before it.
+ */
+val LocalGlyphTurn = androidx.compose.runtime.staticCompositionLocalOf<() -> Float> { { 0f } }
+
+/** The mini player over the tabs, or the tabs alone while nothing plays; the current tab named when [named]. */
+@Composable
+private fun ChromePill(
+    player: PlayerViewModel, actions: ActionsViewModel, onOpenPlayer: () -> Unit,
+    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look, named: Boolean,
+) {
+    val chrome = ChromeColours(look)
+    val state by player.state.collectAsStateWithLifecycle()
+    if ((state.current?.title ?: state.radio) == null) {
+        Pill(PillShape, chrome, Modifier.fillMaxWidth()) { TabRow(route, tabs, onTab, chrome, named, Modifier.fillMaxWidth()) }
+        return
+    }
+    val hairline = with(androidx.compose.ui.platform.LocalDensity.current) { 1f.toDp() }
+    Pill(RoundedCornerShape(CHROME_CORNER), chrome, Modifier.fillMaxWidth()) {
+        Column {
+            MiniPlayer(player, actions, onOpenPlayer, look)
+            Box(Modifier.fillMaxWidth().height(hairline).background(chrome.divider))
+            TabRow(route, tabs, onTab, chrome, named, Modifier.fillMaxWidth())
+        }
     }
 }
 
@@ -196,11 +239,11 @@ fun Modifier.drawsBackdrop(backdrop: Backdrop?): Modifier = if (backdrop == null
         drawLayer(backdrop.layer)
     }
 
-/** The tabs, side by side: only the current one named. */
+/** The tabs, side by side: the current one named when [named]. */
 @Composable
-private fun TabRow(route: String?, tabs: List<Tab>, onTab: (String) -> Unit, chrome: ChromeColours, modifier: Modifier) {
+private fun TabRow(route: String?, tabs: List<Tab>, onTab: (String) -> Unit, chrome: ChromeColours, named: Boolean, modifier: Modifier) {
     Row(modifier.height(BAR_THICK).padding(horizontal = BAR_INSET), Arrangement.SpaceEvenly, Alignment.CenterVertically) {
-        tabs.forEach { t -> TabButton(t, route == t.route, chrome, Modifier.fillMaxHeight()) { onTab(t.route) } }
+        tabs.forEach { t -> TabButton(t, route == t.route, named, chrome, Modifier.fillMaxHeight()) { onTab(t.route) } }
     }
 }
 
@@ -235,8 +278,6 @@ private val CHROME_CORNER = MINI_COVER_CORNER + MINI_PAD
 /** How much the page behind the chrome is blurred, and how much of the page's own color is laid over that. */
 private val BACKDROP_BLUR = 24.dp
 private const val BLURRED_TINT = 0.55f
-/** The tabs on their own across a wide window, at most this wide. */
-private val WIDE_TABS = 440.dp
 /** How long a tab takes to light, and its name to open. */
 private val TAB_FADE = androidx.compose.animation.core.tween<Color>(220)
 
@@ -258,12 +299,12 @@ private class ChromeColours(look: Look) {
 }
 
 /**
- * What the page is kept off at its left edge on its side (the camera's strip), for a page that draws
- * under it anyway: a cover runs to the screen's edge.
+ * What the page is kept off at its left edge on its side (the camera's strip, or the chrome's), for a page
+ * that draws under it anyway: a cover runs to the screen's edge.
  */
 val LocalPageStart = androidx.compose.runtime.compositionLocalOf { 0.dp }
 
-/** What the page is kept off at its right edge on its side (the camera's strip). */
+/** What the page is kept off at its right edge on its side (the camera's strip, or the chrome's). */
 val LocalPageEnd = androidx.compose.runtime.compositionLocalOf { 0.dp }
 
 /**
@@ -302,12 +343,13 @@ fun rememberChromeLook(): Look {
 data class Tab(val route: String, val label: String, val icon: ImageVector)
 
 /**
- * One tab: its glyph, quiet until it is the current one, which takes the accent and its name beside it.
- * Only the current tab is named; the name opens out as the tab is chosen, the others closing up to make
- * room.
+ * One tab: its glyph, quiet until it is the current one, which takes the accent and, when [named], its name
+ * beside it. Only the current tab is named; the name opens out as the tab is chosen, the others closing up
+ * to make room.
  */
 @Composable
-private fun TabButton(tab: Tab, selected: Boolean, chrome: ChromeColours, modifier: Modifier, onClick: () -> Unit) {
+private fun TabButton(tab: Tab, selected: Boolean, named: Boolean, chrome: ChromeColours, modifier: Modifier, onClick: () -> Unit) {
+    val turn = LocalGlyphTurn.current
     val colour by androidx.compose.animation.animateColorAsState(if (selected) chrome.accent else chrome.quiet, TAB_FADE, label = "tab")
     val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Row(
@@ -317,9 +359,9 @@ private fun TabButton(tab: Tab, selected: Boolean, chrome: ChromeColours, modifi
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(tab.icon, null, Modifier.size(23.dp), tint = colour)
+        Icon(tab.icon, null, Modifier.size(23.dp).graphicsLayer { rotationZ = turn() }, tint = colour)
         androidx.compose.animation.AnimatedVisibility(
-            selected,
+            selected && named,
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220, 60)) + androidx.compose.animation.expandHorizontally(androidx.compose.animation.core.tween(220), Alignment.Start),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) + androidx.compose.animation.shrinkHorizontally(androidx.compose.animation.core.tween(220), Alignment.Start),
         ) {
@@ -344,7 +386,9 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
     val sheet = LocalPlayerSheet.current
     val title = state.current?.title ?: state.radio ?: return
     // Gone, it leaves the sheet the whole window to rise over.
-    androidx.compose.runtime.DisposableEffect(sheet) { onDispose { sheet.miniTop = 0f } }
+    androidx.compose.runtime.DisposableEffect(sheet) { onDispose { sheet.miniEdge = 0f } }
+    val turn = LocalGlyphTurn.current
+    val standing = Modifier.graphicsLayer { rotationZ = turn() }
     val settings: dev.nori.music.app.vm.SettingsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     val system = androidx.compose.foundation.isSystemInDarkTheme()
@@ -377,9 +421,12 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
         color = Color.Transparent, contentColor = content,
         modifier = Modifier.fillMaxWidth()
             .semantics { contentDescription = say.nowPlayingBar }
-            .onGloballyPositioned { sheet.miniTop = it.positionInRoot().y }
-            // Up opens the player, following the finger the whole way; see PlayerSheet.
-            .dragsSheet(sheet),
+            .onGloballyPositioned {
+                val b = it.boundsInRoot()
+                sheet.miniEdge = when (sheet.edge) { SheetEdge.BOTTOM -> b.top; SheetEdge.RIGHT -> b.left; SheetEdge.LEFT -> b.right }
+            }
+            // Up (inwards, on its side) opens the player, following the finger the whole way; see PlayerSheet.
+            .dragsSheet(sheet, down = false),
     ) {
         // The tap has to be a child of the drag detectors, not a sibling behind them: a pointerInput
         // waiting for drag slop swallows a tap offered to a clickable further up the same chain.
@@ -395,12 +442,12 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                 Row(Modifier.fillMaxWidth().padding(start = MINI_PAD, top = MINI_PAD, bottom = MINI_PAD), verticalAlignment = Alignment.CenterVertically) {
                     Cover(
                         vm.cover(s?.coverArt, CoverSize.ROW), MINI_COVER,
-                        if (real) Modifier.onGloballyPositioned {
+                        if (real) standing.onGloballyPositioned {
                             // Only the whole square: slid part-way out of the bar it is clipped, and a
                             // thumbnail with no width is not something to grow the cover from.
                             val b = it.boundsInRoot()
                             if (b.height > 0f && kotlin.math.abs(b.width - b.height) < 1f) sheet.miniCover = b
-                        } else Modifier, radius = MINI_COVER_CORNER,
+                        } else standing, radius = MINI_COVER_CORNER,
                     )
                     Column(Modifier.weight(1f).padding(horizontal = 11.dp)) {
                         // A long title here reads itself out twice when the song comes on and then
@@ -437,19 +484,21 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
             // for it because the title beside it is already allowed to run out of space gracefully. The skip is
             // a swipe away. A jam guest's speaker and seal would be the host's; its play is the one its role offers.
             // While a jam is on it stands in the speaker's place: a jam plays on this device only.
-            jam?.let { JamButton(it, 24.dp) { look.color(CoverLook.CHROME_CONTENT_75) } }
+            jam?.let { Box(standing) { JamButton(it, 24.dp) { look.color(CoverLook.CHROME_CONTENT_75) } } }
             if (!state.jamGuest) {
-                if (jam == null) OutputButton(
-                    state.playingOn != null, 24.dp,
-                    idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { content },
-                )
+                if (jam == null) Box(standing) {
+                    OutputButton(
+                        state.playingOn != null, 24.dp,
+                        idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { content },
+                    )
+                }
                 // Seals where songs carry favorites (a provider's only signed in): the bar's one color, the accent.
                 if (LocalRules.current.stars) song?.let { s ->
                     val starred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
-                    FavoriteSeal(starred, tint = look.color(CoverLook.ACCENT), muted = look.color(CoverLook.CHROME_CONTENT_75)) { actions.star(s, !starred) }
+                    Box(standing) { FavoriteSeal(starred, tint = look.color(CoverLook.ACCENT), muted = look.color(CoverLook.CHROME_CONTENT_75)) { actions.star(s, !starred) } }
                 }
             }
-            if (state.offersPlayPause) IconButton(vm::toggle) { PlayPauseGlyph(state.playing, state.buffering, 26.dp, 20.dp) }
+            if (state.offersPlayPause) IconButton(vm::toggle, standing) { PlayPauseGlyph(state.playing, state.buffering, 26.dp, 20.dp) }
         }
         }
         }

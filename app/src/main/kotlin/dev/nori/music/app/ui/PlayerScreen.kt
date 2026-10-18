@@ -1051,7 +1051,7 @@ private fun FlyingThumb(sheet: PlayerSheet, url: String?) {
             Modifier.requiredSize(side).align(Alignment.TopStart)
                 .graphicsLayer {
                     val t = sheet.progress.value.coerceIn(0f, 1f)
-                    val from = sheet.miniCover.translate(0f, -sheet.travel)
+                    val from = sheet.miniCover.translate(-sheet.closed())
                     fun mix(a: Float, b: Float) = a + (b - a) * t
                     val k = (mix(from.height, to.height) / to.height).coerceAtLeast(0.01f)
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
@@ -1277,7 +1277,7 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                 Modifier.requiredSize(side).align(Alignment.TopStart)
                     .graphicsLayer {
                         val t = sheet.progress.value.coerceIn(0f, 1f)
-                        val from = sheet.miniCover.translate(0f, -sheet.travel)
+                        val from = sheet.miniCover.translate(-sheet.closed())
                         fun mix(a: Float, b: Float) = a + (b - a) * t
                         val k = (mix(from.height, h) / h).coerceAtLeast(0.01f)
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)

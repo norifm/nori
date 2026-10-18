@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -24,8 +25,9 @@ import kotlinx.coroutines.launch
 /**
  * The full player as a sheet over the app rather than a page navigated to. It is one number,
  * [progress], from 0 (only the mini player showing) to 1 (the player filling the screen), and every
- * part of the transition is drawn from it: the sheet's top edge travels from the mini player's top to
- * the top of the screen, and the cover grows from the mini player's thumbnail into the sleeve. A drag
+ * part of the transition is drawn from it: the sheet's leading edge travels from the mini player's inner
+ * edge to the far side of the screen (up from the bottom, or across from the side the mini player stands
+ * on, [edge]), and the cover grows from the mini player's thumbnail into the sleeve. A drag
  * sets the number directly, so the whole thing follows the finger and holds wherever it is held; a
  * release settles it with the finger's own speed. Closing is the same path backwards.
  *
@@ -55,11 +57,17 @@ class PlayerSheet(private val scope: CoroutineScope) {
     /** The panel the player opens on (the lyrics widget's tap, a jam strip's); the player takes it and clears it. */
     var panelAsked by mutableStateOf<Panel?>(null)
 
-    /** The top of the mini player, in root coordinates: where the sheet's top edge starts. */
-    var miniTop by mutableFloatStateOf(0f)
+    /** The edge of the window the mini player stands on, which the sheet comes in from and goes back to. */
+    var edge by mutableStateOf(SheetEdge.BOTTOM)
 
-    /** The window's height, for when there is no mini player to start from. */
-    var rootHeight by mutableFloatStateOf(0f)
+    /**
+     * The mini player's side facing the page, in root coordinates along [edge]'s way: its top, or its inner
+     * side when it stands on a side. Where the sheet's leading edge starts; 0 with no mini player.
+     */
+    var miniEdge by mutableFloatStateOf(0f)
+
+    /** The window's size, for when there is no mini player to start from. */
+    var rootSize by mutableStateOf(IntSize.Zero)
 
     /** Settle quickly and without a spring: the user's reduce-motion switch. */
     var plain = false
@@ -76,11 +84,28 @@ class PlayerSheet(private val scope: CoroutineScope) {
     var isOpen by mutableStateOf(false)
         private set
 
-    /** How far the sheet's top edge travels, in pixels. */
-    val travel: Float get() = if (miniTop > 0f) miniTop else rootHeight.coerceAtLeast(1f)
+    /** How far the sheet's leading edge travels, in pixels. */
+    val travel: Float get() = when (edge) {
+        SheetEdge.BOTTOM -> if (miniEdge > 0f) miniEdge else rootSize.height.toFloat()
+        SheetEdge.RIGHT -> if (miniEdge > 0f) miniEdge else rootSize.width.toFloat()
+        SheetEdge.LEFT -> rootSize.width - miniEdge
+    }.coerceAtLeast(1f)
 
-    /** The sheet's top edge, relative to the top of the screen. */
-    fun offset(): Float = (1f - progress.value) * travel
+    /**
+     * What a drag down the open player is measured against: the sheet's own travel, or the window's height
+     * when the sheet travels across.
+     */
+    private val downSpan: Float get() = if (edge == SheetEdge.BOTTOM) travel else rootSize.height.toFloat().coerceAtLeast(1f)
+
+    /** Where the sheet sits put away, relative to filling the window. */
+    fun closed(): Offset = when (edge) {
+        SheetEdge.BOTTOM -> Offset(0f, travel)
+        SheetEdge.RIGHT -> Offset(travel, 0f)
+        SheetEdge.LEFT -> Offset(-travel, 0f)
+    }
+
+    /** Where the sheet is now, relative to filling the window. */
+    fun offset(): Offset = closed() * (1f - progress.value)
 
     fun open() = settle(1f, 0f)
 
@@ -111,14 +136,18 @@ class PlayerSheet(private val scope: CoroutineScope) {
 
     fun dragStart() { from = if (progress.value > 0.5f) 1f else 0f }
 
-    /** Moves the sheet with a finger that moved [dy] pixels (down is positive). */
-    fun dragBy(dy: Float) {
-        scope.launch { progress.snapTo((progress.value - dy / travel).coerceIn(0f, 1f)) }
+    /**
+     * Moves the sheet with a finger that moved [dy] pixels towards putting it away. [down]: a drag down the
+     * open player rather than along the sheet's way.
+     */
+    fun dragBy(dy: Float, down: Boolean) {
+        val span = if (down) downSpan else travel
+        scope.launch { progress.snapTo((progress.value - dy / span).coerceIn(0f, 1f)) }
     }
 
     /** The finger let go at [velocityY] pixels a second: the sheet settles where [sheetTarget] says. */
-    fun release(velocityY: Float) {
-        settle(sheetTarget(from, progress.value, velocityY), -velocityY / travel)
+    fun release(velocityY: Float, down: Boolean) {
+        settle(sheetTarget(from, progress.value, velocityY), -velocityY / if (down) downSpan else travel)
     }
 
     private fun settle(target: Float, velocity: Float, stiffness: Float = 420f) {
@@ -131,6 +160,9 @@ class PlayerSheet(private val scope: CoroutineScope) {
     }
 
 }
+
+/** Where the mini player stands: along the bottom, or on its side down the right or the left edge. */
+enum class SheetEdge { BOTTOM, RIGHT, LEFT }
 
 val LocalPlayerSheet = staticCompositionLocalOf<PlayerSheet> { error("no player sheet") }
 
@@ -156,22 +188,23 @@ fun seen(): Boolean {
 }
 
 /**
- * Vertical drags on this element move the sheet. The velocity is taken from the summed deltas, not
- * from the pointer's position: inside the sheet the element moves with the finger, so its local
- * position barely changes and would report a flick as standing still.
+ * Vertical drags on this element move the sheet: on the mini player (turned on its side with it, so its
+ * vertical is the sheet's way), or [down] the open player, whichever way the sheet travels. The velocity is
+ * taken from the summed deltas, not from the pointer's position: inside the sheet the element moves with
+ * the finger, so its local position barely changes and would report a flick as standing still.
  */
-internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true): Modifier =
+internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true, down: Boolean = true): Modifier =
     if (!enabled) this else pointerInput(sheet) {
         val tracker = VelocityTracker()
         var y = 0f
         detectVerticalDragGestures(
             onDragStart = { tracker.resetTracking(); y = 0f; sheet.dragStart() },
-            onDragEnd = { sheet.release(tracker.calculateVelocity().y) },
-            onDragCancel = { sheet.release(0f) },
+            onDragEnd = { sheet.release(tracker.calculateVelocity().y, down) },
+            onDragCancel = { sheet.release(0f, down) },
         ) { change, dy ->
             y += dy
             tracker.addPosition(change.uptimeMillis, Offset(0f, y))
-            sheet.dragBy(dy)
+            sheet.dragBy(dy, down)
         }
     }
 
