@@ -18,7 +18,7 @@
   }: { cover?: string; title: string; round?: boolean; fallback?: string; by?: Snippet; facts?: string; onplay: (shuffle: boolean) => void; actions?: Snippet } = $props();
 </script>
 
-<div class="hero" class:round>
+<div class="hero" class:circle={round}>
   <div class="art"><Cover src={cover} {round} {fallback} /></div>
   <div class="text">
     <h1>{title}</h1>
@@ -48,7 +48,7 @@
     border-radius: 8px;
     box-shadow: var(--shadow);
   }
-  .round .art :global(.cover) {
+  .circle .art :global(.cover) {
     border-radius: 50%;
   }
   .text {

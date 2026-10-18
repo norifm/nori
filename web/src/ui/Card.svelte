@@ -5,7 +5,7 @@
   let { href, cover, title, sub = "", round = false, fallback = "album" }: { href: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string } = $props();
 </script>
 
-<a class="card" class:round {href}>
+<a class="card" class:circle={round} {href}>
   <Cover src={cover} {round} {fallback} />
   <span class="title clip">{title}</span>
   {#if sub}<span class="sub clip">{sub}</span>{/if}
@@ -29,7 +29,7 @@
     font-size: 13px;
     font-weight: 500;
   }
-  .round {
+  .circle {
     text-align: center;
   }
 </style>

@@ -5,7 +5,7 @@
   let { src, round = false, fallback = "note" }: { src?: string; round?: boolean; fallback?: string } = $props();
 </script>
 
-<div class="cover" class:round>
+<div class="cover" class:circle={round}>
   {#if src}<img {src} alt="" loading="lazy" decoding="async" />{:else}<Icon name={fallback} />{/if}
 </div>
 
@@ -22,7 +22,7 @@
     color: var(--faint);
     box-shadow: inset 0 0 0 0.5px var(--hair);
   }
-  .round {
+  .circle {
     border-radius: 50%;
   }
   img {
