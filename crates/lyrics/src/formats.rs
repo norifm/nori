@@ -54,6 +54,11 @@ pub(crate) fn finish(mut lines: Vec<Timed>) -> Lyrics {
     }
     lines.retain(|l| !l.text.trim().is_empty());
     lines.sort_by_key(|l| l.start);
+    // Every line at one time is untimed text given a time (LyricsPlus' "type": "None").
+    if lines.len() > 1 && lines.iter().all(|l| l.start == lines[0].start) {
+        let lines = lines.into_iter().map(|l| LyricLine { start_ms: -1, end_ms: -1, text: l.text, voice: l.voice, ..Default::default() }).collect();
+        return Lyrics { synced: false, lines, ..Default::default() };
+    }
     let starts: Vec<i64> = lines.iter().map(|l| l.start).collect();
     let word_timed = lines.iter().any(|l| !l.words.is_empty() || l.backing.as_ref().is_some_and(|b| !b.words.is_empty()));
     /// The words in UTF-16, each to its own end or the next word's start. A last word without an end

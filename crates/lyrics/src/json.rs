@@ -639,6 +639,9 @@ mod tests {
         // Syllables without spaces but with `part`: a word ends where `part` is false.
         let parted = from_lyricsplus(r#"{"type":"Syllable","lyrics":[{"time":0,"duration":900,"text":"","syllabus":[{"time":0,"duration":300,"text":"Ri","part":true},{"time":300,"duration":300,"text":"ver","part":false},{"time":600,"duration":300,"text":"song","part":false}]}]}"#);
         assert_eq!(parted.lines[0].text, "River song");
+        // Apple's untimed lyrics come as "None", every line at 0: untimed, not all sung at once.
+        let untimed = from_lyricsplus(r#"{"type":"None","lyrics":[{"time":0,"duration":0,"text":"Paper boats"},{"time":0,"duration":0,"text":"drift away"}]}"#);
+        assert_eq!((untimed.synced, texts(&untimed)), (false, vec!["Paper boats", "drift away"]));
         assert!(from_lyricsplus(r#"{"lyrics":[]}"#).lines.is_empty());
         assert!(from_lyricsplus("not json").lines.is_empty());
 
