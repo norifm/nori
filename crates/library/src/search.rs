@@ -142,7 +142,7 @@ impl Session {
 pub const REMEMBER_MIN_UTF16: usize = 2;
 
 /// How long live search waits after a keystroke before asking the server, ms.
-pub const LIVE_SEARCH_DELAY_MS: i64 = 250;
+pub const LIVE_SEARCH_DELAY_MS: i64 = 150;
 
 /// [`LIVE_SEARCH_DELAY_MS`], for the platform.
 #[cfg_attr(feature = "ffi", uniffi::export)]
