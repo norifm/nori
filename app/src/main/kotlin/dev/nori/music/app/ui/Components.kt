@@ -127,9 +127,9 @@ object CoverSize {
  * whatever is behind it (a mix tile's colour), and a missing one simply leaves that showing.
  */
 @Composable
-fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Radius.cover, plate: Boolean = true) {
+fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Radius.cover, plate: Boolean = true, standIns: List<String?> = emptyList()) {
     val px = with(LocalDensity.current) { size.roundToPx() }
-    val cover = rememberCover(url, px, px)
+    val cover = rememberCover(url, px, px, standIns)
     // Sized by its layout: asked for from layout, where the size is known, rather than through a state
     // that would compose every such cover a second time. The last size is kept for the next address.
     val measured = remember { IntArray(2) }

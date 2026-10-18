@@ -1551,8 +1551,9 @@ extern "system" fn mixing(h: jlong) -> jboolean {
 }
 
 /// Tells `remote` (a `Remote.uniffiCloneHandle()`, taken over) where the engine is now, at the media
-/// volume `volume` (0 to 100; -1 where it cannot be set).
-extern "system" fn remote_played(h: jlong, remote: jlong, volume: jint) {
+/// volume `volume` (0 to 100; -1 where it cannot be set). A plain JNI call, not `@CriticalNative`: the
+/// remote calls back into Kotlin (its `RemoteShown`), which a critical native must never do.
+extern "system" fn remote_played(_: JNIEnv, _: JClass, h: jlong, remote: jlong, volume: jint) {
     // SAFETY: Kotlin passes `Remote.uniffiCloneHandle()`, once.
     let remote: Arc<nori_core::remote::Remote> = unsafe { crate::uniffi_object(remote) };
     let Some(p) = player(h) else { return };

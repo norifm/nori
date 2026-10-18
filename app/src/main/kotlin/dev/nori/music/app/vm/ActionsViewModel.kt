@@ -149,7 +149,8 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     fun shuffleAlbums() = attempt(null) { start(nori.library.shuffleAlbums(), from = PageOrigin(OriginKind.SHUFFLE_ALBUMS, "")) }
 
     /** An endless-ish mix seeded from one song. */
-    fun startRadio(song: Song) = attempt(null) { start(nori.library.radio(song)) }
+    /** A radio from the song playing goes on with it: only the songs after it change. */
+    fun startRadio(song: Song) = attempt(null) { nori.library.radio(song).let { if (asks) start(it) else nori.player.keepPlaying(it, 0) } }
 
     /**
      * octo-fiesta downloads a provider item into the library when it is starred: a song on its own, an album
