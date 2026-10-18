@@ -380,6 +380,24 @@ private fun TextSettingDialog(row: SettingRow.Text, onDismiss: () -> Unit, onSav
     )
 }
 
+/** The key a lyrics service needs, asked where it is switched on: saved, it is on; cleared, every service that
+ *  needs it is off; cancelled, nothing changes. */
+@Composable
+private fun KeyDialog(row: SettingRow.Ranked, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by remember(row.id) { mutableStateOf("") }
+    AlertCard(
+        title = { Text(say.paxsenixKey) },
+        text = {
+            Column {
+                Text(if (row.keySet) say.paxsenixKeyChange else say.paxsenixKeyAsk, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+            }
+        },
+        confirmButton = { TextButton({ onSave(text) }, enabled = row.keySet || text.isNotBlank()) { Text(say.save) } },
+        dismissButton = { TextButton(onDismiss) { Text(say.cancel) } },
+    )
+}
+
 /** One section of a page as SettingsPages.kt laid it out; this only draws the rows and hands back what was picked. */
 @Composable
 private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection, actions: dev.nori.music.app.vm.ActionsViewModel?) {
@@ -439,6 +457,8 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     drag?.let { d -> if (!d.active && d.shown == order) androidx.compose.runtime.SideEffect { drag = null } }
     var typing by remember { mutableStateOf<SettingRow.Text?>(null) }
     NoriDialog(typing, { typing = null }) { row -> TextSettingDialog(row, { typing = null }) { v -> vm.set(row.name, v); typing = null } }
+    var keying by remember { mutableStateOf<SettingRow.Ranked?>(null) }
+    NoriDialog(keying, { keying = null }) { row -> KeyDialog(row, { keying = null }) { v -> vm.set(row.keyName, v); keying = null } }
     Section(section.title) {
         // Each row under a key of its own, so a ranked row moved in the core's order is the same row, its
         // glide and lift carried with it: keyed inside the `when` instead, a moved row began again from
@@ -594,8 +614,9 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                             Column(Modifier.weight(1f).padding(end = 14.dp)) {
                                 Text(row.title, style = MaterialTheme.typography.bodyLarge, color = if (row.on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (row.keySet) TextAction(say.changeKey, { keying = row }, Modifier.padding(top = 4.dp))
                             }
-                            NoriSwitch(row.on, { on -> vm.set(row.name, on.toString()) })
+                            NoriSwitch(row.on, { on -> if (on && row.keyed && !row.keySet) keying = row else vm.set(row.name, on.toString()) })
                         }
                         Hairline(startIndent = 16.dp)
                     }

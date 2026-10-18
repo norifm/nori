@@ -48,7 +48,7 @@ impl Provider for Fake {
     }
 
     fn configure(&self, core: &Core, profile: &SavedServer) -> nori_model::Result<()> {
-        *core.rules.write() = rules(!profile.user.is_empty());
+        core.set_rules(rules(!profile.user.is_empty()));
         Ok(())
     }
 
@@ -91,7 +91,7 @@ impl Provider for Fake {
             return SignInResult::Refused;
         }
         *self.signed_in.lock() = Some("Fay".into());
-        *client.core.rules.write() = rules(true);
+        client.core.set_rules(rules(true));
         SignInResult::SignedIn { name: "Fay".into() }
     }
 

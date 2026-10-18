@@ -1188,7 +1188,7 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
         .iter()
         .map(|line| json!({ "s": line.start_ms, "e": line.end_ms, "t": line.text }))
         .collect();
-    owned(&json!({ "id": id, "synced": l.synced, "offset": l.offset_ms, "lines": lines }))
+    owned(&json!({ "id": id, "synced": l.synced, "offset": l.timing.offset_ms(), "lines": lines }))
 }
 
 /// A long list's orders as JSON to free: `now` the one it is in, `all` every one in the menu's order

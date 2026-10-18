@@ -222,8 +222,6 @@
     <string name="settings_lyrics_size_large">Large</string>
     <string name="settings_lyrics_translation">Show translations</string>
     <string name="settings_lyrics_translation_detail">When your server has them.</string>
-    <string name="settings_lyrics_timing_button">Source and timing</string>
-    <string name="settings_lyrics_timing_button_detail">The corner under the lyrics that says where they came from, and nudges them sooner or later when they drift.</string>
     <string name="settings_lyrics_screen_on">Keep the screen on</string>
     <string name="settings_lyrics_screen_on_detail">While lyrics are shown and music plays.</string>
     <string name="settings_lyrics_online">Find missing lyrics online</string>
@@ -239,10 +237,13 @@
     <!-- The lyrics sources' own page. -->
     <string name="settings_section_asked_order">In the order they\'re asked</string>
     <string name="settings_section_keys">Keys</string>
-    <string name="settings_lyrics_sources_note">The quick ones (PaxSenix, BiniLyrics, Unison and LRCLIB) are asked first, together, and the others only when those find nothing good. Every answer is scored on how well it matches the song, how finely it is timed and whether the other services agree, and the best is shown; the order here settles near ties. Your server\'s own timed lyrics always come before all of these. The unofficial ones use other apps\' lyrics without asking them.</string>
+    <string name="settings_lyrics_sources_note">The quick ones (LyricsPlus, BetterLyrics and LRCLIB) are asked first, together, and the others only when those find nothing good. Every answer is scored on how well it matches the song, how finely it is timed and whether the other services agree, and the best is shown; the order here settles near ties. Your server\'s own timed lyrics always come before all of these. The unofficial ones use other apps\' lyrics without asking them.</string>
     <string name="settings_lyrics_sources_note_off">Nothing is asked while Find missing lyrics online is off.</string>
     <string name="settings_paxsenix_key">PaxSenix key</string>
-    <string name="settings_paxsenix_key_detail">Your own key, for its Spotify and Musixmatch lyrics.</string>
+    <string name="settings_paxsenix_key_ask">Your own PaxSenix key, for its Spotify and Musixmatch lyrics. The service is on once it is saved.</string>
+    <string name="settings_paxsenix_key_change">A new key replaces the one saved. Save it empty to remove the key and turn its services off.</string>
+    <string name="settings_lyrics_key_set">%1$s Key set.</string>
+    <string name="settings_change_key">Change key</string>
     <string name="settings_betterlyrics_key">BetterLyrics key</string>
     <string name="settings_betterlyrics_key_detail">Without one it answers only for songs it has already stored.</string>
     <!-- Each lyrics service: its name, and what it is good at. -->
@@ -254,12 +255,8 @@
     <string name="lyrics_service_paxsenix_about">Apple Music\'s lyrics, syllable by syllable, looked up another way. Unofficial.</string>
     <string name="lyrics_service_lyrics_plus" translatable="false">LyricsPlus</string>
     <string name="lyrics_service_lyrics_plus_about">Apple Music\'s lyrics and others\', syllable by syllable, from volunteers. Unofficial.</string>
-    <string name="lyrics_service_portato" translatable="false">BetterLyrics Portato</string>
-    <string name="lyrics_service_portato_about">QQ Music\'s lyrics, word by word. Strong on Chinese music. Unofficial.</string>
     <string name="lyrics_service_paxsenix_musixmatch" translatable="false">PaxSenix: Musixmatch</string>
     <string name="lyrics_service_paxsenix_musixmatch_about">Musixmatch\'s lyrics, often word by word. Needs a PaxSenix key.</string>
-    <string name="lyrics_service_simpmusic" translatable="false">SimpMusic</string>
-    <string name="lyrics_service_simpmusic_about">Lyrics timed by listeners, often word by word, matched to the song on YouTube.</string>
     <string name="lyrics_service_unison" translatable="false">Unison</string>
     <string name="lyrics_service_unison_about">Open, written and timed by listeners. Many songs word by word.</string>
     <string name="lyrics_service_netease">NetEase Cloud Music</string>
@@ -270,14 +267,8 @@
     <string name="lyrics_service_lrclib_about">Open and run by volunteers. Timed line by line, some songs word by word.</string>
     <string name="lyrics_service_paxsenix_spotify" translatable="false">PaxSenix: Spotify</string>
     <string name="lyrics_service_paxsenix_spotify_about">Spotify\'s lyrics, timed line by line. Needs a PaxSenix key.</string>
-    <string name="lyrics_service_youtube_captions">YouTube captions</string>
-    <string name="lyrics_service_youtube_captions_about">The captions of the song on YouTube, timed line by line. Unofficial.</string>
-    <string name="lyrics_service_megalobiz" translatable="false">Megalobiz</string>
-    <string name="lyrics_service_megalobiz_about">Lyrics timed line by line by its users, read off its pages.</string>
     <string name="lyrics_service_youtube_music" translatable="false">YouTube Music</string>
     <string name="lyrics_service_youtube_music_about">The words YouTube Music shows for the song. Not timed. Unofficial.</string>
-    <string name="lyrics_service_genius" translatable="false">Genius</string>
-    <string name="lyrics_service_genius_about">The biggest catalog of words, not timed. Asked only when nobody has timed lyrics.</string>
 
     <!-- Library. -->
     <string name="settings_section_lists">Songs in lists</string>
@@ -331,11 +322,19 @@
     <string name="settings_lookups_detail">Missing lyrics (sends the artist, song and album name), the AutoEQ headphone list and moving covers, each with its own switch. Off, nothing is asked.</string>
 
     <!-- Downloads and storage. -->
-    <string name="settings_section_streaming">Streaming quality</string>
+    <string name="settings_section_streaming">Streaming</string>
     <string name="settings_section_downloads">Downloads</string>
     <string name="settings_section_storage">Storage</string>
     <string name="settings_quality_wifi">Quality on Wi-Fi</string>
     <string name="settings_quality_mobile">Quality on mobile data</string>
+    <string name="settings_ahead_wifi">Prepare songs ahead on Wi-Fi</string>
+    <string name="settings_ahead_mobile">On mobile data</string>
+    <string name="settings_ahead_detail">Upcoming songs and their lyrics are fetched before you get to them.</string>
+    <string name="settings_ahead_next">Next song</string>
+    <plurals name="settings_ahead_songs">
+        <item quantity="one">%1$d song</item>
+        <item quantity="other">%1$d songs</item>
+    </plurals>
     <string name="settings_quality_download">Quality for downloads</string>
     <string name="settings_quality_original">Original</string>
     <string name="settings_quality_mp3" translatable="false">MP3 %1$d</string>
@@ -417,30 +416,26 @@
     <string name="settings_hint_hide_status_bar">Full screen. Hides the clock and battery bar at the top</string>
     <string name="settings_hint_lyrics_sweep">For lyrics timed word by word</string>
     <string name="settings_hint_lyrics_translation">When your server has them</string>
-    <string name="settings_hint_lyrics_timing_button">Lyrics provider, credit, sync offset, timing button. Show or hide where lyrics came from and the nudges</string>
     <string name="settings_hint_lyrics_screen_on">While lyrics are shown and music plays</string>
     <string name="settings_hint_lyrics_online">Asks the lyrics sources. Sends the artist, song and album name</string>
     <string name="settings_hint_lyrics_words">Keeps looking past lyrics timed line by line</string>
     <string name="settings_hint_lyrics_sources">Which lyrics services are asked, and in what order</string>
     <string name="settings_hint_service_apple">Lyrics service. Apple Music\'s lyrics, syllable by syllable</string>
     <string name="settings_hint_service_lyrics_plus">Lyrics service. YouLy+, syllable by syllable</string>
-    <string name="settings_hint_service_portato">Lyrics service. QQ Music, word by word</string>
     <string name="settings_hint_service_musixmatch">Lyrics service. Word by word, with a key</string>
-    <string name="settings_hint_service_simpmusic">Lyrics service. Timed by listeners, matched on YouTube</string>
     <string name="settings_hint_service_unison">Lyrics service. Open, written and timed by listeners, word by word</string>
     <string name="settings_hint_service_netease">Lyrics service. Word by word, strong on Chinese music</string>
     <string name="settings_hint_service_kugou">Lyrics service. Word by word, Chinese, Japanese and Korean music</string>
     <string name="settings_hint_service_lrclib">Lyrics service. Open, run by volunteers</string>
     <string name="settings_hint_service_spotify">Lyrics service. Spotify\'s lyrics, with a key</string>
-    <string name="settings_hint_service_lines">Lyrics service. Timed line by line</string>
     <string name="settings_hint_service_untimed">Lyrics service. Not timed</string>
-    <string name="settings_hint_paxsenix_key">For its Spotify and Musixmatch lyrics</string>
     <string name="settings_hint_betterlyrics_key">Finds lyrics it has not stored yet</string>
     <string name="settings_hint_tap_action">What opening a song in a list does</string>
     <string name="settings_hint_offline_search">Song names kept on this device so search works without a connection</string>
     <string name="settings_hint_taste_model">Stored on this device. Powers mixes and stats</string>
     <string name="settings_hint_scrobble">Scrobbling. Sends your plays to your server</string>
     <string name="settings_hint_lookups">Missing lyrics, the AutoEQ headphone list and moving covers. Third-party lookups</string>
+    <string name="settings_hint_ahead">Preload, prefetch, buffer and cache upcoming songs and lyrics</string>
     <string name="settings_hint_cache_size">How much streamed music to keep on this device</string>
     <string name="settings_hint_stored">Streamed music, covers, downloads and the library</string>
     <string name="settings_hint_streamed">Clear the streamed music. Downloads stay</string>

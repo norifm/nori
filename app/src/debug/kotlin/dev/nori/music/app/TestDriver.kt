@@ -37,11 +37,12 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
     val player2 = player
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     DisposableEffect(controller) {
-        // "queue" is the player on its queue (where a jam's header is), "devices" the devices sheet.
+        // "queue" is the player on its queue (where a jam's header is), "lyrics" on its lyrics, "devices" the devices sheet.
         val open = { route: String ->
             when (route) {
                 "player" -> sheet.open()
                 "queue" -> nav.player(dev.nori.music.app.ui.Panel.QUEUE)
+                "lyrics" -> nav.player(dev.nori.music.app.ui.Panel.LYRICS)
                 "devices" -> devices()
                 "sign-in" -> settings.openSignInPage()
                 else -> nav.go(route)
@@ -78,6 +79,9 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 """"output":"${settings.currentOutput.value}","offload":${p.offload},"offloadWanted":${dev.nori.music.playback.PlaybackService.offloadWanted},"autoMix":${p.autoMix},"amoled":${p.amoled},""" +
                 """"autoFill":${p.autoFill},"autoMixBetterBeats":${p.autoMixBetterBeats},"scrobble":${p.scrobble},"lyricsOnline":${p.lyricsOnline},""" +
                 """"lyricsAnswerSong":"${TestActions.lastLyrics?.songId.orEmpty()}","lyricsAnswerLines":${TestActions.lastLyrics?.value?.lyrics?.lines?.size ?: 0},""" +
+                """"lyricsAnswerTiming":"${TestActions.lastLyrics?.value?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
+                // The timing of the words the player shows, whoever set it (`LyricsTiming`).
+                """"lyricsShownTiming":"${(player2.lyrics.value.of(st.current?.id, dev.nori.music.app.vm.Load.Loading) as? dev.nori.music.app.vm.Load.Ready)?.data?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +
                 // The player answers from its own engine and output.
                 dev.nori.music.playback.PlaybackService.rustPlayer.let { r ->
                     """"engine":"rust","mixing":${r?.mixing ?: false},"offloaded":${r?.offloaded ?: false},"""
@@ -125,4 +129,11 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
             TestHooks.play = null
         }
     }
+}
+
+/** A lyrics timing as the state line says it: "yours:500", "auto:320", "unchecked". */
+private fun timingWords(t: dev.nori.music.ffi.model.LyricsTiming): String = when (t) {
+    dev.nori.music.ffi.model.LyricsTiming.NotChecked -> "unchecked"
+    is dev.nori.music.ffi.model.LyricsTiming.Automatic -> "auto:${t.ms}"
+    is dev.nori.music.ffi.model.LyricsTiming.Yours -> "yours:${t.ms}"
 }

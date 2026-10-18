@@ -36,6 +36,11 @@ class SongAnswers<T>(private val songs: Int = 4) {
 
     @Synchronized internal fun get(id: String): Kept<T>? = kept[id]
 
+    /** Song [id]'s answer is now [value] (its lyrics retimed), if one is kept. */
+    @Synchronized fun replace(id: String, value: T) {
+        kept[id]?.let { kept[id] = Kept(value, it.done) }
+    }
+
     @Synchronized internal fun put(id: String, value: T, done: Boolean) {
         kept.remove(id)
         kept[id] = Kept(value, done)

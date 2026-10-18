@@ -2080,7 +2080,7 @@ fn credits(s: &Song) -> Credits {
 /// (None: no heart).
 fn song_menu(s: &Song, starred: Option<bool>) -> ModelRc<SongGo> {
     use nori_core::menus::{song_menu, SongAction, SongDownload};
-    let lines: Vec<SongGo> = song_menu(s.clone(), starred.unwrap_or_default(), SongDownload::None, false, starred.is_some(), false, None)
+    let lines: Vec<SongGo> = song_menu(s.clone(), starred.unwrap_or_default(), SongDownload::None, false, false, starred.is_some(), false, None)
         .into_iter()
         .filter_map(|item| {
             let title = words::song_action(&item.action)?.into();

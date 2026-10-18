@@ -2,6 +2,7 @@
 //! the engine asks for plans, whether a song wants measuring, and hands over finished measurements.
 //! The engine re-asks every couple of seconds while nothing is planned, so a repeated "no" is a cached lookup.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, OnceLock};
 
@@ -72,6 +73,10 @@ pub struct Planner {
     worker: OnceLock<Mutex<Sender<Finished>>>,
     /// Told after each plan made.
     planned: Mutex<Option<Planned>>,
+    /// The profile's songs are measured (`ProfileRules::measures`), whether AutoMix is on or not.
+    measures: AtomicBool,
+    /// Told when an analysis is stored or forgotten, or the window moves: what [`Planner::may_measure`] reads.
+    pub changed: nori_tasks::Notify,
 }
 
 /// What is told of each plan made (a jam host's guests play its transitions).
@@ -79,7 +84,7 @@ pub type Planned = Box<dyn Fn() + Send + Sync>;
 
 impl Planner {
     pub fn new(db: Arc<nori_db::Profile>, read_settings: ReadSettings) -> Arc<Planner> {
-        Arc::new(Planner { state: Mutex::new(State::new()), db, read_settings, worker: OnceLock::new(), planned: Mutex::new(None) })
+        Arc::new(Planner { state: Mutex::new(State::new()), db, read_settings, worker: OnceLock::new(), planned: Mutex::new(None), measures: AtomicBool::new(true), changed: Default::default() })
     }
 
     /// Whether the output forbids touching samples (`AudioPolicy::untouched`); set whenever the
@@ -90,14 +95,24 @@ impl Planner {
         p.generation += 1;
     }
 
+    /// Whether the profile's songs are measured as they play and ahead (`ProfileRules::measures`).
+    pub fn set_measures(&self, measures: bool) {
+        self.measures.store(measures, Ordering::Relaxed);
+        self.changed.notify();
+    }
+
+    pub fn measures(&self) -> bool {
+        self.measures.load(Ordering::Relaxed)
+    }
+
     pub fn transitions_off(&self) -> bool {
         self.state.lock().transitions_off
     }
 
-    /// An analysis was stored outside the engine's tap (the measurer ahead, the beat model): a cached
-    /// "no transition" may no longer hold.
+    /// An analysis was stored or forgotten: a cached "no transition" may no longer hold.
     pub fn analyses_changed(&self) {
         self.state.lock().generation += 1;
+        self.changed.notify();
     }
 
     /// The songs in play order: the one before the current one, the current one, and those after it.
@@ -106,6 +121,8 @@ impl Planner {
         p.window = window;
         p.shuffling = shuffling;
         p.generation += 1;
+        drop(p);
+        self.changed.notify();
     }
 
     /// The engine's question: how to mix out of `outgoing_id`, if at all.
@@ -199,17 +216,19 @@ impl Planner {
 
     /// Whether `song_id` should be measured as it plays, and its length in ms (0 unknown) to size the measurement.
     pub fn wants_analysis(&self, song_id: &str) -> Option<u64> {
-        let kept = (self.read_settings)();
-        let (auto_mix, duration) = {
-            let p = self.state.lock();
-            (kept.or(p.prefs).is_some_and(|x| x.auto_mix), p.duration_of(song_id).max(0) as u64)
-        };
-        if !auto_mix || !nori_model::analysable(song_id) {
+        let duration = self.state.lock().duration_of(song_id).max(0) as u64;
+        if !self.measures() || !nori_model::analysable(song_id) {
             return None;
         }
         let db = self.db.get()?;
         let wanted = missing(&db.lock(), &[song_id.to_string()]).is_ok_and(|m| !m.is_empty());
         wanted.then_some(duration)
+    }
+
+    /// Whether `song_id` may yet be measured as it plays: it is in the window and wants measuring.
+    pub fn may_measure(&self, song_id: &str) -> bool {
+        let in_window = self.state.lock().window.iter().any(|s| s.id == song_id);
+        in_window && self.wants_analysis(song_id).is_some()
     }
 
     /// The engine heard `song_id` from its first sample to its last. Finished on the planner's thread,
@@ -255,7 +274,7 @@ impl Planner {
                 return;
             }
         };
-        self.state.lock().generation += 1;
+        self.analyses_changed();
         alog::info(&format!(
             "analysed {}: {:.2} bpm (conf {:.2}, stab {:.2}), key {}, heard {} ms of {} ms, {} frames at {} Hz",
             f.song_id,
@@ -399,12 +418,16 @@ mod tests {
     }
 
     #[test]
-    fn measures_sized_by_the_window() {
-        let (planner, _, _db) = crossfading();
-        let auto_mix = Planner::new(planner.db.clone(), Box::new(|| Some(TransitionPrefs { auto_mix: true, ..nori_player::sim::prefs_off() })));
-        auto_mix.transition_window(vec![song("a", 200_000), song("b", 180_000)], false);
-        assert_eq!(auto_mix.wants_analysis("b"), Some(180_000));
-        assert_eq!(planner.wants_analysis("b"), None, "AutoMix off");
+    fn measures_with_automix_off_unless_the_profile_does_not() {
+        let (planner, crossfade, _db) = crossfading();
+        *crossfade.lock() = 0;
+        planner.transition_window(vec![song("a", 200_000), song("b", 180_000)], false);
+        assert!(planner.plan_for("a").is_none(), "no transition with AutoMix and crossfade off");
+        assert_eq!(planner.wants_analysis("b"), Some(180_000), "sized by the window");
+        assert!(planner.may_measure("b"));
+        planner.set_measures(false);
+        assert_eq!(planner.wants_analysis("b"), None, "a profile that measures nothing");
+        assert!(!planner.may_measure("b"));
     }
 
     /// Only a song heard whole, and at least 30 s of it, is stored.

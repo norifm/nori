@@ -87,7 +87,7 @@ const ANDROID_CREDITS: [(&str, &str, &str, &str, Option<&str>); 6] = [
 ];
 
 /// The typeface and the third-party data services.
-const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 17] = [
+const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 14] = [
     ("Inter", "The typeface", "Copyright (c) 2016 The Inter Project Authors (Rasmus Andersson)", "OFL-1.1", Some("OFL-1.1")),
     ("AutoEQ", "Headphone correction curves: the list kept on Wi-Fi, a curve fetched when it is chosen", "Copyright (c) 2018 Jaakko Pasanen", "MIT", Some("MIT")),
     ("LRCLIB", "Timed lyrics for songs your server has none for, asked only when switched on", "lrclib.net; lyrics belong to their authors and contributors", "Service", None),
@@ -99,7 +99,7 @@ const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 17] = [
         None,
     ),
     ("BiniLyrics", "Lyrics timed syllable by syllable, asked only when switched on", "binimum.org, a volunteer's copy of Apple Music's lyrics; lyrics belong to their authors", "Service", None),
-    ("BetterLyrics", "Lyrics timed syllable by syllable, and QQ Music's word by word, asked only when switched on", "betterlyrics.org; lyrics belong to their authors", "Service", None),
+    ("BetterLyrics", "Lyrics timed syllable by syllable, asked only when switched on", "betterlyrics.org; lyrics belong to their authors", "Service", None),
     (
         "PaxSenix",
         "Apple Music's, Spotify's and Musixmatch's lyrics, asked only when switched on (the last two with your own key)",
@@ -110,10 +110,7 @@ const DATA_CREDITS: [(&str, &str, &str, &str, Option<&str>); 17] = [
     ("LyricsPlus", "Lyrics timed syllable by syllable, asked only when switched on", "The YouLy+ project's volunteer servers; lyrics belong to their authors", "Service", None),
     ("NetEase Cloud Music", "Lyrics, often timed word by word, asked only when switched on", "music.163.com; lyrics belong to their authors", "Service", None),
     ("KuGou", "Lyrics, often timed word by word, asked only when switched on", "kugou.com; lyrics belong to their authors", "Service", None),
-    ("SimpMusic", "Lyrics timed by listeners, asked only when switched on", "simpmusic.org; lyrics belong to their authors", "Service", None),
-    ("YouTube Music", "Captions and lyrics of a song's YouTube upload, asked only when switched on", "Google LLC; lyrics belong to their authors", "Service", None),
-    ("Megalobiz", "Lyrics timed line by line by its users, asked only when switched on", "megalobiz.com; lyrics belong to their authors", "Service", None),
-    ("Genius", "Untimed lyrics, asked last and only when switched on", "genius.com; lyrics belong to their authors", "Service", None),
+    ("YouTube Music", "The lyrics YouTube Music shows for a song, asked only when switched on", "Google LLC; lyrics belong to their authors", "Service", None),
     ("iTunes Search API", "Finding a song's Apple Music id for PaxSenix, asked only when switched on", "Apple Inc.", "Service", None),
     ("Apple Music", "Moving album covers, asked only when switched on", "Apple Inc.; the artwork belongs to its artists and labels", "Service", None),
     (

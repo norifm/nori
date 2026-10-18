@@ -67,8 +67,12 @@ sealed interface SettingRow {
     /** A saved server; the one in use carries its [libraries] when it has more than one, under [note]. */
     data class Server(val id: String, val label: String, val detail: String, val active: Boolean, val libraries: List<Pick> = emptyList(), val note: String = "") : SettingRow
     data class Button(val title: String, val action: String) : SettingRow
-    /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. */
-    data class Ranked(val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean) : SettingRow
+    /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. [keyed]: it
+     *  is switched on only with a key, typed under [keyName]; [keySet]: that key is given. */
+    data class Ranked(
+        val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean,
+        val keyed: Boolean = false, val keySet: Boolean = false, val keyName: String = "",
+    ) : SettingRow
     /** The compressor's gain reduction, read from the player only while the page is on screen. */
     data class CompressionMeter(val key: String) : SettingRow
     /** One setting with a few values, all on view as chips, the one it has lit. */
@@ -140,29 +144,23 @@ private val SERVICES: Map<String, Pair<Int, Int>> = mapOf(
     "BETTER_LYRICS" to (R.string.lyrics_service_better_lyrics to R.string.lyrics_service_better_lyrics_about),
     "PAXSENIX" to (R.string.lyrics_service_paxsenix to R.string.lyrics_service_paxsenix_about),
     "LYRICS_PLUS" to (R.string.lyrics_service_lyrics_plus to R.string.lyrics_service_lyrics_plus_about),
-    "PORTATO" to (R.string.lyrics_service_portato to R.string.lyrics_service_portato_about),
     "PAXSENIX_MUSIXMATCH" to (R.string.lyrics_service_paxsenix_musixmatch to R.string.lyrics_service_paxsenix_musixmatch_about),
-    "SIMPMUSIC" to (R.string.lyrics_service_simpmusic to R.string.lyrics_service_simpmusic_about),
     "UNISON" to (R.string.lyrics_service_unison to R.string.lyrics_service_unison_about),
     "NETEASE" to (R.string.lyrics_service_netease to R.string.lyrics_service_netease_about),
     "KUGOU" to (R.string.lyrics_service_kugou to R.string.lyrics_service_kugou_about),
     "LRCLIB" to (R.string.lyrics_service_lrclib to R.string.lyrics_service_lrclib_about),
     "PAXSENIX_SPOTIFY" to (R.string.lyrics_service_paxsenix_spotify to R.string.lyrics_service_paxsenix_spotify_about),
-    "YOUTUBE_CAPTIONS" to (R.string.lyrics_service_youtube_captions to R.string.lyrics_service_youtube_captions_about),
-    "MEGALOBIZ" to (R.string.lyrics_service_megalobiz to R.string.lyrics_service_megalobiz_about),
     "YOUTUBE_MUSIC" to (R.string.lyrics_service_youtube_music to R.string.lyrics_service_youtube_music_about),
-    "GENIUS" to (R.string.lyrics_service_genius to R.string.lyrics_service_genius_about),
 )
 
 /** What search finds a service by, besides its name. */
 private val SERVICE_HINTS: Map<String, Int> = mapOf(
     "BINILYRICS" to R.string.settings_hint_service_apple, "BETTER_LYRICS" to R.string.settings_hint_service_apple, "PAXSENIX" to R.string.settings_hint_service_apple,
-    "LYRICS_PLUS" to R.string.settings_hint_service_lyrics_plus, "PORTATO" to R.string.settings_hint_service_portato,
-    "PAXSENIX_MUSIXMATCH" to R.string.settings_hint_service_musixmatch, "SIMPMUSIC" to R.string.settings_hint_service_simpmusic,
+    "LYRICS_PLUS" to R.string.settings_hint_service_lyrics_plus,
+    "PAXSENIX_MUSIXMATCH" to R.string.settings_hint_service_musixmatch,
     "UNISON" to R.string.settings_hint_service_unison, "NETEASE" to R.string.settings_hint_service_netease, "KUGOU" to R.string.settings_hint_service_kugou,
     "LRCLIB" to R.string.settings_hint_service_lrclib, "PAXSENIX_SPOTIFY" to R.string.settings_hint_service_spotify,
-    "YOUTUBE_CAPTIONS" to R.string.settings_hint_service_lines, "MEGALOBIZ" to R.string.settings_hint_service_lines,
-    "YOUTUBE_MUSIC" to R.string.settings_hint_service_untimed, "GENIUS" to R.string.settings_hint_service_untimed,
+    "YOUTUBE_MUSIC" to R.string.settings_hint_service_untimed,
 )
 
 /** A setting's title, and the words search also finds it by (0: none). */
@@ -212,11 +210,9 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "lyricsSweep" to (R.string.settings_lyrics_sweep to R.string.settings_hint_lyrics_sweep),
     "lyricsSize" to (R.string.settings_lyrics_size to 0),
     "lyricsTranslation" to (R.string.settings_lyrics_translation to R.string.settings_hint_lyrics_translation),
-    "lyricsTimingButton" to (R.string.settings_lyrics_timing_button to R.string.settings_hint_lyrics_timing_button),
     "lyricsKeepScreenOn" to (R.string.settings_lyrics_screen_on to R.string.settings_hint_lyrics_screen_on),
     "lyricsOnline" to (R.string.settings_lyrics_online to R.string.settings_hint_lyrics_online),
     "lyricsPreferWords" to (R.string.settings_lyrics_words to R.string.settings_hint_lyrics_words),
-    "paxSenixKey" to (R.string.settings_paxsenix_key to R.string.settings_hint_paxsenix_key),
     "betterLyricsKey" to (R.string.settings_betterlyrics_key to R.string.settings_hint_betterlyrics_key),
     "tapAction" to (R.string.settings_tap_action to R.string.settings_hint_tap_action),
     "swipeRight" to (R.string.settings_swipe_right to 0),
@@ -230,6 +226,8 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "wifi" to (R.string.settings_quality_wifi to 0),
     "mobile" to (R.string.settings_quality_mobile to 0),
     "download" to (R.string.settings_quality_download to 0),
+    "songsAheadWifi" to (R.string.settings_ahead_wifi to R.string.settings_hint_ahead),
+    "songsAheadMobile" to (R.string.settings_ahead_mobile to 0),
     "cacheMb" to (R.string.settings_cache_size to R.string.settings_hint_cache_size),
     "altMaxBitRate" to (R.string.settings_alt_bitrate to 0),
     "updateCheck" to (R.string.settings_update_auto to R.string.settings_update_auto_detail),
@@ -501,6 +499,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 }
             }
             "cacheMb" -> v.toInt().let { mb -> if (mb >= 1024 && mb % 1024 == 0) str(R.string.settings_gigabytes, mb / 1024) else str(R.string.settings_megabytes, mb) }
+            "songsAheadWifi", "songsAheadMobile" -> if (v == "1") str(R.string.settings_ahead_next) else res.getQuantityString(R.plurals.settings_ahead_songs, v.toInt(), v.toInt())
             "altMaxBitRate" -> if (v == "0") str(R.string.settings_alt_bitrate_none) else str(R.string.settings_kbps, v.toInt())
             else -> v
         }
@@ -558,11 +557,9 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         "motion" -> str(R.string.settings_motion_detail)
         "lyricsSweep" -> str(R.string.settings_lyrics_sweep_detail)
         "lyricsTranslation" -> str(R.string.settings_lyrics_translation_detail)
-        "lyricsTimingButton" -> str(R.string.settings_lyrics_timing_button_detail)
         "lyricsKeepScreenOn" -> str(R.string.settings_lyrics_screen_on_detail)
         "lyricsOnline" -> str(R.string.settings_lyrics_online_detail)
         "lyricsPreferWords" -> str(R.string.settings_lyrics_words_detail)
-        "paxSenixKey" -> str(R.string.settings_paxsenix_key_detail)
         "betterLyricsKey" -> str(R.string.settings_betterlyrics_key_detail)
         "tapAction" -> str(R.string.settings_hint_tap_action)
         "playlistNotes" -> str(R.string.settings_playlist_notes_detail)
@@ -571,6 +568,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         "queueOffer" -> str(R.string.settings_queue_offer_detail)
         "thirdPartyLookups" -> str(R.string.settings_lookups_detail)
         "remoteControl" -> str(R.string.settings_remote_control_detail)
+        "songsAheadWifi" -> str(R.string.settings_ahead_detail)
         "updateCheck" -> str(R.string.settings_update_auto_detail)
         "updateBeta" -> str(R.string.settings_update_beta_detail)
         else -> ""
@@ -606,7 +604,8 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         is RowItem.LyricsSource -> s.lyricsSources.getOrNull(item.index.toInt())?.let { src ->
             val (title, about) = SERVICES[src.id] ?: return null
             val t = str(title)
-            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, str(about), src.on)
+            val detail = if (src.keySet) str(R.string.settings_lyrics_key_set, str(about)) else str(about)
+            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, detail, src.on, src.needsKey, src.keySet, "lyricsKey:${src.id}")
         }
         is RowItem.CompressionMeter -> SettingRow.CompressionMeter("compression-meter")
         is RowItem.MusicFolder -> null

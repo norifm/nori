@@ -1,6 +1,7 @@
 //! Cover prefetching (downloads, queue neighbours), cover URLs and cache keys. Prefetches use the same
 //! URLs the UI requests, so a warmed cover is a cache hit.
 
+use crate::client::Client;
 use crate::Core;
 
 /// Row and card size. Shared because servers render each requested size on demand (over 1 s each).
@@ -138,13 +139,12 @@ pub(crate) fn cover_neighbours(index: i32, previous: i32, next: i32, ahead: i32,
     out
 }
 
-/// Upcoming songs' covers a phone fetches ahead.
-pub const COVERS_AHEAD: i32 = 5;
-
-/// [`COVERS_AHEAD`], for the platform.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn covers_ahead() -> i32 {
-    COVERS_AHEAD
+impl Client {
+    /// Upcoming songs' covers a phone fetches ahead: as many as songs are prepared ahead on this network.
+    pub fn covers_ahead(&self) -> i32 {
+        self.settings().prefs(|p| nori_player::queue::precache_count(self.metered(), p.songs_ahead_wifi, p.songs_ahead_mobile)) as i32
+    }
 }
 
 /// Covers to colour and prefetch around the current song.
