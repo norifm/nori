@@ -438,6 +438,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             val cutout = androidx.compose.foundation.layout.WindowInsets.displayCutout.asPaddingValues()
             val pageStart = if (!wide) 0.dp else if (chromeLeft) sideRoom else cutout.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
             val pageEnd = if (!wide) 0.dp else if (chromeLeft) cutout.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else sideRoom
+            val beyond = with(androidx.compose.ui.platform.LocalDensity.current) { (pageStart + pageEnd).roundToPx() }
+            androidx.compose.runtime.SideEffect { swipe.beyond = beyond.toFloat(); PageMotion.beyond = beyond }
             // A turn of the phone: the system dissolves the old layout into the new (MainActivity), the chrome is
             // laid out again where it already lay, and its glyphs turn upright from where they were.
             val turn = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -672,6 +674,9 @@ internal object PageMotion {
     /** The pop under way has been shown by [PageSwipe] already: the stack changes with no motion. */
     var instant = false
 
+    /** How far past their sides pages draw, px ([PageSwipe.beyond]): a page coming in or going out travels it too. */
+    var beyond = 0
+
     /**
      * True while the change under way is a pop, false for a push, null for a tab change or none. Read by
      * each page in flight: the page coming in on a push and the page leaving on a pop are on top; the
@@ -699,7 +704,7 @@ internal object PageMotion {
     fun enter(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean): androidx.compose.animation.EnterTransition {
         if (s.begin(pop = false)) return fadeIn(if (plain) 90 else TAB_MS)
         if (plain) return fadeIn(90)
-        return androidx.compose.animation.slideInHorizontally(travel) { it }
+        return androidx.compose.animation.slideInHorizontally(travel) { it + beyond }
     }
 
     fun exit(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean): androidx.compose.animation.ExitTransition {
@@ -719,7 +724,7 @@ internal object PageMotion {
         if (instant) { pop = null; return androidx.compose.animation.ExitTransition.None }
         if (s.begin(pop = true)) return fadeOut(if (plain) 90 else TAB_MS)
         if (plain) return fadeOut(90)
-        return androidx.compose.animation.slideOutHorizontally(travel) { it }
+        return androidx.compose.animation.slideOutHorizontally(travel) { it + beyond }
     }
 
     /** The page coming back under the back gesture when the stack scrubs it, from the side the swipe started on. */
@@ -733,7 +738,7 @@ internal object PageMotion {
     fun held(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean, edge: Int): androidx.compose.animation.ExitTransition {
         if (s.begin(pop = true)) return fadeOut(if (plain) 90 else TAB_MS)
         if (plain) return fadeOut(90)
-        return androidx.compose.animation.slideOutHorizontally(heldTravel()) { side(edge) * it }
+        return androidx.compose.animation.slideOutHorizontally(heldTravel()) { side(edge) * (it + beyond) }
     }
 
     /** How dark a page in [state] is: only the page underneath, covered on a push or uncovered on a pop. */

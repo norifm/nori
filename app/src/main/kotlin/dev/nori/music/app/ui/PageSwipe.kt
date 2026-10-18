@@ -50,6 +50,11 @@ class PageSwipe(private val controller: NavHostController, private val scope: Co
         private set
     /** The width the pages fill, px. */
     var width by mutableFloatStateOf(0f)
+    /**
+     * How far past their sides pages draw, px: on its side a page's colour runs out under the camera's strip
+     * and the chrome's (HeroPage). A page taken away goes this much further, or that edge of it stays behind.
+     */
+    var beyond by mutableFloatStateOf(0f)
     /** The picture of the page coming back, while a swipe shows it; null otherwise. */
     var under: ImageBitmap? by mutableStateOf(null)
         private set
@@ -110,11 +115,11 @@ class PageSwipe(private val controller: NavHostController, private val scope: Co
                 // down as it left - a flick that visibly braked.
                 back && abs(speed) > STILL -> {
                     val pace = maxOf(abs(speed), MIN_PACE)
-                    val ms = ((width - abs(offset)) / pace * 1000f).toInt().coerceIn(MIN_MS, SETTLE_MS)
-                    animate(offset, side * width, speed, tween(ms, easing = androidx.compose.animation.core.LinearEasing)) { v, _ -> offset = v }
+                    val ms = ((width + beyond - abs(offset)) / pace * 1000f).toInt().coerceIn(MIN_MS, SETTLE_MS)
+                    animate(offset, side * (width + beyond), speed, tween(ms, easing = androidx.compose.animation.core.LinearEasing)) { v, _ -> offset = v }
                 }
                 // The back button or key, with no speed: the push's own ease, in reverse.
-                back -> animate(offset, side * width, 0f, tween(SETTLE_MS, easing = PageMotion.Settle)) { v, _ -> offset = v }
+                back -> animate(offset, side * (width + beyond), 0f, tween(SETTLE_MS, easing = PageMotion.Settle)) { v, _ -> offset = v }
                 // Called off: springs back from the finger's speed.
                 else -> animate(offset, 0f, speed, spring(dampingRatio = 1f, stiffness = STIFFNESS)) { v, _ ->
                     offset = if (side > 0f) v.coerceAtLeast(0f) else v.coerceAtMost(0f)
