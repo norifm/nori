@@ -423,7 +423,7 @@ impl Session {
         }
         h.restore();
         h.follow_remote();
-        if !h.offline && h.rules.account && h.core.download_counts().pending > 0 {
+        if !h.offline && h.rules.downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
         }
         Ok(Session { h })
@@ -972,7 +972,7 @@ impl Handle {
 
     /// Stars or unstars on the server (queued when offline); says so when it fails.
     pub fn star(&self, kind: Starrable, id: String, on: bool) {
-        if !self.rules.account {
+        if !self.rules.stars {
             return;
         }
         let (client, out, hearts) = (self.client.clone(), self.out.clone(), self.hearts());
@@ -1445,6 +1445,28 @@ mod tests {
         assert!(matches!(said, Note::Downloading(1)), "the finished and the provider's song are not downloaded");
     }
 
+    #[test]
+    fn provider_song_hearts_reach_the_client() {
+        let dir = nori_testdir::TempDir::new("host-provider-heart");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        prefs.remote_control = false;
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings));
+        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
+        let (sent, shown) = std::sync::mpsc::channel();
+        let out = Arc::new(move |said| {
+            if let Said::Starred(marks) = said { let _ = sent.send(marks); }
+        });
+        let s = Session::open(Open { offline: true, out, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        s.star_song("yt-song".into(), true, None);
+        let marked = shown.recv_timeout(Duration::from_secs(2)).expect("the provider's heart is shown before its write");
+        assert_eq!(marked.songs.get("yt-song"), Some(&true));
+        let restored = shown.recv_timeout(Duration::from_secs(2)).expect("the unavailable account restores the heart");
+        assert!(!restored.songs.contains_key("yt-song"));
+        s.close();
+    }
+
     /// A profile opens on its own saved queue or none, not on the one the profile open before left (a
     /// jam's host's songs, once the guest left).
     #[test]
@@ -1475,29 +1497,25 @@ mod tests {
         s.close();
     }
 
-    /// A profile of a provider without remote control opens with its own rules, and no remote control
-    /// even when it is switched on; a server's profile with it on serves.
+    /// Every provider obeys the shared remote switch when opening a session.
     #[test]
-    fn a_profile_without_remote_opens_without_one() {
-        let dir = nori_testdir::TempDir::new("host-no-remote");
+    fn profile_remote_follows_the_switch() {
+        let dir = nori_testdir::TempDir::new("host-remote-switch");
         let settings = nori_core::settings_store::Settings::new();
-        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
-        prefs.remote_control = true;
-        settings.put(prefs);
-        let queue = Arc::new(nori_core::queue::Session::new(settings));
-        let open = |profile: SavedServer| {
-            Session::open(test_open(queue.clone(), dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))))
-            .unwrap()
-        };
-        let kind = nori_core::providers::providers().into_iter().map(|p| p.kind).find(|&kind| !nori_core::providers::rules_of(SavedServer { kind, ..Default::default() }, false).remote).expect("a provider without remote control");
-        let profile = SavedServer { id: "own".into(), kind, ..Default::default() };
-        let s = open(profile.clone());
-        assert_eq!(s.rules, nori_core::providers::rules_of(profile, false));
-        assert!(s.remote().is_none());
-        s.close();
-        let s = open(SavedServer { id: "own".into(), url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() });
-        assert!(s.remote().is_some(), "a server's profile still serves");
-        s.close();
+        settings.open(&db_path(dir.path())).unwrap();
+        let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
+        for kind in nori_core::providers::providers().into_iter().map(|p| p.kind) {
+            for on in [false, true] {
+                let mut prefs = settings.current().unwrap();
+                prefs.remote_control = on;
+                settings.put(prefs);
+                let profile = SavedServer { id: "own".into(), kind, url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() };
+                let s = Session::open(test_open(queue.clone(), dir.path(), profile.clone(), Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)))).unwrap();
+                assert_eq!(s.rules, nori_core::providers::rules_of(profile, false));
+                assert_eq!(s.remote().is_some(), on && s.rules.remote);
+                s.close();
+            }
+        }
     }
 
     /// A song's request the server never answers is dropped with its song: the connection closes.

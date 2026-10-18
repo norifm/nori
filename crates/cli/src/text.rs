@@ -1,5 +1,7 @@
 //! The terminal client's English: formatted times, sizes, decibels, counts, captions and messages.
 
+pub(crate) const RADIO: &str = "Radio";
+
 use nori_core::beat_model::BeatFailure;
 use nori_core::lyrics_sources::LyricsOrigin;
 use nori_core::numbers::{self, POINT};
@@ -476,3 +478,10 @@ mod tests {
     }
 
 }
+
+pub const PAIR_DEVICES: &str = "Pair devices (paste another device’s code with o)";
+pub const FORGET_DEVICES: &str = "Forget paired devices";
+pub const PAIRED: &str = "Devices paired";
+pub const PAIR_FAILED: &str = "Pairing failed";
+pub const FORGOTTEN: &str = "Paired devices forgotten";
+pub const PAIR_UNAVAILABLE: &str = "Pairing unavailable";

@@ -146,3 +146,25 @@ pub unsafe extern "C" fn nori_ios_remote_pick(id: *const c_char) {
         r.pick((!id.is_empty()).then_some(id));
     }
 }
+
+/// The current profile's device pairing code; NULL where pairing is unavailable.
+#[no_mangle]
+pub extern "C" fn nori_ios_pairing() -> *mut c_char {
+    remote().and_then(|r| r.pairing_link()).map(|link| c(&link).into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+/// Accepts a pairing code the user confirmed.
+///
+/// # Safety
+/// `link` is NUL-terminated UTF-8, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_pair(link: *const c_char) -> i32 {
+    let link = c_text(link);
+    i32::from(remote().is_some_and(|r| r.pair(link)))
+}
+
+/// Forgets all paired devices by rotating this device's pairing credential.
+#[no_mangle]
+pub extern "C" fn nori_ios_forget_pairs() -> i32 {
+    i32::from(remote().is_some_and(|r| r.reset_pairing()))
+}

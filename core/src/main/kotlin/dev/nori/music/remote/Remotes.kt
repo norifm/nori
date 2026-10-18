@@ -368,6 +368,14 @@ class Remotes(private val context: Context, private val nori: Nori) {
         main.post { then(v) }
     }
 
+    suspend fun pair(link: String): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        current()?.pair(link) ?: false
+    }
+
+    suspend fun resetPairing(): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        current()?.resetPairing() ?: false
+    }
+
     /** What the screens read: the remote if there is one, without building it. */
     fun peek(): Remote? = remote
 

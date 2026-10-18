@@ -17,6 +17,7 @@
     <button
       class="menu-item"
       class:danger={it.danger}
+      disabled={it.disabled}
       onclick={() => {
         close();
         void it.run();
@@ -59,8 +60,12 @@
     text-align: left;
     font-size: 15px;
   }
-  .menu-item:hover {
+  .menu-item:hover:enabled {
     background: var(--hover);
+  }
+  .menu-item:disabled {
+    opacity: 0.38;
+    cursor: default;
   }
   .menu-item :global(.icon) {
     color: var(--dim);

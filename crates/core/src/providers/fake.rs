@@ -18,6 +18,8 @@ use crate::{Album, AlbumDetail, Core, SearchResult, Song};
 struct Fake {
     signed_in: Mutex<Option<String>>,
     hearts: Mutex<Vec<String>>,
+    /// Home feeds read; each answers with another shelf, as a service's feed does.
+    feeds: Mutex<u32>,
 }
 
 fn rules(signed_in: bool) -> ProfileRules {
@@ -56,6 +58,11 @@ impl Provider for Fake {
         Ok(match read {
             Read::Search { query, .. } => Some(Page::Found { v: SearchResult { songs: album().songs.into_iter().filter(|s| s.title.to_lowercase().contains(&query)).collect(), ..Default::default() } }),
             Read::AlbumById { id } if id == "f-al" => Some(Page::AlbumPage { v: album() }),
+            Read::HomeFeed => {
+                let mut n = self.feeds.lock();
+                *n += 1;
+                Some(Page::Feed { v: vec![crate::FeedShelf { title: format!("feed {n}"), ..Default::default() }] })
+            }
             _ => None,
         })
     }
@@ -137,6 +144,23 @@ mod tests {
         assert!(matches!(block(c.read_now(Read::GenreList)), Ok(Page::Genres { v }) if v.is_empty()));
         assert!(block(c.sync_library()).is_err(), "no server to sync");
         assert!(c.core.rules().feed && !c.core.rules().remote);
+    }
+
+    /// Home's feed is read once and kept for the session: read again while fresh it is the same page,
+    /// asked anew only after Home's refresh drops it.
+    #[test]
+    fn home_feed_is_kept_until_refreshed() {
+        let (c, fake) = fake();
+        let shelf = || {
+            let mut titles = Vec::new();
+            block(c.read_each(Read::HomeFeed, |p| if let Page::Feed { v } = p { titles.push(v[0].title.clone()) })).unwrap();
+            titles
+        };
+        assert_eq!(shelf(), ["feed 1"]);
+        assert_eq!(shelf(), ["feed 1"], "kept: not asked again");
+        assert_eq!(*fake.feeds.lock(), 1);
+        c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
+        assert_eq!(shelf(), ["feed 2"], "a refresh asks again");
     }
 
     /// A song plays from the provider's address, opened at the URL it resolves to; covers are its own.

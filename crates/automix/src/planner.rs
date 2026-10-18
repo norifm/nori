@@ -138,6 +138,11 @@ impl Planner {
         if p.none.as_ref().is_some_and(|(id, g, _)| *g == generation && id == outgoing_id) {
             return None;
         }
+        if prefs.auto_mix && p.window.iter().any(|s| s.duration_ms <= 0) {
+            drop(p);
+            self.measured_lengths();
+            p = self.state.lock();
+        }
         let chosen = match pick(&prefs, p.transitions_off, &p.window, outgoing_id, p.shuffling) {
             Ok(chosen) => chosen,
             Err(skip) => {
@@ -192,6 +197,23 @@ impl Planner {
             )),
         }
         plan
+    }
+
+    /// Window songs the queue knows no length of (a YouTube feed's) take the length their analysis
+    /// measured, read without the planner locked.
+    fn measured_lengths(&self) {
+        let Some(db) = self.db.get() else { return };
+        let unknown: Vec<String> = self.state.lock().window.iter().filter(|s| s.duration_ms <= 0).map(|s| s.id.clone()).collect();
+        let measured: Vec<(String, i64)> = {
+            let c = db.lock();
+            unknown.into_iter().filter_map(|id| get(&c, &id).ok().flatten().map(|a| (id, a.duration_ms))).collect()
+        };
+        let mut p = self.state.lock();
+        for s in p.window.iter_mut().filter(|s| s.duration_ms <= 0) {
+            if let Some((_, ms)) = measured.iter().find(|(id, _)| *id == s.id) {
+                s.duration_ms = *ms;
+            }
+        }
     }
 
     /// The plan last made out of `outgoing_id`: None while none was, Some(None) when gapless.
@@ -444,6 +466,29 @@ mod tests {
             planner.finish(Finished { song_id: "s".into(), analyzer, frames: pcm.len() as u64, rate: s.rate });
             assert_eq!(get(&db.lock(), "s").unwrap().is_some(), stored, "{secs} s heard of {window_ms} ms");
         }
+    }
+
+    /// Songs the queue knows no length of (a YouTube feed's) mix at the length their analysis measured.
+    #[test]
+    fn unknown_lengths_mix_at_the_measured_ones() {
+        use nori_player::automix::synth::Synth;
+        let db = Arc::new(Mutex::new(nori_db::open("", "t").unwrap()));
+        let profile = Arc::new(nori_db::Profile::default());
+        profile.set(&db);
+        let planner = Planner::new(profile, Box::new(|| Some(TransitionPrefs { auto_mix: true, ..nori_player::sim::prefs_off() })));
+        planner.transition_window(vec![song("a", 0), song("b", 0)], false);
+        assert!(planner.plan_for("a").is_none(), "nothing measured yet");
+        for id in ["a", "b"] {
+            let s = Synth { secs: 60.0, ..Synth::new(120.0) };
+            let mut analyzer = Analyzer::new(s.rate, 60_000);
+            let pcm = s.render();
+            analyzer.feed(&pcm);
+            planner.finish(Finished { song_id: id.into(), analyzer, frames: pcm.len() as u64, rate: s.rate });
+        }
+        let plan = planner.plan_for("a").expect("a mix from the measured lengths");
+        assert_eq!(plan.incoming_id, "b");
+        let note = planner.transition_note("a").unwrap();
+        assert!((40_000..60_000).contains(&note.start_ms), "{note:?}");
     }
 
     #[test]

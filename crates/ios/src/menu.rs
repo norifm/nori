@@ -39,7 +39,7 @@ fn action_code(a: &SongAction) -> i32 {
 }
 
 fn item_json(m: &SongMenuItem) -> Value {
-    let mut v = json!({ "a": action_code(&m.action), "more": m.more });
+    let mut v = json!({ "a": action_code(&m.action), "more": m.more, "enabled": m.enabled });
     match &m.action {
         SongAction::Favourite { on } => v["on"] = json!(on),
         SongAction::GoToAlbum { id } => v["id"] = json!(id),
@@ -72,8 +72,10 @@ fn details_json(s: &Song) -> Value {
 /// `rules`: whether the profile has the account's things, and whether its menu asks a jam's host
 /// (`JamOffer::Guest`).
 fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, rules: &ProfileRules) -> Value {
-    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, false, rules.stars, rules.account, rules.asks.then_some(JamOffer::Guest))
+    let items: Vec<Value> = song_menu(song.clone(), starred, download, player, false, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks.then_some(JamOffer::Guest))
         .iter()
+        // The iPod has no sheet for the lyrics' source and timing.
+        .filter(|i| i.action != SongAction::Lyrics)
         .map(item_json)
         .collect();
     json!({ "items": items, "details": details_json(song) })
@@ -228,7 +230,7 @@ pub unsafe extern "C" fn nori_ios_playlist_create(token: u64, index: i32, name: 
 /// `starred`: -1 nothing, else a `NORI_SWIPE_*` code.
 #[no_mangle]
 pub extern "C" fn nori_ios_row_swipe(left: i32, starred: i32) -> i32 {
-    let setting = with_session(|s| (s.core.session.settings.prefs(|p| if left != 0 { p.swipe_left } else { p.swipe_right }), (s.rules.stars, s.rules.account)));
+    let setting = with_session(|s| (s.core.session.settings.prefs(|p| if left != 0 { p.swipe_left } else { p.swipe_right }), (s.rules.stars, s.rules.downloads)));
     match setting.and_then(|(s, (stars, account))| row_swipe(s, starred != 0, stars, account)) {
         None => -1,
         Some(RowSwipeAct::Queue) => 0,

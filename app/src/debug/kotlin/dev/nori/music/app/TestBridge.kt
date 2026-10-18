@@ -71,7 +71,7 @@ class TestBridge : BroadcastReceiver() {
         // the main thread, so this does too.
         if (cmd == "remote") {
             val nori = dev.nori.music.Nori.get(context)
-            Thread({ answer(runCatching { remoteCheck(nori, arg, value) }.getOrElse { "remote failed: $it" }) }, "remotecheck").start()
+            Thread({ answer(runCatching { remoteCheck(nori, arg, value, context) }.getOrElse { "remote failed: ${it.javaClass.simpleName}" }) }, "remotecheck").start()
             return
         }
         Handler(Looper.getMainLooper()).post {
@@ -111,7 +111,7 @@ class TestBridge : BroadcastReceiver() {
 }
 
 /** One line about the remote control or the jam; see the "remote" command. */
-private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String): String {
+private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String, context: Context): String {
     val r = { nori.remotes.peek() }
     return when (arg) {
         "watch" -> { nori.remotes.watch(value == "on"); "ok" }
@@ -119,7 +119,10 @@ private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String): 
             val st = d.state?.let { s -> "${if (s.playing) "playing" else "paused"} ${s.entries.firstOrNull { it.index == s.index }?.title}" } ?: "no state"
             "${d.name}${if (d.nearby) " (nearby)" else ""}: $st${d.refused?.let { " refused $it" } ?: ""}"
         }?.ifEmpty { "none" } ?: "no remote"
-        "jam" -> kotlinx.coroutines.runBlocking { nori.remotes.jamOpen() } ?: "nothing started"
+        "pair-export" -> r()?.pairingLink()?.let { java.io.File(context.cacheDir, "nori-pairing").writeText(it); "saved" } ?: "pairing unavailable"
+        "pair" -> if (kotlinx.coroutines.runBlocking { nori.remotes.pair(value) }) "paired" else "pairing unavailable"
+        "reset-pairing" -> if (kotlinx.coroutines.runBlocking { nori.remotes.resetPairing() }) "reset" else "pairing unavailable"
+        "jam" -> kotlinx.coroutines.runBlocking { nori.remotes.jamOpen() }?.let { java.io.File(context.cacheDir, "nori-jam").writeText(it); "saved" } ?: "nothing started"
         "view" -> r()?.jamView()?.let { v ->
             "hosting=${v.hosting} members=${v.members.joinToString(",") { "${it.name}:${it.role}" }} pending=${v.pending.joinToString(",") { it.song.title }} next=${v.queue?.entries?.joinToString(",") { it.title }} along=${v.along} listening=${v.listening}"
         } ?: "no jam"
@@ -128,7 +131,11 @@ private fun remoteCheck(nori: dev.nori.music.Nori, arg: String, value: String): 
         "ask" -> kotlinx.coroutines.runBlocking { nori.library.search(value).songs.firstOrNull() }?.let { s ->
             r()?.jamAct(dev.nori.music.ffi.remote.Op.Request(s)); "asked for ${s.title}"
         } ?: "nothing found"
-        "join" -> kotlinx.coroutines.runBlocking { nori.joinJam(value) }.toString()
+        "join" -> when (kotlinx.coroutines.runBlocking { nori.joinJam(value) }) {
+            is dev.nori.music.ffi.JamJoin.Joined -> "joined"
+            dev.nori.music.ffi.JamJoin.Own -> "own"
+            dev.nori.music.ffi.JamJoin.Ended -> "ended"
+        }
         // "found <host>|<port>|<k=v;k=v>": a door as mDNS would find it (the emulator sees no multicast
         // from the host); the TXT as `dns-sd -L` prints it.
         "found" -> {

@@ -39,6 +39,17 @@ On the same network, devices talk straight to each other, found by mDNS and sign
 credentials. Elsewhere they go through octo-fiesta's relay on your server. Nothing goes through any other
 service.
 
+Current development builds also support YouTube Music profiles over the LAN. Open **Devices**, choose
+**Pair devices**, and copy one device's pairing code to the other. Confirm **Pair** only for a device
+you own. On the terminal, show your code from the Devices panel; press `o` to paste another device's
+code and Enter to confirm. The desktop and iPod offer the same pairing actions in Devices.
+
+Pairing shares a random credential, independent of your Google account. Discovery announces only a
+keyed tag; commands require an HMAC signed with the pairing credential. No Google account identifiers
+or cookies are shared. **Forget paired devices** rotates the credential and removes the old devices'
+access. A separately hosted jam remains open. YouTube remote control stays on the local network;
+using another profile's server relay is not supported.
+
 Switched on, it costs one held request a minute while music plays or another device is shown; off,
 nothing at all.
 

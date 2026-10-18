@@ -12,7 +12,6 @@ import dev.nori.music.app.ui.CoverSize
 import dev.nori.music.app.ui.Say
 import dev.nori.music.app.vm.MixStore
 import dev.nori.music.app.widget.Widgets.tint
-import dev.nori.music.ffi.library.AlbumSort
 import dev.nori.music.ffi.model.Album
 import dev.nori.music.ffi.model.OriginKind
 import dev.nori.music.ffi.model.PageOrigin
@@ -34,6 +33,8 @@ private const val GAP = 10
 private const val HEAD = 40
 /** Below this height the header is left out and the tiles take it all. */
 private const val HEADED = 150
+
+private data class ShelfTile(val origin: PageOrigin, val name: String, val covers: List<String>, val favourites: Boolean)
 
 /** The ids of a shelf's tiles, by slot. */
 private val MIX_SLOTS = intArrayOf(R.id.widget_slot0, R.id.widget_slot1, R.id.widget_slot2, R.id.widget_slot3, R.id.widget_slot4, R.id.widget_slot5)
@@ -88,18 +89,24 @@ class MixesWidget : NoriWidget() {
                 val look = Widgets.theme(context).look
                 val (wDp, hDp) = Widgets.sizeDp(context, id)
                 val v = shelf(context, R.layout.widget_mixes, look, hDp)
-                val tiles = if (!nori.settings.value.loggedIn) emptyList() else withContext(Dispatchers.IO) {
+                val say = Say.current
+                val tiles = if (!nori.settings.value.loggedIn) emptyList() else if (nori.rules.feed) {
+                    runCatching { nori.library.featuredPlaylists() }.getOrDefault(emptyList()).map { p ->
+                        ShelfTile(PageOrigin(OriginKind.PLAYLIST, p.id), p.name, listOfNotNull(p.coverArt), false)
+                    }
+                } else withContext(Dispatchers.IO) {
                     val taste = nori.settings.value.tasteModel
                     // As the Home row has them: the mixes drawn for today, the starred songs handed over first.
                     if (taste) runCatching { MixStore.warm(nori) }
                     // As MixesViewModel: a failed hand-over leaves the favourites empty rather than unknown.
                     withTimeoutOrNull(10_000) { runCatching { nori.library.handFavourites().firstOrNull() }.onFailure { runCatching { nori.core.mixFavourites(emptyList()) } } }
-                    runCatching { nori.core.mixCards(taste) }.getOrDefault(emptyList())
+                    runCatching { nori.core.mixCards(taste) }.getOrDefault(emptyList()).map { t ->
+                        ShelfTile(PageOrigin(OriginKind.MIX, t.id), say.mixName(t.name), t.covers, t.favourites)
+                    }
                 }
                 val tileH = tilesDp(hDp)
                 val n = ((wDp - 2 * SIDE + GAP).toFloat() / (tileH + GAP)).roundToInt().coerceIn(1, MIX_SLOTS.size).coerceAtMost(tiles.size.coerceAtLeast(1))
                 val tileW = (wDp - 2 * SIDE - GAP * (n - 1)) / n
-                val say = Say.current
                 val pw = Widgets.px(context, tileW.toFloat(), 400)
                 val ph = (pw * tileH / tileW.toFloat()).toInt().coerceAtLeast(1)
                 val shown = tiles.take(n)
@@ -107,16 +114,16 @@ class MixesWidget : NoriWidget() {
                     shown.mapIndexed { i, t ->
                         async {
                             val covers = t.covers.take(4).map { c -> async { Widgets.picture(context, nori.library.coverUrl(c, CoverSize.ROW), pw / 2) } }.awaitAll()
-                            val colours = dev.nori.music.ffi.library.mixTileColours(t.id).map { it.toInt() }
+                            val colours = dev.nori.music.ffi.library.mixTileColours(t.origin.id).map { it.toInt() }
                             v.setImageViewBitmap(MIX_ART[i], Painter.mix(covers, colours, pw, ph, 12f * pw / tileW))
                         }
                     }.awaitAll()
                 }
                 MIX_SLOTS.forEachIndexed { i, slot -> v.setViewVisibility(slot, if (i < shown.size) View.VISIBLE else View.GONE) }
                 shown.forEachIndexed { i, t ->
-                    v.setTextViewText(MIX_NAME[i], say.mixName(t.name))
+                    v.setTextViewText(MIX_NAME[i], t.name)
                     v.setImageViewResource(MIX_MARK[i], if (t.favourites) R.drawable.widget_heart else R.drawable.widget_sparkle)
-                    v.setOnClickPendingIntent(MIX_SLOTS[i], Widgets.playOrOpen(context, MixesWidget::class.java, PageOrigin(OriginKind.MIX, t.id)))
+                    v.setOnClickPendingIntent(MIX_SLOTS[i], Widgets.playOrOpen(context, MixesWidget::class.java, t.origin))
                 }
                 AppWidgetManager.getInstance(context).updateAppWidget(id, v)
             }
@@ -149,11 +156,27 @@ class AlbumsWidget : NoriWidget() {
 
     override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) = draw(context.applicationContext, intArrayOf(id))
 
-    private companion object {
+    companion object {
         const val SHUFFLE = "dev.nori.music.widget.SHUFFLE_ALBUMS"
 
         /** The albums drawn last, shared by every placed one. Main thread. */
         var drawn: List<Album> = emptyList()
+        private var drawnFor: String? = null
+
+        internal suspend fun albums(nori: Nori, want: Int): List<Album> {
+            val profile = nori.settings.value.activeServerId
+            val library = nori.library
+            if (drawnFor != profile) {
+                drawn = emptyList()
+                drawnFor = profile
+            }
+            if (drawn.size < want && nori.settings.value.loggedIn) {
+                val more = withTimeoutOrNull(15_000) { runCatching { library.featuredAlbums(want) }.getOrNull() }
+                if (nori.settings.value.activeServerId != profile || drawnFor != profile) return emptyList()
+                if (more != null) drawn = (drawn + more.filter { a -> drawn.none { it.id == a.id } }).take(maxOf(want, drawn.size))
+            }
+            return drawn.take(want)
+        }
 
         /** The side of a cover the grid aims for, dp. */
         const val AIM = 84
@@ -171,11 +194,7 @@ class AlbumsWidget : NoriWidget() {
                 val side = (wDp - 2 * SIDE - GAP * (cols - 1)) / cols
                 val rows = ((tilesDp(hDp) + GAP).toFloat() / (side + GAP)).roundToInt().coerceIn(1, ROWS.size)
                 val want = rows * cols
-                if (drawn.size < want && nori.settings.value.loggedIn) {
-                    val more = withTimeoutOrNull(15_000) { runCatching { nori.library.albums(AlbumSort.RANDOM, want).first() }.getOrNull() }
-                    if (more != null) drawn = (drawn + more.filter { a -> drawn.none { it.id == a.id } }).take(maxOf(want, drawn.size))
-                }
-                val albums = drawn.take(want)
+                val albums = albums(nori, want)
                 val px = Widgets.px(context, side.toFloat(), 300)
                 val r = 12 * px / side.toFloat()
                 val pictures = coroutineScope { albums.map { a -> async { Widgets.picture(context, nori.library.coverUrl(a.coverArt, CoverSize.CARD), px) } }.awaitAll() }

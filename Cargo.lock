@@ -4238,6 +4238,7 @@ dependencies = [
 name = "nori-remote"
 version = "0.6.2"
 dependencies = [
+ "getrandom 0.4.3",
  "libc",
  "nori-model",
  "nori-net",
