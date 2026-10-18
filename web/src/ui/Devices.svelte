@@ -1,9 +1,11 @@
 <script lang="ts">
   // Play On: this browser and the account's other devices, the one playing ticked; a click moves the
   // music there (through the server's relay: a browser cannot reach devices on its network itself).
+  // Under them the jam, as in Android's devices sheet.
   import { remote } from "../state/remote.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
+  import JamHost from "./JamHost.svelte";
 
   const d = $derived(remote.devices);
   const kindIcon: Record<string, string> = { Phone: "phone", Desktop: "laptop", Terminal: "terminal", Guest: "artist" };
@@ -26,6 +28,7 @@
     {:else}
       <p class="sub">{W.devicesNone}</p>
     {/each}
+    <JamHost />
   {/if}
 </div>
 

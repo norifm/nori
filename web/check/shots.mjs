@@ -86,7 +86,7 @@ for (const scheme of ["light", "dark"]) {
     await go("#/settings", "settings");
     await shot(name("settings"));
     if (size === "desktop") {
-      // The player bar with the lyrics beside the page, then the queue, then the jam.
+      // The player bar with the lyrics beside the page, then the queue, then the devices and the jam.
       await go(`#/album/${sung.id}`, "album");
       await page.click("#bar [data-pane=lyrics]");
       await wait(800);
@@ -94,9 +94,9 @@ for (const scheme of ["light", "dark"]) {
       await page.click("#bar [data-pane=queue]");
       await wait(400);
       await shot(name("player-bar-queue"));
-      await page.click("#bar [data-pane=jam]");
+      await page.click("#bar [data-pane=devices]");
       await wait(400);
-      await shot(name("jam"));
+      await shot(name("devices"));
       await page.click("#panel [aria-label=Close]");
       await page.click("#bar .art");
     } else {
@@ -116,9 +116,9 @@ for (const scheme of ["light", "dark"]) {
     await wait(400);
     await shot(name("now-playing-queue"));
     if (size === "phone") {
-      await page.click("#full [data-pane=jam]");
+      await page.click("#full [data-pane=devices]");
       await wait(400);
-      await shot(name("jam"));
+      await shot(name("devices"));
     }
     await page.click("#full [aria-label=Close]");
   }

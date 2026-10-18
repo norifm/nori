@@ -3,10 +3,8 @@
   // worded here; then the jam, the account and what this is.
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
-  import { player } from "../state/player.svelte";
   import type { SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
-  import JamPanel from "../ui/JamPanel.svelte";
   import Page from "../ui/Page.svelte";
 
   let rev = $state(0);
@@ -21,7 +19,6 @@
   async function set(name: string, value: string) {
     await ask("setting", name, value);
     rev++;
-    if (player.up) void player.readSound();
   }
 
   async function signOut() {
@@ -49,8 +46,6 @@
       {/if}
     {/each}
   {/each}
-  <h2 class="section">{W.jam}</h2>
-  <div class="group pad"><JamPanel /></div>
   <h2 class="section">{W.account}</h2>
   <div class="group">
     <div class="setting">
@@ -104,9 +99,6 @@
     background: var(--fill);
     border-radius: 12px;
     max-width: 760px;
-  }
-  .pad {
-    padding: 16px;
   }
   .setting {
     display: flex;

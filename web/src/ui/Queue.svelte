@@ -7,6 +7,7 @@
   import type { QueueSong, Song } from "../state/types";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
+  import JamQueue from "./JamQueue.svelte";
 
   const n = $derived(player.now);
   const rows = $derived(n?.queue ?? []);
@@ -22,6 +23,7 @@
   ];
 </script>
 
+<JamQueue />
 <ol class="queue" id="queue">
   {#each rows as q, at (`${q.index}:${q.id}`)}
     {#if at === 0 && current > 0}<li class="head">{W.history}</li>{/if}

@@ -13,7 +13,6 @@ import type { Now, Shown, Song } from "./types";
 export type Anchor = { ms: number; at: number; pace: number; length: number };
 
 /** The settings the player's own controls change. */
-const SOUND = "autoMix,crossfadeSec,speed,pitch";
 
 class Player {
   now = $state.raw<Now | null>(null);
@@ -24,8 +23,6 @@ class Player {
   sung = $state(0);
   /** The player worker answers (the core worker answers only the library before). */
   up = $state(false);
-  sound = $state.raw<Record<string, string>>({});
-  rates = $state.raw<Record<string, string[]>>({});
   /** The session plays here and the browser holds the sound card until the page is clicked. */
   held = $state(false);
 
@@ -169,23 +166,11 @@ class Player {
     await this.refresh();
   }
 
-  async readSound() {
-    const [v, o] = await Promise.all([ask<string>("settings", SOUND), ask<string>("options", SOUND)]);
-    this.sound = JSON.parse(v);
-    this.rates = JSON.parse(o);
-  }
-
-  async setSound(name: string, value: string) {
-    await ask("setting", name, value);
-    this.sound = JSON.parse(await ask<string>("settings", SOUND));
-  }
-
   /** Listens to the worker: the session's reports, what the sound card heard, a restart. */
   listen() {
     rpc.onPlayerUp(() => {
       this.up = true;
       void this.refresh();
-      void this.readSound();
     });
     rpc.onRestart(() => {
       // The player worker crashed and started again over the saved queue: it plays on if it played.

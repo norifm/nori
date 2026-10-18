@@ -1,7 +1,6 @@
 <script lang="ts">
-  // The full player: the cover, the song, the seek bar and controls, AutoMix, speed and pitch; beside
-  // them on a wide screen (in the cover's place on a phone) the lyrics, the queue, other devices or the
-  // jam.
+  // The full player: the cover, the song, the seek bar and controls; beside them on a wide screen (in
+  // the cover's place on a phone) the lyrics, the queue (with the jam over it) or other devices.
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import { href } from "../state/route.svelte";
@@ -13,7 +12,6 @@
   import Heart from "./Heart.svelte";
   import Icon from "./Icon.svelte";
   import Seek from "./Seek.svelte";
-  import SoundRow from "./SoundRow.svelte";
   import PaneView from "./PaneView.svelte";
 
   const s = $derived(player.song!);
@@ -24,7 +22,6 @@
     ["lyrics", "lyrics", W.lyrics],
     ["devices", "devices", W.playOn],
     ["queue", "queue", W.queue],
-    ["jam", "jam", W.jam],
   ];
   const close = () => {
     ui.full = false;
@@ -60,7 +57,6 @@
       {#if player.held}<button class="badge" onclick={() => player.unhold()}>{W.tapToPlay}</button>{/if}
     </div>
     <Controls big />
-    {#if !n?.device && !n?.jam}<SoundRow />{/if}
     <nav class="pane-tabs">
       {#each panes as [p, icon, label] (p)}
         {#if p !== "devices" || remote.devices.on}

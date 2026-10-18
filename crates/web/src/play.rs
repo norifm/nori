@@ -528,7 +528,7 @@ impl Nori {
 #[wasm_bindgen]
 impl Nori {
     /// The jam as the page shows it: `{ start, hosting, guest, link, host, you, members: [{ id, name,
-    /// role }], pending: [{ request, from, title, artist }], along, listening, asks }`.
+    /// role }], pending: [{ request, from, fromId, provider, song }], along, remoteSongs, listening, asks }`.
     pub fn jam(&self) -> String {
         self.with(|h| {
             let r = h.remote();
@@ -543,8 +543,9 @@ impl Nori {
                 "host": view.as_ref().map(|v| v.host().to_string()),
                 "you": view.as_ref().map(|v| v.you.clone()),
                 "members": view.as_ref().map_or(Vec::new(), |v| v.members.iter().map(|m| json!({ "id": m.id, "name": m.name, "role": format!("{:?}", m.role) })).collect()),
-                "pending": view.as_ref().map_or(Vec::new(), |v| v.pending.iter().map(|p| json!({ "request": p.request, "from": p.from_name, "title": p.song.title, "artist": p.song.artist })).collect()),
+                "pending": view.as_ref().map_or(Vec::new(), |v| v.pending.iter().map(|p| json!({ "request": p.request, "from": p.from_name, "fromId": p.from, "provider": p.provider, "song": crate::pages::song(h.core.as_ref(), &p.song.song()) })).collect()),
                 "along": view.as_ref().is_some_and(|v| v.along),
+                "remoteSongs": view.as_ref().is_some_and(|v| v.remote_songs),
                 "listening": view.as_ref().map(|v| format!("{:?}", v.listening)),
                 "asks": controls.is_some_and(|c| c.asks),
             })
@@ -571,6 +572,32 @@ impl Nori {
         if let Some(r) = self.with(|h| h.remote()).flatten() {
             r.jam_along(on);
         }
+    }
+
+    /// Lets the jam's guests ask for provider songs, or not.
+    pub fn jam_remote_songs(&self, on: bool) {
+        if let Some(r) = self.with(|h| h.remote()).flatten() {
+            r.jam_remote_songs(on);
+        }
+    }
+
+    /// Makes member `member` an admin of the jam this device hosts, or a guest again.
+    pub fn jam_promote(&self, member: String, admin: bool) {
+        if let Some(r) = self.with(|h| h.remote()).flatten() {
+            r.jam_act(nori_core::remote::wire::Op::Promote { member, admin });
+        }
+    }
+
+    /// Sends member `member` out of the jam this device hosts.
+    pub fn jam_kick(&self, member: String) {
+        if let Some(r) = self.with(|h| h.remote()).flatten() {
+            r.jam_act(nori_core::remote::wire::Op::Kick { member });
+        }
+    }
+
+    /// `text` as a QR code: `{ size, dark }`, `dark` a string of `1` and `0` row by row; null when too long.
+    pub fn qr(&self, text: String) -> String {
+        nori_core::remote::qr_code(text).map_or_else(|| "null".into(), |q| json!({ "size": q.size, "dark": q.dark.iter().map(|&d| if d { '1' } else { '0' }).collect::<String>() }).to_string())
     }
 
     /// Accepts or declines request `request` (host or admin).

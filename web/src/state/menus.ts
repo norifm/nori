@@ -64,7 +64,7 @@ function item(a: MenuAction, s: Song): Item | null {
         run: async () => {
           await player.play([s], 0);
           await remote.act(() => ask("jam_open"));
-          ui.show("jam");
+          ui.show("devices");
         },
       };
     default:

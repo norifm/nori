@@ -1,7 +1,6 @@
 <script lang="ts">
   // The player bar under the page on a wide screen: the song (its cover opens the full player), the
-  // controls with the seek bar, and the panels beside the page (lyrics, the queue, other devices, the
-  // jam).
+  // controls with the seek bar, and the panels beside the page (lyrics, the queue, other devices).
   import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
   import { href } from "../state/route.svelte";
@@ -19,7 +18,6 @@
     ["lyrics", "lyrics", W.lyrics],
     ["queue", "queue", W.queue],
     ["devices", "devices", W.playOn],
-    ["jam", "jam", W.jam],
   ];
 </script>
 

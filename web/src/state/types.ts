@@ -63,8 +63,9 @@ export type Jam = {
   host: string | null;
   you: string | null;
   members: { id: string; name: string; role: string }[];
-  pending: { request: number; from: string; title: string; artist: string }[];
+  pending: { request: number; from: string; fromId: string; provider: boolean; song: Song }[];
   along: boolean;
+  remoteSongs: boolean;
   listening: string | null;
   asks: boolean;
 };

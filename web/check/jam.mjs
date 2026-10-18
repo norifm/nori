@@ -124,9 +124,9 @@ if (!only || only.includes("jam")) {
   report.host = { link: !!link, jam: await json(host, "jam") };
   expect(typeof link === "string" && link.length > 0, "the host's jam has an invite link");
 
-  // The guest joins with the link from its Jam panel.
+  // The guest joins with the link from its devices pane.
   await guest.bringToFront();
-  await guest.evaluate(() => (location.hash = "#/settings"));
+  await pane(guest, "devices");
   await guest.waitForSelector("#jam-link");
   await guest.type("#jam-link", link);
   await guest.type("#jam-name", "Guest Browser");
@@ -148,23 +148,22 @@ if (!only || only.includes("jam")) {
   });
   await ask(guest, "enqueue", JSON.stringify([pick]), true);
   await until(host, async () => JSON.parse(await window.ask("jam")).pending.length > 0);
-  // The host sees it in its jam pane and accepts it there.
+  // The host sees it over its queue and accepts it there.
   await host.bringToFront();
-  await pane(host, "jam");
+  await pane(host, "queue");
   await host.waitForSelector("#jam .request .solid");
   const request = (await json(host, "jam")).pending[0];
   await host.click("#jam .request .solid");
   await until(host, async (id) => JSON.parse(await window.ask("now")).queue.some((s) => s.id === id), pick.id);
-  report.request = { title: request.title, from: request.from, accepted: true };
+  report.request = { title: request.song.title, from: request.from, accepted: true };
 
   // The guest listens along: its own player plays the jam's music.
   await ask(host, "jam_along", true);
   await until(guest, async () => JSON.parse(await window.ask("jam")).along);
   await guest.bringToFront();
   await guest.evaluate(() => (location.hash = "#/"));
-  await guest.waitForSelector("#bar [data-pane=jam]", { timeout: 30000 });
-  await pane(guest, "jam");
-  await guest.waitForSelector("#jam-listen");
+  await pane(guest, "queue");
+  await guest.waitForSelector("#jam-listen", { timeout: 30000 });
   await guest.click("#jam-listen");
   await until(guest, async () => JSON.parse(await window.ask("jam")).listening === "Playing", null, 30000).catch(() => {});
   await until(guest, () => (window.nori.heard?.seconds ?? 0) > 2, null, 30000).catch(() => {});

@@ -3,7 +3,7 @@
 
 export type Item = { label: string; icon?: string; run: () => unknown; danger?: boolean };
 /** What the side panel (or the full player's) shows. */
-export type Pane = "lyrics" | "queue" | "devices" | "jam";
+export type Pane = "lyrics" | "queue" | "devices";
 
 class Ui {
   toast = $state("");
