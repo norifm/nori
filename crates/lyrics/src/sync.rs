@@ -30,6 +30,11 @@ const PART_SURE: f64 = 0.3;
 const PART_GAIN: f64 = 0.1;
 /// A move is not sure when a smaller one fits this share as well.
 const NEAR_TIE: f64 = 0.75;
+/// A move this long, seconds, may be a beat off...
+const BEAT_S: f64 = 0.5;
+/// ...and is taken for word-timed lyrics only when it raises their words' contrast (activity 0 to 1 inside
+/// them less around them) by this much; tuned on 20 songs of real audio.
+const SPAN_GAIN: f64 = 0.01;
 /// Below this score the lines do not fit the voice...
 pub(crate) const POOR: f64 = 0.35;
 /// ...nor when they fit less than this better than slid far off: with a band as busy as the voice,
@@ -273,7 +278,14 @@ fn rise(v: &Voice, f: f64) -> f64 {
 /// How well `spans` (and `starts`) fit the voice shifted by `shift` frames: the mean activity inside the
 /// spans less the mean around them, plus the mean rise at the starts ([`ONSET_WEIGHT`]).
 fn fit(v: &Voice, spans: &[Span], starts: &[(f64, bool)], shift: f64) -> f64 {
-    let (Some(first), Some(last)) = (spans.first(), spans.last()) else { return 0.0 };
+    let (contrast, onsets) = cues(v, spans, starts, shift);
+    contrast + ONSET_WEIGHT * onsets
+}
+
+/// The two parts of [`fit`]: how much more active the spans are than around them, and the mean rise at
+/// the starts.
+fn cues(v: &Voice, spans: &[Span], starts: &[(f64, bool)], shift: f64) -> (f64, f64) {
+    let (Some(first), Some(last)) = (spans.first(), spans.last()) else { return (0.0, 0.0) };
     let margin = 2.0 * v.fps;
     let (all, all_n) = v.total(first.start + shift - margin, last.end + shift + margin);
     let (mut inside, mut inside_n) = (0.0, 0.0);
@@ -284,11 +296,11 @@ fn fit(v: &Voice, spans: &[Span], starts: &[(f64, bool)], shift: f64) -> f64 {
     }
     let out_n = all_n - inside_n;
     if inside_n < 1.0 || out_n < 1.0 {
-        return 0.0;
+        return (0.0, 0.0);
     }
     let contrast = inside / inside_n - (all - inside) / out_n;
     let onsets = starts.iter().filter(|(_, run_on)| !run_on).map(|(f, _)| rise(v, f + shift)).sum::<f64>() / starts.len().max(1) as f64;
-    contrast + ONSET_WEIGHT * onsets
+    (contrast, onsets)
 }
 
 /// The fit at every whole-frame shift from `-reach` to `reach`.
@@ -529,7 +541,11 @@ pub fn check(l: &Lyrics, curve: &VocalCurve) -> Option<SyncCheck> {
     // Lines in place sit later than the fit by the curve's lag, and line-timed ones also lead the voice.
     let bias_ms = LAG_MS + if l.word_timed { 0 } else { LINE_LEAD_MS };
     let offset_ms = bias_ms - (shift / v.fps * 1000.0).round() as i64;
-    let given = score_at(&v, &spans, &starts, bias_ms as f64 / 1000.0 * v.fps);
+    let at = bias_ms as f64 / 1000.0 * v.fps;
+    let given = score_at(&v, &spans, &starts, at);
+    // A move of a beat or more must also lay the sung spans over more singing: the rise at the line starts
+    // alone follows a band that comes in a beat before the voice.
+    let sings_more = !l.word_timed || (shift - at).abs() < BEAT_S * v.fps || cues(&v, &spans, &starts, shift).0 - cues(&v, &spans, &starts, at).0 >= SPAN_GAIN;
     let best_score = score_at(&v, &spans, &starts, shift).max(given);
     // What any timing scores here: the lines slid 7 to 23 s off.
     let far = [-23.0, -19.0, -17.0, -13.0, -11.0, -7.0, 7.0, 11.0, 13.0, 17.0, 19.0, 23.0];
@@ -539,7 +555,7 @@ pub fn check(l: &Lyrics, curve: &VocalCurve) -> Option<SyncCheck> {
         SyncKind::Poor
     } else if drift_ms.abs() >= DRIFT_MS {
         SyncKind::Drifts
-    } else if offset_ms.abs() >= OFFSET_MIN_MS && confidence >= OFFSET_SURE && best_score > given {
+    } else if offset_ms.abs() >= OFFSET_MIN_MS && confidence >= OFFSET_SURE && best_score > given && sings_more {
         SyncKind::Shifted
     } else {
         SyncKind::Fits
@@ -758,5 +774,29 @@ pub(crate) mod tests {
         let late = Lyrics { synced: true, lines: (0..lines).map(line).collect(), ..Default::default() };
         let c = check(&late, &VocalCurve { fps: fps as f32, t0: 0.0, level }).unwrap();
         assert!((0..=500).contains(&c.applied_ms()), "half a second late, not a line early: {c:?}");
+    }
+
+    /// A band that swells a beat before every line (strings, a chord held into the verse), the curve
+    /// hearing the voice over it hardly at all, as on Radiohead's Climbing Up the Walls: the lines rise
+    /// with the swell slid 1.1 s early, and their words sit inside the loud stretch either way. Word-timed
+    /// lyrics timed right are left alone.
+    #[test]
+    fn a_swell_before_the_voice_is_not_taken() {
+        let fps = 17.2;
+        let mut rng = Rng(5);
+        let mut level: Vec<u8> = (0..(150.0 * fps) as usize).map(|_| (60.0 + 20.0 * rng.unit()) as u8).collect();
+        let mut lines = Vec::new();
+        for k in 0..16 {
+            let start = 20.0 + k as f64 * 6.4 + if k >= 8 { 10.0 } else { 0.0 };
+            let (swell, voice, end) = (((start - 1.1) * fps) as usize, (start * fps) as usize, ((start + 4.5) * fps) as usize);
+            for (i, x) in level[swell..end].iter_mut().enumerate() {
+                *x = (100.0 + 20.0 * rng.unit() + if swell + i >= voice { 5.0 } else { 0.0 }) as u8;
+            }
+            let start_ms = (start * 1000.0) as i64 - LAG_MS;
+            let words = (0..5).map(|w| LyricWord { start_ms: start_ms + w * 900, end_ms: start_ms + w * 900 + 800, start: 7 * w as u32, end: 7 * w as u32 + 6 }).collect();
+            lines.push(LyricLine { start_ms, end_ms: start_ms + 4_400, text: "lomira teshva korupe sumida netori".into(), words, ..Default::default() });
+        }
+        let c = check(&Lyrics { synced: true, word_timed: true, lines, ..Default::default() }, &VocalCurve { fps: fps as f32, t0: 0.0, level }).unwrap();
+        assert_eq!(c.applied_ms(), 0, "{c:?}");
     }
 }
