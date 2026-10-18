@@ -1,12 +1,18 @@
-//! Server reads and their response cache. [`Client::read_stored`] returns the cached page at once (and
-//! whether it is fresh enough to skip the server); [`Client::read_fetch`] asks the server and returns a
-//! page only if it changed. Writes evict what they change (client.rs).
+//! The pages every provider's reads make, and how they are kept: the store all providers share.
+//! [`Client::read_stored`] returns the kept page at once (and whether it is fresh enough not to ask the
+//! source); [`Client::read_fetch`] asks the source and returns a page only if it changed. A page is kept
+//! under nori's own key for its read, on disk when the source answers raw ([`Answer::Raw`], parsed again
+//! on every read) and in memory for the session otherwise. The session's marks lay over every page as it
+//! is read; a write makes the pages of its kind stale ([`stale`]); Home stays put for the session and a
+//! refresh merges into what was shown.
 
 use std::hash::{Hash, Hasher};
 
 use rusqlite::OptionalExtension;
 
-use crate::client::{pairs, Client, NetResult};
+use crate::browse::AlbumSort;
+use crate::client::{Client, NetResult, Write};
+use crate::providers::Answer;
 use crate::{
     Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, Directory, FeedShelf, Genre, Lyrics, MusicFolder, PlayQueue, Playlist, PlaylistDetail, RadioStation, SearchResult,
     ServerInfo, Song, Starred,
@@ -18,14 +24,15 @@ const DAY: i64 = 24 * HOUR;
 /// Freshness window of most reads.
 const BROWSE: i64 = 2 * MINUTE;
 
-/// A server read. Variants up to `FolderById`, and `HomeFeed`, are cached; the rest always ask.
+/// A read of the profile's source. Variants up to `FolderById`, and `HomeFeed`, are kept; the rest
+/// always ask.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Read {
-    /// getAlbumList2 in `kind`'s order. `ByYear` means this year; `Random` is never cached.
-    AlbumList { kind: crate::browse::AlbumSort, size: i32, offset: i32, genre: Option<String> },
+    /// Albums in `kind`'s order. `ByYear` means this year; `Random` is never kept.
+    AlbumList { kind: AlbumSort, size: i32, offset: i32, genre: Option<String> },
     AlbumsByYear { from: i32, to: i32, size: i32, offset: i32 },
-    /// The starred `AlbumList` (same cache entry) with this session's star changes applied.
+    /// The starred `AlbumList` (the same kept page) with this session's star changes applied.
     FavouriteAlbums { size: i32 },
     ArtistIndex,
     AlbumById { id: String },
@@ -37,18 +44,18 @@ pub enum Read {
     StarredItems,
     GenreList,
     RadioList,
-    /// Asks with `enhanced=true` for word cues and translations (OpenSubsonic songLyrics v2).
+    /// With word cues and translations where the source has them.
     LyricsBySong { song_id: String },
     /// The folder tree, for libraries organised by directory.
     FolderIndex,
     FolderById { id: String },
-    // Never cached:
+    // Never kept:
     MusicFolders,
     Ping,
-    /// Uncached so octo-fiesta's provider results show; one big page since the proxy repeats them per offset.
+    /// Never kept, so octo-fiesta's provider results show; one big page since the proxy repeats them per offset.
     Search { query: String, songs: i32, albums: i32, artists: i32 },
-    /// Every song on the server, `count` from `offset`, in the server's order: the songs list of a profile
-    /// that keeps no offline index (a jam guest's).
+    /// Every song of the source, `count` from `offset`, in its order: the songs list of a profile that
+    /// keeps no offline index (a jam guest's).
     SongPage { offset: i32, count: i32 },
     RandomSongs { size: i32, genre: Option<String> },
     SongsByGenre { genre: String, count: i32 },
@@ -124,132 +131,95 @@ pub struct Stored {
     pub fresh: bool,
 }
 
-#[derive(Clone, Copy)]
-enum Parser {
-    AlbumList,
-    FavouriteAlbums,
-    Artists,
-    Album,
-    AlbumSongs,
-    Artist,
-    ArtistInfo,
-    Songs,
-    OneSong,
-    Playlists,
-    Playlist,
-    PlaylistSongs,
-    Starred,
-    Genres,
-    Radio,
-    Lyrics,
-    Indexes,
-    Directory,
-    Search,
-    Folders,
-    Status,
-    Share,
-    Queue,
-    Feed,
-}
-
-struct Spec {
-    endpoint: &'static str,
-    params: Vec<(String, String)>,
-    /// None: never cached.
-    fresh_ms: Option<i64>,
-    parser: Parser,
-}
-
 /// The current local year.
-fn this_year() -> i32 {
+pub(crate) fn this_year() -> i32 {
     let now = crate::db::now_ms();
     nori_library::smart::civil_from_ms(now + nori_library::library::local_offset_s(now / 1000) * 1000).0 as i32
 }
 
-fn by_year(from: i32, to: i32, size: i32, offset: i32) -> Spec {
-    let p = pairs(&[("type", "byYear".into()), ("fromYear", from.to_string()), ("toYear", to.to_string()), ("size", size.to_string()), ("offset", offset.to_string())]);
-    Spec { endpoint: "getAlbumList2", params: p, fresh_ms: Some(BROWSE), parser: Parser::AlbumList }
-}
-
-fn spec(read: Read) -> Spec {
-    let s = |endpoint, params, fresh_ms, parser| Spec { endpoint, params, fresh_ms, parser };
-    let id = |id: String| pairs(&[("id", id)]);
-    match read {
+/// The key `read`'s page is kept under, before the source's scope ([`crate::providers::Provider::scope`]),
+/// and how long it is fresh; None for a read never kept. Writes and refreshes drop pages by key prefix
+/// ([`stale`], [`crate::browse::home_refresh_drops`]).
+pub(crate) fn kept_as(read: &Read) -> Option<(String, i64)> {
+    let by_year = |from: i32, to: i32, size: i32, offset: i32| format!("page:albums/byYear/{from}/{to}/{size}/{offset}");
+    Some(match read {
+        Read::AlbumList { kind: AlbumSort::Random, .. } => return None,
+        Read::AlbumList { kind: AlbumSort::ByYear, size, offset, .. } => (by_year(this_year(), 0, *size, *offset), BROWSE),
         Read::AlbumList { kind, size, offset, genre } => {
-            use crate::browse::AlbumSort;
-            if kind == AlbumSort::ByYear {
-                return by_year(this_year(), 0, size, offset);
-            }
-            let fresh = (kind != AlbumSort::Random).then_some(BROWSE);
-            let mut p = pairs(&[("type", kind.api().into()), ("size", size.to_string()), ("offset", offset.to_string())]);
-            if let Some(g) = genre {
-                p.push(("genre".into(), g));
-            }
-            s("getAlbumList2", p, fresh, Parser::AlbumList)
+            (format!("page:albums/{}/{size}/{offset}{}", kind.api(), genre.as_ref().map(|g| format!("/{g}")).unwrap_or_default()), BROWSE)
         }
-        Read::AlbumsByYear { from, to, size, offset } => by_year(from, to, size, offset),
-        Read::FavouriteAlbums { size } => {
-            let p = pairs(&[("type", "starred".into()), ("size", size.to_string()), ("offset", "0".into())]);
-            s("getAlbumList2", p, Some(BROWSE), Parser::FavouriteAlbums)
+        Read::AlbumsByYear { from, to, size, offset } => (by_year(*from, *to, *size, *offset), BROWSE),
+        Read::FavouriteAlbums { size } => (format!("page:albums/{}/{size}/0", AlbumSort::Starred.api()), BROWSE),
+        Read::ArtistIndex => ("page:artists".into(), BROWSE),
+        Read::AlbumById { id } => (format!("page:album/{id}"), BROWSE),
+        Read::ArtistById { id } => (format!("page:artist/{id}"), BROWSE),
+        Read::ArtistAbout { id } => (format!("page:about/{id}"), DAY),
+        Read::TopSongs { artist } => (format!("page:top/{artist}"), DAY),
+        Read::PlaylistList => ("page:playlists".into(), BROWSE),
+        Read::PlaylistById { id } => (format!("page:playlist/{id}"), BROWSE),
+        Read::StarredItems => ("page:starred".into(), BROWSE),
+        Read::GenreList => ("page:genres".into(), HOUR),
+        Read::RadioList => ("page:radio".into(), HOUR),
+        Read::LyricsBySong { song_id } => (format!("page:lyrics/{song_id}"), HOUR),
+        Read::FolderIndex => ("page:folders".into(), HOUR),
+        Read::FolderById { id } => (format!("page:folder/{id}"), BROWSE),
+        Read::HomeFeed => ("page:home".into(), BROWSE),
+        Read::MusicFolders
+        | Read::Ping
+        | Read::Search { .. }
+        | Read::SongPage { .. }
+        | Read::RandomSongs { .. }
+        | Read::SongsByGenre { .. }
+        | Read::SimilarSongs { .. }
+        | Read::SongById { .. }
+        | Read::AlbumSongs { .. }
+        | Read::PlaylistSongs { .. }
+        | Read::NowPlaying { .. }
+        | Read::ShareLink { .. }
+        | Read::PullQueue => return None,
+    })
+}
+
+/// The pages a write makes stale, as key prefixes, for every provider.
+pub(crate) fn stale(w: &Write) -> &'static [&'static str] {
+    match w {
+        // What lists hearts, and the pages whose items show them.
+        Write::Star { .. } => &["page:starred", "page:album/", "page:artist/", "page:playlist/", "page:albums/starred/"],
+        Write::CreatePlaylist { .. } => &["page:playlists"],
+        Write::AddToPlaylist { .. } | Write::RemoveFromPlaylist { .. } | Write::RenamePlaylist { .. } | Write::ReplacePlaylist { .. } | Write::DeletePlaylist { .. } => {
+            &["page:playlist/", "page:playlists"]
         }
-        Read::ArtistIndex => s("getArtists", vec![], Some(BROWSE), Parser::Artists),
-        Read::AlbumById { id: i } => s("getAlbum", id(i), Some(BROWSE), Parser::Album),
-        Read::ArtistById { id: i } => s("getArtist", id(i), Some(BROWSE), Parser::Artist),
-        Read::ArtistAbout { id: i } => s("getArtistInfo2", pairs(&[("id", i), ("count", "10".into())]), Some(DAY), Parser::ArtistInfo),
-        Read::TopSongs { artist } => s("getTopSongs", pairs(&[("artist", artist), ("count", "20".into())]), Some(DAY), Parser::Songs),
-        Read::PlaylistList => s("getPlaylists", vec![], Some(BROWSE), Parser::Playlists),
-        Read::PlaylistById { id: i } => s("getPlaylist", id(i), Some(BROWSE), Parser::Playlist),
-        Read::StarredItems => s("getStarred2", vec![], Some(BROWSE), Parser::Starred),
-        Read::GenreList => s("getGenres", vec![], Some(HOUR), Parser::Genres),
-        Read::RadioList => s("getInternetRadioStations", vec![], Some(HOUR), Parser::Radio),
-        Read::LyricsBySong { song_id } => s("getLyricsBySongId", pairs(&[("id", song_id), ("enhanced", "true".into())]), Some(HOUR), Parser::Lyrics),
-        Read::FolderIndex => s("getIndexes", vec![], Some(HOUR), Parser::Indexes),
-        Read::FolderById { id: i } => s("getMusicDirectory", id(i), Some(BROWSE), Parser::Directory),
-        Read::MusicFolders => s("getMusicFolders", vec![], None, Parser::Folders),
-        Read::Ping => s("ping", vec![], None, Parser::Status),
-        Read::Search { query, songs, albums, artists } => s(
-            "search3",
-            pairs(&[("query", query), ("songCount", songs.to_string()), ("albumCount", albums.to_string()), ("artistCount", artists.to_string())]),
-            None,
-            Parser::Search,
-        ),
-        Read::SongPage { offset, count } => s(
-            "search3",
-            pairs(&[("query", String::new()), ("songCount", count.to_string()), ("songOffset", offset.to_string()), ("albumCount", "0".into()), ("artistCount", "0".into())]),
-            None,
-            Parser::Search,
-        ),
-        Read::RandomSongs { size, genre } => {
-            let mut p = pairs(&[("size", size.to_string())]);
-            if let Some(g) = genre {
-                p.push(("genre".into(), g));
-            }
-            s("getRandomSongs", p, None, Parser::Songs)
-        }
-        Read::SongsByGenre { genre, count } => s("getSongsByGenre", pairs(&[("genre", genre), ("count", count.to_string())]), None, Parser::Songs),
-        Read::SimilarSongs { id: i, count } => s("getSimilarSongs2", pairs(&[("id", i), ("count", count.to_string())]), None, Parser::Songs),
-        Read::SongById { id: i } => s("getSong", id(i), None, Parser::OneSong),
-        Read::AlbumSongs { id: i } => s("getAlbum", id(i), None, Parser::AlbumSongs),
-        Read::PlaylistSongs { id: i } => s("getPlaylist", id(i), None, Parser::PlaylistSongs),
-        Read::NowPlaying { id: i } => s("scrobble", pairs(&[("id", i), ("submission", "false".into())]), None, Parser::Status),
-        Read::ShareLink { id: i } => s("createShare", id(i), None, Parser::Share),
-        Read::PullQueue => s("getPlayQueue", vec![], None, Parser::Queue),
-        Read::HomeFeed => s("homeFeed", vec![], Some(BROWSE), Parser::Feed),
+        Write::CreateRadio { .. } | Write::DeleteRadio { .. } => &["page:radio"],
+        Write::Scrobble { .. } | Write::SaveQueue { .. } => &[],
     }
 }
 
-/// Cache key: the endpoint then `&k=v` for each sent param (folder included), in order, unencoded.
-/// Eviction prefixes rely on this shape ("getAlbumList2&type=starred").
-fn key(endpoint: &str, params: &[(String, String)]) -> String {
-    let mut k = String::with_capacity(endpoint.len() + params.iter().map(|(a, b)| a.len() + b.len() + 2).sum::<usize>());
-    k.push_str(endpoint);
-    for (a, b) in params {
-        k.push('&');
-        k.push_str(a);
-        k.push('=');
-        k.push_str(b);
-    }
-    k
+/// The page `read` makes of a source that has nothing for it.
+fn empty(read: &Read) -> NetResult<Page> {
+    Ok(match read {
+        Read::AlbumList { .. } | Read::AlbumsByYear { .. } | Read::FavouriteAlbums { .. } => Page::Albums { v: Vec::new() },
+        Read::ArtistIndex | Read::FolderIndex => Page::Artists { v: Vec::new() },
+        Read::AlbumById { .. } => Page::AlbumPage { v: AlbumDetail::new(Album::default(), Vec::new(), Vec::new()) },
+        Read::ArtistById { .. } => Page::ArtistPage { v: ArtistDetail::new(Artist::default(), Vec::new()) },
+        Read::ArtistAbout { .. } => Page::About { v: ArtistInfo::default() },
+        Read::TopSongs { .. } | Read::RandomSongs { .. } | Read::SongsByGenre { .. } | Read::SimilarSongs { .. } | Read::AlbumSongs { .. } | Read::PlaylistSongs { .. } => {
+            Page::Songs { v: Vec::new() }
+        }
+        Read::SongById { .. } => Page::OneSong { v: None },
+        Read::PlaylistList => Page::Playlists { v: Vec::new() },
+        Read::PlaylistById { .. } => Page::PlaylistPage { v: PlaylistDetail::new(Playlist::default(), Vec::new()) },
+        Read::StarredItems => Page::StarredPage { v: Starred::new(Vec::new(), Vec::new(), Vec::new()) },
+        Read::GenreList => Page::Genres { v: Vec::<Genre>::new() },
+        Read::RadioList => Page::Stations { v: Vec::<RadioStation>::new() },
+        Read::LyricsBySong { .. } => Page::LyricsPage { v: crate::lyrics::build(Vec::new()) },
+        Read::FolderById { .. } => Page::DirectoryPage { v: Directory::default() },
+        Read::Search { .. } | Read::SongPage { .. } => Page::Found { v: SearchResult::default() },
+        Read::MusicFolders => Page::Folders { v: Vec::<MusicFolder>::new() },
+        Read::Ping | Read::NowPlaying { .. } => Page::Status { v: ServerInfo::default() },
+        Read::ShareLink { .. } => return Err(crate::CoreError::Parse { reason: "no share in response".into() }.into()),
+        Read::PullQueue => Page::Queue { v: PlayQueue::default(), by: String::new() },
+        Read::HomeFeed => Page::Feed { v: Vec::new() },
+    })
 }
 
 fn digest(bytes: &[u8]) -> u64 {
@@ -305,64 +275,7 @@ fn lists_provider_items(page: &Page) -> bool {
     }
 }
 
-/// The Subsonic error for an item the server does not have.
-const NOT_FOUND: i32 = 70;
-
 impl Client {
-    fn parse(&self, parser: Parser, body: Vec<u8>) -> NetResult<Page> {
-        let r = crate::parse(&body)?;
-        self.core.heard_from_server(&r.kind);
-        let stars = || self.core.stars.lock();
-        Ok(match parser {
-            Parser::AlbumList => Page::Albums { v: r.album_list2.unwrap_or_default().album },
-            Parser::FavouriteAlbums => Page::Albums { v: stars().overlay_albums(r.album_list2.unwrap_or_default().album) },
-            Parser::Artists => Page::Artists { v: r.artists.unwrap_or_default().artists() },
-            Parser::Indexes => Page::Artists { v: r.indexes.unwrap_or_default().artists() },
-            Parser::Album => Page::AlbumPage { v: r.album.unwrap_or_default().into() },
-            Parser::AlbumSongs => Page::Songs { v: r.album.unwrap_or_default().song },
-            Parser::Artist => Page::ArtistPage { v: r.artist.unwrap_or_default().into() },
-            Parser::ArtistInfo => Page::About { v: r.artist_info2.unwrap_or_default().into() },
-            Parser::Songs => Page::Songs { v: r.songs() },
-            Parser::OneSong => Page::OneSong { v: r.songs().into_iter().next() },
-            Parser::Playlists => Page::Playlists { v: r.playlists.unwrap_or_default().playlist },
-            Parser::Playlist => Page::PlaylistPage { v: r.playlist.unwrap_or_default().into() },
-            Parser::PlaylistSongs => Page::Songs { v: r.playlist.unwrap_or_default().entry },
-            // This session's star changes apply to cached and fresh answers alike.
-            Parser::Starred => Page::StarredPage { v: self.marked_favourites(r.starred2.unwrap_or_default().into()) },
-            Parser::Genres => {
-                let mut v = r.genres.unwrap_or_default().genre;
-                v.sort_by_key(|g| std::cmp::Reverse(g.song_count));
-                Page::Genres { v }
-            }
-            Parser::Radio => Page::Stations { v: r.internet_radio_stations.unwrap_or_default().station },
-            Parser::Lyrics => {
-                Page::LyricsPage { v: crate::lyrics::build(r.lyrics_list.unwrap_or_default().structured_lyrics) }
-            }
-            Parser::Directory => Page::DirectoryPage { v: r.directory.unwrap_or_default().into() },
-            Parser::Search => Page::Found { v: r.search_result3.unwrap_or_default().into() },
-            Parser::Folders => Page::Folders { v: r.music_folders.unwrap_or_default().music_folder },
-            Parser::Status => Page::Status { v: r.into() },
-            Parser::Share => {
-                let url = r.shares.and_then(|s| s.share.into_iter().next()).map(|s| s.url).filter(|u| !u.is_empty());
-                Page::ShareUrl { v: url.ok_or(crate::CoreError::Parse { reason: "no share in response".into() })? }
-            }
-            Parser::Queue => {
-                let q = r.play_queue.unwrap_or_default();
-                let by = q.changed_by.clone();
-                Page::Queue { v: q.into(), by }
-            }
-            Parser::Feed => Page::Feed { v: Vec::new() },
-        })
-    }
-
-    /// Parses a server answer and keeps its library items in the index. Cached answers are only parsed:
-    /// they were indexed when they came.
-    fn parse_fresh(&self, parser: Parser, body: Vec<u8>) -> NetResult<Page> {
-        let page = self.parse(parser, body)?;
-        self.index(&page, matches!(parser, Parser::Indexes))?;
-        Ok(page)
-    }
-
     /// Keeps `page`'s library items in the index; `folders` when it lists folders, not artists.
     fn index(&self, page: &Page, folders: bool) -> NetResult<()> {
         let none: (&[Artist], &[Album], &[Song]) = (&[], &[], &[]);
@@ -385,124 +298,18 @@ impl Client {
         Ok(())
     }
 
-    /// The page `read` answers when there is nothing to answer: what a server gives for an empty answer.
-    fn nothing(&self, read: Read) -> NetResult<Page> {
-        self.parse(spec(read).parser, br#"{"subsonic-response":{"status":"ok"}}"#.to_vec())
-    }
-}
-
-#[cfg_attr(feature = "ffi", uniffi::export)]
-impl Client {
-    /// Asks the profile's source, bypassing the cache; what it lists is indexed.
-    pub async fn read_now(&self, read: Read) -> NetResult<Page> {
-        let folders = matches!(read, Read::FolderIndex);
-        let page = match self.core.provider().read(self, read.clone()).await? {
-            Some(page) => page,
-            None => self.nothing(read)?,
-        };
-        self.index(&page, folders)?;
-        Ok(page)
-    }
-}
-
-impl Client {
-    /// The kept page for `read` (None if absent or unparseable) and whether it is fresh.
-    pub(crate) fn read_stored(&self, read: Read) -> NetResult<Stored> {
-        if matches!(read, Read::HomeFeed) {
-            return Ok(self.home_stored());
+    /// `page` as `read` shows it this session: the favourites with this session's marks laid over them.
+    fn overlaid(&self, read: &Read, page: Page) -> Page {
+        match (read, page) {
+            (_, Page::StarredPage { v }) => Page::StarredPage { v: self.marked_favourites(v) },
+            (Read::FavouriteAlbums { .. }, Page::Albums { v }) => Page::Albums { v: self.core.stars.lock().overlay_albums(v) },
+            (_, page) => page,
         }
-        self.core.provider().read_stored(self, read, None)
-    }
-
-    /// Home stays as first shown for the whole session; after a refresh dropped it, the last one shows
-    /// until the merged one comes.
-    fn home_stored(&self) -> Stored {
-        let kept = self.kept_stored(Read::HomeFeed, Some(i64::MAX));
-        if kept.page.is_some() {
-            return kept;
-        }
-        Stored { page: self.core.home.lock().clone().map(|v| Page::Feed { v }), digest: None, fresh: false }
-    }
-
-    /// A source may reshuffle Home on every request: a refresh keeps what was shown and adds what is new.
-    async fn home_fetch(&self, digest: Option<u64>) -> NetResult<Option<Page>> {
-        let Page::Feed { v } = self.read_now(Read::HomeFeed).await? else { return Ok(None) };
-        let shown = self.core.home.lock().take();
-        let v = match shown {
-            Some(shown) => merged(shown, v),
-            None => v,
-        };
-        *self.core.home.lock() = Some(v.clone());
-        let page = Page::Feed { v };
-        Ok((self.keep(Read::HomeFeed, page.clone()) != digest).then_some(page))
-    }
-
-    /// [`Client::read_stored`] with a custom freshness window (for cached reads only).
-    pub(crate) fn read_stored_within(&self, read: Read, fresh_ms: i64) -> NetResult<Stored> {
-        self.core.provider().read_stored(self, read, Some(fresh_ms))
-    }
-
-    /// The cached page while fresh, else the source's, kept; the stale one when it can't be reached.
-    pub(crate) async fn cached_or_fetched(&self, read: Read) -> NetResult<Option<Page>> {
-        let stored = self.read_stored(read.clone())?;
-        if stored.fresh {
-            return Ok(stored.page);
-        }
-        Ok(self.read_refresh(read, stored.digest).await?.or(stored.page))
-    }
-
-    /// Asks the source; returns the page only if it differs from `stored_digest`, and keeps it either
-    /// way (restarting the window). Uncached reads always return their page.
-    pub(crate) async fn read_fetch(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
-        if matches!(read, Read::HomeFeed) {
-            return self.home_fetch(stored_digest).await;
-        }
-        self.core.provider().read_fetch(self, read, stored_digest).await
-    }
-
-    /// `read` asked of the Subsonic server.
-    pub(crate) async fn subsonic_read(&self, read: Read) -> NetResult<Page> {
-        let sp = spec(read);
-        let body = self.fetch(sp.endpoint, sp.params).await?;
-        self.parse(sp.parser, body)
-    }
-
-    /// The server's cached answer for `read`, fresh within `within_ms` (None: the read's own window).
-    pub(crate) fn subsonic_stored(&self, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
-        let sp = spec(read);
-        let Some(fresh_ms) = sp.fresh_ms.map(|ms| within_ms.unwrap_or(ms)) else { return Ok(Stored { page: None, digest: None, fresh: false }) };
-        let k = key(sp.endpoint, &self.scoped(sp.endpoint, sp.params));
-        let row: Option<(Vec<u8>, i64)> = {
-            let c = self.core.db.lock();
-            let mut st = c.prepare_cached("SELECT body, ts FROM cache WHERE server=sid() AND key=?1")?;
-            st.query_row([k], |r| Ok((r.get(0)?, r.get(1)?))).optional()?
-        };
-        let Some((body, ts)) = row else { return Ok(Stored { page: None, digest: None, fresh: false }) };
-        let digest = Some(digest(&body));
-        let page = self.parse(sp.parser, body).ok();
-        let fresh = page.as_ref().is_some_and(|p| !lists_provider_items(p)) && crate::db::now_ms() - ts < fresh_ms;
-        Ok(Stored { page, digest, fresh })
-    }
-
-    /// [`Client::read_stored`] of a provider that stores nothing: its answer kept in memory this session,
-    /// fresh for the read's window, so a page read again (Home scrolled back to, a page left and
-    /// returned to) shows what it showed.
-    pub(crate) fn kept_stored(&self, read: Read, within_ms: Option<i64>) -> Stored {
-        let sp = spec(read);
-        let Some(fresh_ms) = sp.fresh_ms.map(|ms| within_ms.unwrap_or(ms)) else { return Stored { page: None, digest: None, fresh: false } };
-        let kept = self.core.kept.lock().get(&key(sp.endpoint, &sp.params)).cloned();
-        let fresh = kept.as_ref().is_some_and(|k| crate::db::now_ms() - k.at < fresh_ms);
-        let digest = kept.as_ref().map(|k| k.digest);
-        let page = kept.map(|k| match k.page {
-            Page::StarredPage { v } => Page::StarredPage { v: self.marked_favourites(v) },
-            p => p,
-        });
-        Stored { page, digest, fresh }
     }
 
     /// A source's favourites with this session's marks laid over them: unstarred items leave, and a
-    /// song starred that they lack yet (YouTube lists a like seconds later) leads them when its record
-    /// is known.
+    /// song starred that they lack yet (a server that has not had the write yet, YouTube listing a like
+    /// seconds later) leads them when its record is known.
     pub(crate) fn marked_favourites(&self, starred: Starred) -> Starred {
         let marks = self.core.stars.lock().clone();
         let starred = marks.overlay(starred);
@@ -517,46 +324,152 @@ impl Client {
         Starred::new(starred.artists, starred.albums, songs)
     }
 
-    /// [`Client::read_fetch`] of a provider that stores nothing: asked anew, and kept ([`Client::kept_stored`]);
-    /// the page only when it differs from the kept one of `digest`.
-    pub(crate) async fn kept_fetch(&self, read: Read, digest: Option<u64>) -> NetResult<Option<Page>> {
-        let page = self.read_now(read.clone()).await?;
-        Ok((self.keep(read, page.clone()) != digest).then_some(page))
+    /// The key `read`'s page is kept under, the source's scope included, and how long it is fresh.
+    fn kept_key(&self, read: &Read) -> Option<(String, i64)> {
+        kept_as(read).map(|(key, window)| (key + &self.core.provider().scope(self, read), window))
     }
+}
 
-    /// Keeps `page` as `read`'s answer this session ([`Client::kept_stored`]), cached reads only; its digest.
-    pub(crate) fn keep(&self, read: Read, page: Page) -> Option<u64> {
-        let sp = spec(read);
-        let digest = page_digest(&page);
-        if sp.fresh_ms.is_some() {
-            self.core.kept.lock().insert(key(sp.endpoint, &sp.params), Kept { page, at: crate::db::now_ms(), digest });
-        }
-        Some(digest)
-    }
-
-    /// [`Client::read_fetch`] of the Subsonic server, whose answers are cached whole.
-    pub(crate) async fn subsonic_fetch(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
-        let sp = spec(read);
-        if sp.fresh_ms.is_none() {
-            let body = self.fetch(sp.endpoint, sp.params).await?;
-            return Ok(Some(self.parse_fresh(sp.parser, body)?));
-        }
-        let k = key(sp.endpoint, &self.scoped(sp.endpoint, sp.params.clone()));
-        let revision = self.core.cache_revision.load(std::sync::atomic::Ordering::Relaxed);
-        let body = self.fetch(sp.endpoint, sp.params).await?;
-        let page = if stored_digest != Some(digest(&body)) {
-            match self.parse_fresh(sp.parser, body.clone()) {
-                Err(e @ crate::transport::NetError::Api { code: NOT_FOUND, .. }) => {
-                    self.core.cache_drop(&k)?;
-                    return Err(e);
-                }
-                page => Some(page?),
-            }
-        } else {
-            None
+#[cfg_attr(feature = "ffi", uniffi::export)]
+impl Client {
+    /// Asks the profile's source, bypassing the kept pages; what it lists is indexed.
+    pub async fn read_now(&self, read: Read) -> NetResult<Page> {
+        let provider = self.core.provider();
+        let page = match provider.read(self, read.clone()).await? {
+            Some(Answer::Page(page)) => *page,
+            Some(Answer::Raw(raw)) => provider.parse(self, &read, &raw)?,
+            None => empty(&read)?,
         };
-        self.core.cache_put_checked(k, body, Some(revision))?;
-        Ok(page)
+        self.index(&page, matches!(read, Read::FolderIndex))?;
+        Ok(self.overlaid(&read, page))
+    }
+}
+
+impl Client {
+    /// The kept page for `read` (None if absent or unparseable) and whether it is fresh.
+    pub(crate) fn read_stored(&self, read: Read) -> NetResult<Stored> {
+        if matches!(read, Read::HomeFeed) {
+            return self.home_stored();
+        }
+        self.stored(read, None)
+    }
+
+    /// [`Client::read_stored`] with a custom freshness window (for kept reads only).
+    pub(crate) fn read_stored_within(&self, read: Read, fresh_ms: i64) -> NetResult<Stored> {
+        self.stored(read, Some(fresh_ms))
+    }
+
+    /// The page kept for `read`, in memory or on disk, fresh within `within_ms` (None: the read's own
+    /// window).
+    fn stored(&self, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
+        let Some((k, window)) = self.kept_key(&read) else { return Ok(Stored { page: None, digest: None, fresh: false }) };
+        let window = within_ms.unwrap_or(window);
+        let kept = self.core.kept.lock().get(&k).cloned();
+        let (page, digest, at) = match kept {
+            Some(kept) => (Some(kept.page), kept.digest, kept.at),
+            None => {
+                let row: Option<(Vec<u8>, i64)> = {
+                    let c = self.core.db.lock();
+                    let mut st = c.prepare_cached("SELECT body, ts FROM cache WHERE server=sid() AND key=?1")?;
+                    st.query_row([k], |r| Ok((r.get(0)?, r.get(1)?))).optional()?
+                };
+                let Some((body, ts)) = row else { return Ok(Stored { page: None, digest: None, fresh: false }) };
+                (self.core.provider().parse(self, &read, &body).ok(), digest(&body), ts)
+            }
+        };
+        let fresh = page.as_ref().is_some_and(|p| !lists_provider_items(p)) && crate::db::now_ms() - at < window;
+        Ok(Stored { page: page.map(|p| self.overlaid(&read, p)), digest: Some(digest), fresh })
+    }
+
+    /// Home stays as first shown for the whole session; after a refresh dropped it, the last one shows
+    /// until the merged one comes.
+    fn home_stored(&self) -> NetResult<Stored> {
+        let kept = self.stored(Read::HomeFeed, Some(i64::MAX))?;
+        if kept.page.is_some() {
+            return Ok(kept);
+        }
+        Ok(Stored { page: self.core.home.lock().clone().map(|v| Page::Feed { v }), digest: None, fresh: false })
+    }
+
+    /// A source may reshuffle Home on every request: a refresh keeps what was shown and adds what is new.
+    async fn home_fetch(&self, digest: Option<u64>) -> NetResult<Option<Page>> {
+        let Page::Feed { v } = self.read_now(Read::HomeFeed).await? else { return Ok(None) };
+        let shown = self.core.home.lock().take();
+        let v = match shown {
+            Some(shown) => merged(shown, v),
+            None => v,
+        };
+        *self.core.home.lock() = Some(v.clone());
+        let page = Page::Feed { v };
+        let kept = page_digest(&page);
+        if let Some((key, _)) = self.kept_key(&Read::HomeFeed) {
+            self.core.kept.lock().insert(key, Kept { page: page.clone(), at: crate::db::now_ms(), digest: kept });
+        }
+        Ok((Some(kept) != digest).then_some(page))
+    }
+
+    /// The kept page while fresh, else the source's, kept; the stale one when it can't be reached.
+    pub(crate) async fn cached_or_fetched(&self, read: Read) -> NetResult<Option<Page>> {
+        let stored = self.read_stored(read.clone())?;
+        if stored.fresh {
+            return Ok(stored.page);
+        }
+        Ok(self.read_refresh(read, stored.digest).await?.or(stored.page))
+    }
+
+    /// Asks the source; returns the page only if it differs from the kept one of `stored_digest`, and
+    /// keeps it either way (restarting the window). Reads never kept always return their page. A write
+    /// meanwhile makes the answer stale: it is not kept then.
+    pub(crate) async fn read_fetch(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
+        if matches!(read, Read::HomeFeed) {
+            return self.home_fetch(stored_digest).await;
+        }
+        let Some((k, _)) = self.kept_key(&read) else { return self.read_now(read).await.map(Some) };
+        let revision = self.core.cache_revision.load(std::sync::atomic::Ordering::Relaxed);
+        let provider = self.core.provider();
+        let folders = matches!(read, Read::FolderIndex);
+        let page = match provider.read(self, read.clone()).await? {
+            Some(Answer::Raw(body)) => {
+                let page = if stored_digest != Some(digest(&body)) {
+                    match provider.parse(self, &read, &body) {
+                        Err(e) if provider.gone(&e) => {
+                            self.core.cache_drop(&k)?;
+                            return Err(e);
+                        }
+                        page => {
+                            let page = page?;
+                            self.index(&page, folders)?;
+                            Some(page)
+                        }
+                    }
+                } else {
+                    None
+                };
+                self.core.cache_put_checked(k, body, Some(revision))?;
+                page
+            }
+            answer => {
+                let page = match answer {
+                    Some(Answer::Page(page)) => *page,
+                    _ => empty(&read)?,
+                };
+                self.index(&page, folders)?;
+                let digest = page_digest(&page);
+                self.core.keep_checked(k, Kept { page: page.clone(), at: crate::db::now_ms(), digest }, revision);
+                (Some(digest) != stored_digest).then_some(page)
+            }
+        };
+        Ok(page.map(|p| self.overlaid(&read, p)))
+    }
+}
+
+impl crate::Core {
+    /// Keeps `kept` under `key` unless a write since `revision` made what it shows stale.
+    fn keep_checked(&self, key: String, kept: Kept, revision: u64) {
+        let mut pages = self.kept.lock();
+        if revision == self.cache_revision.load(std::sync::atomic::Ordering::Relaxed) {
+            pages.insert(key, kept);
+        }
     }
 }
 
@@ -627,7 +540,7 @@ mod tests {
 
         // Unchanged answer returns none and refreshes.
         let (c, fake) = setup();
-        c.core.cache_put("getGenres".into(), GENRES.into()).unwrap();
+        c.core.cache_put("page:genres".into(), GENRES.into()).unwrap();
         c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
         let s = c.read_stored(Read::GenreList).unwrap();
         assert!(s.page.is_some() && !s.fresh);
@@ -659,7 +572,7 @@ mod tests {
 
         // Unreadable cache is stale.
         let (c, _) = setup();
-        c.core.cache_put("getGenres".into(), b"garbage".to_vec()).unwrap();
+        c.core.cache_put("page:genres".into(), b"garbage".to_vec()).unwrap();
         let s = c.read_stored(Read::GenreList).unwrap();
         assert!(s.page.is_none() && s.digest.is_some() && !s.fresh);
     }
@@ -733,11 +646,11 @@ mod tests {
         let (c, fake) = setup();
         fake.answer(r#"{"subsonic-response":{"status":"ok","albumList2":{"album":[]}}}"#);
         block(c.read_fetch(Read::AlbumList { kind: crate::browse::AlbumSort::Starred, size: 20, offset: 0, genre: None }, None)).unwrap();
-        assert!(c.core.cache_get("getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7".into()).unwrap().is_some());
+        assert!(c.core.cache_get("page:albums/starred/20/0&musicFolderId=7".into()).unwrap().is_some());
         assert!(fake.asked()[0].ends_with("&type=starred&size=20&offset=0&musicFolderId=7"));
         fake.answer(r#"{"subsonic-response":{"status":"ok","lyricsList":{}}}"#);
         block(c.read_fetch(Read::LyricsBySong { song_id: "s 1".into() }, None)).unwrap();
-        assert!(c.core.cache_get("getLyricsBySongId&id=s 1&enhanced=true".into()).unwrap().is_some());
+        assert!(c.core.cache_get("page:lyrics/s 1".into()).unwrap().is_some());
     }
 
     #[test]

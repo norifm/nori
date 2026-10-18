@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::{AccountState, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use super::{AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{profile_rules, ProfileRules};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
@@ -54,7 +54,7 @@ impl Provider for Fake {
         Ok(())
     }
 
-    async fn read(&self, _: &Client, read: Read) -> NetResult<Option<Page>> {
+    async fn read(&self, _: &Client, read: Read) -> NetResult<Option<Answer>> {
         Ok(match read {
             Read::Search { query, .. } => Some(Page::Found { v: SearchResult { songs: album().songs.into_iter().filter(|s| s.title.to_lowercase().contains(&query)).collect(), ..Default::default() } }),
             Read::AlbumById { id } if id == "f-al" => Some(Page::AlbumPage { v: album() }),
@@ -64,7 +64,8 @@ impl Provider for Fake {
                 Some(Page::Feed { v: vec![crate::FeedShelf { title: format!("feed {n}"), ..Default::default() }] })
             }
             _ => None,
-        })
+        }
+        .map(|p| Answer::Page(Box::new(p))))
     }
 
     async fn write(&self, _: &Client, w: Write) -> NetResult<()> {

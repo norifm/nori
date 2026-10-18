@@ -3,7 +3,7 @@
 //! rest of the core and every client go through it and never name one (docs/site/developers/providers.md).
 //! Not octo-fiesta's provider items (`ext-` ids), which are a Subsonic server's.
 
-mod subsonic;
+pub(crate) mod subsonic;
 #[cfg(feature = "youtube")]
 mod youtube;
 #[cfg(test)]
@@ -13,8 +13,10 @@ pub(crate) mod harness;
 
 use std::sync::Arc;
 
+pub use subsonic::login_check;
+
 use crate::browse::ProfileRules;
-use crate::cache_policy::{Page, Read, Stored};
+use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Write};
 use crate::settings::{SavedServer, ServerKind, ServerList};
 use crate::stream::{StreamQuality, StreamTarget};
@@ -46,18 +48,24 @@ pub trait Provider: Send + Sync {
         false
     }
 
-    /// `read` asked of the source now; None when it has nothing for such a read (the empty page).
-    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Page>>;
+    /// `read` asked of the source now; None when it has nothing for such a read (the empty page). How
+    /// its answer is kept, how long it is fresh and what the session lays over it are the core's
+    /// (cache_policy.rs).
+    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>>;
 
-    /// The answer kept for `read`, fresh within `within_ms` (None: the read's own window). Kept answers
-    /// show at once; by default a source's are kept in memory for the session.
-    fn read_stored(&self, client: &Client, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
-        Ok(client.kept_stored(read, within_ms))
+    /// A raw answer of `read` ([`Answer::Raw`]) as its page.
+    fn parse(&self, _client: &Client, read: &Read, _raw: &[u8]) -> NetResult<Page> {
+        Err(NetError::Parse { reason: format!("no raw answer to {read:?}") })
     }
 
-    /// `read` asked anew; the page only when it differs from the kept one of `digest`.
-    async fn read_fetch(&self, client: &Client, read: Read, digest: Option<u64>) -> NetResult<Option<Page>> {
-        client.kept_fetch(read, digest).await
+    /// What `read`'s answer depends on beyond the read (a server's music folders), part of its key.
+    fn scope(&self, _client: &Client, _read: &Read) -> String {
+        String::new()
+    }
+
+    /// Whether `e` says the item read is gone, so its kept page goes too.
+    fn gone(&self, _e: &NetError) -> bool {
+        false
     }
 
     /// Sends one change.
@@ -102,6 +110,15 @@ pub trait Provider: Send + Sync {
     fn account(&self, _client: &Client) -> AccountState {
         AccountState::SignedOut
     }
+}
+
+/// A source's answer to a read.
+pub enum Answer {
+    /// Its page, kept in memory for the session.
+    Page(Box<Page>),
+    /// Its answer as it came, kept on disk and parsed again on every read ([`Provider::parse`]), so a
+    /// page reads as the current parser makes it.
+    Raw(Vec<u8>),
 }
 
 /// Turns a provider's stream addresses into the URLs they open at, on the opening thread (a loader's,

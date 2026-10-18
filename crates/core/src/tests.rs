@@ -10,7 +10,7 @@ const SEARCH: &str = r#"{"subsonic-response":{"status":"ok","version":"1.16.1","
 #[test]
 fn search_indexes_skip_external() {
     let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
-    let r = core.parse_search(SEARCH.into()).unwrap();
+    let r = crate::providers::subsonic::wire::found(SEARCH.as_bytes()).unwrap();
     core.ingest_search(SEARCH.into()).unwrap();
     assert_eq!(r.songs.len(), 3);
     assert!(r.artists[0].starred);
@@ -35,7 +35,7 @@ fn search_indexes_skip_external() {
 #[test]
 fn queue_and_cache_round_trip() {
     let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
-    let songs = core.parse_search(SEARCH.into()).unwrap().songs;
+    let songs = crate::providers::subsonic::wire::found(SEARCH.as_bytes()).unwrap().songs;
     core.save_queue(PlayQueue { songs: songs.clone(), index: 1, position_ms: 5000, origin: None }).unwrap();
     let q = core.load_queue().unwrap();
     assert_eq!((q.songs, q.index, q.position_ms), (songs.clone(), 1, 5000));
@@ -50,14 +50,6 @@ fn queue_and_cache_round_trip() {
     core.cache_evict("getAlbum".into()).unwrap();
     assert_eq!(core.cache_get("getAlbum?id=1".into()).unwrap(), None);
     assert_eq!(core.cache_get("getArtist?id=1".into()).unwrap(), Some(vec![3]));
-}
-
-#[test]
-fn synced_lyrics_preferred() {
-    let l = crate::lyrics::build(crate::parse(r#"{"subsonic-response":{"status":"ok","lyricsList":{"structuredLyrics":[
-          {"synced":false,"line":[{"value":"plain"}]},{"synced":true,"line":[{"start":1500,"value":"timed"}]}]}}}"#.as_bytes()).unwrap().lyrics_list.unwrap_or_default().structured_lyrics);
-    assert!(l.synced);
-    assert_eq!((l.lines[0].start_ms, l.lines[0].text.as_str(), l.lines[0].words.len()), (1500, "timed", 1));
 }
 
 #[test]

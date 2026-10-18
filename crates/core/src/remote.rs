@@ -3035,8 +3035,7 @@ impl Remote {
                     && self.account_tag().is_some();
                 let refusal = if allowed {
                     for mark in &marks {
-                        let (_, _, stale) = nori_net::requests::request(crate::client::Write::Star { kind: mark.kind, id: mark.id.clone(), on: mark.on });
-                        for prefix in stale {
+                        for prefix in crate::cache_policy::stale(&crate::client::Write::Star { kind: mark.kind, id: mark.id.clone(), on: mark.on }) {
                             let _ = self.client.core.cache_stale(prefix);
                         }
                     }

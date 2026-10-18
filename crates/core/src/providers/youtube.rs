@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use innertube_music as yt;
 
-use super::{AccountState, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use super::{AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{LibrarySection, ProfileRules, SettingsPart};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
@@ -281,7 +281,7 @@ impl State {
             Read::AlbumList { offset: 0, .. } if signed_in => Page::Albums { v: self.after(c, api.library_albums(t).await)?.into_iter().map(album).collect() },
             Read::StarredItems if signed_in => {
                 let liked = self.after(c, api.liked_songs(t).await)?.into_iter().map(|s| Song { starred: true, ..song(s) }).collect();
-                Page::StarredPage { v: c.marked_favourites(Starred::new(Vec::new(), Vec::new(), liked)) }
+                Page::StarredPage { v: Starred::new(Vec::new(), Vec::new(), liked) }
             }
             _ => return Ok(None),
         }))
@@ -344,8 +344,8 @@ impl Provider for YouTube {
         Ok(())
     }
 
-    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Page>> {
-        self.0.read(client, read).await
+    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
+        Ok(self.0.read(client, read).await?.map(|p| Answer::Page(Box::new(p))))
     }
 
     async fn write(&self, client: &Client, w: Write) -> NetResult<()> {
@@ -1248,6 +1248,18 @@ mod tests {
         let mut shown = 0;
         block(c.read_each(read(), |_| shown += 1)).unwrap();
         assert_eq!((shown, t.asked.lock().len()), (1, 2), "the kept page, and YouTube asked");
+    }
+
+    /// After a heart, favourites YouTube lists as before show once: the heart is laid over the kept
+    /// page and over YouTube's alike.
+    #[test]
+    fn favourites_listed_as_before_a_heart_show_once() {
+        let (c, _) = signed_in(30, vec![answer(200, "playlist", &[]), answer(200, "", &[]), answer(200, "playlist", &[])]);
+        block(c.cached_or_fetched(Read::StarredItems)).unwrap();
+        block(c.star(Starrable::Song, "yt-khnokW3Mw24".into(), false, Arc::new(Shown))).unwrap();
+        let mut shown = Vec::new();
+        block(c.read_each(Read::StarredItems, |p| shown.push(p.songs().len()))).unwrap();
+        assert_eq!(shown, [2]);
     }
 
     /// A heart makes the kept favourites stale, as a server's: YouTube is asked for them on the next read.

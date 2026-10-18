@@ -328,7 +328,7 @@ mod tests {
         let core = crate::Core::new(String::new(), "t".into(), Default::default()).unwrap();
         core.configure(crate::ServerConfig { url: "http://m".into(), user: "u".into(), password: "p".into(), ..Default::default() }).unwrap();
         let urls = core.download_cover_urls(["al 1", "ext-2", "al 1"].map(String::from).to_vec());
-        let prefix = core.url_prefix("getCoverArt".into());
+        let prefix = core.url_prefix("getCoverArt");
         assert_eq!(urls, [format!("{prefix}&id=al%201&size=320"), format!("{prefix}&id=al%201&size=800")]);
         assert_eq!(core.cover_address("al 1".into(), 320), urls[0]);
 
