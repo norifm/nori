@@ -6,6 +6,11 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
+**Many settings were removed.** Most of them were rarely changed, so where one well-tuned behaviour
+serves everyone (AutoMix tuning, the crossfade curve, the scrobble point, downloads at once and more),
+nori now just uses it. If you relied on one that's gone,
+[open an issue](https://github.com/norifm/nori/issues/new) and tell us how you used it.
+
 ## [0.6.2] - 2026-10-17
 
 ### Added
