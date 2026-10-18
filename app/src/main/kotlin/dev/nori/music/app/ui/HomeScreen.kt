@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -339,10 +340,11 @@ private fun QueueOfferCard(offer: dev.nori.music.ffi.library.QueueOffer, actions
     val song = offer.songs.getOrNull(offer.index.toInt()) ?: return
     androidx.compose.material3.Surface(
         onClick = onPlay, shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-        // Spaced as a shelf is under its heading: the large title's line leaves more room under its letters than a
-        // section heading's, so 4 dp here puts the card as far below them as a row sits below a heading; below it,
-        // only what the next heading keeps above itself.
-        color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 4.dp),
+        // Halfway between the large title's letters and the next heading's: with 4 dp of room above it and only what
+        // the next heading keeps above itself below, the letters stood 15 and 21 dp off it, so it is drawn 3 dp
+        // lower than its place; the page under it does not move.
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 4.dp).offset(y = 3.dp),
     ) {
         Row(Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Cover(actions.cover(song.coverArt, CoverSize.ROW), 48.dp, radius = 8.dp)
