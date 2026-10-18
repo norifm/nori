@@ -23,12 +23,29 @@ hold that profile's state (a session, streams resolved):
 | `info` | the add form's fields (`FormField`: name, address, user, ...; plain or advanced) and how its account signs in (`SignIn::WebPage { start_url }`, `SignIn::Paste`) |
 | `ready`, `check` | whether the form can be sent; checking a profile before it is kept (a server is pinged) |
 | `rules`, `configure` | the profile's `ProfileRules` (library sections, hearts, remote control, jams, downloads, its own Home feed...) and pointing the `Core` at it |
-| `read`, `read_stored`, `read_fetch` | the core's `Read`s (search, album, artist, playlist, Home feed, library sections) as `Page`s; a kept answer and its freshness, where the provider keeps any |
+| `read`, `parse`, `scope`, `gone` | the core's `Read`s (search, album, artist, playlist, Home feed, library sections) as `Page`s (`Answer::Page`), or as the raw answer the core keeps on disk and has `parse` read again (`Answer::Raw`, a Subsonic server's); what else an answer depends on (a server's music folders); which error says the item is gone |
 | `write` | hearts, playlists and the rest of `Write`, where it has somewhere to send them |
 | `stream`, `ahead`, `resolver` | where a song streams from and its cache key; how far ahead songs may be fetched; a `ResolveStream` that turns its stream addresses into the URLs they open at, which the engine's byte source calls (`nori_engine::core::resolving`) |
 | `cover_address`, `cover_prefix` | cover URLs |
 | `sign_in_done`, `sign_in`, `sign_out`, `account` | the account: when a sign-in page is done, signing in with what the page or the user handed over, and where it stands |
 | `subsonic_api` | whether the core's Subsonic account work (scrobbles, queue pushes, remote control) has a server; without one those requests fail at once |
+
+## What every provider gets from the core
+
+A provider only fetches and sends. The rest is the core's page store (`crates/core/src/cache_policy.rs`),
+the same for every provider, so one cannot behave differently from another:
+
+- pages kept under nori's own keys, each read with its freshness window, shown at once and asked anew
+  when stale; a page asked anew that is the same is not shown again;
+- the session's hearts laid over every page as it is read: the favourites lose what was unhearted and
+  gain what was hearted, ahead of the source listing it;
+- writes make the pages of their kind stale (`cache_policy::stale`): still shown, offline too, until the
+  source answers anew;
+- Home kept as first shown for the whole session; a refresh merges the new feed into it, so nothing
+  shown moves.
+
+`providers/harness.rs` runs one scripted session per provider and compares each step's pages and
+requests with a recorded transcript (`crates/core/tests/golden/`); `NORI_BLESS=1` records it anew.
 
 `providers/fake.rs` is a test-only provider standing in for a third kind: its tests search, open a
 page, play, show covers and sign in through the generic paths, with no provider named.

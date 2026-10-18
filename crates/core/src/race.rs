@@ -401,7 +401,7 @@ pub(crate) mod tests {
                 assert_eq!(shown.0.lock()[0].lyrics.lines[0].text, "timed");
                 assert_eq!(fake.asked().len(), 1, "opening the prefetched song needs no request");
                 assert!(fake.asked()[0].contains("id=ahead"));
-                assert!(c.core.cache_get("getLyricsBySongId&id=later&enhanced=true".into()).unwrap().is_none());
+                assert!(c.core.cache_get("page:lyrics/later".into()).unwrap().is_none());
             } else {
                 assert!(fake.asked().is_empty(), "a provider's: no prefetch requests");
             }
@@ -554,7 +554,7 @@ pub(crate) mod tests {
         fake.answer(r#"[{"duration":1022,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
         let found = run(&c, &s, false, false, &lrclib());
         assert_eq!(found[0].origin, LyricsOrigin::Lrclib);
-        c.core.cache_put(format!("getLyricsBySongId&id={}&enhanced=true", s.id), NONE.as_bytes().to_vec()).unwrap();
+        c.core.cache_put(format!("page:lyrics/{}", s.id), NONE.as_bytes().to_vec()).unwrap();
         c.core.db.lock().execute("UPDATE cache SET ts = 0 WHERE key LIKE 'getLyricsBySongId%'", []).unwrap();
         let before = fake.asked().len();
         fake.fail(FailureKind::Timeout);
@@ -593,7 +593,7 @@ pub(crate) mod tests {
         fake.answer(r#"{"statusCode":404}"#);
         fake.answer(r#"[{"duration":1022,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
         run(&c, &s, false, false, &lrclib());
-        c.core.cache_put(format!("getLyricsBySongId&id={}&enhanced=true", s.id), NONE.as_bytes().to_vec()).unwrap();
+        c.core.cache_put(format!("page:lyrics/{}", s.id), NONE.as_bytes().to_vec()).unwrap();
         let shown = || {
             let screen = Arc::new(Screen::default());
             block(c.lyrics_for_with(s.id.clone(), &lrclib(), screen.clone())).unwrap();

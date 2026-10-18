@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use super::{AccountState, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use super::{AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{profile_rules, ProfileRules};
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
@@ -54,7 +54,7 @@ impl Provider for Fake {
         Ok(())
     }
 
-    async fn read(&self, _: &Client, read: Read) -> NetResult<Option<Page>> {
+    async fn read(&self, _: &Client, read: Read) -> NetResult<Option<Answer>> {
         Ok(match read {
             Read::Search { query, .. } => Some(Page::Found { v: SearchResult { songs: album().songs.into_iter().filter(|s| s.title.to_lowercase().contains(&query)).collect(), ..Default::default() } }),
             Read::AlbumById { id } if id == "f-al" => Some(Page::AlbumPage { v: album() }),
@@ -64,7 +64,8 @@ impl Provider for Fake {
                 Some(Page::Feed { v: vec![crate::FeedShelf { title: format!("feed {n}"), ..Default::default() }] })
             }
             _ => None,
-        })
+        }
+        .map(|p| Answer::Page(Box::new(p))))
     }
 
     async fn write(&self, _: &Client, w: Write) -> NetResult<()> {
@@ -146,21 +147,22 @@ mod tests {
         assert!(c.core.rules().feed && !c.core.rules().remote);
     }
 
-    /// Home's feed is read once and kept for the session: read again while fresh it is the same page,
-    /// asked anew only after Home's refresh drops it.
+    /// Home's feed is read once and kept for the whole session, however long ago; Home's refresh asks
+    /// anew and adds what is new after what was shown, as for every provider.
     #[test]
-    fn home_feed_is_kept_until_refreshed() {
+    fn home_feed_is_kept_for_the_session_and_merged_on_refresh() {
         let (c, fake) = fake();
-        let shelf = || {
-            let mut titles = Vec::new();
-            block(c.read_each(Read::HomeFeed, |p| if let Page::Feed { v } = p { titles.push(v[0].title.clone()) })).unwrap();
-            titles
+        let shown = || {
+            let mut pages = Vec::new();
+            block(c.read_each(Read::HomeFeed, |p| if let Page::Feed { v } = p { pages.push(v.iter().map(|s| s.title.clone()).collect::<Vec<_>>()) })).unwrap();
+            pages
         };
-        assert_eq!(shelf(), ["feed 1"]);
-        assert_eq!(shelf(), ["feed 1"], "kept: not asked again");
+        assert_eq!(shown(), [["feed 1"]]);
+        crate::providers::harness::age(&c);
+        assert_eq!(shown(), [["feed 1"]], "kept: not asked again");
         assert_eq!(*fake.feeds.lock(), 1);
         c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
-        assert_eq!(shelf(), ["feed 2"], "a refresh asks again");
+        assert_eq!(shown(), [vec!["feed 1"], vec!["feed 1", "feed 2"]], "a refresh asks again and keeps what was shown");
     }
 
     /// A song plays from the provider's address, opened at the URL it resolves to; covers are its own.

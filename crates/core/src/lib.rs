@@ -75,308 +75,11 @@ pub fn net_profile(p: &settings::SavedServer) -> client::NetProfile {
     client::NetProfile { url: p.url.clone(), alt_url: p.alt_url.clone(), music_folder_ids: p.music_folder_ids.clone(), alt_max_bit_rate: p.alt_max_bit_rate.max(0) as u32 }
 }
 
-impl ServerConfig {
-    /// The server these settings sign requests for.
-    fn server(&self) -> api::Server {
-        let auth = match (&self.api_key, self.legacy_auth) {
-            (Some(k), _) if !k.is_empty() => api::Auth::ApiKey(k),
-            (_, true) => api::Auth::Legacy { user: &self.user, password: &self.password },
-            _ => api::Auth::Token { user: &self.user, password: &self.password },
-        };
-        api::Server::with(&self.url, auth)
-    }
-}
-
-/// A write queued while the server was unreachable.
-pub(crate) struct PendingCall {
-    pub row_id: i64,
-    pub endpoint: String,
-    pub params: Vec<(String, String)>,
-}
-
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Param {
     pub key: String,
     pub value: String,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct ApiError {
-    code: i32,
-    message: String,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Found {
-    artist: Vec<Artist>,
-    album: Vec<Album>,
-    song: Vec<Song>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct AlbumWire {
-    #[serde(flatten)]
-    album: Album,
-    song: Vec<Song>,
-    #[serde(rename = "discTitles")]
-    disc_titles: Vec<DiscTitle>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct ArtistWire {
-    #[serde(flatten)]
-    artist: Artist,
-    album: Vec<Album>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct PlaylistWire {
-    #[serde(flatten)]
-    playlist: Playlist,
-    entry: Vec<Song>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Albums {
-    album: Vec<Album>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Songs {
-    song: Vec<Song>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Index {
-    artist: Vec<Artist>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Artists {
-    index: Vec<Index>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Playlists {
-    playlist: Vec<Playlist>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Genres {
-    genre: Vec<Genre>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Stations {
-    #[serde(rename = "internetRadioStation")]
-    station: Vec<RadioStation>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct ArtistInfoWire {
-    biography: Option<String>,
-    last_fm_url: Option<String>,
-    music_brainz_id: Option<String>,
-    large_image_url: Option<String>,
-    medium_image_url: Option<String>,
-    similar_artist: Vec<Artist>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct LyricsList {
-    structured_lyrics: Vec<lyrics::Structured>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct Folders {
-    music_folder: Vec<MusicFolder>,
-}
-
-/// getMusicDirectory mixes folders and songs in one `child` list, told apart by `isDir`.
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct DirectoryWire {
-    #[serde(deserialize_with = "crate::model::id_string")]
-    id: String,
-    name: String,
-    child: Vec<serde_json::Value>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Share {
-    url: String,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct Shares {
-    share: Vec<Share>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct QueueWire {
-    entry: Vec<Song>,
-    current: Option<serde_json::Value>,
-    position: u64,
-    /// The app that saved it, by the name it gave the server.
-    #[serde(rename = "changedBy")]
-    changed_by: String,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct Response {
-    status: String,
-    version: String,
-    #[serde(rename = "type")]
-    kind: String,
-    server_version: String,
-    open_subsonic: bool,
-    error: Option<ApiError>,
-    search_result3: Option<Found>,
-    starred2: Option<Found>,
-    album: Option<AlbumWire>,
-    artist: Option<ArtistWire>,
-    playlist: Option<PlaylistWire>,
-    album_list2: Option<Albums>,
-    artists: Option<Artists>,
-    playlists: Option<Playlists>,
-    genres: Option<Genres>,
-    random_songs: Option<Songs>,
-    songs_by_genre: Option<Songs>,
-    similar_songs2: Option<Songs>,
-    top_songs: Option<Songs>,
-    song: Option<Song>,
-    internet_radio_stations: Option<Stations>,
-    artist_info2: Option<ArtistInfoWire>,
-    lyrics_list: Option<LyricsList>,
-    play_queue: Option<QueueWire>,
-    shares: Option<Shares>,
-    music_folders: Option<Folders>,
-    indexes: Option<Artists>,
-    directory: Option<DirectoryWire>,
-}
-
-#[derive(Deserialize)]
-struct Envelope {
-    #[serde(rename = "subsonic-response")]
-    response: Response,
-}
-
-fn parse(body: &[u8]) -> Result<Response> {
-    let r = serde_json::from_slice::<Envelope>(body).map_err(|e| CoreError::Parse { reason: e.to_string() })?.response;
-    if r.status != "ok" {
-        let e = r.error.unwrap_or_default();
-        return Err(CoreError::Api { code: e.code, reason: if e.message.is_empty() { "request failed".into() } else { e.message } });
-    }
-    Ok(r)
-}
-
-impl Response {
-    /// randomSongs, songsByGenre, similarSongs2, topSongs and getSong all land here.
-    fn songs(self) -> Vec<Song> {
-        let lists = self.random_songs.or(self.songs_by_genre).or(self.similar_songs2).or(self.top_songs);
-        lists.map(|s| s.song).or(self.song.map(|s| vec![s])).unwrap_or_default()
-    }
-}
-
-impl Artists {
-    fn artists(self) -> Vec<Artist> {
-        self.index.into_iter().flat_map(|i| i.artist).collect()
-    }
-}
-
-impl From<Response> for ServerInfo {
-    fn from(r: Response) -> Self {
-        ServerInfo { version: r.version, server_type: r.kind, server_version: r.server_version, open_subsonic: r.open_subsonic }
-    }
-}
-
-impl From<Found> for SearchResult {
-    fn from(f: Found) -> Self {
-        SearchResult { artists: f.artist, albums: f.album, songs: f.song }
-    }
-}
-
-impl From<Found> for Starred {
-    fn from(f: Found) -> Self {
-        Starred::new(f.artist, f.album, f.song)
-    }
-}
-
-impl From<AlbumWire> for AlbumDetail {
-    fn from(a: AlbumWire) -> Self {
-        AlbumDetail::new(a.album, a.song, a.disc_titles)
-    }
-}
-
-impl From<ArtistWire> for ArtistDetail {
-    fn from(a: ArtistWire) -> Self {
-        ArtistDetail::new(a.artist, a.album)
-    }
-}
-
-impl From<PlaylistWire> for PlaylistDetail {
-    fn from(p: PlaylistWire) -> Self {
-        PlaylistDetail::new(p.playlist, p.entry)
-    }
-}
-
-impl From<ArtistInfoWire> for ArtistInfo {
-    fn from(i: ArtistInfoWire) -> Self {
-        ArtistInfo {
-            biography: i.biography.filter(|b| !b.trim().is_empty()),
-            image_url: i.large_image_url.or(i.medium_image_url).filter(|u| !u.is_empty()),
-            similar: i.similar_artist,
-            last_fm_url: i.last_fm_url.filter(|u| u.starts_with("http")),
-            music_brainz_id: i.music_brainz_id.filter(|m| !m.is_empty()),
-        }
-    }
-}
-
-impl From<DirectoryWire> for Directory {
-    fn from(d: DirectoryWire) -> Self {
-        let mut out = Directory { id: d.id, name: d.name, ..Default::default() };
-        for c in d.child {
-            if c.get("isDir").and_then(|v| v.as_bool()).unwrap_or(false) {
-                if let Ok(mut a) = serde_json::from_value::<Artist>(c.clone()) {
-                    if a.name.is_empty() {
-                        a.name = c.get("title").and_then(|t| t.as_str()).unwrap_or_default().to_string();
-                    }
-                    out.folders.push(a);
-                }
-            } else if let Ok(s) = serde_json::from_value::<Song>(c) {
-                out.songs.push(s);
-            }
-        }
-        out
-    }
-}
-
-impl From<QueueWire> for PlayQueue {
-    fn from(q: QueueWire) -> Self {
-        let current = q.current.map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()));
-        let index = current.and_then(|c| q.entry.iter().position(|s| s.id == c)).unwrap_or(0) as u32;
-        PlayQueue { songs: q.entry, index, position_ms: q.position, origin: None }
-    }
 }
 
 #[cfg_attr(feature = "ffi", derive(uniffi::Object))]
@@ -393,7 +96,10 @@ pub struct Core {
     remote: Mutex<std::sync::Weak<remote::Remote>>,
     cache_revision: AtomicU64,
     /// A provider's answers this session, by cache key, with when they came ([`Client::kept_stored`]).
-    kept: Mutex<std::collections::HashMap<String, (cache_policy::Page, i64)>>,
+    kept: Mutex<std::collections::HashMap<String, cache_policy::Kept>>,
+    /// Home as last shown this session: a refresh drops the kept page, and the new feed is merged into
+    /// this one.
+    home: Mutex<Option<Vec<FeedShelf>>>,
     /// The queue this core saves and restores and its clients fill.
     pub session: Arc<nori_queue::Session>,
     /// The user and the Subsonic secret (password or API key) the LAN's remote control proves the account
@@ -510,6 +216,7 @@ impl Core {
             remote: Mutex::default(),
             cache_revision: AtomicU64::new(0),
             kept: Mutex::default(),
+            home: Mutex::default(),
             session,
             account: RwLock::new(None), lan_jam: RwLock::new(None),
             native_login: RwLock::new(None),
@@ -520,49 +227,6 @@ impl Core {
         });
         core.session.db.set(&core.db);
         Ok(core)
-    }
-
-    /// Sets the server; returns the normalised base url. Clears the library when the profile now points
-    /// at another server or user.
-    pub fn configure(&self, config: ServerConfig) -> Result<String> {
-        let s = config.server();
-        self.serves(&format!("{}|{}", s.base, config.user))?;
-        let base = s.base.clone();
-        *self.server.write() = s;
-        self.install_kind(settings::ServerKind::Subsonic)?;
-        self.starts_transcodes.store(false, std::sync::atomic::Ordering::Relaxed);
-        let key = config.api_key.unwrap_or_default();
-        self.set_rules(browse::profile_rules(nori_remote::is_guest_key(&key)));
-        *self.native_login.write() = key.is_empty().then(|| (config.user.clone(), config.password.clone()));
-        *self.account.write() = match (key.is_empty(), nori_remote::is_guest_key(&key)) {
-            (true, _) => Some((config.user, config.password)),
-            (false, false) => Some((config.user, key)),
-            (false, true) => None,
-        };
-        Ok(base)
-    }
-
-    pub fn url(&self, endpoint: String, params: Vec<Param>) -> String {
-        let p: Vec<(String, String)> = params.into_iter().map(|p| (p.key, p.value)).collect();
-        self.server.read().url(&endpoint, &p)
-    }
-
-    /// Signed url of `endpoint` without parameters, for callers appending `&id=..` per row.
-    pub fn url_prefix(&self, endpoint: String) -> String {
-        self.server.read().url(&endpoint, &[])
-    }
-
-    /// `max_bit_rate` 0 and empty `format` mean the original file. A transcode comes without a length:
-    /// with `estimateContentLength`, Navidrome cuts one that comes out larger than its estimate.
-    pub fn stream_url(&self, id: String, max_bit_rate: u32, format: String) -> String {
-        let mut p = vec![("id".to_string(), id)];
-        if max_bit_rate > 0 {
-            p.push(("maxBitRate".into(), max_bit_rate.to_string()));
-        }
-        if !format.is_empty() {
-            p.push(("format".into(), format));
-        }
-        self.server.read().url("stream", &p)
     }
 
     pub fn local_search(&self, query: String, limit: u32) -> Result<SearchResult> {
@@ -679,28 +343,6 @@ impl Core {
         Ok(())
     }
 
-    /// Points requests at another address of the same server (LAN vs WAN) without touching the index.
-    pub(crate) fn use_address(&self, url: String) {
-        let next = self.server.read().rebased(&url);
-        *self.server.write() = next;
-    }
-
-    /// Validates any response; used for ping and for calls with no payload.
-    pub(crate) fn parse_status(&self, body: Vec<u8>) -> Result<ServerInfo> {
-        Ok(parse(&body)?.into())
-    }
-
-    pub fn parse_search(&self, body: Vec<u8>) -> Result<SearchResult> {
-        Ok(parse(&body)?.search_result3.unwrap_or_default().into())
-    }
-
-    /// Library sync: indexes a search3 page; how many of each it lists, and the index rows it filled.
-    pub(crate) fn ingest_search(&self, body: Vec<u8>) -> Result<(IngestStats, Vec<i64>)> {
-        let f = parse(&body)?.search_result3.unwrap_or_default();
-        let rows = db::index(&mut self.db.lock(), &f.artist, &f.album, &f.song)?;
-        Ok((IngestStats { artists: f.artist.len() as u32, albums: f.album.len() as u32, songs: f.song.len() as u32 }, rows))
-    }
-
     /// Drops the index rows other than `kept`: what a whole sync did not find.
     pub(crate) fn prune_index(&self, kept: &std::collections::HashSet<i64>) -> Result<()> {
         Ok(db::prune(&mut self.db.lock(), kept)?)
@@ -741,36 +383,18 @@ impl Core {
         Ok(())
     }
 
-    pub(crate) fn pending_add(&self, endpoint: &str, params: &[(String, String)]) -> Result<()> {
-        let json = serde_json::to_string(params).unwrap_or_default();
-        self.db.lock().execute("INSERT INTO pending(server, endpoint, params) VALUES(sid(), ?1, ?2)", params![endpoint, json])?;
+    /// Kept answers whose key starts with `prefix` are stale: still shown (offline too) until the
+    /// source answers anew.
+    pub(crate) fn cache_stale(&self, prefix: &str) -> Result<()> {
+        let c = self.db.lock();
+        c.execute("UPDATE cache SET ts = 0 WHERE server=sid() AND key >= ?1 AND key < ?1 || x'ff'", [prefix])?;
+        self.kept.lock().iter_mut().filter(|(k, _)| k.starts_with(prefix)).for_each(|(_, kept)| kept.at = 0);
+        self.cache_revision.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
     pub(crate) fn cache_drop(&self, key: &str) -> Result<()> {
         self.db.lock().execute("DELETE FROM cache WHERE server=sid() AND key=?1", [key])?;
-        Ok(())
-    }
-
-    pub(crate) fn pending_any(&self) -> Result<bool> {
-        Ok(self.db.lock().query_row("SELECT EXISTS(SELECT 1 FROM pending WHERE server=sid())", [], |r| r.get(0))?)
-    }
-
-    pub(crate) fn pending_list(&self) -> Result<Vec<PendingCall>> {
-        let c = self.db.lock();
-        let mut st = c.prepare_cached("SELECT rowid, endpoint, params FROM pending WHERE server=sid() ORDER BY rowid LIMIT 200")?;
-        let rows = st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
-        Ok(rows
-            .filter_map(|r| r.ok())
-            .map(|(row_id, endpoint, json)| {
-                let pairs: Vec<(String, String)> = serde_json::from_str(&json).unwrap_or_default();
-                PendingCall { row_id, endpoint, params: pairs }
-            })
-            .collect())
-    }
-
-    pub(crate) fn pending_done(&self, row_id: i64) -> Result<()> {
-        self.db.lock().execute("DELETE FROM pending WHERE server=sid() AND rowid=?1", [row_id])?;
         Ok(())
     }
 

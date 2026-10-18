@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 
 use innertube_music as yt;
 
-use super::{AccountState, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
+use super::{AccountState, Answer, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{LibrarySection, ProfileRules, SettingsPart};
-use crate::cache_policy::{Page, Read, Stored};
+use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
 use crate::settings::{SavedServer, ServerKind};
 use crate::stream::{StreamQuality, StreamTarget};
@@ -207,27 +207,6 @@ fn shelf(s: yt::Shelf) -> FeedShelf {
     f
 }
 
-/// `shown` with what `fresh` adds: items new to a shelf at its end, new shelves at the end, so nothing
-/// shown moves or leaves.
-fn merged(mut shown: Vec<FeedShelf>, fresh: Vec<FeedShelf>) -> Vec<FeedShelf> {
-    fn add<T>(to: &mut Vec<T>, from: Vec<T>, id: impl Fn(&T) -> &str) {
-        let new: Vec<T> = from.into_iter().filter(|f| !to.iter().any(|t| id(t) == id(f))).collect();
-        to.extend(new);
-    }
-    for f in fresh {
-        match shown.iter_mut().find(|s| s.title == f.title) {
-            Some(s) => {
-                add(&mut s.songs, f.songs, |x| &x.id);
-                add(&mut s.albums, f.albums, |x| &x.id);
-                add(&mut s.playlists, f.playlists, |x| &x.id);
-                add(&mut s.artists, f.artists, |x| &x.id);
-            }
-            None => shown.push(f),
-        }
-    }
-    shown
-}
-
 /// A stream is asked again this long before YouTube stops serving it, so a song opened just before
 /// still loads whole.
 const MARGIN: Duration = Duration::from_secs(5 * 60);
@@ -263,9 +242,6 @@ struct State {
     api: yt::InnerTube,
     session: account::Session,
     streams: Streams,
-    /// Home as last shown this session: a refresh drops the kept page, and the new feed is merged into
-    /// this one.
-    home: parking_lot::Mutex<Option<Vec<FeedShelf>>>,
 }
 
 /// The YouTube Music provider, over the profile's [`State`].
@@ -305,7 +281,7 @@ impl State {
             Read::AlbumList { offset: 0, .. } if signed_in => Page::Albums { v: self.after(c, api.library_albums(t).await)?.into_iter().map(album).collect() },
             Read::StarredItems if signed_in => {
                 let liked = self.after(c, api.liked_songs(t).await)?.into_iter().map(|s| Song { starred: true, ..song(s) }).collect();
-                Page::StarredPage { v: c.marked_favourites(Starred::new(Vec::new(), Vec::new(), liked)) }
+                Page::StarredPage { v: Starred::new(Vec::new(), Vec::new(), liked) }
             }
             _ => return Ok(None),
         }))
@@ -368,8 +344,8 @@ impl Provider for YouTube {
         Ok(())
     }
 
-    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Page>> {
-        self.0.read(client, read).await
+    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
+        Ok(self.0.read(client, read).await?.map(|p| Answer::Page(Box::new(p))))
     }
 
     async fn write(&self, client: &Client, w: Write) -> NetResult<()> {
@@ -378,36 +354,6 @@ impl Provider for YouTube {
 
     fn stream(&self, _: &Client, id: String, _: StreamQuality) -> StreamTarget {
         stream_target(id)
-    }
-
-    /// Home stays as first shown for the whole session; after a refresh dropped it, the last one shows
-    /// until the merged one comes.
-    fn read_stored(&self, client: &Client, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
-        if !matches!(read, Read::HomeFeed) {
-            return Ok(client.kept_stored(read, within_ms));
-        }
-        let kept = client.kept_stored(read, Some(i64::MAX));
-        if kept.page.is_some() {
-            return Ok(kept);
-        }
-        Ok(Stored { page: self.0.home.lock().clone().map(|v| Page::Feed { v }), digest: None, fresh: false })
-    }
-
-    /// YouTube reshuffles Home on every request: a refresh keeps what was shown and adds what is new.
-    async fn read_fetch(&self, client: &Client, read: Read, _digest: Option<u64>) -> NetResult<Option<Page>> {
-        if !matches!(read, Read::HomeFeed) {
-            return client.kept_fetch(read).await;
-        }
-        let Page::Feed { v } = client.read_now(read.clone()).await? else { return Ok(None) };
-        let shown = self.0.home.lock().take();
-        let v = match shown {
-            Some(shown) => merged(shown, v),
-            None => v,
-        };
-        *self.0.home.lock() = Some(v.clone());
-        let page = Page::Feed { v };
-        client.keep(read, page.clone());
-        Ok(Some(page))
     }
 
     fn ahead(&self) -> Option<usize> {
@@ -743,7 +689,7 @@ mod tests {
     fn home_stays_for_the_session() {
         let (c, t) = youtube(&[&fixture("home"), &fixture("home_more"), &fixture("queue"), &reshuffled_home(), &fixture("home_more")]);
         let first = feed(&c);
-        c.core.kept.lock().values_mut().for_each(|(_, at)| *at = 0);
+        c.core.kept.lock().values_mut().for_each(|k| k.at = 0);
         assert_eq!(feed(&c), first);
         assert_eq!(t.asked.lock().len(), 3);
     }
@@ -866,6 +812,8 @@ mod tests {
         let target = c.download_target("yt-dQw4w9WgXcQ".into(), StreamQuality { bit_rate: 192, format: "mp3".into() });
         assert_eq!(target.url, "youtube:dQw4w9WgXcQ");
         assert_eq!(target.key, "dl:yt-dQw4w9WgXcQ");
+        let thumbnail = "https://yt3.googleusercontent.com/abc";
+        assert_eq!(c.core.download_cover_urls(vec![thumbnail.into()]), [format!("{thumbnail}=w320-h320-l90-rj"), format!("{thumbnail}=w800-h800-l90-rj")], "its covers are YouTube's");
     }
 
     #[test]
@@ -1131,6 +1079,221 @@ mod tests {
         assert_eq!(shown[0], ("yt-zhl-Cs1-sG4".to_string(), true), "{shown:?}");
         assert!(shown.len() == 3 && !shown.iter().any(|(id, _)| id == "yt-khnokW3Mw24"), "{shown:?}");
         assert_eq!(ids(block(c.read_now(Read::StarredItems)).ok()), shown, "YouTube lags; the marks do not");
+    }
+
+    /// Answers InnerTube by what is asked, as YouTube would, and keeps each request's path and target.
+    #[derive(Default)]
+    struct Answers {
+        asked: parking_lot::Mutex<Vec<String>>,
+    }
+
+    impl Answers {
+        fn taken(&self) -> Vec<String> {
+            std::mem::take(&mut *self.asked.lock())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Transport for Answers {
+        async fn get(&self, url: String, _: u32) -> Result<TransportResponse, TransportError> {
+            panic!("a Subsonic request in a YouTube Music profile: {url}");
+        }
+        async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
+            let path = request.url.split('?').next().unwrap_or_default().rsplit("/v1/").next().unwrap_or_default().to_string();
+            let body: serde_json::Value = request.json.as_deref().and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default();
+            let at = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let target = ["browseId", "continuation", "videoId", "query"].iter().map(|k| at(k)).find(|v| !v.is_empty()).unwrap_or_default();
+            self.asked.lock().push(format!("{path} {target}"));
+            let browse = at("browseId");
+            let name = match path.as_str() {
+                "browse" if !at("continuation").is_empty() => "home_more",
+                "browse" if browse == "FEmusic_home" => "home",
+                "browse" if browse == "FEmusic_liked_albums" => "library_albums",
+                "browse" if browse == "FEmusic_liked_playlists" => "library_playlists",
+                "browse" if browse.starts_with("MPREb") => "album",
+                "browse" if browse.starts_with("UC") => "artist",
+                "browse" if browse.starts_with("VL") => "playlist",
+                "next" => "radio",
+                "music/get_queue" => "queue",
+                "player" => "player",
+                "search" => match at("params").as_str() {
+                    "EgWKAQIIAWoKEAkQBRAKEAMQBA==" => "search_songs",
+                    "EgWKAQIYAWoKEAkQBRAKEAMQBA==" => "search_albums",
+                    _ => "search_artists",
+                },
+                _ => "",
+            };
+            Ok(answer(200, name, &[]))
+        }
+        fn address_changed(&self) {}
+        fn network(&self) -> Network {
+            Network::Unmetered
+        }
+    }
+
+    /// The differential harness's YouTube Music session ([`crate::providers::harness`]): signed in,
+    /// its pages read, kept and refreshed, hearts given and taken back.
+    #[test]
+    fn a_youtube_session() {
+        use crate::providers::harness::{age, each, kept, now, Marked, Transcript};
+        let mut t = Transcript::new("providers-youtube");
+        let core = crate::Core::new(String::new(), "yt".into(), Default::default()).unwrap();
+        core.configure_profile(SavedServer { kind: ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() }).unwrap();
+        let yt = Arc::new(Answers::default());
+        let c = Client::new(core, yt.clone(), Default::default());
+        account::tests::store(&c, &account::tests::session(SESSION, 30));
+        let asked = |t: &mut Transcript| yt.taken().into_iter().for_each(|a| t.line(format!("asked {a}")));
+        let reads = [
+            Read::HomeFeed,
+            Read::AlbumById { id: "yt-MPREb_K8qWMWVqXGi".into() },
+            Read::ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA".into() },
+            Read::ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA".into() },
+            Read::PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA".into() },
+            Read::PlaylistList,
+            Read::AlbumList { kind: crate::browse::AlbumSort::ByName, size: 60, offset: 0, genre: None },
+            Read::AlbumList { kind: crate::browse::AlbumSort::ByName, size: 60, offset: 60, genre: None },
+            Read::StarredItems,
+            Read::FavouriteAlbums { size: 20 },
+            Read::GenreList,
+            Read::LyricsBySong { song_id: "yt-x".into() },
+        ];
+
+        t.step("first reads");
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+            asked(&mut t);
+        }
+        t.step("stored");
+        for r in &reads {
+            t.stored(r, &c.read_stored(r.clone()));
+        }
+        t.step("read again while fresh");
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+        }
+        asked(&mut t);
+        t.step("aged");
+        age(&c);
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+        }
+        asked(&mut t);
+
+        t.step("reads always asked");
+        for r in [
+            Read::Search { query: "daft punk".into(), songs: 2, albums: 2, artists: 1 },
+            Read::SimilarSongs { id: "yt-dQw4w9WgXcQ".into(), count: 3 },
+            Read::SongById { id: "yt-djV11Xbc914".into() },
+            Read::AlbumSongs { id: "yt-MPREb_K8qWMWVqXGi".into() },
+            Read::PlaylistSongs { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA".into() },
+            Read::RandomSongs { size: 5, genre: None },
+            Read::Ping,
+            Read::PullQueue,
+        ] {
+            now(&mut t, &c, r.clone());
+            t.stored(&r, &c.read_stored(r.clone()));
+            asked(&mut t);
+        }
+
+        t.step("Home's refresh");
+        c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
+        kept(&mut t, &c, &reads);
+        each(&mut t, &c, Read::HomeFeed);
+        asked(&mut t);
+        kept(&mut t, &c, &reads);
+
+        t.step("hearts");
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+        }
+        yt.taken();
+        t.result("heart", &block(c.star(Starrable::Song, "yt-zhl-Cs1-sG4".into(), true, Arc::new(Marked))));
+        t.result("unheart", &block(c.star(Starrable::Song, "yt-khnokW3Mw24".into(), false, Arc::new(Marked))));
+        t.result("album", &block(c.star(Starrable::Album, "yt-MPREb_K8qWMWVqXGi".into(), true, Arc::new(Marked))));
+        asked(&mut t);
+        kept(&mut t, &c, &reads);
+        for r in &reads {
+            t.stored(r, &c.read_stored(r.clone()));
+        }
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+        }
+        asked(&mut t);
+        now(&mut t, &c, Read::StarredItems);
+        asked(&mut t);
+
+        t.step("writes with nowhere to go");
+        t.result("playlist", &block(c.write(Write::CreatePlaylist { name: "x".into(), song_ids: vec!["yt-a".into()] })));
+        t.result("scrobble", &block(c.write(Write::Scrobble { id: "yt-a".into(), submission: true, time_ms: None })));
+        t.line(format!("pending {}", c.core.pending_any().unwrap()));
+        asked(&mut t);
+
+        t.step("streams, downloads and covers");
+        let r = c.resolve("yt-dQw4w9WgXcQ".into(), false, false);
+        t.line(format!("stream {} {}", r.url, r.key));
+        let d = c.download_target("yt-dQw4w9WgXcQ".into(), StreamQuality { bit_rate: 192, format: "mp3".into() });
+        t.line(format!("download {} {}", d.url, d.key));
+        t.line(format!("cover {}", c.core.cover_address("https://yt3.googleusercontent.com/abc".into(), 320)));
+        t.line(format!("download covers {:?}", c.core.download_cover_urls(vec!["https://yt3.googleusercontent.com/abc".into()])));
+        t.finish();
+    }
+
+    /// A heart shows on every page listing the song, kept or asked anew, though YouTube's pages carry
+    /// no likes.
+    #[test]
+    fn a_heart_shows_on_every_page() {
+        let (c, _) = signed_in(30, vec![answer(200, "album", &[]), answer(200, "", &[]), answer(200, "album", &[])]);
+        let read = || Read::AlbumById { id: "yt-MPREb_K8qWMWVqXGi".into() };
+        block(c.cached_or_fetched(read())).unwrap();
+        block(c.star(Starrable::Song, "yt-zhl-Cs1-sG4".into(), true, Arc::new(Shown))).unwrap();
+        let hearted = |p: Page| p.songs().into_iter().filter(|s| s.starred).map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(hearted(c.read_stored(read()).unwrap().page.unwrap()), ["yt-zhl-Cs1-sG4"], "kept");
+        assert_eq!(hearted(block(c.read_now(read())).unwrap()), ["yt-zhl-Cs1-sG4"], "asked anew");
+    }
+
+    /// A Home row YouTube lists without a length (its queue answer failed) takes the length of the
+    /// song's known record.
+    #[test]
+    fn a_song_without_a_length_takes_its_known_one() {
+        let (c, _) = youtube_answering(vec![answer(200, "home", &[]), answer(200, "home_more", &[]), answer(500, "", &[])]);
+        c.core.session.register(vec![Song { id: "yt-hHZ4ej144rc".into(), duration: 238, ..Default::default() }]);
+        let Page::Feed { v } = block(c.read_now(Read::HomeFeed)).unwrap() else { panic!() };
+        assert_eq!(v[0].songs.iter().map(|s| s.duration).collect::<Vec<_>>(), [238, 0, 0]);
+    }
+
+    /// A kept page asked anew that YouTube answers the same is not shown again.
+    #[test]
+    fn an_unchanged_page_is_shown_once() {
+        let (c, t) = youtube(&[&fixture("album"), &fixture("album")]);
+        let read = || Read::AlbumById { id: "yt-MPREb_K8qWMWVqXGi".into() };
+        block(c.read_each(read(), |_| {})).unwrap();
+        c.core.kept.lock().values_mut().for_each(|k| k.at = 0);
+        let mut shown = 0;
+        block(c.read_each(read(), |_| shown += 1)).unwrap();
+        assert_eq!((shown, t.asked.lock().len()), (1, 2), "the kept page, and YouTube asked");
+    }
+
+    /// After a heart, favourites YouTube lists as before show once: the heart is laid over the kept
+    /// page and over YouTube's alike.
+    #[test]
+    fn favourites_listed_as_before_a_heart_show_once() {
+        let (c, _) = signed_in(30, vec![answer(200, "playlist", &[]), answer(200, "", &[]), answer(200, "playlist", &[])]);
+        block(c.cached_or_fetched(Read::StarredItems)).unwrap();
+        block(c.star(Starrable::Song, "yt-khnokW3Mw24".into(), false, Arc::new(Shown))).unwrap();
+        let mut shown = Vec::new();
+        block(c.read_each(Read::StarredItems, |p| shown.push(p.songs().len()))).unwrap();
+        assert_eq!(shown, [2]);
+    }
+
+    /// A heart makes the kept favourites stale, as a server's: YouTube is asked for them on the next read.
+    #[test]
+    fn a_heart_asks_the_favourites_anew() {
+        let (c, t) = signed_in(30, vec![answer(200, "playlist", &[]), answer(200, "", &[]), answer(200, "playlist", &[])]);
+        block(c.cached_or_fetched(Read::StarredItems)).unwrap();
+        block(c.star(Starrable::Song, "yt-khnokW3Mw24".into(), false, Arc::new(Shown))).unwrap();
+        assert!(!c.read_stored(Read::StarredItems).unwrap().fresh);
+        block(c.cached_or_fetched(Read::StarredItems)).unwrap();
+        assert_eq!(t.urls(), [BROWSE, "https://music.youtube.com/youtubei/v1/like/removelike", BROWSE]);
     }
 
     /// Signed-in library features and a temporary guest's requests follow the profile rules.
