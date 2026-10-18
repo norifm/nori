@@ -182,9 +182,8 @@ impl Client {
             Some(Page::LyricsPage { v }) => Some(v),
             _ => None,
         };
-        if let Some(v) = &server {
-            show_server(v);
-        }
+        // A service's words kept from before first: shown after the server's plain ones, those flashed up
+        // in between on a song come back to.
         let song = self.stored_song_of(&id);
         if let Some(song) = &song {
             if let Some(pick) = cached_pick(&*self.core, song,
@@ -192,6 +191,9 @@ impl Client {
                 server.as_ref().is_some_and(|v| v.synced), asked) {
                 screen.show(pick);
             }
+        }
+        if let Some(v) = &server {
+            show_server(v);
         }
         // A downloaded song's lyrics were looked up at download: serve them from the cache without
         // requests; the server is re-asked only after a week, after showing them.
@@ -561,6 +563,26 @@ pub(crate) mod tests {
         let shown = screen.shown.lock();
         assert_eq!(shown[0].0.origin, LyricsOrigin::Lrclib);
         assert_eq!(shown[0].1, before, "cached words must arrive before attempting the slow server request");
+    }
+
+    /// Back to a song (a quick next and previous): its timed words come first, and the server's plain
+    /// ones they replaced never flash up in between.
+    #[test]
+    fn a_song_looked_up_again_shows_its_timed_words_only() {
+        const PLAIN: &str = r#"{"subsonic-response":{"status":"ok","lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain words"}]}]}}}"#;
+        let (c, fake) = setup();
+        let s = Song { id: "back-again".into(), title: "Back Again".into(), ..song() };
+        c.core.session.register(vec![s.clone()]);
+        fake.answer(PLAIN);
+        fake.answer(r#"{"statusCode":404}"#);
+        fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
+        let first = Arc::new(Screen::default());
+        block(c.lyrics_for_with(s.id.clone(), &lrclib(), first.clone())).unwrap();
+        assert_eq!(first.0.lock().last().map(|p| p.origin), Some(LyricsOrigin::Lrclib));
+        let again = Arc::new(Screen::default());
+        block(c.lyrics_for_with(s.id, &lrclib(), again.clone())).unwrap();
+        let origins: Vec<_> = again.0.lock().iter().map(|p| p.origin).collect();
+        assert_eq!(origins, [LyricsOrigin::Lrclib], "the server's plain words must not show first");
     }
 
     #[test]
