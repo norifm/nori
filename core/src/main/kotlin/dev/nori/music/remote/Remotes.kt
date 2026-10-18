@@ -221,6 +221,8 @@ class Remotes(private val context: Context, private val nori: Nori) {
             if (watching) remote?.watch(true)
             if (sight() != Sight.SCREEN) remote?.sight(sight())
             if (appShown && p.remoteControl && !isGuest()) remote?.discoverActive(true)
+            // Built while music plays, it hears where the player is now, not at its next change.
+            remote?.let { r -> engine?.remotePlayed(r, volumePercent(context)) }
         }
         remote
     }
