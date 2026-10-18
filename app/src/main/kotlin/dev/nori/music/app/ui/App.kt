@@ -33,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
@@ -782,13 +783,26 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
         null -> false
     }
     val top = entry.destination.route !in PageSwipe.ROOTS && transition.targetState == androidx.compose.animation.EnterExitState.Visible
+    // On its side a page draws on past its sides, under the camera's strip and the chrome's (HeroPage): its
+    // shadow and its background reach as far, so the edge that casts the shadow is the edge that shows.
+    val out = PageOut(LocalPageStart.current, LocalPageEnd.current)
+    // Where the page stands in the window, the motion's slide included: its shadow goes as its edge reaches
+    // the edge of the pages (the screen's, or the side chrome's), rather than showing past the chrome after
+    // the edge that casts it has gone under it.
+    var at by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     Box(
         Modifier.fillMaxSize()
+            .onGloballyPositioned { at = it.positionInRoot().x }
             .graphicsLayer {
                 translationX = if (swiped) swipe.offset else 0f
-                shadowElevation = if (onTop) PageMotion.EDGE_SHADOW.toPx() else 0f
+                val start = out.start.toPx()
+                val x = at + translationX
+                val room = minOf(start + size.width - (x - start), x + size.width + out.end.toPx() - start)
+                val shadow = PageMotion.EDGE_SHADOW.toPx()
+                shadowElevation = if (onTop) shadow * (room / (shadow * 2f)).coerceIn(0f, 1f) else 0f
+                shape = out
             }
-            .drawBehind { if (moving || swiped) drawRect(background) }
+            .drawBehind { if (moving || swiped) with(out) { drawRect(background, topLeft = androidx.compose.ui.geometry.Offset(-start.toPx(), 0f), size = androidx.compose.ui.geometry.Size(size.width + (start + end).toPx(), size.height)) } }
             .drawWithContent {
                 layer.record { this@drawWithContent.drawContent() }
                 drawLayer(layer)
@@ -796,6 +810,13 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
             }
             .swipeBack(swipe, enabled = top),
     ) { content() }
+}
+
+/** A page's outline: its own box and the [start] and [end] it draws on past it. */
+@androidx.compose.runtime.Immutable
+private data class PageOut(val start: androidx.compose.ui.unit.Dp, val end: androidx.compose.ui.unit.Dp) : androidx.compose.ui.graphics.Shape {
+    override fun createOutline(size: androidx.compose.ui.geometry.Size, layoutDirection: androidx.compose.ui.unit.LayoutDirection, density: androidx.compose.ui.unit.Density) =
+        with(density) { androidx.compose.ui.graphics.Outline.Rectangle(androidx.compose.ui.geometry.Rect(-start.toPx(), 0f, size.width + end.toPx(), size.height)) }
 }
 
 /**
