@@ -227,14 +227,24 @@ private fun LyricsSheet(player: dev.nori.music.app.vm.PlayerViewModel, id: Strin
             remember(lyrics.timing) { say.lyricsTiming(lyrics.timing) },
             Modifier.padding(horizontal = Space.gutter, vertical = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter - 12.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        // Centred, the value in a slot of its own width so − and + stay put as it changes.
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
             TextAction("−", { player.nudgeLyrics(id, -1) })
             Text(
                 say.lyricsShift(dev.nori.music.ffi.lyrics.lyricsOffsetMs(lyrics.timing)),
-                style = MaterialTheme.typography.titleMedium,
+                Modifier.widthIn(min = 96.dp), style = MaterialTheme.typography.titleMedium,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             TextAction("+", { player.nudgeLyrics(id, 1) })
-            if (lyrics.timing is dev.nori.music.ffi.model.LyricsTiming.Yours) TextAction(say.reset, { player.nudgeLyrics(id, 0) })
+        }
+        if (lyrics.timing is dev.nori.music.ffi.model.LyricsTiming.Yours) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center) {
+                TextAction(say.reset, { player.nudgeLyrics(id, 0) })
+            }
         }
     }
 }

@@ -66,8 +66,8 @@ mod tests {
     fn yours_replaces_the_check_and_reset_gives_it_back() {
         let checked = LyricsTiming::Automatic { ms: 320 };
         let sooner = nudged(checked, 1);
-        assert_eq!(sooner, LyricsTiming::Yours { ms: 500, automatic: Some(320) });
-        assert_eq!(nudged(nudged(sooner, -1), -1), LyricsTiming::Yours { ms: 0, automatic: Some(320) });
+        assert_eq!(sooner, LyricsTiming::Yours { ms: 350, automatic: Some(320) }, "from the check's, rounded to a step");
+        assert_eq!(nudged(nudged(sooner, -1), -1), LyricsTiming::Yours { ms: 250, automatic: Some(320) });
         assert_eq!(nudged(sooner, 0), checked);
         assert_eq!(nudged(nudged(LyricsTiming::NotChecked, -1), 0), LyricsTiming::NotChecked);
         assert_eq!(with_yours(checked, Some(-250)), LyricsTiming::Yours { ms: -250, automatic: Some(320) });

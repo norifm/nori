@@ -441,7 +441,7 @@ mod tests {
     fn words() {
         assert_eq!(band(1000.0, BandMark::LowShelf), "1k ↙");
         assert_eq!((balance(0.0), balance(-0.3), balance(0.05)), ("center".into(), "L 30%".into(), "R 5%".into()));
-        assert_eq!(nudge(-250), "-0.3 s");
+        assert_eq!(nudge(-250), "-0.25 s");
         assert_eq!((songs_caption(1, 200), albums(2)), ("1 song · 3:20".into(), "2 albums".into()));
         let s = Song { suffix: "flac".into(), bit_depth: 24, sampling_rate: 96000, ..Default::default() };
         assert_eq!(quality(&s).as_deref(), Some("FLAC 24/96.0"));

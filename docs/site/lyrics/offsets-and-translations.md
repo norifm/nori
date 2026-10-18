@@ -13,7 +13,7 @@ nori checks lyrics against the song's voice once the song is analyzed, and shift
 late. On Android, **Lyrics** in the player's ⋯ menu (there when the song has lyrics) says where they came
 from, whether they are timed by the line or the word, and how their timing was set: not checked yet,
 adjusted automatically, or adjusted by you. The **−** and **+** buttons beside the offset move them
-later or sooner in 250 ms steps. Manual offsets round to the nearest 250 ms. Your timing replaces
+later or sooner in 50 ms steps (250 ms before 0.6.3). Manual offsets round to the nearest 50 ms. Your timing replaces
 the automatic one, is kept for that song and those lyrics, and comes back
 the next time they play; **Reset** returns to the automatic timing. Lyrics from another service, or
 the same service's lyrics timed again, start without your timing.

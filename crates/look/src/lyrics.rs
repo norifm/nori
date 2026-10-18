@@ -52,7 +52,7 @@ const WORD_MS_MAX: i64 = 2_000;
 pub(crate) const LAST_LINE_MS: i64 = 5_000;
 
 /// One "Sooner"/"Later" nudge step.
-pub const NUDGE_STEP_MS: i64 = 250;
+pub const NUDGE_STEP_MS: i64 = 50;
 
 /// After a tap, seeks land imprecisely (a frame or keyframe early, or the playhead is set back).
 /// Positions up to this far before the tapped line still count as on it,
@@ -729,15 +729,17 @@ mod tests {
         let s = c.advance(1502, true, false, false);
         assert!(!s.redraw && s.frame.sung == 5.0);
         assert!(c.advance(1502, true, false, true).redraw);
-        assert_eq!(c.nudge(1), 250);
+        // A quarter second at a time: five steps.
+        let quarter = |c: &LyricClock, dir: i32| (0..5).map(|_| c.nudge(dir)).last().unwrap();
+        assert_eq!(quarter(&c, 1), 250);
         assert_eq!(c.advance(1500, true, false, false).frame.sung, 7.5, "sooner");
-        assert_eq!((c.nudge(-1), c.nudge(-1), c.nudge(-1)), (0, -250, -500));
+        assert_eq!((quarter(&c, -1), quarter(&c, -1), quarter(&c, -1)), (0, -250, -500));
         assert_eq!(c.tap(1), 5500, "seek compensates the nudge");
         assert_eq!(c.shown().active, 1);
         assert_eq!(c.nudge(0), 0);
         assert_eq!(c.tap(0), 1000);
-        c.nudge(1);
-        c.nudge(1);
+        quarter(&c, 1);
+        quarter(&c, 1);
         assert_eq!(c.tap(0), 500);
         // Without word times the sweep is ignored; wake at the next line.
         let c = LyricClock::new(LyricTiming::new(true, false, lines(&[1000, 5000])), 0);
@@ -751,7 +753,7 @@ mod tests {
         assert_eq!(c.advance(3600, false, false, false).frame.active, 1);
         assert_eq!(c.tap(1), 3500);
         c.nudge(0);
-        assert_eq!(c.nudge(1), 250, "nudge stacks on the offset");
+        assert_eq!(quarter(&c, 1), 250, "nudge stacks on the offset");
         assert_eq!(c.tap(1), 3250);
 
         // Tap holds line when seek lands early.
