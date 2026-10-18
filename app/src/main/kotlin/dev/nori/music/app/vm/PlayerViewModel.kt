@@ -180,16 +180,15 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     init {
         // The artwork either side of what is playing, fetched before it is asked for, so a skip does not
         // show an empty sleeve while the server renders the next cover. Same sizes and requests as the player and the rows, so a warmed cover is a cache hit.
-        // How far ahead is the core's (`covers::COVERS_AHEAD`); already-cached ones cost a memory lookup
+        // How far ahead is the core's (`Client::covers_ahead`, as many as songs are prepared ahead); already-cached ones cost a memory lookup
         // and nothing else.
         // Which positions, in which order, is the core's (`covers_around`, over the queue it keeps, which
         // also names the covers either side whose colours the bar works out ahead); it is asked once, only
         // when the queue, the playing song or a skip's target moves, not on every play/pause or buffering change.
         viewModelScope.launch {
-            val ahead = dev.nori.music.ffi.coversAhead()
             state
                 .distinctUntilChanged { a, b -> a.queue === b.queue && a.index == b.index && a.previousIndex == b.previousIndex && a.nextIndex == b.nextIndex }
-                .map { s -> nori.core.coversAround(s.index, s.previousIndex, s.nextIndex, ahead) }
+                .map { s -> nori.core.coversAround(s.index, s.previousIndex, s.nextIndex, nori.client.coversAhead()) }
                 .distinctUntilChanged()
                 .collect { around ->
                     _coversNear.value = around.near

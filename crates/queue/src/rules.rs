@@ -69,10 +69,12 @@ impl Session {
         ids
     }
 
-    /// The upcoming analysable ids to analyse, for AutoMix and the lyrics' timing; empty when the
-    /// profile measures nothing.
+    /// The upcoming analysable ids to analyse, for AutoMix and the lyrics' timing: the song playing and
+    /// as many after it as are prepared ahead on either network (only those on the device are measured);
+    /// empty when the profile measures nothing.
     pub fn measure(&self) -> Vec<String> {
-        let n = q::measure_ahead(self.planner.measures());
+        let ahead = self.settings.prefs(|p| p.songs_ahead_wifi.max(p.songs_ahead_mobile).max(0) as usize);
+        let n = if self.planner.measures() { 1 + ahead } else { 0 };
         self.playlist(|p| p.upcoming().take(UPCOMING).take(n).map(|i| &p.ids()[i]).filter(|id| crate::queue::analysable(id)).cloned().collect())
     }
 
@@ -337,7 +339,7 @@ mod tests {
         // Three ahead on Wi-Fi, one on metered; the player buffers the next song itself.
         assert_eq!(s.precache(false), ["pc3", "pc4"], "never a provider's");
         assert!(s.precache(true).is_empty());
-        assert_eq!(s.measure(), ["pc1", "pc2", "pc3"], "AutoMix off: the current song and those after it");
+        assert_eq!(s.measure(), ["pc1", "pc2", "pc3", "pc4"], "AutoMix off too: the current song and the songs prepared ahead");
         s.planner.set_measures(false);
         assert!(s.measure().is_empty(), "a profile that measures nothing");
 
