@@ -36,19 +36,19 @@ const fn p(page: u32, surface: u32, ink: u32, accent: u32, on: u32) -> Palette {
 }
 
 impl Season {
-    /// Light and dark. Spring: sakura-nezumi paper, kōbai plum, wakatake bamboo. Summer: shiro-ai, tsuyukusa
-    /// dayflower blue, aotake green. Autumn: kinari, kaki persimmon, chitose-midori pine. Winter: shironeri
-    /// and sumi, with one tsubaki camellia and ginnezumi grey for what is on.
+    /// Light and dark. Spring (春霞, haze): usu-ai paper, imayō cherry red, asagi water. Summer (紫陽花): shiro-fuji
+    /// rain grey, ajisai hydrangea, koke moss. Autumn (柿): kinari, kaki persimmon, chitose-midori pine. Winter
+    /// (雪): yuki-shiro snow, ai indigo, ginnezumi grey for what is on.
     pub fn palette(self, dark: bool) -> Palette {
         match (self, dark) {
-            (Season::Spring, false) => p(0xFFFB_F4F3, WHITE, 0xFF2B_2226, 0xFFC2_4F72, 0xFF4E_9A6A),
-            (Season::Spring, true) => p(0xFF16_1013, 0xFF21_191C, 0xFFF7_EEF0, 0xFFEE_8BA8, 0xFF7C_C59A),
-            (Season::Summer, false) => p(0xFFF1_F6F7, WHITE, 0xFF13_212B, 0xFF1C_79B8, 0xFF00_896C),
-            (Season::Summer, true) => p(0xFF0A_1217, 0xFF12_1D24, 0xFFEA_F2F5, 0xFF52_B5E9, 0xFF2F_B596),
+            (Season::Spring, false) => p(0xFFF3_F2F6, 0xFFFD_FDFE, 0xFF26_262A, 0xFFB1_4C66, 0xFF2C_7F8F),
+            (Season::Spring, true) => p(0xFF10_1015, 0xFF1B_1B20, 0xFFEC_EBEF, 0xFFE9_A0B1, 0xFF6F_C3D1),
+            (Season::Summer, false) => p(0xFFEF_F1F7, 0xFFFD_FDFE, 0xFF20_2229, 0xFF4B_5BB0, 0xFF4F_7F3A),
+            (Season::Summer, true) => p(0xFF0A_0C14, 0xFF15_171F, 0xFFE8_EAF0, 0xFF9A_A6EE, 0xFF8F_BF74),
             (Season::Autumn, false) => p(0xFFF6_F0E6, 0xFFFF_FDF8, 0xFF24_1D16, 0xFFBE_5526, 0xFF36_563C),
             (Season::Autumn, true) => p(0xFF11_0E0A, 0xFF1C_1813, 0xFFF3_EDE3, 0xFFE8_743B, 0xFF7F_A27F),
-            (Season::Winter, false) => p(0xFFF3_F3F1, WHITE, 0xFF1B_1B1B, 0xFFA8_262E, 0xFF6B_6D6F),
-            (Season::Winter, true) => p(0xFF0D_0D0D, 0xFF17_1717, 0xFFEC_ECEA, 0xFFE0_565B, 0xFF8E_9194),
+            (Season::Winter, false) => p(0xFFF2_F4F6, 0xFFFD_FDFE, 0xFF21_2326, 0xFF2E_5C8A, 0xFF6B_7077),
+            (Season::Winter, true) => p(0xFF0B_0D11, 0xFF16_181C, 0xFFEB_EDEF, 0xFF7F_B0E0, 0xFF9A_9FA6),
         }
     }
 
@@ -72,8 +72,9 @@ impl Season {
     }
 }
 
-/// How many days a season takes to come in, blending from the one before.
-const BLEND_DAYS: u32 = 7;
+/// How many days a season takes to come in, blending from the one before: the week before it starts and
+/// the week after.
+const BLEND_DAYS: u32 = 14;
 
 /// AMOLED: a dark palette on black, its surface brought a third of the way down with it.
 fn on_black(p: Palette) -> Palette {
@@ -124,32 +125,43 @@ pub fn utc_date(unix_s: i64) -> (u32, u32) {
     (month as u32, day as u32)
 }
 
-/// Where the calendar is on a date: the season, how far it has come in from the one before (1 once it
-/// has fully arrived), and the next one with the date it starts on.
+/// Where the calendar is on a date: the season, and the next one with the date it starts on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SeasonNow {
     pub season: Season,
-    pub arrived: f32,
     pub next: Season,
     pub next_month: u32,
     pub next_day: u32,
 }
 
-/// The season on a date. South of the equator the calendar is half a year round.
+/// The day of the 365-day year the calendar is on. South of the equator it is half a year round.
+fn calendar_day(month: u32, day: u32, southern: bool) -> u32 {
+    (day_of_year(month, day) + if southern { 182 } else { 0 }) % 365
+}
+
+/// The season on a date.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn season_now(month: u32, day: u32, southern: bool) -> SeasonNow {
     let shift = if southern { 182 } else { 0 };
-    let today = (day_of_year(month, day) + shift) % 365;
+    let today = calendar_day(month, day, southern);
     let season = SEASONS.iter().rev().copied().find(|s| today >= s.starts()).unwrap_or(Season::Winter);
-    let since = (today + 365 - season.starts()) % 365;
     let next = season.after();
     let (next_month, next_day) = date_of(next.starts() + 365 - shift);
-    SeasonNow { season, arrived: ((since + 1) as f32 / BLEND_DAYS as f32).min(1.0), next, next_month, next_day }
+    SeasonNow { season, next, next_month, next_day }
+}
+
+/// The season blending in on `today` and how far it has come, from a week before it starts (1/14) to a
+/// week after (all of it); none between blends.
+fn coming_in(today: u32) -> Option<(Season, f32)> {
+    SEASONS.iter().find_map(|s| {
+        let since = (today + 365 + BLEND_DAYS / 2 - s.starts()) % 365;
+        (since < BLEND_DAYS).then(|| (*s, (since + 1) as f32 / BLEND_DAYS as f32))
+    })
 }
 
 /// The palette the app wears: `season`'s, or with none the calendar's on that date, each season blended
-/// in over its first week.
+/// in around its start.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn palette(season: Option<Season>, month: u32, day: u32, southern: bool, dark: bool, amoled: bool) -> Palette {
     let of = |s: Season| {
@@ -158,10 +170,10 @@ pub fn palette(season: Option<Season>, month: u32, day: u32, southern: bool, dar
     };
     match season {
         Some(s) => of(s),
-        None => {
-            let now = season_now(month, day, southern);
-            if now.arrived >= 1.0 { of(now.season) } else { mixed(of(now.season.before()), of(now.season), now.arrived) }
-        }
+        None => match coming_in(calendar_day(month, day, southern)) {
+            Some((s, t)) if t < 1.0 => mixed(of(s.before()), of(s), t),
+            _ => of(season_now(month, day, southern).season),
+        },
     }
 }
 
@@ -285,7 +297,7 @@ mod tests {
             assert_eq!(season_now(m, d, false).season, season, "{d}/{m}");
         }
         let autumn = season_now(10, 18, false);
-        assert_eq!((autumn.next, autumn.next_month, autumn.next_day, autumn.arrived), (Season::Winter, 11, 7, 1.0));
+        assert_eq!((autumn.next, autumn.next_month, autumn.next_day), (Season::Winter, 11, 7));
         let winter = season_now(12, 1, false);
         assert_eq!((winter.next, winter.next_month, winter.next_day), (Season::Spring, 2, 4));
         // South of the equator October is spring, and summer comes in at the start of November.
@@ -294,13 +306,18 @@ mod tests {
     }
 
     #[test]
-    fn a_season_comes_in_over_its_first_week() {
-        let follow = |d| palette(None, 11, d, false, true, false);
+    fn a_season_blends_from_a_week_before_it_starts_to_a_week_after() {
+        let follow = |m, d| palette(None, m, d, false, true, false);
         let (autumn, winter) = (Season::Autumn.palette(true), Season::Winter.palette(true));
-        assert_eq!(follow(6), autumn);
-        assert_eq!(follow(13), winter);
-        assert_eq!(follow(10), mixed(autumn, winter, 4.0 / 7.0));
-        assert_eq!(season_now(11, 9, false).arrived, 3.0 / 7.0);
+        assert_eq!(follow(10, 30), autumn);
+        assert_eq!(follow(10, 31), mixed(autumn, winter, 1.0 / 14.0));
+        assert_eq!(follow(11, 7), mixed(autumn, winter, 8.0 / 14.0));
+        assert_eq!(follow(11, 13), winter);
+        assert_eq!(follow(11, 20), winter);
+        // The blend is the same across New Year (winter to spring is early February) and south of the equator.
+        let spring = Season::Spring.palette(true);
+        assert_eq!(follow(1, 28), mixed(winter, spring, 1.0 / 14.0));
+        assert_eq!(palette(None, 5, 9, true, true, false), mixed(autumn, winter, 8.0 / 14.0));
     }
 
     #[test]

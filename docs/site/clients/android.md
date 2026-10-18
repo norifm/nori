@@ -14,10 +14,10 @@ system's media controls, notification and lock screen.
 - **Install**: see [Install](../start/install.md#android).
 - **Look**: pages take their color from the album cover, with light, dark or system theme and pure
   black for OLED screens. From 0.6.3 the theme is one of four seasons, each a palette of traditional
-  Japanese colors: spring's plum, summer's dayflower blue, autumn's persimmon and winter's ink with one
-  camellia red. By default it **follows the seasons**, turning on the first days of the old calendar's
-  seasons (4 February, 5 May, 7 August, 7 November; half a year round south of the equator) over a
-  week. The theme's accent marks the current tab, a favorite and what is playing, on every page and in
+  Japanese colors: spring's haze and cherry red, summer's hydrangea, autumn's persimmon and winter's snow and
+  indigo. By default it **follows the seasons**, turning on the first days of the old calendar's
+  seasons (4 February, 5 May, 7 August, 7 November; half a year round south of the equator), blending in
+  from a week before the date to a week after it. The theme's accent marks the current tab, a favorite and what is playing, on every page and in
   the player, whatever the cover; a favorite is a seal stamped with 好. The now-playing bar and the tabs
   share one outline over the page, which shows blurred inside it (Android 12 and later). On its side
   the same outline stands on the edge the phone's bottom turned to, its icons turning upright, and the
