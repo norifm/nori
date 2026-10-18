@@ -60,13 +60,15 @@
     </div>
     <Controls big />
     {#if ui.wide}<div class="volume"><Volume /></div>{/if}
-    <nav class="pane-tabs">
-      {#each panes as [p, icon, label] (p)}
-        {#if p !== "devices" || remote.devices.on}
-          <button class="round tab" class:on={pane === p} aria-pressed={pane === p} aria-label={label} title={label} data-pane={p} onclick={() => (ui.pane = ui.pane === p && !ui.wide ? null : p)}><Icon name={icon} /></button>
-        {/if}
-      {/each}
-    </nav>
+    {#if !ui.wide}
+      <nav class="pane-tabs">
+        {#each panes as [p, icon, label] (p)}
+          {#if p !== "devices" || remote.devices.on}
+            <button class="round tab" class:on={pane === p} aria-pressed={pane === p} aria-label={label} title={label} data-pane={p} onclick={() => (ui.pane = ui.pane === p && !ui.wide ? null : p)}><Icon name={icon} /></button>
+          {/if}
+        {/each}
+      </nav>
+    {/if}
   </section>
   {#if ui.wide && pane}
     <section class="side">
@@ -225,9 +227,6 @@
     border: 1px solid var(--hair);
     border-radius: 22px;
     overflow: hidden;
-  }
-  .wide .pane-tabs {
-    display: none;
   }
   .volume {
     display: flex;

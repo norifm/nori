@@ -32,7 +32,7 @@
     <span class="words"><span>{W.seasonFollow}</span><span class="sub">{W.seasonFollowLead}</span></span>
     <input type="checkbox" class="switch" checked={look.season === "FOLLOW"} onchange={(e) => void set("season", e.currentTarget.checked ? "FOLLOW" : worn.season)} />
   </label>
-  <div class="row">
+  <div class="row stack">
     <span>{W.appearance}</span>
     <div class="chips" role="radiogroup" aria-label={W.appearance}>
       {#each W.appearances as [id, name] (id)}
@@ -84,6 +84,10 @@
     border-top: 1px solid var(--hair);
     cursor: default;
   }
+  .stack {
+    flex-direction: column;
+    align-items: flex-start;
+  }
   .words {
     display: flex;
     flex-direction: column;
@@ -92,7 +96,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    justify-content: flex-end;
   }
   .chips button {
     border: 1px solid var(--outline);

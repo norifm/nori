@@ -61,10 +61,9 @@ export async function refreshTheme() {
   }
 }
 
-/** Wears the colors from last time and keeps them current. */
+/** Wears the colors from last time and keeps them current once the core is up (`refreshTheme`). */
 export function startTheme() {
   remembered();
-  void refreshTheme().catch(() => {});
   document.addEventListener("visibilitychange", () => !document.hidden && void refreshTheme().catch(() => {}));
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => void refreshTheme().catch(() => {}));
 }
