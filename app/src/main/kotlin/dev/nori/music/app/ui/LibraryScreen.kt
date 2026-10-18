@@ -132,6 +132,9 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
     val sections = remember(prefs.librarySections, rules.sections) { dev.nori.music.ffi.library.librarySectionsShown(prefs.librarySections, rules.sections) }
     val recent by vm.recent.collectAsStateWithLifecycle()
     val nav = LocalNav.current
+    androidx.compose.foundation.layout.BoxWithConstraints {
+    // As many across as the Albums page has (its grid's own count, [albumColumns]): two upright.
+    val across = albumColumns(LocalWide.current, maxWidth)
     LazyColumn(contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current)) {
         item(key = "title") {
             // What was played and what is kept on the phone: places rather than kinds of music, so buttons
@@ -156,15 +159,27 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
         }
         if (recent.isNotEmpty()) {
             item(key = "recent") { SectionTitle(say.recentlyAdded) }
-            items(recent.chunked(2), key = { row -> row.first().id }) { row ->
-                Row(Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(recent.chunked(across), key = { row -> row.first().id }) { row ->
+                Row(Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(ALBUM_GAP)) {
                     row.forEach { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.weight(1f), fill = true) }
-                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                    repeat(across - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
     }
+    }
 }
+
+/** The narrowest an album's card is on its side, and the gap between cards: the Albums page's grid and Library's recent albums. */
+private val ALBUM_MIN = 170.dp
+private val ALBUM_GAP = 12.dp
+
+/**
+ * How many album cards stand across [width]: two upright; on its side as many as fit at [ALBUM_MIN] or wider,
+ * counted as an adaptive grid counts them, the page's gutters taken off.
+ */
+private fun albumColumns(wide: Boolean, width: androidx.compose.ui.unit.Dp): Int =
+    if (!wide) 2 else (((width - Space.gutter * 2 + ALBUM_GAP) / (ALBUM_MIN + ALBUM_GAP)).toInt()).coerceAtLeast(1)
 
 /** A round button drawn as its outline alone: the page's own places, quieter than the plates on a record's page. */
 @Composable
@@ -243,7 +258,7 @@ private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel = viewModel())
         // On its side the cards keep about the size they have upright (a little larger than Home's shelves,
         // which is the point of a grid of covers) and the row takes as many as fit.
         val wide = LocalWide.current
-        LazyVerticalGrid(if (wide) GridCells.Adaptive(170.dp) else GridCells.Fixed(2), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, top = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyVerticalGrid(if (wide) GridCells.Adaptive(ALBUM_MIN) else GridCells.Fixed(2), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, top = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(ALBUM_GAP), verticalArrangement = Arrangement.spacedBy(ALBUM_GAP)) {
             itemsIndexed(albums, key = { _, a -> a.id }, contentType = { _, _ -> "album" }) { i, a ->
                 if (i >= albums.size - 12) vm.loadMore()
                 AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
