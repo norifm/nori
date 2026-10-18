@@ -173,6 +173,15 @@ pub struct Song {
     pub line: String,
 }
 
+/// Lossless file formats, by suffix.
+const LOSSLESS: [&str; 8] = ["flac", "alac", "wav", "aiff", "ape", "wv", "dsf", "dff"];
+
+/// Whether a file with this suffix (any case) is lossless, so its bit depth says more than its bitrate.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn is_lossless(suffix: &str) -> bool {
+    LOSSLESS.iter().any(|s| s.eq_ignore_ascii_case(suffix))
+}
+
 /// Whether `id` is an octo-fiesta provider item's: it changes once downloaded, so it is never indexed.
 pub fn is_provider_id(id: &str) -> bool {
     id.starts_with("ext-") || id.starts_with("pl-")
@@ -771,6 +780,16 @@ pub enum GainMode {
     Auto,
 }
 
+pub use nori_player::compressor::CompressorPreset;
+
+#[cfg(feature = "ffi")]
+#[uniffi::remote(Enum)]
+pub enum CompressorPreset {
+    Light,
+    Car,
+    Night,
+}
+
 pub use nori_player::device::{Arrival, ArrivalPlan, CurveStep};
 
 #[cfg(feature = "ffi")]
@@ -828,9 +847,6 @@ pub struct TransitionPrefs {
     pub keep_pitch: bool,
     pub keep_albums: bool,
     pub replay_gain: bool,
-    pub fade_curve: FadeCurve,
-    pub fade_in_ms: i32,
-    pub fade_out_ms: i32,
 }
 
 pub use nori_player::transport::{Dip, Switch};

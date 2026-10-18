@@ -64,7 +64,6 @@ pub enum Note {
     NothingToPutBack,
     Downloading(usize),
     DownloadFailed(CoreError),
-    Starred(bool),
     StarFailed(NetError),
     Indexing,
     Indexed(IngestStats),
@@ -359,7 +358,6 @@ impl Session {
         let prefs = core.session.settings.current().unwrap_or_default();
         // Set by the client before the engine starts, so the first chain has the right compensation.
         let level = o.volume;
-        let loudness = level.loudness.clone();
         let output = o.output;
         let store = match o.keeps_music {
             true => Some(Store::open(o.data.join("music"), prefs.cache_mb.max(0) as u64 * 1024 * 1024).map_err(|e| format!("the music directory: {e}"))?),
@@ -371,14 +369,14 @@ impl Session {
         // `bridging`: a song the network cannot bring raises `Event::Bridge` (see `Handle::bridge`).
         let guest = nori_remote::is_guest_key(&o.profile.api_key);
         let rules = core.rules();
-        let app = CoreApp::new(core.session.clone()).per_device(core.clone()).bridging().volume(loudness.clone());
+        let app = CoreApp::new(core.session.clone()).per_device(core.clone()).bridging();
         // A guest plays its host's transitions.
         let app = match &store {
             Some(store) if rules.measures => app.measuring(Measurer::new(analyses.clone(), store.clone())),
             _ => app,
         };
         let library = CoreLibrary { client: client.clone(), bytes: audio, store: store.clone(), analyses };
-        let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs, loudness.db()), platform: o.decoders, ..Config::default() };
+        let config = Config { memory_mb: o.memory_mb, settings: settings(&prefs), platform: o.decoders, ..Config::default() };
         // Each event is the session's first (among its tasks, off the engine's thread), then the client's.
         let heard: Arc<std::sync::OnceLock<std::sync::Weak<Parts>>> = Arc::default();
         let (to, out, tasks) = (heard.clone(), o.out.clone(), o.tasks.clone());
@@ -789,7 +787,7 @@ impl Handle {
 
     fn start_downloads(&self) {
         if let Some(d) = &self.downloader {
-            d.start(self.core.session.settings.prefs(|p| p.parallel_downloads).max(1) as usize);
+            d.start(nori_core::transfers::DOWNLOADS_AT_ONCE);
         }
     }
 
@@ -835,8 +833,8 @@ impl Handle {
         Some(change)
     }
 
-    /// The system moved the volume by itself (its keys, where it keeps the volume), 0 to 1: loudness
-    /// compensation follows, and the account's other devices see it.
+    /// The system moved the volume by itself (its keys, where it keeps the volume), 0 to 1: the
+    /// account's other devices see it.
     pub fn volume_followed(&self, v: f32) {
         self.set_level(v);
     }
@@ -857,7 +855,7 @@ impl Handle {
     /// Applies a settings change's `effect` bits to the engine.
     pub fn apply(&self, effect: u32, prefs: &StoredPrefs) {
         if effect & (APPLY_AUDIO | SOUND | PLAYER) != 0 {
-            self.engine.set_settings(settings(prefs, self.level.loudness.db()));
+            self.engine.set_settings(settings(prefs));
         }
         if effect & APPLY_GAIN != 0 {
             self.engine.gain_changed();
@@ -977,20 +975,16 @@ impl Handle {
         });
     }
 
-    /// Stars or unstars on the server (queued when offline); says so if "Confirm favorites" is on, and
-    /// always when it fails.
+    /// Stars or unstars on the server (queued when offline); says so when it fails.
     pub fn star(&self, kind: Starrable, id: String, on: bool) {
         if !self.rules.account {
             return;
         }
-        let (client, out, notice, hearts) = (self.client.clone(), self.out.clone(), self.core.favourite_notice(), self.hearts());
+        let (client, out, hearts) = (self.client.clone(), self.out.clone(), self.hearts());
         self.run(async move {
-            let said = match client.star(kind, id, on, hearts).await {
-                Ok(()) if !notice => return,
-                Ok(()) => Note::Starred(on),
-                Err(e) => Note::StarFailed(e),
-            };
-            out(Said::Note(said));
+            if let Err(e) = client.star(kind, id, on, hearts).await {
+                out(Said::Note(Note::StarFailed(e)));
+            }
         });
     }
 
@@ -1086,10 +1080,8 @@ impl Handle {
     fn arrived(&self) {
         let steps = self.core.session.song_arrived();
         self.keeper.later(steps.save_after_ms);
-        if steps.lyrics_ahead {
-            let client = self.client.clone();
-            self.run(async move { client.lyrics_prefetch().await });
-        }
+        let client = self.client.clone();
+        self.run(async move { client.lyrics_prefetch().await });
         if steps.fill {
             self.refill();
         }
@@ -1168,9 +1160,7 @@ impl Handle {
 
     /// Sets the volume here; the account's other devices see it.
     fn set_level(&self, v: f32) {
-        if self.level.set(v) {
-            self.loudness_moved();
-        }
+        self.level.set(v);
         self.remotes.played(&self.engine);
     }
 
@@ -1178,13 +1168,6 @@ impl Handle {
     pub(crate) fn volume_from_afar(&self, v: f32) {
         self.set_level(v);
         (self.out)(Said::Volume(self.level.get()));
-    }
-
-    /// Rebuilds the chain for the volume's loudness compensation, when that is on.
-    fn loudness_moved(&self) {
-        if let Some(p) = self.core.session.settings.current().filter(|p| p.loudness) {
-            self.engine.set_settings(settings(&p, self.level.loudness.db()));
-        }
     }
 
     /// The marks moving, as this session shows them.
@@ -1207,10 +1190,8 @@ impl Handle {
     fn edited(&self) {
         self.engine.queue_changed();
         self.keeper.later(queue_keep(QueueMoment::Edited).save_after_ms);
-        if self.core.session.lyrics_prefetch_ready() {
-            let client = self.client.clone();
-            self.run(async move { client.lyrics_prefetch().await });
-        }
+        let client = self.client.clone();
+        self.run(async move { client.lyrics_prefetch().await });
         self.remotes.played(&self.engine);
     }
 

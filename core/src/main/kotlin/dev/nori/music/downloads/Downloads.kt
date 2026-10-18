@@ -173,8 +173,8 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         }
     }
 
-    /** How many songs download at once, from the setting (its range is the core's). */
-    fun parallel() = settings.value.parallelDownloads
+    /** How many songs download at once (the core's `transfers::DOWNLOADS_AT_ONCE`). */
+    fun parallel() = dev.nori.music.ffi.transfers.downloadsAtOnce().toInt()
 
     /** Whether the queue has been handed back to media3 in this process; see [resume]. */
     @Volatile private var resumed = false
@@ -252,8 +252,8 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      * the beat model has not read, are read back as a download's are once saved, under the download service and
      * its notification. [done] hears how many, on the main thread.
      */
-    fun analyse(beats: Boolean, done: (Int) -> Unit) = io.execute {
-        val ids = runCatching { core.downloadUnanalysed(beats) }.getOrElse { Log.w(TAG, "could not list the downloads to analyse", it); emptyList() }
+    fun analyse(done: (Int) -> Unit) = io.execute {
+        val ids = runCatching { core.downloadUnanalysed(runCatching { core.downloadBeats() }.getOrDefault(false)) }.getOrElse { Log.w(TAG, "could not list the downloads to analyse", it); emptyList() }
         val n = if (ids.isEmpty()) 0 else runCatching { dev.nori.music.playback.MeasureJni.processAnalyse(analyses(), ids.toTypedArray()) }.getOrDefault(0)
         if (n > 0) {
             watchMarks()
@@ -408,19 +408,17 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      * Queues what is not downloaded yet. Which songs are new and which are asked for again is the core's
      * (`download_queue`); one asked again that media3 is still working on is left to it.
      */
-    fun download(songs: List<Song>, beats: Boolean = false) = io.execute { queued(runCatching { core.downloadQueue(songs) }, beats) }
+    fun download(songs: List<Song>) = io.execute { queued(runCatching { core.downloadQueue(songs) }) }
 
     /** Every song of the offline index, in one call to the core; sync the library first so the index is complete. */
     fun downloadLibrary() = io.execute {
-        // No question for a whole library: the beat model reads it only when "ML beats for downloads" says always.
-        val beats = runCatching { core.downloadBeatsOffer() }.getOrNull() == dev.nori.music.ffi.transfers.BeatsOffer.YES
-        queued(runCatching { core.downloadQueueLibrary() }, beats)
+        queued(runCatching { core.downloadQueueLibrary() })
     }
 
-    /** [beats]: the beat model reads these songs once they are saved, written down before any of them can finish. */
-    private fun queued(result: Result<DownloadQueued>, beats: Boolean) {
+    /** With better beat detection on, the beat model reads these songs once saved, written down before any can finish. */
+    private fun queued(result: Result<DownloadQueued>) {
         val q = result.getOrElse { Log.w(TAG, "could not queue downloads", it); return }
-        if (beats) runCatching { core.downloadWantBeats(q.fresh + q.again) }.onFailure { Log.w(TAG, "could not ask for the beat model", it) }
+        if (runCatching { core.downloadBeats() }.getOrDefault(false)) runCatching { core.downloadWantBeats(q.fresh + q.again) }.onFailure { Log.w(TAG, "could not ask for the beat model", it) }
         if (q.fresh.isNotEmpty()) publish()
         val requests = q.fresh.map(::request)
         val retries = q.again.map(::request)

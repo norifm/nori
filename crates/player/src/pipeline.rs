@@ -264,7 +264,6 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     /// Failed songs (id, reason); the platform drains them.
     pub failures: Vec<(String, String)>,
     pub errors: ErrorRun,
-    pub skip_on_error: bool,
     /// A failure found while reading ahead (or mid-song), raised when playback reaches it.
     failed: Option<(usize, PlaybackError, String)>,
     /// Playback stopped at this failed song; nothing is read until a jump.
@@ -318,7 +317,6 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             changes: Vec::new(),
             failures: Vec::new(),
             errors: ErrorRun::new(),
-            skip_on_error: true,
             failed: None,
             stopped: None,
             stop_after: None,
@@ -767,7 +765,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         self.failures.push((id.clone(), why));
         let decided = match self.app.on_error(kind, next.is_some()) {
             Some(d) => d,
-            None => self.errors.failed(kind, false, false, self.skip_on_error, next.is_some()),
+            None => self.errors.failed(kind, false, false, next.is_some()),
         };
         match (decided, next) {
             (OnError::Skip, Some(n)) => {

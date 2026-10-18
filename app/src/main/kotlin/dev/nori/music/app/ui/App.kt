@@ -205,7 +205,7 @@ private val tabs = listOf(
 fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    androidx.compose.runtime.SideEffect { AppMotion.force = prefs.ignoreSystemMotion; AppMotion.reduce = prefs.reduceMotion || prefs.einkScreen }
+    androidx.compose.runtime.SideEffect { AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL }
     NoriTheme(prefs) {
         // Sign-in fades to the app: the screens are different enough that a direction would invent a
         // relationship they do not have.
@@ -305,7 +305,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         dev.nori.music.app.TestDriver(controller, nav, sheet, settings, actions, player) { devicesOpen = true }
 
         // Whether the beat model also reads what is being downloaded, when the settings say to ask.
-        BeatsQuestion(actions)
 
         // The perf build's recorder starts a new stretch when the player goes up or away. See PerfHooks.
         dev.nori.music.app.PerfHooks.recorder?.let { r ->
@@ -339,7 +338,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         CompositionLocalProvider(
             LocalNav provides nav,
             LocalLyricsKeepOn provides lyricsKeepOn,
-            LocalStatusRoomKept provides dev.nori.music.ffi.settings.barRoomKept(prefs.hideStatusBar),
+            LocalStatusRoomKept provides dev.nori.music.ffi.settings.barRoomKept(prefs.hideStatusBar, wide),
             LocalPageSwipe provides swipe,
             LocalPlayerSheet provides sheet,
             LocalDownloadMarks provides rememberDownloadMarks(actions),
@@ -349,9 +348,10 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LocalMessages provides actions::tell,
             LocalRules provides rules,
             LocalAsked provides asked,
-            LocalEinkScreen provides prefs.einkScreen,
+            LocalEinkScreen provides (prefs.motion == dev.nori.music.ffi.settings.Motion.EINK),
             LocalHiddenBars provides hiddenBars,
         ) {
+            MobileDownloadQuestion(actions)
             val route = controller.currentBackStackEntryAsState().value?.destination?.route
             // The tab the page on screen belongs to, which is the one that stays lit, as Apple's does: a
             // settings group, or an album opened from Home, is still inside that tab. Lit only on the tab
@@ -943,3 +943,17 @@ private fun Modifier.burnInProtection(
         translationX = d.xDp.dp.toPx()
         translationY = d.yDp.dp.toPx()
     }
+
+/** Songs asked for while on mobile data download only after a yes. */
+@Composable
+private fun MobileDownloadQuestion(actions: ActionsViewModel) {
+    val songs by actions.mobileDownload.collectAsStateWithLifecycle()
+    NoriDialog(songs, { actions.downloadOnMobileData(false) }) {
+        AlertCard(
+            title = { androidx.compose.material3.Text(words(dev.nori.music.app.R.string.download_mobile_title)) },
+            text = { androidx.compose.material3.Text(words(dev.nori.music.app.R.string.download_mobile_text)) },
+            confirmButton = { TextAction(words(dev.nori.music.app.R.string.download_mobile_yes), { actions.downloadOnMobileData(true) }) },
+            dismissButton = { TextAction(words(dev.nori.music.app.R.string.cancel), { actions.downloadOnMobileData(false) }) },
+        )
+    }
+}

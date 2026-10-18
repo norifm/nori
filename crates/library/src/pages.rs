@@ -327,12 +327,11 @@ pub fn similar_artists(similar: Vec<nori_model::Artist>) -> Vec<nori_model::Arti
     similar.into_iter().filter(|a| !a.id.is_empty()).collect()
 }
 
-/// A playlist's description as shown: none when off, or when it is Navidrome's import note and
-/// `hide_import_notes` is on.
+/// A playlist's note as shown: none when `show` is off, or when it is only Navidrome's import note.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn playlist_description(comment: Option<String>, show: bool, hide_import_notes: bool) -> Option<String> {
+pub fn playlist_description(comment: Option<String>, show: bool) -> Option<String> {
     let text = comment.filter(|c| !c.trim().is_empty())?;
-    if !show || (hide_import_notes && is_import_note(&text)) {
+    if !show || is_import_note(&text) {
         return None;
     }
     Some(text)
@@ -557,13 +556,12 @@ mod tests {
 
     #[test]
     fn description_hides_import_note() {
-        let d = |c: &str, show, hide| playlist_description(Some(c.into()), show, hide);
-        assert_eq!(d("Late night driving", true, true).as_deref(), Some("Late night driving"));
-        assert_eq!(d("Auto-imported from 'Glitch.m3u8'", true, true), None);
-        assert_eq!(d("Auto-imported from 'The New New York.m3u8'", true, false).as_deref(), Some("Auto-imported from 'The New New York.m3u8'"));
-        assert_eq!(d("Auto-imported from 'x.m3u' plus my own notes", true, true).as_deref(), Some("Auto-imported from 'x.m3u' plus my own notes"));
-        assert_eq!(d("Late night driving", false, true), None);
-        assert_eq!((d("  ", true, true), playlist_description(None, true, true)), (None, None));
+        let d = |c: &str, show| playlist_description(Some(c.into()), show);
+        assert_eq!(d("Late night driving", true).as_deref(), Some("Late night driving"));
+        assert_eq!(d("Auto-imported from 'Glitch.m3u8'", true), None);
+        assert_eq!(d("Auto-imported from 'x.m3u' plus my own notes", true).as_deref(), Some("Auto-imported from 'x.m3u' plus my own notes"));
+        assert_eq!(d("Late night driving", false), None);
+        assert_eq!((d("  ", true), playlist_description(None, true)), (None, None));
     }
 
 }

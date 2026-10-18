@@ -296,12 +296,12 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
         // ---- settings ----
 
         private fun StoredPrefs.knobs() = Knobs(
-            eqEnabled, crossfeedDb, balance, mono, limiter, speed, pitch, skipSilence, offload, crossfadeSec, autoMix,
+            eqEnabled, headphone, balance, mono, limiter, speed, pitch, skipSilence, offload, crossfadeSec, autoMix,
             replayGain, scrobble, autoFill, skipExplicit, previousAlwaysSkips, fadeMs,
         )
 
         private fun StoredPrefs.with(k: Knobs) = copy(
-            eqEnabled = k.eq, crossfeedDb = k.crossfeedDb, balance = k.balance, mono = k.mono, limiter = k.limiter,
+            eqEnabled = k.eq, headphone = k.headphone, balance = k.balance, mono = k.mono, limiter = k.limiter,
             speed = k.speed, pitch = k.pitch, skipSilence = k.skipSilence, offload = k.offload, crossfadeSec = k.crossfadeSec, autoMix = k.autoMix,
             replayGain = k.replayGain, scrobble = k.scrobble, autoFill = k.autoFill, skipExplicit = k.skipExplicit,
             previousAlwaysSkips = k.previousAlwaysSkips, fadeMs = k.fadeMs,

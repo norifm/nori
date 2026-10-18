@@ -159,6 +159,8 @@ function closeSheet() {
 }
 
 let speeds: { speed: string; pitch: string; autoMix: string; crossfadeSec: string } | undefined;
+/** The values speed and pitch offer (the core's `settings_model::specs`). */
+let rates: { speed: string[]; pitch: string[] } | undefined;
 
 function drawSheet() {
   const s = now?.song;
@@ -245,18 +247,20 @@ function jamSide(): HTMLElement {
 function soundRow(): HTMLElement {
   const row = h("div", { class: "sound" });
   const draw = () => {
-    if (!speeds) return;
+    if (!speeds || !rates) return;
     const automix = h("button", { class: speeds.autoMix === "true" ? "chip on" : "chip", on: { click: () => setSound("autoMix", speeds!.autoMix === "true" ? "false" : "true") } }, W.autoMix);
-    const pick = (name: "speed" | "pitch", label: string, values: string[]) => {
+    const pick = (name: "speed" | "pitch", label: string) => {
+      const values = rates![name];
       const sel = h("select", { "aria-label": label, on: { change: (e) => setSound(name, (e.target as HTMLSelectElement).value) } }, ...values.map((v) => h("option", { value: v, selected: Number(v) === Number(speeds![name]) }, `${label} ${v}×`))) as HTMLSelectElement;
       return sel;
     };
-    row.replaceChildren(automix, pick("speed", W.speed, ["0.75", "0.9", "1", "1.1", "1.25", "1.5", "2"]), pick("pitch", W.pitch, ["0.9", "0.95", "1", "1.05", "1.1"]));
+    row.replaceChildren(automix, pick("speed", W.speed), pick("pitch", W.pitch));
   };
-  if (speeds) draw();
+  if (speeds && rates) draw();
   else
-    void ask<string>("settings", "speed,pitch,autoMix,crossfadeSec").then((v) => {
+    void Promise.all([ask<string>("settings", "speed,pitch,autoMix,crossfadeSec"), ask<string>("options", "speed,pitch")]).then(([v, o]) => {
       speeds = JSON.parse(v);
+      rates = JSON.parse(o);
       draw();
     });
   return row;

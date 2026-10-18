@@ -261,6 +261,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | at the song that could not play | a | core bridge.rs, queue, paths.rs |
 | tapping the download notification opens the queue | b | feature-e2e `download-notification` |
 | several songs download at once; the notification's own id; picks up after a force stop; the album finishes (4) | b | feature-e2e `downloads` (media3's DownloadManager) |
+| (new) a download asked for on mobile data waits for a yes; on Wi-Fi it starts at once | - | feature-e2e `mobile-data` (Android's ConnectivityManager says what the network is; only a phone has mobile data) |
 | the batch reports a speed; an ETA (2) | a | transfers.rs |
 | a new playlist reaches the server; the song went in; the check cleans up (3) | a | client.rs |
 | adding to the queue grows it; play next grows it (2) | a | queue, controls.rs; smoke `queue` keeps one on the device |

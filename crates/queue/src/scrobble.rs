@@ -57,9 +57,10 @@ pub struct ScrobbleSend {
     pub now_playing_id: Option<String>,
 }
 
-/// Listening needed for a play to count: `percent` (clamped to 10..100) of `duration_s`, within 10 s..4 min.
-pub(crate) fn needed_ms(duration_s: i64, percent: i32) -> i64 {
-    (duration_s * 10 * percent.clamp(10, 100) as i64).clamp(10_000, 240_000)
+/// Listening needed for a play to count, Last.fm's rule: half of `duration_s` or 4 minutes, whichever
+/// comes first, and at least 10 s.
+pub(crate) fn needed_ms(duration_s: i64) -> i64 {
+    (duration_s * 500).clamp(10_000, 240_000)
 }
 
 /// Why the player's song changed.
@@ -107,7 +108,7 @@ impl Session {
     /// The player's song changed to `id`. Records the song left in the history when the taste model is
     /// on, and returns what to scrobble when scrobbling is on.
     pub fn scrobble_track(&self, id: Option<String>, why: TrackChange, playing: bool, now_ms: i64, wall_ms: i64, tz_offset_ms: i32) -> ScrobbleSend {
-        let (taste_model, scrobble, percent) = self.settings.prefs(|p| (p.taste_model, p.scrobble, p.scrobble_percent));
+        let (taste_model, scrobble) = self.settings.prefs(|p| (p.taste_model, p.scrobble));
         let next = followed(id, why);
         let song = next.as_deref().and_then(|id| self.song(id));
         let (done, heard, at) = self.scrobbler.lock().switch(song, playing, now_ms, wall_ms);
@@ -120,7 +121,7 @@ impl Session {
         if !scrobble {
             return ScrobbleSend { submit_id: None, submit_at: 0, now_playing_id: None };
         }
-        let submit_id = done.filter(|s| heard >= needed_ms(s.duration as i64, percent)).map(|s| s.id);
+        let submit_id = done.filter(|s| heard >= needed_ms(s.duration as i64)).map(|s| s.id);
         ScrobbleSend { submit_id, submit_at: at, now_playing_id: next }
     }
 }
@@ -131,10 +132,9 @@ mod tests {
 
     #[test]
     fn scrobble_rules() {
-        assert_eq!(needed_ms(200, 50), 100_000);
-        assert_eq!(needed_ms(600, 50), 240_000);
-        assert_eq!(needed_ms(10, 50), 10_000);
-        assert_eq!(needed_ms(200, 5), 20_000, "percent clamped to 10");
+        assert_eq!(needed_ms(200), 100_000, "half");
+        assert_eq!(needed_ms(600), 240_000, "four minutes");
+        assert_eq!(needed_ms(10), 10_000);
 
         // Followed ids.
         let id = |s: &str| Some(s.to_string());

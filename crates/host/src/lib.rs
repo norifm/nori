@@ -25,7 +25,6 @@ use nori_tasks::Tasks;
 use nori_covers::memory::Image;
 #[cfg(feature = "desktop")]
 use nori_engine::{State, Status};
-use nori_engine::core::OutputVolume;
 use nori_engine::Engine;
 use nori_look::cover::CoverColours;
 
@@ -103,25 +102,17 @@ pub fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
     let _ = std::thread::Builder::new().name(name.into()).spawn(f);
 }
 
-/// Volume (0 to 1) in dB, floored at -96.
-pub fn volume_db(v: f32) -> f64 {
-    if v > 0.0 { 20.0 * (v as f64).log10() } else { -96.0 }
-}
-
-/// The client's volume, 0 to 1, and the loudness compensation it is. The account's other devices read
-/// and set it too (remote control).
+/// The client's volume, 0 to 1. The account's other devices read and set it too (remote control).
 pub struct Level {
     value: AtomicU32,
     /// Sets the sound card's level; None where this client cannot set the volume, which is then followed
     /// but not offered to other devices.
     card: Option<Box<dyn Fn(f32) + Send + Sync>>,
-    /// The volume in dB, for loudness compensation.
-    pub loudness: Arc<OutputVolume>,
 }
 
 impl Level {
     pub fn new(v: f32, card: Option<Box<dyn Fn(f32) + Send + Sync>>) -> Arc<Level> {
-        let level = Level { value: AtomicU32::new(0), card, loudness: Arc::default() };
+        let level = Level { value: AtomicU32::new(0), card };
         level.set(v);
         Arc::new(level)
     }
@@ -130,14 +121,12 @@ impl Level {
         f32::from_bits(self.value.load(Ordering::Relaxed))
     }
 
-    /// Sets the volume; true when that moved loudness compensation audibly.
-    pub fn set(&self, v: f32) -> bool {
+    pub fn set(&self, v: f32) {
         let v = v.clamp(0.0, 1.0);
         self.value.store(v.to_bits(), Ordering::Relaxed);
         if let Some(card) = &self.card {
             card(v);
         }
-        self.loudness.set(volume_db(v))
     }
 
     /// As another device shows and sets it, 0 to 100; None when this client cannot set it.

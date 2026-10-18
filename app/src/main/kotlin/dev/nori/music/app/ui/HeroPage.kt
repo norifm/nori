@@ -106,18 +106,14 @@ fun HeroPage(
      * side - and the page's colours taken from the first. Used only when [coverUrl] is null.
      */
     mosaic: List<String> = emptyList(),
-    /**
-     * Whether this kind of page keeps its cover's colours with a black background (album and artist
-     * pages each have a setting); the others go black.
-     */
-    keepsColours: (dev.nori.music.ffi.settings.StoredPrefs) -> Boolean = { false },
     content: LazyListScope.() -> Unit,
 ) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     val dark = when (prefs.theme) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.DARK -> true; ThemeMode.LIGHT -> false }
-    val keeps = keepsColours(prefs)
-    val black = remember(dark, prefs.amoled, keeps) { dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, keeps) }
+    // Which pages wear their cover's colours, and which are black under only its accents, is the core's.
+    val black = remember(dark, prefs.amoled, prefs.coverColors) { dev.nori.music.ffi.settings.coverBlack(prefs.coverColors, false, dark, prefs.amoled) }
+    val tinted = prefs.coverColors.isNotEmpty()
     // A provider's page too: its cover is on screen already, so measuring it asks the provider for
     // nothing more, and the cover loader never keeps it (only the colours stay, in memory).
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.
@@ -127,7 +123,7 @@ fun HeroPage(
         mosaic.isNotEmpty() -> { m -> Mosaic(mosaic, m) }
         else -> null
     }
-    val palette = if (prefs.coverColors) rememberCoverPalette(lead, black) else null
+    val palette = if (tinted) rememberCoverPalette(lead, black) else null
     // Shuffle stays labelled Shuffle (never Pause); it lights while this page's queue is shuffling.
     val player: PlayerViewModel = viewModel()
     val playerState by player.state.collectAsStateWithLifecycle()
@@ -149,7 +145,7 @@ fun HeroPage(
     TintedTheme(palette) {
         val scheme = MaterialTheme.colorScheme
         SystemBarIcons(LocalLook.current)
-        PageTint(palette, waiting = palette == null && prefs.coverColors && lead != null)
+        PageTint(palette, waiting = palette == null && tinted && lead != null)
         val list = rememberLazyListState()
         // How far the hero has scrolled off, for its parallax: the list's own scroll upright; on its side the
         // hero stands still in its half and does not move with the songs (see below).

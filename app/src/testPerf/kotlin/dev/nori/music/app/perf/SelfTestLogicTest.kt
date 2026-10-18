@@ -199,7 +199,7 @@ class SelfTestLogicTest {
     // ---- putting things back ----
 
     private val user = Knobs(
-        eq = true, crossfeedDb = -3f, balance = 0f, mono = false, limiter = true, speed = 1f, pitch = 1f,
+        eq = true, headphone = dev.nori.music.ffi.settings.HeadphoneSound.NATURAL, balance = 0f, mono = false, limiter = true, speed = 1f, pitch = 1f,
         skipSilence = false, offload = true, crossfadeSec = 4, autoMix = true, replayGain = GainMode.AUTO, scrobble = true,
         autoFill = true, skipExplicit = false, previousAlwaysSkips = true, fadeMs = 200,
     )
@@ -207,7 +207,7 @@ class SelfTestLogicTest {
     @Test fun the_test_starts_from_a_plain_path_and_puts_every_setting_back() {
         val t = testKnobs(user)
         assertEquals(
-            listOf("eqEnabled", "crossfeedDb", "limiter", "offload", "crossfadeSec", "autoMix", "scrobble", "autoFill", "previousAlwaysSkips", "fadeMs"),
+            listOf("eqEnabled", "headphoneSound", "limiter", "offload", "crossfadeSec", "autoMix", "scrobble", "autoFill", "previousAlwaysSkips", "fadeMs"),
             knobsDiffer(user, t),
         )
         assertEquals(GainMode.AUTO, t.replayGain)
@@ -227,7 +227,7 @@ class SelfTestLogicTest {
         assertEquals(emptyList<String>(), restoreProblems(before, before.copy(positionMs = 44_000)))
         assertEquals(
             listOf(
-                "settings not as they were: eqEnabled, crossfeedDb, limiter, offload, crossfadeSec, autoMix, scrobble, autoFill, previousAlwaysSkips, fadeMs",
+                "settings not as they were: eqEnabled, headphoneSound, limiter, offload, crossfadeSec, autoMix, scrobble, autoFill, previousAlwaysSkips, fadeMs",
                 "the queue is not the same: 3 songs before, 2 after",
                 "on queue place 0, not 1",
                 "at 3.0 s, not 42.0 s",

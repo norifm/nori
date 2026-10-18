@@ -53,9 +53,12 @@ fi
 
 if want automix; then section "one AutoMix transition"
   album=$(mix_album)
-  "$app" set crossfadeKeepAlbums false >/dev/null; "$app" set autoMix true >/dev/null
+  "$app" set autoMix true >/dev/null
   "$app" play "album:$album" >/dev/null
   sounds 20
+  # Songs of one album in order never mix: shuffled, they do.
+  "$app" do shuffle >/dev/null
+  check "the album is shuffled" wait_for shuffle True 10
   # A cold start on the real server can take a while to know the length; the seek needs it.
   wait_for durationMs ">30000" 30 >/dev/null
   leaving=$(field title); dur=$(field durationMs)
@@ -65,6 +68,7 @@ if want automix; then section "one AutoMix transition"
   check "the mix is heard as the song ends" wait_for mixing True 45
   check "and the next song plays out of it" wait_for title "!$leaving" 30
   check "with the track still sounding" sounds 10
+  "$app" do shuffle >/dev/null
   plain
 fi
 

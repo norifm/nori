@@ -34,7 +34,7 @@ fn late_autofill_respects_playback_and_new_queues() {
         p.remote_control = false;
         p.auto_fill = true;
         p.auto_mix = false;
-        p.lyrics_prefetch = false;
+        p.third_party_lookups = false;
         prefs.put(p);
         let queue = Arc::new(nori_core::queue::Session::new(prefs));
         let card = Card::new();
@@ -109,7 +109,6 @@ fn session_of_songs(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: 
     p.remote_control = false;
     p.auto_fill = false;
     p.auto_mix = false;
-    p.lyrics_prefetch = false;
     prefs.put(p);
     let queue = Arc::new(nori_core::queue::Session::new(prefs));
     let profile = SavedServer { id: "test".into(), url: url.into(), user: "ann".into(), password: "pw".into(), ..Default::default() };

@@ -158,10 +158,10 @@ impl Core {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
-    /// Whether Download asks about the beat model ([`beats_offer`]).
-    pub fn download_beats_offer(&self) -> BeatsOffer {
-        let (on, choice) = self.session.settings.prefs(|p| (p.auto_mix && p.auto_mix_better_beats, p.download_beats));
-        beats_offer(on && nori_player::automix::beats::AVAILABLE, choice)
+    /// Whether the beat model reads songs downloaded now: with better beat detection on, in a build
+    /// that has it.
+    pub fn download_beats(&self) -> bool {
+        nori_player::automix::beats::AVAILABLE && self.session.settings.prefs(|p| p.auto_mix && p.auto_mix_better_beats)
     }
 
     /// What downloaded songs still wait for, for the notification; `now` is the platform clock.

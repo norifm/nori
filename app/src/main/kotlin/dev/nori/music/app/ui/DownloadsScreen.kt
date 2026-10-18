@@ -443,32 +443,3 @@ private fun LazyItemScope.moving(plain: Boolean): Modifier = if (plain) Modifier
     fadeInSpec = tween(220), placementSpec = tween(260, easing = FastOutSlowInEasing), fadeOutSpec = tween(160),
 )
 
-/**
- * Download pressed with "Better beat detection" on and "ML beats for downloads" at Ask: whether the beat model
- * also reads these songs once saved, and whether to remember the answer (the setting becomes Always or Never).
- * Put away without an answer, nothing is downloaded.
- */
-@Composable
-fun BeatsQuestion(actions: ActionsViewModel) {
-    val ask by actions.beatsAsk.collectAsStateWithLifecycle()
-    var keep by remember { mutableStateOf(false) }
-    NoriDialog(ask, { actions.dismissBeats(); keep = false }) {
-        AlertCard(
-            title = { Text(say.beatsAskTitle) },
-            text = {
-                Column {
-                    Text(say.beatsAskText)
-                    Row(
-                        Modifier.padding(top = 12.dp).clip8().clickable { keep = !keep }.padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(say.beatsAskRemember, Modifier.weight(1f).padding(end = 12.dp))
-                        NoriSwitch(keep, { keep = it })
-                    }
-                }
-            },
-            confirmButton = { TextAction(say.beatsAskYes, { actions.answerBeats(true, keep); keep = false }) },
-            dismissButton = { TextAction(say.beatsAskNo, { actions.answerBeats(false, keep); keep = false }) },
-        )
-    }
-}

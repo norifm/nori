@@ -253,7 +253,6 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     val queue = rememberPageQueue(from, detail?.queue)
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
-        keepsColours = { it.albumColours },
         title = album.name,
         subtitle = album.artist,
         caption = caption,
@@ -333,7 +332,6 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
     val topFrom = rememberOrigin(OriginKind.ARTIST_TOP, artist.id)
     HeroPage(
         coverUrl = vm.cover(artist.coverArt, CoverSize.FULL),
-        keepsColours = { it.artistColours },
         title = artist.name,
         caption = remember(ui?.detail, artist.albumCount) {
             if (ui != null) say.releases(ui.detail.albums.size)
@@ -443,12 +441,8 @@ private fun PlaylistPage(
     val from = rememberOrigin(OriginKind.PLAYLIST, id)
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
-        // One choice with albums: the two pages are drawn the same, so they go black or keep colour together.
-        keepsColours = { it.albumColours },
         title = playlist.name,
-        subtitle = remember(playlist.comment, prefs.playlistDescriptions, prefs.hideImportNotes) {
-            dev.nori.music.ffi.library.playlistDescription(playlist.comment, prefs.playlistDescriptions, prefs.hideImportNotes)
-        },
+        subtitle = remember(playlist.comment, prefs.playlistNotes) { dev.nori.music.ffi.library.playlistDescription(playlist.comment, prefs.playlistNotes) },
         caption = remember(detail, playlist) { detail?.let { say.listCaption(it.songs.size, it.seconds.toLong(), true) } ?: say.albumHintCaption(0, playlist.songCount.toInt(), playlist.duration.toLong()) },
         onPlay = detail?.let { d -> { actions.play(d.songs, from = from) } },
         onShuffle = detail?.let { d -> { actions.shuffle(d.songs, from) } },

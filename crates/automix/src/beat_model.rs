@@ -113,11 +113,11 @@ impl ModelFile {
         true
     }
 
-    /// Whether the model may be fetched over this network: not over a `metered` one unless `mobile` data is
-    /// allowed for it; else it waits for Wi-Fi, still saying why the last download failed if one did.
-    pub fn may_fetch(&self, metered: bool, mobile: bool) -> bool {
+    /// Whether the model may be fetched over this network: not over a `metered` one; there it waits for
+    /// Wi-Fi, still saying why the last download failed if one did.
+    pub fn may_fetch(&self, metered: bool) -> bool {
         let mut k = self.kept.lock();
-        if metered && !mobile {
+        if metered {
             if !matches!(k.state, State::Failed(_)) {
                 k.state = State::WaitingForWifi;
             }
@@ -178,11 +178,11 @@ mod tests {
     #[test]
     fn mobile_data_waits_for_wifi() {
         let m = ModelFile::default();
-        assert!(m.may_fetch(false, false) && m.may_fetch(true, true));
-        assert!(!m.may_fetch(true, false));
+        assert!(m.may_fetch(false));
+        assert!(!m.may_fetch(true));
         assert_eq!(m.state(), State::WaitingForWifi);
         m.set_state(State::Failed(BeatFailure::Network));
-        assert!(!m.may_fetch(true, false));
+        assert!(!m.may_fetch(true));
         assert_eq!(m.state(), State::Failed(BeatFailure::Network), "the failure still shows");
     }
 }

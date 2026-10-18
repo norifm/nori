@@ -188,14 +188,7 @@ fn parametric_equalizer() {
 fn graphic_equalizer_and_effects() {
     let mut eq = Equalizer::new(RATE, 2);
     eq.configure_graphic(&[3.0, 5.0, 2.0, 0.0, -2.0, -4.0, 0.0, 2.0, 4.0, 6.0, 3.0, 1.0, 0.0, -1.0, 2.0], -6.0, 3.0);
-    let fx = crate::dsp::Effects {
-        bass_boost_db: 6.0,
-        compressor: Some(crate::compressor::CompressorPreset::Strong.settings()),
-        expander: Some(crate::compressor::ExpanderSettings { threshold_db: -30.0, ratio: 4.0, ..Default::default() }),
-        loudness: Some(crate::contour::Loudness { reference_phon: 80.0, volume_db: -25.0 }),
-        virtualizer: 0.7,
-        boost_db: 4.0,
-    };
+    let fx = crate::dsp::Effects { compressor: Some(crate::compressor::CompressorPreset::Car.settings()), virtualizer: 0.7, boost_db: 4.0 };
     eq.configure_effects(&fx);
     eq.configure_output(0.0, true, -1.0, 120.0, 5.0);
     let x: Vec<i16> = tone(4.0, 440.0).chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();

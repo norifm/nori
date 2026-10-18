@@ -239,7 +239,7 @@ SAVED=()
 remember_settings() { local v; v=$(fields "$@"); local i=0; for k in "$@"; do i=$((i+1)); SAVED+=("$k $(echo "$v" | sed -n "${i}p" | tr 'TF' 'tf')"); done; }
 # The settings that let the plain path play: nothing mixing, nothing in the chain; then any more
 # `name value` pairs given.
-plain_sound() { local s; for s in "autoMix false" "crossfadeSec 0" "crossfadeKeepAlbums true" "eq false" "speed 1" "pitch 1" "skipSilence false" "$@"; do "$app" set $s >/dev/null; done; }
+plain_sound() { local s; for s in "autoMix false" "crossfadeSec 0" "eq false" "speed 1" "pitch 1" "skipSilence false" "$@"; do "$app" set $s >/dev/null; done; }
 restore_settings() { local s; for s in "${SAVED[@]+"${SAVED[@]}"}"; do "$app" set $s >/dev/null; done; SAVED=(); }
 logged() { grep -qE "$1" "$watching"; }
 never() { ! logged "$1"; }
@@ -249,9 +249,13 @@ waitfor_log() { wait_until "$2" logged "$1"; }
 # from two seconds to twenty to come back, and a check made before it has is testing the Wi-Fi, not the app.
 network_off=0
 offline() { network_off=1; adb shell svc wifi disable; adb shell svc data disable; }
+# The network Android routes the app through is $1 (WIFI or MOBILE).
+active_network() { local c n; c=$(adb shell dumpsys connectivity); n=$(sed -n 's/^Active default network: \([0-9]*\).*/\1/p' <<< "$c"); grep -q "network{$n} .*ni{$1" <<< "$c"; }
+# Back on Wi-Fi: mobile data answers a ping too, and would have downloads ask first.
 online() {
   adb shell svc wifi enable; adb shell svc data enable
   local host; host=$(printf '%s' "$APP_URL" | sed -E 's#https?://##; s#[/:].*##')
+  wait_until 30 active_network WIFI || return 1
   wait_until 30 adb shell "ping -c 1 -W 1 $host" >/dev/null 2>&1 || return 1
   network_off=0
 }

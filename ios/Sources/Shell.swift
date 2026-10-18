@@ -419,8 +419,8 @@ final class SearchPage: PageController, UISearchResultsUpdating, UISearchBarDele
     private let search = UISearchController(searchResultsController: nil)
     private var pending: DispatchWorkItem?
     private var typed = ""
-    /// The pause before the server is asked (the `liveSearchDelayMs` setting), seconds.
-    private var delay = 0.35
+    /// The pause before the server is asked (the core's), seconds.
+    private let delay = Double(nori_ios_search_delay_ms()) / 1000
 
     init() { super.init(kind: NORI_PAGE_SEARCH, title: Say.search) }
     required init?(coder: NSCoder) { fatalError() }
@@ -439,10 +439,6 @@ final class SearchPage: PageController, UISearchResultsUpdating, UISearchBarDele
         navigationItem.searchController = search
         navigationItem.hidesSearchBarWhenScrolling = false
         definesPresentationContext = true
-        DispatchQueue.global(qos: .utility).async {
-            guard let ms = SettingsPage.number("liveSearchDelayMs") else { return }
-            DispatchQueue.main.async { self.delay = Double(ms) / 1000 }
-        }
     }
 
     /// Opened with nothing typed (the tab tapped): the field takes the keyboard at once. iOS 12 ignores
@@ -521,8 +517,6 @@ final class SettingsPage: UITableViewController {
               let row = rows.first(where: { $0["name"] as? String == name }) else { return nil }
         return row["value"] as? String
     }
-
-    static func number(_ name: String) -> Int? { value(name).flatMap { Int($0) } }
 
     override func viewDidLoad() {
         super.viewDidLoad()

@@ -6,12 +6,15 @@ import dalvik.annotation.optimization.FastNative
 object Dsp {
     init { System.loadLibrary("norimusic") }
 
-    /** The pre-amp in effect (the core's `SoundSettings::effective_preamp_db`); [preampDb] is ignored when [automatic]. */
-    @JvmStatic @FastNative external fun effectivePreampDb(eqEnabled: Boolean, preampDb: Float, automatic: Boolean, kinds: IntArray, gains: FloatArray): Float
+    /**
+     * The pre-amp in effect (the core's `settings::mode_preamp_db`) for the equalizer [graphic] picks: the
+     * parametric bands' [kinds] and [gains], or the graphic [sliders]; [preampDb] is ignored when [automatic].
+     */
+    @JvmStatic @FastNative external fun effectivePreampDb(eqEnabled: Boolean, preampDb: Float, automatic: Boolean, graphic: Boolean, kinds: IntArray, gains: FloatArray, sliders: FloatArray): Float
 }
 
 /**
- * The sample-domain chain (pre-amp, parametric equalizer, crossfeed, balance, mono, limiter) as a screen
+ * The sample-domain chain (pre-amp, parametric equalizer, balance, mono, limiter) as a screen
  * reads it. The chain runs inside the player (nori-engine), which follows the settings by itself; this
  * only asks it, so a screen can show its meter without reaching into the service.
  */

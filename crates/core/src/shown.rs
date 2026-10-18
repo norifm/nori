@@ -4,11 +4,6 @@ use crate::Core;
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
-    /// Whether a heart press shows a confirmation (the favourite-notice setting).
-    pub fn favourite_notice(&self) -> bool {
-        self.session.settings.prefs(|p| p.favourite_notice)
-    }
-
     /// [`session_buttons`] for the queue's current song.
     pub fn session_buttons_now(&self, starred: bool, shuffle: bool) -> SessionButtons {
         let song = self.session.playlist(|p| p.current_id().is_some_and(|id| !crate::queue::is_radio(id)));

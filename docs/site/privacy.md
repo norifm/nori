@@ -26,7 +26,7 @@ of them asks anything.
 |---|---|---|---|---|
 | Missing lyrics | the [lyrics sources](lyrics/sources.md): PaxSenix (and Apple's public iTunes Search to find the song), BiniLyrics, Unison, BetterLyrics, KuGou, NetEase, LyricsPlus mirrors, SimpMusic (and YouTube Music to find the song's video), LRCLIB, YouTube, Megalobiz, Genius | artist, song and album name, the song's length; your key, for a service you gave one | when you open the lyrics of a song your server has no timed lyrics for; the answer is kept | **Find missing lyrics online** (on), and each source's own switch |
 | The AutoEQ headphone list | raw.githubusercontent.com (the AutoEQ project) | nothing about you | on Wi-Fi when the list is missing or a month old; a curve when you choose it | **Keep the AutoEQ list** (on) |
-| Moving covers (Android) | Apple: itunes.apple.com, music.apple.com and its catalog API | artist and album name | when the player opens on an album, by default only on Wi-Fi; the answer is kept | **Moving covers** (off) |
+| Moving covers (Android) | Apple: itunes.apple.com, music.apple.com and its catalog API | artist and album name | when the player opens on an album, only on Wi-Fi unless set to Always; the answer is kept | **Moving covers** (off) |
 
 ## Other requests
 

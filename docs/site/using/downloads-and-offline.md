@@ -21,7 +21,8 @@ opens the progress and retry controls.
 | Setting | Default |
 |---|---|
 | Quality for downloads | Original (or MP3 320, or Opus 192, 128, 96 or 64, transcoded by the server) |
-| Downloads at once | 5 (1 to 10) |
+
+Four songs download at once (from nori 0.6.3; before, it was a setting); the rest wait their turn.
 
 On the iPod touch, downloads run while the app is open or playing. Downloaded album pages use
 the saved tracks, and cached covers decode without reaching the server. In 0.6.0-beta.3 and later,
@@ -30,8 +31,8 @@ unavailable artwork finishes loading with a placeholder.
 ## The stream cache
 
 Songs you stream are kept in a cache on the device (1 GB by default; 256 MB to 16 GB), so a song played
-again is not fetched again. The songs coming up next are fetched ahead: two on Wi-Fi, one on mobile data
-by default.
+again is not fetched again. The songs coming up next are fetched ahead: three on Wi-Fi, the next one on
+mobile data, and the covers of the next five (from nori 0.6.3; before, these were settings).
 
 ## Offline
 

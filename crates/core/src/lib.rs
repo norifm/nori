@@ -47,7 +47,7 @@ pub use nori_lyrics::{formats, look, lrclib, lyrics, services};
 pub use nori_net::{api, transport};
 pub use nori_perf::perf_log;
 pub use nori_queue::{heard, rules, scrobble};
-pub use nori_settings::{credits, dsp, lyrics_sources, settings, settings_model, settings_store};
+pub use nori_settings::{credits, dsp, lyrics_sources, settings, settings_model, settings_pages, settings_store};
 pub use nori_settings::settings::parse_eq_preset;
 pub use nori_model::model::*;
 pub use nori_library::pages::{AlbumDetail, ArtistDetail, PlaylistDetail, Starred};

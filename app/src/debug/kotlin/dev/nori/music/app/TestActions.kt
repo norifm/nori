@@ -115,9 +115,7 @@ object TestActions {
         val ref = what.substringAfter(' ', "")
         if (verb == "lyrics") lastLyrics = null
         when (verb) {
-            // "beats yes|no[,remember]": the answer to the question Download asks while the beat model is on.
-            "beats" -> { actions.answerBeats(ref.startsWith("yes"), ref.endsWith(",remember")); return@attempt }
-            // Settings' "Analyse downloaded songs" (asks first, as Download does).
+            // Settings' "Analyse downloaded songs".
             "analysedownloads" -> { actions.analyseDownloads(); return@attempt }
             // "car root|tree <id>|search <q>|play <id>|voice <query>[|artist|album|playlist|genre|song]": the car's
             // side of the session, through a media browser as Android Auto connects, each row logged (tag noricar).

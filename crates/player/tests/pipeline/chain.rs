@@ -81,7 +81,7 @@ fn limiter_holds_ceiling() {
 fn compressor_meter() {
     let song = music(20.0, 5);
     let mut p = Player::new(vec![track("a", &song)]);
-    p.set_sound(Sound { effects: Effects { compressor: Some(CompressorPreset::Strong.settings()), ..Effects::default() }, ..limiter() });
+    p.set_sound(Sound { effects: Effects { compressor: Some(CompressorPreset::Car.settings()), ..Effects::default() }, ..limiter() });
     p.play_from(0);
     p.run_for(5_000);
     let reading = p.sink.compression_db();
@@ -100,7 +100,7 @@ fn compressor_meter() {
     let loud = sine(220.0, 0.5, 4.0);
     let song: Vec<i16> = quiet.iter().chain(&loud).copied().collect();
     let mut p = Player::new(vec![track("a", &song)]);
-    p.set_sound(Sound { effects: Effects { compressor: Some(CompressorPreset::Balanced.settings()), ..Effects::default() }, ..Sound::default() });
+    p.set_sound(Sound { effects: Effects { compressor: Some(CompressorPreset::Car.settings()), ..Effects::default() }, ..Sound::default() });
     p.play_from(0);
     assert!(p.run_to_end(30_000));
     let heard = left(&p.sink.heard_samples());
@@ -207,15 +207,10 @@ fn live_settings_changes_do_not_click() {
         ("the equalizer", limiter(), Sound { bands: curve(), ..limiter() }),
         ("mono", limiter(), Sound { mono: true, ..limiter() }),
         ("crossfeed", limiter(), Sound { crossfeed_db: 4.5, ..limiter() }),
-        ("the crossfeed's cutoff", Sound { crossfeed_db: 9.5, crossfeed_hz: 650.0, ..limiter() }, Sound { crossfeed_db: 9.5, crossfeed_hz: 1500.0, ..limiter() }),
         ("balance", eq.clone(), Sound { balance: 0.4, ..eq.clone() }),
         ("the limiter", eq.clone(), Sound { limiter: true, ..eq.clone() }),
         ("the graphic equalizer", limiter(), Sound { graphic: vec![3.0, 6.0, 4.0, 0.0, -3.0, -3.0, 0.0, 2.0, 4.0, 4.0], ..limiter() }),
-        ("the bass boost", limiter(), Sound { effects: Effects { bass_boost_db: 8.0, ..Effects::default() }, ..limiter() }),
-        ("the expander", limiter(), Sound { effects: Effects { expander: Some(nori_player::compressor::ExpanderSettings { threshold_db: -20.0, ratio: 4.0, ..Default::default() }), ..Effects::default() }, ..limiter() }),
-        ("loudness compensation", limiter(), Sound { effects: Effects { loudness: Some(nori_player::contour::Loudness { reference_phon: 80.0, volume_db: -30.0 }), ..Effects::default() }, ..limiter() }),
-        ("the volume under loudness compensation", Sound { effects: Effects { loudness: Some(nori_player::contour::Loudness { reference_phon: 80.0, volume_db: -20.0 }), ..Effects::default() }, ..limiter() }, Sound { effects: Effects { loudness: Some(nori_player::contour::Loudness { reference_phon: 80.0, volume_db: -35.0 }), ..Effects::default() }, ..limiter() }),
-        ("the compressor", limiter(), Sound { effects: Effects { compressor: Some(CompressorPreset::Strong.settings()), ..Effects::default() }, ..limiter() }),
+        ("the compressor", limiter(), Sound { effects: Effects { compressor: Some(CompressorPreset::Car.settings()), ..Effects::default() }, ..limiter() }),
         ("the virtualizer", limiter(), Sound { effects: Effects { virtualizer: 1.0, ..Effects::default() }, ..limiter() }),
         ("the volume boost", limiter(), Sound { effects: Effects { boost_db: 6.0, ..Effects::default() }, ..limiter() }),
     ] {

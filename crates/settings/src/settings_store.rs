@@ -77,6 +77,18 @@ fn profiles_parametric(c: &Connection) -> bool {
     jsons.iter().any(|json| crate::settings::profile_parametric(json))
 }
 
+/// Rewrites the saved sound profiles stored before 0.6.3 in the new form (`settings::sound_from`).
+fn migrate_profiles(c: &Connection) -> rusqlite::Result<()> {
+    let Ok(mut st) = c.prepare("SELECT name, json FROM profiles") else { return Ok(()) };
+    let rows: Vec<(String, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.filter_map(|r| r.ok()).collect();
+    for (name, json) in rows {
+        if let Some(sound) = crate::settings::sound_from(&json).filter(|_| crate::settings::legacy_profile(&json)) {
+            c.execute("UPDATE profiles SET json=?1 WHERE name=?2", params![crate::settings::sound_json(&sound), name])?;
+        }
+    }
+    Ok(())
+}
+
 /// Replaces every stored setting in one transaction.
 fn write(c: &mut Connection, prefs: &StoredPrefs) -> rusqlite::Result<()> {
     let put = save(prefs);
@@ -127,8 +139,12 @@ impl SettingsStore {
         if !raw.is_empty() && !chosen && profiles_parametric(&c) {
             prefs.eq_mode = crate::settings::EqMode::Parametric;
         }
-        if raw.is_empty() || !chosen || raw.contains_key("jam") || raw.contains_key("jamAlong") {
+        let legacy = crate::settings::legacy(&raw);
+        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::old_screen_defaults(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
             write(&mut c, &prefs)?;
+        }
+        if legacy {
+            migrate_profiles(&c)?;
         }
         Ok(SettingsStore { db: Arc::new(Mutex::new(c)), written: Arc::new(Mutex::new(prefs.clone())), prefs, writes: Arc::new(AtomicU64::new(0)) })
     }
@@ -371,7 +387,7 @@ impl SoundTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{band_from, sound_json, EqMode, GainMode, SavedServer, EQ_MODE_KEY, EQ_RANGES};
+    use crate::settings::{band_from, sound_json, CompressorPreset, EqMode, GainMode, HeadphoneSound, Level, SavedServer, EQ_MODE_KEY, EQ_RANGES};
 
     fn open(dir: &nori_testdir::TempDir) -> SettingsStore {
         SettingsStore::open(&dir.join("nori.db").display().to_string()).unwrap()
@@ -406,10 +422,10 @@ mod tests {
             (StoredPrefs { eq_bands: vec![band_from(0, 100.0, 3.0, 1.0, 0)], ..a.clone() }, SOUND),
             (StoredPrefs { eq_enabled: true, ..a.clone() }, APPLY_AUDIO | SOUND),
             (StoredPrefs { replay_gain: GainMode::Track, ..a.clone() }, APPLY_GAIN | REPLAN | SOUND),
-            (StoredPrefs { loudness_target: -14.0, ..a.clone() }, APPLY_GAIN),
-            (StoredPrefs { gain_boost_db: 6.0, ..a.clone() }, APPLY_GAIN | SOUND),
+            (StoredPrefs { headphone: HeadphoneSound::Natural, ..a.clone() }, APPLY_AUDIO | SOUND),
+            (StoredPrefs { level: Level::Loud, ..a.clone() }, APPLY_GAIN),
             (StoredPrefs { crossfade_sec: 6, ..a.clone() }, APPLY_AUDIO | REPLAN),
-            (StoredPrefs { auto_mix_bass_swap: !a.auto_mix_bass_swap, ..a.clone() }, REPLAN),
+            (StoredPrefs { auto_mix: true, ..a.clone() }, APPLY_AUDIO | REPLAN),
             (StoredPrefs { fade_ms: a.fade_ms + 300, ..a.clone() }, PLAYER),
             (StoredPrefs { hi_res: !a.hi_res, ..a.clone() }, PLAYER),
             (StoredPrefs { previous_always_skips: true, ..a.clone() }, PLAYER),
@@ -426,9 +442,8 @@ mod tests {
         assert_eq!(effects(&a, &off_centre), APPLY_AUDIO | SOUND, "chain starts");
         assert_eq!(effects(&off_centre, &StoredPrefs { balance: -0.5, ..a.clone() }), SOUND, "drag step");
         assert_eq!(effects(&off_centre, &a), APPLY_AUDIO | SOUND, "chain stops");
-        let feed = StoredPrefs { crossfeed_db: 3.0, ..a.clone() };
-        assert_eq!(effects(&a, &feed), APPLY_AUDIO | SOUND);
-        assert_eq!(effects(&feed, &StoredPrefs { crossfeed_db: 4.5, ..a.clone() }), SOUND);
+        let feed = StoredPrefs { headphone: HeadphoneSound::Natural, ..a.clone() };
+        assert_eq!(effects(&feed, &StoredPrefs { headphone: HeadphoneSound::Wide, ..a.clone() }), SOUND, "the chain keeps running");
         let eq = StoredPrefs { eq_enabled: true, ..a.clone() };
         assert_eq!(effects(&eq, &StoredPrefs { balance: 0.3, ..eq.clone() }), SOUND, "chain already running");
         assert_eq!(effects(&eq, &StoredPrefs { limiter_threshold_db: -3.0, ..eq.clone() }), SOUND);
@@ -451,8 +466,8 @@ mod tests {
         assert_eq!(s.edit_level(EqLevel::Balance, -0.5), Some((APPLY_AUDIO | SOUND, -0.5)));
         assert_eq!(s.prefs.balance, -0.5);
         assert_eq!(s.edit_level(EqLevel::Balance, -0.6), Some((SOUND, -0.6)));
-        assert_eq!(s.edit_level(EqLevel::ReplayGainPreamp, 20.0), Some((APPLY_GAIN, 6.0)));
-        assert_eq!(s.prefs.preamp_db, 6.0);
+        assert_eq!(s.edit_level(EqLevel::VolumeBoost, 20.0), Some((SOUND, 12.0)), "held in range");
+        assert_eq!(s.prefs.volume_boost_db, 12.0);
     }
 
     #[test]
@@ -545,5 +560,229 @@ mod tests {
         assert!(matches!(s.sound_tool(SoundTool::Import { text: "nothing here".into() }), Err(SoundError::NoFilters)));
         assert_eq!(s.prefs.eq_bands.len(), n - 1, "a failed import changes nothing");
         assert_eq!(s.sound_tool(SoundTool::RemoveBand { index: 999 }).unwrap(), None);
+    }
+
+    /// Settings as 0.6.2 stored them (testdata/stored_0.6.2.txt): its defaults, or every setting changed.
+    fn stored_062(changed: bool) -> HashMap<String, PrefValue> {
+        let file = include_str!("../testdata/stored_0.6.2.txt");
+        let section = file.split("## ").filter(|s| !s.is_empty()).nth(if changed { 0 } else { 1 }).unwrap();
+        section
+            .lines()
+            .skip(1)
+            .filter(|l| !l.is_empty())
+            .map(|l| {
+                let (key, stored) = l.split_once(" = ").unwrap();
+                let (kind, v) = stored.split_once(' ').unwrap();
+                let value = match kind {
+                    "flag" => PrefValue::Flag { v: v == "true" },
+                    "int" => PrefValue::Number { v: v.parse().unwrap() },
+                    "long" => PrefValue::Big { v: v.parse().unwrap() },
+                    "float" => PrefValue::Decimal { v: v.parse().unwrap() },
+                    "text" => PrefValue::Text { v: serde_json::from_str(v).unwrap() },
+                    _ => PrefValue::Text { v: v.to_string() },
+                };
+                (key.to_string(), value)
+            })
+            .collect()
+    }
+
+    /// 0.6.2's defaults with `changes`.
+    fn old(changes: &[(&str, PrefValue)]) -> HashMap<String, PrefValue> {
+        let mut raw = stored_062(false);
+        raw.extend(changes.iter().map(|(k, v)| (k.to_string(), v.clone())));
+        raw
+    }
+
+    /// Settings stored as `raw` opened: what they are, and what is stored after.
+    fn open_old(name: &str, raw: &HashMap<String, PrefValue>) -> (StoredPrefs, HashMap<String, PrefValue>) {
+        let dir = nori_testdir::TempDir::new(name);
+        let path = dir.join("nori.db").display().to_string();
+        {
+            let c = db::open_app(&path).unwrap();
+            for (k, v) in raw {
+                c.execute("INSERT INTO settings(key, value) VALUES(?1, ?2)", params![k, to_json(v)]).unwrap();
+            }
+        }
+        let prefs = SettingsStore::open(&path).unwrap().prefs;
+        (prefs, read(&db::open_app(&path).unwrap()).unwrap())
+    }
+
+    fn flag(v: bool) -> PrefValue {
+        PrefValue::Flag { v }
+    }
+    fn number(v: i32) -> PrefValue {
+        PrefValue::Number { v }
+    }
+    fn decimal(v: f32) -> PrefValue {
+        PrefValue::Decimal { v }
+    }
+
+    #[test]
+    fn screen_defaults_migrate_once() {
+        use crate::settings::DimIdle;
+        for (dim, want) in [(0, DimIdle::Never), (1, DimIdle::HalfMinute), (2, DimIdle::Never), (3, DimIdle::FiveMinutes)] {
+            let raw = old(&[("burnInProtection", flag(true)), ("dimWhenIdle", number(dim))]);
+            let (prefs, stored) = open_old("screen-defaults", &raw);
+            assert_eq!((prefs.burn_in_protection, prefs.dim_when_idle), (false, want));
+            assert!(!stored.contains_key("burnInProtection") && !stored.contains_key("dimWhenIdle"));
+            let chosen = StoredPrefs { burn_in_protection: true, dim_when_idle: DimIdle::Minute, ..prefs };
+            assert_eq!(open_old("screen-chosen", &save(&chosen)).0, chosen);
+        }
+    }
+
+    #[test]
+    fn old_settings_are_stored_without_removed_keys() {
+        for changed in [false, true] {
+            let (prefs, stored) = open_old("old-keys", &stored_062(changed));
+            let left: Vec<&String> = stored.keys().filter(|k| crate::settings::LEGACY_KEYS.contains(&k.as_str())).collect();
+            assert!(left.is_empty(), "{left:?}");
+            assert_eq!(load(&stored), prefs, "read back as migrated, once");
+            assert_eq!(stored, save(&prefs));
+        }
+        let (prefs, _) = open_old("old-changed", &stored_062(true));
+        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb), (1, crate::settings::ThemeMode::Dark, 4096), "the rest as it was");
+    }
+
+    #[test]
+    fn old_leveling_becomes_automatic() {
+        for (mode, want) in [(0, GainMode::Off), (1, GainMode::Auto), (2, GainMode::Auto), (3, GainMode::Auto)] {
+            assert_eq!(open_old("old-leveling", &old(&[("replayGain", number(mode))])).0.replay_gain, want, "{mode}");
+        }
+    }
+
+    #[test]
+    fn old_loudness_target_becomes_nearest_level() {
+        for (lufs, want) in [(-14.0, Level::Loud), (-16.0, Level::Loud), (-18.0, Level::Normal), (-23.0, Level::Quiet)] {
+            assert_eq!(open_old("old-target", &old(&[("loudnessTarget", decimal(lufs))])).0.level, want, "{lufs}");
+        }
+    }
+
+    #[test]
+    fn old_crossfeed_and_virtualizer_become_headphone_sound() {
+        for (crossfeed, virtualizer, want) in [(0.0, 0.0, HeadphoneSound::Off), (4.5, 0.0, HeadphoneSound::Natural), (9.5, 0.0, HeadphoneSound::Natural), (0.0, 0.3, HeadphoneSound::Wide), (3.0, 1.0, HeadphoneSound::Wide)] {
+            let raw = old(&[("crossfeedDb", decimal(crossfeed)), ("virtualizer", decimal(virtualizer))]);
+            assert_eq!(open_old("old-headphone", &raw).0.headphone, want, "{crossfeed} dB, {virtualizer}");
+        }
+    }
+
+    #[test]
+    fn old_compressor_controls_become_nearest_preset() {
+        let gentle = [("compThresholdDb", -16.0), ("compRatio", 2.0), ("compAttackMs", 20.0), ("compReleaseMs", 250.0), ("compMakeupDb", 2.5), ("compKneeDb", 6.0)];
+        let strong = [("compThresholdDb", -28.0), ("compRatio", 5.0), ("compAttackMs", 5.0), ("compReleaseMs", 120.0), ("compMakeupDb", 8.0), ("compKneeDb", 8.0)];
+        let quick = [("compThresholdDb", -20.0), ("compRatio", 8.0), ("compAttackMs", 1.0), ("compReleaseMs", 150.0), ("compMakeupDb", 4.0), ("compKneeDb", 6.0)];
+        for (knobs, want) in [(gentle, CompressorPreset::Light), (strong, CompressorPreset::Car), (quick, CompressorPreset::Night)] {
+            let mut raw = old(&[("compressor", flag(true))]);
+            raw.extend(knobs.iter().map(|(k, v)| (k.to_string(), decimal(*v))));
+            let p = open_old("old-compressor", &raw).0;
+            assert!(p.compressor);
+            assert_eq!(p.compressor_preset, want, "{knobs:?}");
+        }
+        assert_eq!(open_old("old-compressor-default", &stored_062(false)).0.compressor_preset, CompressorPreset::Light, "the old default");
+    }
+
+    #[test]
+    fn old_bass_boost_becomes_the_equalizer_shelf() {
+        // The graphic equalizer off: on, flat but for the shelf, its pre-amp automatic.
+        let p = open_old("old-bass-graphic", &old(&[("bassBoostDb", decimal(6.0))])).0;
+        assert!(p.eq_enabled && p.eq_mode == EqMode::Graphic && p.eq_preamp_db.is_none());
+        assert!(p.eq_graphic[0] > 4.0 && p.eq_graphic[9].abs() < 0.1, "{:?}", p.eq_graphic);
+        let shelf = nori_player::dsp::bass_shelf(6.0);
+        let want = nori_player::graphic::sliders_for(&[nori_player::dsp::Band::from(&shelf)], 10, EQ_RANGES.gain.max as f64);
+        assert_eq!(p.eq_graphic, want.iter().map(|v| EQ_RANGES.gain.hold(*v as f32)).collect::<Vec<_>>(), "the same curve as the bass boost");
+        // A parametric equalizer in use keeps its bands and gains the shelf, its own pre-amp making room.
+        let raw = old(&[("bassBoostDb", decimal(4.0)), ("eqMode", number(0)), ("eqEnabled", flag(true)), ("eqBands", PrefValue::Text { v: "0:1000.0:-2.0:1.0:0".into() }), ("eqPreampDb", decimal(-1.0))]);
+        let p = open_old("old-bass-parametric", &raw).0;
+        assert_eq!(p.eq_bands, [band_from(0, 1000.0, -2.0, 1.0, 0), band_from(8, 100.0, 4.0, 0.8, 0)]);
+        assert_eq!(p.eq_preamp_db, Some(-5.0));
+        assert!(!open_old("old-no-bass", &old(&[("bassBoostDb", decimal(0.0))])).0.eq_enabled, "no boost: the equalizer as it was");
+    }
+
+    #[test]
+    fn old_cover_color_switches_become_places() {
+        use crate::settings::CoverPlace::*;
+        for (colors, amoled, player, album, artist, want) in [
+            (false, false, true, false, false, vec![]),
+            (true, false, false, false, false, vec![Pages, Player]),
+            (true, true, true, false, false, vec![Player]),
+            (true, true, false, true, false, vec![Pages]),
+            (true, true, false, false, true, vec![Pages]),
+            (true, true, true, true, true, vec![Pages, Player]),
+            (true, true, false, false, false, vec![]),
+        ] {
+            let raw = old(&[("coverColors", flag(colors)), ("amoled", flag(amoled)), ("playerColours", flag(player)), ("albumColours", flag(album)), ("artistColours", flag(artist))]);
+            assert_eq!(open_old("old-colors", &raw).0.cover_colors, want, "colors {colors}, AMOLED {amoled}, player {player}, album {album}, artist {artist}");
+        }
+    }
+
+    #[test]
+    fn old_picks_become_conditions() {
+        use crate::settings::AwakeWhen as A;
+        use crate::settings::CoverPlace as C;
+        use crate::settings::HideBarWhen as H;
+        let bars = [(0, vec![]), (1, vec![H::Sideways]), (2, vec![H::Upright]), (3, vec![H::Sideways, H::Upright]), (4, vec![H::Protected])];
+        for (pick, want) in bars {
+            let (p, stored) = open_old("old-bars", &old(&[("hideStatusBar", number(pick)), ("hideGestureBar", number(pick))]));
+            assert_eq!((p.hide_status_bar, p.hide_gesture_bar), (want.clone(), want), "{pick}");
+            assert!(!stored.contains_key("hideStatusBar") && !stored.contains_key("hideGestureBar"), "{stored:?}");
+        }
+        let awake = [(0, vec![]), (1, vec![A::Sideways]), (2, vec![A::Charging]), (3, vec![A::Sideways, A::Charging]), (4, vec![A::Sideways, A::Upright])];
+        for (pick, want) in awake {
+            assert_eq!(open_old("old-awake", &old(&[("keepAwake", number(pick))])).0.keep_awake, want, "{pick}");
+        }
+        // Stored by 0.6.3's first builds, with no key of 0.6.2's left.
+        for (pick, want) in [(0, vec![C::Pages, C::Player]), (1, vec![C::Pages]), (2, vec![C::Player]), (3, vec![])] {
+            let raw = HashMap::from([("coverColorsWhere".to_string(), number(pick)), ("keepAwake".to_string(), number(4)), ("motion".to_string(), number(2))]);
+            let (p, stored) = open_old("old-places", &raw);
+            assert_eq!((p.cover_colors, p.keep_awake, p.motion), (want, vec![A::Sideways, A::Upright], crate::settings::Motion::Eink), "{pick}");
+            assert_eq!(stored, save(&load(&stored)), "stored once, as read");
+            assert!(!crate::settings::PICK_KEYS.iter().any(|k| stored.contains_key(*k)), "{stored:?}");
+        }
+    }
+
+    #[test]
+    fn old_motion_switches_become_motion() {
+        use crate::settings::Motion::*;
+        for (reduce, eink, want) in [(false, false, Full), (true, false, Reduced), (false, true, Eink), (true, true, Eink)] {
+            let raw = old(&[("reduceMotion", flag(reduce)), ("einkScreen", flag(eink)), ("animateAnyway", flag(false))]);
+            assert_eq!(open_old("old-motion", &raw).0.motion, want, "reduce {reduce}, e-ink {eink}");
+        }
+    }
+
+    #[test]
+    fn old_crossfade_fades_become_the_longer() {
+        for (length, fade_in, fade_out, want) in [(6, 0, 0, 6), (6, 2, 4, 4), (8, 1, 0, 8), (4, 6, 2, 4), (0, 2, 2, 0)] {
+            let raw = old(&[("crossfadeSec", number(length)), ("crossfadeInSec", number(fade_in)), ("crossfadeOutSec", number(fade_out))]);
+            assert_eq!(open_old("old-crossfade", &raw).0.crossfade_sec, want, "{length} s, in {fade_in}, out {fade_out}");
+        }
+    }
+
+    #[test]
+    fn old_playlist_descriptions_become_playlist_notes() {
+        for shown in [false, true] {
+            let raw = old(&[("playlistDescriptions", flag(shown)), ("hideImportNotes", flag(!shown))]);
+            assert_eq!(open_old("old-notes", &raw).0.playlist_notes, shown);
+        }
+    }
+
+    #[test]
+    fn old_sound_profiles_are_stored_new() {
+        let dir = nori_testdir::TempDir::new("old-profiles");
+        let path = dir.join("nori.db").display().to_string();
+        let profile = r#"{"eqEnabled":false,"eqMode":1,"crossfeedDb":4.5,"crossfeedHz":700.0,"virtualizer":0.0,"bassBoostDb":3.0,"compressor":true,"compThresholdDb":-28.0,"compRatio":5.0,"compAttackMs":5.0,"compReleaseMs":120.0,"compMakeupDb":8.0,"compKneeDb":8.0,"replayGain":2,"preampDb":1.0,"crossfadeSec":4}"#;
+        {
+            let c = db::open_app(&path).unwrap();
+            for (k, v) in stored_062(false) {
+                c.execute("INSERT INTO settings(key, value) VALUES(?1, ?2)", params![k, to_json(&v)]).unwrap();
+            }
+            c.execute_batch("CREATE TABLE profiles(name TEXT PRIMARY KEY, json TEXT NOT NULL, outputs TEXT NOT NULL DEFAULT '') WITHOUT ROWID").unwrap();
+            c.execute("INSERT INTO profiles(name, json) VALUES('Car', ?1)", [profile]).unwrap();
+        }
+        SettingsStore::open(&path).unwrap();
+        let json: String = db::open_app(&path).unwrap().query_row("SELECT json FROM profiles", [], |r| r.get(0)).unwrap();
+        assert!(!crate::settings::legacy_profile(&json), "{json}");
+        let s = crate::settings::sound_from(&json).unwrap();
+        assert_eq!((s.effects.headphone, s.effects.compressor_preset, s.replay_gain, s.crossfade_sec), (HeadphoneSound::Natural, CompressorPreset::Car, GainMode::Auto, 4));
+        assert!(s.effects.compressor && s.eq_enabled && s.eq_graphic[0] > 2.0, "the bass boost on the equalizer");
+        assert_eq!(crate::settings::sound_from(profile).unwrap(), s, "read the same before it is stored again");
     }
 }

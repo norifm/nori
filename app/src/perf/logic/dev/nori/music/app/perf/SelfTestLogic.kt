@@ -375,7 +375,7 @@ fun plan(o: Options): List<Step> {
  * plays nor adds songs nor skips any by itself.
  */
 data class Knobs(
-    val eq: Boolean, val crossfeedDb: Float, val balance: Float, val mono: Boolean, val limiter: Boolean,
+    val eq: Boolean, val headphone: dev.nori.music.ffi.settings.HeadphoneSound, val balance: Float, val mono: Boolean, val limiter: Boolean,
     val speed: Float, val pitch: Float, val skipSilence: Boolean, val offload: Boolean, val crossfadeSec: Int, val autoMix: Boolean,
     val replayGain: GainMode, val scrobble: Boolean, val autoFill: Boolean, val skipExplicit: Boolean, val previousAlwaysSkips: Boolean,
     val fadeMs: Int,
@@ -383,7 +383,7 @@ data class Knobs(
 
 /** What the test starts from: the plain CPU path, nothing mixing, nothing reported, nothing added. */
 fun testKnobs(user: Knobs): Knobs = user.copy(
-    eq = false, crossfeedDb = 0f, balance = 0f, mono = false, limiter = false, speed = 1f, pitch = 1f,
+    eq = false, headphone = dev.nori.music.ffi.settings.HeadphoneSound.OFF, balance = 0f, mono = false, limiter = false, speed = 1f, pitch = 1f,
     skipSilence = false, offload = false, crossfadeSec = 0, autoMix = false, scrobble = false, autoFill = false,
     skipExplicit = false, previousAlwaysSkips = false, fadeMs = 0,
 )
@@ -392,7 +392,7 @@ fun testKnobs(user: Knobs): Knobs = user.copy(
 fun knobsDiffer(a: Knobs, b: Knobs): List<String> {
     val out = mutableListOf<String>()
     fun d(name: String, x: Any, y: Any) { if (x != y) out += name }
-    d("eqEnabled", a.eq, b.eq); d("crossfeedDb", a.crossfeedDb, b.crossfeedDb)
+    d("eqEnabled", a.eq, b.eq); d("headphoneSound", a.headphone, b.headphone)
     d("balance", a.balance, b.balance); d("mono", a.mono, b.mono); d("limiter", a.limiter, b.limiter); d("speed", a.speed, b.speed)
     d("pitch", a.pitch, b.pitch); d("skipSilence", a.skipSilence, b.skipSilence); d("offload", a.offload, b.offload)
     d("crossfadeSec", a.crossfadeSec, b.crossfadeSec); d("autoMix", a.autoMix, b.autoMix); d("replayGain", a.replayGain, b.replayGain)

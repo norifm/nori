@@ -466,7 +466,7 @@ pub(crate) mod tests {
         let remotes = Remotes::new(Level::new(0.4, Some(Box::new(move |v| *to_card.lock() = v))));
         let status = Status { state: State::Playing, ..Default::default() };
         assert_eq!(remotes.playing(&status).volume, Some(40));
-        assert!(remotes.level.set(0.25), "loudness moves with it");
+        remotes.level.set(0.25);
         assert_eq!((*card.lock(), remotes.playing(&status).volume), (0.25, Some(25)));
         // Waiting for audio as the status says it: the place is held, whenever the event is followed.
         let waiting = Status { state: State::Playing, buffering: true, position_ms: 5_000, at: nori_time::Instant::now() - nori_time::Duration::from_secs(2), ..Default::default() };

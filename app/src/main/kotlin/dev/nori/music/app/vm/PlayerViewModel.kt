@@ -157,24 +157,23 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     init {
         // The artwork either side of what is playing, fetched before it is asked for, so a skip does not
         // show an empty sleeve while the server renders the next cover. Same sizes and requests as the player and the rows, so a warmed cover is a cache hit.
-        // How far ahead is the user's (Settings, "Covers fetched ahead"); already-cached ones cost a
-        // memory lookup and nothing else.
+        // How far ahead is the core's (`covers::COVERS_AHEAD`); already-cached ones cost a memory lookup
+        // and nothing else.
         // Which positions, in which order, is the core's (`covers_around`, over the queue it keeps, which
         // also names the covers either side whose colours the bar works out ahead); it is asked once, only
         // when the queue, the playing song or a skip's target moves, not on every play/pause or buffering change.
         viewModelScope.launch {
-            kotlinx.coroutines.flow.combine(state, nori.settings.prefs.map { it.coversAhead }.distinctUntilChanged()) { s, ahead -> s to ahead }
-                .distinctUntilChanged { (a, x), (b, y) ->
-                    a.queue === b.queue && a.index == b.index && a.previousIndex == b.previousIndex && a.nextIndex == b.nextIndex && x == y
-                }
-                .map { (s, ahead) -> nori.core.coversAround(s.index, s.previousIndex, s.nextIndex, ahead) }
+            val ahead = dev.nori.music.ffi.coversAhead()
+            state
+                .distinctUntilChanged { a, b -> a.queue === b.queue && a.index == b.index && a.previousIndex == b.previousIndex && a.nextIndex == b.nextIndex }
+                .map { s -> nori.core.coversAround(s.index, s.previousIndex, s.nextIndex, ahead) }
                 .distinctUntilChanged()
                 .collect { around ->
                     _coversNear.value = around.near
                     // The covers a skip lands on (either side of the song playing) into memory, decoded: a
                     // skip lands on a picture that is already there. The ones further out onto the disk
                     // only, as the server sent them: decoded they held a megabyte or two each, ten either
-                    // way with "Covers fetched ahead" at 10, and a skip that far is a disk read away.
+                    // way, and a skip that far is a disk read away.
                     val loader = dev.nori.music.data.CoverLoader.get(getApplication<Application>())
                     for (want in around.wants) {
                         val url = nori.library.coverUrl(want.id, want.size.toInt()) ?: continue

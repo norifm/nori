@@ -22,6 +22,7 @@ import dev.nori.music.ffi.model.Song
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import dev.nori.music.ffi.settings.SwipeAction
 import kotlinx.coroutines.flow.first
@@ -158,29 +159,36 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
         nori.library.star(if (isAlbum) StarKind.ALBUM else StarKind.SONG, id, true)
     }
 
-    fun star(song: Song, on: Boolean) = favourite(on) {
+    fun star(song: Song, on: Boolean) = attempt(null) {
         if (!nori.remotes.starWherePlaying(song.id, on)) nori.library.star(StarKind.SONG, song.id, on)
     }
-    fun starAlbum(id: String, on: Boolean) = favourite(on) { nori.library.star(StarKind.ALBUM, id, on) }
-    fun starArtist(id: String, on: Boolean) = favourite(on) { nori.library.star(StarKind.ARTIST, id, on) }
-
-    /**
-     * The heart changes the moment it is pressed (starMarks), so its message does too, rather than
-     * waiting for the server. Only a failure comes back afterwards. The message can be switched off in Settings (the core
-     * says nothing then).
-     */
-    private fun favourite(on: Boolean, block: suspend () -> Unit) {
-        if (nori.core.favouriteNotice()) _messages.trySend(say.favourite(on))
-        attempt(null, block)
-    }
+    fun starAlbum(id: String, on: Boolean) = attempt(null) { nori.library.star(StarKind.ALBUM, id, on) }
+    fun starArtist(id: String, on: Boolean) = attempt(null) { nori.library.star(StarKind.ARTIST, id, on) }
 
     private val _shares = Channel<String>(Channel.BUFFERED)
     /** Links ready to hand to the system share sheet. */
     val shares = _shares.receiveAsFlow()
     fun share(id: String) = attempt(null) { _shares.send(nori.library.share(id)) }
 
-    fun download(songs: List<Song>) = askingBeats { beats ->
-        nori.downloads.download(songs, beats)
+    private val _mobileDownload = MutableStateFlow<List<Song>?>(null)
+    /** Songs asked for on mobile data, waiting for a yes before they download. */
+    val mobileDownload: StateFlow<List<Song>?> = _mobileDownload.asStateFlow()
+
+    fun download(songs: List<Song>) {
+        viewModelScope.launch {
+            if (withContext(Dispatchers.IO) { nori.http.metered }) _mobileDownload.value = songs else downloadNow(songs)
+        }
+    }
+
+    /** The answer to downloading [mobileDownload] over mobile data. */
+    fun downloadOnMobileData(yes: Boolean) {
+        val songs = _mobileDownload.value ?: return
+        _mobileDownload.value = null
+        if (yes) downloadNow(songs)
+    }
+
+    private fun downloadNow(songs: List<Song>) {
+        nori.downloads.download(songs)
         warmCovers(songs)
         _messages.trySend(say.downloadingSongs(songs.size))
     }
@@ -189,39 +197,7 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
      * Settings' "Analyse downloaded songs": the downloads with no current analysis, and those the beat model has
      * not read if it is on and wanted, are read back one at a time under the download service.
      */
-    fun analyseDownloads() = askingBeats { beats ->
-        nori.downloads.analyse(beats) { n -> _messages.trySend(if (n > 0) say.analysingDownloads(n) else say.nothingToAnalyse) }
-    }
-
-    /**
-     * A question waiting for its answer: whether the beat model also reads the songs being downloaded. [go] does
-     * what was asked for, with the answer.
-     */
-    class BeatsAsk(internal val go: (Boolean) -> Unit)
-
-    private val _beatsAsk = MutableStateFlow<BeatsAsk?>(null)
-    /** Download pressed with "Better beat detection" on and "ML beats for downloads" at Ask: the question on screen. */
-    val beatsAsk: StateFlow<BeatsAsk?> = _beatsAsk
-
-    /** Runs [go] with whether the beat model reads the songs: asked first when the settings say to (the core's `download_beats_offer`). */
-    private fun askingBeats(go: (Boolean) -> Unit) {
-        val offer = runCatching { nori.core.downloadBeatsOffer() }.getOrDefault(dev.nori.music.ffi.transfers.BeatsOffer.OFF)
-        if (offer == dev.nori.music.ffi.transfers.BeatsOffer.ASK) _beatsAsk.value = BeatsAsk(go)
-        else go(offer == dev.nori.music.ffi.transfers.BeatsOffer.YES)
-    }
-
-    /** The question answered: [yes] or no, and with [remember] the setting takes the answer and it is not asked again. */
-    fun answerBeats(yes: Boolean, remember: Boolean) {
-        val ask = _beatsAsk.value ?: return
-        _beatsAsk.value = null
-        if (remember) {
-            nori.settings.core.settingSet("downloadBeats", dev.nori.music.ffi.transfers.downloadBeatsRemembered(yes).name)?.let(nori.settings::took)
-        }
-        ask.go(yes)
-    }
-
-    /** The question put away unanswered: nothing is downloaded. */
-    fun dismissBeats() { _beatsAsk.value = null }
+    fun analyseDownloads() = nori.downloads.analyse { n -> _messages.trySend(if (n > 0) say.analysingDownloads(n) else say.nothingToAnalyse) }
 
     /**
      * Fetches the artwork of songs being downloaded onto the disk; which covers, at which addresses, is

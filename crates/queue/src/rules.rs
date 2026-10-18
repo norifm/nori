@@ -53,7 +53,7 @@ impl Session {
     /// The upcoming ids to prefetch on this network (`nori_player::queue::precache_range`).
     pub fn precache(&self, metered: bool) -> Vec<String> {
         let (count, mixing) = self.settings.prefs(|p| {
-            (q::precache_count(metered, p.precache_wifi, p.precache_mobile), q::mixing(self.planner.transitions_off(), p.crossfade_sec, p.auto_mix))
+            (q::precache_count(metered), q::mixing(self.planner.transitions_off(), p.crossfade_sec, p.auto_mix))
         });
         self.playlist(|p| {
             let Some((first, last)) = q::precache_range(count, mixing, p.shuffling()) else { return Vec::new() };
@@ -78,11 +78,11 @@ impl Session {
     /// A song failed to play: what to do (`nori_player::queue::on_error`). `bridge_ready`: the platform
     /// can hand a network failure to the offline bridge.
     pub fn error(&self, kind: PlaybackError, offload_refused: bool, bridge_ready: bool) -> OnError {
-        let (skip, bridge) = self.settings.prefs(|p| (p.skip_on_error, p.bridge_offline));
+        let bridge = self.settings.prefs(|p| p.bridge_offline);
         let has_next = self.playlist(|p| p.next().is_some());
         let mut c = self.controls.lock();
         c.last_error = Some(kind);
-        c.errors.failed(kind, offload_refused, bridge && bridge_ready, skip, has_next)
+        c.errors.failed(kind, offload_refused, bridge && bridge_ready, has_next)
     }
 
     /// The offline bridge took a network failure over: ends the error run.
@@ -112,9 +112,8 @@ impl Session {
     /// The offline bridge could not take a network failure: whether to skip it.
     #[cfg_attr(feature = "ffi", uniffi::method(name = "queue_bridge_failed"))]
     pub fn bridge_failed(&self) -> bool {
-        let skip = self.settings.prefs(|p| p.skip_on_error);
         let has_next = self.playlist(|p| p.next().is_some());
-        self.controls.lock().errors.bridge_failed(skip, has_next)
+        self.controls.lock().errors.bridge_failed(has_next)
     }
 
     /// Music is actually playing: ends the error run. A new song alone does not, since an error's skip is one.
@@ -142,12 +141,9 @@ impl Session {
             bridge: bridge_step(on, bridging, parked),
             precache_after_ms: t::PRECACHE_AFTER_MS,
             pause_at_end: self.sleep_song_changed(),
-            lyrics_ahead: self.lyrics_prefetch_ready(),
         }
     }
 
-    /// Whether lyrics prefetch should reconcile the next queue entry.
-    pub fn lyrics_prefetch_ready(&self) -> bool { self.settings.prefs(|p| p.lyrics_prefetch) }
 
     /// Whether previous restarts the current song (per "previous always skips").
     pub fn queue_previous_restarts(&self, position_ms: i64, has_previous: bool) -> bool {
@@ -156,9 +152,8 @@ impl Session {
 }
 
 impl Session {
-    /// Next queue entry to warm; disabled prefetch and provider tracks have no work.
+    /// Next queue entry whose lyrics are warmed; provider tracks have no work.
     pub fn lyrics_ahead(&self) -> Option<(u64, String)> {
-        if !self.settings.prefs(|p| p.lyrics_prefetch) { return None; }
         self.playlist(|p| {
             let next = p.next()?;
             let id = &p.ids()[next];
@@ -304,8 +299,6 @@ pub struct SongSteps {
     pub precache_after_ms: i64,
     /// The sleep timer's last song: pause at its end.
     pub pause_at_end: bool,
-    /// Warm the next library song's lyrics (`Client::lyrics_prefetch`).
-    pub lyrics_ahead: bool,
 }
 
 /// Whether the equalizer screen switches to the shallow buffer (`set_shallow`): screen visible, sound
@@ -334,8 +327,8 @@ mod tests {
     #[test]
     fn precache_choice() {
         let s = session(&["pc1", "pc2", "pc3", "pc4", "ext-5"], 0);
-        // Defaults: two ahead on Wi-Fi, one on metered; the player buffers the next song itself.
-        assert_eq!(s.precache(false), ["pc3"]);
+        // Three ahead on Wi-Fi, one on metered; the player buffers the next song itself.
+        assert_eq!(s.precache(false), ["pc3", "pc4"], "never a provider's");
         assert!(s.precache(true).is_empty());
         assert!(s.measure().is_empty(), "AutoMix off");
 

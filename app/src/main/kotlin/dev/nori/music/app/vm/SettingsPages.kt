@@ -3,29 +3,34 @@ package dev.nori.music.app.vm
 import dev.nori.music.text.Fmt
 import android.content.res.Resources
 import dev.nori.music.app.R
-import dev.nori.music.ffi.library.SettingsPart
 import dev.nori.music.ffi.library.TextIndex
 import dev.nori.music.ffi.model.MusicFolder
 import dev.nori.music.ffi.settings.BeatModel
 import dev.nori.music.ffi.settings.EqLevel
+import dev.nori.music.ffi.settings.PageFacts
+import dev.nori.music.ffi.settings.RowItem
 import dev.nori.music.ffi.settings.SavedServer
-import dev.nori.music.app.ui.providerStrings
+import dev.nori.music.ffi.settings.SectionId
 import dev.nori.music.ffi.settings.SettingKind
+import dev.nori.music.ffi.settings.SettingsAction
+import dev.nori.music.ffi.settings.SettingsClient
+import dev.nori.music.ffi.settings.SettingsLink
+import dev.nori.music.ffi.settings.SettingsNote
+import dev.nori.music.ffi.settings.SettingsPart
 import dev.nori.music.ffi.settings.SettingsState
-import dev.nori.music.ffi.settings.settingSpecs
+import dev.nori.music.ffi.settings.SettingSpec
+import dev.nori.music.app.ui.providerStrings
 import dev.nori.music.playback.DacState
 import dev.nori.music.ffi.settings.StoredPrefs
 import kotlin.math.roundToInt
 import dev.nori.music.settings.label
-import dev.nori.music.settings.server
 import dev.nori.music.update.Updates
 import dev.nori.music.net.said
 
 /*
- * The settings screen: its groups, pages, sections and rows, what each says and which are shown. The
- * settings themselves - their names, options as values, ranges and defaults, and what the core's rules
- * make of them (`SettingsState`) - are the core's model (nori-settings, settings_model.rs); everything a person
- * reads here is in res/values/strings.xml.
+ * The settings screen's words and rows. Which pages, sections and rows there are, which are shown and
+ * live, and every setting's options and range are the core's (nori-settings, settings_pages.rs, for the
+ * phone); this words them, from res/values/strings.xml, and turns them into the screen's rows.
  */
 
 /** A settings group: its own page, reached from the root of Settings. The icon is the screen's, by [id]. */
@@ -34,8 +39,8 @@ data class SettingsGroup(val id: String, val title: String, val summary: String)
 /** One search result: the page it opens, the row it points at, and the line under its title. */
 data class SettingsHit(val group: String, val key: String, val title: String, val detail: String)
 
-/** One switch of a [SettingRow.Picks]: the setting it turns on and off, and what it says. */
-data class Pick(val name: String, val label: String, val on: Boolean, val tapped: String = (!on).toString())
+/** One of a server's libraries, under it: whether it is shown, and the `musicFolders` value a tap sets. */
+data class Pick(val name: String, val label: String, val on: Boolean, val tapped: String)
 
 /** One choice in a list of options: what it says, and the value the core takes for it. */
 data class SettingOption(val label: String, val value: String)
@@ -66,10 +71,10 @@ sealed interface SettingRow {
     data class Ranked(val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean) : SettingRow
     /** The compressor's gain reduction, read from the player only while the page is on screen. */
     data class CompressionMeter(val key: String) : SettingRow
-    /** One setting made of several switches, each a place it applies to ([Pick]), shown side by side. */
-    data class Picks(val key: String, val title: String, val detail: String, val picks: List<Pick>) : SettingRow
-    /** One setting with a few values, all on view as chips, the one it has lit: [Picks] with one choice. */
+    /** One setting with a few values, all on view as chips, the one it has lit. */
     data class ChipChoice(val key: String, val name: String, val title: String, val detail: String, val options: List<SettingOption>, val chosen: String) : SettingRow
+    /** Independent conditions as chips, each lit while on; [value] is the core's form of the set (`SettingKind::Flags`). */
+    data class Flags(val key: String, val name: String, val title: String, val detail: String, val options: List<SettingOption>, val value: String, val enabled: Boolean) : SettingRow
     /** Text typed in (a service's key), hidden when [secret]. */
     data class Text(val key: String, val name: String, val title: String, val detail: String, val value: String, val secret: Boolean) : SettingRow
 }
@@ -85,9 +90,8 @@ data class ActionAsk(val title: String, val text: String, val confirm: String)
 /** What a page depends on besides the settings, from this phone. */
 data class SettingsFacts(
     val dac: DacState = DacState(),
-    /** Wallpaper colours and the blurred sleeve both need Android 12. */
+    /** Wallpaper colours need Android 12. */
     val wallpaperColours: Boolean = false,
-    val coverBlur: Boolean = false,
     /** Songs AutoMix has measured. */
     val analysed: Int = 0,
     val sync: SyncUi = SyncUi(),
@@ -108,49 +112,27 @@ fun settingKey(title: String): String {
     return key.toString().trim('-')
 }
 
-/** Each setting's options as values, from the core's model; asked once. */
-private val OPTIONS: Map<String, List<String>> by lazy { settingSpecs().associate { it.name to it.options } }
-/** Both bars' choices, worded in the core's order (`HideBar`). */
-private val HIDE_BAR = intArrayOf(
-    R.string.settings_hide_bar_never, R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright,
-    R.string.settings_hide_bar_always, R.string.settings_hide_bar_protected,
-)
-
-private val ACCENTS: List<Long> by lazy { settingSpecs().first { it.kind == SettingKind.COLOUR }.options.map { it.toLong() } }
-
-/** The groups the root of Settings lists: connect first, then what plays, how it sounds, how it looks; those the profile opens ([parts]). */
-fun settingsGroups(res: Resources, parts: List<SettingsPart>): List<SettingsGroup> =
-    GROUPS.filter { opens(it.first, parts) }.map { (id, title, summary) -> SettingsGroup(id, res.getString(title), res.getString(summary)) }
-
-/** Whether a profile that opens [parts] of the settings opens group or page [id]. */
-private fun opens(id: String, parts: List<SettingsPart>): Boolean = when (id) {
-    "servers" -> SettingsPart.PROFILES in parts
-    "playing" -> SettingsPart.PLAYBACK in parts
-    "sound" -> SettingsPart.SOUND in parts
-    "look" -> SettingsPart.LOOK in parts
-    "lyrics", "lyrics-sources" -> SettingsPart.LYRICS in parts
-    "library" -> SettingsPart.LIBRARY in parts
-    "data" -> listOf(SettingsPart.STREAMING, SettingsPart.DOWNLOADS, SettingsPart.STORAGE).any { it in parts }
-    else -> SettingsPart.ABOUT in parts
-}
-
+/** The pages by the id the screen's routes use, with their titles and summaries. */
 private val GROUPS = listOf(
-    Triple("servers", R.string.settings_group_servers, R.string.settings_group_servers_summary),
-    Triple("playing", R.string.settings_group_playing, R.string.settings_group_playing_summary),
-    Triple("sound", R.string.settings_group_sound, R.string.settings_group_sound_summary),
-    Triple("look", R.string.settings_group_look, R.string.settings_group_look_summary),
-    Triple("lyrics", R.string.settings_group_lyrics, R.string.settings_group_lyrics_summary),
-    Triple("library", R.string.settings_group_library, R.string.settings_group_library_summary),
-    Triple("data", R.string.settings_group_data, R.string.settings_group_data_summary),
-    Triple("about", R.string.settings_group_about, R.string.settings_group_about_summary),
+    Triple("servers", dev.nori.music.ffi.settings.SettingsPage.SERVERS, R.string.settings_group_servers to R.string.settings_group_servers_summary),
+    Triple("playing", dev.nori.music.ffi.settings.SettingsPage.PLAYING, R.string.settings_group_playing to R.string.settings_group_playing_summary),
+    Triple("sound", dev.nori.music.ffi.settings.SettingsPage.SOUND, R.string.settings_group_sound to R.string.settings_group_sound_summary),
+    Triple("look", dev.nori.music.ffi.settings.SettingsPage.LOOK, R.string.settings_group_look to R.string.settings_group_look_summary),
+    Triple("lyrics", dev.nori.music.ffi.settings.SettingsPage.LYRICS, R.string.settings_group_lyrics to R.string.settings_group_lyrics_summary),
+    Triple("lyrics-sources", dev.nori.music.ffi.settings.SettingsPage.LYRICS_SOURCES, R.string.settings_page_lyrics_sources to 0),
+    Triple("library", dev.nori.music.ffi.settings.SettingsPage.LIBRARY, R.string.settings_group_library to R.string.settings_group_library_summary),
+    Triple("data", dev.nori.music.ffi.settings.SettingsPage.DATA, R.string.settings_group_data to R.string.settings_group_data_summary),
+    Triple("about", dev.nori.music.ffi.settings.SettingsPage.ABOUT, R.string.settings_group_about to R.string.settings_group_about_summary),
 )
+
+/** The groups the root of Settings lists, in the core's order; those the profile opens ([parts]). */
+fun settingsGroups(res: Resources, parts: List<SettingsPart>): List<SettingsGroup> {
+    val pages = dev.nori.music.ffi.settings.settingsPages(SettingsClient.PHONE, parts)
+    return GROUPS.filter { it.second in pages && it.third.second != 0 }.map { (id, _, words) -> SettingsGroup(id, res.getString(words.first), res.getString(words.second)) }
+}
 
 /** A page's title: a group's, or one of the pages reached from inside another (`page:<id>`). */
-private fun pageTitle(id: String): Int? = GROUPS.firstOrNull { it.first == id }?.second ?: when (id) {
-    "licences" -> R.string.settings_page_licences
-    "lyrics-sources" -> R.string.settings_page_lyrics_sources
-    else -> null
-}
+private fun pageTitle(id: String): Int? = GROUPS.firstOrNull { it.first == id }?.third?.first ?: if (id == "licences") R.string.settings_page_licences else null
 
 /** Each lyrics service's name and what it is good at, by the id the core stores it under. */
 private val SERVICES: Map<String, Pair<Int, Int>> = mapOf(
@@ -172,185 +154,200 @@ private val SERVICES: Map<String, Pair<Int, Int>> = mapOf(
     "GENIUS" to (R.string.lyrics_service_genius to R.string.lyrics_service_genius_about),
 )
 
-// ---- search ----
+/** What search finds a service by, besides its name. */
+private val SERVICE_HINTS: Map<String, Int> = mapOf(
+    "BINILYRICS" to R.string.settings_hint_service_apple, "BETTER_LYRICS" to R.string.settings_hint_service_apple, "PAXSENIX" to R.string.settings_hint_service_apple,
+    "LYRICS_PLUS" to R.string.settings_hint_service_lyrics_plus, "PORTATO" to R.string.settings_hint_service_portato,
+    "PAXSENIX_MUSIXMATCH" to R.string.settings_hint_service_musixmatch, "SIMPMUSIC" to R.string.settings_hint_service_simpmusic,
+    "UNISON" to R.string.settings_hint_service_unison, "NETEASE" to R.string.settings_hint_service_netease, "KUGOU" to R.string.settings_hint_service_kugou,
+    "LRCLIB" to R.string.settings_hint_service_lrclib, "PAXSENIX_SPOTIFY" to R.string.settings_hint_service_spotify,
+    "YOUTUBE_CAPTIONS" to R.string.settings_hint_service_lines, "MEGALOBIZ" to R.string.settings_hint_service_lines,
+    "YOUTUBE_MUSIC" to R.string.settings_hint_service_untimed, "GENIUS" to R.string.settings_hint_service_untimed,
+)
 
-/** Rows only a build with the beat model's runtime has. */
-private val BEAT_MODEL_ROWS = setOf(R.string.settings_better_beats, R.string.settings_beats_mobile_data, R.string.settings_download_beats)
+/** A setting's title, and the words search also finds it by (0: none). */
+private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
+    "crossfadeSec" to (R.string.settings_crossfade to R.string.settings_hint_crossfade),
+    "autoMix" to (R.string.settings_automix to R.string.settings_hint_automix),
+    "autoMixBetterBeats" to (R.string.settings_better_beats to R.string.settings_hint_better_beats),
+    "fadeMs" to (R.string.settings_fade to R.string.settings_hint_fade),
+    "previousAlwaysSkips" to (R.string.settings_previous to R.string.settings_hint_previous),
+    "speed" to (R.string.settings_speed to 0),
+    "pitch" to (R.string.settings_pitch to 0),
+    "skipSilence" to (R.string.settings_skip_silence to R.string.settings_hint_skip_silence),
+    "skipExplicit" to (R.string.settings_skip_explicit to R.string.settings_hint_skip_explicit),
+    "autoFill" to (R.string.settings_auto_fill to R.string.settings_hint_auto_fill),
+    "autoFillKind" to (R.string.settings_auto_fill_kind to R.string.settings_hint_auto_fill_kind),
+    "autoFillBasis" to (R.string.settings_auto_fill_basis to R.string.settings_hint_auto_fill_basis),
+    "autoFillRemote" to (R.string.settings_auto_fill_remote to R.string.settings_hint_auto_fill_remote),
+    "bridgeOffline" to (R.string.settings_bridge_offline to R.string.settings_hint_bridge_offline),
+    "autoEqAuto" to (R.string.settings_autoeq_auto to R.string.settings_hint_autoeq_auto),
+    "autoEqDownload" to (R.string.settings_autoeq_list to R.string.settings_hint_autoeq_list),
+    "profilePerOutput" to (R.string.settings_per_device to R.string.settings_hint_per_device),
+    "soundBypass" to (R.string.settings_sound_bypass to R.string.settings_sound_bypass_detail),
+    "headphoneSound" to (R.string.settings_headphone_sound to R.string.settings_hint_headphone_sound),
+    "compressor" to (R.string.settings_compressor to R.string.settings_compressor_detail),
+    "compressorPreset" to (R.string.settings_compressor_preset to 0),
+    "replayGain" to (R.string.settings_volume_leveling to R.string.settings_hint_volume_leveling),
+    "loudnessLevel" to (R.string.settings_level to R.string.settings_hint_level),
+    "volumeBoostDb" to (R.string.settings_volume_boost_title to R.string.settings_boost_note),
+    "hiRes" to (R.string.settings_hi_res to R.string.settings_hint_hi_res),
+    "maxRate" to (R.string.settings_max_rate to R.string.settings_hint_max_rate),
+    "bitPerfect" to (R.string.settings_bit_perfect to R.string.settings_hint_bit_perfect),
+    "offload" to (R.string.settings_offload to R.string.settings_hint_offload),
+    "theme" to (R.string.settings_theme to R.string.settings_hint_theme),
+    "amoled" to (R.string.settings_amoled to R.string.settings_hint_amoled),
+    "dynamicColor" to (R.string.settings_wallpaper to R.string.settings_hint_wallpaper),
+    "accent" to (R.string.settings_accent to 0),
+    "coverColors" to (R.string.settings_cover_colours to R.string.settings_hint_cover_colours),
+    "movingCovers" to (R.string.settings_moving_covers to R.string.settings_hint_moving_covers),
+    "hideStatusBar" to (R.string.settings_hide_status_bar to R.string.settings_hint_hide_status_bar),
+    "hideGestureBar" to (R.string.settings_hide_gesture_bar to R.string.settings_hint_hide_gesture_bar),
+    "keepAwake" to (R.string.settings_keep_awake to R.string.settings_hint_keep_awake),
+    "burnInProtection" to (R.string.settings_burn_in to R.string.settings_hint_burn_in),
+    "dimWhenIdle" to (R.string.settings_dim_idle to R.string.settings_hint_dim_idle),
+    "dimLevel" to (R.string.settings_dim_level to 0),
+    "controlsSide" to (R.string.settings_controls_side to R.string.settings_hint_controls_side),
+    "motion" to (R.string.settings_motion to R.string.settings_hint_motion),
+    "lyricsSweep" to (R.string.settings_lyrics_sweep to R.string.settings_hint_lyrics_sweep),
+    "lyricsSize" to (R.string.settings_lyrics_size to 0),
+    "lyricsTranslation" to (R.string.settings_lyrics_translation to R.string.settings_hint_lyrics_translation),
+    "lyricsTimingButton" to (R.string.settings_lyrics_timing_button to R.string.settings_hint_lyrics_timing_button),
+    "lyricsKeepScreenOn" to (R.string.settings_lyrics_screen_on to R.string.settings_hint_lyrics_screen_on),
+    "lyricsOnline" to (R.string.settings_lyrics_online to R.string.settings_hint_lyrics_online),
+    "lyricsPreferWords" to (R.string.settings_lyrics_words to R.string.settings_hint_lyrics_words),
+    "paxSenixKey" to (R.string.settings_paxsenix_key to R.string.settings_hint_paxsenix_key),
+    "betterLyricsKey" to (R.string.settings_betterlyrics_key to R.string.settings_hint_betterlyrics_key),
+    "tapAction" to (R.string.settings_tap_action to R.string.settings_hint_tap_action),
+    "swipeRight" to (R.string.settings_swipe_right to 0),
+    "swipeLeft" to (R.string.settings_swipe_left to 0),
+    "playlistNotes" to (R.string.settings_playlist_notes to R.string.settings_hint_playlist_notes),
+    "tasteModel" to (R.string.settings_taste_model to R.string.settings_hint_taste_model),
+    "scrobble" to (R.string.settings_scrobble to R.string.settings_hint_scrobble),
+    "queueOffer" to (R.string.settings_queue_offer to 0),
+    "thirdPartyLookups" to (R.string.settings_lookups to R.string.settings_hint_lookups),
+    "remoteControl" to (R.string.settings_remote_control to R.string.settings_hint_remote_control),
+    "wifi" to (R.string.settings_quality_wifi to 0),
+    "mobile" to (R.string.settings_quality_mobile to 0),
+    "download" to (R.string.settings_quality_download to 0),
+    "cacheMb" to (R.string.settings_cache_size to R.string.settings_hint_cache_size),
+    "altMaxBitRate" to (R.string.settings_alt_bitrate to 0),
+    "updateCheck" to (R.string.settings_update_auto to R.string.settings_update_auto_detail),
+    "updateBeta" to (R.string.settings_update_beta to R.string.settings_update_beta_detail),
+)
 
-/**
- * What the search can find: which page a row lives on, its title, and the words under it. A row is
- * matched by its own title, so the entry here and the row on the page cannot drift apart in wording -
- * only in existence. The hints are the rows' own descriptions, plus the jargon someone might type.
- */
-private val INDEX: List<Triple<String, Int, Int>> = listOf(
-    Triple("playing", R.string.settings_crossfade, R.string.settings_hint_crossfade),
-    Triple("playing", R.string.settings_crossfade_curve, 0),
-    Triple("playing", R.string.settings_automix, R.string.settings_hint_automix),
-    Triple("playing", R.string.settings_longest_mix, 0),
-    Triple("playing", R.string.settings_match_beat, R.string.settings_hint_match_beat),
-    Triple("playing", R.string.settings_biggest_speed_change, 0),
-    Triple("playing", R.string.settings_keep_pitch, R.string.settings_hint_keep_pitch),
-    Triple("playing", R.string.settings_swap_bass, R.string.settings_hint_swap_bass),
-    Triple("playing", R.string.settings_muffle, R.string.settings_hint_muffle),
-    Triple("playing", R.string.settings_echo_out, R.string.settings_hint_echo_out),
-    Triple("playing", R.string.settings_better_beats, R.string.settings_hint_better_beats),
-    Triple("playing", R.string.settings_beats_mobile_data, R.string.settings_hint_beats_mobile_data),
-    Triple("playing", R.string.settings_measured, R.string.settings_hint_measured),
-    Triple("playing", R.string.settings_keep_albums, R.string.settings_hint_keep_albums),
-    Triple("playing", R.string.settings_fade, R.string.settings_hint_fade),
-    Triple("playing", R.string.settings_speed, 0),
-    Triple("playing", R.string.settings_pitch, 0),
-    Triple("playing", R.string.settings_skip_silence, R.string.settings_hint_skip_silence),
-    Triple("playing", R.string.settings_previous, R.string.settings_hint_previous),
-    Triple("playing", R.string.settings_skip_explicit, R.string.settings_hint_skip_explicit),
-    Triple("playing", R.string.settings_auto_fill, R.string.settings_hint_auto_fill),
-    Triple("playing", R.string.settings_auto_fill_kind, R.string.settings_hint_auto_fill_kind),
-    Triple("playing", R.string.settings_auto_fill_basis, R.string.settings_hint_auto_fill_basis),
-    Triple("playing", R.string.settings_auto_fill_remote, R.string.settings_hint_auto_fill_remote),
-    Triple("playing", R.string.settings_skip_errors, R.string.settings_hint_skip_errors),
-    Triple("playing", R.string.settings_bridge_offline, R.string.settings_hint_bridge_offline),
-    Triple("sound", R.string.settings_equalizer, 0),
-    Triple("sound", R.string.settings_autoeq_auto, R.string.settings_hint_autoeq_auto),
-    Triple("sound", R.string.settings_autoeq_list, R.string.settings_hint_autoeq_list),
-    Triple("sound", R.string.settings_per_device, R.string.settings_hint_per_device),
-    Triple("sound", R.string.settings_sound_bypass, R.string.settings_sound_bypass_detail),
-    Triple("sound", R.string.settings_system_effects, 0),
-    Triple("sound", R.string.settings_bass_boost_title, 0),
-    Triple("sound", R.string.settings_virtualizer_title, R.string.settings_virtualizer_hint),
-    Triple("sound", R.string.settings_volume_boost_title, 0),
-    Triple("sound", R.string.settings_compressor, R.string.settings_compressor_detail),
-    Triple("sound", R.string.settings_expander, R.string.settings_expander_detail),
-    Triple("sound", R.string.settings_loudness, R.string.settings_loudness_detail),
-    Triple("sound", R.string.settings_replay_gain, R.string.settings_hint_replay_gain),
-    Triple("sound", R.string.settings_loudness_target, R.string.settings_hint_loudness_target),
-    Triple("sound", R.string.settings_gain_boost, R.string.settings_hint_gain_boost),
-    Triple("sound", R.string.settings_untagged_gain, 0),
-    Triple("sound", R.string.settings_gain_measured, R.string.settings_hint_gain_measured),
-    Triple("sound", R.string.settings_hi_res, R.string.settings_hint_hi_res),
-    Triple("sound", R.string.settings_max_rate, R.string.settings_hint_max_rate),
-    Triple("sound", R.string.settings_bit_perfect, R.string.settings_hint_bit_perfect),
-    Triple("sound", R.string.settings_offload, R.string.settings_hint_offload),
-    Triple("look", R.string.settings_theme, R.string.settings_hint_theme),
-    Triple("look", R.string.settings_amoled, R.string.settings_hint_amoled),
-    Triple("look", R.string.settings_home_rows, 0),
-    Triple("look", R.string.settings_library_sections, 0),
-    Triple("look", R.string.settings_keep_colours, R.string.settings_hint_keep_colours),
-    Triple("look", R.string.settings_wallpaper, R.string.settings_hint_wallpaper),
-    Triple("look", R.string.settings_cover_colours, R.string.settings_hint_cover_colours),
-    Triple("look", R.string.settings_blur, R.string.settings_hint_blur),
-    Triple("look", R.string.settings_moving_covers, R.string.settings_hint_moving_covers),
-    Triple("look", R.string.settings_moving_covers_mobile, R.string.settings_hint_moving_covers_mobile),
-    Triple("look", R.string.settings_confirm_favourites, R.string.settings_hint_confirm_favourites),
-    Triple("look", R.string.settings_ui_scale, 0),
-    Triple("look", R.string.settings_less_movement, R.string.settings_hint_less_movement),
-    Triple("look", R.string.settings_eink_screen, R.string.settings_hint_eink_screen),
-    Triple("look", R.string.settings_hide_status_bar, R.string.settings_hint_hide_status_bar),
-    Triple("look", R.string.settings_hide_gesture_bar, R.string.settings_hint_hide_gesture_bar),
-    Triple("look", R.string.settings_keep_awake, R.string.settings_hint_keep_awake),
-    Triple("look", R.string.settings_burn_in, R.string.settings_hint_burn_in),
-    Triple("look", R.string.settings_dim_idle, R.string.settings_hint_dim_idle),
-    Triple("look", R.string.settings_dim_level, 0),
-    Triple("look", R.string.settings_controls_side, R.string.settings_hint_controls_side),
-    Triple("look", R.string.settings_animate_anyway, R.string.settings_hint_animate_anyway),
-    Triple("lyrics", R.string.settings_lyrics_prefetch, R.string.settings_hint_lyrics_prefetch),
-    Triple("lyrics", R.string.settings_lyrics_sweep, R.string.settings_hint_lyrics_sweep),
-    Triple("lyrics", R.string.settings_lyrics_size, 0),
-    Triple("lyrics", R.string.settings_lyrics_translation, R.string.settings_hint_lyrics_translation),
-    Triple("lyrics", R.string.settings_lyrics_timing_button, R.string.settings_hint_lyrics_timing_button),
-    Triple("lyrics", R.string.settings_lyrics_screen_on, R.string.settings_hint_lyrics_screen_on),
-    Triple("lyrics", R.string.settings_lyrics_online, R.string.settings_hint_lyrics_online),
-    Triple("lyrics", R.string.settings_lyrics_words, R.string.settings_hint_lyrics_words),
-    Triple("lyrics", R.string.settings_lyrics_sources, R.string.settings_hint_lyrics_sources),
-    Triple("lyrics-sources", R.string.lyrics_service_binilyrics, R.string.settings_hint_service_apple),
-    Triple("lyrics-sources", R.string.lyrics_service_better_lyrics, R.string.settings_hint_service_apple),
-    Triple("lyrics-sources", R.string.lyrics_service_paxsenix, R.string.settings_hint_service_apple),
-    Triple("lyrics-sources", R.string.lyrics_service_lyrics_plus, R.string.settings_hint_service_lyrics_plus),
-    Triple("lyrics-sources", R.string.lyrics_service_portato, R.string.settings_hint_service_portato),
-    Triple("lyrics-sources", R.string.lyrics_service_paxsenix_musixmatch, R.string.settings_hint_service_musixmatch),
-    Triple("lyrics-sources", R.string.lyrics_service_simpmusic, R.string.settings_hint_service_simpmusic),
-    Triple("lyrics-sources", R.string.lyrics_service_unison, R.string.settings_hint_service_unison),
-    Triple("lyrics-sources", R.string.lyrics_service_netease, R.string.settings_hint_service_netease),
-    Triple("lyrics-sources", R.string.lyrics_service_kugou, R.string.settings_hint_service_kugou),
-    Triple("lyrics-sources", R.string.lyrics_service_lrclib, R.string.settings_hint_service_lrclib),
-    Triple("lyrics-sources", R.string.lyrics_service_paxsenix_spotify, R.string.settings_hint_service_spotify),
-    Triple("lyrics-sources", R.string.lyrics_service_youtube_captions, R.string.settings_hint_service_lines),
-    Triple("lyrics-sources", R.string.lyrics_service_megalobiz, R.string.settings_hint_service_lines),
-    Triple("lyrics-sources", R.string.lyrics_service_youtube_music, R.string.settings_hint_service_untimed),
-    Triple("lyrics-sources", R.string.lyrics_service_genius, R.string.settings_hint_service_untimed),
-    Triple("lyrics-sources", R.string.settings_paxsenix_key, R.string.settings_hint_paxsenix_key),
-    Triple("lyrics-sources", R.string.settings_betterlyrics_key, R.string.settings_hint_betterlyrics_key),
-    Triple("library", R.string.settings_tap_action, R.string.settings_hint_tap_action),
-    Triple("library", R.string.settings_swipe_right, 0),
-    Triple("library", R.string.settings_swipe_left, 0),
-    Triple("library", R.string.settings_playlist_descriptions, R.string.settings_hint_playlist_descriptions),
-    Triple("library", R.string.settings_hide_import_notes, R.string.settings_hint_hide_import_notes),
-    Triple("library", R.string.settings_offline_search, R.string.settings_hint_offline_search),
-    Triple("library", R.string.settings_search_delay, R.string.settings_hint_search_delay),
-    Triple("library", R.string.settings_taste_model, R.string.settings_hint_taste_model),
-    Triple("library", R.string.settings_scrobble, R.string.settings_hint_scrobble),
-    Triple("library", R.string.settings_queue_offer, 0),
-    Triple("library", R.string.settings_scrobble_after, 0),
-    Triple("library", R.string.settings_lookups, R.string.settings_hint_lookups),
-    Triple("library", R.string.settings_remote_control, R.string.settings_hint_remote_control),
-    Triple("data", R.string.settings_quality_wifi, 0),
-    Triple("data", R.string.settings_quality_mobile, 0),
-    Triple("data", R.string.settings_quality_download, 0),
-    Triple("data", R.string.settings_parallel_downloads, R.string.settings_hint_parallel_downloads),
-    Triple("data", R.string.settings_download_library, 0),
-    Triple("data", R.string.settings_download_beats, R.string.settings_hint_download_beats),
-    Triple("data", R.string.settings_analyse_downloads, R.string.settings_hint_analyse_downloads),
-    Triple("data", R.string.settings_ahead_wifi, R.string.settings_hint_ahead_wifi),
-    Triple("data", R.string.settings_ahead_mobile, 0),
-    Triple("data", R.string.settings_covers_ahead, 0),
-    Triple("data", R.string.settings_cache_size, R.string.settings_hint_cache_size),
-    Triple("data", R.string.settings_stored, R.string.settings_hint_stored),
-    Triple("data", R.string.settings_streamed, R.string.settings_hint_streamed),
-    Triple("data", R.string.settings_covers, R.string.settings_hint_covers),
-    Triple("data", R.string.settings_lyrics_cache, R.string.settings_hint_lyrics_cache),
-    Triple("about", R.string.settings_page_licences, R.string.settings_hint_licences),
-    Triple("about", R.string.settings_update_check_now, R.string.settings_hint_updates),
-    Triple("about", R.string.settings_update_auto, R.string.settings_update_auto_detail),
-    Triple("about", R.string.settings_update_beta, R.string.settings_update_beta_detail),
-    Triple("servers", R.string.settings_music_folder, 0),
-    Triple("servers", R.string.settings_alt_bitrate, 0),
+/** The words of a setting's values that are names: by setting, in the options' order. */
+private val NAMED: Map<String, IntArray> = mapOf(
+    "autoFillKind" to intArrayOf(R.string.settings_auto_fill_kind_songs, R.string.settings_auto_fill_kind_albums),
+    "autoFillBasis" to intArrayOf(R.string.settings_auto_fill_basis_similar, R.string.settings_auto_fill_basis_artist, R.string.settings_auto_fill_basis_genre, R.string.settings_auto_fill_basis_era),
+    "headphoneSound" to intArrayOf(R.string.settings_off, R.string.settings_headphone_natural, R.string.settings_headphone_wide),
+    "movingCovers" to intArrayOf(R.string.settings_off, R.string.settings_moving_covers_wifi, R.string.settings_moving_covers_always),
+    "compressorPreset" to intArrayOf(R.string.settings_compressor_light, R.string.settings_compressor_car, R.string.settings_compressor_night),
+    "replayGain" to intArrayOf(R.string.settings_off, R.string.settings_leveling_song, R.string.settings_leveling_album, R.string.settings_leveling_auto),
+    "loudnessLevel" to intArrayOf(R.string.settings_level_quiet, R.string.settings_level_normal, R.string.settings_level_loud),
+    "maxRate" to intArrayOf(R.string.settings_max_rate_auto, R.string.settings_max_rate_48, R.string.settings_max_rate_96, R.string.settings_max_rate_192),
+    "theme" to intArrayOf(R.string.settings_theme_system, R.string.settings_theme_light, R.string.settings_theme_dark),
+    "coverColors" to intArrayOf(R.string.settings_cover_colours_pages, R.string.settings_cover_colours_player),
+    "motion" to intArrayOf(R.string.settings_motion_full, R.string.settings_motion_reduced, R.string.settings_motion_eink),
+    "hideStatusBar" to HIDE_BAR,
+    "hideGestureBar" to HIDE_BAR,
+    "keepAwake" to intArrayOf(R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright, R.string.settings_when_charging),
+    "dimWhenIdle" to intArrayOf(R.string.settings_dim_idle_never, R.string.settings_dim_idle_half_minute, R.string.settings_dim_idle_minute, R.string.settings_dim_idle_five_minutes),
+    "dimLevel" to intArrayOf(R.string.settings_dim_level_light, R.string.settings_dim_level_medium, R.string.settings_dim_level_strong),
+    "controlsSide" to intArrayOf(R.string.settings_controls_side_driver, R.string.settings_controls_side_left, R.string.settings_controls_side_right),
+    "tapAction" to intArrayOf(R.string.settings_tap_play_list, R.string.settings_tap_play_one, R.string.settings_tap_queue, R.string.settings_tap_play_next),
+    "swipeRight" to SWIPES,
+    "swipeLeft" to SWIPES,
+)
+
+/** What hides either bar, worded in the core's order (`HideBarWhen`). */
+private val HIDE_BAR get() = intArrayOf(R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright, R.string.settings_hide_bar_protected)
+private val SWIPES get() = intArrayOf(R.string.settings_swipe_none, R.string.settings_swipe_queue, R.string.settings_swipe_play_next, R.string.settings_swipe_favourite, R.string.settings_swipe_download)
+
+/** What a link, action or info row is called, and what search also finds it by. */
+private fun itemWords(item: RowItem): Pair<Int, Int>? = when (item) {
+    is RowItem.Link -> when (item.to) {
+        SettingsLink.EQUALIZER -> R.string.settings_equalizer to 0
+        SettingsLink.SYSTEM_EFFECTS -> R.string.settings_system_effects to 0
+        SettingsLink.HOME_ROWS -> R.string.settings_home_rows to 0
+        SettingsLink.LIBRARY_SECTIONS -> R.string.settings_library_sections to 0
+        SettingsLink.LYRICS_SOURCES -> R.string.settings_lyrics_sources to R.string.settings_hint_lyrics_sources
+        SettingsLink.DOWNLOADS -> R.string.settings_downloads to 0
+    }
+    is RowItem.Action -> when (item.action) {
+        SettingsAction.MEASURE_AGAIN -> R.string.settings_measured to R.string.settings_hint_measured
+        SettingsAction.SYNC_LIBRARY -> R.string.settings_offline_search to R.string.settings_hint_offline_search
+        SettingsAction.DOWNLOAD_LIBRARY -> R.string.settings_download_library to 0
+        SettingsAction.ANALYSE_DOWNLOADS -> R.string.settings_analyse_downloads to R.string.settings_hint_analyse_downloads
+        SettingsAction.CLEAR_STREAM -> R.string.settings_streamed to R.string.settings_hint_streamed
+        SettingsAction.CLEAR_COVERS -> R.string.settings_covers to R.string.settings_hint_covers
+        SettingsAction.CLEAR_LYRICS -> R.string.settings_lyrics_cache to R.string.settings_hint_lyrics_cache
+        SettingsAction.CHECK_UPDATE -> R.string.settings_update_check_now to R.string.settings_hint_updates
+        SettingsAction.ADD_SERVER, SettingsAction.JOIN_JAM -> null
+    }
+    is RowItem.Stored -> R.string.settings_stored to R.string.settings_hint_stored
+    else -> null
+}
+
+/** The core's facts for a page, from this phone's. */
+private fun pageFacts(res: Resources, f: SettingsFacts, parts: List<SettingsPart>) = PageFacts(
+    parts = parts,
+    wallpaperColors = f.wallpaperColours,
+    car = res.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK == android.content.res.Configuration.UI_MODE_TYPE_CAR,
+    folders = f.folders.map { it.id },
+    analysed = f.analysed.toUInt(),
+    indexedSongs = f.sync.indexed.songs,
+    syncing = f.sync.running,
+    streamBytes = f.storage.streamBytes,
+    coverBytes = f.storage.coverBytes,
+    lyricsBytes = f.storage.lyricsBytes,
+    downloadSongs = f.storage.downloadSongs.toUInt(),
+    storageBusy = f.storage.busy,
 )
 
 /**
- * The settings search, over [INDEX] in this [res]'s language: titles first, then anything whose words
+ * The settings search, over every row of every page in this [res]'s language (the core's rows, as the
+ * pages have them, so the entry and the row cannot drift apart): titles first, then anything whose words
  * mention the query, each in the order of the pages (the core's `TextIndex`, one call per query).
- * [beatModel]: whether this build offers better beat detection.
  */
-class SettingsSearch(private val res: Resources, private val beatModel: Boolean) {
-    private val entries = INDEX.filter { beatModel || it.second !in BEAT_MODEL_ROWS }
-    private val text: TextIndex by lazy { TextIndex(entries.map { (_, t, h) -> listOf(res.getString(t), if (h == 0) "" else res.getString(h)) }) }
+class SettingsSearch(private val res: Resources, p: StoredPrefs, s: SettingsState, f: SettingsFacts, parts: List<SettingsPart>) {
+    private val entries: List<Triple<String, String, String>> = GROUPS.flatMap { (id, page, _) ->
+        dev.nori.music.ffi.settings.settingsPage(page, SettingsClient.PHONE, p, s, pageFacts(res, f, parts)).flatMap { it.rows }.mapNotNull { row ->
+            val item = row.item
+            val (title, hint) = when (item) {
+                is RowItem.Setting -> SETTING_WORDS[item.spec.name]?.let { (t, h) -> res.getString(t) to (if (h == 0) "" else res.getString(h)) }
+                is RowItem.LyricsSource -> s.lyricsSources.getOrNull(item.index.toInt())?.let { src ->
+                    SERVICES[src.id]?.let { (t, _) -> res.getString(t) to (SERVICE_HINTS[src.id]?.let(res::getString) ?: "") }
+                }
+                else -> itemWords(item)?.let { (t, h) -> res.getString(t) to (if (h == 0) "" else res.getString(h)) }
+            } ?: return@mapNotNull null
+            Triple(id, title, hint)
+        }
+    } + listOf(Triple("about", res.getString(R.string.settings_page_licences), res.getString(R.string.settings_hint_licences)))
+    private val text: TextIndex by lazy { TextIndex(entries.map { (_, t, h) -> listOf(t, h) }) }
 
-    fun find(query: String, parts: List<SettingsPart>): List<SettingsHit> = text.ranked(query.trim()).filter { opens(entries[it.toInt()].first, parts) }.map { i ->
-        val (group, t, h) = entries[i.toInt()]
-        val title = res.getString(t)
+    fun find(query: String): List<SettingsHit> = text.ranked(query.trim()).map { i ->
+        val (group, title, hint) = entries[i.toInt()]
         val page = pageTitle(group)?.let(res::getString).orEmpty()
-        SettingsHit(group, settingKey(title), title, if (h == 0) page else res.getString(R.string.settings_hit_detail, page, res.getString(h)))
+        SettingsHit(group, settingKey(title), title, if (hint.isEmpty()) page else res.getString(R.string.settings_hit_detail, page, hint))
     }
 }
 
-// ---- the pages ----
-
 /** One group's page for these settings, facts and the core's state; null for a group there is not, or one the profile does not open ([parts]). */
 fun settingsPage(res: Resources, id: String, p: StoredPrefs, f: SettingsFacts, s: SettingsState, parts: List<SettingsPart>): SettingsPage? {
-    val title = pageTitle(id)?.takeIf { opens(id, parts) } ?: return null
-    val b = PageBuilder(res, p, f, s, parts)
-    val sections = when (id) {
-        "playing" -> b.playing()
-        "sound" -> b.sound()
-        "look" -> b.look()
-        "lyrics" -> b.lyrics()
-        "lyrics-sources" -> b.lyricsSources()
-        "library" -> b.library()
-        "data" -> b.data()
-        "servers" -> b.servers()
-        "about" -> b.about()
-        else -> emptyList()
+    val (_, page, words) = GROUPS.firstOrNull { it.first == id } ?: return null
+    if (page !in dev.nori.music.ffi.settings.settingsPages(SettingsClient.PHONE, parts)) return null
+    val b = PageBuilder(res, p, f, s)
+    val sections = dev.nori.music.ffi.settings.settingsPage(page, SettingsClient.PHONE, p, s, pageFacts(res, f, parts))
+    // A server's libraries are drawn inside the server in use, not as rows of their own.
+    val libraries = sections.firstOrNull { it.id == SectionId.MUSIC_FOLDERS }?.rows.orEmpty().filter { it.shown }.mapNotNull { r ->
+        val item = r.item as? RowItem.MusicFolder ?: return@mapNotNull null
+        f.folders.getOrNull(item.index.toInt())?.let { Pick("musicFolders", it.name, item.on, item.tapped) }
     }
-    return SettingsPage(res.getString(title), sections)
+    val shown = sections.filter { it.id != SectionId.MUSIC_FOLDERS }.map { sec ->
+        SettingsSection(res.getString(b.sectionTitle(sec.id)), sec.rows.filter { it.shown }.mapNotNull { b.row(it, libraries) })
+    }.filter { it.rows.isNotEmpty() }
+    return SettingsPage(res.getString(words.first), shown)
 }
 
 /** One of a DAC's modes, or what is playing: "44.1 kHz / 24 bit" (the rate in the phone's number style). */
@@ -431,252 +428,280 @@ fun updateButton(res: Resources, s: Updates.State, installs: Boolean): String? =
     else -> res.getString(R.string.update_check)
 }
 
-private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: SettingsFacts, val s: SettingsState, val parts: List<SettingsPart>) {
+/** Turns the core's rows into the screen's, in words. */
+private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: SettingsFacts, val s: SettingsState) {
     fun str(id: Int) = res.getString(id)
     fun str(id: Int, vararg args: Any) = res.getString(id, *args)
-    fun value(name: String) = s.values[name].orEmpty()
-    fun on(name: String) = value(name) == "true"
 
-    fun toggle(name: String, title: Int, detail: String, enabled: Boolean = true, on: Boolean = on(name)): SettingRow.Toggle {
-        val t = str(title)
-        return SettingRow.Toggle(settingKey(t), name, t, detail, on, enabled)
+    fun sectionTitle(id: SectionId): Int = when (id) {
+        SectionId.ACCOUNTS -> R.string.settings_section_accounts
+        SectionId.MUSIC_FOLDERS, SectionId.THIS_SERVER -> R.string.settings_section_this_server
+        SectionId.BETWEEN -> R.string.settings_section_between
+        SectionId.CONTROLS -> R.string.settings_section_controls
+        SectionId.QUEUE -> R.string.settings_section_queue
+        SectionId.EQUALIZER -> R.string.settings_section_equalizer
+        SectionId.EFFECTS -> R.string.settings_section_effects
+        SectionId.VOLUME -> R.string.settings_section_volume
+        SectionId.OUTPUT -> R.string.settings_section_output
+        SectionId.THEME -> R.string.settings_section_theme
+        SectionId.COVER -> R.string.settings_section_cover
+        SectionId.HOME -> R.string.settings_section_home
+        SectionId.SCREEN -> R.string.settings_section_screen
+        SectionId.MOTION -> R.string.settings_section_motion
+        SectionId.DISPLAY -> R.string.settings_section_display
+        SectionId.SOURCES -> R.string.settings_section_sources
+        SectionId.ASKED_ORDER -> R.string.settings_section_asked_order
+        SectionId.KEYS -> R.string.settings_section_keys
+        SectionId.LISTS -> R.string.settings_section_lists
+        SectionId.PLAYLISTS -> R.string.settings_section_playlists
+        SectionId.SEARCH -> R.string.settings_section_search
+        SectionId.HISTORY -> R.string.settings_section_history
+        SectionId.ONLINE -> R.string.settings_section_online
+        SectionId.DEVICES -> R.string.settings_section_devices
+        SectionId.STREAMING -> R.string.settings_section_streaming
+        SectionId.DOWNLOADS -> R.string.settings_section_downloads
+        SectionId.STORAGE -> R.string.settings_section_storage
+        SectionId.UPDATES -> R.string.settings_updates
     }
-
-    fun toggle(name: String, title: Int, detail: Int, enabled: Boolean = true) = toggle(name, title, str(detail), enabled)
-
-    /** The core's options for [name] as chips, each worded by [labels] in the options' order. */
-    fun chips(name: String, title: Int, detail: Int, vararg labels: Int): SettingRow.ChipChoice {
-        val t = str(title)
-        val options = OPTIONS[name].orEmpty().mapIndexed { i, v -> SettingOption(labels.getOrNull(i)?.let(::str) ?: v, v) }
-        return SettingRow.ChipChoice(settingKey(t), name, t, str(detail), options, value(name))
-    }
-
-    fun picks(title: Int, detail: Int, vararg picks: Pair<String, Int>): SettingRow.Picks {
-        val t = str(title)
-        return SettingRow.Picks(settingKey(t), t, str(detail), picks.map { (name, label) -> Pick(name, str(label), on(name)) })
-    }
-
-    /** A list of the core's options for [name], each worded by [label]; [fallback] words a value no option is. */
-    fun choice(name: String, title: Int, enabled: Boolean = true, fallback: (String) -> String = { it }, label: (String) -> String): SettingRow.Choice {
-        val options = OPTIONS[name].orEmpty().map { SettingOption(label(it), it) }
-        return choiceOf(name, title, options, enabled, fallback)
-    }
-
-    fun choiceOf(name: String, title: Int, options: List<SettingOption>, enabled: Boolean = true, fallback: (String) -> String = { it }): SettingRow.Choice {
-        val v = value(name)
-        val t = str(title)
-        return SettingRow.Choice(settingKey(t), name, t, options, options.firstOrNull { it.value == v }?.label ?: fallback(v), enabled)
-    }
-
-    /** An enum setting: its options by name, worded by [labels] in the same order. */
-    fun named(name: String, title: Int, vararg labels: Int): SettingRow.Choice {
-        val names = OPTIONS[name].orEmpty()
-        return choice(name, title) { v -> names.indexOf(v).takeIf { it in labels.indices }?.let { str(labels[it]) } ?: v }
-    }
-
-    fun action(title: Int, detail: String, button: String, enabled: Boolean, act: String): SettingRow.Action {
-        val t = str(title)
-        return SettingRow.Action(settingKey(t), t, detail, button, enabled, false, act)
-    }
-
-    fun link(title: Int, status: String, dimmed: Boolean, act: String, divider: Boolean): SettingRow.Link {
-        val t = str(title)
-        return SettingRow.Link(settingKey(t), t, status, dimmed, act, divider)
-    }
-
-    fun section(title: Int, rows: List<SettingRow>) = SettingsSection(str(title), rows)
 
     // How values read.
     fun offOr(v: String, words: (String) -> String) = if (v == "0") str(R.string.settings_off) else words(v)
     fun seconds(v: String) = str(R.string.settings_seconds, v)
     fun millis(v: String) = str(R.string.settings_millis, v)
     fun percent(v: String) = str(R.string.settings_percent, v)
-    /** A float setting's value as Kotlin writes a float ("1.1"), for one no option is. */
-    fun float(v: String) = v.toFloatOrNull()?.toString() ?: v
-    /** −3 dB with a true minus sign. */
-    fun minus(v: String) = v.replace('-', '−')
 
-    fun playing(): List<SettingsSection> {
-        val live = !s.untouched
-        val between = mutableListOf<SettingRow>()
-        if (s.untouched) between += SettingRow.Note(str(R.string.settings_held_by_dac))
-        // AutoMix plans its own transitions, so the plain crossfade gives way to it.
-        if (!p.autoMix) between += choice("crossfadeSec", R.string.settings_crossfade, live) { offOr(it, ::seconds) }
-        // How a plain crossfade sounds: its curve, and how long each side takes within it.
-        if (!p.autoMix && p.crossfadeSec > 0) {
-            between += named("crossfadeCurve", R.string.settings_crossfade_curve, R.string.settings_crossfade_equal_power, R.string.settings_crossfade_linear, R.string.settings_crossfade_s_curve)
-            fun part(v: String) = if (v == "0") str(R.string.settings_crossfade_whole) else seconds(v)
-            between += choice("crossfadeInSec", R.string.settings_crossfade_in, live, label = ::part)
-            between += choice("crossfadeOutSec", R.string.settings_crossfade_out, live, label = ::part)
-        }
-        between += toggle("autoMix", R.string.settings_automix, R.string.settings_automix_detail, live)
-        if (p.autoMix) {
-            between += choice("autoMixMaxS", R.string.settings_longest_mix, live, label = ::seconds)
-            between += toggle("autoMixBeatMatch", R.string.settings_match_beat, R.string.settings_match_beat_detail, live)
-            if (p.autoMixBeatMatch) {
-                between += choice("autoMixMaxTempoPct", R.string.settings_biggest_speed_change, live, ::float, ::percent)
-                between += toggle("autoMixKeepPitch", R.string.settings_keep_pitch, R.string.settings_keep_pitch_detail, live)
-            }
-            between += toggle("autoMixBassSwap", R.string.settings_swap_bass, R.string.settings_swap_bass_detail, live)
-            between += toggle("autoMixFilters", R.string.settings_muffle, R.string.settings_muffle_detail, live)
-            between += toggle("autoMixEchoOut", R.string.settings_echo_out, R.string.settings_echo_out_detail, live)
-            // Only in a build that carries the beat model's runtime.
-            val model = s.beatModel
-            if (model !is BeatModel.Unavailable) {
-                val mb = s.beatModelMb.toInt()
-                val better = p.autoMixBetterBeats
-                val detail = if (!better) str(R.string.settings_better_beats_off, mb) else when (model) {
-                    is BeatModel.Failed -> str(R.string.settings_better_beats_failed, str(when (model.why) {
-                        dev.nori.music.ffi.automix.BeatFailure.NETWORK -> R.string.settings_better_beats_network
-                        dev.nori.music.ffi.automix.BeatFailure.WRONG_FILE -> R.string.settings_better_beats_wrong_file
-                        dev.nori.music.ffi.automix.BeatFailure.STORAGE -> R.string.settings_better_beats_storage
-                    }))
-                    BeatModel.WaitingForWifi -> str(R.string.settings_better_beats_waiting, mb)
-                    BeatModel.Downloading -> str(R.string.settings_better_beats_downloading, mb)
-                    BeatModel.Ready -> str(R.string.settings_better_beats_ready)
-                    else -> str(R.string.settings_better_beats_absent, mb)
-                }
-                between += toggle("autoMixBetterBeats", R.string.settings_better_beats, detail, live)
-                if (better && model != BeatModel.Ready) {
-                    between += toggle("autoMixBeatsMobileData", R.string.settings_beats_mobile_data, R.string.settings_beats_mobile_data_detail, live)
-                }
-            }
-            between += action(
-                R.string.settings_measured, res.getQuantityString(R.plurals.settings_measured_detail, f.analysed, f.analysed),
-                str(R.string.settings_measure_again), f.analysed > 0, "measure-again",
-            )
-        }
-        between += toggle("crossfadeKeepAlbums", R.string.settings_keep_albums, R.string.settings_keep_albums_detail, live)
-        between += choice("fadeMs", R.string.settings_fade) { v -> offOr(v) { if (it.toInt() % 1000 == 0) seconds((it.toInt() / 1000).toString()) else millis(it) } }
-
-        val controls = listOf(
-            toggle("previousAlwaysSkips", R.string.settings_previous, R.string.settings_previous_detail),
-            choice("speed", R.string.settings_speed, fallback = ::float) { if (it == "1") str(R.string.settings_normal) else str(R.string.settings_times, it) },
-            choice("pitch", R.string.settings_pitch, fallback = ::float) { v ->
-                val pct = ((v.toFloat() - 1f) * 100f).roundToInt()
+    /** A setting value in words. */
+    fun valueWords(name: String, v: String, options: List<String>): String {
+        NAMED[name]?.let { labels -> return options.indexOf(v).takeIf { it in labels.indices }?.let { str(labels[it]) } ?: v }
+        return when (name) {
+            "crossfadeSec" -> offOr(v, ::seconds)
+            "fadeMs" -> offOr(v) { if (it.toInt() % 1000 == 0) seconds((it.toInt() / 1000).toString()) else millis(it) }
+            "speed" -> if (v == "1") str(R.string.settings_normal) else str(R.string.settings_times, v)
+            "pitch" -> {
+                val pct = ((v.toFloatOrNull() ?: 1f) - 1f).times(100f).roundToInt()
                 when {
                     pct == 0 -> str(R.string.settings_normal)
                     pct < 0 -> percent("−${-pct}")
                     else -> percent("+$pct")
                 }
-            },
-            toggle("skipSilence", R.string.settings_skip_silence, str(if (s.untouched) R.string.settings_skip_silence_held else R.string.settings_skip_silence_detail), live),
-        )
-
-        val queue = mutableListOf<SettingRow>(
-            toggle("skipExplicit", R.string.settings_skip_explicit, R.string.settings_skip_explicit_detail),
-            toggle("autoFill", R.string.settings_auto_fill, R.string.settings_auto_fill_detail),
-        )
-        // What arrives and what it is chosen by are two separate questions, so they are two rows.
-        if (p.autoFill) {
-            queue += named("autoFillKind", R.string.settings_auto_fill_kind, R.string.settings_auto_fill_kind_songs, R.string.settings_auto_fill_kind_albums)
-            queue += named(
-                "autoFillBasis", R.string.settings_auto_fill_basis, R.string.settings_auto_fill_basis_similar, R.string.settings_auto_fill_basis_artist,
-                R.string.settings_auto_fill_basis_genre, R.string.settings_auto_fill_basis_era,
-            )
-            queue += toggle("autoFillRemote", R.string.settings_auto_fill_remote, R.string.settings_auto_fill_remote_detail)
-        }
-        val wrong = listOf(
-            toggle("skipOnError", R.string.settings_skip_errors, R.string.settings_skip_errors_detail),
-            toggle("bridgeOffline", R.string.settings_bridge_offline, R.string.settings_bridge_offline_detail),
-        )
-        return listOf(
-            section(R.string.settings_section_between, between), section(R.string.settings_section_controls, controls),
-            section(R.string.settings_section_queue, queue), section(R.string.settings_section_wrong, wrong),
-        )
-    }
-
-    fun sound(): List<SettingsSection> {
-        // The chain is taken out of the path by the same rule the transitions are, so the row says so
-        // rather than reading "On" over sound it is not touching.
-        val bypassed = s.untouched
-        val status = str(if (bypassed) R.string.settings_equalizer_off_now else if (s.soundChainOn) R.string.settings_on else R.string.settings_off)
-        val eq = listOf(
-            link(R.string.settings_equalizer, status, bypassed, "equalizer", divider = true),
-            toggle("autoEqAuto", R.string.settings_autoeq_auto, R.string.settings_autoeq_auto_detail),
-            // Under the switch for looking things up at all (Library), and turns it on with it.
-            toggle("autoEqDownload", R.string.settings_autoeq_list, R.string.settings_autoeq_list_detail),
-            toggle("profilePerOutput", R.string.settings_per_device, R.string.settings_per_device_detail),
-            toggle("soundBypass", R.string.settings_sound_bypass, R.string.settings_sound_bypass_detail),
-            link(R.string.settings_system_effects, "", false, "system-effects", divider = false),
-        )
-        val volume = mutableListOf<SettingRow>(
-            named("replayGain", R.string.settings_replay_gain, R.string.settings_off, R.string.settings_replay_gain_track, R.string.settings_replay_gain_album, R.string.settings_replay_gain_auto),
-        )
-        if (p.replayGain != dev.nori.music.ffi.model.GainMode.OFF) {
-            val r = dev.nori.music.settings.EQ.eqRanges.replayGainPreamp
-            volume += SettingRow.Slider("preampDb", str(R.string.settings_overall_level, Fmt.signedDb(p.preampDb)), p.preampDb, r.min, r.max, true, EqLevel.REPLAY_GAIN_PREAMP)
-            volume += choice("loudnessTarget", R.string.settings_loudness_target, fallback = { str(R.string.settings_lufs, minus(float(it))) }) {
-                val words = when (it) {
-                    "-18" -> R.string.settings_lufs_replay_gain
-                    "-14", "-16" -> R.string.settings_lufs_streaming
-                    "-23" -> R.string.settings_lufs_broadcast
-                    else -> R.string.settings_lufs
+            }
+            "lyricsSize" -> when (v) {
+                "0" -> str(R.string.settings_lyrics_size_small)
+                "1" -> str(R.string.settings_lyrics_size_medium)
+                "2" -> str(R.string.settings_lyrics_size_large)
+                else -> v
+            }
+            "wifi", "mobile", "download" -> {
+                val (rate, format) = v.split(':', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+                when (format) {
+                    "" -> str(R.string.settings_quality_original)
+                    "mp3" -> str(R.string.settings_quality_mp3, rate.toInt())
+                    "opus" -> str(R.string.settings_quality_opus, rate.toInt())
+                    else -> "$rate $format"
                 }
-                str(words, minus(it))
             }
-            // Past 0 dB a song needs its samples turned up, with the limiter behind them: it keeps off the audio chip.
-            volume += choice("gainBoostDb", R.string.settings_gain_boost, fallback = ::float) { offOr(it) { v -> str(R.string.settings_gain_boost_upto, "+$v") } }
-            volume += choice("untaggedGainDb", R.string.settings_untagged_gain, fallback = ::float) { str(R.string.settings_db, minus(it)) }
-            volume += toggle("gainMeasured", R.string.settings_gain_measured, R.string.settings_gain_measured_detail)
+            "cacheMb" -> v.toInt().let { mb -> if (mb >= 1024 && mb % 1024 == 0) str(R.string.settings_gigabytes, mb / 1024) else str(R.string.settings_megabytes, mb) }
+            "altMaxBitRate" -> if (v == "0") str(R.string.settings_alt_bitrate_none) else str(R.string.settings_kbps, v.toInt())
+            else -> v
         }
-        val d = f.dac
-        val output = mutableListOf<SettingRow>(
-            toggle("hiRes", R.string.settings_hi_res, R.string.settings_hi_res_detail),
-            named("maxRate", R.string.settings_max_rate, R.string.settings_max_rate_auto, R.string.settings_max_rate_48, R.string.settings_max_rate_96, R.string.settings_max_rate_192),
-            toggle("bitPerfect", R.string.settings_bit_perfect, bitPerfectWords(d)),
-        )
-        // What is actually going out, rather than what was asked for.
-        dacDetail(d)?.let { output += SettingRow.Note(it) }
-        val offload = str(if (d.device != null) R.string.settings_offload_usb else if (s.offloadPaused) R.string.settings_offload_paused else R.string.settings_offload_detail)
-        output += toggle("offload", R.string.settings_offload, offload)
-        return listOf(
-            section(R.string.settings_section_equalizer, eq), section(R.string.settings_section_effects, effects()),
-            section(R.string.settings_section_volume, volume), section(R.string.settings_section_output, output),
-        )
     }
 
-    /** Bass boost, virtualizer, volume boost and the compressor: sliders edited in place in the core. */
-    fun effects(): List<SettingRow> {
-        fun boost(db: Float) = if (db <= 0f) str(R.string.settings_off) else str(R.string.settings_db, Fmt.signedDb(db))
-        fun one(v: Float) = "%.1f".format(v)
-        val rows = mutableListOf<SettingRow>(
-            SettingRow.Slider("bassBoostDb", str(R.string.settings_bass_boost, boost(p.bassBoostDb)), p.bassBoostDb, 0f, 12f, false, EqLevel.BASS_BOOST),
-            SettingRow.Slider(
-                "virtualizer",
-                str(R.string.settings_virtualizer, if (p.virtualizer <= 0f) str(R.string.settings_off) else percent((p.virtualizer * 100f).roundToInt().toString())),
-                p.virtualizer, 0f, 1f, false, EqLevel.VIRTUALIZER,
-            ),
-            SettingRow.Slider("volumeBoostDb", str(R.string.settings_volume_boost, boost(p.volumeBoostDb)), p.volumeBoostDb, 0f, 12f, false, EqLevel.VOLUME_BOOST),
-            SettingRow.Note(str(R.string.settings_boost_note)),
-            toggle("compressor", R.string.settings_compressor, R.string.settings_compressor_detail),
-        )
-        if (p.compressor) {
-            rows += SettingRow.CompressionMeter("compression-meter")
-            rows += choice("compressorPreset", R.string.settings_compressor_preset, fallback = { str(R.string.settings_compressor_custom) }) {
-                str(when (it) { "GENTLE" -> R.string.settings_compressor_gentle; "STRONG" -> R.string.settings_compressor_strong; else -> R.string.settings_compressor_balanced })
+    /** The line under a setting, where it has one. */
+    fun detail(name: String): String = when (name) {
+        "crossfadeSec" -> str(R.string.settings_crossfade_detail)
+        "autoMix" -> str(R.string.settings_automix_detail)
+        "autoMixBetterBeats" -> {
+            val mb = s.beatModelMb.toInt()
+            if (!p.autoMixBetterBeats) str(R.string.settings_better_beats_off, mb) else when (val model = s.beatModel) {
+                is BeatModel.Failed -> str(R.string.settings_better_beats_failed, str(when (model.why) {
+                    dev.nori.music.ffi.automix.BeatFailure.NETWORK -> R.string.settings_better_beats_network
+                    dev.nori.music.ffi.automix.BeatFailure.WRONG_FILE -> R.string.settings_better_beats_wrong_file
+                    dev.nori.music.ffi.automix.BeatFailure.STORAGE -> R.string.settings_better_beats_storage
+                }))
+                BeatModel.WaitingForWifi -> str(R.string.settings_better_beats_waiting, mb)
+                BeatModel.Downloading -> str(R.string.settings_better_beats_downloading, mb)
+                BeatModel.Ready -> str(R.string.settings_better_beats_ready)
+                else -> str(R.string.settings_better_beats_absent, mb)
             }
-            // The sliders span the useful part of each control (a ratio of 3 was a sliver at the start of
-            // 1 to 20); the core takes the wider values a profile or the terminal may hold.
-            rows += SettingRow.Slider("compThresholdDb", str(R.string.settings_comp_threshold, minus(one(p.compThresholdDb))), p.compThresholdDb, -60f, 0f, false, EqLevel.COMP_THRESHOLD)
-            rows += SettingRow.Slider("compRatio", str(R.string.settings_comp_ratio, one(p.compRatio)), p.compRatio.coerceIn(1f, 10f), 1f, 10f, false, EqLevel.COMP_RATIO)
-            rows += SettingRow.Slider("compAttackMs", str(R.string.settings_comp_attack, one(p.compAttackMs)), p.compAttackMs.coerceIn(0.1f, 100f), 0.1f, 100f, false, EqLevel.COMP_ATTACK)
-            rows += SettingRow.Slider("compReleaseMs", str(R.string.settings_comp_release, p.compReleaseMs.roundToInt().toString()), p.compReleaseMs.coerceIn(10f, 1000f), 10f, 1000f, false, EqLevel.COMP_RELEASE)
-            rows += SettingRow.Slider("compMakeupDb", str(R.string.settings_comp_makeup, Fmt.signedDb(p.compMakeupDb)), p.compMakeupDb.coerceIn(0f, 12f), 0f, 12f, false, EqLevel.COMP_MAKEUP)
-            rows += SettingRow.Slider("compKneeDb", str(R.string.settings_comp_knee, one(p.compKneeDb)), p.compKneeDb.coerceIn(0f, 12f), 0f, 12f, false, EqLevel.COMP_KNEE)
         }
-        // Loudness compensation that follows the volume (ISO 226): off unless asked for.
-        rows += toggle("loudness", R.string.settings_loudness, R.string.settings_loudness_detail)
-        if (p.loudness) rows += choice("loudnessRefPhon", R.string.settings_loudness_reference) { str(R.string.settings_phon, it) }
-        // The downward expander, a noise gate at a high ratio: off unless asked for.
-        rows += toggle("expander", R.string.settings_expander, R.string.settings_expander_detail)
-        if (p.expander) {
-            rows += SettingRow.Slider("expThresholdDb", str(R.string.settings_exp_threshold, minus(one(p.expThresholdDb))), p.expThresholdDb, -90f, -10f, false, EqLevel.EXP_THRESHOLD)
-            rows += SettingRow.Slider("expRatio", str(R.string.settings_exp_ratio, one(p.expRatio)), p.expRatio, 1f, 20f, false, EqLevel.EXP_RATIO)
-            rows += SettingRow.Slider("expAttackMs", str(R.string.settings_exp_attack, one(p.expAttackMs)), p.expAttackMs.coerceIn(0.1f, 50f), 0.1f, 50f, false, EqLevel.EXP_ATTACK)
-            rows += SettingRow.Slider("expReleaseMs", str(R.string.settings_exp_release, p.expReleaseMs.roundToInt().toString()), p.expReleaseMs.coerceIn(10f, 1000f), 10f, 1000f, false, EqLevel.EXP_RELEASE)
+        "previousAlwaysSkips" -> str(R.string.settings_previous_detail)
+        "skipSilence" -> str(if (s.untouched) R.string.settings_skip_silence_held else R.string.settings_skip_silence_detail)
+        "skipExplicit" -> str(R.string.settings_skip_explicit_detail)
+        "autoFill" -> str(R.string.settings_auto_fill_detail)
+        "autoFillKind" -> str(R.string.settings_hint_auto_fill_kind)
+        "autoFillRemote" -> str(R.string.settings_auto_fill_remote_detail)
+        "bridgeOffline" -> str(R.string.settings_bridge_offline_detail)
+        "autoEqAuto" -> str(R.string.settings_autoeq_auto_detail)
+        "autoEqDownload" -> str(R.string.settings_autoeq_list_detail)
+        "profilePerOutput" -> str(R.string.settings_per_device_detail)
+        "soundBypass" -> str(R.string.settings_sound_bypass_detail)
+        "headphoneSound" -> str(R.string.settings_headphone_sound_detail)
+        "compressor" -> str(R.string.settings_compressor_detail)
+        "compressorPreset" -> str(R.string.settings_compressor_preset_detail)
+        "replayGain" -> str(R.string.settings_volume_leveling_detail)
+        "loudnessLevel" -> str(R.string.settings_level_detail)
+        "hiRes" -> str(R.string.settings_hi_res_detail)
+        "bitPerfect" -> bitPerfectWords(f.dac)
+        "offload" -> str(if (f.dac.device != null) R.string.settings_offload_usb else if (s.offloadPaused) R.string.settings_offload_paused else R.string.settings_offload_detail)
+        "theme" -> str(R.string.settings_hint_theme)
+        "amoled" -> str(R.string.settings_amoled_detail)
+        "dynamicColor" -> str(R.string.settings_wallpaper_detail)
+        "coverColors" -> str(R.string.settings_cover_colours_detail)
+        "movingCovers" -> str(if (s.values["movingCovers"] != "off" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) R.string.settings_moving_covers_still else R.string.settings_moving_covers_detail)
+        "hideStatusBar" -> str(R.string.settings_hide_status_bar_detail)
+        "hideGestureBar" -> str(R.string.settings_hide_gesture_bar_detail)
+        "keepAwake" -> str(R.string.settings_keep_awake_detail)
+        "burnInProtection" -> str(R.string.settings_burn_in_detail)
+        "dimWhenIdle" -> str(R.string.settings_dim_idle_detail)
+        "dimLevel" -> str(R.string.settings_dim_level_detail)
+        "controlsSide" -> str(R.string.settings_controls_side_detail)
+        "motion" -> str(R.string.settings_motion_detail)
+        "lyricsSweep" -> str(R.string.settings_lyrics_sweep_detail)
+        "lyricsTranslation" -> str(R.string.settings_lyrics_translation_detail)
+        "lyricsTimingButton" -> str(R.string.settings_lyrics_timing_button_detail)
+        "lyricsKeepScreenOn" -> str(R.string.settings_lyrics_screen_on_detail)
+        "lyricsOnline" -> str(R.string.settings_lyrics_online_detail)
+        "lyricsPreferWords" -> str(R.string.settings_lyrics_words_detail)
+        "paxSenixKey" -> str(R.string.settings_paxsenix_key_detail)
+        "betterLyricsKey" -> str(R.string.settings_betterlyrics_key_detail)
+        "tapAction" -> str(R.string.settings_hint_tap_action)
+        "playlistNotes" -> str(R.string.settings_playlist_notes_detail)
+        "tasteModel" -> str(R.string.settings_taste_model_detail)
+        "scrobble" -> str(R.string.settings_scrobble_detail)
+        "queueOffer" -> str(R.string.settings_queue_offer_detail)
+        "thirdPartyLookups" -> str(R.string.settings_lookups_detail)
+        "remoteControl" -> str(R.string.settings_remote_control_detail)
+        "updateCheck" -> str(R.string.settings_update_auto_detail)
+        "updateBeta" -> str(R.string.settings_update_beta_detail)
+        else -> ""
+    }
+
+    /** The screen's row for one of the core's; null for one this screen does not draw. */
+    fun row(r: dev.nori.music.ffi.settings.SettingsRow, libraries: List<Pick>): SettingRow? = when (val item = r.item) {
+        is RowItem.Setting -> setting(item.spec, item.value, item.chips, r.enabled)
+        is RowItem.Link -> link(item.to)
+        is RowItem.Action -> action(item.action, r.enabled)
+        is RowItem.Note -> when (item.note) {
+            SettingsNote.HELD_BY_DAC -> SettingRow.Note(str(R.string.settings_held_by_dac))
+            SettingsNote.BOOST -> SettingRow.Note(str(R.string.settings_boost_note))
+            SettingsNote.DAC -> dacDetail(f.dac)?.let { SettingRow.Note(it) }
+            SettingsNote.LYRICS_SOURCES -> SettingRow.Note(str(if (s.values["lyricsOnline"] == "true") R.string.settings_lyrics_sources_note else R.string.settings_lyrics_sources_note_off))
         }
-        return rows
+        is RowItem.Stored -> {
+            val st = f.storage
+            val bytes = Fmt::bytes
+            val t = str(R.string.settings_stored)
+            SettingRow.Info(
+                settingKey(t), t,
+                str(
+                    R.string.settings_stored_detail, bytes(st.streamBytes), bytes(st.coverBytes), bytes(st.lyricsBytes),
+                    res.getQuantityString(R.plurals.settings_stored_downloads, st.downloadSongs, st.downloadSongs, bytes(st.downloadBytes)), bytes(st.indexBytes),
+                ),
+            )
+        }
+        is RowItem.Server -> p.servers.getOrNull(item.index.toInt())?.let { sv ->
+            val active = sv.id == p.activeServerId
+            SettingRow.Server(sv.id, serverLabel(sv), serverDetail(sv, active), active, if (active) libraries else emptyList(), str(R.string.settings_music_folder_detail))
+        }
+        is RowItem.LyricsSource -> s.lyricsSources.getOrNull(item.index.toInt())?.let { src ->
+            val (title, about) = SERVICES[src.id] ?: return null
+            val t = str(title)
+            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, str(about), src.on)
+        }
+        is RowItem.CompressionMeter -> SettingRow.CompressionMeter("compression-meter")
+        is RowItem.MusicFolder -> null
+    }
+
+    fun setting(spec: SettingSpec, value: String, chips: Boolean, enabled: Boolean): SettingRow? {
+        val name = spec.name
+        val title = SETTING_WORDS[name]?.first?.let(::str) ?: name
+        val key = settingKey(title)
+        return when (spec.kind) {
+            SettingKind.SWITCH -> SettingRow.Toggle(key, name, title, detail(name), value == "true", enabled)
+            SettingKind.CHOICE -> {
+                val options = spec.options.map { SettingOption(valueWords(name, it, spec.options), it) }
+                if (chips) SettingRow.ChipChoice(key, name, title, detail(name), options, value)
+                else SettingRow.Choice(key, name, title, options, options.firstOrNull { it.value == value }?.label ?: valueWords(name, value, spec.options), enabled)
+            }
+            SettingKind.FLAGS -> SettingRow.Flags(key, name, title, detail(name), spec.options.map { SettingOption(valueWords(name, it, spec.options), it) }, value, enabled)
+            SettingKind.LEVEL -> {
+                val db = value.toFloatOrNull() ?: spec.min
+                val shown = if (db <= 0f) str(R.string.settings_off) else str(R.string.settings_db, Fmt.signedDb(db))
+                SettingRow.Slider(name, str(R.string.settings_volume_boost, shown), db, spec.min, spec.max, false, if (name == "volumeBoostDb") EqLevel.VOLUME_BOOST else null)
+            }
+            SettingKind.TEXT -> SettingRow.Text(key, name, title, detail(name), value, secret = true)
+            SettingKind.COLOUR -> SettingRow.Palette(name, spec.options.map { it.toLong() }, p.accent)
+        }
+    }
+
+    fun link(to: SettingsLink): SettingRow = when (to) {
+        SettingsLink.EQUALIZER -> {
+            // The chain is taken out of the path by the same rule the transitions are, so the row says so
+            // rather than reading "On" over sound it is not touching.
+            val status = str(if (s.untouched) R.string.settings_equalizer_off_now else if (s.soundChainOn) R.string.settings_on else R.string.settings_off)
+            linkRow(R.string.settings_equalizer, status, s.untouched, "equalizer", divider = true)
+        }
+        SettingsLink.SYSTEM_EFFECTS -> linkRow(R.string.settings_system_effects, "", false, "system-effects", divider = false)
+        SettingsLink.HOME_ROWS -> linkRow(R.string.settings_home_rows, "", false, "home-rows", divider = true)
+        SettingsLink.LIBRARY_SECTIONS -> linkRow(R.string.settings_library_sections, "", false, "library-sections", divider = false)
+        SettingsLink.LYRICS_SOURCES -> {
+            val n = s.lyricsSources.count { it.on }
+            val status = if (n == 0) str(R.string.settings_lyrics_sources_none) else res.getQuantityString(R.plurals.settings_lyrics_sources_on, n, n)
+            linkRow(R.string.settings_lyrics_sources, status, n == 0, "page:lyrics-sources", divider = false)
+        }
+        SettingsLink.DOWNLOADS -> actionRow(R.string.settings_downloads, str(R.string.settings_downloads_detail), str(R.string.settings_show), true, "downloads")
+    }
+
+    fun action(a: SettingsAction, enabled: Boolean): SettingRow? {
+        val clearing = str(if (f.storage.busy) R.string.settings_clearing else R.string.settings_clear)
+        return when (a) {
+            SettingsAction.MEASURE_AGAIN -> actionRow(R.string.settings_measured, res.getQuantityString(R.plurals.settings_measured_detail, f.analysed, f.analysed), str(R.string.settings_measure_again), enabled, "measure-again")
+            SettingsAction.SYNC_LIBRARY -> {
+                val sync = f.sync
+                val indexed = sync.indexed
+                val counts = str(
+                    R.string.settings_offline_search_detail,
+                    res.getQuantityString(R.plurals.settings_songs, indexed.songs.toInt(), indexed.songs.toInt()),
+                    res.getQuantityString(R.plurals.settings_albums, indexed.albums.toInt(), indexed.albums.toInt()),
+                    res.getQuantityString(R.plurals.settings_artists, indexed.artists.toInt(), indexed.artists.toInt()),
+                )
+                val t = str(R.string.settings_offline_search)
+                SettingRow.Action(settingKey(t), t, sync.error ?: counts, str(if (sync.running) R.string.settings_updating else R.string.settings_update), enabled, sync.error != null, "sync-library")
+            }
+            SettingsAction.DOWNLOAD_LIBRARY -> actionRow(R.string.settings_download_library, str(R.string.settings_download_library_detail), str(R.string.settings_download), enabled, "download-library")
+            SettingsAction.ANALYSE_DOWNLOADS -> actionRow(R.string.settings_analyse_downloads, str(R.string.settings_analyse_downloads_detail), str(R.string.settings_analyse), enabled, "analyse-downloads")
+            SettingsAction.CLEAR_STREAM -> actionRow(R.string.settings_streamed, str(R.string.settings_streamed_detail), clearing, enabled, "clear-stream")
+            SettingsAction.CLEAR_COVERS -> actionRow(R.string.settings_covers, str(R.string.settings_covers_detail), clearing, enabled, "clear-covers")
+            SettingsAction.CLEAR_LYRICS -> actionRow(R.string.settings_lyrics_cache, str(R.string.settings_lyrics_cache_detail, Fmt.bytes(f.storage.lyricsBytes)), clearing, enabled, "clear-lyrics")
+            SettingsAction.ADD_SERVER -> SettingRow.Button(str(R.string.settings_add_server), "add-server")
+            SettingsAction.CHECK_UPDATE -> {
+                // About's update check, with where it stands and its one button.
+                val u = f.update
+                val button = updateButton(res, u, f.installsUpdates)
+                val act = when (u) {
+                    is Updates.State.Downloading -> "update-cancel"
+                    is Updates.State.Available, is Updates.State.Failed, is Updates.State.NeedsPermission, is Updates.State.NoApk -> "update-go"
+                    else -> "update-check"
+                }
+                val t = str(R.string.settings_update_check_now)
+                val failed = u is Updates.State.Failed || u is Updates.State.CheckFailed
+                SettingRow.Action(
+                    settingKey(t), t, updateWords(res, u, dev.nori.music.app.BuildConfig.VERSION_NAME, f.installsUpdates),
+                    button ?: str(R.string.update_check), button != null, failed, act,
+                )
+            }
+            SettingsAction.JOIN_JAM -> null
+        }
+    }
+
+    fun actionRow(title: Int, detail: String, button: String, enabled: Boolean, act: String): SettingRow.Action {
+        val t = str(title)
+        return SettingRow.Action(settingKey(t), t, detail, button, enabled, false, act)
+    }
+
+    fun linkRow(title: Int, status: String, dimmed: Boolean, act: String, divider: Boolean): SettingRow.Link {
+        val t = str(title)
+        return SettingRow.Link(settingKey(t), t, status, dimmed, act, divider)
     }
 
     /** The bit-perfect switch's second line: what the DAC is doing, why it cannot, or what the switch is for. */
@@ -698,285 +723,15 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         return if (parts.isEmpty()) null else parts.joinToString(str(R.string.settings_dac_separator))
     }
 
-    fun look(): List<SettingsSection> {
-        val theme = mutableListOf<SettingRow>(
-            named("theme", R.string.settings_theme, R.string.settings_theme_system, R.string.settings_theme_light, R.string.settings_theme_dark),
-            toggle("amoled", R.string.settings_amoled, R.string.settings_amoled_detail),
-        )
-        if (p.amoled) theme += picks(
-            R.string.settings_keep_colours, R.string.settings_keep_colours_detail,
-            "artistColours" to R.string.settings_keep_colours_artist, "albumColours" to R.string.settings_keep_colours_album,
-            "playerColours" to R.string.settings_keep_colours_player,
-        )
-        if (f.wallpaperColours) theme += toggle("dynamicColor", R.string.settings_wallpaper, R.string.settings_wallpaper_detail)
-        if (!p.dynamicColor || !f.wallpaperColours) theme += SettingRow.Palette("accent", ACCENTS, p.accent)
-        val cover = mutableListOf<SettingRow>(toggle("coverColors", R.string.settings_cover_colours, R.string.settings_cover_colours_detail))
-        if (f.coverBlur) cover += toggle("softSleeve", R.string.settings_blur, R.string.settings_blur_detail)
-        // Under the switch for looking things up at all (Library), and turns it on with it.
-        val moving = on("motionArtwork")
-        cover += toggle("motionArtwork", R.string.settings_moving_covers, str(if (moving && (p.reduceMotion || p.einkScreen)) R.string.settings_moving_covers_still else R.string.settings_moving_covers_detail))
-        if (moving) cover += toggle("motionArtworkMobile", R.string.settings_moving_covers_mobile, R.string.settings_moving_covers_mobile_detail)
-        val messages = listOf(toggle("favouriteNotice", R.string.settings_confirm_favourites, R.string.settings_confirm_favourites_detail))
-        val size = mutableListOf<SettingRow>(
-            choice("uiScale", R.string.settings_ui_scale, fallback = ::float) { v ->
-                when (v) {
-                    "0" -> str(R.string.settings_ui_scale_auto)
-                    "0.9" -> str(R.string.settings_ui_scale_smaller)
-                    "1" -> str(R.string.settings_ui_scale_system)
-                    "1.1" -> str(R.string.settings_ui_scale_larger)
-                    else -> float(v)
-                }
-            },
-            toggle("reduceMotion", R.string.settings_less_movement, R.string.settings_less_movement_detail),
-            toggle("einkScreen", R.string.settings_eink_screen, R.string.settings_eink_screen_detail),
-        )
-        if (!p.reduceMotion && !p.einkScreen) size += toggle("ignoreSystemMotion", R.string.settings_animate_anyway, R.string.settings_animate_anyway_detail)
-        val screen = listOf(
-            chips("hideStatusBar", R.string.settings_hide_status_bar, R.string.settings_hide_status_bar_detail, *HIDE_BAR),
-            chips("hideGestureBar", R.string.settings_hide_gesture_bar, R.string.settings_hide_gesture_bar_detail, *HIDE_BAR),
-            chips(
-                "keepAwake", R.string.settings_keep_awake, R.string.settings_keep_awake_detail,
-                R.string.settings_keep_awake_never, R.string.settings_keep_awake_sideways, R.string.settings_keep_awake_charging,
-                R.string.settings_keep_awake_sideways_charging, R.string.settings_keep_awake_always,
-            ),
-            toggle("burnInProtection", R.string.settings_burn_in, R.string.settings_burn_in_detail),
-        ) + listOfNotNull(
-            chips(
-                "dimWhenIdle", R.string.settings_dim_idle, R.string.settings_dim_idle_detail,
-                R.string.settings_dim_idle_never, R.string.settings_dim_idle_half_minute,
-                R.string.settings_dim_idle_minute, R.string.settings_dim_idle_five_minutes,
-            ).takeIf { p.burnInProtection },
-            chips(
-                "dimLevel", R.string.settings_dim_level, R.string.settings_dim_level_detail,
-                R.string.settings_dim_level_light, R.string.settings_dim_level_medium, R.string.settings_dim_level_strong,
-            ).takeIf { p.burnInProtection && p.dimWhenIdle != dev.nori.music.ffi.settings.DimIdle.NEVER },
-            // Only on a car's own screen, the only place it changes anything.
-            chips(
-                "controlsSide", R.string.settings_controls_side, R.string.settings_controls_side_detail,
-                R.string.settings_controls_side_driver, R.string.settings_controls_side_left, R.string.settings_controls_side_right,
-            ).takeIf { res.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK == android.content.res.Configuration.UI_MODE_TYPE_CAR },
-        )
-        // Which shelves Home has, and in what order: set once or twice, so here rather than on Home itself.
-        val home = listOf(
-            link(R.string.settings_home_rows, "", false, "home-rows", divider = true),
-            link(R.string.settings_library_sections, "", false, "library-sections", divider = false),
-        )
-        return listOf(
-            section(R.string.settings_section_theme, theme), section(R.string.settings_section_cover, cover),
-            section(R.string.settings_section_home, home), section(R.string.settings_section_screen, screen),
-            section(R.string.settings_section_messages, messages), section(R.string.settings_section_size, size),
-        )
-    }
-
-    fun lyrics(): List<SettingsSection> {
-        val display = listOf(
-            toggle("lyricsPrefetch", R.string.settings_lyrics_prefetch, R.string.settings_lyrics_prefetch_detail),
-            toggle("lyricsSweep", R.string.settings_lyrics_sweep, R.string.settings_lyrics_sweep_detail),
-            choice("lyricsSize", R.string.settings_lyrics_size) { v ->
-                when (v) {
-                    "0" -> str(R.string.settings_lyrics_size_small)
-                    "1" -> str(R.string.settings_lyrics_size_medium)
-                    "2" -> str(R.string.settings_lyrics_size_large)
-                    else -> v
-                }
-            },
-            toggle("lyricsTranslation", R.string.settings_lyrics_translation, R.string.settings_lyrics_translation_detail),
-            toggle("lyricsTimingButton", R.string.settings_lyrics_timing_button, R.string.settings_lyrics_timing_button_detail),
-            toggle("lyricsKeepScreenOn", R.string.settings_lyrics_screen_on, R.string.settings_lyrics_screen_on_detail),
-        )
-        // The switch for looking things up at all lives in Library, but somebody looking for lyrics looks
-        // here, so the lyrics half of it is offered here too and turns the other one on with it.
-        val online = on("lyricsOnline")
-        val sources = mutableListOf<SettingRow>(toggle("lyricsOnline", R.string.settings_lyrics_online, R.string.settings_lyrics_online_detail))
-        if (online) {
-            sources += toggle("lyricsPreferWords", R.string.settings_lyrics_words, R.string.settings_lyrics_words_detail)
-            val n = s.lyricsSources.count { it.on }
-            val status = if (n == 0) str(R.string.settings_lyrics_sources_none) else res.getQuantityString(R.plurals.settings_lyrics_sources_on, n, n)
-            sources += link(R.string.settings_lyrics_sources, status, n == 0, "page:lyrics-sources", divider = false)
-        }
-        return listOf(section(R.string.settings_section_display, display), section(R.string.settings_section_sources, sources))
-    }
-
-    /**
-     * Every lyrics service in one list, in the order they are asked: each switched on or off where it
-     * stands, and picked up and moved. A switch never moves a service, so the list reads the same after it.
-     */
-    fun lyricsSources(): List<SettingsSection> {
-        val ranked = s.lyricsSources.mapNotNull { src ->
-            val (title, about) = SERVICES[src.id] ?: return@mapNotNull null
-            val t = str(title)
-            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, str(about), src.on)
-        }.toMutableList<SettingRow>()
-        ranked += SettingRow.Note(str(if (on("lyricsOnline")) R.string.settings_lyrics_sources_note else R.string.settings_lyrics_sources_note_off))
-        val keys = listOf(
-            text("paxSenixKey", R.string.settings_paxsenix_key, R.string.settings_paxsenix_key_detail),
-            text("betterLyricsKey", R.string.settings_betterlyrics_key, R.string.settings_betterlyrics_key_detail),
-        )
-        return listOf(section(R.string.settings_section_asked_order, ranked), section(R.string.settings_section_keys, keys))
-    }
-
-    fun text(name: String, title: Int, detail: Int): SettingRow.Text {
-        val t = str(title)
-        return SettingRow.Text(settingKey(t), name, t, str(detail), value(name), secret = true)
-    }
-
-    fun library(): List<SettingsSection> {
-        val swipes = intArrayOf(R.string.settings_swipe_none, R.string.settings_swipe_queue, R.string.settings_swipe_play_next, R.string.settings_swipe_favourite, R.string.settings_swipe_download)
-        val gestures = listOf(
-            named("tapAction", R.string.settings_tap_action, R.string.settings_tap_play_list, R.string.settings_tap_play_one, R.string.settings_tap_queue, R.string.settings_tap_play_next),
-            named("swipeRight", R.string.settings_swipe_right, *swipes),
-            named("swipeLeft", R.string.settings_swipe_left, *swipes),
-        )
-        val sync = f.sync
-        val indexed = sync.indexed
-        val counts = str(
-            R.string.settings_offline_search_detail,
-            res.getQuantityString(R.plurals.settings_songs, indexed.songs.toInt(), indexed.songs.toInt()),
-            res.getQuantityString(R.plurals.settings_albums, indexed.albums.toInt(), indexed.albums.toInt()),
-            res.getQuantityString(R.plurals.settings_artists, indexed.artists.toInt(), indexed.artists.toInt()),
-        )
-        val t = str(R.string.settings_offline_search)
-        val search = listOf(
-            SettingRow.Action(settingKey(t), t, sync.error ?: counts, str(if (sync.running) R.string.settings_updating else R.string.settings_update), !sync.running, sync.error != null, "sync-library"),
-            choice("liveSearchDelayMs", R.string.settings_search_delay, label = ::millis),
-        )
-        val playlists = mutableListOf<SettingRow>(toggle("playlistDescriptions", R.string.settings_playlist_descriptions, R.string.settings_playlist_descriptions_detail))
-        if (p.playlistDescriptions) playlists += toggle("hideImportNotes", R.string.settings_hide_import_notes, R.string.settings_hide_import_notes_detail)
-        val history = mutableListOf<SettingRow>(
-            toggle("tasteModel", R.string.settings_taste_model, R.string.settings_taste_model_detail),
-            toggle("scrobble", R.string.settings_scrobble, R.string.settings_scrobble_detail),
-        )
-        if (p.scrobble) history += choice("scrobblePercent", R.string.settings_scrobble_after) { if (it == "100") str(R.string.settings_scrobble_whole) else percent(it) }
-        val online = listOf(toggle("thirdPartyLookups", R.string.settings_lookups, R.string.settings_lookups_detail))
-        val devices = listOf(
-            toggle("remoteControl", R.string.settings_remote_control, R.string.settings_remote_control_detail),
-            toggle("queueOffer", R.string.settings_queue_offer, R.string.settings_queue_offer_detail),
-        )
-        return listOf(
-            section(R.string.settings_section_lists, gestures), section(R.string.settings_section_playlists, playlists),
-            section(R.string.settings_section_search, search), section(R.string.settings_section_history, history), section(R.string.settings_section_online, online),
-            section(R.string.settings_section_devices, devices),
-        )
-    }
-
-    /** A stream quality: "Original", "MP3 320", "Opus 192". */
-    fun quality(name: String, title: Int) = choice(name, title, fallback = { it.replace(":", "") }) { v ->
-        val (rate, format) = v.split(':', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
-        when (format) {
-            "" -> str(R.string.settings_quality_original)
-            "mp3" -> str(R.string.settings_quality_mp3, rate.toInt())
-            "opus" -> str(R.string.settings_quality_opus, rate.toInt())
-            else -> "$rate $format"
-        }
-    }
-
-    fun songsAhead(v: String) = if (v == "1") str(R.string.settings_ahead_next) else res.getQuantityString(R.plurals.settings_ahead_songs, v.toInt(), v.toInt())
-
-    fun data(): List<SettingsSection> {
-        val streaming = listOf(quality("wifi", R.string.settings_quality_wifi), quality("mobile", R.string.settings_quality_mobile))
-        val downloads = mutableListOf<SettingRow>(
-            quality("download", R.string.settings_quality_download),
-            choice("parallelDownloads", R.string.settings_parallel_downloads) { it },
-            action(R.string.settings_download_library, str(R.string.settings_download_library_detail), str(R.string.settings_download), f.sync.indexed.songs > 0u, "download-library"),
-        )
-        // The beat model over what is downloaded: only while it is on (a build with it, AutoMix and Better beat detection on).
-        if (s.beatModel !is BeatModel.Unavailable && p.autoMix && p.autoMixBetterBeats) {
-            downloads += named("downloadBeats", R.string.settings_download_beats, R.string.settings_download_beats_ask, R.string.settings_download_beats_always, R.string.settings_download_beats_never)
-        }
-        downloads += action(
-            R.string.settings_analyse_downloads, str(R.string.settings_analyse_downloads_detail), str(R.string.settings_analyse),
-            f.storage.downloadSongs > 0, "analyse-downloads",
-        )
-        val ahead = listOf(
-            choice("precacheWifi", R.string.settings_ahead_wifi, label = ::songsAhead),
-            choice("precacheMobile", R.string.settings_ahead_mobile, label = ::songsAhead),
-            choice("coversAhead", R.string.settings_covers_ahead) { offOr(it) { v -> v } },
-        )
-        // What lives on this device, and a way to throw the throwaway parts out. Downloads are the permanent
-        // copy and are removed where they are listed; the streamed music and the covers rebuild themselves.
-        val st = f.storage
-        val bytes = Fmt::bytes
-        val clearing = str(if (st.busy) R.string.settings_clearing else R.string.settings_clear)
-        val stored = str(R.string.settings_stored)
-        val storage = listOf(
-            choice("cacheMb", R.string.settings_cache_size) { v ->
-                val mb = v.toInt()
-                if (mb >= 1024 && mb % 1024 == 0) str(R.string.settings_gigabytes, mb / 1024) else str(R.string.settings_megabytes, mb)
-            },
-            SettingRow.Info(
-                settingKey(stored), stored,
-                str(
-                    R.string.settings_stored_detail, bytes(st.streamBytes), bytes(st.coverBytes), bytes(st.lyricsBytes),
-                    res.getQuantityString(R.plurals.settings_stored_downloads, st.downloadSongs, st.downloadSongs, bytes(st.downloadBytes)), bytes(st.indexBytes),
-                ),
-            ),
-            action(R.string.settings_streamed, str(R.string.settings_streamed_detail), clearing, !st.busy && st.streamBytes > 0, "clear-stream"),
-            action(R.string.settings_covers, str(R.string.settings_covers_detail), clearing, !st.busy && st.coverBytes > 0, "clear-covers"),
-            action(R.string.settings_lyrics_cache, str(R.string.settings_lyrics_cache_detail, bytes(st.lyricsBytes)), clearing, !st.busy && st.lyricsBytes > 0, "clear-lyrics"),
-            action(R.string.settings_downloads, str(R.string.settings_downloads_detail), str(R.string.settings_show), true, "downloads"),
-        )
-        return listOfNotNull(
-            section(R.string.settings_section_streaming, streaming).takeIf { SettingsPart.STREAMING in parts },
-            section(R.string.settings_section_downloads, downloads).takeIf { SettingsPart.DOWNLOADS in parts },
-            section(R.string.settings_section_ahead, ahead).takeIf { SettingsPart.STREAMING in parts },
-            section(R.string.settings_section_storage, storage).takeIf { SettingsPart.STORAGE in parts },
-        )
-    }
-
-    /** The line under a saved server: who signs in, whether it is in use, and what is special about it. */
     /** A profile without a name or an address is called by its kind. */
     private fun serverLabel(sv: SavedServer): String = sv.label.ifBlank { str(providerStrings(sv.kind).name) }
 
+    /** The line under a saved server: who signs in, whether it is in use, and what is special about it. */
     private fun serverDetail(sv: SavedServer, active: Boolean): String {
         val who = sv.user.ifEmpty { str(providerStrings(sv.kind).noUser) }
         val parts = mutableListOf(who, str(if (active) R.string.settings_server_in_use else R.string.settings_server_not_in_use))
         if (sv.wifiOnly) parts += str(R.string.settings_server_wifi_only)
         if (sv.altUrl.isNotBlank()) parts += str(R.string.settings_server_second_address)
         return parts.joinToString(str(R.string.settings_server_separator))
-    }
-
-    /**
-     * About's own rows under the build's facts (AboutContent draws those): the update check with where it
-     * stands and its one button, and the daily check's switch.
-     */
-    fun about(): List<SettingsSection> {
-        val u = f.update
-        val button = updateButton(res, u, f.installsUpdates)
-        val act = when (u) {
-            is Updates.State.Downloading -> "update-cancel"
-            is Updates.State.Available, is Updates.State.Failed, is Updates.State.NeedsPermission, is Updates.State.NoApk -> "update-go"
-            else -> "update-check"
-        }
-        val t = str(R.string.settings_update_check_now)
-        val failed = u is Updates.State.Failed || u is Updates.State.CheckFailed
-        val check = SettingRow.Action(
-            settingKey(t), t, updateWords(res, u, dev.nori.music.app.BuildConfig.VERSION_NAME, f.installsUpdates),
-            button ?: str(R.string.update_check), button != null, failed, act,
-        )
-        return listOf(SettingsSection(str(R.string.settings_updates), listOf(check, toggle("updateCheck", R.string.settings_update_auto, R.string.settings_update_auto_detail), toggle("updateBeta", R.string.settings_update_beta, R.string.settings_update_beta_detail))))
-    }
-
-    fun servers(): List<SettingsSection> {
-        // The libraries are the server in use's: it is the only one asked for them.
-        val libraries = if (f.folders.size > 1) {
-            val switches = dev.nori.music.ffi.settings.folderSwitches(p.server?.musicFolderIds.orEmpty(), f.folders.map { it.id })
-            f.folders.zip(switches) { m, s -> Pick("musicFolders", m.name, s.on, s.tapped) }
-        } else emptyList()
-        val accounts = p.servers.map { sv ->
-            val active = sv.id == p.activeServerId
-            SettingRow.Server(
-                sv.id, serverLabel(sv), serverDetail(sv, active), active,
-                if (active) libraries else emptyList(), str(R.string.settings_music_folder_detail),
-            )
-        }.toMutableList<SettingRow>()
-        if (SettingsPart.SERVER_OPTIONS !in parts) return listOf(section(R.string.settings_section_accounts, accounts))
-        accounts += SettingRow.Button(str(R.string.settings_add_server), "add-server")
-        val out = mutableListOf(section(R.string.settings_section_accounts, accounts))
-        val server = p.server
-        if (server != null && server.altUrl.isNotBlank()) {
-            val rows = listOf(choice("altMaxBitRate", R.string.settings_alt_bitrate) { if (it == "0") str(R.string.settings_alt_bitrate_none) else str(R.string.settings_kbps, it.toInt()) })
-            out += section(R.string.settings_section_this_server, rows)
-        }
-        return out
     }
 }

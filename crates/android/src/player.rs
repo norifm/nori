@@ -25,7 +25,7 @@ use nori_engine::ahead::{Ahead, Entry, Keeping};
 use nori_engine::arriving::Listening;
 use nori_core::client::CurrentClient;
 use nori_core::queue::is_radio;
-use nori_engine::core::{ahead_songs, key_format, measuring_ahead, resolving, settings, Analyses, CoreApp, CoreQueue, OutputVolume};
+use nori_engine::core::{ahead_songs, key_format, measuring_ahead, resolving, settings, Analyses, CoreApp, CoreQueue};
 use nori_engine::{Body, ByteSource, Cancel, Coded, Coding, Config, Device, Engine, Event, Library, Located, OffloadOutput, OpenError, OutputFacts, OutputFormat, Source, State, Support};
 use nori_player::transitions::WindowSong;
 use parking_lot::Mutex;
@@ -62,7 +62,6 @@ pub(crate) static CLASS: Class = Class {
         native!(c"gainReductionDb", c"(J)F", gain_reduction_db),
         native!(c"compressionDb", c"(J)F", compression_db),
         native!(c"setQuiet", c"(JF)V", set_quiet),
-        native!(c"setVolume", c"(JIIF)V", set_volume),
         native!(c"bytesWritten", c"(J)J", bytes_written),
         native!(c"event", c"(J)J", event),
         native!(c"eventText", c"(J)Ljava/lang/String;", event_text),
@@ -1359,8 +1358,6 @@ struct Player {
     jumped: Mutex<Option<(i64, Instant)>>,
     /// Last [`look_now`], monotonic ms.
     looked_ms: AtomicI64,
-    /// Music volume for loudness compensation ([`set_volume`]).
-    volume: Arc<OutputVolume>,
     /// Its outputs' volume factor ([`set_quiet`]).
     quiet: Arc<Quiet>,
     ahead: Arc<Ahead>,
@@ -1404,9 +1401,7 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     let stations = Arc::new(Mutex::new(Vec::new()));
     let ahead = Ahead::new();
     let library = AndroidLibrary { bridge: bridge.clone(), queue: queue.clone(), current: current.clone(), analyses: analyses.clone(), stations: stations.clone(), ahead: ahead.clone() };
-    // Full volume until Kotlin reports one (only while loudness compensation is on).
-    let volume = Arc::new(OutputVolume::default());
-    let sound = queue.settings.current().map(|p| settings(&p, volume.db())).unwrap_or_default();
+    let sound = queue.settings.current().map(|p| settings(&p)).unwrap_or_default();
     let watch = Some(nori_engine::watch::Watcher(Arc::new(PerfWatch { current, bridge: bridge.clone() })));
     let config = Config { memory_mb: memory_mb.max(16) as u32, settings: sound, watch, platform: nori_player::decode::Platform { aac: crate::mediacodec::platform_aac(), later: None }, ..Config::default() };
     let events = Arc::new(Events { bridge: bridge.clone(), queue: Mutex::default(), signalled: AtomicBool::new(false), text: Mutex::default(), jumps: AtomicI64::new(0) });
@@ -1415,9 +1410,9 @@ extern "system" fn create(env: JNIEnv, _: JClass, bridge: JObject, current: jlon
     let can_offload = JAVA.get().is_some_and(|j| j.offload.is_some()) && sdk >= 29;
     let offloaded: Option<Box<dyn OffloadOutput>> = can_offload.then(|| Box::new(JavaOffload::new(bridge.clone(), offload.clone(), quiet.clone())) as Box<dyn OffloadOutput>);
     log(&format!("the engine starts: API {sdk}, {} output, {} MB of memory, offload {}", if float != 0 { "float" } else { "16-bit" }, config.memory_mb, if can_offload { "possible" } else { "not on this Android" }));
-    let app = CoreApp::new(queue.clone()).bridging().volume(volume.clone());
+    let app = CoreApp::new(queue.clone()).bridging();
     let engine = Engine::start(library, app, CoreQueue(queue.clone()), Box::new(output), offloaded, config, move |e| tell.push(e));
-    PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), volume, quiet, ahead, analyses, queue }))
+    PLAYERS.add(Arc::new(Player { engine, bridge, shared, events, offload, stations, jumped: Mutex::new(None), looked_ms: AtomicI64::new(i64::MIN / 2), quiet, ahead, analyses, queue }))
 }
 
 /// Unregisters the player and stops it on a thread of its own (stopping joins engine threads, and media3
@@ -1509,7 +1504,7 @@ extern "system" fn set_foreground(h: jlong, on: jboolean) {
 extern "system" fn apply_settings(h: jlong) {
     let Some(p) = player(h) else { return };
     if let Some(prefs) = p.queue.settings.current() {
-        p.engine.set_settings(settings(&prefs, p.volume.db()));
+        p.engine.set_settings(settings(&prefs));
     }
 }
 
@@ -1602,26 +1597,6 @@ extern "system" fn on_cpu(h: jlong) -> jboolean {
 /// Limiter gain reduction on the last buffer, dB.
 extern "system" fn gain_reduction_db(h: jlong) -> jfloat {
     player(h).map_or(0.0, |p| p.engine.status_with(|s| s.gain_reduction_db))
-}
-
-/// Music volume step `index` of `max` (`db`: the platform's figure, NaN if none); only reported while
-/// loudness compensation is on. Rebuilds the chain when that changes the sound.
-extern "system" fn set_volume(h: jlong, index: jint, max: jint, db: jfloat) {
-    let db = nori_player::contour::volume_db(index, max, db);
-    let Some(p) = player(h) else { return };
-    if !p.volume.set(db) {
-        return;
-    }
-    let Some(prefs) = p.queue.settings.current().filter(|p| p.loudness) else { return };
-    let s = nori_player::contour::design(prefs.loudness_ref_phon as f64, db);
-    nori_core::alog::info(&format!(
-        "loudness: volume {index}/{max} at {db:.1} dB, bass {:+.1} dB at {} Hz, treble {:+.1} dB, pre-gain {:.1} dB",
-        s.low.map_or(0.0, |b| b.gain_db),
-        s.low.map_or(0.0, |b| b.freq),
-        s.high.map_or(0.0, |b| b.gain_db),
-        s.pre_db
-    ));
-    p.engine.set_settings(settings(&prefs, p.volume.db()));
 }
 
 /// Compressor gain reduction on the last buffer, dB.

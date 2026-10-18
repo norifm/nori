@@ -1,10 +1,10 @@
-//! Settings pages, following Android's SettingsPages.kt minus phone-only settings. Settings, options and
-//! values come from the core's `settings_model`; rows report back the setting name and the picked value.
+//! Settings pages: the core's (`settings_pages`, desktop client), worded and drawn. Rows report back the
+//! setting name and the picked value.
 
-use nori_core::browse::SettingsPart;
 use nori_core::numbers::{self, POINT};
-use nori_core::settings::{EqLevel, GainMode, StoredPrefs, EQ_RANGES};
-use nori_core::settings_model::{self, BeatModel, SettingsState};
+use nori_core::settings::{EqLevel, StoredPrefs};
+use nori_core::settings_model::{self, BeatModel, SettingKind, SettingsState};
+use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsRow};
 use slint::{Color, ModelRc, SharedString, VecModel};
 
 use crate::{words, SettingRow};
@@ -125,34 +125,12 @@ struct Row {
     swatches: Vec<u32>,
 }
 
-struct Build<'a> {
-    p: &'a StoredPrefs,
-    s: &'a SettingsState,
-    f: &'a Facts,
-}
-
 fn options(name: &str) -> Vec<String> {
     settings_model::specs().into_iter().find(|s| s.name == name).map(|s| s.options).unwrap_or_default()
 }
 
-fn off_or(v: &str, words: impl Fn(&str) -> String) -> String {
-    if v == "0" { "Off".into() } else { words(v) }
-}
-
 fn minus(v: &str) -> String {
     v.replace('-', "−")
-}
-
-fn one(v: f32) -> String {
-    numbers::fixed(v as f64, 1, false, POINT)
-}
-
-fn percent(v: &str) -> String {
-    format!("{v} %")
-}
-
-fn seconds(v: &str) -> String {
-    format!("{v} s")
 }
 
 /// The accent to draw: the core's default (Android purple) becomes red here; others as picked.
@@ -161,303 +139,153 @@ pub fn accent_shown(argb: u32) -> u32 {
     if argb == default { 0xFFFA2D48 } else { argb }
 }
 
-impl Build<'_> {
-    fn value(&self, name: &str) -> String {
-        self.s.values.get(name).cloned().unwrap_or_default()
+/// The settings page a tab shows.
+fn tab_page(tab: i32) -> SettingsPage {
+    match tab {
+        1 => SettingsPage::Playing,
+        2 => SettingsPage::Sound,
+        3 => SettingsPage::Lyrics,
+        4 => SettingsPage::Library,
+        5 => SettingsPage::Data,
+        6 => SettingsPage::Servers,
+        _ => SettingsPage::Look,
     }
+}
 
-    fn toggle(&self, name: &str, title: &str, detail: &str) -> Row {
-        self.toggle_if(name, title, detail, true)
+fn section_title(id: SectionId) -> &'static str {
+    use SectionId::*;
+    match id {
+        Accounts => "Accounts",
+        MusicFolders => "Music folders",
+        ThisServer => "This server",
+        Between => "Between songs",
+        Controls => "Controls",
+        Queue => "Queue",
+        Equalizer => "Equalizer",
+        Effects => "Effects",
+        Volume => "Volume",
+        Output => "Output",
+        Theme | Cover => "Look",
+        Home => "Home",
+        Screen => "Screen",
+        Motion => "Motion",
+        Display => "Display",
+        Sources => "Sources",
+        AskedOrder => "In the order they're asked",
+        Keys => "Keys",
+        Lists => "Lists",
+        Playlists => "Playlists",
+        Search => "Search",
+        History => "Listening history",
+        Online => "Online",
+        Devices => "Other devices",
+        Streaming => "Streaming quality",
+        Downloads => "Downloads",
+        Storage => "Storage",
+        Updates => "Updates",
     }
+}
 
-    fn toggle_if(&self, name: &str, title: &str, detail: &str, enabled: bool) -> Row {
-        Row { kind: TOGGLE, name: name.into(), title: title.into(), detail: detail.into(), on: self.value(name) == "true", enabled, ..Default::default() }
-    }
-
-    fn choice(&self, name: &str, title: &str, label: impl Fn(&str) -> String) -> Row {
-        self.choice_if(name, title, true, label)
-    }
-
-    fn choice_if(&self, name: &str, title: &str, enabled: bool, label: impl Fn(&str) -> String) -> Row {
-        let options = options(name).into_iter().map(|v| (label(&v), v)).collect();
-        Row { kind: CHOICE, name: name.into(), title: title.into(), options, enabled, ..Default::default() }
-    }
-
-    /// An enum setting with one label per option, in option order.
-    fn named(&self, name: &str, title: &str, labels: &[&str]) -> Row {
-        let names = options(name);
-        self.choice(name, title, |v| names.iter().position(|n| n == v).and_then(|i| labels.get(i)).map_or_else(|| v.to_string(), |l| l.to_string()))
-    }
-
-    fn slider(&self, name: &str, label: String, value: f32, (min, max): (f32, f32), centred: bool) -> Row {
-        Row { kind: SLIDER, name: name.into(), title: label, value: value.clamp(min, max), min, max, centred, enabled: true, ..Default::default() }
-    }
-
-    fn action(&self, title: &str, detail: String, button: &str, enabled: bool, chore: Chore) -> Row {
-        Row { kind: ACTION, name: chore_name(chore).into(), title: title.into(), detail, button: button.into(), enabled, ..Default::default() }
-    }
-
-    fn info(&self, title: &str, detail: String) -> Row {
-        Row { kind: INFO, title: title.into(), detail, ..Default::default() }
-    }
-
-    fn note(&self, text: &str) -> Row {
-        Row { kind: NOTE, title: text.into(), ..Default::default() }
-    }
-
-    fn link(&self, title: &str, status: &str, act: &str) -> Row {
-        Row { kind: LINK, name: act.into(), title: title.into(), detail: status.into(), enabled: true, ..Default::default() }
-    }
-
-    fn text(&self, name: &str, title: &str, detail: &str) -> Row {
-        Row { kind: TEXT, name: name.into(), title: title.into(), detail: detail.into(), button: self.value(name), enabled: true, ..Default::default() }
-    }
-
-    fn general(&self) -> Vec<(&'static str, Vec<Row>)> {
-        let p = self.p;
-        let accents: Vec<u32> = options("accent").iter().filter_map(|c| c.parse::<i64>().ok()).map(|c| c as u32).collect();
-        let look = vec![
-            Row { kind: PALETTE, name: "accent".into(), title: "Accent color".into(), swatches: accents, value: p.accent as u32 as f32, enabled: true, ..Default::default() },
-            self.toggle("coverColors", "Colors from the cover", "Pages take their colors from the artwork."),
-            self.toggle("favouriteNotice", "Confirm favorites", "A short message when you favorite or unfavorite something."),
-        ];
-        let mut devices = vec![("The system's own".to_string(), String::new())];
-        devices.extend(self.f.devices.iter().map(|d| (d.clone(), d.clone())));
-        let output = vec![
-            Row { kind: CHOICE, name: DEVICE.into(), title: "Play through".into(), options: devices, enabled: true, ..Default::default() },
-            self.note("A new device is used from the next start of nori."),
-        ];
-        vec![("Look", look), ("Output device", output), ("About", vec![self.info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))])]
-    }
-
-    fn playing(&self) -> Vec<(&'static str, Vec<Row>)> {
-        let p = self.p;
-        let s = self.s;
-        let live = !s.untouched;
-        let mut between = Vec::new();
-        if !p.auto_mix {
-            between.push(self.choice_if("crossfadeSec", "Crossfade", live, |v| off_or(v, seconds)));
+/// A setting's title and the line under it.
+fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
+    let (title, detail) = match name {
+        "crossfadeSec" => ("Crossfade", "Songs fade into each other, not within an album."),
+        "autoMix" => ("AutoMix", "Blends songs like a DJ, matching the beat."),
+        "autoMixBetterBeats" => {
+            let mb = s.beat_model_mb;
+            let detail = match &s.beat_model {
+                BeatModel::Ready => "On. Each song is listened to once, just before it plays.".into(),
+                BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
+                BeatModel::Failed { .. } => "The download didn't work. It tries again at the next song.".into(),
+                BeatModel::WaitingForWifi => format!("Waits for Wi-Fi to download (about {mb} MB)."),
+                _ => format!("Listens to the start and end of each song so mixes land on the beat. A one-time download of about {mb} MB over Wi-Fi, from the model's authors."),
+            };
+            return ("Better beat detection".into(), detail);
         }
-        if !p.auto_mix && p.crossfade_sec > 0 {
-            between.push(self.named("crossfadeCurve", "Crossfade curve", &["Equal power", "Linear", "S-curve"]));
-            let part = |v: &str| if v == "0" { "The whole crossfade".to_string() } else { seconds(v) };
-            between.push(self.choice_if("crossfadeInSec", "Fade in over", live, part));
-            between.push(self.choice_if("crossfadeOutSec", "Fade out over", live, part));
-        }
-        between.push(self.toggle_if("autoMix", "AutoMix", "Blends songs like a DJ, matching the beat.", live));
-        if p.auto_mix {
-            between.push(self.choice_if("autoMixMaxS", "Longest mix", live, seconds));
-            between.push(self.toggle_if("autoMixBeatMatch", "Match the beat", "Nudges the next song's speed so the beats line up.", live));
-            if p.auto_mix_beat_match {
-                between.push(self.choice_if("autoMixMaxTempoPct", "Biggest speed change", live, percent));
-                between.push(self.toggle_if("autoMixKeepPitch", "Keep the pitch", "Off lets the pitch follow the speed, up to 2 %.", live));
-            }
-            between.push(self.toggle_if("autoMixBassSwap", "Swap the bass", "The new song's bass replaces the old one's.", live));
-            between.push(self.toggle_if("autoMixFilters", "Muffle the ending", "The outgoing song fades out muffled.", live));
-            between.push(self.toggle_if("autoMixEchoOut", "Echo out clashes", "Overlapping vocals end in an echo instead.", live));
-            if s.beat_model != BeatModel::Unavailable {
-                let mb = s.beat_model_mb;
-                let detail = if !p.auto_mix_better_beats {
-                    format!("Listens to the start and end of each song so mixes land on the beat. A one-time download of about {mb} MB, from the model's authors.")
-                } else {
-                    match &s.beat_model {
-                        BeatModel::Ready => "On. Each song is listened to once, just before it plays.".into(),
-                        BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
-                        BeatModel::Failed { .. } => "The download didn't work. It tries again at the next song.".into(),
-                        _ => format!("Downloaded (about {mb} MB) the next time AutoMix measures a song."),
-                    }
-                };
-                between.push(self.toggle_if("autoMixBetterBeats", "Better beat detection", &detail, live));
-            }
-            let n = self.f.analysed;
-            between.push(self.action("Measured songs", format!("{} measured for tempo and beats.", words::count(n, "song", "songs")), "Measure again", n > 0, Chore::MeasureAgain));
-        }
-        between.push(self.toggle_if("crossfadeKeepAlbums", "Keep albums gapless", "Songs of one album that follow each other in order play without mixing.", live));
-        between.push(self.choice("fadeMs", "Fade on play and pause", |v| off_or(v, |v| if v.parse::<u32>().is_ok_and(|n| n % 1000 == 0) { seconds(&(v.parse::<u32>().unwrap_or(0) / 1000).to_string()) } else { format!("{v} ms") })));
+        "fadeMs" => ("Fade on play and pause", ""),
+        "previousAlwaysSkips" => ("Previous goes back a song", "Instead of restarting the current one."),
+        "speed" => ("Speed", ""),
+        "pitch" => ("Pitch", ""),
+        "skipSilence" => ("Skip silence", if s.untouched { "Off while the audio is played untouched." } else { "Cuts quiet gaps in and between songs." }),
+        "skipExplicit" => ("Skip explicit songs", "Songs your server marks explicit."),
+        "autoFill" => ("Keep playing when the queue ends", "Adds more music automatically."),
+        "autoFillKind" => ("Carry on with", ""),
+        "autoFillBasis" => ("Chosen by", ""),
+        "autoFillRemote" => ("Include remote songs", "Songs not in your library yet, from the server's streaming providers. Each one played is downloaded into the library."),
+        "bridgeOffline" => ("Play downloads when offline", "If the server drops, keep playing from downloads."),
+        "autoEqAuto" => ("AutoEQ for headphones", "Applies a known correction curve when headphones connect."),
+        "autoEqDownload" => ("Keep the AutoEQ list", "Downloads the headphone list (850 kB, from github.com), and again once a month, so headphones find their curve."),
+        "profilePerOutput" => ("Remember sound per device", "Each device keeps its own equalizer settings."),
+        "soundBypass" => ("No processing on this output", "No equalizer or effects reach this output. Saved with the device's sound."),
+        "headphoneSound" => ("Headphone sound", "Natural sounds like speakers, Wide sounds bigger."),
+        "compressor" => ("Compressor", "Evens out quiet and loud parts."),
+        "compressorPreset" => ("For", ""),
+        "replayGain" => ("Volume leveling", "Every song plays equally loud."),
+        "loudnessLevel" => ("Level", "How loud leveled songs play."),
+        "volumeBoostDb" => ("Volume boost", ""),
+        "hiRes" => ("High quality output", "Plays 24-bit files in full, and runs the equalizer and effects in floating point. Starts with the next song."),
+        "maxRate" => ("Highest sample rate", ""),
+        "accent" => ("Accent color", ""),
+        "coverColors" => ("Colors from the cover", "Where the artwork's colors show."),
+        "lyricsSweep" => ("Fill in words as they're sung", "For lyrics timed word by word."),
+        "lyricsTranslation" => ("Show translations", "When your server has them."),
+        "lyricsOnline" => ("Find missing lyrics online", "When your server has no timed lyrics. Sends the artist, song and album name to the lyrics sources."),
+        "lyricsPreferWords" => ("Prefer word-by-word lyrics", "Keeps looking past lyrics timed line by line."),
+        "paxSenixKey" => ("PaxSenix key", "Your own key, for its Spotify and Musixmatch lyrics."),
+        "betterLyricsKey" => ("BetterLyrics key", "Without one it answers only for songs it has already stored."),
+        "tasteModel" => ("Keep listening history", "Stored on this Mac. Powers mixes and stats."),
+        "scrobble" => ("Tell the server what you play", "Sends your plays to your server once you've heard half a song or four minutes of it."),
+        "thirdPartyLookups" => ("Look things up online", "Missing lyrics (sends the artist, song and album name) and the AutoEQ headphone list, each with its own switch. Off, nothing is asked."),
+        "remoteControl" => ("Remote control and jams", "Control playback on your other devices, or invite guests to a jam. Uses your network directly or the octo-fiesta relay."),
+        "wifi" => ("Streaming quality", ""),
+        "download" => ("Quality for downloads", ""),
+        "cacheMb" => ("Space for streamed music", ""),
+        other => (other, ""),
+    };
+    (title.to_string(), detail.to_string())
+}
 
-        let controls = vec![
-            self.toggle("previousAlwaysSkips", "Previous goes back a song", "Instead of restarting the current one."),
-            self.choice("speed", "Speed", |v| if v == "1" { "Normal".into() } else { format!("{v}×") }),
-            self.choice("pitch", "Pitch", |v| {
-                let pct = ((v.parse::<f32>().unwrap_or(1.0) - 1.0) * 100.0).round() as i32;
-                match pct {
-                    0 => "Normal".into(),
-                    n if n < 0 => format!("−{} %", -n),
-                    n => format!("+{n} %"),
-                }
-            }),
-            self.toggle_if("skipSilence", "Skip silence", if s.untouched { "Off while the audio is played untouched." } else { "Cuts quiet gaps in and between songs." }, live),
-        ];
-        let mut queue = vec![
-            self.toggle("skipExplicit", "Skip explicit songs", "Songs your server marks explicit."),
-            self.toggle("autoFill", "Keep playing when the queue ends", "Adds more music automatically."),
-        ];
-        if p.auto_fill {
-            queue.push(self.named("autoFillKind", "Carry on with", &["Songs", "Albums"]));
-            queue.push(self.named("autoFillBasis", "Chosen by", &["Similar music", "The same artist", "The same genre", "The same era"]));
-            queue.push(self.toggle(
-                "autoFillRemote",
-                "Include remote songs",
-                "Songs not in your library yet, from the server's streaming providers. Each one played is downloaded into the library.",
-            ));
+/// A setting's value in words.
+fn option_words(name: &str, v: &str) -> String {
+    let seconds = |v: &str| format!("{v} s");
+    match (name, v) {
+        ("crossfadeSec" | "fadeMs", "0") => "Off".into(),
+        ("crossfadeSec", v) => seconds(v),
+        ("fadeMs", v) => match v.parse::<u32>() {
+            Ok(ms) if ms % 1000 == 0 => seconds(&(ms / 1000).to_string()),
+            _ => format!("{v} ms"),
+        },
+        ("speed", "1") | ("pitch", "1") => "Normal".into(),
+        ("speed", v) => format!("{v}×"),
+        ("pitch", v) => {
+            let pct = ((v.parse::<f32>().unwrap_or(1.0) - 1.0) * 100.0).round() as i32;
+            if pct < 0 { format!("−{} %", -pct) } else { format!("+{pct} %") }
         }
-        let wrong = vec![
-            self.toggle("skipOnError", "Skip songs that won't play", "Up to three in a row."),
-            self.toggle("bridgeOffline", "Play downloads when offline", "If the server drops, keep playing from downloads."),
-        ];
-        vec![("Between songs", between), ("Controls", controls), ("Queue", queue), ("When something goes wrong", wrong)]
-    }
-
-    fn sound(&self) -> Vec<(&'static str, Vec<Row>)> {
-        let p = self.p;
-        let s = self.s;
-        let status = if s.untouched { "Off now" } else if s.sound_chain_on { "On" } else { "Off" };
-        let eq = vec![
-            self.link("Equalizer and crossfeed", status, EQUALIZER),
-            self.toggle("autoEqAuto", "AutoEQ for headphones", "Applies a known correction curve when headphones connect."),
-            self.toggle("autoEqDownload", "Keep the AutoEQ list", "Downloads the headphone list (850 kB, from github.com), and again once a month, so headphones find their curve."),
-            self.toggle("profilePerOutput", "Remember sound per device", "Each device keeps its own equalizer settings."),
-            self.toggle("soundBypass", "No processing on this output", "No equalizer, crossfeed or effects reach this output. Saved with the device's sound."),
-        ];
-        let mut volume = vec![self.named("replayGain", "Even out volume", &["Off", "Per song", "Per album", "Automatic"])];
-        if p.replay_gain != GainMode::Off {
-            let r = EQ_RANGES.replay_gain_preamp;
-            volume.push(self.slider("preampDb", format!("Overall level {} dB", crate::eq::signed(p.preamp_db)), p.preamp_db, (r.min, r.max), true));
-            volume.push(self.choice("loudnessTarget", "Loudness target", |v| match v {
-                "-18" => format!("{} LUFS (ReplayGain)", minus(v)),
-                "-14" | "-16" => format!("{} LUFS (streaming)", minus(v)),
-                "-23" => format!("{} LUFS (broadcast)", minus(v)),
-                _ => format!("{} LUFS", minus(v)),
-            }));
-            volume.push(self.choice("gainBoostDb", "Turn quiet songs up", |v| off_or(v, |v| format!("Up to +{v} dB"))));
-            volume.push(self.choice("untaggedGainDb", "Volume for songs without tags", |v| format!("{} dB", minus(v))));
-            volume.push(self.toggle("gainMeasured", "Measure songs without tags", "Songs without tags play at the loudness AutoMix measured, once it has."));
-        }
-        let output = vec![
-            self.toggle("hiRes", "High quality output", "Plays 24-bit files in full, and runs the equalizer and effects in floating point. Starts with the next song."),
-            self.named("maxRate", "Highest sample rate", &["Each song's own", "48 kHz", "96 kHz", "192 kHz"]),
-        ];
-        vec![("Equalizer", eq), ("Effects", self.effects()), ("Volume", volume), ("Output", output)]
-    }
-
-    fn effects(&self) -> Vec<Row> {
-        let p = self.p;
-        let boost = |db: f32| if db <= 0.0 { "Off".to_string() } else { format!("{} dB", crate::eq::signed(db)) };
-        let mut rows = vec![
-            self.slider("bassBoostDb", format!("Bass boost: {}", boost(p.bass_boost_db)), p.bass_boost_db, (0.0, 12.0), false),
-            self.slider(
-                "virtualizer",
-                format!("Virtualizer: {}", if p.virtualizer <= 0.0 { "Off".into() } else { percent(&format!("{:.0}", p.virtualizer * 100.0)) }),
-                p.virtualizer,
-                (0.0, 1.0),
-                false,
-            ),
-            self.slider("volumeBoostDb", format!("Volume boost: {}", boost(p.volume_boost_db)), p.volume_boost_db, (0.0, 12.0), false),
-            self.note("Boosts turn the limiter on with them, so loud songs do not distort."),
-            self.toggle("compressor", "Compressor", "Brings quiet passages up and loud ones down, for noisy places or quiet listening."),
-        ];
-        if p.compressor {
-            rows.push(self.choice("compressorPreset", "Strength", |v| match v {
-                "GENTLE" => "Gentle".into(),
-                "STRONG" => "Strong".into(),
-                "BALANCED" => "Balanced".into(),
-                _ => "Custom".into(),
-            }));
-            rows.push(self.slider("compThresholdDb", format!("Starts at {} dB", minus(&one(p.comp_threshold_db))), p.comp_threshold_db, (-60.0, 0.0), false));
-            rows.push(self.slider("compRatio", format!("Ratio {}:1", one(p.comp_ratio)), p.comp_ratio, (1.0, 10.0), false));
-            rows.push(self.slider("compAttackMs", format!("Reacts in {} ms", one(p.comp_attack_ms)), p.comp_attack_ms, (0.1, 100.0), false));
-            rows.push(self.slider("compReleaseMs", format!("Lets go over {:.0} ms", p.comp_release_ms), p.comp_release_ms, (10.0, 1000.0), false));
-            rows.push(self.slider("compMakeupDb", format!("Makes up {} dB", crate::eq::signed(p.comp_makeup_db)), p.comp_makeup_db, (0.0, 12.0), false));
-            rows.push(self.slider("compKneeDb", format!("Softness {} dB", one(p.comp_knee_db)), p.comp_knee_db, (0.0, 12.0), false));
-        }
-        rows.push(self.toggle(
-            "loudness",
-            "Loudness compensation",
-            "As you turn the volume down, brings the bass and the highest notes up the way the ear needs (ISO 226), so quiet listening does not sound thin.",
-        ));
-        if p.loudness {
-            rows.push(self.choice("loudnessRefPhon", "Balanced at, all the way up", |v| format!("{v} phon")));
-        }
-        rows.push(self.toggle("expander", "Noise gate", "Turns hiss and hum down further when the music goes quiet. A high ratio closes it like a gate."));
-        if p.expander {
-            rows.push(self.slider("expThresholdDb", format!("Works under {} dB", minus(&one(p.exp_threshold_db))), p.exp_threshold_db, (-90.0, -10.0), false));
-            rows.push(self.slider("expRatio", format!("Ratio 1:{}", one(p.exp_ratio)), p.exp_ratio, (1.0, 20.0), false));
-            rows.push(self.slider("expAttackMs", format!("Opens in {} ms", one(p.exp_attack_ms)), p.exp_attack_ms, (0.1, 50.0), false));
-            rows.push(self.slider("expReleaseMs", format!("Closes over {:.0} ms", p.exp_release_ms), p.exp_release_ms, (10.0, 1000.0), false));
-        }
-        rows
-    }
-
-    fn lyrics(&self) -> Vec<(&'static str, Vec<Row>)> {
-        let display = vec![
-            self.toggle("lyricsPrefetch", crate::words::LYRICS_PREFETCH, crate::words::LYRICS_PREFETCH_DETAIL),
-            self.toggle("lyricsSweep", "Fill in words as they're sung", "For lyrics timed word by word."),
-            self.toggle("lyricsTranslation", "Show translations", "When your server has them."),
-        ];
-        let online = self.value("lyricsOnline") == "true";
-        let mut sources = vec![self.toggle(
-            "lyricsOnline",
-            "Find missing lyrics online",
-            "When your server has no timed lyrics. Sends the artist, song and album name to the lyrics sources.",
-        )];
-        if online {
-            sources.push(self.toggle("lyricsPreferWords", "Prefer word-by-word lyrics", "Keeps looking past lyrics timed line by line."));
-        }
-        let mut out = vec![("Display", display), ("Sources", sources)];
-        if online {
-            let mut ranked: Vec<Row> = self
-                .s
-                .lyrics_sources
-                .iter()
-                .filter_map(|src| {
-                    let (title, about) = service(&src.id)?;
-                    Some(Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: true, ..Default::default() })
-                })
-                .collect();
-            ranked.push(self.note(
-                "The quick ones (PaxSenix, BiniLyrics, Unison and LRCLIB) are asked first, together, and the others only when those find nothing good. Every answer is scored on how well it matches the song, how finely it is timed and whether the other services agree, and the best is shown; the order here settles near ties. Your server's own timed lyrics always come before all of these.",
-            ));
-            out.push(("In the order they're asked", ranked));
-            out.push((
-                "Keys",
-                vec![
-                    self.text("paxSenixKey", "PaxSenix key", "Your own key, for its Spotify and Musixmatch lyrics."),
-                    self.text("betterLyricsKey", "BetterLyrics key", "Without one it answers only for songs it has already stored."),
-                ],
-            ));
-        }
-        out
-    }
-
-    fn library(&self) -> Vec<(&'static str, Vec<Row>)> {
-        let (songs, albums, artists) = self.f.indexed;
-        let counts = format!("{} · {} · {} on this Mac", words::count(songs, "song", "songs"), words::count(albums, "album", "albums"), words::count(artists, "artist", "artists"));
-        let search = vec![
-            self.action("Offline search", counts, if self.f.syncing { "Updating…" } else { "Update" }, !self.f.syncing, Chore::SyncLibrary),
-            self.choice("liveSearchDelayMs", "Search delay", |v| format!("{v} ms")),
-        ];
-        let mut history = vec![
-            self.toggle("tasteModel", "Keep listening history", "Stored on this Mac. Powers mixes and stats."),
-            self.toggle("scrobble", "Tell the server what you play", "Sends your plays to your server (scrobbling)."),
-        ];
-        if self.p.scrobble {
-            history.push(self.choice("scrobblePercent", "Count a play after", |v| if v == "100" { "the whole song".into() } else { percent(v) }));
-        }
-        let online = vec![self.toggle(
-            "thirdPartyLookups",
-            "Look things up online",
-            "Missing lyrics (sends the artist, song and album name) and the AutoEQ headphone list, each with its own switch. Off, nothing is asked.",
-        )];
-        let devices = vec![self.toggle(
-            "remoteControl",
-            "Remote control and jams",
-            "Control playback on your other devices, or invite guests to a jam. Uses your network directly or the octo-fiesta relay.",
-        )];
-        vec![("Search", search), ("Listening history", history), ("Online", online), ("Other devices", devices)]
-    }
-
-    fn quality(&self, name: &str, title: &str) -> Row {
-        self.choice(name, title, |v| {
+        ("autoFillKind", "SONGS") => "Songs".into(),
+        ("autoFillKind", "ALBUMS") => "Albums".into(),
+        ("autoFillBasis", "SIMILAR") => "Similar music".into(),
+        ("autoFillBasis", "ARTIST") => "The same artist".into(),
+        ("autoFillBasis", "GENRE") => "The same genre".into(),
+        ("autoFillBasis", "ERA") => "The same era".into(),
+        ("headphoneSound" | "replayGain", "OFF") => "Off".into(),
+        ("headphoneSound", "NATURAL") => "Natural".into(),
+        ("headphoneSound", "WIDE") => "Wide".into(),
+        ("compressorPreset", "LIGHT") => "Light".into(),
+        ("compressorPreset", "CAR") => "The car".into(),
+        ("compressorPreset", "NIGHT") => "The night".into(),
+        ("replayGain", "TRACK") => "Per song".into(),
+        ("replayGain", "ALBUM") => "Per album".into(),
+        ("replayGain", "AUTO") => "Automatic".into(),
+        ("loudnessLevel", "QUIET") => format!("Quiet ({} LUFS)", minus("-23")),
+        ("loudnessLevel", "NORMAL") => format!("Normal ({} LUFS)", minus("-18")),
+        ("loudnessLevel", "LOUD") => format!("Loud ({} LUFS)", minus("-14")),
+        ("maxRate", "AUTO") => "Each song's own".into(),
+        ("maxRate", "KHZ48") => "48 kHz".into(),
+        ("maxRate", "KHZ96") => "96 kHz".into(),
+        ("maxRate", "KHZ192") => "192 kHz".into(),
+        ("coverColors", "PAGES") => "Pages".into(),
+        ("coverColors", "PLAYER") => "Player".into(),
+        ("wifi" | "download", v) => {
             let (rate, format) = v.split_once(':').unwrap_or((v, ""));
             match format {
                 "" => "Original".into(),
@@ -465,79 +293,136 @@ impl Build<'_> {
                 "opus" => format!("Opus {rate}"),
                 _ => format!("{rate} {format}"),
             }
-        })
+        }
+        ("cacheMb", v) => match v.parse::<u32>() {
+            Ok(mb) if mb >= 1024 && mb % 1024 == 0 => format!("{} GB", mb / 1024),
+            _ => format!("{v} MB"),
+        },
+        (_, v) => v.to_string(),
     }
+}
 
-    fn data(&self) -> Vec<(&'static str, Vec<Row>)> {
-        let f = self.f;
-        let streaming = vec![self.quality("wifi", "Streaming quality")];
-        let downloads = vec![
-            self.quality("download", "Quality for downloads"),
-            self.choice("parallelDownloads", "Downloads at once", |v| v.into()),
-            self.action("Download the whole library", "Every song, at the download quality.".into(), "Download", f.indexed.0 > 0, Chore::DownloadLibrary),
-        ];
-        let ahead = vec![
-            self.choice("precacheWifi", "Load ahead", |v| if v == "1" { "Next song".into() } else { format!("{v} songs") }),
-            self.choice("coversAhead", "Load covers ahead", |v| off_or(v, |v| v.into())),
-        ];
-        let stored = format!(
-            "{} streamed · {} covers · {} lyrics · {} in {} · {} library",
-            numbers::bytes(f.stream_bytes as i64, POINT),
-            numbers::bytes(f.cover_bytes as i64, POINT),
-            numbers::bytes(f.lyrics_bytes as i64, POINT),
-            numbers::bytes(f.download_bytes as i64, POINT),
-            words::count(f.download_songs, "download", "downloads"),
-            numbers::bytes(f.database_bytes as i64, POINT)
-        );
-        let storage = vec![
-            self.choice("cacheMb", "Space for streamed music", |v| match v.parse::<u32>() {
-                Ok(mb) if mb >= 1024 && mb % 1024 == 0 => format!("{} GB", mb / 1024),
-                _ => format!("{v} MB"),
-            }),
-            self.info("Stored on this Mac", stored),
-            self.action("Streamed music", "Oldest goes first. Downloads stay.".into(), "Clear", f.stream_bytes > 0, Chore::ClearStream),
-            self.action("Covers", "Fetched again when needed.".into(), "Clear", f.cover_bytes > 0, Chore::ClearCovers),
-            self.action("Lyrics", format!("{} found online. Looked up again when needed.", numbers::bytes(f.lyrics_bytes as i64, POINT)), "Clear", f.lyrics_bytes > 0, Chore::ClearLyrics),
-        ];
-        vec![("Streaming quality", streaming), ("Downloads", downloads), ("Loading ahead", ahead), ("Storage", storage)]
+fn info(title: &str, detail: String) -> Row {
+    Row { kind: INFO, title: title.into(), detail, ..Default::default() }
+}
+
+fn note(text: &str) -> Row {
+    Row { kind: NOTE, title: text.into(), ..Default::default() }
+}
+
+fn action(title: &str, detail: String, button: &str, enabled: bool, chore: Chore) -> Row {
+    Row { kind: ACTION, name: chore_name(chore).into(), title: title.into(), detail, button: button.into(), enabled, ..Default::default() }
+}
+
+/// A set of independent flags as its title, then a switch for each (its name stores the set with the
+/// flag switched); None for any other row.
+fn flag_rows(r: &SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
+    let RowItem::Setting { spec, value, .. } = &r.item else { return None };
+    if spec.kind != SettingKind::Flags {
+        return None;
     }
+    let (title, detail) = setting_words(&spec.name, s);
+    let switches = spec.options.iter().map(|flag| Row {
+        kind: TOGGLE,
+        name: format!("{}={}", spec.name, settings_model::flag_toggled(value.clone(), flag.clone())),
+        title: option_words(&spec.name, flag),
+        on: settings_model::flag_on(value.clone(), flag.clone()),
+        enabled: r.enabled,
+        ..Default::default()
+    });
+    Some(std::iter::once(info(&title, detail)).chain(switches).collect())
+}
 
-    fn servers(&self) -> Vec<(&'static str, Vec<Row>)> {
-        let p = self.p;
-        let mut accounts: Vec<Row> = p
-            .servers
-            .iter()
-            .map(|sv| {
-                let active = sv.id == p.active_server_id;
-                let words = crate::words::provider(sv.kind);
-                let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
-                let mut detail = format!("{who} · {}", if active { "in use" } else { "not in use" });
-                if !sv.alt_url.trim().is_empty() {
-                    detail.push_str(" · second address");
+/// The desktop's row for one of the core's, or None for one it does not draw.
+fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Option<Row> {
+    let enabled = r.enabled;
+    Some(match r.item {
+        RowItem::Setting { spec, value, .. } => {
+            let (title, detail) = setting_words(&spec.name, s);
+            match spec.kind {
+                SettingKind::Switch => Row { kind: TOGGLE, name: spec.name, title, detail, on: value == "true", enabled, ..Default::default() },
+                SettingKind::Choice => {
+                    let options = spec.options.iter().map(|v| (option_words(&spec.name, v), v.clone())).collect();
+                    Row { kind: CHOICE, name: spec.name, title, options, enabled, ..Default::default() }
                 }
-                let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
-                Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, ..Default::default() }
-            })
-            .collect();
-        if self.f.rules.settings.contains(&SettingsPart::ServerOptions) {
-            accounts.push(Row { kind: BUTTON, name: ADD_SERVER.into(), title: "Add server".into(), enabled: true, ..Default::default() });
+                SettingKind::Level => {
+                    let v: f32 = value.parse().unwrap_or(spec.min);
+                    let title = format!("{title}: {}", if v <= 0.0 { "Off".to_string() } else { format!("{} dB", crate::eq::signed(v)) });
+                    Row { kind: SLIDER, name: spec.name, title, value: v.clamp(spec.min, spec.max), min: spec.min, max: spec.max, enabled: true, ..Default::default() }
+                }
+                SettingKind::Text => Row { kind: TEXT, name: spec.name, title, detail, button: value, enabled: true, ..Default::default() },
+                SettingKind::Colour => {
+                    let swatches = spec.options.iter().filter_map(|c| c.parse::<i64>().ok()).map(|c| c as u32).collect();
+                    Row { kind: PALETTE, name: spec.name, title, swatches, value: p.accent as u32 as f32, enabled: true, ..Default::default() }
+                }
+                // Drawn by `flag_rows`.
+                SettingKind::Flags => return None,
+            }
         }
-        let mut out = vec![("Accounts", accounts)];
-        if self.f.folders.len() > 1 {
-            let shown = p.active_server().map(|s| s.music_folder_ids.clone()).unwrap_or_default();
-            let switches = nori_core::settings::folder_switches(shown, self.f.folders.iter().map(|(_, id)| id.clone()).collect());
-            let rows = self.f.folders.iter().zip(switches).map(|((name, _), s)| Row {
-                kind: TOGGLE,
-                name: format!("{MUSIC_FOLDERS}={}", s.tapped),
-                title: name.clone(),
-                on: s.on,
-                enabled: true,
-                ..Default::default()
-            });
-            out.push(("Music folders", rows.collect()));
+        RowItem::Link { to: SettingsLink::Equalizer } => {
+            let status = if s.untouched { "Off now" } else if s.sound_chain_on { "On" } else { "Off" };
+            Row { kind: LINK, name: EQUALIZER.into(), title: "Equalizer".into(), detail: status.into(), enabled: true, ..Default::default() }
         }
-        out
-    }
+        RowItem::Stored => {
+            let bytes = |b: u64| numbers::bytes(b as i64, POINT);
+            let stored = format!(
+                "{} streamed · {} covers · {} lyrics · {} in {} · {} library",
+                bytes(f.stream_bytes),
+                bytes(f.cover_bytes),
+                bytes(f.lyrics_bytes),
+                bytes(f.download_bytes),
+                words::count(f.download_songs, "download", "downloads"),
+                bytes(f.database_bytes)
+            );
+            info("Stored on this Mac", stored)
+        }
+        RowItem::Link { .. } | RowItem::CompressionMeter => return None,
+        RowItem::Action { action: a } => {
+            let n = f.analysed;
+            let (songs, albums, artists) = f.indexed;
+            let bytes = |b: u64| numbers::bytes(b as i64, POINT);
+            match a {
+                SettingsAction::MeasureAgain => action("Measured songs", format!("{} measured for tempo and beats.", words::count(n, "song", "songs")), "Measure again", enabled, Chore::MeasureAgain),
+                SettingsAction::SyncLibrary => {
+                    let counts = format!("{} · {} · {} on this Mac", words::count(songs, "song", "songs"), words::count(albums, "album", "albums"), words::count(artists, "artist", "artists"));
+                    action("Offline search", counts, if f.syncing { "Updating…" } else { "Update" }, enabled, Chore::SyncLibrary)
+                }
+                SettingsAction::DownloadLibrary => action("Download the whole library", "Every song, at the download quality.".into(), "Download", enabled, Chore::DownloadLibrary),
+                SettingsAction::ClearStream => action("Streamed music", format!("{}. Oldest goes first. Downloads stay.", bytes(f.stream_bytes)), "Clear", enabled, Chore::ClearStream),
+                SettingsAction::ClearCovers => action("Covers", format!("{}. Fetched again when needed.", bytes(f.cover_bytes)), "Clear", enabled, Chore::ClearCovers),
+                SettingsAction::ClearLyrics => action("Lyrics", format!("{} found online. Looked up again when needed.", bytes(f.lyrics_bytes)), "Clear", enabled, Chore::ClearLyrics),
+                SettingsAction::AddServer => Row { kind: BUTTON, name: ADD_SERVER.into(), title: "Add server".into(), enabled: true, ..Default::default() },
+                SettingsAction::AnalyseDownloads | SettingsAction::JoinJam | SettingsAction::CheckUpdate => return None,
+            }
+        }
+        RowItem::Note { note: n } => note(match n {
+            SettingsNote::HeldByDac => "The audio is played untouched: no mixing, skipping or effects.",
+            SettingsNote::Boost => "The boost turns the limiter on with it, so loud songs do not distort.",
+            SettingsNote::LyricsSources => "The quick ones (LyricsPlus, BetterLyrics and LRCLIB) are asked first, together, and the others only when those find nothing good. Every answer is scored on how well it matches the song, how finely it is timed and whether the other services agree, and the best is shown; the order here settles near ties. Your server's own timed lyrics always come before all of these.",
+            SettingsNote::Dac => return None,
+        }),
+        RowItem::Server { index } => {
+            let sv = p.servers.get(index as usize)?;
+            let active = sv.id == p.active_server_id;
+            let words = crate::words::provider(sv.kind);
+            let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
+            let mut detail = format!("{who} · {}", if active { "in use" } else { "not in use" });
+            if !sv.alt_url.trim().is_empty() {
+                detail.push_str(" · second address");
+            }
+            let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
+            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, ..Default::default() }
+        }
+        RowItem::MusicFolder { index, on, tapped } => {
+            let (name, _) = f.folders.get(index as usize)?;
+            Row { kind: TOGGLE, name: format!("{MUSIC_FOLDERS}={tapped}"), title: name.clone(), on, enabled, ..Default::default() }
+        }
+        RowItem::LyricsSource { index } => {
+            let src = s.lyrics_sources.get(index as usize)?;
+            let (title, about) = service(&src.id)?;
+            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: true, ..Default::default() }
+        }
+    })
 }
 
 /// Display name and description of a lyrics service by core id.
@@ -563,28 +448,56 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
     })
 }
 
+/// The groups of settings tab `tab`: each section's title and rows. Tab 0 adds the desktop's own:
+/// the output device and the version.
+fn groups(p: &StoredPrefs, f: &Facts, tab: i32) -> Vec<(&'static str, Vec<Row>)> {
+    let s = settings_model::state(p, settings_model::Output::default(), &crate::session::app().settings.model);
+    let facts = PageFacts {
+        parts: f.rules.settings.clone(),
+        folders: f.folders.iter().map(|(_, id)| id.clone()).collect(),
+        analysed: f.analysed,
+        indexed_songs: f.indexed.0,
+        syncing: f.syncing,
+        stream_bytes: f.stream_bytes as i64,
+        cover_bytes: f.cover_bytes as i64,
+        lyrics_bytes: f.lyrics_bytes as i64,
+        download_songs: f.download_songs,
+        ..PageFacts::default()
+    };
+    let mut groups: Vec<(&'static str, Vec<Row>)> = Vec::new();
+    for sec in settings_pages::page(tab_page(tab), SettingsClient::Desktop, p, &s, &facts) {
+        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f).into_iter().collect())).collect();
+        let title = section_title(sec.id);
+        // Sections that share a title are one group here.
+        match groups.last_mut() {
+            Some((t, g)) if *t == title => g.extend(rows),
+            _ if rows.is_empty() => {}
+            _ => groups.push((title, rows)),
+        }
+    }
+    if tab == 0 {
+        let mut devices = vec![("The system's own".to_string(), String::new())];
+        devices.extend(f.devices.iter().map(|d| (d.clone(), d.clone())));
+        let output = vec![
+            Row { kind: CHOICE, name: DEVICE.into(), title: "Play through".into(), options: devices, enabled: true, ..Default::default() },
+            note("A new device is used from the next start of nori."),
+        ];
+        groups.push(("Output device", output));
+        groups.push(("About", vec![info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))]));
+    }
+    groups
+}
+
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.
 pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32) -> ModelRc<SettingRow> {
-    let s = settings_model::state(p, settings_model::Output::default(), &crate::session::app().settings.model);
-    let b = Build { p, s: &s, f };
-    let mut groups = match tab {
-        1 => b.playing(),
-        2 => b.sound(),
-        3 => b.lyrics(),
-        4 => b.library(),
-        5 => b.data(),
-        6 => b.servers(),
-        _ => b.general(),
-    };
-    groups.retain(|(title, _)| f.rules.settings.contains(&part(tab, title)));
     let mut out = Vec::new();
-    for (title, rows) in groups {
+    for (title, rows) in groups(p, f, tab) {
         out.push(SettingRow { kind: HEADING, title: title.into(), ..Default::default() });
         let n = rows.len();
         for (i, r) in rows.into_iter().enumerate() {
             let v = match Target::of(&r.name) {
                 Target::Device => f.device.clone(),
-                Target::Setting(name) => b.value(name),
+                Target::Setting(name) => settings_model::value_of(p, name).unwrap_or_default(),
             };
             let chosen = r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32);
             let labels: Vec<SharedString> = r.options.iter().map(|o| o.0.as_str().into()).collect();
@@ -613,22 +526,6 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32) -> ModelRc<SettingRow> {
     ModelRc::new(VecModel::from(out))
 }
 
-/// The part of the settings section `title` of tab `tab` is.
-fn part(tab: i32, title: &str) -> SettingsPart {
-    match (tab, title) {
-        (1, _) => SettingsPart::Playback,
-        (2, _) => SettingsPart::Sound,
-        (3, _) => SettingsPart::Lyrics,
-        (4, _) => SettingsPart::Library,
-        (5, "Downloads") => SettingsPart::Downloads,
-        (5, "Storage") => SettingsPart::Storage,
-        (5, _) => SettingsPart::Streaming,
-        (6, "This server") => SettingsPart::ServerOptions,
-        (6, _) => SettingsPart::Profiles,
-        _ => SettingsPart::Look,
-    }
-}
-
 /// The value of option `index` of `target`.
 pub fn option_value(target: Target, index: usize, f: &Facts) -> Option<String> {
     match target {
@@ -646,25 +543,10 @@ pub fn option_value(target: Target, index: usize, f: &Facts) -> Option<String> {
 /// The in-place level a slider row edits.
 pub fn level_of(name: &str) -> Option<EqLevel> {
     Some(match name {
-        "preampDb" => EqLevel::ReplayGainPreamp,
-        "bassBoostDb" => EqLevel::BassBoost,
-        "virtualizer" => EqLevel::Virtualizer,
         "volumeBoostDb" => EqLevel::VolumeBoost,
-        "compThresholdDb" => EqLevel::CompThreshold,
-        "compRatio" => EqLevel::CompRatio,
-        "compAttackMs" => EqLevel::CompAttack,
-        "compReleaseMs" => EqLevel::CompRelease,
-        "compMakeupDb" => EqLevel::CompMakeup,
-        "compKneeDb" => EqLevel::CompKnee,
-        "expThresholdDb" => EqLevel::ExpThreshold,
-        "expRatio" => EqLevel::ExpRatio,
-        "expAttackMs" => EqLevel::ExpAttack,
-        "expReleaseMs" => EqLevel::ExpRelease,
         "eqPreamp" => EqLevel::Preamp,
         "balance" => EqLevel::Balance,
         "limiter" => EqLevel::Limiter,
-        "crossfeed" => EqLevel::Crossfeed,
-        "crossfeedCut" => EqLevel::CrossfeedCut,
         _ => return None,
     })
 }
@@ -682,14 +564,19 @@ mod tests {
 
     #[test]
     fn row_names_resolve() {
-        let p = StoredPrefs { auto_mix: true, auto_fill: true, compressor: true, expander: true, loudness: true, scrobble: true, ..StoredPrefs::default() };
+        let p = StoredPrefs { auto_mix: true, auto_fill: true, compressor: true, scrobble: true, ..StoredPrefs::default() };
         let f = Facts::default();
-        let s = settings_model::state(&p, settings_model::Output::default(), &crate::session::app().settings.model);
-        let b = Build { p: &p, s: &s, f: &f };
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
-        for (_, rows) in [b.general(), b.playing(), b.sound(), b.lyrics(), b.library(), b.data(), b.servers()].into_iter().flatten() {
-            for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE | TEXT) && r.name != DEVICE) {
-                assert!(specs.contains(&r.name), "{} is not a core setting", r.name);
+        for tab in 0..7 {
+            for (_, rows) in groups(&p, &f, tab) {
+                for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE | TEXT) && r.name != DEVICE) {
+                    let name = toggled(&r.name, r.on).0;
+                    assert!(specs.iter().any(|s| s == name), "{name} is not a core setting");
+                    assert!(!setting_words(name, &settings_model::state(&p, settings_model::Output::default(), &crate::session::app().settings.model)).0.eq(name), "{name} has no words");
+                }
+                for r in rows.iter().filter(|r| r.kind == SLIDER) {
+                    assert!(level_of(&r.name).is_some(), "{}", r.name);
+                }
             }
         }
         for c in CHORES {
@@ -698,10 +585,5 @@ mod tests {
         assert_eq!(Act::of(EQUALIZER), Some(Act::Equalizer));
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
-        for r in b.sound().into_iter().flat_map(|g| g.1) {
-            if r.kind == SLIDER {
-                assert!(level_of(&r.name).is_some(), "{}", r.name);
-            }
-        }
     }
 }

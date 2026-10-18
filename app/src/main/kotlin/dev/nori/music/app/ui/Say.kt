@@ -196,11 +196,6 @@ class Say(private val r: Resources) {
     val findingLyrics: String = r.getString(R.string.finding_lyrics)
     val analysing: String = r.getString(R.string.analysing)
     val detectingBeats: String = r.getString(R.string.detecting_beats)
-    val beatsAskTitle: String = r.getString(R.string.beats_ask_title)
-    val beatsAskText: String = r.getString(R.string.beats_ask_text)
-    val beatsAskRemember: String = r.getString(R.string.beats_ask_remember)
-    val beatsAskYes: String = r.getString(R.string.beats_ask_yes)
-    val beatsAskNo: String = r.getString(R.string.beats_ask_no)
     val nothingToAnalyse: String = r.getString(R.string.said_nothing_to_analyse)
     val equalizer: String = r.getString(R.string.equalizer)
     val eqHint: String = r.getString(R.string.eq_hint)
@@ -233,11 +228,6 @@ class Say(private val r: Resources) {
     val profiles: String = r.getString(R.string.profiles)
     val saveTheseSettings: String = r.getString(R.string.save_these_settings)
     val saveAsProfile: String = r.getString(R.string.save_as_profile)
-    val crossfeed: String = r.getString(R.string.crossfeed)
-    val crossfeedOff: String = r.getString(R.string.crossfeed_off)
-    val crossfeedDefault: String = r.getString(R.string.crossfeed_default)
-    val crossfeedChuMoy: String = r.getString(R.string.crossfeed_chu_moy)
-    val crossfeedJanMeier: String = r.getString(R.string.crossfeed_jan_meier)
     val importPreset: String = r.getString(R.string.import_preset)
     val importPresetHint: String = r.getString(R.string.import_preset_hint)
     val importPresetExample: String = r.getString(R.string.import_preset_example)
@@ -395,7 +385,7 @@ class Say(private val r: Resources) {
 
     /** The format of a record, from its first song: "FLAC 24/96.0", "MP3 320 kbps". */
     fun quality(s: Song): String? {
-        val lossless = s.suffix.lowercase() in LOSSLESS
+        val lossless = dev.nori.music.ffi.model.isLossless(s.suffix)
         val name = s.suffix.uppercase()
         val detail = if (lossless && s.bitDepth > 0u) "${s.bitDepth}/${Fmt.khz(s.samplingRate.toInt())}"
         else if (s.bitRate > 0u) "${s.bitRate} kbps" else null
@@ -777,7 +767,6 @@ class Say(private val r: Resources) {
     val excludedFromMixes: String get() = r.getString(R.string.said_excluded_from_mixes)
     val serverDownloading: String get() = r.getString(R.string.said_server_downloading)
     val saidFailed: String get() = r.getString(R.string.said_failed)
-    fun favourite(on: Boolean): String = r.getString(if (on) R.string.said_favourite_added else R.string.said_favourite_removed)
     fun downloadingSongs(n: Int): String = r.getQuantityString(R.plurals.said_downloading, n, n)
     fun downloadsRemoved(n: Int): String = r.getQuantityString(R.plurals.said_downloads_removed, n, n)
     fun analysingDownloads(n: Int): String = r.getQuantityString(R.plurals.said_analysing_downloads, n, n)
@@ -811,13 +800,6 @@ class Say(private val r: Resources) {
         if (db > 0.05f) r.getString(R.string.eq_compressing, Fmt.fixed(db.toDouble(), 1)) else r.getString(R.string.eq_not_compressing)
     fun reduction(db: Float): String =
         if (db > 0.05f) r.getString(R.string.eq_reduction, Fmt.fixed(db.toDouble(), 1)) else r.getString(R.string.eq_not_clipping)
-    fun crossfeed(db: Float, custom: Boolean = false): String = when {
-        db <= 0f -> r.getString(R.string.eq_off)
-        custom -> r.getString(R.string.eq_crossfeed_custom, Fmt.fixed(db.toDouble(), 1))
-        else -> r.getString(R.string.eq_crossfeed_on, Fmt.fixed(db.toDouble(), 1))
-    }
-    /** "Cutoff 1265 Hz: how high up the other ear hears", in whole hertz as the core keeps it. */
-    fun crossfeedCut(hz: Float): String = r.getString(R.string.eq_crossfeed_cut, Fmt.fixed(hz.toDouble(), 0))
     /** The band dialog's title: "63 Hz", "1k Hz". */
     fun hzTitle(freq: Float): String = r.getString(R.string.eq_hz_title, Fmt.hz(freq))
     /** "Slope 0.71" for a shelf given by its slope, "Q 1.41" for the rest. */
@@ -907,7 +889,6 @@ class Say(private val r: Resources) {
     companion object {
         /** Counts up to this are made once and kept. */
         private const val COUNTS = 512
-        private val LOSSLESS = setOf("flac", "alac", "wav", "aiff", "ape", "wv", "dsf", "dff")
 
         @Volatile private var res: Resources? = null
         @Volatile private var made: Say? = null

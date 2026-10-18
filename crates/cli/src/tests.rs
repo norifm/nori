@@ -396,17 +396,17 @@ fn settings_page() {
     dump("settings", &s);
     let pages = a.settings.pages(&a.prefs.clone()).to_vec();
     for (g, page) in GROUPS.iter().zip(&pages) {
-        assert!(s.contains(g.title), "{}: group missing", g.id);
+        assert!(s.contains(g.title), "{}: group missing", g.title);
         for section in &page.sections {
             if !section.title.is_empty() {
-                assert!(s.contains(&section.title), "{}: section {} missing", g.id, section.title);
+                assert!(s.contains(&section.title), "{}: section {} missing", g.title, section.title);
             }
             for row in &section.rows {
                 let title = match row {
                     Row::Toggle { title, .. } | Row::Choice { title, .. } | Row::Link { title, .. } | Row::Action { title, .. } => title.trim(),
                     _ => continue,
                 };
-                assert!(s.contains(title), "{}: {title} missing:\n{s}", g.id);
+                assert!(s.contains(title), "{}: {title} missing:\n{s}", g.title);
             }
         }
     }

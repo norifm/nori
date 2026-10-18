@@ -202,7 +202,7 @@ fn downloads_and_measuring_over_core() {
 
     // "Better beat detection" without a model decodes nothing more and says why.
     let mut prefs = settings.current().unwrap();
-    (prefs.auto_mix_better_beats, prefs.auto_mix_beats_mobile_data) = (true, true);
+    prefs.auto_mix_better_beats = true;
     settings.put(prefs);
     measurer.ask(core.session.measure());
     settle(&measurer);
@@ -389,9 +389,9 @@ impl ByteSource for Plain {
 /// quality; fetching ahead follows the network's setting (none on metered by default).
 fn metered_and_ahead(client: &Arc<Client>, network: &NoApi, store: &Arc<Store>, analyses: &Arc<Analyses>) {
     use nori_player::pipeline::Songs;
-    let songs: Vec<Song> = (1..=5).map(|i| Song { id: format!("p-{i}"), title: format!("P{i}"), duration: 3, suffix: "mp3".into(), ..Default::default() }).collect();
+    let songs: Vec<Song> = (1..=6).map(|i| Song { id: format!("p-{i}"), title: format!("P{i}"), duration: 3, suffix: "mp3".into(), ..Default::default() }).collect();
     client.session().register(songs);
-    let ids: Vec<String> = (1..=5).map(|i| format!("p-{i}")).collect();
+    let ids: Vec<String> = (1..=6).map(|i| format!("p-{i}")).collect();
     client.session().set(ids, Some(0), false, None);
 
     let net = Arc::new(Plain::default());
@@ -403,8 +403,8 @@ fn metered_and_ahead(client: &Arc<Client>, network: &NoApi, store: &Arc<Store>, 
     let _playing = sources.open("p-1", 0).unwrap();
     sources.upcoming("p-2");
     store.wait_ahead();
-    assert!(store.peek("p-3:0").is_some(), "the song after the next, fetched whole ahead");
-    assert!(store.peek("p-4:0").is_none(), "two ahead on Wi-Fi by default: the next (the engine's own) and this one");
+    assert!(store.peek("p-3:0").is_some() && store.peek("p-4:0").is_some(), "the songs after the next, fetched whole ahead");
+    assert!(store.peek("p-5:0").is_none(), "three ahead on Wi-Fi: the next (the engine's own) and these two");
     assert_eq!(net.0.lock().iter().filter(|u| u.ends_with("&id=p-3")).count(), 1, "in one request");
 
     // A lower metered quality makes the switch visible.
@@ -419,15 +419,15 @@ fn metered_and_ahead(client: &Arc<Client>, network: &NoApi, store: &Arc<Store>, 
     client.session().moved_to(1);
     sources.upcoming("p-3");
     store.wait_ahead();
-    let _after = sources.open("p-4", 0).unwrap();
+    let _after = sources.open("p-5", 0).unwrap();
     let mut asked_for = net.0.lock();
-    while !asked_for.iter().any(|u| u.contains("&id=p-4")) {
+    while !asked_for.iter().any(|u| u.contains("&id=p-5")) {
         net.1.wait(&mut asked_for);
     }
     drop(asked_for);
     let opened: Vec<String> = net.0.lock()[asked..].to_vec();
-    assert!(opened.iter().any(|u| u.ends_with("&id=p-4&maxBitRate=192&format=opus")), "the next song fetched streams at the metered quality: {opened:?}");
-    assert!(store.peek("p-5:0").is_none() && store.peek("p-5:192opus").is_none(), "one ahead on mobile data by default: the engine's own next song, none more");
+    assert!(opened.iter().any(|u| u.ends_with("&id=p-5&maxBitRate=192&format=opus")), "the next song fetched streams at the metered quality: {opened:?}");
+    assert!(store.peek("p-6:0").is_none() && store.peek("p-6:192opus").is_none(), "one ahead on mobile data: the engine's own next song, none more");
     network.metered.store(false, std::sync::atomic::Ordering::Relaxed);
 }
 

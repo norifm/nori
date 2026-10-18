@@ -944,27 +944,19 @@ fun MoreCircle(items: List<Pair<String, () -> Unit>>, modifier: Modifier = Modif
 
 
 /**
- * Whether movement should be kept to a minimum: the app's own switch (or its e-ink one), or the system's
- * animations being turned off (Developer options, or the accessibility setting some people rely on). Read
- * it rather than hard-coding durations, so "reduce motion" means the same thing everywhere.
+ * Whether movement is kept to short fades or none ([Motion] Reduced or E-ink, the user's choice, whatever
+ * Android's animation setting says). Read it rather than hard-coding durations, so it means the same
+ * thing everywhere.
  */
 @Composable
 fun reduceMotion(): Boolean {
     val prefs by (androidx.lifecycle.viewmodel.compose.viewModel<dev.nori.music.app.vm.SettingsViewModel>()).prefs.collectAsStateWithLifecycle()
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val systemOff = androidx.compose.runtime.remember {
-        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-    }
-    // The rule is the core's; asked only when one of its three answers changes.
-    val reduce = prefs.reduceMotion || prefs.einkScreen
-    return androidx.compose.runtime.remember(reduce, prefs.ignoreSystemMotion, systemOff) {
-        dev.nori.music.ffi.motionReduced(reduce, prefs.ignoreSystemMotion, systemOff)
-    }
+    return prefs.motion != dev.nori.music.ffi.settings.Motion.FULL
 }
 
 /**
- * Prefs.einkScreen, provided once by App: the player redraws only when something changes (a song, play
- * or pause, a seek, a touch), so its seek bar and lyrics are set on those and do not run on their own.
+ * The E-ink motion, provided once by App: the player redraws only when something changes (a song, play
+ * or pause, a seek, a touch), so its seek bar, lyrics and playing bars do not run on their own.
  */
 val LocalEinkScreen = androidx.compose.runtime.compositionLocalOf { false }
 
@@ -973,22 +965,16 @@ val LocalEinkScreen = androidx.compose.runtime.compositionLocalOf { false }
  * in its coroutine's context, and by default that is Android's animator duration scale - so with system
  * animations off, every tween and spring in the app finished on its first frame. The activity starts
  * the whole composition with this object in its context instead (see MainActivity), so every animation
- * there is, ours and the libraries', reads it: the system's scale normally, full speed when the user
- * asked this app to animate regardless of the rest of the phone.
+ * there is, ours and the libraries', runs at full speed: nori's own Motion setting is what reduces them.
  */
 object AppMotion : androidx.compose.ui.MotionDurationScale {
-    // On until the settings say otherwise, as they do by default: the first frames, composed before App
-    // has read them, would otherwise run at Android's scale and finish on the spot.
-    @Volatile var force = true
-
     /**
      * The user's reduce-motion answer, for code that must not look it up per call - a cover in a grid
      * of a hundred cannot each collect the settings. Kept current by App; [reduceMotion] is the same
      * answer for everything else.
      */
     @Volatile var reduce = false
-    // A static read, and the process is told when the setting changes: nothing to observe.
-    override val scaleFactor: Float get() = if (force) 1f else android.animation.ValueAnimator.getDurationScale()
+    override val scaleFactor: Float get() = 1f
 }
 
 

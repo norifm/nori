@@ -1317,7 +1317,7 @@ fn gain_boost_uses_float_limiter() {
     let mut app = sim::App::new();
     app.gains.insert("a".into(), up);
     app.gains.insert("b".into(), 0.5);
-    let rig = Rig::with_app(&[("a", &a), ("b", &b)], app, Settings { gain_boost_db: 9.0, ..Settings::default() });
+    let rig = Rig::with_app(&[("a", &a), ("b", &b)], app, Settings { gain_boost_db: nori_player::gain::BOOST_MAX_DB, ..Settings::default() });
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(30, Rig::ended), "{:?}", rig.events.lock());
     assert!(rig.engine.status().chain, "the limiter is in the path");
@@ -1330,7 +1330,7 @@ fn gain_boost_uses_float_limiter() {
     assert!(peak <= ceiling + 1.0, "nothing past the -1 dB ceiling: {peak} of {ceiling}");
     let (ha, hb) = (&heard[delay..delay + a.len()], &heard[delay + a.len()..]);
     let louder = 20.0 * (rms(ha) / rms(&a)).log10();
-    assert!(louder > 7.0 && louder < 9.1, "a {louder:.2} dB louder: the 9 asked, less what the limiter took off its peaks");
+    assert!(louder > 5.0 && louder < 6.1, "a {louder:.2} dB louder: held to the 6 dB a song may be turned up, less what the limiter took off its peaks");
     let quieter = 20.0 * (rms(hb) / rms(&b)).log10();
     assert!((quieter + 6.02).abs() < 0.05, "b 6 dB quieter: {quieter:.2}");
     // Without a boost cap, a plays at its own level.
@@ -2015,7 +2015,7 @@ fn sound_changes_seamlessly() {
     type Case = (&'static str, Vec<i16>, Settings, Vec<(i64, Settings)>, usize);
     let cases: Vec<Case> = vec![
         ("equalizer", music(20.0, 42), Settings::default(), vec![(3_000, loud_eq()), (7_000, with_sound(nori_engine::Sound { preamp_db: -6.0, limiter: true, mono: true, ..Default::default() })), (12_000, Settings::default())], 6),
-        ("compressor", music(15.0, 43), Settings::default(), vec![(3_000, squeeze(CompressorPreset::Strong)), (8_000, squeeze(CompressorPreset::Balanced))], 6),
+        ("compressor", music(15.0, 43), Settings::default(), vec![(3_000, squeeze(CompressorPreset::Car)), (8_000, squeeze(CompressorPreset::Light))], 6),
         ("speed", music(20.0, 44), Settings::default(), vec![(3_000, Settings { speed: 1.5, ..Settings::default() }), (6_000, Settings { speed: 0.8, pitch: 1.1, ..Settings::default() }), (9_000, Settings::default())], 20),
         // On before the first silence, off in the middle of the second.
         ("silence skipping", gaps, loud_eq(), vec![(3_000, Settings { skip_silence: true, ..loud_eq() }), (17_500, loud_eq())], 120),

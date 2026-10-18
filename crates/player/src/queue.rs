@@ -82,9 +82,9 @@ pub fn mixing(transitions_off: bool, crossfade_s: i32, auto_mix: bool) -> bool {
     !transitions_off && (crossfade_s > 0 || auto_mix)
 }
 
-/// Prefetch count for the current network.
-pub fn precache_count(metered: bool, wifi: i32, mobile: i32) -> usize {
-    (if metered { mobile } else { wifi }).max(0) as usize
+/// Songs fetched ahead on the current network: three on Wi-Fi, the next one on mobile data.
+pub fn precache_count(metered: bool) -> usize {
+    if metered { 1 } else { 3 }
 }
 
 /// Upcoming songs (0 = playing) measured ahead for AutoMix.
@@ -121,11 +121,11 @@ pub enum OnError {
 
 /// What to do when a song will not play: an offload refusal drops offload, a network error goes to the
 /// bridge if enabled, anything else skips (at most three in a row), else stop.
-pub fn on_error(kind: PlaybackError, offload_refused: bool, bridge: bool, skip_on_error: bool, has_next: bool, errors_in_a_row: u32) -> OnError {
+pub fn on_error(kind: PlaybackError, offload_refused: bool, bridge: bool, has_next: bool, errors_in_a_row: u32) -> OnError {
     match kind {
         PlaybackError::Output if !offload_refused => OnError::GiveUpOffload,
         PlaybackError::Network if bridge => OnError::Bridge,
-        _ if skip_on_error && has_next && errors_in_a_row < 3 => OnError::Skip,
+        _ if has_next && errors_in_a_row < 3 => OnError::Skip,
         _ => OnError::Stop,
     }
 }
@@ -142,8 +142,8 @@ impl ErrorRun {
     }
 
     /// [`on_error`] with the run so far; skips are counted.
-    pub fn failed(&mut self, kind: PlaybackError, offload_refused: bool, bridge: bool, skip_on_error: bool, has_next: bool) -> OnError {
-        let d = on_error(kind, offload_refused, bridge, skip_on_error, has_next, self.in_a_row);
+    pub fn failed(&mut self, kind: PlaybackError, offload_refused: bool, bridge: bool, has_next: bool) -> OnError {
+        let d = on_error(kind, offload_refused, bridge, has_next, self.in_a_row);
         if d == OnError::Skip {
             self.in_a_row += 1;
         }
@@ -151,8 +151,8 @@ impl ErrorRun {
     }
 
     /// The bridge could not take over: skip under the same limit.
-    pub fn bridge_failed(&mut self, skip_on_error: bool, has_next: bool) -> bool {
-        let skip = on_error(PlaybackError::Other, true, false, skip_on_error, has_next, self.in_a_row) == OnError::Skip;
+    pub fn bridge_failed(&mut self, has_next: bool) -> bool {
+        let skip = on_error(PlaybackError::Other, true, false, has_next, self.in_a_row) == OnError::Skip;
         if skip {
             self.in_a_row += 1;
         }
@@ -329,28 +329,27 @@ mod tests {
 
     #[test]
     fn error_handling() {
-        assert_eq!(on_error(PlaybackError::Output, false, false, true, true, 0), OnError::GiveUpOffload);
-        assert_eq!(on_error(PlaybackError::Output, true, false, true, true, 0), OnError::Skip, "already off offload");
-        assert_eq!(on_error(PlaybackError::Network, false, true, true, true, 0), OnError::Bridge);
-        assert_eq!(on_error(PlaybackError::Other, false, true, true, true, 2), OnError::Skip);
-        assert_eq!(on_error(PlaybackError::Other, false, true, true, true, 3), OnError::Stop);
-        assert_eq!(on_error(PlaybackError::Other, false, false, false, true, 0), OnError::Stop);
+        assert_eq!(on_error(PlaybackError::Output, false, false, true, 0), OnError::GiveUpOffload);
+        assert_eq!(on_error(PlaybackError::Output, true, false, true, 0), OnError::Skip, "already off offload");
+        assert_eq!(on_error(PlaybackError::Network, false, true, true, 0), OnError::Bridge);
+        assert_eq!(on_error(PlaybackError::Other, false, true, true, 2), OnError::Skip);
+        assert_eq!(on_error(PlaybackError::Other, false, true, true, 3), OnError::Stop);
+        assert_eq!(on_error(PlaybackError::Other, false, false, false, 0), OnError::Stop, "nothing after it");
 
         // Error run counts skips.
         let mut r = ErrorRun::new();
         for _ in 0..3 {
-            assert_eq!(r.failed(PlaybackError::Other, false, false, true, true), OnError::Skip);
+            assert_eq!(r.failed(PlaybackError::Other, false, false, true), OnError::Skip);
         }
-        assert_eq!(r.failed(PlaybackError::Other, false, false, true, true), OnError::Stop, "three in a row, then it stops");
+        assert_eq!(r.failed(PlaybackError::Other, false, false, true), OnError::Stop, "three in a row, then it stops");
         r.played();
-        assert_eq!(r.failed(PlaybackError::Network, false, true, true, true), OnError::Bridge, "handing to the bridge is not a skip");
-        assert!(r.bridge_failed(true, true));
-        assert!(!r.bridge_failed(false, true), "skip on error off");
-        assert!(!r.bridge_failed(true, false), "nothing after");
-        assert!(r.bridge_failed(true, true) && r.bridge_failed(true, true));
-        assert!(!r.bridge_failed(true, true), "the bridge's skips count toward the same three");
-        assert_eq!(r.failed(PlaybackError::Output, false, false, true, true), OnError::GiveUpOffload);
-        assert_eq!(r.failed(PlaybackError::Other, false, false, true, true), OnError::Stop, "giving up offload is not a skip");
+        assert_eq!(r.failed(PlaybackError::Network, false, true, true), OnError::Bridge, "handing to the bridge is not a skip");
+        assert!(r.bridge_failed(true));
+        assert!(!r.bridge_failed(false), "nothing after");
+        assert!(r.bridge_failed(true) && r.bridge_failed(true));
+        assert!(!r.bridge_failed(true), "the bridge's skips count toward the same three");
+        assert_eq!(r.failed(PlaybackError::Output, false, false, true), OnError::GiveUpOffload);
+        assert_eq!(r.failed(PlaybackError::Other, false, false, true), OnError::Stop, "giving up offload is not a skip");
     }
 
     #[test]
@@ -358,7 +357,6 @@ mod tests {
         assert!(mixing(false, 4, false) && mixing(false, 0, true));
         assert!(!mixing(false, 0, false), "no transition");
         assert!(!mixing(true, 4, true), "the output forbids it");
-        assert_eq!((precache_count(true, 3, 1), precache_count(false, 3, 1), precache_count(false, -1, 1)), (1, 3, 0));
         assert_eq!((measure_ahead(true), measure_ahead(false)), (3, 0));
     }
 

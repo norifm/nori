@@ -142,6 +142,15 @@ impl Nori {
         let v: serde_json::Map<String, Value> = names.split(',').filter_map(|n| Some((n.to_string(), Value::String(nori_core::settings_model::value_of(&prefs, n)?)))).collect();
         Value::Object(v).to_string()
     }
+
+    /// The values the settings `names` (comma separated) offer, as `{ name: [value, ...] }`
+    /// (`settings_model::specs`).
+    pub fn options(&self, names: String) -> String {
+        let specs = nori_core::settings_model::specs();
+        let v: serde_json::Map<String, Value> =
+            names.split(',').filter_map(|n| Some((n.to_string(), Value::from(specs.iter().find(|s| s.name == n)?.options.clone())))).collect();
+        Value::Object(v).to_string()
+    }
 }
 
 /// Without the engine: the core alone, for the library.

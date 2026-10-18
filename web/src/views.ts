@@ -290,8 +290,9 @@ export async function search(query: string): Promise<HTMLElement> {
 }
 
 export async function settings(signOut: () => void): Promise<HTMLElement> {
-  const names = "autoMix,crossfadeSec,speed,pitch,autoMixKeepPitch";
+  const names = "autoMix,crossfadeSec,speed,pitch";
   let v: Record<string, string> = JSON.parse(await ask<string>("settings", names));
+  const offered: Record<string, string[]> = JSON.parse(await ask<string>("options", names));
   const profile = JSON.parse(await ask<string>("profile")) as { url: string; user: string } | null;
   const body = h("div", { class: "settings" });
   const jamBox = h("div", { class: "group jam-group" });
@@ -309,12 +310,12 @@ export async function settings(signOut: () => void): Promise<HTMLElement> {
       h("div", null, h("span", { class: "title" }, label), lead ? h("span", { class: "sub" }, lead) : null),
       h("input", { type: "checkbox", class: "switch", checked: v[name] === "true", on: { change: (e) => void set(name, (e.target as HTMLInputElement).checked ? "true" : "false") } }),
     );
-  const choice = (name: string, label: string, values: string[], word: (x: string) => string) =>
+  const choice = (name: string, label: string, word: (x: string) => string) =>
     h(
       "label",
       { class: "setting" },
       h("span", { class: "title" }, label),
-      h("select", { on: { change: (e) => void set(name, (e.target as HTMLSelectElement).value) } }, ...values.map((x) => h("option", { value: x, selected: Number(x) === Number(v[name]) }, word(x)))),
+      h("select", { on: { change: (e) => void set(name, (e.target as HTMLSelectElement).value) } }, ...(offered[name] ?? []).map((x) => h("option", { value: x, selected: Number(x) === Number(v[name]) }, word(x)))),
     );
   const draw = () =>
     body.replaceChildren(
@@ -323,10 +324,9 @@ export async function settings(signOut: () => void): Promise<HTMLElement> {
         "div",
         { class: "group" },
         toggle("autoMix", W.autoMix, W.autoMixLead),
-        choice("crossfadeSec", W.crossfade, ["0", "2", "4", "6", "8", "12"], (x) => (x === "0" ? W.crossfadeOff : W.seconds(Number(x)))),
-        choice("speed", W.speed, ["0.75", "0.9", "1", "1.1", "1.25", "1.5", "2"], (x) => `${x}×`),
-        choice("pitch", W.pitch, ["0.9", "0.95", "1", "1.05", "1.1"], (x) => `${x}×`),
-        toggle("autoMixKeepPitch", W.keepPitch),
+        choice("crossfadeSec", W.crossfade, (x) => (x === "0" ? W.crossfadeOff : W.seconds(Number(x)))),
+        choice("speed", W.speed, (x) => `${x}×`),
+        choice("pitch", W.pitch, (x) => `${x}×`),
       ),
       h("h2", { class: "section-title" }, W.jam),
       jamBox,

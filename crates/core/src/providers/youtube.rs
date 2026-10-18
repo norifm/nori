@@ -558,7 +558,7 @@ mod tests {
         let songs = ids.iter().map(|id| crate::Song { id: id.clone(), ..Default::default() }).collect();
         c.session().register(songs);
         c.session().set(ids, Some(0), false, None);
-        assert_eq!(c.session().precache(false), ["yt-c"], "the settings would fetch the song after next");
+        assert_eq!(c.session().precache(false), ["yt-c", "yt-d"], "the songs after next would be fetched");
         assert!(c.precache_targets(false).is_empty());
         assert_eq!(c.core.cover_address("https://yt3.googleusercontent.com/abc".into(), 320), "https://yt3.googleusercontent.com/abc=w320-h320-l90-rj");
         assert_eq!(c.core.cover_prefix(), None, "each cover's address is its own");

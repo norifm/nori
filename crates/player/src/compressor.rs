@@ -1,10 +1,10 @@
-//! Stereo-linked feed-forward compressor and downward expander (Giannoulis, Massberg, Reiss, JAES 2012):
+//! Stereo-linked feed-forward compressor (Giannoulis, Massberg, Reiss, JAES 2012):
 //! frame peak level, a soft-knee static curve in dB, a smooth decoupled peak detector on the gain
 //! reduction, then make-up gain. `α = exp(-1 / (τ fs))`. At rest a frame costs a compare; logs and powers
 //! only run while reducing.
 
 /// Soft-knee gain reduction (dB, >= 0) for a level `over` dB past the threshold with knee width `w`.
-/// The compressor uses slope `1 - 1/ratio`; the expander `ratio - 1` with `over` negated.
+/// The slope is `1 - 1/ratio`.
 /// Both sides are computed and one picked: music crosses the knee too often for a branch to guess.
 #[inline(always)]
 fn curve_db(over: f64, slope: f64, w: f64) -> f64 {
@@ -29,33 +29,54 @@ pub struct CompressorSettings {
     pub knee_db: f64,
 }
 
-/// Built-in compressor settings.
+/// The compressor's settings, one per use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CompressorPreset {
-    /// Light levelling that leaves transients alone.
-    Gentle,
-    /// Everyday evening-out: quiet passages come up, loud ones go down.
-    Balanced,
-    /// Loud and even, for noisy places or low volume at night.
-    Strong,
+    /// Gentle leveling that leaves transients alone.
+    Light,
+    /// Strong upward leveling: quiet passages stay above road noise.
+    Car,
+    /// Peaks tamed fast, for listening at low volume.
+    Night,
 }
 
 impl CompressorPreset {
-    pub const ALL: [CompressorPreset; 3] = [CompressorPreset::Gentle, CompressorPreset::Balanced, CompressorPreset::Strong];
+    pub const ALL: [CompressorPreset; 3] = [CompressorPreset::Light, CompressorPreset::Car, CompressorPreset::Night];
 
     /// Make-up is about half the reduction at -6 dBFS; the limiter catches the rest.
     pub fn settings(self) -> CompressorSettings {
         match self {
-            CompressorPreset::Gentle => CompressorSettings { threshold_db: -16.0, ratio: 2.0, attack_ms: 20.0, release_ms: 250.0, makeup_db: 2.5, knee_db: 6.0 },
-            CompressorPreset::Balanced => CompressorSettings { threshold_db: -20.0, ratio: 3.0, attack_ms: 10.0, release_ms: 180.0, makeup_db: 4.5, knee_db: 6.0 },
-            CompressorPreset::Strong => CompressorSettings { threshold_db: -28.0, ratio: 5.0, attack_ms: 5.0, release_ms: 120.0, makeup_db: 8.0, knee_db: 8.0 },
+            CompressorPreset::Light => CompressorSettings { threshold_db: -16.0, ratio: 2.0, attack_ms: 20.0, release_ms: 250.0, makeup_db: 2.5, knee_db: 6.0 },
+            CompressorPreset::Car => CompressorSettings { threshold_db: -30.0, ratio: 4.0, attack_ms: 10.0, release_ms: 250.0, makeup_db: 10.0, knee_db: 10.0 },
+            CompressorPreset::Night => CompressorSettings { threshold_db: -20.0, ratio: 6.0, attack_ms: 2.0, release_ms: 150.0, makeup_db: 5.0, knee_db: 6.0 },
         }
+    }
+
+    /// The preset nearest to `s`, each control measured against its range.
+    pub fn nearest(s: CompressorSettings) -> CompressorPreset {
+        let s = s.held();
+        let span = |(lo, hi): (f64, f64)| hi - lo;
+        let distance = |p: &CompressorPreset| {
+            let q = p.settings();
+            [
+                (s.threshold_db - q.threshold_db) / span(THRESHOLD_DB),
+                (s.ratio - q.ratio) / span(RATIO),
+                (s.attack_ms - q.attack_ms) / span(ATTACK_MS),
+                (s.release_ms - q.release_ms) / span(RELEASE_MS),
+                (s.makeup_db - q.makeup_db) / span(MAKEUP_DB),
+                (s.knee_db - q.knee_db) / span(KNEE_DB),
+            ]
+            .iter()
+            .map(|d| d * d)
+            .sum::<f64>()
+        };
+        CompressorPreset::ALL.into_iter().min_by(|a, b| distance(a).total_cmp(&distance(b))).expect("presets")
     }
 }
 
 impl Default for CompressorSettings {
     fn default() -> Self {
-        CompressorPreset::Balanced.settings()
+        CompressorPreset::Light.settings()
     }
 }
 
@@ -184,114 +205,6 @@ impl Compressor {
     }
 }
 
-/// Downward expander: below the threshold each dB of fall becomes `ratio` dB (a gate at high ratios).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ExpanderSettings {
-    /// dBFS peak level below which it acts.
-    pub threshold_db: f64,
-    /// dB out per dB in below the threshold, >= 1.
-    pub ratio: f64,
-    /// Opening time, ms.
-    pub attack_ms: f64,
-    /// Closing time, ms.
-    pub release_ms: f64,
-}
-
-impl Default for ExpanderSettings {
-    /// 2:1 below -50 dBFS: lowers hiss without touching music.
-    fn default() -> Self {
-        ExpanderSettings { threshold_db: -50.0, ratio: 2.0, attack_ms: 5.0, release_ms: 150.0 }
-    }
-}
-
-pub(crate) const EXP_THRESHOLD_DB: (f64, f64) = (-90.0, -10.0);
-pub(crate) const EXP_RATIO: (f64, f64) = (1.0, 20.0);
-pub(crate) const EXP_ATTACK_MS: (f64, f64) = (0.1, 100.0);
-pub(crate) const EXP_RELEASE_MS: (f64, f64) = (10.0, 2000.0);
-/// Knee width, dB (prevents chatter at the threshold).
-const EXP_KNEE_DB: f64 = 6.0;
-/// Maximum reduction, dB.
-pub(crate) const EXP_RANGE_DB: f64 = 80.0;
-
-impl ExpanderSettings {
-    /// Clamped to the ranges; NaN takes the default.
-    pub fn held(self) -> ExpanderSettings {
-        let d = ExpanderSettings::default();
-        ExpanderSettings {
-            threshold_db: held(self.threshold_db, EXP_THRESHOLD_DB, d.threshold_db),
-            ratio: held(self.ratio, EXP_RATIO, d.ratio),
-            attack_ms: held(self.attack_ms, EXP_ATTACK_MS, d.attack_ms),
-            release_ms: held(self.release_ms, EXP_RELEASE_MS, d.release_ms),
-        }
-    }
-
-    /// Static gain reduction (dB, up to [`EXP_RANGE_DB`]) for a steady peak level `x_db`.
-    pub fn reduction_db(&self, x_db: f64) -> f64 {
-        curve_db(self.threshold_db - x_db, self.ratio - 1.0, EXP_KNEE_DB).min(EXP_RANGE_DB)
-    }
-}
-
-/// Expander state: a peak follower (instant up, release down); the reduction follows it closing and
-/// opens over the attack.
-#[derive(Clone, Copy, Debug)]
-pub struct Expander {
-    s: ExpanderSettings,
-    /// Linear level at the top of the knee (above it the reduction is 0).
-    open: f64,
-    attack: f64,
-    release: f64,
-    env: f64,
-    /// Current reduction, dB.
-    y: f64,
-    /// Largest reduction since last reset by the chain, dB.
-    pub meter_db: f64,
-}
-
-impl Expander {
-    pub fn new(rate: f64, s: ExpanderSettings) -> Self {
-        let mut e = Expander { s, open: 0.0, attack: 0.0, release: 0.0, env: 0.0, y: 0.0, meter_db: 0.0 };
-        e.tune(rate, s);
-        e
-    }
-
-    /// New settings, detector state kept.
-    pub fn tune(&mut self, rate: f64, s: ExpanderSettings) {
-        let s = s.held();
-        let coeff = |ms: f64| (-1.0 / (ms / 1000.0 * rate.max(1.0))).exp();
-        self.s = s;
-        self.open = 10f64.powf((s.threshold_db + EXP_KNEE_DB / 2.0) / 20.0);
-        self.attack = coeff(s.attack_ms);
-        self.release = coeff(s.release_ms);
-    }
-
-    pub fn settings(&self) -> ExpanderSettings {
-        self.s
-    }
-
-    /// Processes one frame, all channels linked.
-    #[inline]
-    pub fn frame(&mut self, f: &mut [f64]) {
-        let peak = f.iter().fold(0f64, |m, v| m.max(v.abs()));
-        self.env = peak.max(self.release * self.env);
-        if self.env >= self.open && self.y == 0.0 {
-            return; // open and at rest: bit-exact
-        }
-        let c = if self.env >= self.open { 0.0 } else { self.s.reduction_db(20.0 * self.env.max(1e-10).log10()) };
-        self.y = if c >= self.y { c } else { self.attack * self.y + (1.0 - self.attack) * c };
-        if self.y < 1e-6 {
-            self.y = 0.0;
-            return;
-        }
-        self.meter_db = self.meter_db.max(self.y);
-        let g = 10f64.powf(-self.y / 20.0);
-        f.iter_mut().for_each(|v| *v *= g);
-    }
-
-    pub fn reset(&mut self) {
-        (self.env, self.y, self.meter_db) = (0.0, 0.0, 0.0);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,7 +322,7 @@ mod tests {
     /// exact gain of a frame at a time, and lands on it at the end of every run.
     #[test]
     fn interpolated_gain_follows_exact() {
-        let s = CompressorPreset::Strong.settings();
+        let s = CompressorPreset::Car.settings();
         let n = 96_000;
         let x: Vec<f64> = (0..n)
             .map(|i| {
@@ -451,67 +364,15 @@ mod tests {
         }
     }
 
-    fn expander(threshold_db: f64, ratio: f64) -> ExpanderSettings {
-        ExpanderSettings { threshold_db, ratio, attack_ms: 5.0, release_ms: 100.0 }
-    }
-
-    /// A stereo sine through the expander: gain in dB over the last tenth.
-    fn expand(e: &mut Expander, db: f64, secs: f64, freq: f64) -> f64 {
-        let a = 10f64.powf(db / 20.0);
-        let n = (secs * RATE) as usize;
-        let mut out_peak = 0f64;
-        for i in 0..n {
-            let x = a * (std::f64::consts::TAU * freq * i as f64 / RATE).sin();
-            let mut f = [x, x];
-            e.frame(&mut f);
-            if i >= n - n / 10 {
-                out_peak = out_peak.max(f[0].abs());
-            }
-        }
-        20.0 * (out_peak / a).log10()
-    }
-
     #[test]
-    fn expander_follows_curve() {
-        let s = expander(-50.0, 3.0);
-        assert_eq!(s.reduction_db(-40.0), 0.0, "above the threshold, nothing");
-        assert_eq!(s.reduction_db(-47.0), 0.0, "the knee starts 3 dB over the threshold");
-        assert!(s.reduction_db(-50.0) > 0.0 && (s.reduction_db(-53.0) - 6.0).abs() < 1e-9, "bends through it and joins the line 3 dB under");
-        assert!((s.reduction_db(-60.0) - 20.0).abs() < 1e-12, "10 dB under at 1:3 is 30 dB under: 20 dB off");
-        assert_eq!(s.reduction_db(-400.0), EXP_RANGE_DB, "a gate closes only so far");
-        for x in -90..-20 {
-            let (a, b) = (s.reduction_db(x as f64), s.reduction_db(x as f64 + 0.01));
-            assert!(b <= a && a - b < 0.03, "continuous, less as the level rises, at {x} dB");
+    fn nearest_preset() {
+        for p in CompressorPreset::ALL {
+            assert_eq!(CompressorPreset::nearest(p.settings()), p);
         }
-        assert_eq!(expander(-50.0, 1.0).reduction_db(-80.0), 0.0, "1:1 does nothing");
-
-        // Expander steady tones follow curve.
-        let s = expander(-50.0, 2.0);
-        for db in [-20.0, -45.0, -60.0, -70.0] {
-            let mut e = Expander::new(RATE, s);
-            let gain = expand(&mut e, db, 2.0, 220.0);
-            let want = -s.reduction_db(db);
-            assert!((gain - want).abs() < 0.5, "{db} dBFS: {gain} dB, the curve says {want}");
-        }
-        // Above the knee: bit-exact.
-        let mut e = Expander::new(RATE, s);
-        let mut f = [0.25, -0.1];
-        for _ in 0..2000 {
-            f = [0.25, -0.1];
-            e.frame(&mut f);
-        }
-        assert_eq!(f, [0.25, -0.1]);
-        assert_eq!(e.meter_db, 0.0);
-    }
-
-    #[test]
-    fn gate_closes_on_hiss_and_reopens() {
-        let s = ExpanderSettings { threshold_db: -50.0, ratio: 10.0, attack_ms: 2.0, release_ms: 80.0 };
-        let mut e = Expander::new(RATE, s);
-        let hiss = expand(&mut e, -65.0, 1.0, 3000.0);
-        assert!(hiss < -60.0, "the hiss is gone: {hiss} dB");
-        let back = expand(&mut e, -12.0, 0.05, 440.0);
-        assert!(back.abs() < 0.1, "open again: {back} dB");
+        let deep = CompressorSettings { threshold_db: -28.0, ratio: 5.0, attack_ms: 5.0, release_ms: 120.0, makeup_db: 8.0, knee_db: 8.0 };
+        assert_eq!(CompressorPreset::nearest(deep), CompressorPreset::Car, "deep and loud");
+        let fast = CompressorSettings { attack_ms: 1.0, ratio: 10.0, ..CompressorPreset::Light.settings() };
+        assert_eq!(CompressorPreset::nearest(fast), CompressorPreset::Night, "quick and hard on peaks");
     }
 
     #[test]

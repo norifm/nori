@@ -14,7 +14,7 @@ fn the_weights_come_from_the_authors() {
     let dir = nori_testdir::TempDir::new("beat-model");
     let settings = nori_core::settings_store::Settings::new();
     let mut prefs = settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
-    (prefs.auto_mix, prefs.auto_mix_better_beats, prefs.auto_mix_beats_mobile_data) = (true, true, true);
+    (prefs.auto_mix, prefs.auto_mix_better_beats) = (true, true);
     settings.put(prefs);
     let session = std::sync::Arc::new(nori_core::queue::Session::new(settings));
     let core = Core::new(dir.join("nori.db").to_string_lossy().into_owned(), "test".into(), session).unwrap();

@@ -11,6 +11,7 @@ fn main() {
             let kind = match s.kind {
                 SettingKind::Switch => "switch",
                 SettingKind::Choice => "choice",
+                SettingKind::Flags => "flags",
                 SettingKind::Level => "level",
                 SettingKind::Text => "text",
                 SettingKind::Colour => "colour",
