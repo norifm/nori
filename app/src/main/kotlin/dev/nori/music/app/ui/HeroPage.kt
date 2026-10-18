@@ -125,7 +125,13 @@ fun HeroPage(
         mosaic.isNotEmpty() -> { m -> Mosaic(mosaic, m) }
         else -> null
     }
-    val palette = if (tinted) rememberCoverPalette(lead, black) else null
+    // Measured from the smaller cover the tile that opened the page holds in memory, when it does: the
+    // full one is a download away, and the page wore the theme's colours until it came.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val measured = remember(lead, coverStandIns) {
+        coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead
+    }
+    val palette = if (tinted) rememberCoverPalette(measured, black) else null
     // Shuffle stays labelled Shuffle (never Pause); it lights while this page's queue is shuffling.
     val player: PlayerViewModel = viewModel()
     val playerState by player.state.collectAsStateWithLifecycle()
