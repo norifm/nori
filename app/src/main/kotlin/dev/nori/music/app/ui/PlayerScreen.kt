@@ -743,7 +743,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 // move the lyrics and queue buttons; each keeps the line under its glyph whether it has words or not.
                 Row(kept("icons").fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 4.dp), verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, nudge = (-1.5).dp, enabled = !radio) { choose(Panel.LYRICS) }
+                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, nudge = (-1.5).dp, drop = 2.7.dp, enabled = !radio) { choose(Panel.LYRICS) }
                         Spacer(Modifier.height(OUTPUT_LINE))
                     }
                     // Apple's middle glyph is AirPlay, not a sleep timer: on this screen the thing worth
@@ -2389,17 +2389,19 @@ private fun PanelButton(
      * Optical alignment. The three boxes are spaced evenly and the glyphs are centred in them, but the
      * ink inside a Material glyph is not centred in its own square and no two of these three fill it
      * the same way: measured on screen, the queue's marks came out a sixth narrower than the other two
-     * and the row read as leaning. [size] evens out how much of the box each one covers and [nudge]
-     * moves its ink, not its touch target, so the three sit symmetrically about the middle one.
+     * and the row read as leaning, and the lyrics' bubble, its weight in its top, stood 2.7 dp above the
+     * others' middles. [size] evens out how much of the box each one covers and [nudge] and [drop] move its
+     * ink, not its touch target, so the three sit symmetrically about the middle one and on one line.
      */
     size: androidx.compose.ui.unit.Dp = 27.dp,
     nudge: androidx.compose.ui.unit.Dp = 0.dp,
+    drop: androidx.compose.ui.unit.Dp = 0.dp,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val look = LocalLook.current
     IconButton(onClick, enabled = enabled) {
-        LookIcon(icon, label, Modifier.size(size).offset(x = nudge)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+        LookIcon(icon, label, Modifier.size(size).offset(x = nudge, y = drop)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
     }
 }
 
