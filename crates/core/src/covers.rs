@@ -102,15 +102,8 @@ const DOWNLOAD_COVERS: u32 = 500;
 impl Core {
     /// Cover URLs to warm for songs being downloaded, so they have artwork offline ([`cover_wants`]).
     pub fn download_cover_urls(&self, arts: Vec<String>) -> Vec<String> {
-        let prefix = self.url_prefix("getCoverArt".into());
-        cover_wants(arts, DOWNLOAD_COVERS)
-            .into_iter()
-            .map(|w| {
-                let mut out = String::new();
-                cover_url_into(&mut out, &prefix, &w.id, w.size as i32);
-                out
-            })
-            .collect()
+        let provider = self.provider();
+        cover_wants(arts, DOWNLOAD_COVERS).into_iter().map(|w| provider.cover_address(self, &w.id, w.size)).collect()
     }
 
     /// The URL of cover `id` at `size` px, as the profile's provider makes it.

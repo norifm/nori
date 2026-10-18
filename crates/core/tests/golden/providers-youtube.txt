@@ -294,4 +294,4 @@ pending false
 stream youtube:dQw4w9WgXcQ yt-dQw4w9WgXcQ:0
 download youtube:dQw4w9WgXcQ dl:yt-dQw4w9WgXcQ
 cover https://yt3.googleusercontent.com/abc=w320-h320-l90-rj
-download covers ["/rest/getCoverArt?&id=https%3A%2F%2Fyt3.googleusercontent.com%2Fabc&size=320", "/rest/getCoverArt?&id=https%3A%2F%2Fyt3.googleusercontent.com%2Fabc&size=800"]
+download covers ["https://yt3.googleusercontent.com/abc=w320-h320-l90-rj", "https://yt3.googleusercontent.com/abc=w800-h800-l90-rj"]

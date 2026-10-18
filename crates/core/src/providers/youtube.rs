@@ -866,6 +866,8 @@ mod tests {
         let target = c.download_target("yt-dQw4w9WgXcQ".into(), StreamQuality { bit_rate: 192, format: "mp3".into() });
         assert_eq!(target.url, "youtube:dQw4w9WgXcQ");
         assert_eq!(target.key, "dl:yt-dQw4w9WgXcQ");
+        let thumbnail = "https://yt3.googleusercontent.com/abc";
+        assert_eq!(c.core.download_cover_urls(vec![thumbnail.into()]), [format!("{thumbnail}=w320-h320-l90-rj"), format!("{thumbnail}=w800-h800-l90-rj")], "its covers are YouTube's");
     }
 
     #[test]
