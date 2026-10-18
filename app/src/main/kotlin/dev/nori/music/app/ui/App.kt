@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.onSizeChanged
@@ -558,9 +559,19 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 ChangelogDialog(settings)
               }
               }
+              // Upright, what runs on under the bar fades into the page's colour across the bar's room, as a row on its
+              // side does under the strip the chrome stands in (bleedsToEdges); the page's colour is the chrome's look's.
+              if (!wide) Box(
+                  Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(chromeHeight + EDGE_REACH).drawBehind {
+                      val reach = EDGE_REACH.toPx()
+                      val fade = edgeFade(chromeLook.color(CoverLook.CHROME_PAGE), size.height - reach, reach)
+                      drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(*fade, startY = 0f, endY = size.height))
+                  },
+              )
               Box(
                   Modifier.align(Alignment.BottomCenter).padding(start = pageStart, end = pageEnd)
-                      .onGloballyPositioned { chromeHeight = with(density) { it.size.height.toDp() } },
+                      .onGloballyPositioned { chromeHeight = with(density) { it.size.height.toDp() } }
+                      .then(if (wide) Modifier else Modifier.keepsTouches()),
               ) {
                   // The now playing bar has a heart now, and it reads the stars the user has just
                   // changed from here like every other one. Outside this, it saw only the server's
@@ -573,7 +584,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                   SideChrome(
                       player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook, chromeLeft,
                       Modifier.align(if (chromeLeft) Alignment.CenterStart else Alignment.CenterEnd)
-                          .onGloballyPositioned { sideRoom = with(density) { it.size.width.toDp() } },
+                          .onGloballyPositioned { sideRoom = with(density) { it.size.width.toDp() } }.keepsTouches(),
                   )
               }
               }

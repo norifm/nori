@@ -352,23 +352,12 @@ fun Modifier.bleedsToEdges(): Modifier {
         layout(constraints.maxWidth, placeable.height) { placeable.place(-start.roundToPx(), 0) }
     }.drawWithCache {
         val reach = EDGE_REACH.toPx()
-        // [strip] wide at the screen's edge, faded over it and [reach] of the page beside it: how visible a cover
-        // is (1 - the cover of page colour) from the page to the screen's edge. The same on both sides, camera or
-        // rail: half gone where the strip begins, thinning out across it, nothing left at the screen's edge.
-        fun ramp(strip: Float): Array<Pair<Float, Color>> {
-            val at = (reach / (strip + reach)).coerceIn(0f, 1f)
-            fun c(visible: Float) = page.copy(alpha = 1f - visible)
-            val across = listOf(0.2f to 0.35f, 0.55f to 0.14f, 0.8f to 0.04f)
-            val into = 0.5f
-            return (listOf(0f to c(1f), at * 0.5f to c(1f - (1f - into) * 0.35f), at to c(into)) +
-                across.map { (x, v) -> at + (1f - at) * x to c(v) } + listOf(1f to c(0f))).toTypedArray()
-        }
         val l = start.toPx()
         val r = end.toPx()
         val inStart = if (l > 0f) l + reach else 0f
-        val inFade = Brush.horizontalGradient(*ramp(l), startX = inStart, endX = 0f)
+        val inFade = Brush.horizontalGradient(*edgeFade(page, l, reach), startX = inStart, endX = 0f)
         val outStart = if (r > 0f) size.width - r - reach else size.width
-        val outFade = Brush.horizontalGradient(*ramp(r), startX = outStart, endX = size.width)
+        val outFade = Brush.horizontalGradient(*edgeFade(page, r, reach), startX = outStart, endX = size.width)
         onDrawWithContent {
             drawContent()
             if (l > 0f) drawRect(inFade, size = Size(inStart, size.height))
@@ -420,8 +409,22 @@ val LocalStatusRoom = androidx.compose.runtime.compositionLocalOf { 0.dp }
 @Composable
 fun pagePadding(bottom: Dp, top: Dp = 0.dp): PaddingValues = PaddingValues(start = LocalPageStart.current, end = LocalPageEnd.current, top = top, bottom = bottom)
 
-/** How far into the page a sideways row's edge fade reaches past the strip beside it ([bleedsToEdges]). */
-private val EDGE_REACH = 56.dp
+/** How far into the page an edge fade reaches past the strip beside it ([bleedsToEdges], the bar's upright). */
+val EDGE_REACH = 24.dp
+
+/**
+ * The fade of what runs out under a strip at the screen's edge (the camera's, the chrome's) into [page]'s colour:
+ * colour stops from [reach] px before the strip (0) to the screen's edge (1), across a strip [strip] px wide.
+ * Untouched before the strip, still mostly there where it begins and thinning out across it, a trace left at
+ * the edge: the chrome's glass over it has something to show. Gone by the strip's start, the pill was a pane
+ * over plain colour.
+ */
+fun edgeFade(page: Color, strip: Float, reach: Float): Array<Pair<Float, Color>> {
+    val at = (reach / (strip + reach)).coerceIn(0f, 1f)
+    fun c(visible: Float) = page.copy(alpha = 1f - visible)
+    val across = listOf(0.3f to 0.62f, 0.6f to 0.36f, 0.85f to 0.16f)
+    return (listOf(0f to c(1f), at to c(0.86f)) + across.map { (x, v) -> at + (1f - at) * x to c(v) } + listOf(1f to c(0.06f))).toTypedArray()
+}
 
 /** A sideways row's padding: [horizontal] and [vertical], and at each end the strip it runs out under ([bleedsToEdges]). */
 @Composable

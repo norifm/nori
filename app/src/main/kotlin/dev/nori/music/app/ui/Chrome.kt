@@ -507,6 +507,12 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
 
 private val pagePalette = androidx.compose.runtime.mutableStateOf<PagePalette?>(null)
 
+/**
+ * The chrome's room, its margins round the pill included, takes the touches that land on it from the page
+ * under it: a thumb reaching for a tab that landed just beside the pill opened the album under it.
+ */
+fun Modifier.keepsTouches(): Modifier = pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
+
 /** How long the chrome takes to go from one page's colours to the next's. */
 private const val CHROME_FADE_MS = 340
 
