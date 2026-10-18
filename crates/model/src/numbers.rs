@@ -28,10 +28,9 @@ pub fn signed_db(db: f32, decimal: &str) -> String {
     fixed(if db == 0.0 { 0.0 } else { db as f64 }, 1, true, decimal)
 }
 
-/// How far the lyrics are nudged, in seconds with its sign: "+0.5", "-0.3".
-#[cfg_attr(feature = "ffi", uniffi::export)]
+/// How far the lyrics are nudged, in seconds with its sign: "+0.50", "-0.05".
 pub fn nudge(ms: i64, decimal: &str) -> String {
-    fixed((ms as f32 / 1000.0) as f64, 1, true, decimal)
+    fixed((ms as f32 / 1000.0) as f64, 2, true, decimal)
 }
 
 /// A band's frequency as its label says it: "63", "1k", "2.5k", "12.5k", "3.111k". Thousands keep four
@@ -224,8 +223,8 @@ mod tests {
             (signed_db(3.25, POINT), "+3.3"),
             (signed_db(-1.0, POINT), "-1.0"),
             (signed_db(3.0, comma), "+3,0"),
-            (nudge(-250, POINT), "-0.3"),
-            (nudge(500, POINT), "+0.5"),
+            (nudge(-250, POINT), "-0.25"),
+            (nudge(50, POINT), "+0.05"),
             (bytes(850, POINT), "850 B"),
             (bytes(38 * 1024, POINT), "38 KB"),
             (bytes(2_202_009, POINT), "2.1 MB"),

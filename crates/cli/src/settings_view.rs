@@ -93,7 +93,8 @@ pub enum Row {
     Server { id: String, label: String, detail: String, active: bool },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it.
-    Ranked { name: String, id: String, title: String, detail: String, on: bool },
+    /// `keyed`: it needs a key, asked for when it is switched on.
+    Ranked { name: String, id: String, title: String, detail: String, on: bool, keyed: bool },
     /// Free text (a service's API key).
     Text { name: String, title: String, detail: String, value: String, secret: bool },
 }
@@ -264,6 +265,10 @@ impl SettingsView {
                     return None;
                 }
                 Opened::Cmds(vec![Cmd::SwitchServer(id)])
+            }
+            // Switched on, one that needs a key asks for it (empty clears it and switches it off).
+            Row::Ranked { id, keyed: true, on: false, .. } => {
+                Opened::Overlay(Overlay::Input { title: format!("{} key (empty: none)", text::LYRICS_KEY), text: String::new(), secret: true, name: format!("lyricsKey:{id}") })
             }
             Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
             Row::Text { name, title, value, secret, .. } => Opened::Overlay(Overlay::Input { title, text: value, secret, name }),
@@ -490,7 +495,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "lyricsTranslation" => ("Translations", "When the server has them"),
         "lyricsOnline" => ("Online lookups", "When the server has no timed lyrics; sends artist, title and album"),
         "lyricsPreferWords" => ("Prefer word timing", "Keep asking past line-timed answers"),
-        "paxSenixKey" => ("PaxSenix key", "For Spotify and Musixmatch"),
         "betterLyricsKey" => ("BetterLyrics key", "For songs it has not cached"),
         "tasteModel" => ("Listening history", "Kept locally; feeds mixes and stats"),
         "scrobble" => ("Scrobble", "Report plays to the server (half the song or 4 minutes)"),
@@ -498,6 +502,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "remoteControl" => ("Remote control and jams", "Control playback on your other devices (C), or invite guests to a jam. Uses your network directly or the octo-fiesta relay"),
         "wifi" => ("Streaming quality", ""),
         "download" => ("Download quality", ""),
+        "songsAheadWifi" => ("Prepare ahead", "Upcoming songs and their lyrics, fetched before their turn"),
         "cacheMb" => ("Stream cache limit", ""),
         other => (other, ""),
     };
@@ -536,6 +541,8 @@ fn option_words(name: &str, v: &str) -> String {
         ("coverColors", "PAGES") => "pages".into(),
         ("coverColors", "PLAYER") => "player".into(),
         ("wifi" | "download", v) => quality(v),
+        ("songsAheadWifi", "1") => "next song".into(),
+        ("songsAheadWifi", v) => format!("{v} songs"),
         ("cacheMb", v) => match v.parse::<i32>() {
             Ok(mb) if mb % 1024 == 0 => format!("{} GB", mb / 1024),
             _ => format!("{v} MB"),
@@ -638,9 +645,10 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }
         }
         RowItem::LyricsSource { index } => {
-            let LyricsSource { id, on, .. } = s.lyrics_sources.get(index as usize)?;
+            let LyricsSource { id, on, needs_key, key_set } = s.lyrics_sources.get(index as usize)?;
             let (title, detail) = service(id);
-            Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail: detail.into(), on: *on }
+            let detail = if *key_set { format!("{detail} · key set") } else { detail.to_string() };
+            Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail, on: *on, keyed: *needs_key }
         }
     })
 }
@@ -655,15 +663,10 @@ fn service(id: &str) -> (&'static str, &'static str) {
         "KUGOU" => ("KuGou", "word-timed, CJK · unofficial"),
         "NETEASE" => ("NetEase", "word-timed, Chinese · unofficial"),
         "LYRICS_PLUS" => ("LyricsPlus", "YouLy+, syllable-timed · unofficial"),
-        "SIMPMUSIC" => ("SimpMusic", "community-timed, via YouTube"),
-        "PORTATO" => ("BetterLyrics Portato", "QQ Music, word-timed · unofficial"),
         "PAXSENIX_MUSIXMATCH" => ("PaxSenix Musixmatch", "word-timed · needs a PaxSenix key"),
         "LRCLIB" => ("LRCLIB", "open, line-timed"),
         "PAXSENIX_SPOTIFY" => ("PaxSenix Spotify", "line-timed · needs a PaxSenix key"),
-        "YOUTUBE_CAPTIONS" => ("YouTube captions", "line-timed · unofficial"),
-        "MEGALOBIZ" => ("Megalobiz", "line-timed, scraped"),
         "YOUTUBE_MUSIC" => ("YouTube Music", "untimed · unofficial"),
-        "GENIUS" => ("Genius", "untimed, asked last"),
         _ => ("?", ""),
     }
 }
@@ -1063,12 +1066,12 @@ mod tests {
     fn lyrics_sources_move_and_switch() {
         // All services default on; one is switched off to have an off row.
         let d = StoredPrefs::default();
-        let prefs = StoredPrefs { lyrics_online: true, third_party_lookups: true, lyrics_on: d.lyrics_on.iter().filter(|s| s.name() != "GENIUS").copied().collect(), ..d };
+        let prefs = StoredPrefs { lyrics_online: true, third_party_lookups: true, lyrics_on: d.lyrics_on.iter().filter(|s| s.name() != "UNISON").copied().collect(), ..d };
         let mut v = SettingsView::default();
         let pages = v.pages(&prefs).to_vec();
         let lines = SettingsView::lines(&pages);
         let ranked: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| matches!(l, Line::Row(Row::Ranked { .. }))).map(|(i, _)| i).collect();
-        assert_eq!(ranked.len(), 16);
+        assert_eq!(ranked.len(), nori_core::lyrics_sources::LyricsService::ALL.len());
         assert!(lines.iter().all(|l| !matches!(l, Line::Row(Row::Ranked { title, .. }) if title == "?")), "every service has a name");
         let off = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { on: false, .. }))).unwrap();
         let Line::Row(Row::Ranked { id, name, .. }) = lines[off] else { unreachable!() };
@@ -1077,6 +1080,11 @@ mod tests {
         assert!(matches!(&v.step(false)[..], [Cmd::Setting(n, value)] if n == "lyricsMove" && *value == format!("{id}:-1")));
         let Some(Opened::Cmds(c)) = v.open() else { panic!() };
         assert!(matches!(&c[..], [Cmd::Setting(n, value)] if *n == name && value == "true"));
+        // A service that needs a key asks for it when switched on.
+        let keyed = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { keyed: true, .. }))).unwrap();
+        v.row.at = keyed;
+        let Some(Opened::Overlay(Overlay::Input { name, secret: true, .. })) = v.open() else { panic!("no key asked") };
+        assert!(name.starts_with("lyricsKey:"), "{name}");
         // Third-party lookups off: no sources listed.
         let quiet = StoredPrefs { third_party_lookups: false, ..prefs };
         v.invalidate();

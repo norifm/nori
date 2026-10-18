@@ -602,74 +602,6 @@ pub(crate) fn from_youtube_music(json: &str) -> Lyrics {
         .unwrap_or_default()
 }
 
-/// A caption's words without the marks captions put round music: "♪", "[Music]", "(Applause)".
-fn caption(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut depth = 0usize;
-    let mut bracket = String::new();
-    for c in text.chars() {
-        match c {
-            '[' | '(' if depth == 0 => {
-                depth = 1;
-                bracket.clear();
-                bracket.push(c);
-            }
-            ']' | ')' if depth == 1 => {
-                depth = 0;
-                bracket.push(c);
-                let inner = bracket[1..bracket.len() - 1].trim().to_lowercase();
-                // Only a sound in brackets goes; sung words in brackets ("(ooh)") stay.
-                if !matches!(inner.as_str(), "music" | "applause" | "laughter" | "instrumental" | "silence" | "cheering" | "no audio") {
-                    out.push_str(&bracket);
-                }
-            }
-            _ if depth == 1 => bracket.push(c),
-            '♪' | '♫' | '\u{266c}' => {}
-            c if c.is_whitespace() => out.push(' '),
-            c => out.push(c),
-        }
-    }
-    if depth == 1 {
-        out.push_str(&bracket);
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// A YouTube video's captions, line-timed: `get_transcript`'s cues or segments, or `json3` events. Word
-/// offsets in captions time speech recognition, not singing, so they are not used.
-pub(crate) fn from_youtube_captions(json: &str) -> Lyrics {
-    let Some(v) = parse(json) else { return Lyrics::default() };
-    let mut cues: Vec<(i64, Option<i64>, String)> = Vec::new();
-    for c in all(&v, "transcriptCueRenderer") {
-        let (Some(start), Some(text)) = (c.get("startOffsetMs").and_then(ms), c.get("cue").and_then(text_of)) else { continue };
-        cues.push((start, c.get("durationMs").and_then(ms).map(|d| start + d), text));
-    }
-    for c in all(&v, "transcriptSegmentRenderer") {
-        let (Some(start), Some(text)) = (c.get("startMs").and_then(ms), c.get("snippet").and_then(text_of)) else { continue };
-        cues.push((start, c.get("endMs").and_then(ms), text));
-    }
-    if let Some(events) = v.get("events").and_then(Value::as_array) {
-        for e in events {
-            let Some(start) = e.get("tStartMs").and_then(ms) else { continue };
-            let Some(segs) = e.get("segs").and_then(Value::as_array) else { continue };
-            let text: String = segs.iter().filter_map(|s| s.get("utf8").and_then(Value::as_str)).collect();
-            cues.push((start, e.get("dDurationMs").and_then(ms).map(|d| start + d), text));
-        }
-    }
-    let lines = cues
-        .into_iter()
-        .filter_map(|(start, end, text)| {
-            let words = caption(&text);
-            (!words.is_empty()).then(|| {
-                let mut line = Timed { start, end: end.filter(|e| *e > start), ..Default::default() };
-                append(&mut line, &words, None);
-                line
-            })
-        })
-        .collect();
-    finish(lines)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,6 +639,9 @@ mod tests {
         // Syllables without spaces but with `part`: a word ends where `part` is false.
         let parted = from_lyricsplus(r#"{"type":"Syllable","lyrics":[{"time":0,"duration":900,"text":"","syllabus":[{"time":0,"duration":300,"text":"Ri","part":true},{"time":300,"duration":300,"text":"ver","part":false},{"time":600,"duration":300,"text":"song","part":false}]}]}"#);
         assert_eq!(parted.lines[0].text, "River song");
+        // Apple's untimed lyrics come as "None", every line at 0: untimed, not all sung at once.
+        let untimed = from_lyricsplus(r#"{"type":"None","lyrics":[{"time":0,"duration":0,"text":"Paper boats"},{"time":0,"duration":0,"text":"drift away"}]}"#);
+        assert_eq!((untimed.synced, texts(&untimed)), (false, vec!["Paper boats", "drift away"]));
         assert!(from_lyricsplus(r#"{"lyrics":[]}"#).lines.is_empty());
         assert!(from_lyricsplus("not json").lines.is_empty());
 
@@ -739,7 +674,7 @@ mod tests {
         let ttml = r#"{"ttml":"<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div><p begin=\"1.0\" end=\"2.0\"><span begin=\"1.0\" end=\"1.5\">Hi</span> <span begin=\"1.5\" end=\"2.0\">there</span></p></div></body></tt>","score":0.93}"#;
         let l = from_provider(ttml, "");
         assert!(l.word_timed && l.lines[0].text == "Hi there");
-        // Portato: `{lyrics, provider: "qq"}` with QRC text inside.
+        // QQ Music's QRC inside `{lyrics, provider: "qq"}`.
         let qq = r#"{"lyrics":"[ti:Song]\n[1000,2000]Hi (1000,500)there(1500,1500)","provider":"qq"}"#;
         let q = from_provider(qq, "Song");
         assert!(q.word_timed);
@@ -839,22 +774,6 @@ mod tests {
         assert!(!l.synced);
         assert_eq!(texts(&l), ["Paper boats on a quiet river", "La la la line two", "", "Counting lamps along the pier"]);
         assert!(from_youtube_music("{}").lines.is_empty());
-
-        // Youtube captions in three shapes.
-        let transcript = r#"{"actions":[{"updateEngagementPanelAction":{"content":{"transcriptRenderer":{"body":{"transcriptBodyRenderer":{"cueGroups":[
-          {"transcriptCueGroupRenderer":{"cues":[{"transcriptCueRenderer":{"cue":{"simpleText":"♪ Paper boats on a quiet river ♪"},"startOffsetMs":"16210","durationMs":"3460"}}]}},
-          {"transcriptCueGroupRenderer":{"cues":[{"transcriptCueRenderer":{"cue":{"simpleText":"[Music]"},"startOffsetMs":"19670","durationMs":"2000"}}]}},
-          {"transcriptCueGroupRenderer":{"cues":[{"transcriptCueRenderer":{"cue":{"runs":[{"text":"counting lamps\nalong the pier (hey)"}]},"startOffsetMs":"22000","durationMs":"3000"}}]}}]}}}}}}]}"#;
-        let l = from_youtube_captions(transcript);
-        assert!(l.synced && !l.word_timed);
-        assert_eq!(texts(&l), ["Paper boats on a quiet river", "counting lamps along the pier (hey)"]);
-        assert_eq!((l.lines[0].start_ms, l.lines[0].end_ms), (16_210, 19_670));
-        let segments = r#"{"transcriptSegmentRenderer":{"startMs":"1000","endMs":"2500","snippet":{"runs":[{"text":"Hello"}]}}}"#;
-        assert_eq!(from_youtube_captions(segments).lines[0].end_ms, 2500);
-        let json3 = r#"{"wireMagic":"pb3","events":[{"tStartMs":0,"dDurationMs":1000},{"tStartMs":1200,"dDurationMs":2000,"segs":[{"utf8":"hel"},{"utf8":"lo","tOffsetMs":400}]}]}"#;
-        let j = from_youtube_captions(json3);
-        assert_eq!(texts(&j), ["hello"]);
-        assert!(j.lines[0].words.is_empty(), "speech-recognition word offsets are not singing");
     }
 
 }

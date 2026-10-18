@@ -54,6 +54,11 @@ pub(crate) fn finish(mut lines: Vec<Timed>) -> Lyrics {
     }
     lines.retain(|l| !l.text.trim().is_empty());
     lines.sort_by_key(|l| l.start);
+    // Every line at one time is untimed text given a time (LyricsPlus' "type": "None").
+    if lines.len() > 1 && lines.iter().all(|l| l.start == lines[0].start) {
+        let lines = lines.into_iter().map(|l| LyricLine { start_ms: -1, end_ms: -1, text: l.text, voice: l.voice, ..Default::default() }).collect();
+        return Lyrics { synced: false, lines, ..Default::default() };
+    }
     let starts: Vec<i64> = lines.iter().map(|l| l.start).collect();
     let word_timed = lines.iter().any(|l| !l.words.is_empty() || l.backing.as_ref().is_some_and(|b| !b.words.is_empty()));
     /// The words in UTF-16, each to its own end or the next word's start. A last word without an end
@@ -460,7 +465,7 @@ pub(crate) fn from_krc(content: &str, title: &str) -> Result<Lyrics, String> {
     Ok(finish_karaoke(karaoke(&String::from_utf8_lossy(&text), |l| karaoke_line(l, '<', '>', true)), title))
 }
 
-// ---- QQ Music's QRC (through BetterLyrics' Portato) ------------------------------------------------
+// ---- QQ Music's QRC ------------------------------------------------------------------------------
 
 /// The named references lyrics pages use, beyond XML's five.
 const NAMED: &[(&str, char)] = &[
@@ -551,7 +556,7 @@ fn qrc_line(raw: &str) -> Option<Timed> {
     Some(line)
 }
 
-/// QQ Music's QRC as Portato sends it (decrypted, bare or wrapped); a song without QRC comes as LRC.
+/// QQ Music's QRC (decrypted, bare or wrapped); a song without QRC comes as LRC.
 pub(crate) fn from_qrc(text: &str, title: &str) -> Lyrics {
     if text.len() > 4 << 20 {
         return Lyrics::default();
@@ -745,12 +750,26 @@ mod tests {
         assert!(crate::credits::is_credit("编曲：某人", "", ""));
     }
 
+    /// Standard padded base64.
+    fn to_base64(bytes: &[u8]) -> String {
+        const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let n = chunk.iter().enumerate().fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+            for k in 0..4 {
+                out.push(if k <= chunk.len() { ABC[(n >> (18 - 6 * k) & 63) as usize] as char } else { '=' });
+            }
+        }
+        out
+    }
+
     /// Packs KRC text the way KuGou's download API does: zlib, XOR with the key, `krc1`, base64.
     fn pack_krc(text: &str) -> String {
         let packed = miniz_oxide::deflate::compress_to_vec_zlib(text.as_bytes(), 6);
         let mut bytes = b"krc1".to_vec();
         bytes.extend(packed.iter().enumerate().map(|(i, b)| b ^ KRC_KEY[i % 16]));
-        crate::services::base64(&bytes)
+        assert_eq!(base64(&to_base64(b"hello")).as_deref(), Some(&b"hello"[..]));
+        to_base64(&bytes)
     }
 
     const KRC: &str = include_str!("../testdata/kugou.krc.txt");
@@ -776,7 +795,7 @@ mod tests {
         assert_eq!(base64("aGVs\nbG8").unwrap(), b"hello");
     }
 
-    /// QQ's QRC inside its XML wrapper, as a Portato answer carries it (invented words and names): a
+    /// QQ's QRC inside its XML wrapper, as a provider's answer carries it (invented words and names): a
     /// title line and a credit line QQ times as if sung, each word followed by its own time, a space
     /// timed on its own, a bracket that is text, an entity in the attribute, and CJK.
     const QRC: &str = include_str!("../testdata/qq.qrc.xml");

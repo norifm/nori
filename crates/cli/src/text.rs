@@ -185,18 +185,14 @@ pub fn lyrics_origin(origin: LyricsOrigin) -> &'static str {
     match origin {
         LyricsOrigin::Server => "your server",
         LyricsOrigin::Binilyrics => "BiniLyrics",
-        LyricsOrigin::BetterLyrics | LyricsOrigin::Portato => "BetterLyrics",
+        LyricsOrigin::BetterLyrics => "BetterLyrics",
         LyricsOrigin::Paxsenix | LyricsOrigin::PaxsenixMusixmatch | LyricsOrigin::PaxsenixSpotify => "PaxSenix",
         LyricsOrigin::LyricsPlus => "LyricsPlus",
-        LyricsOrigin::Simpmusic => "SimpMusic",
         LyricsOrigin::Unison => "Unison",
         LyricsOrigin::Netease => "NetEase",
         LyricsOrigin::Kugou => "KuGou",
         LyricsOrigin::Lrclib => "LRCLIB",
-        LyricsOrigin::YoutubeCaptions => "YouTube",
-        LyricsOrigin::Megalobiz => "Megalobiz",
         LyricsOrigin::YoutubeMusic => "YouTube Music",
-        LyricsOrigin::Genius => "Genius",
     }
 }
 
@@ -337,6 +333,8 @@ pub const INVITE_ROOM: &str = "Make the window bigger to show the QR code.";
 // A guest's.
 pub const JAM_GUEST: &str = "Jam";
 pub const JAM_JOIN: &str = "Join a jam";
+/// The key the keyed lyrics services take.
+pub const LYRICS_KEY: &str = "PaxSenix";
 pub const JOIN_TITLE: &str = " Join a jam · enter joins, esc drops ";
 pub const JOIN_HOW: &str = "Paste the invite link the host sent you:";
 pub const JOINING: &str = "Joining…";
@@ -443,7 +441,7 @@ mod tests {
     fn words() {
         assert_eq!(band(1000.0, BandMark::LowShelf), "1k ↙");
         assert_eq!((balance(0.0), balance(-0.3), balance(0.05)), ("center".into(), "L 30%".into(), "R 5%".into()));
-        assert_eq!(nudge(-250), "-0.3 s");
+        assert_eq!(nudge(-250), "-0.25 s");
         assert_eq!((songs_caption(1, 200), albums(2)), ("1 song · 3:20".into(), "2 albums".into()));
         let s = Song { suffix: "flac".into(), bit_depth: 24, sampling_rate: 96000, ..Default::default() };
         assert_eq!(quality(&s).as_deref(), Some("FLAC 24/96.0"));

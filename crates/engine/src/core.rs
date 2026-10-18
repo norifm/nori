@@ -99,7 +99,7 @@ impl CoreApp {
         self
     }
 
-    /// With AutoMix on, upcoming songs on disk are measured by `measurer`.
+    /// Upcoming songs on disk are measured by `measurer`.
     pub fn measuring(mut self, measurer: Arc<Measurer>) -> CoreApp {
         self.measurer = Some(measurer);
         self
@@ -133,7 +133,7 @@ impl App for CoreApp {
         self.now_ms = now_ms;
     }
 
-    /// With a measurer, upcoming songs are measured too when AutoMix is on.
+    /// With a measurer, upcoming songs are measured too when the profile measures songs.
     fn auto_mix(&self) -> bool {
         self.measurer.is_some() && !self.session.measure().is_empty()
     }
@@ -975,18 +975,18 @@ impl Analyses {
         }
     }
 
-    /// Measures `id` as its bytes arrive (`crate::arriving`), if AutoMix is on, it is unanalysed, its
+    /// Measures `id` as its bytes arrive (`crate::arriving`), if the profile measures songs, it is unanalysed, its
     /// container allows it (`hint`: not MP4) and it is not already being measured. `wait`: the fetch may
     /// block on the decoder (not for a loader the player reads).
     pub fn measure_as_it_comes(self: &Arc<Self>, id: &str, hint: Option<&str>, wait: bool) -> Option<Listening> {
         let client = self.client()?;
-        if !client.session().settings.prefs(|p| p.auto_mix) {
+        if !client.session().planner.measures() {
             return None;
         }
         self.listen_as_it_comes(client.core().clone(), id, hint, wait)
     }
 
-    /// [`Analyses::measure_as_it_comes`] for a download, whatever AutoMix says: every download is
+    /// [`Analyses::measure_as_it_comes`] for a download, whatever the profile says: every download is
     /// analysed once (`nori_core::transfers::needs`).
     pub fn measure_download_as_it_comes(self: &Arc<Self>, id: &str, hint: Option<&str>) -> Option<Listening> {
         self.listen_as_it_comes(self.client()?.core().clone(), id, hint, true)

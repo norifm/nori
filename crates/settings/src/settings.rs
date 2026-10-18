@@ -547,9 +547,6 @@ pub struct StoredPrefs {
     pub lyrics_size: i32,
     #[setting("lyricsTranslation", FLAG, default = true, show = K::Switch)]
     pub lyrics_translation: bool,
-    /// The button under the lyrics that opens the timing offset controls.
-    #[setting("lyricsTimingButton", FLAG, default = true, show = K::Switch)]
-    pub lyrics_timing_button: bool,
     #[setting("lyricsKeepScreenOn", FLAG, default = true, show = K::Switch)]
     pub lyrics_keep_screen_on: bool,
     /// Look lyrics up online when the server has no timed ones. Stored under its old key "lyricsLrclib".
@@ -559,13 +556,14 @@ pub struct StoredPrefs {
     #[setting("lyricsOrder", LYRICS_ORDER, default = lyrics_sources::default_order())]
     pub lyrics_order: Vec<LyricsService>,
     /// The lyrics services switched on (changed by `lyricsService:<name>`).
-    #[setting("lyricsOn", LYRICS_ON, default = lyrics_sources::default_order(), hidden)]
+    #[setting("lyricsOn", LYRICS_ON, default = lyrics_sources::default_on(), hidden)]
     pub lyrics_on: Vec<LyricsService>,
     /// Keep asking lower-ranked services for word timing after a line-timed answer.
     #[setting("lyricsPreferWords", FLAG, default = true, show = K::Switch)]
     pub lyrics_prefer_words: bool,
-    /// PaxSenix key, for its Spotify and Musixmatch lyrics; empty for none.
-    #[setting("paxSenixKey", TEXT, default = String::new(), show = K::Text)]
+    /// PaxSenix key, for its Spotify and Musixmatch lyrics; empty for none. Given where those are switched
+    /// on (`lyricsKey:<name>`).
+    #[setting("paxSenixKey", TEXT, default = String::new(), hidden)]
     pub paxsenix_key: String,
     /// BetterLyrics key, for songs it has not cached; empty for none.
     #[setting("betterLyricsKey", TEXT, default = String::new(), show = K::Text)]
@@ -615,6 +613,12 @@ pub struct StoredPrefs {
     pub mobile: SavedQuality,
     #[setting("download", Quality, default = SavedQuality::default(), show = K::Choice(QUALITIES))]
     pub download: SavedQuality,
+    /// Upcoming songs prepared ahead (audio and lyrics) on Wi-Fi and on mobile data; the next song
+    /// always is, so the player can go on without a gap.
+    #[setting("songsAheadWifi", within(1, 10), default = 3, show = K::Choice(&["1", "2", "3", "5", "10"]))]
+    pub songs_ahead_wifi: i32,
+    #[setting("songsAheadMobile", within(1, 10), default = 1, show = K::Choice(&["1", "2", "3", "5"]))]
+    pub songs_ahead_mobile: i32,
     #[setting("cacheMb", within(256, 16384), default = 1024, show = K::Choice(&["256", "1024", "4096", "16384"]), effect = CACHE_LIMIT)]
     pub cache_mb: i32,
 }
@@ -670,13 +674,16 @@ const VOLUME_BOOST_MAX: f32 = nori_player::dsp::VOLUME_BOOST_MAX_DB as f32;
 
 /// The stored ranking, completed with any service it does not name.
 const LYRICS_ORDER: Custom<Vec<LyricsService>> = Custom {
-    load: |t, _| lyrics_sources::complete_order(&lyrics_sources::parse(t.unwrap_or_default())),
+    load: |t, _| lyrics_sources::complete_order(&lyrics_sources::stored_or(t.unwrap_or_default(), lyrics_sources::default_order())),
     save: |o| lyrics_sources::to_names(o),
     set: Some(|v| Some(lyrics_sources::complete_order(&lyrics_sources::parse(v)))),
     show: Some(|o| lyrics_sources::to_names(o)),
 };
 
-const LYRICS_ON: Custom<Vec<LyricsService>> = Custom { load: |t, d| t.map_or(d, lyrics_sources::parse), save: |o| lyrics_sources::to_names(o), set: None, show: None };
+const LYRICS_ON: Custom<Vec<LyricsService>> = Custom { load: |t, d| match t {
+        Some(t) => lyrics_sources::stored_or(t, d),
+        None => d,
+    }, save: |o| lyrics_sources::to_names(o), set: None, show: None };
 
 /// One per line, empty lines dropped.
 const LINES: Custom<Vec<String>> =
@@ -1323,7 +1330,7 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
         // Test bridge: back to the defaults.
         "lyricsSources" if value.trim().eq_ignore_ascii_case("default") => {
             n.lyrics_order = lyrics_sources::default_order();
-            Some(n.lyrics_on = lyrics_sources::default_order())
+            Some(n.lyrics_on = lyrics_sources::default_on())
         }
         // Test bridge: only these services, in this order (`lrclib,unison`).
         "lyricsSources" => {
@@ -1336,10 +1343,21 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
         "lyricsPlace" => service(value).and_then(|(s, to)| Some(n.lyrics_order = lyrics_sources::placed(p, s, to.parse().ok()?))),
         // One service moved by places: `NETEASE:-1`.
         "lyricsMove" => service(value).and_then(|(s, by)| Some(n.lyrics_order = lyrics_sources::moved(p, s, by.parse().ok()?))),
-        // `lyricsService:NETEASE`: one service on or off.
-        _ if name.starts_with("lyricsService:") => LyricsService::named(&name["lyricsService:".len()..]).map(|s| {
+        // `lyricsService:NETEASE`: one service on or off. One that needs a key is not switched on without
+        // it: the key is given with `lyricsKey:<name>`.
+        _ if name.starts_with("lyricsService:") => LyricsService::named(&name["lyricsService:".len()..]).filter(|s| !on(value) || lyrics_sources::can_be_on(p, *s)).map(|s| {
             n.lyrics_on.retain(|x| *x != s);
             if on(value) {
+                n.lyrics_on.push(s);
+            }
+        }),
+        // `lyricsKey:PAXSENIX_SPOTIFY`: the key a service needs, kept and the service switched on; an
+        // empty key switches off every service that needs it.
+        _ if name.starts_with("lyricsKey:") => LyricsService::named(&name["lyricsKey:".len()..]).filter(|s| s.needs_key()).map(|s| {
+            n.paxsenix_key = value.trim().to_string();
+            if n.paxsenix_key.is_empty() {
+                n.lyrics_on.retain(|x| !x.needs_key());
+            } else if !n.lyrics_on.contains(&s) {
                 n.lyrics_on.push(s);
             }
         }),
@@ -2091,10 +2109,10 @@ mod tests {
         // Lyrics services by name.
         let p = StoredPrefs::default();
         let all = p.lyrics_on.len();
-        let off = set_by_name(&p, "lyricsService:portato", "false").unwrap().prefs;
-        assert!(!off.lyrics_on.contains(&LyricsService::Portato) && off.lyrics_on.len() == all - 1);
-        let on = set_by_name(&off, "lyricsService:portato", "true").unwrap().prefs;
-        assert!(on.lyrics_on.contains(&LyricsService::Portato) && on.lyrics_on.len() == all);
+        let off = set_by_name(&p, "lyricsService:kugou", "false").unwrap().prefs;
+        assert!(!off.lyrics_on.contains(&LyricsService::Kugou) && off.lyrics_on.len() == all - 1);
+        let on = set_by_name(&off, "lyricsService:kugou", "true").unwrap().prefs;
+        assert!(on.lyrics_on.contains(&LyricsService::Kugou) && on.lyrics_on.len() == all);
         assert_eq!(on.lyrics_order, p.lyrics_order, "a switch never moves a service");
         let off = set_by_name(&on, "lyricsService:paxsenix", "false").unwrap().prefs;
         assert_eq!((off.lyrics_order.clone(), off.lyrics_on.len()), (p.lyrics_order.clone(), all - 1));
@@ -2111,10 +2129,10 @@ mod tests {
         assert_eq!(only.lyrics_order[..2], [LyricsService::Lrclib, LyricsService::Kugou]);
         let back = set_by_name(&only, "lyricsSources", "default").unwrap().prefs;
         assert_eq!((back.lyrics_on, back.lyrics_order), (p.lyrics_on.clone(), p.lyrics_order.clone()));
-        let keyed = set_by_name(&placed, "paxSenixKey", "  k  ").unwrap().prefs;
+        let keyed = set_by_name(&placed, "lyricsKey:PAXSENIX_SPOTIFY", "  k  ").unwrap().prefs;
         let back = load(&save(&keyed));
         assert_eq!((back.lyrics_on, back.lyrics_order, back.paxsenix_key), (keyed.lyrics_on.clone(), keyed.lyrics_order.clone(), "k".to_string()));
-        assert_eq!(load(&HashMap::new()).lyrics_on, crate::lyrics_sources::default_order(), "nothing stored: the defaults, every service");
+        assert_eq!(load(&HashMap::new()).lyrics_on, crate::lyrics_sources::default_on(), "nothing stored: the default services");
         assert_eq!(load(&HashMap::new()).lyrics_order, crate::lyrics_sources::default_order());
 
         // Effects by name.

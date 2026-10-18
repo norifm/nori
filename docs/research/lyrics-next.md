@@ -101,5 +101,22 @@ current trust score is in `crates/lyrics/src/trust.rs`, and the race is in `race
        half-shifted ones Drifts 40 % → 44 %. `DRIFT_MS`, the part thresholds and `W_SYNC` were kept.
      - Uncertain: rock still lets another song's timing through (10 % caught); only 4 rap songs; "good" is
        agreement, not truth (one metal song's services all agree on a timing 2 s off this file).
+   - *Checked on real audio, 2026-10-18*: 20 songs streamed from YouTube Music through nori-cli (its own
+     analysis), every service asked, 108 answers; truth taken as each answer's median line time less Apple's
+     word timing (BetterLyrics/BiniLyrics), which spectrograms showed on the voice for the songs looked at.
+     - No fixed latency in the curve: frame times are the window's end less 1.28 hops plus half a curve frame
+       (about 20 ms), and Apple's timings fit at 0 ± 200 ms. The offsets scatter, though: the best offset's
+       median error is 181 ms (median +58 ms late), so moves under `OFFSET_MIN_MS` are noise.
+     - The large error was beat-sized: on Climbing Up the Walls an instrument swells 1.1 s before every line
+       and the curve hardly hears the voice over it, so the rise at the line starts (half the fit) followed the
+       swell and the right lyrics were moved +1176 ms. The word spans there fit no better moved (contrast
+       0.041 → 0.043, against +0.03 to +0.3 for real moves), so a move of half a second or more of word-timed
+       lyrics now needs the spans to gain `SPAN_GAIN` too. Line-timed spans are guessed and tile the singing,
+       so they cannot say this. Wrong moves 11 → 9, moves to within 300 ms unchanged (8); median absolute
+       error of what is shown 40 → 29 ms, mean 167 → 145 ms.
+     - Left: answers whose words tile the whole line (KuGou) can still slide by a section (Vitamin R,
+       −3285 ms where the answer is ~0.8 s late); several 350-400 ms moves have an unclear truth (Teardrop,
+       Change). The owner's wanted offsets (+300 ms, +500 ms) are 0.3-0.5 s sooner than the voice on these
+       streams for both songs, which points to how the playhead is heard on the phone rather than the check.
 3. **Sources:** survey all 17 on a sample of the user's library (the feature-e2e `lyrics-services` section exists
    and is opt-in): hit rate, sync level, latency and junk. Then choose the default set with numbers.

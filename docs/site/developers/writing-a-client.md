@@ -39,7 +39,7 @@ platform opens and re-exports every crate below it by its module name (`nori_cor
 | "Better beat detection": Beat This! over the ends of the songs coming up, its graph built in and its weights made from the authors' checkpoint, fetched once (a build with the `neural-beats` feature; the Android debug and perf builds have it) | `nori-engine::core::Measurer`; `nori-player::automix::beats`, `neural`, `checkpoint`, `weights`; `nori-core::model_download`; `nori-automix::beat_model` |
 | Output devices: naming, ranking, per-device sound profiles, AutoEQ curves, bit-perfect decisions | `nori-player::outputs`, `device`, `dac`; `nori-devices`: `outputs`, `profiles`, `autoeq` |
 | Downloads and stream cache bookkeeping: what is stored, what to fetch next, what to evict | `nori-transfers`: `transfers`; nori-engine's `CacheOrder` (the stream cache's eviction order); `nori-core::cache_policy` (the server's answers kept) |
-| Scrobbling decisions; lyrics: the server's, and sixteen lyrics services asked through the `Transport` (requests, matching, every format they answer in, credits stripped, each answer scored, asking them in waves, remembering the answers and the choice in the app's database, the lyrics cache's size and clearing), the current line, backing vocals and duet sides, and when the page redraws | `nori-queue::scrobble`; `nori-lyrics`: `lyrics`, `formats`, `json`, `html`, `lrclib`, `services`, `credits`, `trust`, `sync`, `race`, `look`; `nori-core::race` (`Client::lyrics_lookup`); `nori-settings::lyrics_sources`; `nori-look::lyrics` |
+| Scrobbling decisions; lyrics: the server's, and eleven lyrics services asked through the `Transport` (requests, matching, every format they answer in, credits stripped, each answer scored, asking them in waves, remembering the answers and the choice in the app's database, the lyrics cache's size and clearing), the current line, backing vocals and duet sides, and when the page redraws | `nori-queue::scrobble`; `nori-lyrics`: `lyrics`, `formats`, `json`, `lrclib`, `services`, `credits`, `trust`, `sync`, `race`, `look`; `nori-core::race` (`Client::lyrics_lookup`); `nori-settings::lyrics_sources`; `nori-look::lyrics` |
 | Why a song will not play, as a kind (`PlaybackError`); the credits (the core's crates, Android's libraries, the typeface and the third parties' data) | `nori-model`; `nori-settings::credits`: `core_credits`, `android_credits`, `data_credits` |
 | A perf recorder's bookkeeping: the state a stretch is filed under, what two readings of the counters make (the threads that woke most among them), the stretches kept, their sums by state, the page's figures, the audio output's line and the shared report | `nori-perf::perf_log` |
 | Cover colors: palette, theme, the page's color scheme, the wash and melt behind the player | `nori-look::cover`, `palette`, `theme`, `dress` |
@@ -236,8 +236,9 @@ The engine also plays what the Android player plays around the sound chain, each
   one already on its way keep the address they were fetched from. Android's transport asks the system; a
   desktop client's is always unmetered.
 - **Fetching ahead**: as each song starts (and at a queue edit) the engine fetches the next one and the
-  core's `Client::precache_targets` names the ones after it (how many for this network - none on a metered
-  one by default - never a provider's song or a download), which nori-engine's one fetcher of the songs
+  core's `Client::precache_targets` names the ones after it (how many for this network: the
+  `songsAheadWifi`/`songsAheadMobile` settings, none past the next on a metered one by default - never a
+  provider's song or a download; `Client::lyrics_prefetch` warms the lyrics of as many), which nori-engine's one fetcher of the songs
   coming up (`ahead.rs`) fetches whole onto the disk one after another, each in one go, and then leaves the
   network alone until the next song starts: `Store::fetch_ahead` into the engine's own store, or
   `Ahead::ask` over a client's cache (`Keeping`; Android's is media3's stream cache). A song the queue no

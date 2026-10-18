@@ -198,7 +198,7 @@ fn downloads_and_measuring_over_core() {
     assert_eq!(measurer.decoded(), 3, "once");
     assert_eq!(told.load(std::sync::atomic::Ordering::Relaxed), 2, "told of each song stored, to plan again");
     measurer.ask(Vec::new());
-    assert!(!measurer.busy(), "AutoMix off: nothing to measure");
+    assert!(!measurer.busy(), "nothing asked: nothing to measure");
 
     // "Better beat detection" without a model decodes nothing more and says why.
     let mut prefs = settings.current().unwrap();

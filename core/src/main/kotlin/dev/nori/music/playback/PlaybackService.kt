@@ -729,8 +729,8 @@ class PlaybackService : MediaLibraryService() {
      * plans a transition from both halves' analyses, and until this existed the only way to get one was
      * to have played the track through: the first time two songs met they were faded rather than mixed,
      * and the plan for the boundary the listener was already in the middle of arrived too late to use.
-     * Off entirely when AutoMix is (the core then names no songs), and it never fetches anything (see
-     * AutoMixPrefetch). Asked again with the same songs, it does nothing.
+     * The lyrics' timing reads the same measurement, so it runs whether AutoMix is on or not; it never
+     * fetches anything (see AutoMixPrefetch). Asked again with the same songs, it does nothing.
      */
     /** The account's: a jam guest plays its host's transitions. */
     private fun analyseAhead() { if (nori.rules.measures) analyser.update() }

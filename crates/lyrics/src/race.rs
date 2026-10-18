@@ -10,6 +10,7 @@
 //! with the lyrics. The lookup is one future: no thread.
 
 use std::collections::HashSet;
+use std::future::Future;
 use nori_time::{Duration, Instant};
 
 use futures_util::stream::{FuturesUnordered, StreamExt};
@@ -154,7 +155,7 @@ impl Race {
 
     /// `rank`'s lyrics with the offset their check is sure of.
     fn to_screen(&self, rank: usize, mut lyrics: Lyrics) -> Lyrics {
-        lyrics.offset_ms = self.check(rank).map_or(0, |c| c.applied_ms());
+        lyrics.timing = sync::timing(self.check(rank));
         lyrics
     }
 
@@ -197,8 +198,12 @@ impl Race {
         Self::leader_in(&self.scores())
     }
 
-    fn first_wave_done(&self) -> bool {
-        (0..self.entries.len()).all(|r| self.done[r] || !self.entries[r].first_wave || self.entries[r].best <= self.server_timing)
+    /// Whether the first wave is in but for at most one straggler, which holds back neither the screen
+    /// nor the second wave.
+    fn first_wave_in(&self) -> bool {
+        let wave: Vec<usize> = (0..self.entries.len()).filter(|&r| self.entries[r].first_wave && self.entries[r].best > self.server_timing).collect();
+        let out = wave.iter().filter(|&&r| !self.done[r]).count();
+        out == 0 || (out == 1 && wave.len() > 1)
     }
 
     fn timed_done(&self) -> bool {
@@ -236,7 +241,7 @@ impl Race {
         if e.best < Timing::Lines {
             return self.timed_done() && leader.is_none();
         }
-        e.first_wave || (self.first_wave_done() && (leader.is_none_or(|(_, s)| s < WIDEN_BELOW) || self.wants_words(rank, leader)))
+        e.first_wave || (self.first_wave_in() && (leader.is_none_or(|(_, s)| s < WIDEN_BELOW) || self.wants_words(rank, leader)))
     }
 
     /// Whether `rank` is still worth asking for word timing: words preferred, the leader only
@@ -251,7 +256,7 @@ impl Race {
     fn hopeless(&self, rank: usize, leader: Option<(usize, f64)>) -> bool {
         let e = self.entries[rank];
         e.best <= self.server_timing
-            || (e.best >= Timing::Lines && !e.first_wave && self.first_wave_done() && leader.is_some_and(|(_, s)| s >= WIDEN_BELOW) && !self.wants_words(rank, leader))
+            || (e.best >= Timing::Lines && !e.first_wave && self.first_wave_in() && leader.is_some_and(|(_, s)| s >= WIDEN_BELOW) && !self.wants_words(rank, leader))
             || (e.best < Timing::Lines && self.timed_done() && leader.is_some())
     }
 
@@ -279,7 +284,7 @@ impl Race {
                 let same = self.agree[r][leader];
                 (best > had + MARGIN && same) || best > had + OVERRULE
             }
-            None => (best >= SURE && self.evidenced(leader)) || (self.first_wave_done() && best >= WIDEN_BELOW) || last,
+            None => (best >= SURE && self.evidenced(leader)) || (self.first_wave_in() && best >= WIDEN_BELOW) || last,
         };
         if !take {
             return None;
@@ -288,11 +293,17 @@ impl Race {
         self.answers[leader].as_ref().map(|a| (leader, self.to_screen(leader, a.0.clone())))
     }
 
-    /// Whether `rank`'s answer is backed by more than its service: it names this title, or another
-    /// answer has the same words.
+    /// Whether the answer names this title, agrees with another, or matches the length with timing
+    /// across the song.
     fn evidenced(&self, rank: usize) -> bool {
-        let Some((_, named)) = self.answers[rank].as_ref() else { return false };
-        named.title.as_deref().is_some_and(|t| name_alike(t, &self.song.title) >= 0.85) || self.agree[rank].iter().any(|&a| a)
+        let Some((lyrics, named)) = self.answers[rank].as_ref() else { return false };
+        let duration = self.song.duration as f64;
+        let length = duration > 0.0 && named.duration_s.is_some_and(|s| (Named::seconds(s) - duration).abs() <= 2.0);
+        let times = || lyrics.lines.iter().filter(|l| l.start_ms >= 0 && !l.text.trim().is_empty()).map(|l| l.start_ms);
+        let spans = lyrics.synced && times().min().zip(times().max()).is_some_and(|(first, last)| {
+            first as f64 <= duration * 300.0 && last as f64 >= duration * 750.0 && (last - first) as f64 >= duration * 600.0
+        });
+        named.title.as_deref().is_some_and(|t| name_alike(t, &self.song.title) >= 0.85) || self.agree[rank].iter().any(|&a| a) || (length && spans)
     }
 
     /// What is on screen, with its score and what its service named.
@@ -323,7 +334,7 @@ pub(crate) fn sync_words(c: &SyncCheck) -> String {
 
 /// A service's cache key for a song. With a BetterLyrics key given, a miss without one is asked again.
 fn cache_key(service: LyricsService, song: &Song, lookup: &LyricsLookup) -> String {
-    let keyed = matches!(service, LyricsService::BetterLyrics | LyricsService::Portato) && !lookup.better_lyrics_key.is_empty();
+    let keyed = service == LyricsService::BetterLyrics && !lookup.better_lyrics_key.is_empty();
     format!("{CACHE_PREFIX}{}{}|{}|{}|{}", service.name(), if keyed { "+key" } else { "" }, song.artist, song.title, song.duration)
 }
 
@@ -398,7 +409,7 @@ pub fn cached_pick(cache: &dyn LyricsCache, song: &Song, server_has_lines: bool,
     let (rank, mut lyrics, _, _) = chosen_before(cache, song, &lookup.services)?;
     let server_timing = if server_has_lines { Timing::Untimed } else { Timing::Empty };
     if timing(&lyrics) <= server_timing { return None; }
-    lyrics.offset_ms = cache.voice(song).and_then(|voice| sync::check(&lyrics, &voice)).map_or(0, |check| check.applied_ms());
+    lyrics.timing = sync::timing(cache.voice(song).and_then(|voice| sync::check(&lyrics, &voice)));
     Some(LyricsPick { lyrics, origin: lookup.services[rank].origin() })
 }
 
@@ -481,7 +492,7 @@ pub async fn lookup(
     if let Some((rank, lyrics, named, was)) = chosen_before(cache, song, &services).filter(|c| timing(&c.1) > server_timing) {
         let check = voice.as_ref().and_then(|v| sync::check(&lyrics, v));
         let mut on_screen = lyrics.clone();
-        on_screen.offset_ms = check.map_or(0, |c| c.applied_ms());
+        on_screen.timing = sync::timing(check);
         shown.show(LyricsPick { lyrics: on_screen, origin: services[rank].origin() });
         let mut line = format!("lyrics: kept {} ({was:.2}, {})", services[rank].title(), timing(&lyrics).words());
         if let Some(c) = &check {
@@ -509,23 +520,8 @@ pub async fn lookup(
         }
     }
     let shared = Shared::over(memory);
-    let mut out = FuturesUnordered::new();
-    loop {
-        for rank in race.next(out.len(), AT_ONCE) {
-            let (service, key, shared) = (services[rank], keys[rank].as_str(), &shared);
-            out.push(async move { (rank, ask(transport, cache, lookup, shared, service, key, song).await) });
-        }
-        let last = out.is_empty();
-        if let Some((rank, lyrics)) = race.to_show(last) {
-            shown.show(LyricsPick { lyrics, origin: services[rank].origin() });
-        }
-        if last {
-            break;
-        }
-        let Some((rank, answer)) = out.next().await else { break };
-        race.answer(rank, answer);
-    }
-    drop(out);
+    let asking = |rank: usize| ask(transport, cache, lookup, &shared, services[rank], &keys[rank], song);
+    run_race(&mut race, asking, |rank, lyrics| shown.show(LyricsPick { lyrics, origin: services[rank].origin() })).await;
     let Some((rank, trust, lyrics, named)) = race.chosen() else {
         if !server_has_lines {
             shown.show(none());
@@ -547,6 +543,27 @@ pub async fn lookup(
     }
     nori_model::alog::info(&line);
     Some(line)
+}
+
+/// Runs `race` out: each rank `ask`ed once it may be, no more than [`AT_ONCE`] out, and every choice
+/// handed to `show` as it is made.
+async fn run_race<F: Future<Output = Option<(Lyrics, Named)>>>(race: &mut Race, ask: impl Fn(usize) -> F, show: impl Fn(usize, Lyrics)) {
+    let ask = &ask;
+    let mut out = FuturesUnordered::new();
+    loop {
+        for rank in race.next(out.len(), AT_ONCE) {
+            out.push(async move { (rank, ask(rank).await) });
+        }
+        let last = out.is_empty();
+        if let Some((rank, lyrics)) = race.to_show(last) {
+            show(rank, lyrics);
+        }
+        if last {
+            break;
+        }
+        let Some((rank, answer)) = out.next().await else { break };
+        race.answer(rank, answer);
+    }
 }
 
 /// Asks one service and caches its answer, credits stripped; a failure is only rested in memory.
@@ -590,7 +607,7 @@ mod tests {
 
     fn pick(text: &str, origin: LyricsOrigin) -> LyricsPick {
         let line = nori_model::LyricLine { start_ms: 1000, end_ms: 2000, text: text.into(), ..Default::default() };
-        LyricsPick { lyrics: Lyrics { synced: true, word_timed: false, lines: vec![line], offset_ms: 0 }, origin }
+        LyricsPick { lyrics: Lyrics { synced: true, word_timed: false, lines: vec![line], ..Default::default() }, origin }
     }
 
     #[test]
@@ -746,6 +763,20 @@ mod tests {
     }
 
     #[test]
+    fn matching_length_and_full_timing_show_early() {
+        for (length, short, early) in [(180.0, false, true), (182.0, false, true), (178_000.0, false, true), (183.0, false, false), (0.0, false, false), (180.0, true, false)] {
+            let mut r = Race::new(&tune(), vec![entry(0.85, true, W); 3], true, Timing::Empty);
+            r.next(0, 6);
+            let mut lyrics = words(&OURS, true);
+            if short {
+                for line in &mut lyrics.lines { line.start_ms /= 4; }
+            }
+            r.answer(1, Some((lyrics, Named::new("", "", "", length))));
+            assert_eq!(r.to_show(false).is_some(), early, "length {length}, short {short}");
+        }
+    }
+
+    #[test]
     fn shown_replaced() {
         let mut r = Race::new(&tune(), vec![entry(0.85, true, W), entry(0.85, true, W), entry(0.85, true, W)], true, Timing::Empty);
         r.next(0, 6);
@@ -818,10 +849,10 @@ mod tests {
         r.next(0, 6);
         r.answer(0, Some((late, Named::new("Glass Harbour", "The Lanterns", "", s.duration as f64))));
         let (_, shown) = r.to_show(true).expect("shown");
-        assert!((shown.offset_ms - 1000).abs() < 120, "{}", shown.offset_ms);
+        assert!((shown.timing.offset_ms() - 1000).abs() < 120, "{:?}", shown.timing);
         assert!(sync_words(&r.check(0).unwrap()).starts_with("sync 0."), "{}", sync_words(&r.check(0).unwrap()));
         let pick = |lyrics| LyricsPick { lyrics, origin: LyricsOrigin::Lrclib };
-        assert!(lyrics_replaces(Some(&pick(shown.clone())), &pick(Lyrics { offset_ms: 0, ..shown })), "another offset is other lyrics to show");
+        assert!(lyrics_replaces(Some(&pick(shown.clone())), &pick(Lyrics { timing: Default::default(), ..shown })), "another offset is other lyrics to show");
     }
 
     // ---- the lookup, through the fake web and cache ----------------------------------------------------
@@ -974,10 +1005,9 @@ mod tests {
         let mut missed = Race::new(&tune(), entries.clone(), true, Timing::Empty);
         missed.next(0, 6);
         missed.answer(0, None);
-        assert!(missed.next(1, 6).is_empty(), "not while the first wave is out");
-        missed.answer(1, None);
-        assert_eq!(missed.next(0, 6), [2], "the first wave missed: the next one, still timed");
+        assert_eq!(missed.next(1, 6), [2], "the first wave missed but for a straggler: the next one, still timed");
         missed.answer(2, None);
+        missed.answer(1, None);
         assert_eq!(missed.next(0, 6), [3], "untimed words last, when nobody timed anything");
         let mut low = Race::new(&tune(), entries, true, Timing::Empty);
         low.next(0, 6);
@@ -1001,4 +1031,85 @@ mod tests {
         assert_eq!(web.asked().len(), 2, "each client its own memory");
     }
 
+    #[test]
+    fn straggler_holds_nothing() {
+        // The first wave's second service hangs for a minute; the first misses at once, and the second
+        // wave's word-timed answer naming the song comes 1 s after it is asked.
+        let entries = vec![entry(0.9, true, W), entry(0.85, true, W), entry(0.85, false, W)];
+        let mut r = Race::new(&tune(), entries, true, Timing::Empty);
+        let answers = [(100, None), (60_000, None), (1_000, Some((words(&OURS, true), naming("Glass Harbour"))))];
+        let (shown, asked) = race_on_clock(&mut r, &answers);
+        assert_eq!(asked, [(0, 0), (0, 1), (100, 2)], "the second wave asked once the first missed");
+        assert_eq!(shown.iter().map(|(t, rank, _)| (*t, *rank)).collect::<Vec<_>>(), [(1_100, 2)], "shown on arrival");
+    }
+
+    // ---- on a clock the test moves ----------------------------------------------------------------------
+
+    /// Virtual time: a sleep wakes when the clock reaches it, and the clock jumps to the next sleep
+    /// whenever nothing else can run.
+    #[derive(Clone, Default)]
+    struct Clock(std::rc::Rc<std::cell::RefCell<(u64, Vec<Sleeper>)>>);
+
+    /// When a sleep is due, and whom it wakes.
+    type Sleeper = (u64, std::task::Waker);
+    /// Each pick shown (when, rank, lyrics), and each rank asked (when, rank).
+    type Seen = (Vec<(u64, usize, Lyrics)>, Vec<(u64, usize)>);
+
+    impl Clock {
+        fn now(&self) -> u64 {
+            self.0.borrow().0
+        }
+
+        fn sleep(&self, ms: u64) -> impl Future<Output = ()> + '_ {
+            let at = self.now() + ms;
+            std::future::poll_fn(move |cx| {
+                let mut c = self.0.borrow_mut();
+                if c.0 >= at {
+                    return std::task::Poll::Ready(());
+                }
+                c.1.push((at, cx.waker().clone()));
+                std::task::Poll::Pending
+            })
+        }
+
+        fn run<F: Future>(&self, f: F) -> F::Output {
+            let mut f = std::pin::pin!(f);
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            loop {
+                if let std::task::Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+                    return v;
+                }
+                let due: Vec<Sleeper> = {
+                    let mut c = self.0.borrow_mut();
+                    let at = c.1.iter().map(|(at, _)| *at).min().expect("waiting on nothing");
+                    c.0 = at;
+                    let (due, later) = std::mem::take(&mut c.1).into_iter().partition(|(t, _)| *t <= at);
+                    c.1 = later;
+                    due
+                };
+                for (_, w) in due {
+                    w.wake();
+                }
+            }
+        }
+    }
+
+    /// `race` run with each rank answering `answers[rank]` after its delay: every pick shown, with when,
+    /// and each rank asked, with when.
+    fn race_on_clock(race: &mut Race, answers: &[(u64, Option<(Lyrics, Named)>)]) -> Seen {
+        let clock = Clock::default();
+        let (shown, asked) = (std::cell::RefCell::new(Vec::new()), std::cell::RefCell::new(Vec::new()));
+        let ask = |rank: usize| {
+            asked.borrow_mut().push((clock.now(), rank));
+            let (ms, answer) = answers[rank].clone();
+            let clock = &clock;
+            async move {
+                clock.sleep(ms).await;
+                answer
+            }
+        };
+        clock.run(run_race(race, ask, |rank, lyrics| shown.borrow_mut().push((clock.now(), rank, lyrics))));
+        (shown.into_inner(), asked.into_inner())
+    }
 }
+

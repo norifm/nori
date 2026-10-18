@@ -111,7 +111,7 @@ pub struct PlaylistView {
 }
 
 /// The repeat mode for walking neighbours: repeat one walks like repeat all.
-fn walk_repeat(p: &Playlist) -> u8 {
+pub(crate) fn walk_repeat(p: &Playlist) -> u8 {
     if p.repeat() == REPEAT_ONE { REPEAT_ALL } else { p.repeat() }
 }
 
@@ -504,7 +504,7 @@ pub(crate) mod tests {
     }
 
     /// A session over settings opened in a directory of its own, changed by `change`.
-    fn opened(change: impl FnOnce(&mut nori_settings::settings::StoredPrefs)) -> (nori_testdir::TempDir, Session) {
+    pub(crate) fn opened(change: impl FnOnce(&mut nori_settings::settings::StoredPrefs)) -> (nori_testdir::TempDir, Session) {
         let dir = nori_testdir::TempDir::new("session");
         let settings = nori_settings::settings_store::Settings::new();
         let mut p = settings.open(&dir.join("app.db").to_string_lossy()).unwrap();

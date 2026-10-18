@@ -121,7 +121,7 @@ internal object LyricsLine {
         val said = l.lines.filter { it.text.isNotBlank() }
         if (!l.synced) return Words(said[0].text, said.getOrNull(1)?.text.orEmpty(), false, null)
         // The lines are sung by their start times, the lyrics' found offset added to the playhead (as LyricsClock does).
-        val t = p.positionNow() + l.offsetMs
+        val t = p.positionNow() + dev.nori.music.ffi.lyrics.lyricsOffsetMs(l.timing)
         val at = l.lines.indexOfLast { it.startMs <= t }
         val now = l.lines.getOrNull(at)?.text?.takeIf { it.isNotBlank() } ?: NOTE
         val then = l.lines.drop(at + 1).firstOrNull { it.text.isNotBlank() }?.text.orEmpty()
