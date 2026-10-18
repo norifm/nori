@@ -75,12 +75,17 @@ impl Default for SeekPace {
     }
 }
 
+/// The bar's share of a song of `duration_ms`; none of one whose length is unknown (0).
 fn fraction(position_ms: i64, duration_ms: i64) -> f32 {
-    (position_ms.max(0) as f64 / duration_ms.max(1) as f64).clamp(0.0, 1.0) as f32
+    if duration_ms <= 0 {
+        return 0.0;
+    }
+    (position_ms.max(0) as f64 / duration_ms as f64).clamp(0.0, 1.0) as f32
 }
 
+/// Elapsed and remaining seconds; a song whose length is unknown (0) counts up with nothing remaining.
 fn times(position_ms: i64, duration_ms: i64) -> (i64, i64) {
-    let at = position_ms.clamp(0, duration_ms.max(0));
+    let at = if duration_ms > 0 { position_ms.clamp(0, duration_ms) } else { position_ms.max(0) };
     (at / 1000, (duration_ms - at).max(0) / 1000)
 }
 
@@ -252,6 +257,15 @@ mod tests {
             out.push(pace.bar());
         }
         out
+    }
+
+    /// A song of unknown length (0) still counts its elapsed time.
+    #[test]
+    fn unknown_length_counts_up() {
+        let mut p = SeekPace::new();
+        p.sync(1_000, 0);
+        p.step(65_400, 0, 0.016, 1000.0, 1.0);
+        assert_eq!((p.times(), p.bar()), ((65, 0), 0.0));
     }
 
     #[test]
