@@ -338,6 +338,7 @@ impl Page<'_> {
         if !self.web() {
             between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().shown(p.auto_mix).enabled(self.f.analysed > 0));
         }
+        between.push(self.setting("crossfadeKeepAlbums").shown(p.auto_mix || p.crossfade_sec > 0).enabled(live));
         between.push(self.setting("fadeMs"));
         let controls = vec![self.setting("previousAlwaysSkips"), self.setting("speed"), self.setting("pitch"), self.setting("skipSilence").enabled(live)];
         let mut queue = vec![
@@ -607,6 +608,8 @@ mod tests {
         let shown = |p: &StoredPrefs, name: &str| names(&every_row(SettingsClient::Phone, p, &facts()), true).iter().any(|n| n == name);
         let d = StoredPrefs::default();
         assert!(shown(&d, "crossfadeSec") && !shown(&StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
+        let mixing = [StoredPrefs { auto_mix: true, ..d.clone() }, StoredPrefs { crossfade_sec: 4, ..d.clone() }];
+        assert!(!shown(&d, "crossfadeKeepAlbums") && mixing.iter().all(|p| shown(p, "crossfadeKeepAlbums")), "only while songs mix");
         assert!(!shown(&d, "compressorPreset") && shown(&StoredPrefs { compressor: true, ..d.clone() }, "compressorPreset"));
         assert!(shown(&d, "loudnessLevel") && !shown(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
         assert!(!shown(&StoredPrefs { auto_fill: false, ..d.clone() }, "autoFillKind"));

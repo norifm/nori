@@ -124,6 +124,7 @@ enum Say {
         ("Playback", [
             ("crossfadeSec", "Crossfade (seconds)"),
             ("autoMix", "AutoMix"),
+            ("crossfadeKeepAlbums", "Keep albums gapless"),
             ("skipSilence", "Skip silence"),
             ("previousAlwaysSkips", "Previous always skips"),
         ]),

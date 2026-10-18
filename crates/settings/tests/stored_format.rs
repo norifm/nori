@@ -76,6 +76,7 @@ fn sample() -> StoredPrefs {
         crossfade_sec: 6,
         auto_mix: true,
         auto_mix_better_beats: true,
+        crossfade_keep_albums: false,
         speed: 1.25,
         skip_silence: true,
         taste_model: false,

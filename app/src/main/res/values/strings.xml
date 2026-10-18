@@ -74,6 +74,8 @@
     </plurals>
     <string name="settings_measure_again">Measure again</string>
     <string name="settings_fade">Fade on play and pause</string>
+    <string name="settings_keep_albums">Keep albums gapless</string>
+    <string name="settings_keep_albums_detail">Songs of one album that follow each other in order play without mixing.</string>
     <string name="settings_previous">Previous goes back a song</string>
     <string name="settings_previous_detail">Instead of restarting the current one.</string>
     <string name="settings_speed">Speed</string>
@@ -384,6 +386,7 @@
 
     <!-- What the search also finds a row by: the jargon someone might type, and the rows' own words. -->
     <string name="settings_hint_crossfade">One song fades into the next</string>
+    <string name="settings_hint_keep_albums">No mixing between songs of the same album</string>
     <string name="settings_hint_automix">Blends songs like a DJ, matching the beat</string>
     <string name="settings_hint_better_beats">A neural beat tracker for AutoMix, downloaded once (Beat This!)</string>
     <string name="settings_hint_measured">Tempo and beats, measured on this device</string>
@@ -447,7 +450,7 @@
     <string name="settings_remote_control">Remote control and jams</string>
     <string name="settings_remote_control_detail">Control playback on your other devices, or invite guests to a Jam. Uses your network directly or the octo-fiesta relay.</string>
     <string name="settings_hint_remote_control">Remote control, play on another device, Jam, group session, listen together</string>
-    <string name="settings_crossfade_detail">Songs fade into each other, not within an album</string>
+    <string name="settings_crossfade_detail">Songs fade into each other</string>
     <string name="settings_headphone_sound">Headphone sound</string>
     <string name="settings_headphone_sound_detail">Natural sounds like speakers, Wide sounds bigger</string>
     <string name="settings_headphone_natural">Natural</string>

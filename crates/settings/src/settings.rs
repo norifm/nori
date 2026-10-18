@@ -410,7 +410,7 @@ pub struct StoredPrefs {
     #[setting("activeServerId", TEXT, default = String::new(), hidden)]
     pub active_server_id: String,
     // Between songs.
-    /// Seconds; 0 is off. Equal power, and never between songs of one album in order.
+    /// Seconds; 0 is off. Equal power.
     #[setting("crossfadeSec", clamped(0, 12), default = 0, show = K::Choice(&["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]), effect = APPLY_AUDIO | REPLAN, sound)]
     pub crossfade_sec: i32,
     /// Beat-matched transitions with every part of them on ([`StoredPrefs::transition_prefs`]).
@@ -421,6 +421,9 @@ pub struct StoredPrefs {
     /// songs are analyzed with it as they arrive.
     #[setting("autoMixBetterBeats", FLAG, default = false, show = K::Switch)]
     pub auto_mix_better_beats: bool,
+    /// Songs of one album that follow each other in order play gapless, with AutoMix or a crossfade.
+    #[setting("crossfadeKeepAlbums", FLAG, default = true, show = K::Switch, effect = REPLAN)]
+    pub crossfade_keep_albums: bool,
     #[setting("fadeMs", within(0, 5000), default = 0, show = K::Choice(&["0", "150", "300", "500", "1000"]), effect = PLAYER)]
     pub fade_ms: i32,
     // Controls.
@@ -766,7 +769,7 @@ impl StoredPrefs {
     }
 
     /// What the transition planner reads from the settings (`nori_automix::planner::Planner`): AutoMix
-    /// with every part of it on, mixes up to [`AUTO_MIX_MAX_S`], and albums in order never mixed.
+    /// with every part of it on, and mixes up to [`AUTO_MIX_MAX_S`].
     pub fn transition_prefs(&self) -> TransitionPrefs {
         TransitionPrefs {
             auto_mix: self.auto_mix,
@@ -778,7 +781,7 @@ impl StoredPrefs {
             filter_effects: true,
             echo_out: true,
             keep_pitch: true,
-            keep_albums: true,
+            keep_albums: self.crossfade_keep_albums,
             // AutoMix skips its loudness matching under volume leveling.
             replay_gain: self.replay_gain != GainMode::Off,
         }
@@ -985,7 +988,7 @@ pub fn sound_json(s: &SoundSettings) -> String {
 pub(crate) const LEGACY_KEYS: &[&str] = &[
     "preampDb", "gainBoostDb", "untaggedGainDb", "gainMeasured", "loudnessTarget", "loudness", "loudnessRefPhon", "bassBoostDb", "virtualizer",
     "crossfeedDb", "crossfeedHz", "compThresholdDb", "compRatio", "compAttackMs", "compReleaseMs", "compMakeupDb", "compKneeDb", "expander",
-    "expThresholdDb", "expRatio", "expAttackMs", "expReleaseMs", "crossfadeCurve", "crossfadeInSec", "crossfadeOutSec", "crossfadeKeepAlbums",
+    "expThresholdDb", "expRatio", "expAttackMs", "expReleaseMs", "crossfadeCurve", "crossfadeInSec", "crossfadeOutSec",
     "autoMixMaxS", "autoMixBeatMatch", "autoMixMaxTempoPct", "autoMixKeepPitch", "autoMixBassSwap", "autoMixFilters", "autoMixEchoOut",
     "autoMixBeatsMobileData", "downloadBeats", "coverColors", "playerColours", "albumColours", "artistColours", "softSleeve", "favouriteNotice",
     "uiScale", "reduceMotion", "einkScreen", "animateAnyway", "lyricsPrefetch", "skipOnError", "playlistDescriptions", "hideImportNotes",

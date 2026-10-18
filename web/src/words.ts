@@ -144,6 +144,7 @@ export const W = {
     crossfadeSec: ["Crossfade", "One song fades into the next."],
     autoMix: ["AutoMix", "Songs flow into each other, matched in tempo and key."],
     autoMixBetterBeats: ["Better Beats", "A neural beat tracker for AutoMix. Uses more battery."],
+    crossfadeKeepAlbums: ["Keep Albums Gapless", "Songs of one album that follow each other in order play without mixing."],
     fadeMs: ["Fade on Pause", "Pausing and seeking fade the sound."],
     previousAlwaysSkips: ["Previous Always Skips", "Previous goes to the song before, even mid-song."],
     speed: ["Speed", ""],
