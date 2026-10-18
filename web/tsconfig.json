@@ -3,11 +3,13 @@
     "target": "es2022",
     "module": "es2022",
     "moduleResolution": "bundler",
-    "lib": ["es2022", "dom"],
+    "lib": ["es2022", "dom", "dom.iterable"],
+    "types": ["vite/client", "svelte"],
     "strict": true,
-    "rootDir": "src",
-    "outDir": "dist",
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
 }

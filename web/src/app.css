@@ -1,0 +1,288 @@
+/* nori for the web: the desktop app's and Apple Music's look, light and dark as the system is. The
+   components keep their own styles; this is the ground they share. */
+
+:root {
+  color-scheme: light dark;
+  --accent: #fa2d48;
+  --accent-text: #fff;
+  --bg: #ffffff;
+  --side: #f6f5f4;
+  --panel: #f9f8f7;
+  --bar: rgba(252, 251, 250, 0.97);
+  --raised: #ffffff;
+  --text: #1d1d1f;
+  --dim: rgba(0, 0, 0, 0.56);
+  --faint: rgba(0, 0, 0, 0.32);
+  --hair: rgba(0, 0, 0, 0.09);
+  --fill: rgba(0, 0, 0, 0.055);
+  --hover: rgba(0, 0, 0, 0.04);
+  --chosen: rgba(0, 0, 0, 0.075);
+  --shadow: 0 10px 40px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.08);
+  --scrim: rgba(0, 0, 0, 0.32);
+  --cover-ground: #e9e8e6;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Inter, Arial, sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, Inter, Arial, sans-serif;
+  --side-w: 232px;
+  --panel-w: 320px;
+  --bar-h: 72px;
+  --tabs-h: 56px;
+  --mini-h: 60px;
+  --gutter: 16px;
+  --page-pad: 40px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1f1d1c;
+    --side: #191817;
+    --panel: #242221;
+    --bar: rgba(34, 32, 31, 0.97);
+    --raised: #2c2a29;
+    --text: rgba(255, 255, 255, 0.9);
+    --dim: rgba(255, 255, 255, 0.58);
+    --faint: rgba(255, 255, 255, 0.36);
+    --hair: rgba(255, 255, 255, 0.08);
+    --fill: rgba(255, 255, 255, 0.08);
+    --hover: rgba(255, 255, 255, 0.05);
+    --chosen: rgba(255, 255, 255, 0.1);
+    --shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --scrim: rgba(0, 0, 0, 0.55);
+    --cover-ground: #2f2d2b;
+  }
+}
+
+@media (max-width: 899px) {
+  :root {
+    --page-pad: var(--gutter);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.35 var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: var(--display);
+  letter-spacing: -0.015em;
+}
+
+.icon {
+  width: 1.25em;
+  height: 1.25em;
+  fill: currentColor;
+  flex: none;
+  display: block;
+}
+
+/* A filled or quiet capsule button (Play, Shuffle, Sign In). */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.pill.solid {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.pill.small {
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.pill:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.pill .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* A round icon button without a ground until hovered. */
+.round {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--text);
+  flex: none;
+}
+
+.round:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.round.on {
+  color: var(--accent);
+}
+
+.round .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.field {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--hair);
+  background: var(--fill);
+  outline: none;
+}
+
+.field:focus {
+  border-color: var(--accent);
+}
+
+select.field {
+  appearance: none;
+  padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 16px, calc(100% - 10px) 16px;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.sub {
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.empty {
+  color: var(--dim);
+  padding: 24px 0;
+}
+
+.loading {
+  color: var(--faint);
+  padding: 40px;
+  text-align: center;
+}
+
+.error {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+/* The switch: a checkbox drawn as iOS draws one. */
+.switch {
+  appearance: none;
+  width: 42px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--chosen);
+  position: relative;
+  cursor: pointer;
+  flex: none;
+  margin: 0;
+  transition: background 0.2s;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s;
+}
+
+.switch:checked {
+  background: #34c759;
+}
+
+.switch:checked::after {
+  transform: translateX(16px);
+}
+
+.clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--fill);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

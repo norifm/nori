@@ -19,7 +19,10 @@ use std::sync::Arc;
 
 #[cfg(not(feature = "engine"))]
 use nori_core::client::Client;
+#[cfg(not(feature = "engine"))]
+use nori_core::browse::ProfileRules;
 use nori_core::settings::SavedServer;
+use nori_core::settings_pages::{self, SettingsClient, SettingsPage};
 use nori_core::settings_store::Settings;
 use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
@@ -143,14 +146,81 @@ impl Nori {
         Value::Object(v).to_string()
     }
 
-    /// The values the settings `names` (comma separated) offer, as `{ name: [value, ...] }`
-    /// (`settings_model::specs`).
-    pub fn options(&self, names: String) -> String {
-        let specs = nori_core::settings_model::specs();
-        let v: serde_json::Map<String, Value> =
-            names.split(',').filter_map(|n| Some((n.to_string(), Value::from(specs.iter().find(|s| s.name == n)?.options.clone())))).collect();
-        Value::Object(v).to_string()
+    /// The settings pages a browser has for the profile open, by name (`settings_pages`).
+    pub fn settings_pages(&self) -> String {
+        let pages = settings_pages::pages(SettingsClient::Web, &self.rules().settings);
+        Value::from(pages.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>()).to_string()
     }
+
+    /// Settings page `name` as a browser draws it: `[{ id, rows: [row] }]`, each row `{ item, shown,
+    /// enabled, depth }` with `item` `{ kind: "setting", name, type, options, min, max, value, chips }`
+    /// or `{ kind: "note", note }`. Words are the page's.
+    pub fn settings_page(&self, name: String) -> Result<String, JsValue> {
+        let page = SettingsPage::ALL.into_iter().find(|p| format!("{p:?}") == name).ok_or_else(|| error(format!("no settings page {name}")))?;
+        let prefs = self.app.settings.current().unwrap_or_default();
+        // What the pages read of the device: a browser has no DAC, no offload and no beat model, and its
+        // pages list no lyrics services (`settings_model::state` would bring the player's policy in).
+        let state = nori_core::settings_model::SettingsState {
+            values: Default::default(),
+            untouched: false,
+            sound_chain_on: prefs.sound_chain_on(),
+            offload_paused: false,
+            lyrics_sources: Vec::new(),
+            beat_model: nori_core::settings_model::BeatModel::Unavailable,
+            beat_model_mb: 0,
+        };
+        let facts = settings_pages::PageFacts { parts: self.rules().settings, ..Default::default() };
+        let sections: Vec<Value> = settings_pages::page(page, SettingsClient::Web, &prefs, &state, &facts)
+            .into_iter()
+            .map(|sec| json!({ "id": format!("{:?}", sec.id), "rows": sec.rows.iter().filter_map(settings_row).collect::<Vec<_>>() }))
+            .collect();
+        Ok(Value::from(sections).to_string())
+    }
+
+    /// Song `song`'s menu (JSON, as a page read it), most used first (`menus::song_menu`): `[{ action,
+    /// more, on, id, name, named }]`. `player`: opened from the player, showing `lyrics`.
+    pub fn menu(&self, song: String, player: bool, lyrics: bool) -> Result<String, JsValue> {
+        use nori_core::menus::{song_menu, SongAction, SongDownload};
+        let song: nori_core::Song = serde_json::from_str(&song).map_err(error)?;
+        let rules = self.rules();
+        let items: Vec<Value> = song_menu(song.clone(), song.starred, SongDownload::None, player, lyrics, rules.stars, rules.account, self.jam_offer())
+            .into_iter()
+            .map(|m| {
+                let mut v = json!({ "more": m.more });
+                let action = match m.action {
+                    SongAction::Favourite { on } => {
+                        v["on"] = json!(on);
+                        "Favourite"
+                    }
+                    SongAction::GoToAlbum { id } => {
+                        v["id"] = json!(id);
+                        "GoToAlbum"
+                    }
+                    SongAction::GoToArtist { id, name, named } => {
+                        v["id"] = json!(id);
+                        v["name"] = json!(name);
+                        v["named"] = json!(named);
+                        "GoToArtist"
+                    }
+                    a => return json!({ "action": format!("{a:?}"), "more": m.more }),
+                };
+                v["action"] = json!(action);
+                v
+            })
+            .collect();
+        Ok(Value::from(items).to_string())
+    }
+}
+
+/// A settings row as the page draws it; None for a kind a browser never has.
+fn settings_row(r: &settings_pages::SettingsRow) -> Option<Value> {
+    use settings_pages::RowItem;
+    let item = match &r.item {
+        RowItem::Setting { spec, value, chips } => json!({ "kind": "setting", "name": spec.name, "type": format!("{:?}", spec.kind), "options": spec.options, "min": spec.min, "max": spec.max, "value": value, "chips": chips }),
+        RowItem::Note { note } => json!({ "kind": "note", "note": format!("{note:?}") }),
+        _ => return None,
+    };
+    Some(json!({ "item": item, "shown": r.shown, "enabled": r.enabled, "depth": r.depth }))
 }
 
 /// Without the engine: the core alone, for the library.
@@ -172,6 +242,15 @@ impl Nori {
 
     fn leave(&self) {
         *self.client.borrow_mut() = None;
+    }
+
+    /// An account's: the core module opens no guest's profile.
+    fn rules(&self) -> ProfileRules {
+        ProfileRules::default()
+    }
+
+    fn jam_offer(&self) -> Option<nori_core::menus::JamOffer> {
+        None
     }
 
     /// Sets a setting by name; false if there is no such setting.
