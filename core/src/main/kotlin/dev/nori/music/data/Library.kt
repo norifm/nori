@@ -200,6 +200,14 @@ class Library(
         lifted { client.lyricsFor(song.id, shown) }
     }.buffer(Channel.UNLIMITED).flowOn(Dispatchers.IO)
 
+    /**
+     * [found], [songId]'s lyrics, a step sooner ([dir] > 0) or later (< 0), or back to the timing the core
+     * checked them to (0); kept by the core for these words (`Core::lyrics_nudge`).
+     */
+    suspend fun lyricsNudge(songId: String, found: FoundLyrics, dir: Int): FoundLyrics = withContext(Dispatchers.IO) {
+        core.lyricsNudge(songId, LyricsPick(found.lyrics, found.source), dir).let { FoundLyrics(it.lyrics, it.origin) }
+    }
+
     // ---- local only: history, mixes, smart playlists (all computed in the Rust core from the index) ----
 
     suspend fun clearHistory() = withContext(Dispatchers.IO) { core.historyClear() }

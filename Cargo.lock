@@ -3875,6 +3875,7 @@ dependencies = [
  "nori-db",
  "nori-model",
  "nori-player",
+ "nori-tasks",
  "nori-testdir",
  "parking_lot",
  "rusqlite",

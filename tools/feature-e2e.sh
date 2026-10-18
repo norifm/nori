@@ -158,7 +158,7 @@ if want lyrics-services; then section "each lyrics service (a report, not a chec
   "$app" set lyricsOnline true >/dev/null
   "$app" play "$LYRICS_SONG" >/dev/null; sounds 20
   answered=0
-  services="binilyrics better_lyrics paxsenix lyrics_plus portato paxsenix_musixmatch simpmusic unison netease kugou lrclib paxsenix_spotify youtube_captions megalobiz youtube_music genius"
+  services="lyrics_plus better_lyrics lrclib kugou netease binilyrics paxsenix unison paxsenix_musixmatch paxsenix_spotify youtube_music"
   for s in $services; do
     "$app" set lyricsSources "$s" >/dev/null
     "$app" do lyrics >/dev/null; wait_for lyricsSource "!SERVER" 12 2>/dev/null

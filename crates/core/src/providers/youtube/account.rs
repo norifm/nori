@@ -118,7 +118,7 @@ impl State {
                 api.take_changed();
                 // Fresh from the browser: it was just rotated.
                 self.keep(c, Some(Kept { cookies, rotated_at: unix_now(), ended: false }));
-                *c.core.rules.write() = rules(true);
+                c.core.set_rules(rules(true));
                 SignInResult::SignedIn { name }
             }
             Err(e) => {
@@ -135,7 +135,7 @@ impl State {
     pub(super) fn sign_out(&self, c: &Client) {
         self.api.set_cookies(None);
         self.keep(c, None);
-        *c.core.rules.write() = rules(false);
+        c.core.set_rules(rules(false));
     }
 
     pub(super) fn account(&self, c: &Client) -> AccountState {

@@ -1,4 +1,4 @@
-//! Lyrics calls: the server's lyrics, then the enabled lyrics services, through the client's transport
+//! Lyrics calls: the server and enabled lyrics services together, through the client's transport
 //! and the response cache. Service logic and ranking are nori-lyrics'.
 
 use std::sync::Arc;
@@ -30,41 +30,56 @@ impl LyricsCache for Core {
 
 #[derive(Default)]
 pub(crate) struct Prefetch {
-    entry: Option<u64>,
+    /// The queue entries asked for, in order.
+    entries: Vec<u64>,
+    /// Those of them already warmed.
+    warmed: Vec<u64>,
     cancel: Option<futures_util::future::AbortHandle>,
 }
 
-// A cancelled caller releases its entry so a later visit can warm it again.
+// A cancelled caller releases its entries so a later visit can warm them again.
 struct PrefetchRun<'a> {
     work: &'a parking_lot::Mutex<Prefetch>,
-    entry: u64,
+    entries: Vec<u64>,
 }
 
 impl PrefetchRun<'_> {
+    fn warmed(&self, entry: u64) {
+        let mut work = self.work.lock();
+        if work.entries == self.entries { work.warmed.push(entry); }
+    }
+
     fn finish(self) {
         let mut work = self.work.lock();
-        if work.entry == Some(self.entry) { work.cancel = None; }
+        if work.entries == self.entries { work.cancel = None; }
     }
 }
 
 impl Drop for PrefetchRun<'_> {
     fn drop(&mut self) {
         let mut work = self.work.lock();
-        if work.entry == Some(self.entry) && work.cancel.take().is_some() {
-            work.entry = None;
+        if work.entries == self.entries && work.cancel.take().is_some() {
+            work.entries.clear();
         }
     }
 }
 
-/// Passes on only picks that replace the last one shown ([`lyrics_replaces`]).
+/// Passes on only picks that replace the last one shown ([`lyrics_replaces`]), each with the timing the
+/// listener gave those words of song `song_id`, if they did.
 struct Screen {
     to: Arc<dyn LyricsShown>,
     last: parking_lot::Mutex<Option<LyricsPick>>,
+    core: Arc<Core>,
+    song_id: String,
 }
 
 impl LyricsShown for Screen {
-    fn show(&self, pick: LyricsPick) {
+    fn show(&self, mut pick: LyricsPick) {
+        pick.lyrics.timing = nori_lyrics::timing::with_yours(pick.lyrics.timing, self.core.lyrics_yours(&self.song_id, &pick));
         let mut last = self.last.lock();
+        if last.as_ref().is_some_and(|p| !p.lyrics.lines.is_empty() && pick.lyrics.lines.is_empty()) {
+            return;
+        }
         if lyrics_replaces(last.as_ref(), &pick) {
             *last = Some(pick.clone());
             drop(last);
@@ -75,47 +90,85 @@ impl LyricsShown for Screen {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// Warms the next queue entry's lyrics without publishing them to a screen.
+    /// Warms the lyrics of the songs prepared ahead ([`nori_queue::Session::lyrics_ahead`]) one after
+    /// another, without publishing them to a screen.
     pub async fn lyrics_prefetch(&self) {
         use futures_util::future::{AbortHandle, Abortable};
-        let next = self.core.session.lyrics_ahead();
-        let (old, registration) = {
+        let next = self.core.session.lyrics_ahead(self.metered());
+        let entries: Vec<u64> = next.iter().map(|(entry, _)| *entry).collect();
+        let (old, todo, registration) = {
             let mut work = self.prefetch.lock();
-            let entry = next.as_ref().map(|(entry, _)| *entry);
-            if work.entry == entry { return; }
-            work.entry = entry;
+            if work.entries == entries { return; }
+            work.warmed.retain(|e| entries.contains(e));
+            let todo: Vec<(u64, String)> = next.into_iter().filter(|(e, _)| !work.warmed.contains(e)).collect();
+            work.entries = entries.clone();
             let old = work.cancel.take();
-            let registration = next.as_ref().map(|_| {
+            let registration = (!todo.is_empty()).then(|| {
                 let (cancel, registration) = AbortHandle::new_pair();
                 work.cancel = Some(cancel);
                 registration
             });
-            (old, registration)
+            (old, todo, registration)
         };
         if let Some(old) = old { old.abort(); }
-        if let (Some((entry, id)), Some(registration)) = (next, registration) {
-            let run = PrefetchRun { work: &self.prefetch, entry };
-            if matches!(Abortable::new(self.lyrics_for(id.clone(), Arc::new(Unseen)), registration).await, Ok(Ok(()))) {
-                crate::alog::info(&format!("lyrics: prefetched {id}"));
-                run.finish();
+        let Some(registration) = registration else { return };
+        let run = PrefetchRun { work: &self.prefetch, entries };
+        let warm = async {
+            let mut all = true;
+            for (entry, id) in todo {
+                if self.lyrics_warm(id.clone()).await.is_ok() {
+                    crate::alog::info(&format!("lyrics: prefetched {id}"));
+                    run.warmed(entry);
+                } else {
+                    all = false;
+                }
             }
+            all
+        };
+        // A failed song is tried again at the next visit.
+        if Abortable::new(warm, registration).await == Ok(true) {
+            run.finish();
         }
     }
 
     /// Streams song `id`'s lyrics to `shown`: the server's (cached, then changed), then the services'
     /// when those are not timed, and an empty server answer last if nobody had any. No pick is shown
-    /// twice. Dropping the future cancels its requests.
+    /// twice. A service's timed lyrics shown before the song playing is measured are shown again once
+    /// it is, checked against its voice. Dropping the future cancels its requests.
     pub async fn lyrics_for(&self, id: String, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
-        let asked = self.settings().with_prefs(lyrics_lookup).unwrap_or_else(|| lyrics_lookup(&StoredPrefs::default()));
-        self.lyrics_for_with(id, &asked, shown).await
+        self.lyrics_for_with(id, &self.lyrics_asked(), shown).await
     }
 }
 
 impl Client {
+    fn lyrics_asked(&self) -> LyricsLookup {
+        self.settings().with_prefs(lyrics_lookup).unwrap_or_else(|| lyrics_lookup(&StoredPrefs::default()))
+    }
+
+    /// Song `id`'s lyrics looked up and cached, shown nowhere.
+    async fn lyrics_warm(&self, id: String) -> NetResult<()> {
+        self.lyrics_look_up(id, &self.lyrics_asked(), Arc::new(Unseen)).await.map(drop)
+    }
+
     /// [`Client::lyrics_for`] with the services given.
     async fn lyrics_for_with(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
+        let screen = self.lyrics_look_up(id.clone(), asked, shown).await?;
+        let last = screen.last.lock().clone();
+        let Some(mut pick) = last.filter(|p| p.origin != nori_settings::lyrics_sources::LyricsOrigin::Server && p.lyrics.synced) else { return Ok(()) };
+        if !matches!(pick.lyrics.timing, nori_model::LyricsTiming::NotChecked | nori_model::LyricsTiming::Yours { automatic: None, .. }) {
+            return Ok(());
+        }
+        if let Some(voice) = self.core.voice_measured(&id).await {
+            pick.lyrics.timing = nori_lyrics::sync::timing_against(&pick.lyrics, &voice);
+            screen.show(pick);
+        }
+        Ok(())
+    }
+
+    /// The lookup of [`Client::lyrics_for`], up to its last answer; returns where they were shown.
+    async fn lyrics_look_up(&self, id: String, asked: &LyricsLookup, shown: Arc<dyn LyricsShown>) -> NetResult<Arc<Screen>> {
         use crate::cache_policy::{Page, Read};
-        let screen = Arc::new(Screen { to: shown, last: parking_lot::Mutex::new(None) });
+        let screen = Arc::new(Screen { to: shown, last: parking_lot::Mutex::new(None), core: self.core.clone(), song_id: id.clone() });
         let read = || Read::LyricsBySong { song_id: id.clone() };
         let show_server = |v: &crate::Lyrics| {
             let timed = screen.last.lock().as_ref().is_some_and(|pick| pick.lyrics.synced);
@@ -125,13 +178,12 @@ impl Client {
         };
         let stored = self.read_stored(read()).ok();
         let digest = stored.as_ref().and_then(|s| s.digest);
-        let mut server: Option<crate::Lyrics> = match stored.as_ref().and_then(|s| s.page.clone()) {
+        let server: Option<crate::Lyrics> = match stored.as_ref().and_then(|s| s.page.clone()) {
             Some(Page::LyricsPage { v }) => Some(v),
             _ => None,
         };
-        if let Some(v) = &server {
-            show_server(v);
-        }
+        // A service's words kept from before first: shown after the server's plain ones, those flashed up
+        // in between on a song come back to.
         let song = self.stored_song_of(&id);
         if let Some(song) = &song {
             if let Some(pick) = cached_pick(&*self.core, song,
@@ -140,23 +192,37 @@ impl Client {
                 screen.show(pick);
             }
         }
+        if let Some(v) = &server {
+            show_server(v);
+        }
         // A downloaded song's lyrics were looked up at download: serve them from the cache without
         // requests; the server is re-asked only after a week, after showing them.
         let fresh = stored.as_ref().is_some_and(|s| s.fresh);
         let downloaded = server.is_some() && !fresh && self.core.download_song(&id).is_some();
         let refresh_after = downloaded && self.read_stored_within(read(), DOWNLOADED_SERVER_KEPT_MS).is_ok_and(|s| !s.fresh);
-        if !fresh && !downloaded {
-            // A server failure just means no server lyrics.
-            if let Ok(Some(Page::LyricsPage { v })) = self.read_refresh(read(), digest).await {
-                show_server(&v);
-                server = Some(v);
-            }
-        }
         let has_lines = server.as_ref().is_some_and(|l| !l.lines.is_empty());
         let synced = server.as_ref().is_some_and(|l| l.synced);
-        let song = match song { Some(song) => song, None => self.song_of(id.clone()).await? };
-        if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics).await {
-            nori_perf::perf_log::note_core("lyrics", line.trim_start_matches("lyrics: "));
+        let refresh = async {
+            if !fresh && !downloaded {
+                if let Ok(Some(Page::LyricsPage { v })) = self.read_refresh(read(), digest).await {
+                    show_server(&v);
+                    return v.synced;
+                }
+            }
+            synced
+        };
+        let services = async {
+            let song = match song { Some(song) => song, None => self.song_of(id.clone()).await? };
+            if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics).await {
+                nori_perf::perf_log::note_core("lyrics", line.trim_start_matches("lyrics: "));
+            }
+            Ok::<(), crate::transport::NetError>(())
+        };
+        // Timed server lyrics finish the lookup; otherwise both sources can publish as they arrive.
+        use futures_util::future::{select, Either};
+        match select(Box::pin(refresh), Box::pin(services)).await {
+            Either::Left((timed, services)) => { if !timed { services.await?; } }
+            Either::Right((result, refresh)) => { result?; refresh.await; }
         }
         if refresh_after {
             // Newly timed server lyrics win; anything else is used next time.
@@ -166,15 +232,40 @@ impl Client {
                 }
             }
         }
-        Ok(())
+        Ok(screen)
     }
 }
 
 /// Freshness of a downloaded song's cached server lyrics.
 pub(crate) const DOWNLOADED_SERVER_KEPT_MS: i64 = MISS_KEPT_MS;
 
+impl Core {
+    /// The offset the listener gave `pick`'s words of song `song_id`, if they did.
+    fn lyrics_yours(&self, song_id: &str, pick: &LyricsPick) -> Option<i64> {
+        let key = nori_lyrics::timing::key(song_id, pick.origin, &pick.lyrics);
+        crate::db::kv_get(&self.db.lock(), &key).ok().flatten().and_then(|v| v.parse().ok())
+    }
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
+    /// `pick`, song `song_id`'s lyrics, a step sooner (`dir` > 0) or later (< 0), or back to the sync
+    /// check's timing (0); the listener's timing is kept for these words and given them whenever they
+    /// are shown again.
+    pub fn lyrics_nudge(&self, song_id: String, mut pick: LyricsPick, dir: i32) -> LyricsPick {
+        pick.lyrics.timing = nori_lyrics::timing::nudged(pick.lyrics.timing, dir);
+        let key = nori_lyrics::timing::key(&song_id, pick.origin, &pick.lyrics);
+        let c = self.db.lock();
+        let kept = match pick.lyrics.timing {
+            nori_model::LyricsTiming::Yours { ms, .. } => crate::db::kv_put(&c, &key, &ms.to_string()),
+            _ => crate::db::kv_delete(&c, &key),
+        };
+        if let Err(e) = kept {
+            crate::alog::info(&format!("lyrics: timing not kept: {e}"));
+        }
+        pick
+    }
+
     /// Bytes of cached service lyrics and picks.
     pub fn lyrics_cache_bytes(&self) -> i64 {
         let c = self.db.lock();
@@ -212,7 +303,7 @@ impl Client {
         for id in ids.into_iter().filter(|id| !crate::is_provider_id(id)) {
             let downloads = &self.core.downloads;
             downloads.with(|t| t.working(&id, crate::transfers::Work::Lyrics));
-            let _ = self.lyrics_for(id.clone(), Arc::new(Unseen)).await;
+            let _ = self.lyrics_warm(id.clone()).await;
             downloads.with(|t| t.work_done(&id, crate::transfers::Work::Lyrics));
         }
     }
@@ -227,6 +318,7 @@ pub(crate) mod tests {
     use crate::transport::FailureKind;
     use nori_settings::lyrics_sources::LyricsService;
     use nori_settings::lyrics_sources::LyricsOrigin;
+    use nori_model::LyricsTiming;
     use parking_lot::Mutex;
 
     fn song() -> Song {
@@ -260,17 +352,50 @@ pub(crate) mod tests {
     const NONE: &str = r#"{"subsonic-response":{"status":"ok","lyricsList":{}}}"#;
 
     #[test]
-    fn prefetch_warms_only_the_next_library_song() {
+    fn services_show_while_the_server_is_pending() {
+        use crate::transport::{Exchange, Network, Transport, TransportError, TransportResponse};
+        use std::future::Future;
+        use std::task::{Context, Waker};
+
+        struct SlowServer(Arc<Fake>);
+        #[async_trait::async_trait]
+        impl Transport for SlowServer {
+            async fn get(&self, url: String, timeout: u32) -> Result<TransportResponse, TransportError> {
+                if url.contains("getLyricsBySongId") { std::future::pending().await } else { self.0.get(url, timeout).await }
+            }
+            async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> { self.0.send(request).await }
+            fn address_changed(&self) {}
+            fn network(&self) -> Network { Network::Unmetered }
+        }
+        let (original, fake) = setup();
+        let c = Client::new(original.core.clone(), Arc::new(SlowServer(fake.clone())), Default::default());
+        c.set_profile(NetProfile { url: "h".into(), ..Default::default() });
+        let s = song();
+        c.core.session.register(vec![s.clone()]);
+        fake.answer(r#"{"statusCode":404}"#);
+        fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
+        let screen = Arc::new(Screen::default());
+        let asked = lrclib();
+        let mut lookup = Box::pin(c.lyrics_for_with(s.id, &asked, screen.clone()));
+        assert!(lookup.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+        assert_eq!(screen.0.lock().last().map(|p| p.origin), Some(LyricsOrigin::Lrclib));
+    }
+
+    #[test]
+    fn prefetch_warms_the_library_songs_prepared_ahead() {
+        let stored = |c: &Client, id: &str| matches!(c.read_stored(crate::cache_policy::Read::LyricsBySong { song_id: id.into() }).ok().and_then(|s| s.page),
+            Some(crate::cache_policy::Page::LyricsPage { v }) if !v.lines.is_empty());
+        // Mobile data: the next song only, by default.
         for next in ["ahead", "ext-ahead"] {
             let (c, fake) = setup();
+            *fake.metered.lock() = true;
             let ahead = Song { id: next.into(), ..song() };
             c.core.session.register(vec![Song { id: "current".into(), ..song() }, ahead]);
             c.core.session.set(vec!["current".into(), next.into(), "later".into()], Some(0), false, None);
             fake.answer(SYNCED);
             block(c.lyrics_prefetch());
             if next == "ahead" {
-                let stored = c.read_stored(crate::cache_policy::Read::LyricsBySong { song_id: next.into() }).unwrap();
-                assert!(matches!(stored.page, Some(crate::cache_policy::Page::LyricsPage { v }) if !v.lines.is_empty()), "prefetch must store the next song's words before it is played");
+                assert!(stored(&c, next), "prefetch must store the next song's words before it is played");
                 let shown = Arc::new(Screen::default());
                 block(c.lyrics_for(next.into(), shown.clone())).unwrap();
                 assert_eq!(shown.0.lock()[0].lyrics.lines[0].text, "timed");
@@ -281,6 +406,20 @@ pub(crate) mod tests {
                 assert!(fake.asked().is_empty(), "a provider's: no prefetch requests");
             }
         }
+        // Wi-Fi: as many as the songs prepared ahead there, three by default.
+        let (c, fake) = setup();
+        let queue = ["current", "s1", "s2", "s3", "s4"];
+        c.core.session.register(queue.iter().map(|id| Song { id: id.to_string(), ..song() }).collect());
+        c.core.session.set(queue.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
+        (0..3).for_each(|_| fake.answer(SYNCED));
+        block(c.lyrics_prefetch());
+        assert_eq!(queue.map(|id| stored(&c, id)), [false, true, true, true, false]);
+        // The next song moves on: only the newly prepared one is asked for.
+        c.core.session.moved_to(1);
+        fake.answer(SYNCED);
+        block(c.lyrics_prefetch());
+        assert!(stored(&c, "s4"));
+        assert_eq!(fake.asked().len(), 4);
     }
 
     #[test]
@@ -312,6 +451,9 @@ pub(crate) mod tests {
         let active = Arc::new(AtomicUsize::new(0));
         let c = Client::new(original.core.clone(), Arc::new(Gate { fake: fake.clone(), active: active.clone() }), Default::default());
         c.set_profile(NetProfile { url: "h".into(), ..Default::default() });
+        let dir = nori_testdir::TempDir::new("lyrics-prefetch-cancel");
+        c.settings().open(&dir.join("settings.db").to_string_lossy()).unwrap();
+        c.settings().edit_by_name("lyricsOnline", "false");
         c.core.session.register(vec![Song { id: "first".into(), ..song() }, Song { id: "second".into(), ..song() }]);
         c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
         let mut first = Box::pin(c.lyrics_prefetch());
@@ -423,6 +565,54 @@ pub(crate) mod tests {
         assert_eq!(shown[0].1, before, "cached words must arrive before attempting the slow server request");
     }
 
+    /// Back to a song (a quick next and previous): its timed words come first, and the server's plain
+    /// ones they replaced never flash up in between.
+    #[test]
+    fn a_song_looked_up_again_shows_its_timed_words_only() {
+        const PLAIN: &str = r#"{"subsonic-response":{"status":"ok","lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"plain words"}]}]}}}"#;
+        let (c, fake) = setup();
+        let s = Song { id: "back-again".into(), title: "Back Again".into(), ..song() };
+        c.core.session.register(vec![s.clone()]);
+        fake.answer(PLAIN);
+        fake.answer(r#"{"statusCode":404}"#);
+        fake.answer(r#"[{"duration":1024,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
+        let first = Arc::new(Screen::default());
+        block(c.lyrics_for_with(s.id.clone(), &lrclib(), first.clone())).unwrap();
+        assert_eq!(first.0.lock().last().map(|p| p.origin), Some(LyricsOrigin::Lrclib));
+        let again = Arc::new(Screen::default());
+        block(c.lyrics_for_with(s.id, &lrclib(), again.clone())).unwrap();
+        let origins: Vec<_> = again.0.lock().iter().map(|p| p.origin).collect();
+        assert_eq!(origins, [LyricsOrigin::Lrclib], "the server's plain words must not show first");
+    }
+
+    #[test]
+    fn your_timing_stays_with_those_words() {
+        let (c, fake) = setup();
+        let s = Song { id: "nudged".into(), title: "Before the Rain".into(), ..song() };
+        c.core.session.register(vec![s.clone()]);
+        fake.answer(r#"{"statusCode":404}"#);
+        fake.answer(r#"[{"duration":1022,"syncedLyrics":"[00:02.00]line one\n[01:00.00]line two here\n[02:00.00]a third line\n[03:00.00]and the fourth"}]"#);
+        run(&c, &s, false, false, &lrclib());
+        c.core.cache_put(format!("getLyricsBySongId&id={}&enhanced=true", s.id), NONE.as_bytes().to_vec()).unwrap();
+        let shown = || {
+            let screen = Arc::new(Screen::default());
+            block(c.lyrics_for_with(s.id.clone(), &lrclib(), screen.clone())).unwrap();
+            let first = screen.0.lock()[0].clone();
+            assert_eq!(first.origin, LyricsOrigin::Lrclib);
+            first
+        };
+        let pick = shown();
+        assert_eq!(pick.lyrics.timing, LyricsTiming::NotChecked);
+        let once = c.core.lyrics_nudge(s.id.clone(), pick.clone(), 1);
+        let twice = c.core.lyrics_nudge(s.id.clone(), once, 1);
+        assert_eq!(twice.lyrics.timing, LyricsTiming::Yours { ms: 2 * nori_look::lyrics::NUDGE_STEP_MS, automatic: None });
+        assert_eq!(shown().lyrics.timing, twice.lyrics.timing, "shown again, still yours");
+        assert_eq!(c.core.lyrics_yours(&s.id, &LyricsPick { origin: LyricsOrigin::Netease, ..pick.clone() }), None, "another source's words");
+        assert_eq!(c.core.lyrics_yours("other", &pick), None, "another song");
+        assert_eq!(c.core.lyrics_nudge(s.id.clone(), shown(), 0).lyrics.timing, LyricsTiming::NotChecked);
+        assert_eq!(shown().lyrics.timing, LyricsTiming::NotChecked, "reset is forgotten for good");
+    }
+
     #[test]
     fn service_hit_cached_and_ranked() {
         let (c, fake) = setup();
@@ -455,18 +645,15 @@ pub(crate) mod tests {
         assert!(c.core.cache_get("getAlbum|1".into()).unwrap().is_some(), "other cache entries stay");
     }
 
-    /// Lyrics of an analysed song get the offset of their times against its vocal curve.
-    #[test]
-    fn analysed_lyrics_get_sync_offset() {
+    /// A sung song measured into an analyser, its first line's time, and LRCLIB's answer for it: a line
+    /// per sung phrase, 1.2 s late (plus the 0.2 s lead sync.rs expects).
+    fn late_lyrics() -> (nori_player::automix::analysis::Analyzer, f64, String, u32) {
         use nori_player::automix::analysis::Analyzer;
         use nori_player::automix::eval::{Song as Synthetic, Style, FULL, SUNG};
-        let (c, fake) = setup();
         let synthetic = Synthetic { sections: vec![(4, FULL), (12, SUNG), (6, FULL), (12, SUNG), (4, FULL)], ..Synthetic::new("offset", Style::Backbeat, 112.0, 2, false) };
         let (x, truth) = synthetic.render();
         let mut a = Analyzer::new(synthetic.rate, 0);
         a.feed(&x);
-        nori_automix::store::put_voice(&c.core.db.lock(), "sync1", &a.take_features().voice_curve()).unwrap();
-        // A line per sung phrase, 1.2 s late (plus the 0.2 s lead sync.rs expects).
         let mut lrc = String::new();
         let mut last = f64::MIN;
         for (i, (start, _)) in truth.voice.iter().enumerate() {
@@ -477,12 +664,61 @@ pub(crate) mod tests {
             last = truth.voice[i].1;
         }
         let secs = (x.len() / synthetic.rate as usize) as u32;
-        fake.answer(&serde_json::json!({"syncedLyrics": lrc, "duration": secs, "trackName": "Offset", "artistName": "Pink Floyd"}).to_string());
+        let answer = serde_json::json!({"syncedLyrics": lrc, "duration": secs, "trackName": "Offset", "artistName": "Pink Floyd"}).to_string();
+        (a, truth.voice[0].0, answer, secs)
+    }
+
+    /// Lyrics of an analysed song get the offset of their times against its vocal curve.
+    #[test]
+    fn analysed_lyrics_get_sync_offset() {
+        let (c, fake) = setup();
+        let (mut a, first, answer, secs) = late_lyrics();
+        nori_automix::store::put_voice(&c.core.db.lock(), "sync1", &a.take_features().voice_curve()).unwrap();
+        fake.answer(&answer);
         let s = Song { id: "sync1".into(), title: "Offset".into(), duration: secs, ..song() };
         let got = run(&c, &s, false, false, &lrclib());
         let l = &got.last().expect("lyrics").lyrics;
-        assert!((l.offset_ms - 1200).abs() < 150, "offset {}", l.offset_ms);
-        assert_eq!(l.lines[0].start_ms, ((truth.voice[0].0 - 0.2 + 1.2) * 1000.0 / 10.0).round() as i64 * 10, "times unchanged");
+        assert!(matches!(l.timing, LyricsTiming::Automatic { ms } if (ms - 1200).abs() < 150), "{:?}", l.timing);
+        assert_eq!(l.lines[0].start_ms, ((first - 0.2 + 1.2) * 1000.0 / 10.0).round() as i64 * 10, "times unchanged");
+    }
+
+    /// Lyrics shown while the playing song is not measured yet are checked against its voice as soon as
+    /// it is, with AutoMix off too; a song that leaves the play window is no longer waited for.
+    #[test]
+    fn lyrics_are_checked_once_the_playing_song_is_measured() {
+        use std::future::Future;
+        use std::task::{Context, Waker};
+        let (c, fake) = setup();
+        c.core.session.settings.open("").unwrap();
+        c.core.session.settings.put(StoredPrefs { auto_mix: false, ..StoredPrefs::default() });
+        let (a, _, answer, secs) = late_lyrics();
+        let s = Song { id: "sync2".into(), title: "Offset".into(), duration: secs, ..song() };
+        let other = Song { id: "other".into(), ..s.clone() };
+        c.core.session.register(vec![s.clone(), other.clone()]);
+        c.core.session.set(vec![s.id.clone()], Some(0), false, None);
+        c.core.session.window();
+        fake.answer(NONE);
+        fake.answer(&answer);
+        let screen = Arc::new(Screen::default());
+        let asked = lrclib();
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut lookup = Box::pin(c.lyrics_for_with(s.id.clone(), &asked, screen.clone()));
+        assert!(lookup.as_mut().poll(&mut cx).is_pending(), "waits for the measurement");
+        assert_eq!(screen.0.lock().last().map(|p| p.lyrics.timing), Some(LyricsTiming::NotChecked));
+        c.core.analysis_finish(&s.id, a).unwrap().expect("stored");
+        assert!(lookup.as_mut().poll(&mut cx).is_ready());
+        let timing = screen.0.lock().last().unwrap().lyrics.timing;
+        assert!(matches!(timing, LyricsTiming::Automatic { ms } if (ms - 1200).abs() < 150), "{timing:?}");
+
+        c.core.session.set(vec![other.id.clone()], Some(0), false, None);
+        c.core.session.window();
+        fake.answer(NONE);
+        fake.answer(&answer);
+        let mut lookup = Box::pin(c.lyrics_for_with(other.id.clone(), &asked, screen.clone()));
+        assert!(lookup.as_mut().poll(&mut cx).is_pending());
+        c.core.session.set(vec![s.id.clone()], Some(0), false, None);
+        c.core.session.window();
+        assert!(lookup.as_mut().poll(&mut cx).is_ready(), "out of the play window: no longer waited for");
     }
 
     #[test]

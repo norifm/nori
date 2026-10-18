@@ -315,7 +315,7 @@ impl Provider for YouTube {
     fn configure(&self, core: &Core, profile: &SavedServer) -> nori_model::Result<()> {
         core.serves(IDENT)?;
         *core.server.write() = crate::api::Server::default();
-        *core.rules.write() = rules(!profile.user.is_empty());
+        core.set_rules(rules(!profile.user.is_empty()));
         *core.native_login.write() = None;
         *core.account.write() = None;
         Ok(())

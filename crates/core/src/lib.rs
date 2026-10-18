@@ -527,7 +527,7 @@ impl Core {
         self.install_kind(settings::ServerKind::Subsonic)?;
         self.starts_transcodes.store(false, std::sync::atomic::Ordering::Relaxed);
         let key = config.api_key.unwrap_or_default();
-        *self.rules.write() = browse::profile_rules(nori_remote::is_guest_key(&key));
+        self.set_rules(browse::profile_rules(nori_remote::is_guest_key(&key)));
         *self.native_login.write() = key.is_empty().then(|| (config.user.clone(), config.password.clone()));
         *self.account.write() = match (key.is_empty(), nori_remote::is_guest_key(&key)) {
             (true, _) => Some((config.user, config.password)),

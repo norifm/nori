@@ -11,7 +11,7 @@ pub fn lyrics_clock(lyrics: nori_model::Lyrics, position_ms: i64) -> i64 {
 
 /// A clock on `lyrics` at `position_ms`.
 pub fn clock_on(lyrics: &nori_model::Lyrics, position_ms: i64) -> LyricClock {
-    LyricClock::with_offset(LyricTiming::new(lyrics.synced, lyrics.word_timed, lyrics.lines.iter().map(timed)), position_ms, lyrics.offset_ms)
+    LyricClock::with_offset(LyricTiming::new(lyrics.synced, lyrics.word_timed, lyrics.lines.iter().map(timed)), position_ms, lyrics.timing.offset_ms())
 }
 
 fn timed(l: &nori_model::LyricLine) -> Line {

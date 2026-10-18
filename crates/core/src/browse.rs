@@ -6,6 +6,14 @@ use crate::{db, history, Core, Result};
 
 pub use nori_library::browse::*;
 
+impl Core {
+    /// Sets what the app offers over this profile; its songs are measured only where the rules say.
+    pub(crate) fn set_rules(&self, rules: ProfileRules) {
+        self.session.planner.set_measures(rules.measures);
+        *self.rules.write() = rules;
+    }
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
     /// What the app offers over this profile, as configured: a jam guest's or the account's.

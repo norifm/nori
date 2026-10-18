@@ -179,7 +179,7 @@ fn section_title(id: SectionId) -> &'static str {
         History => "Listening history",
         Online => "Online",
         Devices => "Other devices",
-        Streaming => "Streaming quality",
+        Streaming => "Streaming",
         Downloads => "Downloads",
         Storage => "Storage",
         Updates => "Updates",
@@ -231,7 +231,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "lyricsTranslation" => ("Show translations", "When your server has them."),
         "lyricsOnline" => ("Find missing lyrics online", "When your server has no timed lyrics. Sends the artist, song and album name to the lyrics sources."),
         "lyricsPreferWords" => ("Prefer word-by-word lyrics", "Keeps looking past lyrics timed line by line."),
-        "paxSenixKey" => ("PaxSenix key", "Your own key, for its Spotify and Musixmatch lyrics."),
         "betterLyricsKey" => ("BetterLyrics key", "Without one it answers only for songs it has already stored."),
         "tasteModel" => ("Keep listening history", "Stored on this Mac. Powers mixes and stats."),
         "scrobble" => ("Tell the server what you play", "Sends your plays to your server once you've heard half a song or four minutes of it."),
@@ -239,6 +238,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "remoteControl" => ("Remote control and jams", "Control playback on your other devices, or invite guests to a jam. Uses your network directly or the octo-fiesta relay."),
         "wifi" => ("Streaming quality", ""),
         "download" => ("Quality for downloads", ""),
+        "songsAheadWifi" => ("Prepare songs ahead", "Upcoming songs and their lyrics are fetched before you get to them."),
         "cacheMb" => ("Space for streamed music", ""),
         other => (other, ""),
     };
@@ -294,6 +294,8 @@ fn option_words(name: &str, v: &str) -> String {
                 _ => format!("{rate} {format}"),
             }
         }
+        ("songsAheadWifi", "1") => "Next song".into(),
+        ("songsAheadWifi", v) => format!("{v} songs"),
         ("cacheMb", v) => match v.parse::<u32>() {
             Ok(mb) if mb >= 1024 && mb % 1024 == 0 => format!("{} GB", mb / 1024),
             _ => format!("{v} MB"),
@@ -420,7 +422,9 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         RowItem::LyricsSource { index } => {
             let src = s.lyrics_sources.get(index as usize)?;
             let (title, about) = service(&src.id)?;
-            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: true, ..Default::default() }
+            // A service that needs a key has its key's field beside its switch (`centred`), which turns it on.
+            let button = if src.key_set { "Key set" } else { "PaxSenix key" };
+            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: !src.needs_key || src.key_set, centred: src.needs_key, button: button.into(), ..Default::default() }
         }
     })
 }
@@ -432,18 +436,13 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
         "BETTER_LYRICS" => ("BetterLyrics", "Apple Music's lyrics, syllable by syllable. Finds more with a key. Unofficial."),
         "PAXSENIX" => ("PaxSenix", "Apple Music's lyrics, syllable by syllable, looked up another way. Unofficial."),
         "LYRICS_PLUS" => ("LyricsPlus", "Apple Music's lyrics and others', syllable by syllable, from volunteers. Unofficial."),
-        "PORTATO" => ("BetterLyrics Portato", "QQ Music's lyrics, word by word. Strong on Chinese music. Unofficial."),
         "PAXSENIX_MUSIXMATCH" => ("PaxSenix: Musixmatch", "Musixmatch's lyrics, often word by word. Needs a PaxSenix key."),
-        "SIMPMUSIC" => ("SimpMusic", "Lyrics timed by listeners, often word by word, matched to the song on YouTube."),
         "UNISON" => ("Unison", "Open, written and timed by listeners. Many songs word by word."),
         "NETEASE" => ("NetEase Cloud Music", "The Chinese streaming service's own lyrics, often word by word. Unofficial."),
         "KUGOU" => ("KuGou", "Strong on Chinese, Japanese and Korean music, often word by word. Unofficial."),
         "LRCLIB" => ("LRCLIB", "Open and run by volunteers. Timed line by line, some songs word by word."),
         "PAXSENIX_SPOTIFY" => ("PaxSenix: Spotify", "Spotify's lyrics, timed line by line. Needs a PaxSenix key."),
-        "YOUTUBE_CAPTIONS" => ("YouTube captions", "The captions of the song on YouTube, timed line by line. Unofficial."),
-        "MEGALOBIZ" => ("Megalobiz", "Lyrics timed line by line by its users, read off its pages."),
         "YOUTUBE_MUSIC" => ("YouTube Music", "The words YouTube Music shows for the song. Not timed. Unofficial."),
-        "GENIUS" => ("Genius", "The biggest catalogue of words, not timed. Asked only when nobody has timed lyrics."),
         _ => return None,
     })
 }

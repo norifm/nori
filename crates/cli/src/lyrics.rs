@@ -74,7 +74,7 @@ mod tests {
         let words = vec![LyricWord { start_ms: 1000, end_ms: 1500, start: 0, end: 5 }, LyricWord { start_ms: 1500, end_ms: 2000, start: 6, end: 11 }];
         let l1 = LyricLine { start_ms: 1000, end_ms: 2000, text: "Hello world".into(), words, ..Default::default() };
         let l2 = LyricLine { start_ms: 3000, end_ms: 4000, text: "Żółć ok".into(), ..Default::default() };
-        Lyrics { synced: true, word_timed: true, lines: vec![l1, l2], offset_ms: 0 }
+        Lyrics { synced: true, word_timed: true, lines: vec![l1, l2], ..Default::default() }
     }
 
     #[test]

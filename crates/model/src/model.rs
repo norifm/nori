@@ -421,10 +421,33 @@ pub struct Lyrics {
     /// Word times come from the source; false when estimated from line times or absent.
     pub word_timed: bool,
     pub lines: Vec<LyricLine>,
-    /// Offset (ms) the clock adds to the playhead, from the vocal sync check (nori-lyrics sync.rs); 0 if none.
-    #[cfg_attr(feature = "ffi", uniffi(default))]
+    /// How they are fitted to the song: the offset the clock adds to the playhead, and whose it is.
     #[serde(skip)]
-    pub offset_ms: i64,
+    pub timing: LyricsTiming,
+}
+
+/// Who set the offset lyrics are shown with, and what it is: the vocal sync check (nori-lyrics sync.rs)
+/// or the listener (nori-lyrics timing.rs).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum LyricsTiming {
+    /// Not heard against the song's voice: the song is not analysed yet, or the words are the server's.
+    #[default]
+    NotChecked,
+    /// Heard against the voice and moved by `ms` (0: they were on time).
+    Automatic { ms: i64 },
+    /// Moved by the listener to `ms`; `automatic` is what the check gave, none if it has not run.
+    Yours { ms: i64, automatic: Option<i64> },
+}
+
+impl LyricsTiming {
+    /// What the clock adds to the playhead to find the lyrics' time.
+    pub fn offset_ms(self) -> i64 {
+        match self {
+            LyricsTiming::NotChecked => 0,
+            LyricsTiming::Automatic { ms } | LyricsTiming::Yours { ms, .. } => ms,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

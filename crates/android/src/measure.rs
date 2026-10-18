@@ -162,7 +162,7 @@ extern "system" fn start(mut env: JNIEnv, _: JClass, bridge: JObject, analyses: 
     MEASURERS.add(Arc::new(Running { measurer, session: m.session.clone() }))
 }
 
-/// The upcoming songs may have changed: asks for the queue's `measure` (empty with AutoMix off).
+/// The upcoming songs may have changed: asks for the queue's `measure` (empty when the profile measures nothing).
 extern "system" fn update(h: jlong) {
     if let Some(r) = MEASURERS.get(h) {
         r.measurer.ask(r.session.measure());

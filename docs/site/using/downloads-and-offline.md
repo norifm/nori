@@ -31,8 +31,12 @@ unavailable artwork finishes loading with a placeholder.
 ## The stream cache
 
 Songs you stream are kept in a cache on the device (1 GB by default; 256 MB to 16 GB), so a song played
-again is not fetched again. The songs coming up next are fetched ahead: three on Wi-Fi, the next one on
-mobile data, and the covers of the next five (from nori 0.6.3; before, these were settings).
+again is not fetched again. The songs coming up next are fetched ahead, with their lyrics: three on
+Wi-Fi and the next one on mobile data by default. Settings › Downloads and storage › Prepare songs ahead
+sets how many, 1 to 10 on Wi-Fi and 1 to 5 on mobile data (the desktop and terminal offer the Wi-Fi
+one); the next song is always fetched so playback goes on without a gap. The covers of the next five are
+fetched too. This is from nori 0.6.3; in 0.6.2 two songs were fetched ahead on Wi-Fi by default, and
+only the next one's lyrics.
 
 ## Offline
 

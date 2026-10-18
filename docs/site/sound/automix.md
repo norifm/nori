@@ -17,6 +17,9 @@ measured, it plans a mix of up to 12 seconds: it nudges the next song's speed (b
 pitch) so the beats line up, swaps the bass, fades the outgoing song out muffled, and ends clashing
 vocals in an echo.
 
+Songs are measured once, when first played or coming up next, whether AutoMix is on or not: the same
+measurement checks the lyrics' timing against the singing. It costs a little CPU once per song.
+
 **Better beat detection** (off by default) runs a small neural beat tracker (Beat This!) over the start
 and end of each song, for mixes that land on the beat more often, and over downloaded songs as they
 arrive. It needs a one-time download of about 8 MB from the model's authors, over Wi-Fi.

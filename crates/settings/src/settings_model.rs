@@ -71,15 +71,17 @@ pub fn value_of(p: &StoredPrefs, name: &str) -> Option<String> {
     Some(if r.lookups && !p.third_party_lookups { false.to_string() } else { (r.show)(p) })
 }
 
-/// One lyrics service in rank order. Changed by name with `lyricsService:<id>`, `lyricsPlace`
-/// (`<id>:<place>`) and `lyricsMove` (`<id>:-1`).
+/// One lyrics service in rank order. Changed by name with `lyricsService:<id>`, `lyricsKey:<id>` (its
+/// key, for one that `needs_key`), `lyricsPlace` (`<id>:<place>`) and `lyricsMove` (`<id>:-1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LyricsSource {
     pub id: String,
     pub on: bool,
-    /// Asked only with the PaxSenix key.
+    /// Never on without its key: switching it on asks for the key first.
     pub needs_key: bool,
+    /// The key it needs is given.
+    pub key_set: bool,
 }
 
 /// The beat model's download state.
@@ -156,7 +158,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
     let on = lyrics_sources::switched_on(p);
     let lyrics_sources = lyrics_sources::complete_order(&p.lyrics_order)
         .into_iter()
-        .map(|s| LyricsSource { id: s.name().into(), on: on.contains(&s), needs_key: s.needs_key() })
+        .map(|s| LyricsSource { id: s.name().into(), on: on.contains(&s), needs_key: s.needs_key(), key_set: s.needs_key() && !p.paxsenix_key.trim().is_empty() })
         .collect();
     SettingsState {
         values: specs().into_iter().filter_map(|s| Some((s.name.clone(), value_of(p, &s.name)?))).collect(),
@@ -460,10 +462,11 @@ mod tests {
         let order: Vec<&str> = d.lyrics_order.iter().map(|s| s.name()).collect();
         assert_eq!(s.lyrics_sources.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), order);
         let on: Vec<&str> = s.lyrics_sources.iter().filter(|l| l.on).map(|l| l.id.as_str()).collect();
-        assert_eq!(on, order, "every service on");
+        let defaults: Vec<&str> = crate::lyrics_sources::default_on().iter().map(|s| s.name()).collect();
+        assert_eq!(on, defaults, "the default services on");
         let off = set_by_name(&d, "lyricsService:BINILYRICS", "false").unwrap().prefs;
         let s2 = state(&off, Output::default(), &beat_model::ModelFile::default());
-        assert_eq!(s2.lyrics_sources[1], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false }, "switched off where it stands");
+        assert_eq!(s2.lyrics_sources[5], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false, key_set: false }, "switched off where it stands");
         assert!(s.lyrics_sources.iter().any(|l| l.needs_key));
         assert_eq!(s.beat_model == BeatModel::Unavailable, !beats::AVAILABLE);
     }

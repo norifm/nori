@@ -43,7 +43,7 @@ Applies to nori 0.6. "All" means Android, the desktop, the terminal and the iPod
 
 ## Lyrics
 
-- Your server's lyrics, then sixteen services online, scored and the best shown. All.
+- Your server's lyrics, then eleven services online, scored and the best shown. All.
 - Word-by-word lyrics, translations, timing you can nudge. All.
 
 ## Offline
