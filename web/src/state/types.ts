@@ -51,7 +51,7 @@ export type Now = {
 // Field names as nori-model's serde has them.
 export type LyricLine = { start_ms: number; end_ms: number; text: string; translation?: string | null; background?: boolean; voice?: number };
 export type Lyrics = { synced: boolean; word_timed: boolean; lines: LyricLine[] };
-export type Timing = { kind: "NotChecked" | "Automatic" | "Yours"; ms: number; automatic?: number | null };
+export type Timing = { kind: "NotChecked" | "DoesNotFit" | "Automatic" | "Yours"; ms: number; automatic?: number | null };
 /** The lyrics shown for a song, where they came from and how they are timed. */
 export type Shown = { song: string; lyrics: Lyrics; origin: string; timing: Timing };
 
