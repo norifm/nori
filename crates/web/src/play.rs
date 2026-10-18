@@ -352,32 +352,35 @@ impl Nori {
         self.with(|h| h.lyrics(song));
     }
 
-    /// The lyrics' state at the position now: `{ song, active, glide, sung, wait }` (`sung`: how much of
-    /// the lit line is sung, in UTF-16 units, while the words sweep; `wait`: ms until it next changes,
-    /// a display frame being `frame_ms`; 0 never), or null without lyrics.
+    /// The lyrics' state at the position now: `{ song, active, glide, swept, sung, wait }` (`swept`: the
+    /// lit line's words light up as they are sung; `sung`: how much of it is sung, in UTF-16 units;
+    /// `wait`: ms until it next changes, a display frame being `frame_ms`; 0 never), or null without
+    /// lyrics.
     pub fn lyrics_now(&self, frame_ms: u32) -> String {
         let lyrics = self.live.lyrics.borrow();
-        let Some((song, _, clock)) = lyrics.as_ref() else { return "null".into() };
+        let Some((song, pick, clock)) = lyrics.as_ref() else { return "null".into() };
         let sweep = self.app.settings.prefs(|p| p.lyrics_sweep);
         let step = clock.advance(self.position_now(), sweep, true, true);
         let wait = clock.wait_ms(&step, sweep, frame_ms as u64).unwrap_or(0);
-        json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "sung": step.frame.sung, "wait": wait }).to_string()
+        json!({ "song": song, "active": step.frame.active, "glide": step.frame.glide_ms, "swept": sweep && swept(pick, step.frame.active), "sung": step.frame.sung, "wait": wait }).to_string()
     }
 
     /// A tap on lyric line `line`: shows it at once and plays from where it is sung, the lyrics' timing
-    /// applied. `{ active, ms }`: the line lit and the place sought; null without synced lyrics, or for a
+    /// applied. `{ active, swept, ms }`: the line lit (`swept` as in `lyrics_now`) and the place sought;
+    /// null without synced lyrics, or for a
     /// jam guest who asks the host for what plays (its taps reach nothing, as on Android).
     pub fn lyrics_tap(&self, line: usize) -> String {
         if self.rules().asks {
             return "null".into();
         }
         let lyrics = self.live.lyrics.borrow();
-        let Some((_, _, clock)) = lyrics.as_ref().filter(|(_, pick, _)| pick.lyrics.synced) else { return "null".into() };
+        let Some((_, pick, clock)) = lyrics.as_ref().filter(|(_, pick, _)| pick.lyrics.synced) else { return "null".into() };
         let ms = clock.tap(line);
         let active = clock.shown().active;
+        let swept = self.app.settings.prefs(|p| p.lyrics_sweep) && swept(pick, active);
         drop(lyrics);
         self.seek(ms as f64);
-        json!({ "active": active, "ms": ms }).to_string()
+        json!({ "active": active, "swept": swept, "ms": ms }).to_string()
     }
 
     /// The lyrics shown a step sooner (`dir` > 0) or later (< 0), or back to the sync check's timing
@@ -685,6 +688,11 @@ struct Kinds {
     desktop: String,
     terminal: String,
     guest: String,
+}
+
+/// Whether line `active` of `pick` has word times to light up as they are sung.
+fn swept(pick: &LyricsPick, active: i32) -> bool {
+    usize::try_from(active).ok().and_then(|i| pick.lyrics.lines.get(i)).is_some_and(|l| !l.words.is_empty())
 }
 
 /// Lyrics' timing as the page shows it: `{ kind, ms, automatic }`.

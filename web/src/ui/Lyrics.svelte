@@ -49,8 +49,9 @@
     box.scrollTo({ top: el.offsetTop - box.clientHeight * 0.38, behavior: "smooth" });
   });
 
-  /** How much of line `i`'s text is sung, in fractional UTF-16 units (JavaScript's own); -1 while it is not swept. */
-  const sungPart = (i: number, text: string) => (i === player.line && player.sung > 0 ? Math.min(text.length, player.sung) : -1);
+  /** How much of line `i`'s text is sung, in fractional UTF-16 units (JavaScript's own); -1 while it is
+   * not swept. A swept line is dim from its first frame, not lit whole until its first letter. */
+  const sungPart = (i: number, text: string) => (i === player.line && player.sung >= 0 ? Math.min(text.length, player.sung) : -1);
 </script>
 
 <div class="lyrics" class:synced id="lyrics" bind:this={box}>
