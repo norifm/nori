@@ -577,6 +577,24 @@ mod tests {
         assert_eq!((d.playlist.id.as_str(), d.playlist.song_count, d.playlist.duration, d.playlist.public), ("yt-VLp", 1, 7, true));
     }
 
+    /// The visitor id YouTube gave one session goes with the next session's first request, so Home is
+    /// the same visitor's feed.
+    #[test]
+    fn the_visitor_id_is_kept_between_sessions() {
+        let dir = nori_testdir::TempDir::new("yt-visitor");
+        let path = dir.path().join("library.db").to_string_lossy().into_owned();
+        let session = || {
+            let core = crate::Core::new(path.clone(), "yt".into(), Default::default()).unwrap();
+            core.configure_profile(SavedServer { id: "yt".into(), kind: ServerKind::YouTubeMusic, ..Default::default() }).unwrap();
+            let t = Arc::new(InnerTube { answers: parking_lot::Mutex::new(vec![answer(200, "home_more", &[]), answer(200, "home", &[])]), ..Default::default() });
+            block(Client::new(core, t.clone(), Default::default()).read_now(Read::HomeFeed)).unwrap();
+            let visitor = t.asked.lock()[0].headers.get("X-Goog-Visitor-Id").cloned();
+            visitor
+        };
+        assert_eq!(session(), None);
+        assert_eq!(session().as_deref(), Some("CgtGSVhUVVJFX0lEKAA%3D"));
+    }
+
     #[test]
     fn a_lan_guest_never_uses_the_owners_cookies() {
         let dir = nori_testdir::TempDir::new("yt-jam-cookie-isolation");

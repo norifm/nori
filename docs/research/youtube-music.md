@@ -146,7 +146,9 @@ WebM bytes feed playback analysis; no analysis-only network request is made.
    else 140, else the best Opus, else the best AAC (`player::pick`), and keeps it until 5 minutes
    before `expiresInSeconds`. `innertube_music::InnerTube` (one per client) also keeps the visitor id the
    first answer gave and sends it with every later request; a player refusal for want of one is asked
-   once more with the one it carried. The id is kept in memory only and never logged.
+   once more with the one it carried. The id is never logged; nori keeps it in the profile's
+   `youtube_visitor` row and gives it back before the next start's first request, since a new
+   visitor gets a different Home each time.
 3. From byte 0 the URL carries `&range=0-<clen-1>` (a plain GET is throttled, above); from later bytes
    the `Range` header the byte source sends does the same.
 4. A refused URL (403: the address changed, so the `ip=` binding no longer holds, or YouTube expired it

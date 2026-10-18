@@ -35,7 +35,8 @@ async fn play(yt: &InnerTube) -> Result<String, innertube_music::Error<String>> 
 ```
 
 One `InnerTube` value per session: it learns YouTube's visitor id from the first answer and sends it
-with every later request (music videos refuse to play without one).
+with every later request (music videos refuse to play without one). Keep `take_new_visitor()` and give
+it back with `set_visitor` in the next session: a new visitor is served a different Home.
 
 `InnerTube::radio` returns the song's watch queue as metadata. It does not resolve or fetch audio;
 call `player` for a track only when the user asks to play or download it.

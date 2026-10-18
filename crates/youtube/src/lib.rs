@@ -217,8 +217,15 @@ pub enum Rotated {
 /// confirm you're not a bot", learned from the first answer; and the account, when signed in.
 #[derive(Default)]
 pub struct InnerTube {
-    visitor: Mutex<Option<String>>,
+    visitor: Mutex<Visitor>,
     account: Mutex<Option<Account>>,
+}
+
+#[derive(Default)]
+struct Visitor {
+    id: Option<String>,
+    /// Learned from an answer and not yet taken ([`InnerTube::take_new_visitor`]).
+    new: bool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -227,7 +234,20 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl InnerTube {
     fn visitor(&self) -> Option<String> {
-        lock(&self.visitor).clone()
+        lock(&self.visitor).id.clone()
+    }
+
+    /// Sends `id`, a visitor id YouTube gave before ([`InnerTube::take_new_visitor`]), from the first
+    /// request on: the same visitor is served the same feeds.
+    pub fn set_visitor(&self, id: Option<String>) {
+        *lock(&self.visitor) = Visitor { id, new: false };
+    }
+
+    /// The visitor id YouTube gave since the last take, to be kept for the next session's
+    /// [`InnerTube::set_visitor`].
+    pub fn take_new_visitor(&self) -> Option<String> {
+        let mut v = lock(&self.visitor);
+        std::mem::take(&mut v.new).then(|| v.id.clone()).flatten()
     }
 
     /// Signs in with a session's `cookies` (see [`auth`]); None signs out. Nothing is asked: a later
@@ -269,7 +289,10 @@ impl InnerTube {
         }
         let v: Value = serde_json::from_slice(&r.body).map_err(|e| Error::Parse(e.to_string()))?;
         if let Some(id) = v.pointer("/responseContext/visitorData").and_then(Value::as_str).filter(|id| !id.is_empty()) {
-            lock(&self.visitor).get_or_insert_with(|| id.to_string());
+            let mut v = lock(&self.visitor);
+            if v.id.is_none() {
+                *v = Visitor { id: Some(id.to_string()), new: true };
+            }
         }
         Ok(v)
     }
@@ -575,6 +598,20 @@ pub(crate) mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(fake.asked().len(), 3);
+        assert_eq!(yt.take_new_visitor().as_deref(), Some("CgtGSVhUVVJFX0lEKAA%3D"));
+        assert_eq!(yt.take_new_visitor(), None, "taken once");
+    }
+
+    /// A visitor id given before goes with the very first request and is not taken as new.
+    #[test]
+    fn a_given_visitor_id_is_sent_first() {
+        let yt = InnerTube::default();
+        yt.set_visitor(Some("known".into()));
+        let fake = Fake::answering(&[(200, &fixture("not_a_bot"))]);
+        let _ = ready(yt.player(&fake, "v"));
+        assert_eq!(fake.asked()[0].header("X-Goog-Visitor-Id"), Some("known"));
+        assert_eq!(body(&fake.asked()[0])["context"]["client"]["visitorData"], "known");
+        assert_eq!(yt.take_new_visitor(), None);
     }
 
     #[test]
