@@ -283,9 +283,12 @@ WIDGET
   "$app" open player >/dev/null
   check "the YouTube song menu opens" tapnode content-desc More
   check "its additional actions open" tapnode text More
+  radio_seed=$(field songId); radio_from=$(field positionMs)
   check "YouTube offers song radio" tapnode text 'Start radio from this song'
   check "YouTube radio fills the queue" wait_for queue '>1' 30
   check "YouTube radio plays through the AudioTrack" sounds 20
+  check "the song the radio started from plays on" wait_for positionMs ">$((radio_from + 30000))" 45
+  check "without moving on" wait_for songId "$radio_seed" 1
   # Crossplay without a server: the terminal client on a YouTube profile, paired by its random secret.
   # Pairing, signing and the door's refusals are Rust's (crates/host tests/lan_jam.rs); here the phone
   # pairs through JNI, follows the door and hands its YouTube queue over.

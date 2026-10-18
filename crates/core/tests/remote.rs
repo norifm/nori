@@ -2279,6 +2279,21 @@ fn listening_guest(relay: &Arc<Relay>, host: &Device, link: String) -> (Device, 
 }
 
 #[test]
+fn a_guest_follows_its_host_resuming_after_a_pause() {
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    host.playing(&["s1", "s2"], 0);
+    let link = opened(&host);
+    let (gus, leads) = listening_guest(&relay, &host, link);
+    host.remote.clone().played(Playing { playing: false, position_ms: 31_000, rate: 1.0, index: Some(0), volume: None, ..Default::default() });
+    gus.until("the host's pause", |_| leads.last().flatten().filter(|l| !l.playing));
+    host.remote.clone().played(Playing { playing: true, position_ms: 31_000, rate: 1.0, index: Some(0), volume: None, ..Default::default() });
+    let l = gus.until("the host playing again", |_| leads.last().flatten().filter(|l| l.playing)).clone();
+    assert!((l.ms - 31_000.0).abs() < 50.0, "the guest starts where the host resumed, not {}", l.ms);
+    relay.close();
+}
+
+#[test]
 fn a_guest_hears_its_jam_end_and_stops_playing_along() {
     // Ended by the host, this guest sent out by it, or forgotten by the relay (its key no longer signs in).
     for how in ["closed", "kicked", "restarted"] {

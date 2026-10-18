@@ -73,6 +73,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 fun HeroPage(
     coverUrl: String?,
     title: String,
+    /** The same cover at the sizes lists ask for: drawn at once while [coverUrl] loads. */
+    coverStandIns: List<String?> = emptyList(),
     /** The artist line under the title, in the cover's accent colour; tapping it opens [onSubtitle]. */
     subtitle: String? = null,
     /** A quiet line under that, in sentence case: year, song count, length, quality. */
@@ -119,7 +121,7 @@ fun HeroPage(
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.
     val lead = coverUrl ?: mosaic.firstOrNull()
     val picture: (@Composable (Modifier) -> Unit)? = when {
-        coverUrl != null -> { m -> Cover(coverUrl, 0.dp, m, radius = 0.dp) }
+        coverUrl != null -> { m -> Cover(coverUrl, 0.dp, m, radius = 0.dp, standIns = coverStandIns) }
         mosaic.isNotEmpty() -> { m -> Mosaic(mosaic, m) }
         else -> null
     }

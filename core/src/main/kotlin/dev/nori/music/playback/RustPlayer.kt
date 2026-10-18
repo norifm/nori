@@ -68,8 +68,12 @@ internal object RustPlayerJni {
     /** The engine reads its output once, now. */
     @JvmStatic @CriticalNative external fun look(h: Long)
     @JvmStatic @CriticalNative external fun mixing(h: Long): Boolean
-    /** Tells [remote] (`Remote.uniffiCloneHandle()`, taken over) where the engine is now, at media [volume] 0 to 100 (-1: none). */
-    @JvmStatic @CriticalNative external fun remotePlayed(h: Long, remote: Long, volume: Int)
+    /**
+     * Tells [remote] (`Remote.uniffiCloneHandle()`, taken over) where the engine is now, at media [volume] 0 to 100
+     * (-1: none). Not `@CriticalNative`: the remote calls back into Kotlin, and a garbage collection walking
+     * this thread's stack then crashed the app.
+     */
+    @JvmStatic external fun remotePlayed(h: Long, remote: Long, volume: Int)
     @JvmStatic @CriticalNative external fun chainIn(h: Long): Boolean
     @JvmStatic @CriticalNative external fun onCpu(h: Long): Boolean
     /** Song ms per real ms: the speed times a mix's tempo. */

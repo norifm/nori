@@ -30,15 +30,19 @@ import kotlin.math.roundToInt
  * [state]; nothing here runs per frame.
  */
 @Stable
-class CoverImage internal constructor(val url: String?, loader: CoverLoader?) {
+class CoverImage internal constructor(val url: String?, loader: CoverLoader?, standIns: List<String?> = emptyList()) {
     private val kept = url?.let { loader?.kept(it) }
 
-    /** The picture, once there is one. A smaller one kept from another view may stand in until it comes. */
-    var image by mutableStateOf(kept?.bitmap?.asImageBitmap())
+    /**
+     * The picture, once there is one. A smaller one kept from another view may stand in until it comes:
+     * of the same address, or of [standIns] (the same cover asked for at a list's size, a provider's
+     * thumbnail at another address).
+     */
+    var image by mutableStateOf((kept ?: standIns.firstNotNullOfOrNull { s -> s?.let { loader?.kept(it) } })?.bitmap?.asImageBitmap())
         private set
 
     /** In memory when the view was composed: drawn at once, not faded in. */
-    val fromMemory: Boolean = kept != null
+    val fromMemory: Boolean = image != null
 
     var state by mutableStateOf(if (url == null) MISSING else if (kept != null) READY else LOADING)
         private set
@@ -118,9 +122,9 @@ class CoverImage internal constructor(val url: String?, loader: CoverLoader?) {
  * came never decodes it.
  */
 @Composable
-fun rememberCover(url: String?, width: Int, height: Int = width): CoverImage {
+fun rememberCover(url: String?, width: Int, height: Int = width, standIns: List<String?> = emptyList()): CoverImage {
     val context = LocalContext.current
-    val cover = remember(url) { CoverImage(url, url?.let { CoverLoader.get(context) }) }
+    val cover = remember(url) { CoverImage(url, url?.let { CoverLoader.get(context) }, standIns) }
     DisposableEffect(cover, width, height) {
         if (width > 0 && height > 0) cover.want(width, height)
         onDispose { cover.stop() }

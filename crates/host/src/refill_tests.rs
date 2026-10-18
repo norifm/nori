@@ -155,3 +155,41 @@ fn media_keys_start_a_restored_queue_and_fill_at_its_end() {
     s.close();
 }
 
+
+/// A server that answers every request with `body`.
+fn answering_server(body: &'static str) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for mut c in listener.incoming().flatten() {
+            use std::io::Write as _;
+            let mut buf = [0u8; 4096];
+            let _ = c.read(&mut buf);
+            let _ = write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        }
+    });
+    url
+}
+
+/// A radio from the song playing goes on with it where it is; only the songs after it change.
+#[test]
+fn a_radio_from_the_song_playing_keeps_it_playing() {
+    let dir = nori_testdir::TempDir::new("host-radio");
+    let url = answering_server(r#"{"subsonic-response":{"status":"ok","version":"1.16.1","similarSongs2":{"song":[{"id":"b","title":"b","duration":1,"suffix":"wav"},{"id":"c","title":"c","duration":1,"suffix":"wav"}]}}}"#);
+    let (card, clock) = (Card::new(), Virtual::default());
+    let time = Stepper::new(clock.clone(), card.pull.clone());
+    let (s, songs) = session_of_songs(&dir, &url, &card, clock);
+    let a = Song { duration: 6, ..songs[0].clone() };
+    let path = s.store.as_ref().expect("a store").download_path("a");
+    std::fs::write(path, wav(44_100, &sine(44_100, 220.0, 6.0, 16_000.0))).unwrap();
+    s.core.session.register(vec![a.clone()]);
+    s.play(vec![a], 0, false, None);
+    assert!(time.until(Duration::from_secs(5), || card.secs() >= 2.0), "a plays");
+    s.play_later(Fetch::Radio("a".into()), false);
+    // The answer comes on the network's own time, with the card's clock held.
+    assert!(!time.clock.hang_while(|| s.core.session.playlist(|p| p.len()) != 3, Duration::from_secs(10)), "the radio is queued");
+    assert!(time.until(Duration::from_secs(10), || (card.last_second_hz() - 440.0).abs() <= 1.0), "b follows a");
+    let heard = card.secs();
+    s.close();
+    assert!(heard < 7.5, "a played once, not again from its start: {heard:.1} s before b's first second");
+}

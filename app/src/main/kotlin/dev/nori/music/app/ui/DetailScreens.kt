@@ -254,6 +254,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     val queue = rememberPageQueue(from, detail?.queue)
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
+        coverStandIns = listOf(vm.cover(album.coverArt, CoverSize.CARD), vm.cover(album.coverArt, CoverSize.ROW)),
         title = album.name,
         subtitle = album.artist,
         caption = caption,
@@ -334,6 +335,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
     val topFrom = rememberOrigin(OriginKind.ARTIST_TOP, artist.id)
     HeroPage(
         coverUrl = vm.cover(artist.coverArt, CoverSize.FULL),
+        coverStandIns = listOf(vm.cover(artist.coverArt, CoverSize.CARD), vm.cover(artist.coverArt, CoverSize.ROW)),
         title = artist.name,
         caption = remember(ui?.detail, artist.albumCount) {
             if (ui != null) say.releases(ui.detail.albums.size)
@@ -443,6 +445,7 @@ private fun PlaylistPage(
     val from = rememberOrigin(OriginKind.PLAYLIST, id)
     HeroPage(
         coverUrl = vm.cover(playlist.coverArt, CoverSize.FULL),
+        coverStandIns = listOf(vm.cover(playlist.coverArt, CoverSize.CARD), vm.cover(playlist.coverArt, CoverSize.ROW)),
         title = playlist.name,
         subtitle = remember(playlist.comment, prefs.playlistNotes) { dev.nori.music.ffi.library.playlistDescription(playlist.comment, prefs.playlistNotes) },
         caption = remember(detail, playlist) { detail?.let { say.listCaption(it.songs.size, it.seconds.toLong(), true) } ?: say.albumHintCaption(0, playlist.songCount.toInt(), playlist.duration.toLong()) },
