@@ -20,8 +20,11 @@ const CREDIT_WORDS: &[&str] = &[
     "translation", "translator", "songwriter", "songwriters", "source", "label", "copyright", "subtitles", "subs",
 ];
 
+/// Words on a label that names the song itself: "Artist:", "Songs Title:", "Album:".
+const DETAIL_WORDS: &[&str] = &["artist", "artists", "singer", "singers", "song", "songs", "title", "songtitle", "album"];
+
 /// The words that may come before " by " in a credit written without a colon ("Words and music by …").
-const BY_WORDS: &[&str] = &["and", "provided", "powered", "licensed", "brought", "made", "all", "additional", "the"];
+const BY_WORDS: &[&str] = &["and", "originally", "provided", "powered", "licensed", "brought", "made", "all", "additional", "the"];
 
 /// Openings of a service's watermark or an ad, lower case, in the languages the services answer in.
 const WATERMARKS: &[&str] = &[
@@ -61,14 +64,19 @@ fn role_and_name(t: &str) -> bool {
     let Some((label, value)) = t.split_once([':', '：']) else { return false };
     let label = label.trim();
     let lower = label.to_lowercase();
-    let named = lower.split(|c: char| !c.is_alphabetic()).any(|w| CREDIT_WORDS.contains(&w));
+    // "Lyricsby:" is "Lyrics by:" with its space lost.
+    let named = lower.split(|c: char| !c.is_alphabetic()).any(|w| CREDIT_WORDS.contains(&w.strip_suffix("by").unwrap_or(w)) || DETAIL_WORDS.contains(&w));
     let native = !label.is_empty() && label.chars().count() <= 8 && !label.chars().any(|c| c.is_ascii_alphanumeric()) && label.chars().any(char::is_alphabetic);
     !value.trim().is_empty() && label.chars().count() <= 24 && (named || native)
 }
 
 /// "Written by Someone": only credit words before " by ", and a name after it (a capital, a digit or
-/// another script), so "stand by the water" is not one.
+/// another script), so "stand by the water" is not one. A bare "By 某人" signs an upload when the name is
+/// in a script other than Latin.
 fn by_line(t: &str) -> bool {
+    if let Some(name) = t.get(..3).filter(|by| by.eq_ignore_ascii_case("by ")).map(|_| t[3..].trim()) {
+        return name.chars().next().is_some_and(|c| c.is_alphabetic() && c >= '\u{370}');
+    }
     let Some(at) = t.to_ascii_lowercase().find(" by ") else { return false };
     let (head, tail) = (t[..at].to_lowercase(), t[at + 4..].trim());
     let words: Vec<&str> = head.split(|c: char| !c.is_alphabetic()).filter(|w| !w.is_empty()).collect();
@@ -105,15 +113,19 @@ fn blank(t: &str) -> bool {
 
 /// A header naming the song: the title, "Title Lyrics", "Artist - Title" or "Title by Artist".
 fn header(t: &str, title: &str, artist: &str) -> bool {
+    // The release a header names may differ from the library's: "Title (2018 Mix)" for "Title (Remastered)".
+    let title = crate::lrclib::clean(title);
+    let title = title.find(['(', '[']).filter(|at| *at > 0).map_or(title.as_str(), |at| &title[..at]);
     let (line, title, artist) = (norm(t), norm(title), norm(artist));
     if title.is_empty() || line.is_empty() {
         return false;
     }
     let bare = line.strip_suffix(" lyrics").unwrap_or(&line);
     let rest = bare.replacen(&title, "", 1);
+    let artist_named = !artist.is_empty() && format!(" {rest} ").contains(&format!(" {artist} "));
     let rest = if artist.is_empty() { rest } else { rest.replacen(&artist, "", 1) };
     let dashed = (t.contains(" - ") || t.contains(" – ")) && line.split_whitespace().count() <= title.split_whitespace().count() + 6;
-    bare.contains(&title) && (dashed || rest.split_whitespace().all(|w| w == "by"))
+    bare.contains(&title) && (dashed || artist_named || rest.split_whitespace().all(|w| w == "by"))
 }
 
 /// Whether `text` is a credit; with `title` and `artist`, a header naming the song counts too.
@@ -193,6 +205,30 @@ mod tests {
         let mut fr = lyrics(&["Paroles de la chanson Glass Harbour par The Lanterns", SUNG[0], SUNG[1], SUNG[2], "Lyrics from somewhere.example", "Lyrics provided by SomeService", "Produced by Some Producer"], false);
         strip_edges(&mut fr, "Glass Harbour", "The Lanterns");
         assert_eq!(texts(&fr), &SUNG[..3]);
+    }
+
+    #[test]
+    fn song_details_go() {
+        let cases: [(&[&str], &str); 6] = [
+            // KuGou and NetEase open with the song's details as labels, and sign off with the uploader.
+            (&["Artist：the lanterns", "Songs Title：glass harbour", SUNG[0], SUNG[1], SUNG[2], SUNG[3], "By 某人"], "Glass Harbour"),
+            (&["Artist: The Lanterns", "Song : Glass Harbour （Someone）", "Album : Low Tide （c）1975", "Album:Low Tide", SUNG[0], SUNG[1], SUNG[2], SUNG[3]], "Glass Harbour"),
+            (&["Lyricsby：SOMEONE/ANOTHER", "Composedby：SOMEONE", "Originally recorded by Another Band", SUNG[0], SUNG[1], SUNG[2], SUNG[3]], "Glass Harbour"),
+            // A header naming another release of the song than the library's.
+            (&["Glass Harbour (2018 Mix) - The Lanterns (灯笼)", "Lyrics by：Someone Person", SUNG[0], SUNG[1], SUNG[2], SUNG[3]], "Glass Harbour (2011 Remastered Version)"),
+            (&["Glass Harbour (Live At Some Studio Somewhere, Far City) - The Lanterns (灯笼)", "Written by：Someone", SUNG[0], SUNG[1], SUNG[2], SUNG[3]], "Glass Harbour"),
+            // NetEase's word-timed header, its words run together.
+            (&["GLASS HARBOUR（グラス（ハーバー-The Lanterns（灯笼", "Lyricsby：SOMEONE", SUNG[0], SUNG[1], SUNG[2], SUNG[3]], "Glass Harbour"),
+        ];
+        for (lines, title) in cases {
+            let mut l = lyrics(lines, true);
+            strip_edges(&mut l, title, "The Lanterns");
+            assert_eq!(texts(&l), SUNG, "{lines:?}");
+        }
+        let sung = ["By the water we stood", SUNG[1], SUNG[2], "By Your Side"];
+        let mut l = lyrics(&sung, true);
+        strip_edges(&mut l, "Glass Harbour", "The Lanterns");
+        assert_eq!(texts(&l), sung, "a sung line opening with 'by' stays");
     }
 
     #[test]
