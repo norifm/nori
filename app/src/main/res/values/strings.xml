@@ -58,11 +58,11 @@
     <string name="settings_automix">AutoMix</string>
     <string name="settings_automix_detail">Blends songs like a DJ, matching the beat.</string>
     <string name="settings_better_beats">Better beat detection</string>
-    <string name="settings_better_beats_off">Listens to the start and end of each song so mixes land on the beat, downloaded songs too. A one-time download of about %1$d MB over Wi-Fi, from the model\'s authors.</string>
+    <string name="settings_better_beats_off">Listens to the start and end of each song so mixes land on the beat, downloaded songs too. Uses more battery. A one-time download of about %1$d MB over Wi-Fi, from the model\'s authors.</string>
     <string name="settings_better_beats_absent">Downloaded over Wi-Fi (about %1$d MB) the next time AutoMix measures a song.</string>
     <string name="settings_better_beats_waiting">Waiting for Wi-Fi to download it (about %1$d MB).</string>
     <string name="settings_better_beats_downloading">Downloading (about %1$d MB)…</string>
-    <string name="settings_better_beats_ready">On. Each song is listened to once, just before it plays.</string>
+    <string name="settings_better_beats_ready">On. Each song is listened to once, just before it plays, which uses more battery.</string>
     <string name="settings_better_beats_network">the network failed</string>
     <string name="settings_better_beats_wrong_file">the file that arrived was not the right one</string>
     <string name="settings_better_beats_storage">it could not be saved</string>
