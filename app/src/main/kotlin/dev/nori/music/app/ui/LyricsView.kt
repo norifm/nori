@@ -477,7 +477,8 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
                                 if (from <= 0f || from >= full) continue
                                 launch {
                                     rest[k].snapTo(from)
-                                    if (plain) rest[k].snapTo(full) else rest[k].animateTo(full, androidx.compose.animation.core.tween(glideMs, easing = LyricEase))
+                                    // Done in the first third of the change, so the line is seen whole before it dims.
+                                    if (plain) rest[k].snapTo(full) else rest[k].animateTo(full, androidx.compose.animation.core.tween(glideMs / 3, easing = LyricEase))
                                     held[k] = full
                                 }
                             }
@@ -783,7 +784,9 @@ private fun DrawScope.drawSungAt(d: Laid, at: Float, base: Color, lit: Color, gl
     val n = l.layoutInput.text.length
     if (lit.alpha <= 0f || at <= 0f || n == 0) return
     if (at >= n) {
-        drawText(l, color = lit, shadow = glow)
+        // Clipped like the partly sung rows: drawn for its glow alone, set [clipDx] away, an unclipped line
+        // put its letters where the line itself is not (on screen for a duet's right-hand line).
+        clipRect(clipDx - spread, -spread, clipDx + size.width + spread, size.height + spread) { drawText(l, color = lit, shadow = glow) }
         return
     }
     val index = at.toInt().coerceIn(0, n - 1)
