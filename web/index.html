@@ -4,13 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#1f1d1c" media="(prefers-color-scheme: dark)">
   <title>nori</title>
-  <link rel="stylesheet" href="style.css">
-  <script type="module" src="app.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </head>
 <body>
-  <div id="app"><p class="loading">nori</p></div>
+  <div id="app"></div>
   <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
     <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
     <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></symbol>
@@ -39,6 +38,17 @@
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></symbol>
     <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></symbol>
+    <symbol id="i-next-up" viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 5h12v2H3zm0 5h8v2H3zm14-6v4h-3v2h3v4h2v-4h3v-2h-3v-4z"/></symbol>
+    <symbol id="i-radio" viewBox="0 0 24 24"><path d="M12 10a2 2 0 100 4 2 2 0 000-4zm-6.36-4.36l1.42 1.42A6.97 6.97 0 005 12c0 1.93.78 3.68 2.06 4.94l-1.42 1.42A8.96 8.96 0 013 12c0-2.49 1.01-4.74 2.64-6.36zm12.72 0A8.96 8.96 0 0121 12c0 2.49-1.01 4.74-2.64 6.36l-1.42-1.42A6.97 6.97 0 0019 12c0-1.93-.78-3.68-2.06-4.94zM8.46 8.46l1.42 1.42A3 3 0 009 12c0 .83.34 1.58.88 2.12l-1.42 1.42A4.98 4.98 0 017 12c0-1.38.56-2.63 1.46-3.54zm7.08 0A4.98 4.98 0 0117 12c0 1.38-.56 2.63-1.46 3.54l-1.42-1.42A3 3 0 0015 12c0-.83-.34-1.58-.88-2.12z"/></symbol>
+    <symbol id="i-devices" viewBox="0 0 24 24"><path d="M6 21h12l-6-6zM21 3H3a2 2 0 00-2 2v11a2 2 0 002 2h3.5l2-2H3V5h18v11h-5.5l2 2H21a2 2 0 002-2V5a2 2 0 00-2-2z"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M16 1H8a3 3 0 00-3 3v16a3 3 0 003 3h8a3 3 0 003-3V4a3 3 0 00-3-3zm-4 21a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm5-4H7V4h10z"/></symbol>
+    <symbol id="i-laptop" viewBox="0 0 24 24"><path d="M20 18a2 2 0 002-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2H0v2h24v-2zM4 6h16v10H4z"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zm0 14H4V8h16zm-2-1h-6v-2h6zM7.5 17l-1.41-1.41L8.67 13l-2.59-2.59L7.5 9l4 4z"/></symbol>
+    <symbol id="i-down-wide" viewBox="0 0 24 24"><path d="M3.5 8.3L12 14.4l8.5-6.1 1.2 1.6L12 17 2.3 9.9z"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 11h14v2H5z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></symbol>
   </svg>
 </body>
 </html>

@@ -122,8 +122,9 @@ impl SyncCheck {
 /// The timing a check gives lyrics: its offset when it is sure of one, else as they are; not checked
 /// without a check, or with one that had too little to go on.
 pub(crate) fn timing(check: Option<SyncCheck>) -> nori_model::LyricsTiming {
-    match check {
-        Some(c) if c.kind != SyncKind::Unsure => nori_model::LyricsTiming::Automatic { ms: c.applied_ms() },
+    match check.map(|c| (c.kind, c)) {
+        Some((SyncKind::Fits | SyncKind::Shifted, c)) => nori_model::LyricsTiming::Automatic { ms: c.applied_ms() },
+        Some((SyncKind::Poor | SyncKind::Drifts, _)) => nori_model::LyricsTiming::DoesNotFit,
         _ => nori_model::LyricsTiming::NotChecked,
     }
 }
@@ -689,6 +690,10 @@ pub(crate) mod tests {
         let wrong = check(&random(2 * phrases.len(), secs, 7), &curve).unwrap();
         // Poor or drifting, demoted the same either way (trust.rs): at random, some part of it fits somewhere.
         assert!(matches!(wrong.kind, SyncKind::Poor | SyncKind::Drifts), "{wrong:?}");
+        assert_eq!(timing(Some(wrong)), nori_model::LyricsTiming::DoesNotFit, "never shown as checked and on time");
+        assert_eq!(timing(Some(edit)), nori_model::LyricsTiming::DoesNotFit, "another version's timing does not fit either");
+        let at_once = check(&lyrics(&phrases, false, false, &|_| 0.2), &curve);
+        assert_eq!(timing(at_once), nori_model::LyricsTiming::DoesNotFit, "every line at one time: {at_once:?}");
         let mut plain = lyrics(&phrases, false, false, &|t| t);
         plain.synced = false;
         assert_eq!(check(&plain, &curve), None, "untimed words are not checked");

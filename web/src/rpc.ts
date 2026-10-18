@@ -4,10 +4,9 @@
 // databases. Only one worker may hold them, so only one tab runs nori at a time (a Web Lock), and a
 // worker that crashed is started again over the saved session.
 
-import { playerFile, probe } from "./decoder.js";
 
 export type Said = { kind: string; [k: string]: unknown };
-export type Heard = { played: number; dry: number; dryAt: number[]; peak: number; silences: [number, number][] };
+export type Heard = { played: number; dry: number; dryAt: number[]; peak: number; silences: [number, number][]; lastLoud: number; soundAt: number; freshAt: number };
 /** A worker's build: the core, or the player with its compiled module. */
 type Build = { kind: "core" } | { kind: "player"; module: WebAssembly.Module; file: string };
 
@@ -23,6 +22,7 @@ let gate: Promise<void>;
 export let player = false;
 
 const listeners: ((s: Said) => void)[] = [];
+const up: (() => void)[] = [];
 const hearers: ((h: Heard) => void)[] = [];
 const restarted: (() => void)[] = [];
 
@@ -32,6 +32,11 @@ export function onSaid(f: (s: Said) => void) {
 
 export function onHeard(f: (h: Heard) => void) {
   hearers.push(f);
+}
+
+/** `f` runs once the player worker answers (the first time, and after a crash). */
+export function onPlayerUp(f: () => void) {
+  up.push(f);
 }
 
 /** `f` runs once a crashed worker is up again over the saved session. */
@@ -48,7 +53,7 @@ function settled(): Promise<void> {
 
 /** Starts a worker over `b`; resolves once it is up. */
 function start(b: Build): Promise<void> {
-  const w = new Worker(new URL("./worker.js", import.meta.url), { type: "module", name: b.kind });
+  const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module", name: b.kind });
   worker = w;
   build = b;
   if (b.kind === "player") w.postMessage({ handed: { module: b.module, file: b.file } });
@@ -122,10 +127,11 @@ async function replace(b: Build, answered: boolean) {
   player = b.kind === "player";
   await send("resume", []);
   if (sound && player) {
-    const { port, rate } = sound();
-    worker.postMessage({ id: ++calls, call: "audio", args: [port, rate] }, [port]);
+    const { port, rate, ear } = sound();
+    worker.postMessage({ id: ++calls, call: "audio", args: [port, rate, ear] }, [port]);
   }
   open();
+  if (player) up.forEach((f) => f());
 }
 
 let restarting = false;
@@ -151,8 +157,10 @@ export function playerUp(): Promise<void> {
   if (switching) return switching;
   switching = (async () => {
     const t0 = performance.now();
+    // dist/decoder.js, built on its own for the player's glue; asked here which build decodes what.
+    const { playerFile, probe } = (await import(/* @vite-ignore */ new URL("decoder.js", document.baseURI).href)) as typeof import("./decoder");
     const file = playerFile(await probe(() => {}));
-    const module = await WebAssembly.compileStreaming(fetch(new URL(`./pkg/${file}.wasm`, import.meta.url)));
+    const module = await WebAssembly.compileStreaming(fetch(new URL(`pkg/${file}.wasm`, document.baseURI)));
     facts.playerCompiledMs = Math.round(performance.now() - t0);
     const t1 = performance.now();
     await replace({ kind: "player", module, file }, true);
@@ -162,15 +170,17 @@ export function playerUp(): Promise<void> {
   return switching;
 }
 
-/** Makes a new line to the sound card: its port for the player worker, and the card's rate. */
-let sound: (() => { port: MessagePort; rate: number }) | undefined;
+/** A line to the sound card: its port for the player worker, the card's rate, and its latency to the ear, s. */
+type Line = { port: MessagePort; rate: number; ear: number };
+/** Makes a new line to the sound card. */
+let sound: (() => Line) | undefined;
 
 /** Joins the sound card to the player worker, now and after every restart. */
-export async function soundTo(line: () => { port: MessagePort; rate: number }) {
+export async function soundTo(line: () => Line) {
   await playerUp();
   sound = line;
-  const { port, rate } = line();
-  worker.postMessage({ id: ++calls, call: "audio", args: [port, rate] }, [port]);
+  const { port, rate, ear } = line();
+  worker.postMessage({ id: ++calls, call: "audio", args: [port, rate, ear] }, [port]);
 }
 
 /** Starts the player module when the browser is idle after the first page, unless data is to be saved

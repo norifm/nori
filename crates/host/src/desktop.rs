@@ -93,7 +93,6 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         tasks: crate::tasks(),
         keeps_music: true,
         decoders: Default::default(),
-        finds_active: true,
         out: o.out,
     })
 }

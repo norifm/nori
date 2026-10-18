@@ -217,7 +217,9 @@ let loaded: CodecsModule | undefined;
 function codecsModule(): Promise<CodecsModule> {
   codecs ??= (async () => {
     const t0 = performance.now();
-    const m = (await import("./pkg/player-codecs.js")) as unknown as CodecsModule;
+    // dist/pkg beside this file (dist/decoder.js).
+    const here = import.meta.url;
+    const m = (await import(/* @vite-ignore */ new URL("pkg/player-codecs.js", here).href)) as unknown as CodecsModule;
     await m.default();
     loaded = m;
     console.info(`the Rust decoders loaded in ${Math.round(performance.now() - t0)} ms`);

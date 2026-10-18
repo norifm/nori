@@ -458,7 +458,7 @@ fn section_title(id: SectionId) -> &'static str {
 /// A setting's title and the line under it.
 fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
-        "crossfadeSec" => ("Crossfade", "Songs fade into each other, not within an album"),
+        "crossfadeSec" => ("Crossfade", "Songs fade into each other"),
         "autoMix" => ("AutoMix", "Beat-matched transitions planned per song pair"),
         "autoMixBetterBeats" => {
             let state = match &s.beat_model {
@@ -470,6 +470,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
             };
             return ("Neural beat tracking".into(), format!("Beat This! ({state})"));
         }
+        "crossfadeKeepAlbums" => ("Gapless albums", "Never mix songs of the same album played in order"),
         "fadeMs" => ("Fade on play/pause", ""),
         "previousAlwaysSkips" => ("Previous always skips", "Never restart the current song"),
         "speed" => ("Speed", ""),

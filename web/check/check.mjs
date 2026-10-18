@@ -1,7 +1,8 @@
 // The web client in headless Chrome against the local Navidrome (tools/dev-server.sh) through
 // web/serve.py: sign-in, browsing, search, a song streamed and played, next and previous, synced lyrics,
-// a crossfade and an AutoMix transition heard as continuous samples, speed and pitch. Exits non-zero
-// when something is off, and prints what it saw.
+// a crossfade and an AutoMix transition heard as continuous samples, speed and pitch, the seek bar
+// running and holding, a click on a lyric line, how soon a pause is heard. Exits non-zero when
+// something is off, and prints what it saw.
 //
 //   npm --prefix web/check install && node web/check/check.mjs [http://localhost:8080/] [phase]
 //   SLOW_URL=http://localhost:8081/ node web/check/check.mjs ...   (also a Play during a slow load)
@@ -68,7 +69,7 @@ const album = (name, artist) => albums.find((a) => a.name === name && (!artist |
 if (!only || only.includes("browse")) {
   const counts = {};
   const firstArtist = (await read({ kind: "artists" })).artists[0]?.id;
-  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".grid .card"], ["#/genres", "genres", ".genres li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".grid .card"]]) {
+  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".grid .card"], ["#/genres", "genres", ".genres li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".grid .card"], ["#/settings", "settings", "[data-setting]"]]) {
     await hash(h, top);
     counts[top] = await page.$$eval(sel, (e) => e.length);
     expect(counts[top] > 0 && !(await facts()).pageError, `${top} lists something`);
@@ -83,7 +84,7 @@ if (!only || only.includes("browse")) {
 async function playAlbum(id, at = 0) {
   await hash(`#/album/${id}`, "album");
   const t0 = Date.now();
-  await (await page.$$(".songs li"))[at].click();
+  await (await page.$$(".songs li .play"))[at].click();
   // The player module answers once the first Play has started it.
   await page.waitForFunction(async (a) => window.nori.playerSwitchMs !== undefined && JSON.parse(await window.ask("now"))?.song?.albumId === a && (window.nori.heard?.seconds ?? 0) > 0, { timeout: 60000, polling: 50 }, id);
   return Date.now() - t0;
@@ -100,6 +101,8 @@ expect(loaded.playerEarly && !loaded.heard, "the player worker is up before any 
  * the player module may still load. */
 async function early(at) {
   const p = await browser.newPage();
+  p.on("pageerror", (e) => logs.push(`early pageerror: ${e}`));
+  await p.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
   await p.setCacheEnabled(false);
   await p.goto(at, { waitUntil: "load" });
   await p.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 120000 });
@@ -108,11 +111,20 @@ async function early(at) {
   const shown = await p.evaluate(() => performance.now());
   const id = (await p.evaluate(async () => JSON.parse(await window.ask("read", JSON.stringify({ kind: "albums", sort: "alphabeticalByName", size: 50, offset: 0 }))).albums.find((a) => a.name === "Second Wind")?.id));
   await p.evaluate((x) => (location.hash = `#/album/${x}`), id);
-  await p.waitForSelector(".songs li");
+  await p.waitForSelector(".songs li .play");
+  // A restored queue already shows the fixed mini-player on a phone.
+  await p.$eval(".songs li .play", (e) => e.scrollIntoView({ block: "center" }));
   const before = await p.evaluate(() => window.nori.playerReadyAt);
   const clicked = await p.evaluate(() => performance.now());
-  await (await p.$$(".songs li"))[0].click();
-  await p.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 2, { timeout: 120000, polling: 50 });
+  await (await p.$$(".songs li .play"))[0].click();
+  await p.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 2, { timeout: 120000, polling: 50 }).catch(async (e) => {
+    console.error("early playback", await p.evaluate(async () => {
+      const n = JSON.parse(await window.ask("now"));
+      const f = window.nori;
+      return { playerReadyAt: f.playerReadyAt, heard: f.heard, error: f.error, crashes: f.crashes, state: n.state, positionMs: n.positionMs, queue: n.queue.length, song: n.song?.title };
+    }), logs);
+    throw e;
+  });
   const f = await p.evaluate(() => JSON.parse(JSON.stringify(window.nori)));
   const n = JSON.parse(await p.evaluate(() => window.ask("now")));
   const songs = (await p.evaluate(async (x) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "album", id: x }))).songs.length, id));
@@ -131,9 +143,15 @@ if (!only || only.includes("play")) {
   expect(after.seconds - before.seconds > 9 && after.dry === before.dry, "ten seconds play without running dry");
 }
 
+/** Opens pane `name` (lyrics, queue, devices, jam) beside the page, from the player bar. */
+async function pane(name, p = page) {
+  if (!(await p.$(`#panel #${name}`))) await p.click(`#bar [data-pane=${name}]`);
+  await p.waitForSelector(`#panel #${name}`);
+}
+
 if (!only || only.includes("lyrics")) {
   await playAlbum(album("Sung Album"));
-  await page.click("#mini");
+  await pane("lyrics");
   await page.waitForFunction(() => window.nori.lyrics, { timeout: 30000 });
   // The lines lit as the song plays, until two have been.
   await page.waitForFunction(() => {
@@ -144,7 +162,29 @@ if (!only || only.includes("lyrics")) {
   const lit = await page.evaluate(() => [...window.litLines]);
   report.lyrics = { lyrics: (await facts()).lyrics, lit };
   expect(report.lyrics.lit.filter((l) => l >= 0).length >= 2, "synced lyrics move on line by line");
-  await page.click(".grabber");
+  // A later line clicked lights at once and plays from where it is sung (the lyrics' timing applied);
+  // Enter on a focused line does the same.
+  const lines = report.lyrics.lyrics.lines;
+  const later = Math.min(Math.max(...lit) + 4, lines - 2);
+  const tapped = await page.evaluate((k) => {
+    const [t, at] = [window.nori.audioTime, performance.now()];
+    document.querySelector(`.lyrics .line[data-i="${k}"]`).click();
+    return { t, at };
+  }, later);
+  await page.waitForFunction((k) => window.nori.lyricLine === k, { timeout: 2000, polling: "raf" }, later).catch(() => {});
+  const litMs = Math.round((await page.evaluate(() => performance.now())) - tapped.at);
+  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, tapped.t).catch(() => {});
+  const tapHeard = (await facts()).heard.freshAt;
+  await new Promise((r) => setTimeout(r, 1000));
+  const [landed, at, sought] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.audioTime, window.nori.tapped?.ms]);
+  const enter = later + 1;
+  await page.focus(`.lyrics .line[data-i="${enter}"]`);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction((k) => window.nori.lyricLine === k, { timeout: 2000, polling: 50 }, enter).catch(() => {});
+  report.lyrics.tap = { line: later, litMs, heardMs: Math.round((tapHeard - tapped.t) * 1000), soughtMs: sought, placeMs: Math.round(landed - (sought + (at - tapHeard) * 1000)), enterLit: (await facts()).lyricLine === enter };
+  const tap = report.lyrics.tap;
+  expect(tap.litMs < 100 && tap.heardMs >= 0 && tap.heardMs < 100 && Math.abs(tap.placeMs) < 100 && tap.enterLit, "a lyric line clicked or entered lights at once and is heard from where it is sung");
+  await page.click("#panel [aria-label=Close]");
 }
 
 if (!only || only.includes("skip")) {
@@ -158,6 +198,89 @@ if (!only || only.includes("skip")) {
   const c = await now();
   report.skip = { start: a.index, afterNext: b.index, afterPrevious: c.index };
   expect(a.index === 0 && b.index === 1 && c.index === 0, "next and previous move through the queue");
+}
+
+if (!only || only.includes("instant")) {
+  // Pause, play, seek and next act on what is heard at once, on the sound card's clock: pause is silent
+  // within 50 ms and play sounds again as soon, a seek and a skip are heard from their place, and the
+  // place runs on with the music across a pause (none of it lost or played twice).
+  await playAlbum(album("Second Wind", "Alpha Waves"));
+  await heardFor(3, (await facts()).heard);
+  const press = (sel) => page.evaluate((s) => {
+    const t = window.nori.audioTime;
+    document.querySelector(s).click();
+    return t;
+  }, sel);
+  const settle = (ms) => new Promise((r) => setTimeout(r, ms));
+  // The place less the music heard, ms: the same as long as the place follows the music.
+  const offset = async () => {
+    const all = [];
+    for (let i = 0; i < 5; i++) {
+      const [n, f] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.heard.seconds]);
+      all.push(n - f * 1000);
+      await settle(120);
+    }
+    return all.sort((a, b) => a - b)[2];
+  };
+  const ms = (s) => Math.round(s * 1000);
+  // The seek bar and its times as shown, and the core's place.
+  const shown = () => page.evaluate(async () => {
+    const n = JSON.parse(await window.ask("now"));
+    const run = document.querySelector("#bar .run");
+    const bar = Math.round((1 + new DOMMatrix(getComputedStyle(run).transform).m41 / run.getBoundingClientRect().width) * n.song.duration * 1000);
+    return { bar, core: n.positionMs, at: document.querySelector("#bar .times .at").textContent, left: document.querySelector("#bar .times span:last-child").textContent, durationMs: n.song.duration * 1000 };
+  });
+  const clock = (x) => `${Math.floor(x / 60000)}:${String(Math.floor(x / 1000) % 60).padStart(2, "0")}`;
+  const s0 = await shown();
+  await settle(2000);
+  const s1 = await shown();
+  const bar = { movedMs: s1.bar - s0.bar, offCoreMs: s1.bar - s1.core, at: [s0.at, s1.at], left: [s0.left, s1.left] };
+  expect(Math.abs(bar.movedMs - 2000) < 250 && Math.abs(bar.offCoreMs) < 250 && s1.at === clock(s1.bar) && s1.left === `-${clock(s1.durationMs - s1.bar)}` && s1.left !== s0.left, "while playing the seek bar and its times move with the core's place");
+  const before = await offset();
+  const paused = await press("#bar [aria-label=Pause]");
+  await settle(800);
+  const p0 = (await facts()).heard;
+  const held0 = (await now()).positionMs;
+  const b0 = await shown();
+  await settle(500);
+  const held1 = (await now()).positionMs;
+  const b1 = await shown();
+  bar.pausedMovedMs = b1.bar - b0.bar;
+  bar.pausedOffCoreMs = b1.bar - b1.core;
+  expect(b1.bar === b0.bar && b1.at === b0.at && Math.abs(bar.pausedOffCoreMs) < 250, "paused, the seek bar and its times stay at the core's place");
+  const pauseMs = ms(p0.lastLoud - paused);
+  const played = await press("#bar [aria-label=Play]");
+  await page.waitForFunction((t) => (window.nori.heard?.soundAt ?? 0) > t, { timeout: 5000, polling: 20 }, played).catch(() => {});
+  const resumeMs = ms((await facts()).heard.soundAt - played);
+  await heardFor(1.5, (await facts()).heard);
+  const after = await offset();
+  const seekTo = 20000;
+  const sought = await page.evaluate((to) => {
+    const t = window.nori.audioTime;
+    const seek = document.querySelector("#bar .seek input");
+    seek.value = String(to);
+    seek.dispatchEvent(new Event("change", { bubbles: true }));
+    return t;
+  }, seekTo);
+  await settle(150);
+  const s2 = await shown();
+  bar.afterSeekMs = s2.bar - seekTo;
+  expect(Math.abs(bar.afterSeekMs) < 250, "after a seek the seek bar is at once at its place");
+  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, sought).catch(() => {});
+  const seekHeard = (await facts()).heard.freshAt;
+  await settle(1000);
+  const [landed, at] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.audioTime]);
+  const seekPlaceMs = Math.round(landed - (seekTo + (at - seekHeard) * 1000));
+  const skipped = await press("#bar [aria-label=Next]");
+  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, skipped).catch(() => {});
+  const nextMs = ms((await facts()).heard.freshAt - skipped);
+  const index = (await now()).index;
+  report.instant = { pauseMs, resumeMs, seekMs: ms(seekHeard - sought), nextMs, pausedMovedMs: held1 - held0, offsetMs: [Math.round(before), Math.round(after)], seekPlaceMs, index, seekBar: bar };
+  expect(pauseMs >= 0 && pauseMs < 50, "a pause is silent within 50 ms");
+  expect(resumeMs >= 0 && resumeMs < 50, "play sounds again within 50 ms");
+  expect(report.instant.seekMs >= 0 && report.instant.seekMs < 100 && Math.abs(seekPlaceMs) < 100, "a seek is heard from its place within 100 ms");
+  expect(nextMs >= 0 && nextMs < 250 && index === 1, "next is heard within 250 ms");
+  expect(held1 === held0 && Math.abs(after - before) < 40, "the place stays still while paused and follows the music across it");
 }
 
 /** The last song of one album and the first of another (an album's songs play gaplessly), listened to
@@ -236,6 +359,51 @@ if (!only || only.includes("speed")) {
   await ask("setting", "pitch", "1");
 }
 
+/** The seek bar's run, 0 to 1, as the browser draws it now. */
+const bar = (p = page) =>
+  p.$eval("#bar .run", (e) => {
+    const m = new DOMMatrix(getComputedStyle(e).transform);
+    return 1 + m.m41 / e.getBoundingClientRect().width;
+  });
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const stateIs = (s) => page.waitForFunction(async (x) => JSON.parse(await window.ask("now")).state === x, { timeout: 10000, polling: 50 }, s);
+
+if (!only || only.includes("seekbar")) {
+  // The bar runs on by itself while the song plays, holds while it is paused, and no timer runs while
+  // it holds or the page is hidden.
+  await playAlbum(album("Second Wind", "Alpha Waves"));
+  await heardFor(1, (await facts()).heard);
+  const a0 = await bar();
+  await wait(1500);
+  const a1 = await bar();
+  const playingTimers = (await facts()).clockTimers;
+  await page.click("#bar [aria-label=Pause]");
+  await stateIs("Paused");
+  await wait(300);
+  const p0 = await bar();
+  await wait(1500);
+  const p1 = await bar();
+  const pausedTimers = (await facts()).clockTimers;
+  await page.click("#bar [aria-label=Play]");
+  await stateIs("Playing");
+  // Hidden: the times stop; seen again, they run on.
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const hiddenTimers = (await facts()).clockTimers;
+  await page.evaluate(() => {
+    delete document.hidden;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  const shownTimers = (await facts()).clockTimers;
+  const length = (await now()).song.duration * 1000;
+  report.seekbar = { playing: [a0, a1], paused: [p0, p1], expectedStep: 1500 / length, timers: { playing: playingTimers, paused: pausedTimers, hidden: hiddenTimers, shown: shownTimers } };
+  expect(a1 - a0 > (0.5 * 1500) / length && a1 - a0 < (2 * 1500) / length, "the seek bar runs on while the song plays");
+  expect(Math.abs(p1 - p0) < 1e-4, "the seek bar holds while the song is paused");
+  expect(playingTimers > 0 && pausedTimers === 0 && hiddenTimers === 0 && shownTimers > 0, "no timer runs while paused or hidden");
+}
+
 if (!only || only.includes("edit")) {
   // Playlists made, filled, renamed, reordered, emptied and deleted, and hearts, through the pages' own
   // menus; what the server then holds is read back.
@@ -254,7 +422,7 @@ if (!only || only.includes("edit")) {
   const playlistNamed = async (name) => (await read({ kind: "playlists" })).playlists.find((p) => p.name === name);
   const name = `Check ${Date.now() % 100000}`;
   await hash("#/playlists", "playlists");
-  await page.click(".page-head .pill");
+  await page.click("#new-playlist");
   await named(name);
   await page.waitForFunction(async (n) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.name === n), { timeout: 30000, polling: 250 }, name);
   const made = await playlistNamed(name);
@@ -275,7 +443,7 @@ if (!only || only.includes("edit")) {
   await named(`${name} renamed`);
   await page.waitForFunction(async (n) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.name === n), { timeout: 30000, polling: 250 }, `${name} renamed`);
   // The page is drawn again with the new name: its rows before that are gone.
-  await page.waitForFunction((n) => document.querySelector(".hero-text h1")?.textContent === n, { timeout: 30000, polling: 100 }, `${name} renamed`);
+  await page.waitForFunction((n) => document.querySelector(".hero h1")?.textContent === n, { timeout: 30000, polling: 100 }, `${name} renamed`);
   await page.waitForSelector(".songs li");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
   await menu("Move Down");
@@ -376,8 +544,8 @@ if (!only || only.includes("offline")) {
   const swFile = new URL("../dist/sw.js", import.meta.url);
   if (fs.existsSync(swFile)) {
     const was = fs.readFileSync(swFile, "utf8");
-    const build = was.match(/const BUILD = "([0-9a-f]+)"/)[1];
-    fs.writeFileSync(swFile, was.replace(`const BUILD = "${build}"`, `const BUILD = "${build}0"`));
+    const build = (await page.evaluate(() => caches.keys())).find((k) => k.startsWith("nori-")).slice(5);
+    fs.writeFileSync(swFile, was.replaceAll(build, `${build}0`));
     try {
       await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
       await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration()).waiting, { timeout: 30000, polling: 250 });
@@ -407,15 +575,16 @@ if (!only || only.includes("early")) {
  * album: the time from the click to the first sound, and 20 s heard after it. */
 async function slowStart(at) {
   const p = await browser.newPage();
+  await p.setViewport({ width: 1280, height: 800 });
   await p.goto(at, { waitUntil: "load" });
   await p.waitForFunction(() => window.nori.coreMs !== undefined, { timeout: 60000 });
   if (await p.$("#login")) await p.click("#login button");
   await p.waitForFunction(() => window.nori.page === "home", { timeout: 60000 });
   const id = await p.evaluate(async () => JSON.parse(await window.ask("read", JSON.stringify({ kind: "albums", sort: "alphabeticalByName", size: 100, offset: 0 }))).albums.find((a) => a.name === "Playback")?.id);
   await p.evaluate((x) => (location.hash = `#/album/${x}`), id);
-  await p.waitForSelector(".songs li");
+  await p.waitForSelector(".songs li .play");
   const t0 = Date.now();
-  await (await p.$$(".songs li"))[0].click();
+  await (await p.$$(".songs li .play"))[0].click();
   await p.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 0, { timeout: 60000, polling: 20 });
   const firstSoundMs = Date.now() - t0;
   const before = await p.evaluate(() => JSON.parse(JSON.stringify(window.nori.heard)));

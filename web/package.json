@@ -1,0 +1,17 @@
+{
+  "name": "nori-web",
+  "private": true,
+  "type": "module",
+  "description": "The web client's shell: Svelte 5 over the core and player modules (web/build.sh builds it)",
+  "scripts": {
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "svelte": "5.57.1",
+    "svelte-check": "4.7.6",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}
