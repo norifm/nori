@@ -171,6 +171,9 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // Each change's arriving panel goes under every panel before it (see the panels' AnimatedContent).
     var changes by remember { mutableIntStateOf(0) }
     val choose: (Panel) -> Unit = { panel = if (panel == it) Panel.ART else it; changes++ }
+    // A radio station or live stream has no lyrics: an open lyrics panel gives way to the artwork.
+    val radio = state.radio != null
+    LaunchedEffect(radio) { if (radio && panel == Panel.LYRICS) choose(Panel.ART) }
     // Where the sleeve ends, so the page behind it can be drawn at the same scale. Written on layout,
     // read in the draw phase; it only moves when the window does.
     var sleeveBottom by remember { mutableFloatStateOf(0f) }
@@ -691,7 +694,13 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                 )
 
-                Box(kept("seek")) { SeekBar(vm, state.advancing, state.durationMs, seekable = state.offersSeek) }
+                Box(kept("seek")) {
+                    if (radio) LookText(
+                        say.playerLive, { live.color(CoverLook.ACCENT) },
+                        Modifier.fillMaxWidth().padding(horizontal = PLAYER_GUTTER, vertical = 12.dp),
+                        style = MaterialTheme.typography.labelLarge.copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                    ) else SeekBar(vm, state.advancing, state.durationMs, seekable = state.offersSeek)
+                }
 
                 // Three controls, plain glyphs with no containers. Shuffle and repeat live in the queue header.
                 // Sized off `w4` as a share of the screen's width: Apple's pause glyph stands 9.8 % of the
@@ -734,7 +743,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 // move the lyrics and queue buttons; each keeps the line under its glyph whether it has words or not.
                 Row(kept("icons").fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 4.dp), verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, nudge = (-1.5).dp) { choose(Panel.LYRICS) }
+                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, nudge = (-1.5).dp, enabled = !radio) { choose(Panel.LYRICS) }
                         Spacer(Modifier.height(OUTPUT_LINE))
                     }
                     // Apple's middle glyph is AirPlay, not a sleep timer: on this screen the thing worth
@@ -2398,11 +2407,12 @@ private fun PanelButton(
      */
     size: androidx.compose.ui.unit.Dp = 27.dp,
     nudge: androidx.compose.ui.unit.Dp = 0.dp,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val look = LocalLook.current
-    IconButton(onClick) {
-        LookIcon(icon, label, Modifier.size(size).offset(x = nudge)) { look.color(if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+    IconButton(onClick, enabled = enabled) {
+        LookIcon(icon, label, Modifier.size(size).offset(x = nudge)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
     }
 }
 

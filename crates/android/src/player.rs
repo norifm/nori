@@ -1179,9 +1179,18 @@ struct AndroidLibrary {
 impl Library for AndroidLibrary {
     fn locate(&mut self, id: &str) -> Result<Located, String> {
         if is_radio(id) {
-            let url = self.stations.lock().iter().find(|(s, _)| s == id).map(|(_, u)| u.clone()).ok_or("a station with no address")?;
-            log(&format!("{id} is a station's stream"));
-            return Ok(Located { source: Source::Live { url, bytes: Arc::new(JavaBytes { bridge: self.bridge.clone(), key: String::new(), ahead: self.ahead.clone() }) }, hint: None, duration_ms: None, estimated: false, from_second: None });
+            let bytes: Arc<dyn ByteSource> = Arc::new(JavaBytes { bridge: self.bridge.clone(), key: String::new(), ahead: self.ahead.clone() });
+            let station = self.stations.lock().iter().find(|(s, _)| s == id).map(|(_, u)| u.clone());
+            // Not a station: a provider's live stream, at the address the provider resolves.
+            let (url, bytes) = match station {
+                Some(url) => (url, bytes),
+                None => {
+                    let client = self.current.get().ok_or("a station with no address")?;
+                    (client.resolve_now(id).url, resolving(&client, bytes))
+                }
+            };
+            log(&format!("{id} is a live stream"));
+            return Ok(Located { source: Source::Live { url, bytes }, hint: None, duration_ms: None, estimated: false, from_second: None });
         }
         let song = self.queue.song(id);
         let duration_ms = song.as_ref().map(|s| s.duration as i64 * 1000).filter(|&d| d > 0);

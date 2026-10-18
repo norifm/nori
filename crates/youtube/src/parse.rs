@@ -36,6 +36,8 @@ pub struct Song {
     pub year: u32,
     /// Thumbnail base URL ([`thumbnail_url`] sizes it).
     pub thumbnail: Option<String>,
+    /// A live stream (YouTube's live badge): no length, and it never ends.
+    pub live: bool,
 }
 
 /// An album, single or EP.
@@ -163,6 +165,11 @@ fn browse(v: &Value) -> Option<(&str, Leads)> {
     Some((str_at(b, "/browseId")?, leads(page)))
 }
 
+/// Whether `item` wears YouTube's live badge.
+fn live(item: &Value) -> bool {
+    ["badges", "subtitleBadges"].iter().filter_map(|k| item.get(k)?.as_array()).flatten().any(|b| b.get("liveBadgeRenderer").or_else(|| b.get("liveBadge")).is_some())
+}
+
 /// The runs of a text object (`{"runs": [...]}`).
 fn runs(text: &Value) -> Vec<Run<'_>> {
     let Some(list) = text.get("runs").and_then(Value::as_array) else { return Vec::new() };
@@ -246,7 +253,7 @@ fn list_item(item: &Value) -> Option<Item> {
     let thumb = item.get("thumbnail").and_then(thumbnail);
     let video = str_at(item, "/playlistItemData/videoId").or_else(|| cols[0].iter().find_map(|r| r.video));
     if let Some(v) = video {
-        let mut song = Song { video_id: v.to_string(), title, thumbnail: thumb, ..Default::default() };
+        let mut song = Song { video_id: v.to_string(), title, thumbnail: thumb, live: live(item), ..Default::default() };
         for (i, col) in cols.iter().enumerate().skip(1) {
             for (k, seg) in segments(col).enumerate() {
                 if let Some((name, links)) = artists_of(seg).filter(|_| song.artists.is_empty()) {
@@ -274,7 +281,7 @@ fn card(item: &Value) -> Option<Item> {
     let subtitle = item.get("subtitle").map(runs).unwrap_or_default();
     let thumb = item.get("thumbnailRenderer").and_then(thumbnail);
     if let Some(v) = str_at(item, "/navigationEndpoint/watchEndpoint/videoId") {
-        let mut song = Song { video_id: v.to_string(), title, thumbnail: thumb, ..Default::default() };
+        let mut song = Song { video_id: v.to_string(), title, thumbnail: thumb, live: live(item), ..Default::default() };
         if let Some((name, links)) = segments(&subtitle).find_map(artists_of) {
             song.artist = name;
             song.artists = links;
@@ -468,7 +475,7 @@ fn panel_video(item: &Value) -> Option<Song> {
         Some(AlbumLink { id: id.to_string(), name: joined(seg) })
     });
     let duration = item.get("lengthText").map(runs).and_then(|r| seconds(&joined(&r))).unwrap_or(0);
-    Some(Song { video_id, title, artist, artists, album, duration, thumbnail: item.get("thumbnail").and_then(thumbnail), ..Default::default() })
+    Some(Song { video_id, title, artist, artists, album, duration, thumbnail: item.get("thumbnail").and_then(thumbnail), live: live(item), ..Default::default() })
 }
 
 /// A carousel's title and its songs, albums, artists and playlists, in order.
@@ -664,5 +671,22 @@ mod tests {
         let shelf = v.pointer_mut("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/1/musicShelfRenderer/contents").unwrap();
         shelf.as_array_mut().unwrap()[0] = serde_json::json!({ "musicResponsiveListItemRenderer": { "flexColumns": [] } });
         assert_eq!(search(&v).songs.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(), ["Da Funk", "Alive"]);
+    }
+
+    /// A live video's row (search's badge), card (a subtitle badge) and queue entry are live; others not.
+    #[test]
+    fn live_streams_are_marked() {
+        let mut v = json("search_songs");
+        let shelf = v.pointer_mut("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/1/musicShelfRenderer/contents/0/musicResponsiveListItemRenderer").unwrap();
+        shelf["badges"] = serde_json::json!([{ "liveBadgeRenderer": { "label": "LIVE" } }]);
+        assert_eq!(search(&v).songs.iter().map(|s| s.live).collect::<Vec<_>>(), [true, false, false]);
+        let card = serde_json::json!({
+            "title": { "runs": [{ "text": "lofi radio" }] },
+            "subtitleBadges": [{ "liveBadgeRenderer": {} }],
+            "navigationEndpoint": { "watchEndpoint": { "videoId": "v1" } },
+        });
+        assert!(matches!(super::card(&card), Some(Item::Song(Song { live: true, .. }))));
+        let entry = serde_json::json!({ "title": { "runs": [{ "text": "lofi radio" }] }, "videoId": "v1", "badges": [{ "liveBadge": {} }] });
+        assert!(panel_video(&entry).is_some_and(|s| s.live && s.duration == 0));
     }
 }

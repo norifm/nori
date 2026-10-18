@@ -11,6 +11,7 @@
 //! Best effort: YouTube changes either client without notice.
 
 pub mod auth;
+pub mod live;
 mod parse;
 mod player;
 
@@ -380,7 +381,7 @@ impl InnerTube {
     }
 
     /// Gives `songs` whose rows show no length (Home's, a mix's) theirs, from one `music/get_queue`. Best
-    /// effort: unanswered, they stay unknown.
+    /// effort: unanswered, they stay unknown. A live stream is marked so.
     async fn fill_lengths<'a, H: Http + Sync>(&self, http: &H, songs: impl IntoIterator<Item = &'a mut Song>) {
         let mut unknown: Vec<&mut Song> = songs.into_iter().filter(|s| s.duration == 0).collect();
         if unknown.is_empty() {
@@ -391,6 +392,7 @@ impl InnerTube {
         for known in parse::queue(&answer) {
             for s in unknown.iter_mut().filter(|s| s.video_id == known.video_id) {
                 s.duration = known.duration;
+                s.live |= known.live;
             }
         }
     }
@@ -476,6 +478,16 @@ impl InnerTube {
             });
         }
         Err(last)
+    }
+
+    /// Piece `n` of live stream `stream` (the newest when None), its AAC frames appended to `out` as
+    /// ADTS ([`live::adts`]); returns the piece's number. A piece not made yet is answered once it is.
+    pub async fn live_piece<H: Http + Sync>(&self, http: &H, stream: &Stream, n: Option<u64>, out: &mut Vec<u8>) -> Result<u64, H::Error> {
+        let answer = http.send(Request { url: live::piece_url(&stream.format.url, n), headers: Vec::new(), body: None }).await.map_err(Error::Transport)?;
+        if answer.status != 200 {
+            return Err(Error::Status(answer.status));
+        }
+        live::adts(&answer.body, out).ok_or_else(|| Error::Parse("not a live piece of AAC audio".into()))
     }
 }
 
