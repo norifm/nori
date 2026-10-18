@@ -230,7 +230,7 @@ fun HeroPage(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center,
+                    title, style = titled(MaterialTheme.typography.headlineSmall), textAlign = TextAlign.Center,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
                 if (!subtitle.isNullOrEmpty()) Text(

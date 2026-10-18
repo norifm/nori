@@ -135,6 +135,20 @@ private fun inter(weight: FontWeight) = Font(
 
 val Inter = FontFamily(inter(FontWeight.Normal), inter(FontWeight.Medium), inter(FontWeight.SemiBold), inter(FontWeight.Bold))
 
+/**
+ * The second and last typeface, for what a page is called and nothing else: Literata at its display size,
+ * a book face whose sharp serifs sit with the mincho of the seal and the seasons. Cut to that one optical
+ * size and to weights 500-800 (440 kB), with the whole of Latin, Greek, Cyrillic and Vietnamese.
+ */
+private fun literata(weight: FontWeight) = Font(
+    R.font.literata, weight,
+    variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)),
+)
+
+private val Literata = FontFamily(literata(FontWeight.SemiBold), literata(FontWeight.Bold))
+
+/** [style] as a page's name: in Literata, tracked a little tighter. */
+fun titled(style: TextStyle): TextStyle = style.copy(fontFamily = Literata, letterSpacing = (-0.3).sp)
 
 /**
  * Tighter and heavier than stock Material, which is what makes a music app read as a music app:
@@ -462,7 +476,7 @@ fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composabl
     ) {
         Text(
             text, Modifier.weight(1f),
-            style = MaterialTheme.typography.headlineMedium.copy(fontSize = 30.sp),
+            style = titled(MaterialTheme.typography.headlineMedium.copy(fontSize = 31.sp)),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         trailing?.invoke(this)
@@ -475,7 +489,7 @@ fun BackTitle(text: String) {
     val nav = LocalNav.current
     Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
         androidx.compose.material3.IconButton(nav::back) { Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
