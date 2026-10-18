@@ -40,6 +40,8 @@ if want container-seek && [ "$NORI_E2E_SERVER" = local ]; then section "M4A seek
   check "the sought M4A plays through the AudioTrack" sounds 10
   check "M4A continues beyond the seek" wait_for positionMs '>11500' 10
   check "the sought M4A stays selected" test "$(field title)" = 'Lossless Song'
+  # The fixture is 20 s long: the sections after it play the suite's own song.
+  "$app" play "$song" >/dev/null; sounds 20
 fi
 
 if want transport; then section "transport from outside the app"
