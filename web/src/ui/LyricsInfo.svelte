@@ -35,11 +35,11 @@
 
 <style>
   .info {
-    border: 0;
-    padding: 20px;
-    border-radius: 16px;
-    background: var(--raised);
-    color: var(--text);
+    border: 1px solid var(--hair);
+    padding: 22px;
+    border-radius: 22px;
+    background: var(--surface);
+    color: var(--ink);
     box-shadow: var(--shadow);
     width: min(380px, calc(100vw - 32px));
     display: flex;
@@ -54,6 +54,7 @@
   }
   h3 {
     font-size: 19px;
+    font-weight: 700;
   }
   .line {
     display: flex;

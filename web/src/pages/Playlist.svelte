@@ -63,6 +63,6 @@
 <style>
   .comment {
     font-size: 15px;
-    color: var(--dim);
+    color: var(--ink2);
   }
 </style>

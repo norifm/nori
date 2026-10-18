@@ -45,8 +45,8 @@ const heard = (page) => page.evaluate(() => window.nori.heard?.seconds ?? 0);
 
 /** Opens pane `name` beside the page from the player bar. */
 async function pane(page, name) {
-  if (!(await page.$(`#panel #${name}`))) await page.click(`#bar [data-pane=${name}]`);
-  await page.waitForSelector(`#panel #${name}`);
+  if (!(await page.$(`#full #${name}`))) await page.click(`#bar [data-pane=${name}]`);
+  await page.waitForSelector(`#full #${name}`);
 }
 
 const host = await open("host");

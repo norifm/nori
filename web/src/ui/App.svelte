@@ -105,8 +105,7 @@
   }
   h1 {
     font-size: 40px;
-    font-weight: 800;
-    letter-spacing: -0.03em;
+    font-weight: 700;
   }
   .sub {
     margin: 0 0 12px;
