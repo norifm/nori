@@ -548,7 +548,7 @@ read_each StarredItems
 page starred [ar1] [al2*/1] [s1*/200,s2*/180] 2 #5d8aa1998e469f71
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
@@ -561,7 +561,7 @@ unstar al2: ok
 asked unstar&albumId=al2
 kept FsFFsFssFFFssFFFFFF
 stored FavouriteAlbums { size: 20 }: albums [al1/2] #0ec106fc480360b5 digest=true fresh=false
-stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=false
+stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: albums [al1/2,al2/1] #0fc7c5725c9e3585 digest=true fresh=false
 stored StarredItems: starred [ar1] [] [s1*/200,s2*/180] 2 #1b095473e42e0333 digest=true fresh=false
 == offline: a heart is queued and the favourites show it
 star s9: ok
@@ -571,9 +571,9 @@ page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 stored StarredItems: starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2 digest=true fresh=false
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
-stored AlbumById { id: "al1" }: album al1/2 [s1/200,s2*/180] #048f055c9190ce17 digest=true fresh=false
+stored AlbumById { id: "al1" }: album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d digest=true fresh=false
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
@@ -600,16 +600,16 @@ ended: ok
 asked getStarred2&musicFolderId=7
 == each write and what it leaves kept
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -618,7 +618,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -627,13 +627,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -651,7 +651,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -660,16 +660,16 @@ Star { kind: Artist, id: "ar1", on: false }: ok
 asked unstar&artistId=ar1
 kept FsFFsFssFFFssFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -678,7 +678,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -687,13 +687,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -711,7 +711,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -720,16 +720,16 @@ CreatePlaylist { name: "New", song_ids: ["s1", "s2"] }: ok
 asked createPlaylist&name=New&songId=s1&songId=s2
 kept FFFFFFFFFFsFFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -738,7 +738,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -747,13 +747,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -771,7 +771,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -780,16 +780,16 @@ AddToPlaylist { id: "p1", song_ids: ["s2"] }: ok
 asked updatePlaylist&playlistId=p1&songIdToAdd=s2
 kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -798,7 +798,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -807,13 +807,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -831,7 +831,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -840,16 +840,16 @@ RemoveFromPlaylist { id: "p1", index: 0 }: ok
 asked updatePlaylist&playlistId=p1&songIndexToRemove=0
 kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -858,7 +858,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -867,13 +867,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -891,7 +891,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -900,16 +900,16 @@ RenamePlaylist { id: "p1", name: "Road" }: ok
 asked updatePlaylist&playlistId=p1&name=Road
 kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -918,7 +918,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -927,13 +927,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -951,7 +951,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -960,16 +960,16 @@ ReplacePlaylist { id: "p1", song_ids: ["s2", "s1"] }: ok
 asked createPlaylist&playlistId=p1&songId=s2&songId=s1
 kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -978,7 +978,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -987,13 +987,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -1011,7 +1011,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1020,16 +1020,16 @@ DeletePlaylist { id: "p1" }: ok
 asked deletePlaylist&id=p1
 kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -1038,7 +1038,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -1047,13 +1047,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -1071,7 +1071,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1080,16 +1080,16 @@ CreateRadio { name: "R", stream_url: "http://r" }: ok
 asked createInternetRadioStation&name=R&streamUrl=http%3A%2F%2Fr
 kept FFFFFFFFFFFFFFsFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -1098,7 +1098,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -1107,13 +1107,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -1131,7 +1131,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1140,16 +1140,16 @@ DeleteRadio { id: "r1" }: ok
 asked deleteInternetRadioStation&id=r1
 kept FFFFFFFFFFFFFFsFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -1158,7 +1158,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -1167,13 +1167,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -1191,7 +1191,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1200,16 +1200,16 @@ Scrobble { id: "s1", submission: false, time_ms: None }: ok
 asked scrobble&id=s1&submission=false
 kept FFFFFFFFFFFFFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -1218,7 +1218,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -1227,13 +1227,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -1251,7 +1251,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1260,16 +1260,16 @@ SaveQueue { ids: ["s1", "s2"], current: Some("s2"), position_ms: 7 }: ok
 asked savePlayQueue&id=s1&id=s2&current=s2&position=7
 kept FFFFFFFFFFFFFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
-page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al1/2,al2/1] #0fc7c5725c9e3585
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
@@ -1278,7 +1278,7 @@ read_each ArtistIndex
 page artists [ar1] #e4328b60ef4d3dea
 ended: ok
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
 page artist ar1 [al1/2] #c9c86854de016ea9
@@ -1287,13 +1287,13 @@ read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 ended: ok
 read_each TopSongs { artist: "A" }
-page songs [s1/200] #16a140f7cf8f4e2c
+page songs [s1*/200] #6e33e46b92deb7d2
 ended: ok
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
 read_each PlaylistById { id: "p1" }
-page playlist p1/0 [s1/200] #ca5e40173283c07d
+page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
 page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
@@ -1311,7 +1311,7 @@ read_each FolderIndex
 page artists [d1] #f40db99784f6a43d
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1325,7 +1325,7 @@ stored StarredItems: starred [ar1] [] [s1*/200,s9*/90] 2 #4504663f8835b13e diges
 kept -----FssFF-s-FFFFFs
 == a page the server no longer has is dropped
 read_each AlbumById { id: "al1" }
-page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+page album al1/2 [s1*/200,s2/180] #cd036746592e83fb
 ended: error Api { code: 70, reason: "no" }
 stored AlbumById { id: "al1" }: none digest=false fresh=false
 asked getAlbum&id=al1
@@ -1340,11 +1340,11 @@ ended: ok
 asked getInternetRadioStations
 == a page listing a provider item is never fresh
 read_each AlbumById { id: "al1" }
-page album al1/0 [s1/200,ext-deezer-song-9/100] #2d8da6efbd1568eb
+page album al1/0 [s1*/200,ext-deezer-song-9/100] #a00f93047db55ae1
 ended: ok
-stored AlbumById { id: "al1" }: album al1/0 [s1/200,ext-deezer-song-9/100] #2d8da6efbd1568eb digest=true fresh=false
+stored AlbumById { id: "al1" }: album al1/0 [s1*/200,ext-deezer-song-9/100] #a00f93047db55ae1 digest=true fresh=false
 read_each AlbumById { id: "al1" }
-page album al1/0 [s1/200,ext-deezer-song-9/100] #2d8da6efbd1568eb
+page album al1/0 [s1*/200,ext-deezer-song-9/100] #a00f93047db55ae1
 ended: ok
 asked getAlbum&id=al1
 asked getAlbum&id=al1

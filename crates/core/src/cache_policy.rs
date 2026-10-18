@@ -11,7 +11,7 @@ use std::hash::{Hash, Hasher};
 use rusqlite::OptionalExtension;
 
 use crate::browse::AlbumSort;
-use crate::client::{Client, NetResult, Write};
+use crate::client::{Client, NetResult, Starrable, Write};
 use crate::providers::Answer;
 use crate::{
     Album, AlbumDetail, Artist, ArtistDetail, ArtistInfo, Directory, FeedShelf, Genre, Lyrics, MusicFolder, PlayQueue, Playlist, PlaylistDetail, RadioStation, SearchResult,
@@ -262,6 +262,48 @@ pub(crate) struct Kept {
     digest: u64,
 }
 
+/// The songs, albums and artists `page` shows.
+fn records(page: &mut Page) -> (Vec<&mut Song>, Vec<&mut Album>, Vec<&mut Artist>) {
+    let (mut songs, mut albums, mut artists): (Vec<&mut Song>, Vec<&mut Album>, Vec<&mut Artist>) = Default::default();
+    match page {
+        Page::Albums { v } => albums.extend(v),
+        Page::Artists { v } => artists.extend(v),
+        Page::AlbumPage { v } => {
+            albums.push(&mut v.album);
+            songs.extend(&mut v.songs);
+        }
+        Page::ArtistPage { v } => {
+            artists.push(&mut v.artist);
+            albums.extend(&mut v.albums);
+        }
+        Page::About { v } => artists.extend(&mut v.similar),
+        Page::Songs { v } => songs.extend(v),
+        Page::OneSong { v } => songs.extend(v),
+        Page::PlaylistPage { v } => songs.extend(&mut v.songs),
+        Page::StarredPage { v } => {
+            songs.extend(&mut v.songs);
+            albums.extend(&mut v.albums);
+            artists.extend(&mut v.artists);
+        }
+        Page::DirectoryPage { v } => songs.extend(&mut v.songs),
+        Page::Found { v } => {
+            songs.extend(&mut v.songs);
+            albums.extend(&mut v.albums);
+            artists.extend(&mut v.artists);
+        }
+        Page::Queue { v, .. } => songs.extend(&mut v.songs),
+        Page::Feed { v } => {
+            for shelf in v {
+                songs.extend(&mut shelf.songs);
+                albums.extend(&mut shelf.albums);
+                artists.extend(&mut shelf.artists);
+            }
+        }
+        Page::Playlists { .. } | Page::Genres { .. } | Page::Stations { .. } | Page::LyricsPage { .. } | Page::Folders { .. } | Page::Status { .. } | Page::ShareUrl { .. } => {}
+    }
+    (songs, albums, artists)
+}
+
 /// Whether `page` lists a provider item. Such answers change as provider songs get downloaded, so they
 /// are never fresh.
 fn lists_provider_items(page: &Page) -> bool {
@@ -299,12 +341,29 @@ impl Client {
     }
 
     /// `page` as `read` shows it this session: the favourites with this session's marks laid over them.
+    /// Every item's heart is this session's mark, and a song without a length takes the one its known
+    /// record has (a Home row YouTube lists without one).
     fn overlaid(&self, read: &Read, page: Page) -> Page {
-        match (read, page) {
+        let mut page = match (read, page) {
             (_, Page::StarredPage { v }) => Page::StarredPage { v: self.marked_favourites(v) },
             (Read::FavouriteAlbums { .. }, Page::Albums { v }) => Page::Albums { v: self.core.stars.lock().overlay_albums(v) },
             (_, page) => page,
+        };
+        let marks = self.core.stars.lock().clone();
+        let (songs, albums, artists) = records(&mut page);
+        for s in songs {
+            s.starred = marks.starred(Starrable::Song, &s.id, s.starred);
+            if s.duration == 0 {
+                s.duration = self.stored_song_of(&s.id).or_else(|| self.core.indexed_song(&s.id)).map_or(0, |known| known.duration);
+            }
         }
+        for a in albums {
+            a.starred = marks.starred(Starrable::Album, &a.id, a.starred);
+        }
+        for a in artists {
+            a.starred = marks.starred(Starrable::Artist, &a.id, a.starred);
+        }
+        page
     }
 
     /// A source's favourites with this session's marks laid over them: unstarred items leave, and a

@@ -1238,6 +1238,29 @@ mod tests {
         t.finish();
     }
 
+    /// A heart shows on every page listing the song, kept or asked anew, though YouTube's pages carry
+    /// no likes.
+    #[test]
+    fn a_heart_shows_on_every_page() {
+        let (c, _) = signed_in(30, vec![answer(200, "album", &[]), answer(200, "", &[]), answer(200, "album", &[])]);
+        let read = || Read::AlbumById { id: "yt-MPREb_K8qWMWVqXGi".into() };
+        block(c.cached_or_fetched(read())).unwrap();
+        block(c.star(Starrable::Song, "yt-zhl-Cs1-sG4".into(), true, Arc::new(Shown))).unwrap();
+        let hearted = |p: Page| p.songs().into_iter().filter(|s| s.starred).map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(hearted(c.read_stored(read()).unwrap().page.unwrap()), ["yt-zhl-Cs1-sG4"], "kept");
+        assert_eq!(hearted(block(c.read_now(read())).unwrap()), ["yt-zhl-Cs1-sG4"], "asked anew");
+    }
+
+    /// A Home row YouTube lists without a length (its queue answer failed) takes the length of the
+    /// song's known record.
+    #[test]
+    fn a_song_without_a_length_takes_its_known_one() {
+        let (c, _) = youtube_answering(vec![answer(200, "home", &[]), answer(200, "home_more", &[]), answer(500, "", &[])]);
+        c.core.session.register(vec![Song { id: "yt-hHZ4ej144rc".into(), duration: 238, ..Default::default() }]);
+        let Page::Feed { v } = block(c.read_now(Read::HomeFeed)).unwrap() else { panic!() };
+        assert_eq!(v[0].songs.iter().map(|s| s.duration).collect::<Vec<_>>(), [238, 0, 0]);
+    }
+
     /// A kept page asked anew that YouTube answers the same is not shown again.
     #[test]
     fn an_unchanged_page_is_shown_once() {
