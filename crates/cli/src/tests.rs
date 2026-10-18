@@ -21,6 +21,18 @@ fn app() -> App {
     a
 }
 
+#[test]
+fn youtube_radio_uses_the_playing_song() {
+    let mut a = app();
+    a.rules = nori_core::providers::rules_of(nori_core::settings::SavedServer { kind: nori_core::settings::ServerKind::YouTubeMusic, ..Default::default() }, false);
+    a.song = Some(Song { id: "yt-song".into(), title: "Song".into(), ..Default::default() });
+    let screen = draw(&mut a, 120, 36);
+    assert!(screen.contains("Radio"));
+    let r = hit_rect(&a, Hit::Button(crate::app::Button::RadioSong));
+    click(&mut a, r.x, r.y);
+    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id), false)) if id == "yt-song"));
+}
+
 fn draw(a: &mut App, w: u16, h: u16) -> String {
     draw_with(a, w, h, None)
 }

@@ -852,6 +852,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
     let images = app.images;
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let account = app.rules.account;
+    let downloads = app.rules.downloads;
     let App { pages, hits, shown, marks, rules, devices, .. } = app;
     let marks = Marks::of(marks, rules, devices);
     let Some(p) = pages.last_mut() else { return };
@@ -892,7 +893,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         if let Some(on) = star.filter(|_| account) {
             pill(f, hits, &mut x, y, end, if on { "♥ Favorite" } else { "♡ Favorite" }, false, Button::Star, t);
         }
-        if account && !matches!(p, Page::DownloadedAlbum { .. }) {
+        if downloads && !matches!(p, Page::DownloadedAlbum { .. }) {
             pill(f, hits, &mut x, y, end, "↓ Download", false, Button::Download, t);
         }
         let back = "‹ Back";
@@ -1273,6 +1274,8 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool) {
         DeviceRow::Jam if d.jam.is_some() => spread(vec![Span::styled("◉ ", Style::default().fg(t.accent)), name(&crate::text::jam_strip(listeners), true)], Span::styled(crate::text::JAM_INVITE, dim(&t)), w),
         DeviceRow::Jam => Line::from(vec![Span::styled("◉ ", Style::default().fg(t.accent)), Span::styled(crate::text::JAM_START, Style::default().fg(t.text))]),
         DeviceRow::Join => Line::from(vec![Span::styled("+ ", Style::default().fg(t.accent)), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.text))]),
+        DeviceRow::Pair => Line::from(crate::text::PAIR_DEVICES),
+        DeviceRow::ResetPairing => Line::from(crate::text::FORGET_DEVICES),
     });
     devices.sel = sel;
     let mut y = body.y + body.height + 1;
@@ -1752,6 +1755,11 @@ fn player_bar(f: &mut Frame, area: Rect, app: &mut App, ui: &Theme) {
         let r = Rect { x, width: 1, ..l1 };
         put(f, Paragraph::new(Span::styled("⤢", lit(app.full))), r);
         app.hits.push((Rect { x: x.saturating_sub(1), width: 3, ..r }, Hit::Button(Button::Full)));
+        if app.rules.radio && app.song.is_some() {
+            let r = Rect { x: x + 4, width: 7, ..l1 };
+            text(f, r, crate::text::RADIO, dim(&t));
+            app.hits.push((r, Hit::Button(Button::RadioSong)));
+        }
         let vw = 12u16;
         let label = format!("{:>3}%", (app.volume * 100.0).round() as i32);
         let icon = if app.volume <= 0.0 { "mute" } else { "vol" };

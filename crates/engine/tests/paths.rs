@@ -2119,6 +2119,27 @@ fn automix() -> Settings {
 }
 
 #[test]
+fn webm_pair_plays_through_its_mix() {
+    let d = dir();
+    let encoder = ["-c:a", "libopus", "-b:a", "128k"];
+    let (a, b) = (made(&d, "a", 40, 440, &encoder, "webm"), made(&d, "b", 30, 660, &encoder, "webm"));
+    let server = Arc::new(Server::default());
+    serve(&server, &[("yt-a", &a), ("yt-b", &b)]);
+    let app = Watched::automix();
+    let songs = vec![("yt-a".into(), String::new(), 40_000), ("yt-b".into(), String::new(), 30_000)];
+    let rig = Rig::new(server, songs, app.clone(), None, automix());
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait(80, |r| r.events.lock().contains(&Event::State(State::Ended))), "{:?}", app.log());
+    let heard = rig.card.heard.lock();
+    let format = rig.card.opened.lock()[0];
+    let seconds = heard.len() as f64 / format.channels as f64 / format.rate as f64;
+    assert!((62.0..70.5).contains(&seconds), "both songs heard with only the mix overlapping: {seconds} s");
+    assert!(app.log().iter().any(|l| l.contains("mixing: the next track arrived")), "{:?}", app.log());
+    assert!(!rig.events.lock().iter().any(|e| matches!(e, Event::Error { .. })), "{:?}", rig.events.lock());
+    rig.engine.stop();
+}
+
+#[test]
 fn automix_toggles_offload() {
     let Some(d) = encoder() else { return };
     let (a, b) = (mp3(&d, "a", 40, 440), mp3(&d, "b", 30, 660));
@@ -3058,24 +3079,29 @@ fn torn_down_while_paused_plays_again() {
 }
 
 #[test]
-fn webm_seek_shows_its_place() {
+fn timestamped_containers_seek_to_their_place() {
     // YouTube's WebM counts its stamps in milliseconds: a seek while it plays is placed where it
     // landed, not at those milliseconds read as frames.
     let d = dir();
-    let a = made(&d, "a", 30, 440, &["-c:a", "libopus", "-b:a", "128k", "-cluster_time_limit", "1000"], "webm");
-    let b = mp3(&d, "b", 5, 660);
-    let server = Arc::new(Server::default());
-    serve(&server, &[("a", &a), ("b", &b)]);
-    let songs = vec![("a".into(), "webm".into(), 30_000), ("b".into(), "mp3".into(), 5_000)];
-    let rig = Rig::new(server, songs, app(), Some(Fake::new(MP3_ONLY)), offload());
-    rig.engine.play_at(0, 0);
-    assert!(rig.wait(10, |r| r.card.heard.lock().len() > 3 * 2 * 44_100), "a plays");
-    rig.engine.go_to(0, 20_000);
-    rig.run(1_000);
-    let at = rig.engine.status().position_ms;
-    assert!((20_000..22_500).contains(&at), "a from about 20 s: {at} ms");
-    assert!(rig.wait(30, |r| r.heard_song("b")), "{:?}", rig.events.lock());
-    let placed: Vec<i64> = rig.events.lock().iter().filter_map(|e| match e { Event::Placed { ms, .. } => Some(*ms), _ => None }).collect();
-    assert!(placed.iter().skip_while(|&&ms| ms < 20_000).all(|&ms| ms >= 20_000), "never placed back before the seek: {placed:?}");
-    rig.engine.stop();
+    for (format, encoder) in [
+        ("webm", vec!["-c:a", "libopus", "-b:a", "128k", "-cluster_time_limit", "1000"]),
+        ("m4a", vec!["-c:a", "aac", "-b:a", "128k"]),
+    ] {
+        let a = made(&d, "a", 30, 440, &encoder, format);
+        let b = mp3(&d, "b", 5, 660);
+        let server = Arc::new(Server::default());
+        serve(&server, &[("a", &a), ("b", &b)]);
+        let songs = vec![("a".into(), format.into(), 30_000), ("b".into(), "mp3".into(), 5_000)];
+        let rig = Rig::new(server, songs, app(), Some(Fake::new(MP3_ONLY)), offload());
+        rig.engine.play_at(0, 0);
+        assert!(rig.wait(10, |r| r.card.heard.lock().len() > 3 * 2 * 44_100), "a plays");
+        rig.engine.go_to(0, 20_000);
+        rig.run(1_000);
+        let at = rig.engine.status().position_ms;
+        assert!((20_000..22_500).contains(&at), "a from about 20 s: {at} ms");
+        assert!(rig.wait(30, |r| r.heard_song("b")), "{:?}", rig.events.lock());
+        let placed: Vec<i64> = rig.events.lock().iter().filter_map(|e| match e { Event::Placed { ms, .. } => Some(*ms), _ => None }).collect();
+        assert!(placed.iter().skip_while(|&&ms| ms < 20_000).all(|&ms| ms >= 20_000), "never placed back before the seek: {placed:?}");
+        rig.engine.stop();
+    }
 }

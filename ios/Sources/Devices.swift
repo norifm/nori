@@ -30,6 +30,7 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
     private let outputs = OutputPicker()
     private var here = true
     private var devices: [[String: Any]] = []
+    private var pairing: String?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -102,10 +103,11 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         let d = takenJSON(nori_ios_remote_devices()) as? [String: Any] ?? [:]
         here = d["here"] as? Bool ?? true
         devices = d["devices"] as? [[String: Any]] ?? []
+        pairing = taken(nori_ios_pairing())
         table.reloadData()
     }
 
-    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { devices.count + 3 }
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { devices.count + 3 + (pairing == nil ? 0 : 2) }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "device")
@@ -125,6 +127,12 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
             return cell
         }
         guard indexPath.row <= devices.count else {
+            if indexPath.row >= devices.count + 3 {
+                cell.textLabel?.text = indexPath.row == devices.count + 3 ? Say.pairDevices : Say.forgetDevices
+                cell.detailTextLabel?.text = nil
+                cell.accessoryType = .disclosureIndicator
+                return cell
+            }
             if indexPath.row == devices.count + 1 {
                 cell.textLabel?.text = Say.output
                 cell.detailTextLabel?.text = nil
@@ -148,12 +156,32 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
+        if indexPath.row == devices.count + 3 { return pair() }
+        if indexPath.row == devices.count + 4 {
+            nori_ios_forget_pairs()
+            read()
+            return
+        }
         if indexPath.row == devices.count + 1 { return outputs.show() }
         guard indexPath.row <= devices.count else { return JamJoin.ask(from: self) }
         let id = indexPath.row == 0 ? "" : devices[indexPath.row - 1]["id"] as? String ?? ""
         id.withCString { nori_ios_remote_pick($0) }
         dismiss(animated: true)
     }
+    private func pair() {
+        guard let code = pairing else { return }
+        let ask = UIAlertController(title: Say.pairDevices, message: Say.pairHow, preferredStyle: .alert)
+        ask.addTextField { $0.placeholder = "nori://pair…"; $0.autocapitalizationType = .none; $0.autocorrectionType = .no }
+        ask.addAction(UIAlertAction(title: Say.pairCopy, style: .default) { _ in UIPasteboard.general.string = code })
+        ask.addAction(UIAlertAction(title: Say.pairAccept, style: .default) { [weak self, weak ask] _ in
+            let value = ask?.textFields?.first?.text ?? ""
+            if value.withCString({ nori_ios_pair($0) }) == 0 { Toast.show(Say.pairFailed) }
+            self?.read()
+        })
+        ask.addAction(UIAlertAction(title: Say.cancel, style: .cancel))
+        present(ask, animated: true)
+    }
+
 }
 
 /// Joining someone's jam with the invite link its host sent: the guest profile opens once joined

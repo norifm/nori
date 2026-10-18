@@ -18,7 +18,7 @@ const DAY: i64 = 24 * HOUR;
 /// Freshness window of most reads.
 const BROWSE: i64 = 2 * MINUTE;
 
-/// A server read. Variants up to `FolderById` are cached; the rest always ask.
+/// A server read. Variants up to `FolderById`, and `HomeFeed`, are cached; the rest always ask.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Read {
@@ -61,7 +61,7 @@ pub enum Read {
     /// A public share link (needs sharing enabled on the server).
     ShareLink { id: String },
     PullQueue,
-    /// The source's own home feed (`ProfileRules::feed`); a Subsonic server has none.
+    /// The source's own home feed (`ProfileRules::feed`), kept for the session; a Subsonic server has none.
     HomeFeed,
 }
 
@@ -234,7 +234,7 @@ fn spec(read: Read) -> Spec {
         Read::NowPlaying { id: i } => s("scrobble", pairs(&[("id", i), ("submission", "false".into())]), None, Parser::Status),
         Read::ShareLink { id: i } => s("createShare", id(i), None, Parser::Share),
         Read::PullQueue => s("getPlayQueue", vec![], None, Parser::Queue),
-        Read::HomeFeed => s("ping", vec![], None, Parser::Feed),
+        Read::HomeFeed => s("homeFeed", vec![], Some(BROWSE), Parser::Feed),
     }
 }
 
@@ -419,6 +419,53 @@ impl Client {
         let page = self.parse(sp.parser, body).ok();
         let fresh = page.as_ref().is_some_and(|p| !lists_provider_items(p)) && crate::db::now_ms() - ts < fresh_ms;
         Ok(Stored { page, digest, fresh })
+    }
+
+    /// [`Client::read_stored`] of a provider that stores nothing: its answer kept in memory this session,
+    /// fresh for the read's window, so a page read again (Home scrolled back to, a page left and
+    /// returned to) shows what it showed.
+    pub(crate) fn kept_stored(&self, read: Read, within_ms: Option<i64>) -> Stored {
+        let sp = spec(read);
+        let Some(fresh_ms) = sp.fresh_ms.map(|ms| within_ms.unwrap_or(ms)) else { return Stored { page: None, digest: None, fresh: false } };
+        let kept = self.core.kept.lock().get(&key(sp.endpoint, &sp.params)).cloned();
+        let fresh = kept.as_ref().is_some_and(|(_, at)| crate::db::now_ms() - at < fresh_ms);
+        let page = kept.map(|(p, _)| match p {
+            Page::StarredPage { v } => Page::StarredPage { v: self.marked_favourites(v) },
+            p => p,
+        });
+        Stored { page, digest: None, fresh }
+    }
+
+    /// A source's favourites with this session's marks laid over them: unstarred items leave, and a
+    /// song starred that they lack yet (YouTube lists a like seconds later) leads them when its record
+    /// is known.
+    pub(crate) fn marked_favourites(&self, starred: Starred) -> Starred {
+        let marks = self.core.stars.lock().clone();
+        let starred = marks.overlay(starred);
+        let mut missing: Vec<&String> = marks.songs.iter().filter(|(id, on)| **on && !starred.songs.iter().any(|s| &s.id == *id)).map(|(id, _)| id).collect();
+        missing.sort();
+        let mut songs: Vec<Song> =
+            missing.into_iter().filter_map(|id| self.stored_song_of(id).or_else(|| self.core.indexed_song(id))).map(|s| Song { starred: true, ..s }).collect();
+        if songs.is_empty() {
+            return starred;
+        }
+        songs.extend(starred.songs);
+        Starred::new(starred.artists, starred.albums, songs)
+    }
+
+    /// [`Client::read_fetch`] of a provider that stores nothing: asked anew, and kept ([`Client::kept_stored`]).
+    pub(crate) async fn kept_fetch(&self, read: Read) -> NetResult<Option<Page>> {
+        let page = self.read_now(read.clone()).await?;
+        self.keep(read, page.clone());
+        Ok(Some(page))
+    }
+
+    /// Keeps `page` as `read`'s answer this session ([`Client::kept_stored`]); cached reads only.
+    pub(crate) fn keep(&self, read: Read, page: Page) {
+        let sp = spec(read);
+        if sp.fresh_ms.is_some() {
+            self.core.kept.lock().insert(key(sp.endpoint, &sp.params), (page, crate::db::now_ms()));
+        }
     }
 
     /// [`Client::read_fetch`] of the Subsonic server, whose answers are cached whole.

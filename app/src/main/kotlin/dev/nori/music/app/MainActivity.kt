@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
     private var started = false
     /** The same one App's messages come from: one per activity. */
     private val actions: dev.nori.music.app.vm.ActionsViewModel by viewModels()
+    private val remote: dev.nori.music.app.vm.RemoteViewModel by viewModels()
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     /** What was asked for from outside (the download notification, a launcher shortcut); App does it and clears this. */
     private val launchRoute = androidx.compose.runtime.mutableStateOf<String?>(null)
@@ -64,6 +65,10 @@ class MainActivity : ComponentActivity() {
     /** A jam invite opened: this phone joins as a guest, and the app shows the host's playback (App, LocalRules). */
     private fun joinJam(intent: Intent?) {
         val link = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString ?: return
+        if (dev.nori.music.ffi.pairingValid(link)) {
+            remote.offerPairing(link)
+            return
+        }
         if (!dev.nori.music.ffi.remote.isInvite(link)) return
         lifecycleScope.launch {
             val said = runCatching { Nori.get(this@MainActivity).joinJam(link) }.fold(
@@ -74,7 +79,7 @@ class MainActivity : ComponentActivity() {
                         dev.nori.music.ffi.JamJoin.Ended -> R.string.jam_invite_ended
                     }
                 },
-                { dev.nori.music.NoriLog.w("jam: not joined: $it"); R.string.jam_join_failed },
+                { dev.nori.music.NoriLog.w("jam: not joined: ${it.javaClass.simpleName}"); R.string.jam_join_failed },
             )
             said?.let { actions.tell(getString(it)) }
         }

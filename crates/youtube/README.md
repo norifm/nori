@@ -2,7 +2,7 @@
 
 YouTube Music over InnerTube, in Rust, without a JavaScript engine:
 
-- search, albums, artists and playlists through the `WEB_REMIX` client (music.youtube.com);
+- search, albums, artists, playlists, Home and related-track radio through the `WEB_REMIX` client (music.youtube.com);
 - audio streams through the visionOS client, whose URLs need no signature deciphering, n-transform or PO token.
 
 The crate does no I/O. It builds requests and parses answers into plain records (`Song`, `Album`,
@@ -35,7 +35,11 @@ async fn play(yt: &InnerTube) -> Result<String, innertube_music::Error<String>> 
 ```
 
 One `InnerTube` value per session: it learns YouTube's visitor id from the first answer and sends it
-with every later request (music videos refuse to play without one).
+with every later request (music videos refuse to play without one). Keep `take_new_visitor()` and give
+it back with `set_visitor` in the next session: a new visitor is served a different Home.
+
+`InnerTube::radio` returns the song's watch queue as metadata. It does not resolve or fetch audio;
+call `player` for a track only when the user asks to play or download it.
 
 Stream URLs are bound to the requesting IP address and expire after `Stream::expires_in`. Ask from byte
 0 with `url_from(0)` and send a `Range` header for later bytes.

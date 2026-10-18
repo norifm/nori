@@ -361,8 +361,10 @@ impl Runner {
         let d = &mut app.devices;
         // A guest's music is the jam's: it moves to no other device.
         d.on = remote.is_some() && !guest;
-        d.jams = jams && d.on && !unsupported;
-        d.jams_unsupported = jams && d.on && unsupported;
+        d.pairing = remote.as_ref().and_then(|r| r.pairing_link());
+        let offered = remote.as_ref().is_some_and(|r| r.jam_start() == nori_core::remote::JamStart::Offered);
+        d.jams = jams && d.on && (offered || remote.as_ref().is_some_and(|r| r.jam_view().is_some()));
+        d.jams_unsupported = jams && d.on && unsupported && d.pairing.is_none();
         d.list = remote.as_ref().filter(|_| d.on).map(|r| r.devices()).unwrap_or_default();
         if let Some(r) = &remote {
             let names = nori_core::remote::device_names(d.list.clone(), r.me(), crate::text::kind_words());
@@ -587,6 +589,14 @@ impl Runner {
                 if let Some(r) = s.remote() {
                     r.pick(device);
                 }
+            }
+            Cmd::Pair(link) => {
+                let paired = s.remote().is_some_and(|r| r.pair(link));
+                app.say(if paired { crate::text::PAIRED } else { crate::text::PAIR_FAILED }, !paired);
+            }
+            Cmd::ResetPairing => {
+                let reset = s.remote().is_some_and(|r| r.reset_pairing());
+                app.say(if reset { crate::text::FORGOTTEN } else { crate::text::PAIR_UNAVAILABLE }, !reset);
             }
             Cmd::JamStart => s.jam_open(),
             Cmd::JamEnd => {

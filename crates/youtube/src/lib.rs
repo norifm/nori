@@ -217,8 +217,15 @@ pub enum Rotated {
 /// confirm you're not a bot", learned from the first answer; and the account, when signed in.
 #[derive(Default)]
 pub struct InnerTube {
-    visitor: Mutex<Option<String>>,
+    visitor: Mutex<Visitor>,
     account: Mutex<Option<Account>>,
+}
+
+#[derive(Default)]
+struct Visitor {
+    id: Option<String>,
+    /// Learned from an answer and not yet taken ([`InnerTube::take_new_visitor`]).
+    new: bool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -227,7 +234,20 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl InnerTube {
     fn visitor(&self) -> Option<String> {
-        lock(&self.visitor).clone()
+        lock(&self.visitor).id.clone()
+    }
+
+    /// Sends `id`, a visitor id YouTube gave before ([`InnerTube::take_new_visitor`]), from the first
+    /// request on: the same visitor is served the same feeds.
+    pub fn set_visitor(&self, id: Option<String>) {
+        *lock(&self.visitor) = Visitor { id, new: false };
+    }
+
+    /// The visitor id YouTube gave since the last take, to be kept for the next session's
+    /// [`InnerTube::set_visitor`].
+    pub fn take_new_visitor(&self) -> Option<String> {
+        let mut v = lock(&self.visitor);
+        std::mem::take(&mut v.new).then(|| v.id.clone()).flatten()
     }
 
     /// Signs in with a session's `cookies` (see [`auth`]); None signs out. Nothing is asked: a later
@@ -269,7 +289,10 @@ impl InnerTube {
         }
         let v: Value = serde_json::from_slice(&r.body).map_err(|e| Error::Parse(e.to_string()))?;
         if let Some(id) = v.pointer("/responseContext/visitorData").and_then(Value::as_str).filter(|id| !id.is_empty()) {
-            lock(&self.visitor).get_or_insert_with(|| id.to_string());
+            let mut v = lock(&self.visitor);
+            if v.id.is_none() {
+                *v = Visitor { id: Some(id.to_string()), new: true };
+            }
         }
         Ok(v)
     }
@@ -351,7 +374,35 @@ impl InnerTube {
 
     /// Playlist `id` (`VL...`) and its first page of songs.
     pub async fn playlist<H: Http + Sync>(&self, http: &H, id: &str) -> Result<PlaylistPage, H::Error> {
-        Ok(parse::playlist(&self.browse(http, id).await?, id))
+        let mut page = parse::playlist(&self.browse(http, id).await?, id);
+        self.fill_lengths(http, &mut page.songs).await;
+        Ok(page)
+    }
+
+    /// Gives `songs` whose rows show no length (Home's, a mix's) theirs, from one `music/get_queue`. Best
+    /// effort: unanswered, they stay unknown.
+    async fn fill_lengths<'a, H: Http + Sync>(&self, http: &H, songs: impl IntoIterator<Item = &'a mut Song>) {
+        let mut unknown: Vec<&mut Song> = songs.into_iter().filter(|s| s.duration == 0).collect();
+        if unknown.is_empty() {
+            return;
+        }
+        let ids: Vec<&str> = unknown.iter().map(|s| s.video_id.as_str()).collect();
+        let Ok(answer) = self.call(&WEB_REMIX, http, "music/get_queue", json!({ "videoIds": ids })).await else { return };
+        for known in parse::queue(&answer) {
+            for s in unknown.iter_mut().filter(|s| s.video_id == known.video_id) {
+                s.duration = known.duration;
+            }
+        }
+    }
+
+    /// A song's radio queue, without resolving or fetching any audio.
+    pub async fn radio<H: Http + Sync>(&self, http: &H, video: &str) -> Result<Vec<Song>, H::Error> {
+        let answer = self.call(&WEB_REMIX, http, "next", json!({
+            "videoId": video, "playlistId": format!("RDAMVM{video}"), "params": "wAEB",
+            "enablePersistentPlaylistPanel": true, "isAudioOnly": true,
+            "tunerSettingValue": "AUTOMIX_SETTING_NORMAL"
+        })).await?;
+        Ok(parse::watch_queue(&answer))
     }
 
     /// The home feed's shelves, its first page and the one after: the account's own when signed in,
@@ -361,6 +412,8 @@ impl InnerTube {
         if let Some(token) = next {
             shelves.extend(parse::feed(&self.call(&WEB_REMIX, http, "browse", json!({ "continuation": token })).await?).0);
         }
+        let songs = shelves.iter_mut().flat_map(|s| &mut s.items).filter_map(|i| if let Item::Song(s) = i { Some(s) } else { None });
+        self.fill_lengths(http, songs).await;
         Ok(shelves)
     }
 
@@ -565,6 +618,20 @@ pub(crate) mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(fake.asked().len(), 3);
+        assert_eq!(yt.take_new_visitor().as_deref(), Some("CgtGSVhUVVJFX0lEKAA%3D"));
+        assert_eq!(yt.take_new_visitor(), None, "taken once");
+    }
+
+    /// A visitor id given before goes with the very first request and is not taken as new.
+    #[test]
+    fn a_given_visitor_id_is_sent_first() {
+        let yt = InnerTube::default();
+        yt.set_visitor(Some("known".into()));
+        let fake = Fake::answering(&[(200, &fixture("not_a_bot"))]);
+        let _ = ready(yt.player(&fake, "v"));
+        assert_eq!(fake.asked()[0].header("X-Goog-Visitor-Id"), Some("known"));
+        assert_eq!(body(&fake.asked()[0])["context"]["client"]["visitorData"], "known");
+        assert_eq!(yt.take_new_visitor(), None);
     }
 
     #[test]
@@ -573,6 +640,23 @@ pub(crate) mod tests {
         let page = ready(InnerTube::default().album(&fake, "MPREb_K8qWMWVqXGi")).unwrap();
         assert_eq!(page.album.id, "MPREb_K8qWMWVqXGi");
         assert_eq!(body(&fake.asked()[0])["browseId"], "MPREb_K8qWMWVqXGi");
+    }
+
+    #[test]
+    fn radio_asks_for_related_tracks_without_audio() {
+        let fake = Fake::answering(&[(200, &fixture("radio"))]);
+        let songs = ready(InnerTube::default().radio(&fake, "dQw4w9WgXcQ")).unwrap();
+        assert_eq!(songs.iter().map(|s| (s.video_id.as_str(), s.title.as_str(), s.artist.as_str(), s.duration)).collect::<Vec<_>>(), [
+            ("dQw4w9WgXcQ", "Never Gonna Give You Up", "Artist", 212),
+            ("djV11Xbc914", "Take On Me", "Artist", 212),
+        ]);
+        assert_eq!(songs[0].album.as_ref().unwrap().id, "MPREb_album");
+        assert_eq!(songs[0].artists[0].id, "UCartist");
+        let asked = fake.asked();
+        assert_eq!(asked.len(), 1);
+        assert!(asked[0].url.contains("/next?"));
+        assert_eq!(body(&asked[0])["videoId"], "dQw4w9WgXcQ");
+        assert_eq!(body(&asked[0])["playlistId"], "RDAMVMdQw4w9WgXcQ");
     }
 
     /// The three searches are in flight together: none waits for another's answer.
@@ -603,6 +687,33 @@ pub(crate) mod tests {
         assert_eq!(titles, ["Quick picks", "All hits", "Party music", "New releases"]);
         assert_eq!(body(&fake.asked()[0])["browseId"], "FEmusic_home");
         assert_eq!(body(&fake.asked()[1])["continuation"], "FIXTURE_CONTINUATION");
+    }
+
+    /// Home's song rows show no length: one queue request gives every one of them its own.
+    #[test]
+    fn home_songs_get_their_lengths() {
+        let fake = Fake::with(vec![ok("home"), ok("home_more"), ok("queue")]);
+        let shelves = ready(InnerTube::default().home(&fake)).unwrap();
+        let lengths: Vec<(&str, u32)> = shelves[0].items.iter().map(|i| match i {
+            Item::Song(s) => (s.video_id.as_str(), s.duration),
+            _ => panic!("{i:?}"),
+        }).collect();
+        assert_eq!(lengths, [("hHZ4ej144rc", 238), ("5F28ye50-Kc", 213), ("o_eLrGr6Sqs", 229)]);
+        let asked = fake.asked();
+        assert_eq!((asked.len(), body(&asked[2])["videoIds"].clone()), (3, json!(["hHZ4ej144rc", "5F28ye50-Kc", "o_eLrGr6Sqs"])));
+        assert!(asked[2].url.contains("/youtubei/v1/music/get_queue?"), "{}", asked[2].url);
+    }
+
+    /// A playlist whose rows all show their lengths costs no more requests; without a queue answer the
+    /// lengths stay unknown and the page still comes.
+    #[test]
+    fn lengths_are_asked_only_when_missing() {
+        let fake = Fake::with(vec![ok("playlist")]);
+        assert!(ready(InnerTube::default().playlist(&fake, "VLx")).unwrap().songs.iter().all(|s| s.duration > 0));
+        assert_eq!(fake.asked().len(), 1);
+        let fake = Fake::with(vec![ok("home"), ok("home_more"), status(500, &[])]);
+        let shelves = ready(InnerTube::default().home(&fake)).unwrap();
+        assert!(shelves[0].items.iter().all(|i| matches!(i, Item::Song(s) if s.duration == 0)));
     }
 
     /// Signed in, music.youtube.com requests carry the session; streams never do.

@@ -62,6 +62,33 @@ impl Core {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
+    /// Albums offered by the provider's Home feed, or a fresh random library page.
+    pub async fn featured_albums(&self, limit: u32) -> NetResult<Vec<crate::Album>> {
+        if !self.core.rules().feed {
+            return Ok(self.read_now(Read::AlbumList { kind: AlbumSort::Random, size: limit.min(i32::MAX as u32) as i32, offset: 0, genre: None }).await?.albums());
+        }
+        let mut albums = Vec::new();
+        if let Some(Page::Feed { v }) = self.cached_or_fetched(Read::HomeFeed).await? {
+            for album in v.into_iter().flat_map(|s| s.albums) {
+                if !albums.iter().any(|a: &crate::Album| a.id == album.id) { albums.push(album); }
+            }
+        }
+        albums.truncate(limit as usize);
+        Ok(albums)
+    }
+
+    /// The provider's featured playlists, without loading their songs or audio.
+    pub async fn featured_playlists(&self) -> NetResult<Vec<crate::Playlist>> {
+        let mut playlists = Vec::new();
+        if !self.core.rules().feed { return Ok(playlists); }
+        if let Some(Page::Feed { v }) = self.cached_or_fetched(Read::HomeFeed).await? {
+            for playlist in v.into_iter().flat_map(|s| s.playlists) {
+                if !playlists.iter().any(|p: &crate::Playlist| p.id == playlist.id) { playlists.push(playlist); }
+            }
+        }
+        Ok(playlists)
+    }
+
     /// A page of the songs list at `offset`: the offline index's, as [`Core::songs_page`] has it, or for a
     /// profile that keeps none (a jam guest's) the server's, in its own order whatever the sort.
     pub async fn songs_listed(&self, sort: String, starred_only: bool, year_from: u32, year_to: u32, offset: u32) -> NetResult<SongsPage> {

@@ -1,10 +1,43 @@
-//! Remote control without the relay, between devices on one network. A controllable device opens a door:
-//! a small HTTP listener speaking the relay's poll and send for itself alone. Every request carries an
-//! HMAC-SHA256 over it, keyed with the account's Subsonic secret (password or API key), which only the
-//! account's own devices hold. Discovery (mDNS `_nori._tcp`) is the platform's; the TXT record carries
-//! [`account_tag`] so a device lists only its account's doors.
+//! Authenticated LAN control and scoped jams. Devices pair using a random secret; Subsonic profiles
+//! can also use their existing account credential. Discovery carries only a keyed tag. A jam uses its
+//! own invite credential and derives a separate credential for every guest, without sharing an account.
 
 use sha2::{Digest, Sha256};
+
+/// A 256-bit pairing or invite credential from the operating system.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn new_secret() -> std::io::Result<String> {
+    let mut bytes = [0; 32];
+    getrandom::fill(&mut bytes).map_err(std::io::Error::other)?;
+    Ok(hex(&bytes))
+}
+
+/// Query parameters encoded for the LAN protocol.
+pub fn target(endpoint: &str, params: &[(String, String)]) -> String {
+    format!("/rest/{endpoint}?{}", params.iter().map(|(k,v)| format!("{}={}", crate::encode(k), crate::encode(v))).collect::<Vec<_>>().join("&"))
+}
+
+/// A member's credential is derived on both devices and never sent over the LAN.
+pub fn member_secret(invite: &str, nonce: &str) -> String {
+    hex(&hmac(invite.as_bytes(), format!("nori-jam-member:{nonce}").as_bytes()))
+}
+
+/// The secret in a temporary YouTube LAN jam profile.
+pub fn guest_secret(api_key: &str) -> Option<&str> {
+    api_key.strip_prefix("nori-jam-lan-")
+}
+
+/// Device pairing is separate from a jam invitation.
+pub fn pairing_link(secret: &str) -> String {
+    format!("nori://pair#k={secret}")
+}
+
+/// A pairing link contains a 256-bit secret, never an account identifier.
+pub fn parse_pairing(link: &str) -> Option<String> {
+    let secret = link.trim().strip_prefix("nori://pair#k=")?;
+    (secret.len() == 64 && secret.bytes().all(|b| b.is_ascii_hexdigit())).then(|| secret.to_ascii_lowercase())
+}
+
 
 /// The door listens on a socket, which a browser cannot.
 #[cfg(not(target_arch = "wasm32"))]

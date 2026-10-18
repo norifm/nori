@@ -1,0 +1,187 @@
+{
+ "responseContext": {
+  "visitorData": "FIXTURE_VISITOR"
+ },
+ "queueDatas": [
+  {
+   "content": {
+    "playlistPanelVideoRenderer": {
+     "videoId": "hHZ4ej144rc",
+     "title": {
+      "runs": [
+       {
+        "text": "Mimo najlepszych chęci"
+       }
+      ]
+     },
+     "longBylineText": {
+      "runs": [
+       {
+        "text": "Vito Bambino",
+        "navigationEndpoint": {
+         "browseEndpoint": {
+          "browseId": "UC2goE-vgYa9vhMss8WlOm3w",
+          "browseEndpointContextSupportedConfigs": {
+           "browseEndpointContextMusicConfig": {
+            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+           }
+          }
+         }
+        }
+       },
+       {
+        "text": " • "
+       },
+       {
+        "text": "Mimo najlepszych chęci",
+        "navigationEndpoint": {
+         "browseEndpoint": {
+          "browseId": "MPREb_belO7bZVmAt",
+          "browseEndpointContextSupportedConfigs": {
+           "browseEndpointContextMusicConfig": {
+            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+           }
+          }
+         }
+        }
+       },
+       {
+        "text": " • "
+       },
+       {
+        "text": "2026"
+       }
+      ]
+     },
+     "lengthText": {
+      "runs": [
+       {
+        "text": "3:58"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "content": {
+    "playlistPanelVideoRenderer": {
+     "videoId": "5F28ye50-Kc",
+     "title": {
+      "runs": [
+       {
+        "text": "Teh Hijau"
+       }
+      ]
+     },
+     "longBylineText": {
+      "runs": [
+       {
+        "text": "Tulus",
+        "navigationEndpoint": {
+         "browseEndpoint": {
+          "browseId": "UC_DHlXllTSMB8pTC38_leFg",
+          "browseEndpointContextSupportedConfigs": {
+           "browseEndpointContextMusicConfig": {
+            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+           }
+          }
+         }
+        }
+       },
+       {
+        "text": " • "
+       },
+       {
+        "text": "Teh Hijau",
+        "navigationEndpoint": {
+         "browseEndpoint": {
+          "browseId": "MPREb_RVAbNZdUasD",
+          "browseEndpointContextSupportedConfigs": {
+           "browseEndpointContextMusicConfig": {
+            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+           }
+          }
+         }
+        }
+       },
+       {
+        "text": " • "
+       },
+       {
+        "text": "2026"
+       }
+      ]
+     },
+     "lengthText": {
+      "runs": [
+       {
+        "text": "3:33"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "content": {
+    "playlistPanelVideoRenderer": {
+     "videoId": "o_eLrGr6Sqs",
+     "title": {
+      "runs": [
+       {
+        "text": "อย่ามากกว่าฉันก็พอ (Jealous) (feat. Violette Wautier)"
+       }
+      ]
+     },
+     "longBylineText": {
+      "runs": [
+       {
+        "text": "GAVIN:D",
+        "navigationEndpoint": {
+         "browseEndpoint": {
+          "browseId": "UCxxfBQRekvUE9GH4kvRA9jA",
+          "browseEndpointContextSupportedConfigs": {
+           "browseEndpointContextMusicConfig": {
+            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+           }
+          }
+         }
+        }
+       },
+       {
+        "text": " • "
+       },
+       {
+        "text": "IN MY ROOM SESSION",
+        "navigationEndpoint": {
+         "browseEndpoint": {
+          "browseId": "MPREb_t5xfyRM1y2J",
+          "browseEndpointContextSupportedConfigs": {
+           "browseEndpointContextMusicConfig": {
+            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+           }
+          }
+         }
+        }
+       },
+       {
+        "text": " • "
+       },
+       {
+        "text": "2026"
+       }
+      ]
+     },
+     "lengthText": {
+      "runs": [
+       {
+        "text": "3:49"
+       }
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

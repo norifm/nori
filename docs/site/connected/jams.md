@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Applies to nori 0.6 on Android, the desktop, the terminal and the iPod touch. Jams need octo-fiesta.
+Applies to nori 0.6 on Android, the desktop, the terminal and the iPod touch. Server profiles need octo-fiesta. Current development builds also support YouTube Music jams on the local network.
 
 A jam is a session others join without an account. **Remote control and jams** is enabled by default (Settings, Library, Other devices).
 Start a jam from the devices button, or from a song's, album's or playlist's menu.
@@ -15,6 +15,18 @@ Start a jam from the devices button, or from a song's, album's or playlist's men
 **Invite** shows a QR code and a link. Others join by scanning the code with nori, or by opening the
 link. If your server has only a home address, the invite says so: it then works only on your home
 network, and a public address in the server settings lets guests join from elsewhere.
+
+## YouTube Music on the LAN
+
+A YouTube Music host can start a jam without a server. Its invite works only on the same network.
+Guests use a temporary, signed-out YouTube Music profile and resolve each song themselves. Joining
+preserves the profile they were using; leaving restores it. Google cookies and account identifiers are
+never included in the invitation or shared with guests.
+
+The invite and each guest's credential are separate from paired-device control. Guests keep the same
+request and admin roles shown below; a guest cannot control the host as an owner. Removing a guest
+revokes its credential, and ending the jam revokes every guest and its invite. Guests must join a new
+room with a new invitation after it ends.
 
 ## Roles
 

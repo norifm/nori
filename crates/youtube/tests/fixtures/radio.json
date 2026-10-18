@@ -1,0 +1,148 @@
+{
+  "contents": {
+    "singleColumnMusicWatchNextResultsRenderer": {
+      "tabbedRenderer": {
+        "watchNextTabbedResultsRenderer": {
+          "tabs": [
+            {
+              "tabRenderer": {
+                "content": {
+                  "musicQueueRenderer": {
+                    "content": {
+                      "playlistPanelRenderer": {
+                        "contents": [
+                          {
+                            "playlistPanelVideoRenderer": {
+                              "videoId": "dQw4w9WgXcQ",
+                              "title": {
+                                "runs": [
+                                  {
+                                    "text": "Never Gonna Give You Up"
+                                  }
+                                ]
+                              },
+                              "longBylineText": {
+                                "runs": [
+                                  {
+                                    "text": "Artist",
+                                    "navigationEndpoint": {
+                                      "browseEndpoint": {
+                                        "browseId": "UCartist",
+                                        "browseEndpointContextSupportedConfigs": {
+                                          "browseEndpointContextMusicConfig": {
+                                            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "text": " \u2022 "
+                                  },
+                                  {
+                                    "text": "Album",
+                                    "navigationEndpoint": {
+                                      "browseEndpoint": {
+                                        "browseId": "MPREb_album",
+                                        "browseEndpointContextSupportedConfigs": {
+                                          "browseEndpointContextMusicConfig": {
+                                            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              "lengthText": {
+                                "runs": [
+                                  {
+                                    "text": "3:32"
+                                  }
+                                ]
+                              },
+                              "thumbnail": {
+                                "thumbnails": [
+                                  {
+                                    "url": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+                                    "width": 480,
+                                    "height": 360
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "playlistPanelVideoRenderer": {
+                              "videoId": "djV11Xbc914",
+                              "title": {
+                                "runs": [
+                                  {
+                                    "text": "Take On Me"
+                                  }
+                                ]
+                              },
+                              "longBylineText": {
+                                "runs": [
+                                  {
+                                    "text": "Artist",
+                                    "navigationEndpoint": {
+                                      "browseEndpoint": {
+                                        "browseId": "UCartist",
+                                        "browseEndpointContextSupportedConfigs": {
+                                          "browseEndpointContextMusicConfig": {
+                                            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "text": " \u2022 "
+                                  },
+                                  {
+                                    "text": "Album",
+                                    "navigationEndpoint": {
+                                      "browseEndpoint": {
+                                        "browseId": "MPREb_album",
+                                        "browseEndpointContextSupportedConfigs": {
+                                          "browseEndpointContextMusicConfig": {
+                                            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              "lengthText": {
+                                "runs": [
+                                  {
+                                    "text": "3:32"
+                                  }
+                                ]
+                              },
+                              "thumbnail": {
+                                "thumbnails": [
+                                  {
+                                    "url": "https://i.ytimg.com/vi/djV11Xbc914/hqdefault.jpg",
+                                    "width": 480,
+                                    "height": 360
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

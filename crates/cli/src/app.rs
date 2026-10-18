@@ -176,6 +176,8 @@ pub enum Cmd {
     JamDecide(u64, bool),
     /// Joins the jam this invite link is to.
     JoinJam(String),
+    Pair(String),
+    ResetPairing,
     LeaveJam,
     /// A jam guest listens along (plays the host's music here, in step), or only watches.
     Listen(bool),
@@ -215,6 +217,8 @@ impl Cmd {
             Cmd::JamEnd => "end the jam".into(),
             Cmd::JamDecide(r, yes) => format!("jam request {r} accepted={yes}"),
             Cmd::JoinJam(_) => "join a jam".into(),
+            Cmd::Pair(_) => "pair devices".into(),
+            Cmd::ResetPairing => "forget paired devices".into(),
             Cmd::LeaveJam => "leave the jam".into(),
             Cmd::JamAlong(on) => format!("room listening along {on}"),
             Cmd::JamRemoteSongs(on) => format!("room remote songs {on}"),
@@ -519,6 +523,7 @@ pub struct Devices {
     pub jams: bool,
     /// Jams are on but the server cannot relay them.
     pub jams_unsupported: bool,
+    pub pairing: Option<String>,
     /// The account's other devices.
     pub list: Vec<RemoteDevice>,
     pub sel: Sel,
@@ -545,6 +550,8 @@ pub enum DeviceRow {
     Jam,
     /// Joins someone's jam.
     Join,
+    Pair,
+    ResetPairing,
 }
 
 impl Devices {
@@ -555,6 +562,7 @@ impl Devices {
             rows.push(DeviceRow::Jam);
         }
         rows.push(DeviceRow::Join);
+        if self.pairing.is_some() { rows.extend([DeviceRow::Pair, DeviceRow::ResetPairing]); }
         rows
     }
 
@@ -741,6 +749,7 @@ pub enum Button {
     Download,
     /// Star the playing song.
     StarSong,
+    RadioSong,
     Back,
     Help,
     Connect,
@@ -1451,7 +1460,7 @@ impl App {
             t.push_str(&text);
         } else if self.view == View::Login {
             self.login.fields[self.login.focus].push_str(&text);
-        } else if nori_core::remote::is_invite(&text) {
+        } else if nori_core::remote::is_invite(&text) || nori_core::remote::pairing_valid(text.clone()) {
             // An invite pasted anywhere offers to join its jam.
             self.overlay = Some(Overlay::Join { text, error: None, busy: false });
         } else {
@@ -1600,6 +1609,10 @@ impl App {
             },
             Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
             Overlay::Join { text, error, busy } => match k.code {
+                KeyCode::Enter if nori_core::remote::pairing_valid(text.clone()) => {
+                    self.cmds.push(Cmd::Pair(text.clone()));
+                    self.overlay = None;
+                }
                 KeyCode::Enter if nori_core::remote::is_invite(text) => {
                     *busy = true;
                     *error = None;
@@ -2079,7 +2092,7 @@ impl App {
             }
             // Hearts are where songs carry them, downloads the account's.
             (Action::Star, _) if !self.rules.stars => self.dirty = false,
-            (Action::Download, _) if !self.rules.account => self.dirty = false,
+            (Action::Download, _) if !self.rules.downloads => self.dirty = false,
             (Action::Download, item) => match item {
                 Item::Song(songs, i) => self.cmds.push(Cmd::Download(vec![songs[i].clone()])),
                 Item::Album(al) => self.cmds.push(Cmd::DownloadFetch(Fetch::Album(al.id))),
@@ -2304,6 +2317,8 @@ impl App {
             Some(DeviceRow::Jam) if d.jam.is_some() => self.invite(),
             Some(DeviceRow::Jam) => self.jam_start(),
             Some(DeviceRow::Join) => self.join(),
+            Some(DeviceRow::Pair) => { if let Some(link) = d.pairing.clone() { self.overlay = Some(Overlay::Invite { link }); } }
+            Some(DeviceRow::ResetPairing) => self.cmds.push(Cmd::ResetPairing),
             None => self.dirty = false,
         }
     }
@@ -2665,6 +2680,11 @@ impl App {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.stars) {
                     let (id, listed) = (s.id.clone(), s.starred);
                     self.star(Starrable::Song, id, listed);
+                }
+            }
+            Button::RadioSong => {
+                if let Some(s) = self.song.as_ref().filter(|_| self.rules.radio) {
+                    self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id.clone()), false));
                 }
             }
             Button::Back => {

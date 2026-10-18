@@ -856,7 +856,7 @@ fn download_states(s: &nori_host::session::Session, songs: &[Song]) -> Vec<(bool
 /// `songs`' download entries (`menus::download_entries`): `[{act, n}]`, `act` 0 download all, 1 download
 /// the `n` missing, 2 remove the `n` downloaded. None where downloads are not the profile's (a jam guest's).
 fn entries_of(s: &nori_host::session::Session, songs: &[Song]) -> Value {
-    if !s.rules.account {
+    if !s.rules.downloads {
         return json!([]);
     }
     let states = download_states(s, songs);

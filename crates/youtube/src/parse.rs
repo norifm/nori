@@ -436,6 +436,41 @@ pub(crate) fn playlist(v: &Value, id: &str) -> PlaylistPage {
     PlaylistPage { playlist, songs }
 }
 
+/// The watch queue returned by `next`, in playback order.
+pub(crate) fn watch_queue(v: &Value) -> Vec<Song> {
+    sections(v, "/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs")
+        .filter_map(|tab| tab.pointer("/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|item| panel_video(item.get("playlistPanelVideoRenderer")?))
+        .collect()
+}
+
+/// The songs a `music/get_queue` answer gives for the videos asked; a video with an audio-only twin
+/// comes wrapped, its own first.
+pub(crate) fn queue(v: &Value) -> Vec<Song> {
+    sections(v, "/queueDatas")
+        .filter_map(|q| q.pointer("/content/playlistPanelVideoRenderer").or_else(|| q.pointer("/content/playlistPanelVideoWrapperRenderer/primaryRenderer/playlistPanelVideoRenderer")))
+        .filter_map(panel_video)
+        .collect()
+}
+
+/// A `playlistPanelVideoRenderer`.
+fn panel_video(item: &Value) -> Option<Song> {
+    let title = joined(&runs(item.get("title")?));
+    let video_id = item.get("videoId")?.as_str()?.to_string();
+    if title.is_empty() || video_id.is_empty() {
+        return None;
+    }
+    let byline = item.get("longBylineText").or_else(|| item.get("shortBylineText")).map(runs).unwrap_or_default();
+    let (artist, artists) = segments(&byline).find_map(artists_of).unwrap_or_else(|| (joined(&byline), Vec::new()));
+    let album = segments(&byline).find_map(|seg| {
+        let (id, Leads::Album) = seg.iter().find_map(|r| r.browse)? else { return None };
+        Some(AlbumLink { id: id.to_string(), name: joined(seg) })
+    });
+    let duration = item.get("lengthText").map(runs).and_then(|r| seconds(&joined(&r))).unwrap_or(0);
+    Some(Song { video_id, title, artist, artists, album, duration, thumbnail: item.get("thumbnail").and_then(thumbnail), ..Default::default() })
+}
+
 /// A carousel's title and its songs, albums, artists and playlists, in order.
 fn carousel(shelf: &Value) -> Option<Shelf> {
     let title = joined(&runs(shelf.pointer("/header/musicCarouselShelfBasicHeaderRenderer/title")?));

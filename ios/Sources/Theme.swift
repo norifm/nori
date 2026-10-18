@@ -79,9 +79,10 @@ extension UIAlertController {
         return sheet
     }
 
-    func add(_ title: String, checked: Bool = false, destructive: Bool = false, run: @escaping () -> Void) {
+    func add(_ title: String, checked: Bool = false, destructive: Bool = false, enabled: Bool = true, run: @escaping () -> Void) {
         let action = UIAlertAction(title: title, style: destructive ? .destructive : .default) { _ in run() }
         if checked { action.setValue(true, forKey: "checked") }
+        action.isEnabled = enabled
         addAction(action)
     }
 
