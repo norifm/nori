@@ -410,10 +410,11 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         if (LocalPlayerShown.current) SystemBarIcons(live)
         Box(
             // Pull down from anywhere on the artwork page and the whole player follows the finger down;
-            // the lyrics and queue need a vertical drag to scroll, so there only the handle does.
+            // the lyrics and queue need a vertical drag to scroll, so there only the handle does. On its side
+            // only the controls' half does (PlayerHalves): across the cover a sideways drag changes the song.
             Modifier.fillMaxSize().onGloballyPositioned { player[0] = it }
                 .then(if (motion != null) Modifier.watchTouches(motion) else Modifier)
-                .dragsSheet(sheet, enabled = panel == Panel.ART),
+                .dragsSheet(sheet, enabled = panel == Panel.ART && !LocalWide.current),
         ) {
             // The page is the cover itself, enlarged and smoothed, lined up with the sleeve. No seam
             // gradient over it: the sleeve carries its own dissolve at its bottom edge, and a gradient
@@ -491,10 +492,10 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
             @Composable fun kept(key: String) = Modifier.sharedElement(rememberSharedContentState(key), this@AnimatedContent)
             // The page's text colour, read while the transport draws.
             val ink = androidx.compose.ui.graphics.ColorProducer { live.color(CoverLook.ON) }
-            // On its side the controls' half has nothing of its own to scroll, so a pull down anywhere on it puts
-            // the player away whatever the panel - as the artwork does - while the lyrics and the queue beside it
-            // keep their vertical drag for scrolling.
-            PlayerHalves(LocalWide.current, Modifier.dragsSheet(sheet, enabled = panel != Panel.ART), panel = {
+            // On its side the controls' half has nothing of its own to drag across but its sliders, so a drag
+            // towards the mini player's edge anywhere on it puts the player away whatever the panel, while the
+            // cover beside it keeps its sideways drag for the songs either side.
+            PlayerHalves(LocalWide.current, Modifier.dragsSheet(sheet, enabled = LocalWide.current), panel = {
                 // The artwork bleeds to all three edges like the sleeve it is - up under the status bar
                 // as well, which is the whole point: Apple's has no top edge, and giving it one drew a
                 // line across the screen. The handle and the close button float over it instead.
@@ -831,7 +832,7 @@ private fun PlayerHalves(wide: Boolean, controlsDrag: Modifier, panel: @Composab
             }
             Column(
                 // Clear of the camera's punch hole too, which is on this side when the phone is turned the other way.
-                // The whole half, edge to edge, takes the pull down ([controlsDrag]) before the insets are kept off.
+                // The whole half, edge to edge, takes the drag that puts the player away ([controlsDrag]) before the insets are kept off.
                 // The same room kept above as below (the gesture bar's, or the status bar's if it is shown), so the
                 // controls stand in the middle of the screen's height rather than of what is above the gesture bar.
                 Modifier.padding(start = if (atEnd) 0.dp else controlsAt, end = if (atEnd) controlsAt else 0.dp).fillMaxSize().then(controlsDrag).padding(vertical = barRoom())

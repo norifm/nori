@@ -426,7 +426,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                 sheet.miniEdge = when (sheet.edge) { SheetEdge.BOTTOM -> b.top; SheetEdge.RIGHT -> b.left; SheetEdge.LEFT -> b.right }
             }
             // Up (inwards, on its side) opens the player, following the finger the whole way; see PlayerSheet.
-            .dragsSheet(sheet, down = false),
+            .dragsSheet(sheet, onMini = true),
     ) {
         // The tap has to be a child of the drag detectors, not a sibling behind them: a pointerInput
         // waiting for drag slop swallows a tap offered to a clickable further up the same chain.

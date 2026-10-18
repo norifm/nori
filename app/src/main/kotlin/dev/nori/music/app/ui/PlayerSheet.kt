@@ -3,6 +3,7 @@ package dev.nori.music.app.ui
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -91,12 +92,6 @@ class PlayerSheet(private val scope: CoroutineScope) {
         SheetEdge.LEFT -> rootSize.width - miniEdge
     }.coerceAtLeast(1f)
 
-    /**
-     * What a drag down the open player is measured against: the sheet's own travel, or the window's height
-     * when the sheet travels across.
-     */
-    private val downSpan: Float get() = if (edge == SheetEdge.BOTTOM) travel else rootSize.height.toFloat().coerceAtLeast(1f)
-
     /** Where the sheet sits put away, relative to filling the window. */
     fun closed(): Offset = when (edge) {
         SheetEdge.BOTTOM -> Offset(0f, travel)
@@ -136,18 +131,14 @@ class PlayerSheet(private val scope: CoroutineScope) {
 
     fun dragStart() { from = if (progress.value > 0.5f) 1f else 0f }
 
-    /**
-     * Moves the sheet with a finger that moved [dy] pixels towards putting it away. [down]: a drag down the
-     * open player rather than along the sheet's way.
-     */
-    fun dragBy(dy: Float, down: Boolean) {
-        val span = if (down) downSpan else travel
-        scope.launch { progress.snapTo((progress.value - dy / span).coerceIn(0f, 1f)) }
+    /** Moves the sheet with a finger that moved [d] pixels its way, towards putting it away. */
+    fun dragBy(d: Float) {
+        scope.launch { progress.snapTo((progress.value - d / travel).coerceIn(0f, 1f)) }
     }
 
-    /** The finger let go at [velocityY] pixels a second: the sheet settles where [sheetTarget] says. */
-    fun release(velocityY: Float, down: Boolean) {
-        settle(sheetTarget(from, progress.value, velocityY), -velocityY / if (down) downSpan else travel)
+    /** The finger let go at [velocity] pixels a second, towards putting it away: it settles where [sheetTarget] says. */
+    fun release(velocity: Float) {
+        settle(sheetTarget(from, progress.value, velocity), -velocity / travel)
     }
 
     private fun settle(target: Float, velocity: Float, stiffness: Float = 420f) {
@@ -188,25 +179,33 @@ fun seen(): Boolean {
 }
 
 /**
- * Vertical drags on this element move the sheet: on the mini player (turned on its side with it, so its
- * vertical is the sheet's way), or [down] the open player, whichever way the sheet travels. The velocity is
- * taken from the summed deltas, not from the pointer's position: inside the sheet the element moves with
- * the finger, so its local position barely changes and would report a flick as standing still.
+ * Drags along the sheet's way move it: up and down when it rises from the bottom, across towards the edge
+ * the mini player stands on when it comes in from the side. The mini player itself is turned with its pill
+ * ([onMini]), so its own vertical is the sheet's way either way. A drag the other way is left to whatever
+ * else wants it (the songs either side, scrolling). The velocity is taken from the summed deltas, not from
+ * the pointer's position: inside the sheet the element moves with the finger, so its local position barely
+ * changes and would report a flick as standing still.
  */
-internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true, down: Boolean = true): Modifier =
-    if (!enabled) this else pointerInput(sheet) {
+internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true, onMini: Boolean = false): Modifier {
+    if (!enabled) return this
+    val across = !onMini && sheet.edge != SheetEdge.BOTTOM
+    // Towards putting it away is positive: down, or out to the edge the mini player stands on.
+    val sign = if (across && sheet.edge == SheetEdge.LEFT) -1f else 1f
+    return pointerInput(sheet, across, sign) {
         val tracker = VelocityTracker()
-        var y = 0f
-        detectVerticalDragGestures(
-            onDragStart = { tracker.resetTracking(); y = 0f; sheet.dragStart() },
-            onDragEnd = { sheet.release(tracker.calculateVelocity().y, down) },
-            onDragCancel = { sheet.release(0f, down) },
-        ) { change, dy ->
-            y += dy
-            tracker.addPosition(change.uptimeMillis, Offset(0f, y))
-            sheet.dragBy(dy, down)
+        var moved = 0f
+        val start = { _: Offset -> tracker.resetTracking(); moved = 0f; sheet.dragStart() }
+        val end = { sheet.release(sign * tracker.calculateVelocity().let { if (across) it.x else it.y }) }
+        val cancel = { sheet.release(0f) }
+        val step = { change: androidx.compose.ui.input.pointer.PointerInputChange, d: Float ->
+            moved += d
+            tracker.addPosition(change.uptimeMillis, if (across) Offset(moved, 0f) else Offset(0f, moved))
+            sheet.dragBy(sign * d)
         }
+        if (across) detectHorizontalDragGestures(start, end, cancel, step)
+        else detectVerticalDragGestures(start, end, cancel, step)
     }
+}
 
 /** How far the back gesture takes the player down before it is let go. */
 private const val BACK_TRAVEL = 0.2f
@@ -217,10 +216,10 @@ private const val SHEET_COMMIT = 0.15f
 
 /**
  * Where the player sheet settles when the finger lifts: 1 open, 0 put away. [from] is the end it was
- * nearer when the drag began, [progress] where it is now and [velocity] the finger's (down positive). A
- * flick goes the way it was flicked; a drag that has come a little way finishes the move it started, and
- * a smaller one goes back. Deciding by the halfway point instead meant a pull down from the player had to
- * cover half the screen before it would close.
+ * nearer when the drag began, [progress] where it is now and [velocity] the finger's, positive towards
+ * putting it away. A flick goes the way it was flicked; a drag that has come a little way finishes the move
+ * it started, and a smaller one goes back. Deciding by the halfway point instead meant a pull down from the
+ * player had to cover half the screen before it would close.
  */
 private fun sheetTarget(from: Float, progress: Float, velocity: Float): Float {
     val moved = progress - from
