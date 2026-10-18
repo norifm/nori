@@ -136,9 +136,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun autoEq() = go("autoeq")
     fun back() { if (sheet.isOpen) sheet.close() else swipe.back() }
     /**
-     * A tab always lands on that tab's own page. It used to save the stack it popped and restore it on
-     * the way back, which meant tapping Home from an album popped the album and then put it straight
-     * back - the tab looked dead. Nothing above the tab roots survives a tab tap now.
+     * A tab always lands on that tab's own page: nothing above the tab roots survives a tab tap. A saved
+     * and restored stack would put an album straight back after Home popped it, and the tab would look dead.
      */
     fun tab(route: String) {
         if (sheet.isOpen) sheet.close()
@@ -208,8 +207,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     androidx.compose.runtime.SideEffect { AppMotion.force = prefs.ignoreSystemMotion; AppMotion.reduce = prefs.reduceMotion || prefs.einkScreen }
     NoriTheme(prefs) {
-        // Sign-in used to cut straight to the app. One short fade is enough: the screens are different
-        // enough that a direction would invent a relationship they do not have.
+        // Sign-in fades to the app: the screens are different enough that a direction would invent a
+        // relationship they do not have.
         val plain = reduceMotion()
         // A jam guest's profile is the same app over its host's library, started afresh on joining and on leaving.
         val guest = remember(prefs.activeServerId, prefs.server?.apiKey) { prefs.server?.apiKey?.let { dev.nori.music.ffi.remote.isGuestKey(it) } == true }
@@ -394,27 +393,23 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             val hideGestureBar = remember(prefs.hideGestureBar, wide, protecting) {
                 android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && dev.nori.music.ffi.settings.barHidden(prefs.hideGestureBar, wide, protecting)
             }
-            androidx.compose.runtime.SideEffect { hiddenBars.value = HiddenBars(hideBar, hideGestureBar) }
-            LaunchedEffect(hideBar, hideGestureBar) {
+            val bars = remember(hideBar, hideGestureBar) { HiddenBars(hideBar, hideGestureBar) }
+            androidx.compose.runtime.SideEffect { hiddenBars.value = bars }
+            LaunchedEffect(bars) {
                 val window = (barsView.context as? android.app.Activity)?.window ?: return@LaunchedEffect
-                val bars = androidx.core.view.WindowCompat.getInsetsController(window, barsView)
-                bars.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                if (hideBar) bars.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                else bars.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                if (hideGestureBar) bars.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
-                else bars.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+                bars.applyTo(window, barsView)
             }
             val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
             // Read only where the layer and the dimming draw, so a move or a dim redraws and recomposes nothing.
-            var drift by remember { mutableStateOf<dev.nori.music.ffi.BurnInDrift?>(null) }
+            var drift by remember { mutableStateOf<dev.nori.music.ffi.look.Drift?>(null) }
             LaunchedEffect(protecting) {
                 if (!protecting) { drift = null; return@LaunchedEffect }
                 val since = System.currentTimeMillis()
                 lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
                     while (true) {
                         val now = System.currentTimeMillis()
-                        drift = dev.nori.music.ffi.burnInDrift(now, since)
-                        kotlinx.coroutines.delay(dev.nori.music.ffi.burnInNextMoveMs(now))
+                        drift = dev.nori.music.ffi.look.drift(now, since)
+                        kotlinx.coroutines.delay(dev.nori.music.ffi.look.nextMoveMs(now))
                     }
                 }
             }
@@ -521,13 +516,13 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     page("artist/{id}", inset = false) { ArtistScreen(it.arguments!!.getString("id")!!, actions) }
                     page("playlist/{id}", inset = false) { PlaylistScreen(it.arguments!!.getString("id")!!, actions) }
                     page("mix/{id}", inset = false) { MixScreen(it.arguments!!.getString("id")!!, actions) }
-                    page("genre/{id}") { GenreScreen(it.arguments!!.getString("id")!!, actions) }
-                    page("smart/{id}") { SmartScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("genre/{id}", inset = false) { GenreScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("smart/{id}", inset = false) { SmartScreen(it.arguments!!.getString("id")!!, actions) }
                     page("smartEdit/{id}") { SmartEditScreen(it.arguments!!.getString("id")!!.let { i -> if (i == "new") "" else i }) }
                     page("stats") { StatsScreen() }
                     page("perf") { dev.nori.music.app.PerfHooks.recorder?.Page() }
                     page("downloads") { DownloadsScreen(actions) }
-                    page("folder/{id}") { FolderScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("folder/{id}", inset = false) { FolderScreen(it.arguments!!.getString("id")!!, actions) }
                     page("decade/{year}") { SongsScreen(actions, it.arguments!!.getString("year")!!.toInt()) }
                 }
                 // A newer release, and its download and install once asked for; under the player, so the
@@ -846,10 +841,16 @@ private fun EdgeBack(swipe: PageSwipe, sheet: PlayerSheet, controller: androidx.
 @Composable
 private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
     val shown by remember { androidx.compose.runtime.derivedStateOf { sheet.progress.value > 0f || sheet.progress.targetValue > 0f } }
-    // Built once, shortly after the app is up, and kept: opening the player then only moves it. Until
-    // then, and on a phone too slow to have got there, the first open builds it.
+    // Built once the app's first frame is drawn and the main thread has nothing else to do, and kept:
+    // opening the player then only moves it. An open before that builds it.
     var warm by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { kotlinx.coroutines.delay(1500); warm = true }
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.DisposableEffect(view) {
+        val idle = android.os.MessageQueue.IdleHandler { warm = true; false }
+        val queue = android.os.Looper.myQueue()
+        view.post { queue.addIdleHandler(idle) }
+        onDispose { queue.removeIdleHandler(idle) }
+    }
     if (!shown && !warm) return
     val radius = with(androidx.compose.ui.platform.LocalDensity.current) { 14.dp.toPx() }
     if (shown) Box(
@@ -865,8 +866,8 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
             translationY = if (parked) sheet.rootHeight * 2f + 1f else sheet.offset()
             // It comes up *through* the now playing bar rather than on top of it: for the first tenth of
             // the rise the player is still part transparent, so the bar shows through its own place in
-            // it. Snapping to full strength on the first frame of a drag - which is what this did - made
-            // a whole dark page appear out of nothing before it had moved anywhere.
+            // it. At full strength on the first frame of a drag, a whole dark page would appear out of
+            // nothing before it had moved anywhere.
             alpha = if (parked) 0f else (sheet.progress.value / 0.1f).coerceIn(0f, 1f)
             val r = radius * (1f - sheet.progress.value).coerceIn(0f, 1f) * 4f
             shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = r.coerceAtMost(radius), topEnd = r.coerceAtMost(radius))
@@ -918,7 +919,7 @@ private fun rememberCharging(watch: Boolean): Boolean {
  */
 private fun Modifier.burnInProtection(
     touches: kotlinx.coroutines.flow.MutableSharedFlow<Unit>,
-    drift: () -> dev.nori.music.ffi.BurnInDrift?,
+    drift: () -> dev.nori.music.ffi.look.Drift?,
     dim: () -> Float,
 ): Modifier = this
     .pointerInput(touches) {

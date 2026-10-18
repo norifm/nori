@@ -2,6 +2,10 @@
 //! changes, a collection's songs, the offline index, cover colours and the output volume in dB. Media
 //! controls (`desktop` feature) sit over the engine. Each client words what happens itself.
 
+#[cfg(feature = "desktop")]
+pub mod desktop;
+pub mod pages;
+pub mod player;
 pub mod remote;
 pub mod session;
 
@@ -20,9 +24,9 @@ use nori_core::{Core, OriginKind, PageOrigin, Song};
 use nori_tasks::Tasks;
 use nori_covers::memory::Image;
 #[cfg(feature = "desktop")]
-use nori_engine::State;
+use nori_engine::{State, Status};
 use nori_engine::core::OutputVolume;
-use nori_engine::{Engine, Status};
+use nori_engine::Engine;
 use nori_look::cover::CoverColours;
 
 /// The database shared by all profiles and the settings.
@@ -60,7 +64,7 @@ pub enum JoinError {
 /// one `remote` (this device's) opened ([`nori_core::remote::jam_join`]).
 pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &Arc<Settings>, link: String, device: &str, remote: Option<Arc<nori_core::remote::Remote>>) -> Result<JamPass, JoinError> {
     use nori_core::remote::JamJoin;
-    let user = settings.prefs(|p| p.servers.iter().find(|s| s.id == p.active_server_id).map(|s| s.user.clone()).filter(|u| !u.is_empty()));
+    let user = settings.prefs(|p| p.active_server().map(|s| s.user.clone()).filter(|u| !u.is_empty()));
     match block_on(nori_core::remote::jam_join(transport, settings.clone(), remote, link, user.unwrap_or_else(|| device.into()))) {
         Ok(JamJoin::Joined { pass }) => Ok(pass),
         Ok(JamJoin::Own) => Err(JoinError::Own),
@@ -73,15 +77,12 @@ pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &
 /// profile before it. The account's profile active until now is opened again by [`jam_left`].
 pub fn jam_joined(settings: &Settings, pass: JamPass, name: &str) -> SavedServer {
     let mut prefs = settings.current().unwrap_or_default();
-    let active = prefs.servers.iter().find(|s| s.id == prefs.active_server_id);
-    if active.is_some_and(|s| !nori_remote::is_guest_key(&s.api_key)) {
+    if prefs.active_server().is_some_and(|s| !nori_remote::is_guest_key(&s.api_key)) {
         settings.keep_app_value(BEFORE_JAM, prefs.active_server_id.clone());
     }
     let guest = SavedServer { id: nori_core::settings::new_server_id(), name: name.into(), url: pass.url, api_key: pass.api_key, ..Default::default() };
     prefs.servers.retain(|s| !nori_remote::is_guest_key(&s.api_key));
-    prefs.servers.push(guest.clone());
-    prefs.active_server_id = guest.id.clone();
-    settings.put(prefs);
+    settings.put(nori_core::providers::profile_activated(prefs, guest.clone()));
     guest
 }
 
@@ -197,29 +198,11 @@ impl Fetch {
     }
 }
 
-/// Natively, each task on a thread of its own as before, since the platform's HTTP (ureq) blocks the
-/// thread a request is made on; timers on one [`nori_tasks::Native`] thread, parked while none is due.
+/// Where a session's work that waits on the network runs natively: one [`nori_tasks::Native`] thread,
+/// parked while nothing is ready. Requests answer from nori-http's own threads.
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub struct Threads {
-    timers: nori_tasks::Native,
-}
-
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-impl Threads {
-    pub fn new() -> Arc<Threads> {
-        Arc::new(Threads { timers: nori_tasks::Native::new("nori-timers").expect("a thread for timers") })
-    }
-}
-
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-impl Tasks for Threads {
-    fn spawn(&self, task: nori_tasks::Task) {
-        spawn("nori-task", move || block_on(task));
-    }
-
-    fn sleep(&self, after: Duration) -> nori_tasks::Sleep {
-        self.timers.sleep(after)
-    }
+pub fn tasks() -> Arc<dyn Tasks> {
+    Arc::new(nori_tasks::Native::new("nori-tasks").expect("a thread for the session's tasks"))
 }
 
 /// Saves the queue and playback position.
@@ -290,61 +273,6 @@ impl Keeper {
     }
 }
 
-/// The playing song, from the engine's status.
-pub type SongOf = Box<dyn Fn(&Status) -> Option<Song> + Send + Sync>;
-
-/// Media controls over the engine.
-pub struct Controls {
-    pub engine: Arc<Engine>,
-    pub song: SongOf,
-}
-
-impl Controls {
-    /// Controls whose song is `queue`'s.
-    pub fn over_queue(engine: Arc<Engine>, queue: Arc<nori_core::queue::Session>) -> Controls {
-        Controls { engine, song: Box::new(move |s| s.id.as_deref().and_then(|id| queue.song(id))) }
-    }
-}
-
-#[cfg(feature = "desktop")]
-impl nori_mpris::Controls for Controls {
-    fn play(&self) {
-        self.engine.play();
-    }
-    fn pause(&self) {
-        self.engine.pause();
-    }
-    fn toggle(&self) {
-        self.engine.toggle();
-    }
-    fn next(&self) {
-        self.engine.next();
-    }
-    fn previous(&self) {
-        self.engine.previous();
-    }
-    fn seek(&self, ms: i64) {
-        self.engine.seek(ms);
-    }
-    fn now(&self) -> nori_mpris::Now {
-        let s = self.engine.status();
-        let song = (self.song)(&s).unwrap_or_default();
-        nori_mpris::Now {
-            playing: s.state == State::Playing,
-            loaded: s.state == State::Paused,
-            index: s.index,
-            title: song.title,
-            artist: song.artist,
-            album: song.album,
-            length_ms: song.duration as i64 * 1000,
-            position_ms: s.position_now(),
-            starred: song.starred,
-            art: None,
-            art_file: None,
-        }
-    }
-}
-
 /// The place heard at the last look, for telling a jump (MPRIS's Seeked) from the music moving on.
 #[cfg(feature = "desktop")]
 #[derive(Default)]
@@ -392,7 +320,7 @@ mod tests {
     fn queue_saves_wait_for_the_last_one_asked() {
         let saves = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let (seen, started) = (saves.clone(), Instant::now());
-        let keeper = Keeper::start(move || seen.lock().push(started.elapsed()), Threads::new());
+        let keeper = Keeper::start(move || seen.lock().push(started.elapsed()), tasks());
         keeper.later(150);
         std::thread::sleep(Duration::from_millis(50));
         keeper.later(150);

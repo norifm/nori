@@ -7,12 +7,9 @@ import dev.nori.music.look.CoverPixels
  * shown at once, anything else is asked of the loader, and a load that fails is asked again once, a
  * moment later, before the view gives up on the picture. [CoverImage] is this over the app's loader.
  *
- * A failure used to be final: the player's sleeve drew its placeholder for the rest of the song after a
- * single cover fetch that timed out, or one the loader answered with nothing because the song had been
- * skipped away from and back while it was on the wire. Now a failure the next try can mend (the network,
- * the server, a file cut short, a fetch nobody waited for) waits [RETRY_MS] and asks again, with the view
- * still showing that the picture is on its way; one that cannot be mended (a format that is not decoded)
- * is given up at once. Every failure is told to [Source.failed], which the perf build logs with its reason.
+ * A failure the next try can mend (a fetch that timed out, the server, a file cut short) waits
+ * [RETRY_MS] and asks again, with the view still showing that the picture is on its way; one that cannot
+ * be mended (a format that is not decoded) is given up at once. Every failure is told to [Source.failed], which the perf build logs with its reason.
  *
  * Offline, a view does not shimmer through the try again: a failure that says the server cannot be
  * reached at all ([unreachable]: no network, no route, nobody answering) settles on the placeholder at

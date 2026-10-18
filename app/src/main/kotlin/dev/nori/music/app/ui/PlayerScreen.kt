@@ -196,8 +196,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     val shift = remember { PageShift() }
     // How far the panel that is arriving has arrived. One number for the whole screen, driven here
     // rather than inside AnimatedContent: a child animation started by the content that is entering
-    // reads its own state as already settled and never runs, which is why the sleeve used to be
-    // replaced by the page behind it in a single frame instead of dissolving into it.
+    // reads its own state as already settled and never runs, and the sleeve would be replaced by the
+    // page behind it in a single frame instead of dissolving into it.
     val arrival = remember { Animatable(1f) }
     var showing by remember { mutableStateOf(panel) }
     /** The panel being left, for as long as the change lasts. */
@@ -252,7 +252,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // AMOLED black everywhere else, but the player keeps the cover's colours unless asked not to: in
     // black, the page under the sleeve was pure black and the picture looked cut off, where Apple's
     // carries the record's colour down the whole screen.
-    val black = remember(dark, prefs.amoled, prefs.playerColours) { dev.nori.music.ffi.pageBlack(dark, prefs.amoled, prefs.playerColours) }
+    val black = remember(dark, prefs.amoled, prefs.playerColours) { dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, prefs.playerColours) }
     // A provider's song wears its cover too (it is on screen); only its neighbours' are never measured ahead.
     val rowUrl = vm.cover(state.current?.coverArt, CoverSize.ROW)
     val tint = if (prefs.coverColors) rememberCoverTint(rowUrl, black) else CoverTint(rowUrl, null)
@@ -338,10 +338,10 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     }
 
     // The colours of a record that has fully arrived, kept until the page itself is wearing them (`held`,
-    // declared above). The page used to stop drawing them the moment the sleeve let go of the record,
-    // which is one or two frames before it took them on: for those frames the page went back to the
-    // record before, and the record growing back into place swept its own soft bottom down over that -
-    // the frame of the previous cover that shows as the sleeve zooms in. Latched on a boolean, so it
+    // declared above). The sleeve lets go of the record one or two frames before the page takes them
+    // on: dropped then, the page would go back to the record before for those frames, and the record
+    // growing back into place would sweep its own soft bottom down over that - a frame of the previous
+    // cover as the sleeve zooms in. Latched on a boolean, so it
     // cannot be missed when two changes land in the same frame.
     LaunchedEffect(shift) {
         androidx.compose.runtime.snapshotFlow { shift.amount >= 0.999f }.collect { full ->
@@ -371,8 +371,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // to fire near the end of a white↔colour cross-fade and look like a snap.
     //
     // Two looks worked out by nori-look, and how far between them the page is, read where each colour
-    // is drawn: a fade or a drag redraws what shows the colours and recomposes nothing. It used to mix
-    // a palette and build a whole new colour scheme here on every frame, which recomposed the player.
+    // is drawn: a fade or a drag redraws what shows the colours and recomposes nothing, where a palette
+    // mixed and a colour scheme built here on every frame would recompose the player.
     val live = remember {
         LiveLook { mode ->
             when (mode) {
@@ -430,8 +430,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     if (across) return@drawWithCache sleeveWashAcross(p, bottom, resting)
                     // At the sleeve's size and place whatever the record is doing. A record picked up is
                     // whole above the sleeve's soft band; only in that band does it give way to this,
-                    // and the band does not move (see rubOutBottom). The copy used to shrink with the
-                    // record, and the page's colours moving about was what caught the eye.
+                    // and the band does not move (see rubOutBottom): a copy shrinking with the
+                    // record would move the page's colours about, which catches the eye.
                     sleeveWash(p, bottom, resting)
                 }
             }
@@ -498,8 +498,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 //
                 // The sleeve takes exactly its square and no more. Giving it the column's spare height
                 // instead left a band of empty wash under it twice as deep as Apple's, because the
-                // controls below are shorter than the space that was left over; the spare height now
-                // sits above the volume slider, which is where Apple's is.
+                // controls below are shorter than the space left over; the spare height sits above
+                // the volume slider, which is where Apple's is.
                 // The sleeve draws further down than it takes up: the title and artist are laid out over
                 // its last stretch, which is already going soft, the way Apple's are. Measured on `w4`,
                 // their cover is sharp to about 53 % of the screen and still leaves a faint trace behind
@@ -525,7 +525,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                         // the flight, which is started by an effect, had not begun - one frame with no
                         // cover on screen at all.
                         // Back from the queue, which covers nothing (rows over the page), the sleeve comes up
-                        // under it as the rows fade: at full strength at once it was a cut under a fade.
+                        // under it as the rows fade: at full strength at once it would be a cut under a fade.
                         .graphicsLayer {
                             alpha = when {
                                 (page == panel && panel != showing) || flying -> 0f
@@ -574,10 +574,9 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                         )
                     }
                 } else {
-                    // Where the handle used to be. The bar and the close button below it were two more
-                    // things to look at for something the page already does - a pull anywhere on the
-                    // artwork puts the player away - so only the drag is left, over the strip the lyrics
-                    // and the queue cannot have (they need their own vertical drag to scroll).
+                    // No handle or close button: a pull anywhere on the artwork already puts the player
+                    // away, so only the drag is here, over the strip the lyrics and the queue cannot have
+                    // (they need their own vertical drag to scroll).
                     Spacer(Modifier.fillMaxWidth().windowInsetsPadding(statusBarRoom).height(22.dp).dragsSheet(sheet))
                     Box(
                         Modifier.weight(1f).graphicsLayer { alpha = panelFade.read() }
@@ -643,9 +642,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                                     Modifier.readable(key = m.key), style = MaterialTheme.typography.titleLarge,
                                     maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                                 )
-                                // Artist and album, each on its own line and each a way there. On one line they
-                                // ran two ellipses into each other as soon as the album had a long name, which
-                                // is why the album used to be on the ⋯ menu and nowhere else.
+                                // Artist and album, each on its own line and each a way there: on one line they
+                                // run two ellipses into each other as soon as the album has a long name.
                                 //
                                 // Apple holds these lines back from the title rather than colouring them: a
                                 // saturated accent here is the one thing that made the screen read as Material.
@@ -976,7 +974,7 @@ private fun Artwork(
             // Just enough shade under the status bar for its icons to read on a pale cover; the same
             // amount the album page uses, and invisible against anything darker.
             // On its side the sleeve's right edge goes soft (SoftSleeve), and the shade goes with it: stopping
-            // where the sleeve does, it was a darker block with a hard edge across the top of the soft band.
+            // where the sleeve does, it would be a darker block with a hard edge across the top of the soft band.
             val across = LocalWide.current
             val turned = across && LocalCoverAtEnd.current
             Box(
@@ -1278,9 +1276,9 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                         scaleX = k; scaleY = k
                         // The square grows about its own middle and travels from the middle of the
                         // thumbnail to the middle of the screen, which is where the sleeve's middle is.
-                        // Carrying its left edge instead - what this did - left it hanging in the top left
-                        // corner of the sheet for the whole climb, with the page showing down the right
-                        // hand side, and it arrived a little way off the sleeve it was handing over to.
+                        // Carrying its left edge instead would leave it hanging in the top left corner of
+                        // the sheet for the whole climb, with the page showing down the right hand side,
+                        // and it would arrive a little way off the sleeve it hands over to.
                         val drawn = size.width * k
                         // Sideways it is most of the way over before it is half way up. The thumbnail sits
                         // at the very left of the bar and the sheet under it is already the full width, so
@@ -1422,10 +1420,9 @@ private fun SleeveCarousel(
 ) {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
-    // Where the record is, in pixels, written straight from the finger. It was an Animatable, snapped
-    // to from a coroutine per pointer event; on a flick several of those were still queued when the
-    // finger left, and they landed on top of the animation that had already started and dragged the
-    // record back - the change that jerked instead of running through once.
+    // Where the record is, in pixels, written straight from the finger. Not an Animatable snapped to from
+    // a coroutine per pointer event: on a flick several of those would still be queued when the finger
+    // left, land on top of the animation already started and drag the record back.
     //
     // Every write also moves the page's colours with it (see `sync` below), there and then: the page used
     // to follow through a flow that made a list and boxed the offset on every frame of a drag.
@@ -1496,8 +1493,8 @@ private fun SleeveCarousel(
     }
     // A song that changes by itself - the end of one, gapless, a crossfade, an AutoMix switch, a skip
     // from the notification - changes record the way a skip does: the record it left goes out one side
-    // and the new one comes in from the other, lifted, and settles into the sleeve. It used to dissolve
-    // in place, which next to a skip read as the player snapping. The song on the page only moves when
+    // and the new one comes in from the other, lifted, and settles into the sleeve: a dissolve in place
+    // next to a skip reads as the player snapping. The song on the page only moves when
     // the ear does (for a mix, where the incoming song becomes the louder), so the slide starts there.
     //
     // Decided while composing, so the first frame the new song is drawn on already has its record off
@@ -1549,9 +1546,8 @@ private fun SleeveCarousel(
         androidx.compose.runtime.snapshotFlow { !holding && offset == 0f && lift.value == 0f && landedUrl == null && !naturalHere }
             .collect { motion.resting = it }
     }
-    // The plate a record waits on: the same placeholder as the sleeve's, the theme's own surface. It
-    // used to be the page's, which is the colour of the song being left - a record for the next song
-    // arriving in the last one's colour.
+    // The plate a record waits on: the same placeholder as the sleeve's, the theme's own surface, not
+    // the page's, which is the colour of the song being left.
     val plate = Modifier.drawBehind { drawRect(art.plate) }
     val shapes = remember { CornerShapes() }
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -1682,8 +1678,8 @@ private fun SleeveCarousel(
             // picture in from where the record had it when it comes (SleeveArt.clearFor).
             if (!whole && url != art.shownUrl) art.clearFor(url, level)
             // What the player has been asked for, whether or not there was a picture to hold over. The
-            // next change waits for this, not for the picture: a cover that failed to load used to let
-            // the one after it start against a queue that had not moved yet.
+            // next change waits for this, not for the picture, so a cover that failed to load does not let
+            // the one after it start against a queue that has not moved yet.
             committed = url
             committedTint = if (go < 0) nextTintNow else previousTintNow
             // Unless the sleeve already shows this picture (the next song of the same album): then no
@@ -1747,8 +1743,8 @@ private fun SleeveCarousel(
     // change at once (the song moves on now, see land's cancel path) and the record that was coming
     // in carries straight on from wherever it is to become the one going out - so five quick presses
     // are five songs and one continuous scroll of records, and the motion stops within a slide of the
-    // last press. They used to queue, four deep, each waiting for the slide before it: the records
-    // went on scrolling for a second after the thumb had stopped, which read as the player lagging.
+    // last press. Queued, each waiting for the slide before it, the records would go on scrolling for a
+    // second after the thumb had stopped, which reads as the player lagging.
     // The interrupting slide starts with the speed the record already had, so nothing jolts.
     LaunchedEffect(moving, holding) {
         // Whatever happened - a move that turned out to have nothing to move to, a landing cancelled
@@ -1801,7 +1797,7 @@ private fun SleeveCarousel(
                 }
             }
             // Sideways only, and plainly so: the sleeve sits inside the sheet that is pulled down to
-            // put the player away, and a dismissal with any slant at all used to change the song.
+            // put the player away, and a dismissal with any slant at all must not change the song.
             sidewaysDrag(
                 slop = 1.5f, ratio = 1.8f,
                 onDragStart = {
@@ -1891,8 +1887,8 @@ private fun SleeveCarousel(
             // fade between them shows no shift; it moves with the record, too. The sharp copy only: a
             // surface is drawn once, so the blurred band at the sleeve's foot stays the still cover's, which
             // is also what the page's wash is made of. When the song changes by itself it goes out with the
-            // record it was playing on, fading as it goes: that record is the neighbour by then, and the
-            // video used to vanish on the slide's first frame, leaving the still cover in its place.
+            // record it was playing on, fading as it goes (that record is the neighbour by then) rather than
+            // vanishing on the slide's first frame and leaving the still cover in its place.
             // Composed here, after the records, whatever happens to them, so its surface is never made
             // again in the middle of a move.
             if (!blurred && motion != null && motion.present && landedUrl == null) Box(
@@ -1951,7 +1947,7 @@ private class BandEffect(blurPx: Float) {
         val key = (q(s) shl 30) or (q(kr) shl 20) or (q(kg) shl 10) or q(kb)
         return made[key] ?: run {
             // The matrix is nori-look's (`sleeve::band_matrix`), asked once per tint.
-            val m = android.graphics.ColorMatrix(dev.nori.music.ffi.bandMatrix(s, kr, kg, kb).toFloatArray())
+            val m = android.graphics.ColorMatrix(dev.nori.music.ffi.look.bandMatrix(s, kr, kg, kb).toFloatArray())
             android.graphics.RenderEffect.createColorFilterEffect(android.graphics.ColorMatrixColorFilter(m), blur).asComposeRenderEffect()
         }.also { made[key] = it }
     }
@@ -2087,8 +2083,8 @@ internal fun swipeTurn(offset: Float, velocity: Float, width: Float, hasBefore: 
 /** The scale of a record [side] tall at lift [l], on a sleeve [width] wide: 1 at rest, the whole square at 86 % of the width held. */
 private fun liftedScale(l: Float, width: Float, side: Float): Float {
     val held = if (side > 0f) (LIFTED_WIDTH * width / side).coerceAtMost(1f) else 1f
-    // Never past either end. A spring settling back to nought used to dip below it for a few frames,
-    // which made the record a shade bigger than the sleeve - enough for the page's wash, which is drawn
+    // Never past either end. A spring settling back to nought dips below it for a few frames, which
+    // would make the record a shade bigger than the sleeve - enough for the page's wash, which is drawn
     // to the sleeve's own size, to stop short of the bottom edge and leave a line there.
     return 1f - (1f - held) * l.coerceIn(0f, 1f)
 }
@@ -2327,7 +2323,7 @@ internal fun Modifier.readable(iterations: Int = READ_OUT, key: String? = null):
     // [key]: the line is the same one wherever it is drawn (the player's title, in each panel). It remembers
     // what it measured and that it has begun reading itself out, so a panel change - which draws the title
     // anew - does not lay it out once without its soft edge and then again with it, and does not walk it from
-    // the start again: that was the title flashing and jumping back each time the lyrics or queue opened.
+    // the start again, which would flash the title and jump it back each time the lyrics or queue open.
     val seen = key?.let(ReadOut::of)
     // What the line needs and what it has. The first size is this element's own - the width the row
     // gives the title - and the second is the text's, measured inside the marquee, which lays it out
@@ -2708,7 +2704,7 @@ private fun Queue(vm: PlayerViewModel) {
 
   Box(Modifier.fillMaxSize()) {
     // Shuffle and repeat live here, pinned above the list - not in the transport, and never scrolled
-    // away (the list opens at the playing row, which used to hide them).
+    // away (the list opens at the playing row, which would hide them).
     Column(Modifier.fillMaxSize()) {
         val j = jam
         val start by remote.jamStarting.collectAsStateWithLifecycle()

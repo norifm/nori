@@ -146,9 +146,9 @@ class PageSwipe(private val controller: NavHostController, private val scope: Co
     private fun finish() {
         // The motion has already shown the change; the stack follows with none of its own, until anything
         // next moves the stack ([plain]). The page taken away keeps its offset, off the screen, until it
-        // leaves the composition ([left]). Both used to end two frames after the pop: on a phone slower than
-        // that to build the page come back, the stack ran its own pop over it - back, then a second switch -
-        // or the page taken away drew whole again over it.
+        // leaves the composition ([left]). Ended a fixed two frames after the pop, a phone slower than that
+        // to build the page come back would see the stack run its own pop over it, or the page taken away
+        // drawn whole again over it.
         PageMotion.instant = true
         controller.popBackStack()
     }

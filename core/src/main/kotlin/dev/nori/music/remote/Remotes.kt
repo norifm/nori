@@ -6,7 +6,6 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import dev.nori.music.Nori
@@ -14,7 +13,6 @@ import dev.nori.music.ffi.Client
 import dev.nori.music.ffi.JamControls
 import dev.nori.music.ffi.JamView
 import dev.nori.music.ffi.Mirror
-import dev.nori.music.ffi.Playing
 import dev.nori.music.ffi.RelaySupport
 import dev.nori.music.ffi.Remote
 import dev.nori.music.ffi.RemoteMe
@@ -302,18 +300,10 @@ class Remotes(private val context: Context, private val nori: Nori) {
         current()?.watch(on)
     }
 
-    /** The player's state changed; nothing happens unless a remote exists. */
-    fun played(state: Playing) {
+    /** The player's state changed: [tell] tells the remote where it is, at the media volume; nothing happens unless a remote exists. */
+    fun played(tell: (Remote, Int?) -> Unit) {
         val r = remote ?: return
-        val read = SystemClock.elapsedRealtimeNanos()
-        work {
-            val elapsed = if (state.playing && !state.buffering) (SystemClock.elapsedRealtimeNanos() - read) / 1_000_000 else 0L
-            r.played(state.copy(
-                positionMs = state.positionMs + (elapsed * state.rate).toLong(),
-                mixPositionMs = state.mixPositionMs + (elapsed * state.mixRate).toLong(),
-                volume = volumePercent(context)?.toUByte(),
-            ))
-        }
+        work { tell(r, volumePercent(context)) }
     }
 
     /**

@@ -16,10 +16,10 @@ use nori_core::stage::QueueRows;
 use nori_core::{Album, Artist, Genre, Lyrics, OriginKind, PageOrigin, Playlist, SearchResult, Song};
 use nori_covers::loader::Ticket;
 use nori_engine::State;
-use nori_core::remote::{Mirror, MirrorRow};
-use nori_host::remote::Elsewhere;
 use nori_host::session::{read_pages, Chore};
+use nori_host::pages::{HomePart, ShelfItems};
 use nori_host::Fetch;
+use nori_core::settings::HomeRow;
 use serde_json::{json, Value};
 
 use crate::session::{c_text, with_session};
@@ -41,8 +41,6 @@ pub const PAGE_STARRED: i32 = 14;
 
 /// Albums asked per list page.
 const ALBUM_PAGE: i32 = 500;
-/// Albums on a home shelf.
-const SHELF: i32 = 30;
 /// Song lists kept for taps; older pages fall off.
 const KEPT_LISTS: usize = 24;
 
@@ -52,9 +50,6 @@ pub const PAGE_SMARTS: i32 = 16;
 /// One smart playlist by id: its songs.
 pub const PAGE_SMART: i32 = 17;
 pub const PAGE_DOWNLOADED_ALBUM: i32 = 18;
-
-/// The home shelves, in order: their keys are the client's to word.
-const SHELVES: [&str; 6] = ["mixes", "random", "recent", "newest", "starred", "playlists"];
 
 pub type PageFn = unsafe extern "C" fn(u64, *const c_char);
 /// `(token, width, height, rgba, len, owner)`: the pixels stay valid until `owner` is given to
@@ -352,11 +347,23 @@ fn refresh_favourites(
     let _ = nori_core::transport::block_on(client.mix_favourites_refresh(digest));
 }
 
-/// The "For you" row to send again once the mixes are warm: whenever it differs from what was sent,
-/// whoever drew them (another read of Home may have, leaving this one's warm-up nothing to do), or always
-/// when no shelf answered.
-fn tiles_again(sent: &Value, now: Value, any: bool) -> Option<Value> {
-    (now != *sent || !any).then_some(now)
+/// A Home shelf's key, which the app words.
+fn shelf_key(row: HomeRow) -> &'static str {
+    match row {
+        HomeRow::Pinned => "pinned",
+        HomeRow::Playlists => "playlists",
+        HomeRow::Recent => "recent",
+        HomeRow::Newest => "newest",
+        HomeRow::Frequent => "frequent",
+        HomeRow::TopSongs => "topSongs",
+        HomeRow::Random => "random",
+        HomeRow::Starred => "starred",
+    }
+}
+
+/// A shelf of covers; songs are a list.
+fn shelf_grid(row: HomeRow) -> bool {
+    row != HomeRow::TopSongs
 }
 
 /// The running downloads' facts on their rows: `pct` whole percent (-1 unknown), `bps` bytes a second
@@ -413,62 +420,32 @@ fn read(token: u64, kind: i32, arg: String) {
             Some(json!({ "sections": feed_sections(token, &v) }))
         }),
         PAGE_HOME => {
-            // The mixes, the favourites and the playlists are the account's: a jam guest's Home is the
-            // host's album shelves.
-            let account = core.rules().account;
-            let taste = core.session.settings.prefs(|p| p.taste_model);
-            let mixes = |core: &nori_core::Core| {
-                section("mixes", true, if account { core.mix_cards(taste).iter().map(mix_json).collect() } else { Vec::new() })
-            };
-            let mut rows: Vec<Value> = SHELVES
-                .iter()
-                .map(|k| section(k, true, Vec::new()))
-                .collect();
-            let stored = client.mix_favourites_stored();
-            rows[0] = mixes(&core);
-            let mut any = false;
-            for (i, key) in SHELVES.iter().enumerate().skip(1) {
-                if !account && matches!(*key, "starred" | "playlists") {
-                    continue;
-                }
-                let read = match *key {
-                    "starred" => Read::FavouriteAlbums { size: SHELF },
-                    "playlists" => Read::PlaylistList,
-                    _ => Read::AlbumList {
-                        kind: match *key {
-                            "random" => AlbumSort::Random,
-                            "recent" => AlbumSort::Recent,
-                            _ => AlbumSort::Newest,
-                        },
-                        size: SHELF,
-                        offset: 0,
-                        genre: None,
-                    },
-                };
-                let r = read_pages(&client, read, |p| {
-                    let items = match p {
-                        Page::Albums { v } => v.iter().map(album_json).collect(),
-                        Page::Playlists { v } => v.iter().map(playlist_json).collect(),
-                        _ => return,
-                    };
-                    rows[i] = section(key, true, items);
-                    any = true;
-                    send(token, &json!({ "sections": rows }));
-                });
-                if let Err(e) = r {
-                    if !any {
-                        return send_error(token, &e);
+            let Some(h) = with_session(|s| nori_host::session::Handle::clone(s)) else { return };
+            let rows = h.home_rows();
+            // "For you", then the shelves in the order kept; a jam guest's mixes stay empty.
+            let shown: Vec<Value> = std::iter::once(section("mixes", true, Vec::new())).chain(rows.iter().map(|&r| section(shelf_key(r), shelf_grid(r), Vec::new()))).collect();
+            let shown = std::sync::Mutex::new(shown);
+            h.read_home(rows, true, move |r| {
+                let mut v = lock(&shown);
+                match r {
+                    Ok(HomePart::Feed(feed)) => return send(token, &json!({ "sections": feed_sections(token, &feed) })),
+                    Ok(HomePart::Mixes(tiles)) => v[0] = section("mixes", true, tiles.iter().map(mix_json).collect()),
+                    Ok(HomePart::Shelf { at, items }) => {
+                        let key = v[at + 1]["key"].as_str().unwrap_or_default().to_string();
+                        v[at + 1] = match items {
+                            ShelfItems::Albums(a) => section(&key, true, a.iter().map(album_json).collect()),
+                            ShelfItems::Playlists(p) => section(&key, true, p.iter().map(playlist_json).collect()),
+                            ShelfItems::Songs(songs) => {
+                                let shelf = songs_section(&key, &songs, 0);
+                                keep_list(token, songs, None);
+                                shelf
+                            }
+                        };
                     }
+                    Err(e) => return send_error(token, &e),
                 }
-            }
-            if account {
-                refresh_favourites(&client, stored);
-                nori_core::transport::block_on(client.mix_warm_all());
-            }
-            if let Some(tiles) = tiles_again(&rows[0], mixes(&core), any) {
-                rows[0] = tiles;
-                send(token, &json!({ "sections": rows }));
-            }
+                send(token, &json!({ "sections": *v }));
+            });
         }
         PAGE_MIX => {
             if arg == FAVOURITES_MIX {
@@ -709,24 +686,27 @@ fn read(token: u64, kind: i32, arg: String) {
     }
 }
 
+/// The queue the player shows (`Handle::queue_shown`): this iPod's, the device's it mirrors (`remote`:
+/// read only but for a tap, which plays that song there), or a jam guest's host's (`jam`), each song
+/// with who asked for it in the jam (`by`) where someone did.
 fn queue_json(s: &nori_host::session::Session) -> Value {
-    if let Some(e) = s.elsewhere() {
-        return mirrored_queue_json(&e.mirror);
+    let q = s.queue_shown(None);
+    let shown = q.heard().map_or(-1, |i| i as i32);
+    let mut v = queue_sections(&q.view.songs, &q.rows, q.view.repeat, q.view.shuffle, shown);
+    if q.mirrored {
+        v["head"]["remote"] = json!(true);
     }
-    if s.guest {
-        return jam_queue_json(s);
+    if q.jam {
+        v["head"]["jam"] = json!(true);
     }
-    let q = &s.core.session;
-    let (ids, current, repeat, lit) =
-        q.playlist(|p| (p.ids().to_vec(), p.current(), p.repeat(), p.lit()));
-    // The song heard, which during a mix is not yet the queue's current one.
-    let shown = s.engine.status().index.or(current).map_or(-1, |i| i as i32);
-    let rows = s.core.queue_rows(ids.len() as u32, lit, shown);
-    let songs: Vec<Song> = ids
-        .iter()
-        .map(|id| q.song(id).unwrap_or_else(|| Song { id: id.clone(), ..Song::default() }))
-        .collect();
-    queue_sections(&songs, &rows, repeat, lit, shown)
+    for section in v["sections"].as_array_mut().into_iter().flatten() {
+        for row in section["items"].as_array_mut().into_iter().flatten() {
+            if let Some(by) = row["id"].as_str().and_then(|id| q.by.get(id)) {
+                row["by"] = json!(by);
+            }
+        }
+    }
+    v
 }
 
 /// The queue in play order (`Core::queue_rows`): what has played, the song playing, what plays next.
@@ -754,105 +734,34 @@ fn queue_sections(songs: &[Song], rows: &QueueRows, repeat: u8, shuffle: bool, s
     })
 }
 
-/// The queue of the device this one mirrors, as far as it is known here, in play order. Read only here
-/// but for a tap, which plays that song there (`remote`).
-fn mirrored_queue_json(m: &Mirror) -> Value {
-    let at = m.at.map_or(0, |a| a as usize).min(m.rows.len());
-    let items = |rows: &[MirrorRow]| -> Vec<Value> { rows.iter().map(|r| song_json(&r.song, r.index as usize)).collect() };
-    let (history, now, next) = match m.at {
-        Some(_) if at < m.rows.len() => (&m.rows[..at], &m.rows[at..=at], &m.rows[at + 1..]),
-        _ => (&m.rows[..0], &m.rows[..0], &m.rows[..]),
-    };
-    let cur = now.first().map_or(-1, |r| r.index as i64);
-    json!({
-        "head": {
-            "cur": cur, "repeat": m.repeat, "shuffle": m.shuffle, "reorderable": false,
-            "kept": m.rows.iter().map(|r| r.index).collect::<Vec<_>>(), "remote": true,
-        },
-        "sections": [
-            section("history", false, items(history)),
-            section("now", false, items(now)),
-            section("next", false, items(next)),
-        ],
-    })
-}
-
-/// A jam guest's queue: the host's, read only, each song with who asked for it (`by`) where someone did,
-/// and `jam` in its head.
-fn jam_queue_json(s: &nori_host::session::Session) -> Value {
-    let Some(e) = s.jam_playing() else {
-        return json!({ "head": { "cur": -1, "kept": [], "remote": true, "jam": true }, "sections": [] });
-    };
-    let added = s.remote().map(|r| r.jam_added()).unwrap_or_default();
-    let mut v = mirrored_queue_json(&e.mirror);
-    v["head"]["jam"] = json!(true);
-    for section in v["sections"].as_array_mut().into_iter().flatten() {
-        for row in section["items"].as_array_mut().into_iter().flatten() {
-            if let Some(by) = row["id"].as_str().and_then(|id| added.get(id)) {
-                row["by"] = json!(by);
-            }
-        }
-    }
-    v
-}
-
-/// What plays now, for the mini player, the card and the lock screen: this iPod's, the device's it
-/// mirrors (`device` its name), or for a jam guest the jam's (`jam`). `remote`: remote control is on.
+/// What plays now (`Handle::now`), for the mini player, the card and the lock screen: this iPod's, the
+/// device's it mirrors (`device` its name), or for a jam guest the jam's (`jam`). `remote`: the
+/// controls reach another device, or remote control is on here.
 fn now_json(s: &nori_host::session::Session) -> Value {
-    if let Some(e) = s.elsewhere() {
-        return mirrored_now_json(&e);
-    }
-    if s.guest {
-        let mut v = s.jam_playing().map_or_else(|| json!({ "state": 0, "index": -1, "ms": 0 }), |e| mirrored_now_json(&e));
-        v["jam"] = json!(true);
-        v["remote"] = json!(false);
-        v.as_object_mut().map(|o| o.remove("device"));
-        return v;
-    }
-    let st = s.engine.status();
-    let (repeat, lit, len) = s
-        .core
-        .session
-        .playlist(|p| (p.repeat(), p.lit(), p.len()));
-    let song = st.id.as_deref().and_then(|id| s.core.session.song(id));
-    let state = match st.state {
+    let n = s.now();
+    let state = match n.state {
         State::Idle => 0,
         State::Playing => 1,
         State::Paused => 2,
         State::Ended => 3,
     };
+    let here = n.device.is_none() && !n.jam;
     let mut v = json!({
-        "state": state, "index": st.index.map_or(-1, |i| i as i64), "ms": st.position_now().max(0),
-        "pace": st.pace, "repeat": repeat, "shuffle": lit, "len": len, "mixing": st.mixing,
-        "eq": s.core.session.settings.prefs(|p| p.eq_enabled), "remote": s.remote().is_some(),
+        "state": state, "index": n.index.map_or(-1, |i| i as i64), "ms": n.position_now().max(0),
+        "pace": n.pace, "repeat": n.repeat, "shuffle": n.shuffle, "len": n.len, "mixing": n.mixing,
+        "eq": here && s.core.session.settings.prefs(|p| p.eq_enabled), "remote": !n.jam && (!here || s.remote().is_some()),
+        "buffering": n.buffering, "volume": n.volume.map(|v| (v * 100.0).round() as i64), "jam": n.jam,
     });
-    if let Some(song) = song {
-        v["song"] = song_json(&song, st.index.unwrap_or(0));
+    if let Some(device) = &n.device {
+        v["device"] = json!(device);
+    }
+    if let Some(song) = &n.song {
+        v["song"] = song_json(song, n.index.unwrap_or(0));
         v["suffix"] = json!(song.suffix);
         v["kbps"] = json!(song.bit_rate);
         v["hz"] = json!(song.sampling_rate);
         v["bits"] = json!(song.bit_depth);
         v["album"] = json!(song.album);
-    }
-    v
-}
-
-fn mirrored_now_json(e: &Elsewhere) -> Value {
-    let m = &e.mirror;
-    let row = m.at.and_then(|a| m.rows.get(a as usize));
-    let state = match (m.playing, row) {
-        (true, _) => 1,
-        (false, Some(_)) => 2,
-        (false, None) => 0,
-    };
-    let mut v = json!({
-        "state": state, "index": row.map_or(-1, |r| r.index as i64), "ms": e.position_ms().max(0),
-        "pace": m.rate, "repeat": m.repeat, "shuffle": m.shuffle, "len": m.len, "mixing": m.mixing,
-        "eq": false, "remote": true, "device": m.name, "buffering": m.buffering, "volume": m.volume,
-    });
-    if let Some(r) = row {
-        v["song"] = song_json(&r.song, r.index as usize);
-        v["album"] = json!(r.song.album);
     }
     v
 }
@@ -1079,20 +988,41 @@ pub unsafe extern "C" fn nori_ios_enqueue_collection(kind: i32, id: *const c_cha
     with_session(|s| s.enqueue_later(what, next != 0));
 }
 
+/// A song (1), album (2) or artist (3) by its code.
+fn starrable(kind: i32) -> Option<Starrable> {
+    match kind {
+        1 => Some(Starrable::Song),
+        2 => Some(Starrable::Album),
+        3 => Some(Starrable::Artist),
+        _ => None,
+    }
+}
+
 /// Stars (`on` 1) or unstars a song (1), album (2) or artist (3).
 ///
 /// # Safety
 /// `id` is NUL-terminated UTF-8.
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_star(kind: i32, id: *const c_char, on: i32) {
-    let kind = match kind {
-        1 => Starrable::Song,
-        2 => Starrable::Album,
-        3 => Starrable::Artist,
-        _ => return,
-    };
+    let Some(kind) = starrable(kind) else { return };
     let id = c_text(id);
     with_session(|s| s.star(kind, id, on != 0));
+}
+
+/// Whether a song (1), album (2) or artist (3) shows starred (1), its record saying `listed`: a song as
+/// the device playing elsewhere shows it while it is in that queue, else this session's mark over the
+/// record (`Handle::starred`).
+///
+/// # Safety
+/// `id` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_starred(kind: i32, id: *const c_char, listed: i32) -> i32 {
+    let (Some(kind), id, listed) = (starrable(kind), c_text(id), listed != 0) else { return listed };
+    let shown = with_session(|s| match kind {
+        Starrable::Song => s.starred(&Song { id: id.clone(), starred: listed, ..Song::default() }, s.elsewhere().as_ref()),
+        _ => s.core.starred(kind, &id, listed),
+    });
+    i32::from(shown.unwrap_or(listed))
 }
 
 /// What plays now, as JSON to free with `nori_ios_free`; NULL when nothing is open.
@@ -1475,17 +1405,6 @@ pub extern "C" fn nori_ios_facts() -> *mut c_char {
 mod tests {
     use super::*;
 
-    #[test]
-    fn home_sends_mixes_drawn_by_another_read() {
-        // Regression: Home sent its tiles again only when its own warm-up drew a mix, so mixes another
-        // read drew in the meantime stayed grey, without covers, until a refresh.
-        let bare = section("mixes", true, vec![json!({ "k": "mix", "id": "quick", "c": "" })]);
-        let drawn = section("mixes", true, vec![json!({ "k": "mix", "id": "quick", "c": "cover-1" })]);
-        assert_eq!(tiles_again(&bare, drawn.clone(), true), Some(drawn.clone()));
-        assert_eq!(tiles_again(&drawn, drawn.clone(), true), None, "nothing new: not sent twice");
-        assert_eq!(tiles_again(&drawn, drawn.clone(), false), Some(drawn), "no shelf answered: the row alone");
-    }
-
     fn song(id: &str) -> Song {
         Song {
             id: id.into(),
@@ -1553,42 +1472,6 @@ mod tests {
         let none = QueueRows { now: -1, ..rows };
         let v = queue_sections(&songs, &none, 0, true, -1);
         assert_eq!(v["sections"][2]["items"].as_array().unwrap().len(), 4);
-    }
-
-    #[test]
-    fn a_mirrored_queue_splits_at_the_song_playing_there_and_takes_no_edits() {
-        let row = |index: u32, id: &str| MirrorRow { index, song: song(id) };
-        let mut m = Mirror {
-            id: "desk".into(),
-            name: "Desk".into(),
-            kind: nori_core::remote::wire::DeviceKind::Desktop,
-            rows: vec![row(2, "a"), row(0, "b"), row(1, "c")],
-            at: Some(1),
-            len: 3,
-            rev: 7,
-            playing: true,
-            buffering: false,
-
-            mixing: false,
-            position_ms: 0,
-            at_us: 0,
-            rate: 1.0,
-            shuffle: true,
-            repeat: 2,
-            volume: None,
-            refused: None,
-        };
-        let ids = |v: &Value, s: usize| -> Vec<String> {
-            v["sections"][s]["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap().to_string()).collect()
-        };
-        let v = mirrored_queue_json(&m);
-        assert_eq!((ids(&v, 0), ids(&v, 1), ids(&v, 2)), (vec!["a".to_string()], vec!["b".to_string()], vec!["c".to_string()]));
-        assert_eq!((v["head"]["cur"].clone(), v["head"]["shuffle"].clone(), v["head"]["repeat"].clone()), (json!(0), json!(true), json!(2)));
-        assert_eq!(v["head"]["kept"], json!([2, 0, 1]), "no row is removed from here");
-        assert_eq!(v["sections"][2]["items"][0]["i"], 1, "a row keeps its place in the device's list");
-        m.at = None;
-        let v = mirrored_queue_json(&m);
-        assert_eq!((ids(&v, 1).len(), ids(&v, 2).len(), v["head"]["cur"].clone()), (0, 3, json!(-1)), "nothing playing: the whole queue is to come");
     }
 
     #[test]

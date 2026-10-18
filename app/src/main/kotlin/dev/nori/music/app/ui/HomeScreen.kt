@@ -130,8 +130,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
             ui.rows.forEach { shelf ->
                 // The favourite playlists are a selection of something the page fetches once for all of
                 // it, so their shelf is filled from there - but it stands where the user put it in the
-                // order. It used to be drawn above every shelf whatever the order said, which is why it
-                // could be at the bottom of the list and at the top of the page at the same time.
+                // order.
                 val s = if (shelf.row == dev.nori.music.ffi.settings.HomeRow.PINNED) dev.nori.music.app.vm.Shelf.Playlists(shelf.row, ui.pinned) else shelf
                 if (s.isEmpty) return@forEach
                 when (s) {
@@ -303,9 +302,9 @@ private object Arrival {
  * still.
  *
  * Once per process, not once per visit. Coming back to the page - a pop from an album, a tab tap -
- * composes it again from nothing, and the run used to start again with it: the page slid back into
- * place (PageMotion) with every section at nought, so it arrived as a black card and its sections
- * only appeared once the slide was over. The page is what is coming back; it should look as it did.
+ * composes it again from nothing; run again, the page would slide back into place (PageMotion) with
+ * every section at nought, a black card whose sections appear only once the slide is over. The page
+ * is what is coming back; it should look as it did.
  */
 @Composable
 private fun rememberArrival(): State<Float> {

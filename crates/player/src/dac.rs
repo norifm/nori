@@ -24,9 +24,9 @@ pub enum DacBlock {
 }
 
 /// Flags of [`DacBlock::NeedsExclusive`]'s depth set.
-pub const DEPTH_16: u8 = 1;
-pub const DEPTH_24: u8 = 2;
-pub const DEPTH_32: u8 = 4;
+pub(crate) const DEPTH_16: u8 = 1;
+pub(crate) const DEPTH_24: u8 = 2;
+pub(crate) const DEPTH_32: u8 = 4;
 
 /// A bit depth's flag in [`DacBlock::NeedsExclusive`]'s set; 0 for other depths.
 fn depth_bit(bits: u32) -> u8 {

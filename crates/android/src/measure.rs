@@ -52,7 +52,7 @@ pub(crate) struct Measuring {
 /// What [`create_analyses`] made (held by Kotlin for the process's life); None for 0.
 pub(crate) fn measuring<'a>(h: jlong) -> Option<&'a Measuring> {
     // SAFETY: a non-zero `h` came from `create_analyses` and is never freed.
-    (h != 0).then(|| unsafe { &*(h as *const Measuring) })
+    unsafe { crate::handle(h) }
 }
 
 /// AutoMix's analyses over `current`'s client (a `CurrentClient.uniffiCloneHandle()`, taken over) and the

@@ -39,7 +39,8 @@ A client asks the core and draws:
 
 - the kinds offered: `providers()`, in order; a client offers the choice only when there are several;
 - the add form: the fields of the chosen kind's `ProviderInfo`, advanced ones folded away; whether it
-  can be sent (`server_ready`), the profile to keep (`server_for_login`, then `check_profile`);
+  can be sent (`server_ready`), and the login itself, which checks the profile and keeps it as the active
+  one (`log_in`: `server_for_login`, then `check_profile`);
 - opening a profile: `Core::configure_profile`, and the engine's byte source wrapped by
   `nori_engine::core::resolving`;
 - signing in, for a kind with `sign_in` ways: a page of the app's own at `start_url`, whose address and

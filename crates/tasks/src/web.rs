@@ -2,6 +2,7 @@
 //! `setTimeout`.
 
 use std::future::Future;
+use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -27,21 +28,41 @@ impl Tasks for Local {
                 let _ = set.call2(&global, &resolve, &JsValue::from_f64(after.as_millis() as f64));
             }
         });
-        Box::pin(OneThread(JsFuture::from(promise)))
+        let timer = OneThread(JsFuture::from(promise));
+        Box::pin(async move {
+            let _ = timer.await;
+        })
     }
 }
 
-/// A future holding JS values, which are not `Send`: the module runs on one thread (no wasm threads),
-/// so it is never sent anywhere.
-struct OneThread<F>(F);
+/// A value holding JS values, which are not `Send`: the module runs on one thread (no wasm threads),
+/// so it is never sent or shared anywhere.
+#[derive(Clone)]
+pub struct OneThread<T>(pub T);
 
 // SAFETY: wasm32-unknown-unknown without atomics has one thread.
-unsafe impl<F> Send for OneThread<F> {}
+unsafe impl<T> Send for OneThread<T> {}
+unsafe impl<T> Sync for OneThread<T> {}
 
-impl<F: Future + Unpin> Future for OneThread<F> {
-    type Output = ();
+impl<T> Deref for OneThread<T> {
+    type Target = T;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        Pin::new(&mut self.0).poll(cx).map(|_| ())
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for OneThread<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+impl<F: Future> Future for OneThread<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        // SAFETY: the inner future is never moved out of the pinned wrapper.
+        unsafe { self.map_unchecked_mut(|s| &mut s.0) }.poll(cx)
     }
 }

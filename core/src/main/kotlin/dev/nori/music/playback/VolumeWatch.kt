@@ -11,6 +11,32 @@ import dev.nori.music.ffi.devices.OutputPort
 import dev.nori.music.ffi.devices.outputPort
 
 /**
+ * Calls [changed] on the main thread whenever the music stream's volume may have changed, until the
+ * returned function is called. The system announces a change with a broadcast (the one ExoPlayer's volume
+ * tracking listens to); that is not public API, so the settings store, which the system writes every
+ * volume to a moment later, is watched too.
+ */
+fun watchMusicVolume(context: Context, changed: () -> Unit): () -> Unit {
+    val receiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context, intent: android.content.Intent) {
+            if (intent.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", AudioManager.STREAM_MUSIC) == AudioManager.STREAM_MUSIC) changed()
+        }
+    }
+    androidx.core.content.ContextCompat.registerReceiver(
+        context, receiver, android.content.IntentFilter("android.media.VOLUME_CHANGED_ACTION"),
+        androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+    )
+    val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = changed()
+    }
+    context.contentResolver.registerContentObserver(android.provider.Settings.System.CONTENT_URI, true, observer)
+    return {
+        context.unregisterReceiver(receiver)
+        context.contentResolver.unregisterContentObserver(observer)
+    }
+}
+
+/**
  * The music volume, for loudness compensation (nori_player::contour): read when the system's settings
  * say something changed and when the output changes, and handed on only when the step or the output is
  * another; the core applies it only when that moves the sound. Registered only while the setting is on:
@@ -22,30 +48,26 @@ class VolumeWatch(
     private val tell: (index: Int, max: Int, db: Float) -> Unit,
 ) {
     private val audio = context.getSystemService(AudioManager::class.java)
-    private val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-        override fun onChange(selfChange: Boolean) = read()
-    }
-    private var on = false
+    private var stop: (() -> Unit)? = null
     private var lastIndex = -1
     private var lastOutput = ""
 
     /** Loudness compensation switched on or off. */
     fun set(enabled: Boolean) {
-        if (enabled == on) return
-        on = enabled
+        if (enabled == (stop != null)) return
         if (enabled) {
-            // The volume steps are kept among the system's settings: a change to one is a change there.
-            context.contentResolver.registerContentObserver(android.provider.Settings.System.CONTENT_URI, true, observer)
+            stop = watchMusicVolume(context, ::read)
             lastIndex = -1
             read()
         } else {
-            context.contentResolver.unregisterContentObserver(observer)
+            stop?.invoke()
+            stop = null
         }
     }
 
     /** The music went to another output, whose volume is its own. */
     fun outputChanged() {
-        if (on) read()
+        if (stop != null) read()
     }
 
     private fun read() {

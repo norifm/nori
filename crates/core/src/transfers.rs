@@ -43,7 +43,7 @@ impl Core {
         let rows: Vec<(String, String)> = {
             let c = self.db.lock();
             let mut st = c.prepare("SELECT id, json FROM items WHERE server=sid() AND kind=?1 ORDER BY rowid")?;
-            let rows = st.query_map([crate::db::SONG], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let rows = st.query_map([crate::db::ItemKind::Song], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.filter_map(|r| r.ok()).collect()
         };
         self.queue_downloads(rows)
@@ -154,13 +154,6 @@ impl Core {
         q.fresh.iter().for_each(|id| held.queued(id));
         Ok(q)
     }
-}
-
-
-/// The "ML beats for downloads" setting for a remembered answer.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn download_beats_remembered(yes: bool) -> nori_settings::settings::DownloadBeats {
-    beats_remembered(yes)
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]

@@ -177,7 +177,6 @@ class Settings(private val context: Context) {
 
     /**
      * A change by name the core has already kept (`setting_set`): taken in here, and nothing sent back.
-     * A settings row's every step used to send the whole record back to be compared and kept again.
      */
     fun took(change: SettingChange) {
         state.value = change.prefs

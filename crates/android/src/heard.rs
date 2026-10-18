@@ -24,7 +24,7 @@ pub(crate) static PLAYHEAD: Class = Class {
 
 fn clock<'a>(h: jlong) -> Option<&'a Mutex<HeardClock>> {
     // SAFETY: a non-zero `h` is a pointer `create` made, which lives as long as the process.
-    (h != 0).then(|| unsafe { &*(h as *const Mutex<HeardClock>) })
+    unsafe { crate::handle(h) }
 }
 
 /// The process's clock over the queue session `s` (`crate::kept`); Kotlin keeps it for the app's life,

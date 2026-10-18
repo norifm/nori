@@ -154,6 +154,50 @@ impl Args {
     }
 }
 
+/// The media controls over the script's engine and its songs.
+struct Keys {
+    engine: Arc<Engine>,
+    songs: Arc<Mutex<Vec<Song>>>,
+}
+
+impl nori_mpris::Controls for Keys {
+    fn play(&self) {
+        self.engine.play();
+    }
+    fn pause(&self) {
+        self.engine.pause();
+    }
+    fn toggle(&self) {
+        self.engine.toggle();
+    }
+    fn next(&self) {
+        self.engine.next();
+    }
+    fn previous(&self) {
+        self.engine.previous();
+    }
+    fn seek(&self, ms: i64) {
+        self.engine.seek(ms);
+    }
+    fn now(&self) -> nori_mpris::Now {
+        let s = self.engine.status();
+        let song = s.index.and_then(|i| self.songs.lock().unwrap().get(i).cloned()).unwrap_or_default();
+        nori_mpris::Now {
+            playing: s.state == State::Playing,
+            loaded: s.state == State::Paused,
+            index: s.index,
+            title: song.title,
+            artist: song.artist,
+            album: song.album,
+            length_ms: song.duration as i64 * 1000,
+            position_ms: s.position_now(),
+            starred: song.starred,
+            art: None,
+            art_file: None,
+        }
+    }
+}
+
 struct Cli {
     core: Arc<Core>,
     client: Arc<Client>,
@@ -334,7 +378,7 @@ pub fn main(argv: Vec<String>) {
 
     let mpris = a.mpris.then(|| {
         let songs = cli.songs.clone();
-        let controls = Arc::new(crate::backend::Controls { engine: cli.engine.clone(), song: Box::new(move |s| s.index.and_then(|i| songs.lock().unwrap().get(i).cloned())) });
+        let controls = Arc::new(Keys { engine: cli.engine.clone(), songs });
         let m = nori_mpris::Mpris::start("nori").map_err(|e| println!("no media controls: {e}")).ok()?;
         m.serve(Some(controls));
         Some(m)

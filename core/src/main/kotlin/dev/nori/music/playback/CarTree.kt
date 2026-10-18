@@ -15,8 +15,10 @@ import dev.nori.music.ffi.library.BrowsePage
 import dev.nori.music.ffi.library.CarAction
 import dev.nori.music.ffi.library.CarFolder
 import dev.nori.music.ffi.library.CarGroup
+import dev.nori.music.ffi.library.CarMedia
 import dev.nori.music.ffi.library.CarStyle
 import dev.nori.music.ffi.library.MixName
+import dev.nori.music.ffi.model.ExplicitStatus
 import dev.nori.music.ffi.model.Song
 
 /** Words the car's tree needs that are the app's, not this module's: a mix's name. The app sets it as it starts. */
@@ -88,12 +90,12 @@ internal class CarTree(private val context: Context) {
             // The root says the car may search it (MediaBrowserCompat's key, which Android Auto reads).
             if (f.kind == CarFolder.ROOT) putBoolean(SEARCH_SUPPORTED, true)
         }
-        val type = when (f.id.substringBefore(':')) {
-            "album", "downloaded" -> MediaMetadata.MEDIA_TYPE_ALBUM
-            "artist" -> MediaMetadata.MEDIA_TYPE_ARTIST
-            "playlist", "mix" -> MediaMetadata.MEDIA_TYPE_PLAYLIST
-            "genre" -> MediaMetadata.MEDIA_TYPE_GENRE
-            else -> MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+        val type = when (f.media) {
+            CarMedia.ALBUM -> MediaMetadata.MEDIA_TYPE_ALBUM
+            CarMedia.ARTIST -> MediaMetadata.MEDIA_TYPE_ARTIST
+            CarMedia.PLAYLIST -> MediaMetadata.MEDIA_TYPE_PLAYLIST
+            CarMedia.GENRE -> MediaMetadata.MEDIA_TYPE_GENRE
+            CarMedia.FOLDER -> MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
         }
         val subtitle = f.subtitle ?: f.songs?.let { context.resources.getQuantityString(R.plurals.car_song_count, it.toInt(), it.toInt()) }
         return MediaItem.Builder().setMediaId(f.id).setMediaMetadata(
@@ -116,7 +118,7 @@ internal class CarTree(private val context: Context) {
     private fun song(parent: String, s: Song, made: MediaItem, downloaded: Boolean, group: CarGroup?): MediaItem {
         val extras = Bundle().apply {
             putLong(MediaConstants.EXTRAS_KEY_DOWNLOAD_STATUS, if (downloaded) MediaConstants.EXTRAS_VALUE_STATUS_DOWNLOADED else MediaConstants.EXTRAS_VALUE_STATUS_NOT_DOWNLOADED)
-            if (s.explicitStatus == "explicit") putLong(MediaConstants.EXTRAS_KEY_IS_EXPLICIT, 1L)
+            if (s.explicitStatus == ExplicitStatus.EXPLICIT) putLong(MediaConstants.EXTRAS_KEY_IS_EXPLICIT, 1L)
             group?.let { putString(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_GROUP_TITLE, context.getString(groupName(it))) }
         }
         return made.buildUpon().setMediaId(dev.nori.music.ffi.library.carSongRow(parent, s.id)).setMediaMetadata(
@@ -156,9 +158,9 @@ internal class CarTree(private val context: Context) {
         CarFolder.RANDOM -> R.drawable.car_random
         CarFolder.FAVOURITES -> R.drawable.car_favourite
         CarFolder.DOWNLOADS -> R.drawable.car_download
-        null -> when (f.id.substringBefore(':')) {
-            "genre" -> R.drawable.car_genres
-            "artist" -> R.drawable.car_artists
+        null -> when (f.media) {
+            CarMedia.GENRE -> R.drawable.car_genres
+            CarMedia.ARTIST -> R.drawable.car_artists
             else -> null
         }
         else -> null

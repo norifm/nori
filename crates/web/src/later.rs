@@ -4,6 +4,7 @@
 //! the Rust decoders of `player-codecs.wasm`, loaded beside it once a song needs them (`Codecs`).
 
 use nori_player::decode::{Codec, Fault, LaterDecoder, Setup};
+use nori_tasks::OneThread;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(raw_module = "../decoder.js")]
@@ -35,10 +36,7 @@ extern "C" {
     fn free(this: &Decoding);
 }
 
-struct Web(Decoding);
-
-// SAFETY: wasm32-unknown-unknown without the atomics feature has a single thread; nothing is ever sent.
-unsafe impl Send for Web {}
+struct Web(OneThread<Decoding>);
 
 impl LaterDecoder for Web {
     fn feed(&mut self, unit: &[u8], at_us: i64) {
@@ -101,7 +99,7 @@ pub fn decoder(setup: &Setup) -> Option<Box<dyn LaterDecoder>> {
         None if beside(setup.codec) => Decoding::rust(codec, rate, channels, config),
         None => return None,
     };
-    Some(Box::new(Web(d)))
+    Some(Box::new(Web(OneThread(d))))
 }
 
 /// `player-codecs.wasm`'s Rust decoders for another module: a packet in, its samples out, interleaved.

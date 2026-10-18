@@ -105,6 +105,7 @@ pub fn line_strength(synced: bool, line: i32, active: i32) -> f32 {
 }
 
 /// Whether the lyrics keep the screen on.
+#[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn keeps_screen_on(asked: bool, shown: bool, playing: bool) -> bool {
     asked && shown && playing
 }
@@ -438,6 +439,16 @@ impl LyricClock {
         self.timing.frame(self.shown.load(Relaxed))
     }
 
+    /// ms until `step` (from [`LyricClock::advance`] with `sweep`) wants the clock advanced again, a
+    /// display frame lasting `frame_ms` while it counts frames; None for never.
+    pub fn wait_ms(&self, step: &Step, sweep: bool, frame_ms: u64) -> Option<u64> {
+        match step.wait {
+            0 => None,
+            ms if step.still || !(sweep && self.timing.sweeps()) => Some(ms as u64),
+            frames => Some(frames as u64 * frame_ms),
+        }
+    }
+
     /// The displayed moment (offset and nudge applied), for word animations.
     pub fn shown_ms(&self) -> i64 {
         self.shown.load(Relaxed)
@@ -696,11 +707,16 @@ mod tests {
         let s = c.advance(1450, false, false, false);
         assert!(!s.still, "no sweep: never still");
         assert_eq!((c.advance(1200, true, false, false).wait, c.advance(1200, true, false, false).still), (SWEEP_FRAMES, false));
+        // In ms: frames while a word fills, ms while still or not sweeping.
+        let wait = |at: i64, sweep: bool| c.wait_ms(&c.advance(at, sweep, false, false), sweep, 16);
+        assert_eq!((wait(1200, true), wait(1450, true)), (Some(SWEEP_FRAMES as u64 * 16), Some(151)));
+        assert_eq!(wait(1200, false), Some(c.advance(1200, false, false, false).wait as u64));
 
         // Unsynced lyrics never wake.
         let c = LyricClock::new(LyricTiming::new(false, false, lines(&[-1, -1, -1])), 0);
         let s = c.advance(10_000, true, false, true);
         assert_eq!(s, Step { frame: Frame { active: -1, glide_ms: GLIDE_MS, sung: 0.0 }, wait: 0, still: false, redraw: true });
+        assert_eq!(c.wait_ms(&s, true, 16), None);
     }
 
     #[test]

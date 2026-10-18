@@ -10,11 +10,12 @@ const PERIOD_Y: i64 = 521;
 const RAMP: i64 = 4;
 /// How far the drift reaches either way. A text or icon stroke is far thinner, so it wears in as a
 /// faint smear instead of its shape.
-pub const REACH_DP: f32 = 6.0;
+const REACH_DP: f32 = 6.0;
 
 /// Where the screen is drawn: offsets within ±`reach_dp`, the reach growing over the first minutes.
 /// The client enlarges what it draws by `reach_dp` on each side so no edge comes into view.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Drift {
     pub x_dp: f32,
     pub y_dp: f32,
@@ -22,6 +23,7 @@ pub struct Drift {
 }
 
 /// The drift at `now_ms` for protection that started at `since_ms` (both wall clock).
+#[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn drift(now_ms: i64, since_ms: i64) -> Drift {
     let minute = now_ms.div_euclid(MINUTE_MS);
     let ramp = (minute - since_ms.div_euclid(MINUTE_MS)).clamp(0, RAMP) as f32 / RAMP as f32;
@@ -30,6 +32,7 @@ pub fn drift(now_ms: i64, since_ms: i64) -> Drift {
 }
 
 /// Milliseconds until the drift next moves: the next whole minute.
+#[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn next_move_ms(now_ms: i64) -> i64 {
     MINUTE_MS - now_ms.rem_euclid(MINUTE_MS)
 }

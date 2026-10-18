@@ -46,6 +46,8 @@ case "${1:-}" in
     done
     send state ;;
   open|play|state|set|login|do|remote|queuesaved|webcookies) send "$@" ;;
-  wake) adb shell input keyevent 224 >/dev/null; adb shell wm dismiss-keyguard >/dev/null 2>&1; sleep 1 ;;
+  # Back once the screen is on, 5 s at most.
+  wake) adb shell input keyevent 224 >/dev/null; adb shell wm dismiss-keyguard >/dev/null 2>&1
+    for _ in $(seq 25); do adb shell dumpsys power | grep -q 'mWakefulness=Awake' && break; sleep 0.2; done ;;
   *) echo "usage: app.sh launch|open <route>|play <ref>|do <action>|login <url|user|pass>|login kind:<KIND>|set <name> <value>|state|queuesaved|webcookies|wake" >&2; exit 2 ;;
 esac

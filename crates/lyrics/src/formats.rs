@@ -424,7 +424,7 @@ pub(crate) fn from_netease(yrc: &str, lrc: &str, title: &str) -> Lyrics {
 const KRC_KEY: [u8; 16] = [0x40, 0x47, 0x61, 0x77, 0x5e, 0x32, 0x74, 0x47, 0x51, 0x36, 0x31, 0x2d, 0xce, 0xd2, 0x6e, 0x69];
 
 /// Standard or URL-safe base64, padding and line breaks allowed.
-fn base64(s: &str) -> Option<Vec<u8>> {
+pub fn base64(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let (mut acc, mut bits) = (0u32, 0u32);
     for c in s.bytes() {

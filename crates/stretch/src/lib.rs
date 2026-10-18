@@ -1,10 +1,10 @@
-//! Signalsmith Stretch 1.3.1, ported from C++: time-stretching and pitch-shifting with a phase vocoder that predicts
+//! Signalsmith Stretch 1.3.1, ported from C++: time-stretching with a phase vocoder that predicts
 //! each bin's phase from its neighbors in time and frequency, locked across channels.
 //!
 //! Ported from Signalsmith Stretch, Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd., and Signalsmith
 //! Linear, Copyright (c) 2025 Signalsmith Audio, both MIT (see LICENSE in this crate). Only what nori uses is here:
-//! the cheaper preset with its split computation, transposition by semitones, `process`, `flush` and `reset`; no
-//! seeking, formants or custom frequency maps.
+//! the cheaper preset with its split computation, `process`, `flush` and `reset`; no
+//! transposition, seeking, formants or custom frequency maps.
 //!
 //! Buffers are interleaved. Nothing allocates after construction.
 
@@ -20,7 +20,6 @@ const NOISE_FLOOR: f32 = 1e-15;
 const MAX_CLEAN_STRETCH: f32 = 2.0;
 /// The main phase prediction is spread over this many steps.
 const SPLIT_MAIN_PREDICTION: usize = 8;
-const SMOOTH_ENERGY_STEPS: usize = 3;
 
 #[derive(Clone, Copy, Default)]
 struct Band {
@@ -49,12 +48,6 @@ impl Prediction {
 }
 
 #[derive(Clone, Copy)]
-struct Peak {
-    input: f32,
-    output: f32,
-}
-
-#[derive(Clone, Copy, Default)]
 struct MapPoint {
     input_bin: f32,
     freq_grad: f32,
@@ -68,7 +61,6 @@ struct BlockProcess {
     step: usize,
     new_spectrum: bool,
     reanalyze_prev: bool,
-    mapped_frequencies: bool,
     time_factor: f32,
 }
 
@@ -80,7 +72,6 @@ impl Default for BlockProcess {
             step: 0,
             new_spectrum: false,
             reanalyze_prev: false,
-            mapped_frequencies: false,
             time_factor: 0.0,
         }
     }
@@ -134,18 +125,12 @@ pub struct Stretch {
     stashed_output: Output,
     channel_bands: Vec<Band>,
     predictions: Vec<Prediction>,
-    peaks: Vec<Peak>,
-    energy: Vec<f32>,
-    smoothed_energy: Vec<f32>,
     output_map: Vec<MapPoint>,
     block: BlockProcess,
     process_spectrum_steps: usize,
     silence_counter: usize,
     silence_first: bool,
-    freq_multiplier: f32,
-    freq_tonality_limit: f32,
     prev_input_offset: i32,
-    smooth_energy_state: f32,
     random: MinStd,
 }
 
@@ -164,18 +149,12 @@ impl Stretch {
             stft,
             channel_bands: vec![Band::default(); bands * channels],
             predictions: vec![Prediction::default(); bands * channels],
-            peaks: Vec::with_capacity(bands.div_ceil(2)),
-            energy: vec![0.0; bands],
-            smoothed_energy: vec![0.0; bands],
-            output_map: vec![MapPoint::default(); bands],
+            output_map: (0..bands).map(|b| MapPoint { input_bin: b as f32, freq_grad: 1.0 }).collect(),
             block: BlockProcess::default(),
             process_spectrum_steps: 0,
             silence_counter: 0,
             silence_first: true,
-            freq_multiplier: 1.0,
-            freq_tonality_limit: 0.5,
             prev_input_offset: -1,
-            smooth_energy_state: 0.0,
             random: MinStd(1),
         }
     }
@@ -199,12 +178,6 @@ impl Stretch {
         self.channel_bands.fill(Band::default());
         self.silence_counter = 0;
         self.block = BlockProcess::default();
-    }
-
-    /// Shifts every frequency by `semitones`.
-    pub fn set_transpose_semitones(&mut self, semitones: f32) {
-        self.freq_multiplier = 2f64.powf((semitones / 12.0) as f64) as f32;
-        self.freq_tonality_limit = 1.0;
     }
 
     /// Takes in `input` and writes `output`; the ratio of their lengths is the time-stretch.
@@ -316,7 +289,6 @@ impl Stretch {
 
         let b = &mut self.block;
         b.new_spectrum = input_interval > 0;
-        b.mapped_frequencies = self.freq_multiplier != 1.0;
         if b.new_spectrum {
             // The previous analysis must be one interval back, give or take a frame.
             b.reanalyze_prev = (input_interval - interval as i32).abs() > 1;
@@ -337,9 +309,6 @@ impl Stretch {
         let mut steps = 0;
         if self.block.new_spectrum {
             steps += ch;
-        }
-        if self.block.mapped_frequencies {
-            steps += SMOOTH_ENERGY_STEPS + 1;
         }
         steps += 1 + ch + SPLIT_MAIN_PREDICTION;
         if self.block.new_spectrum {
@@ -429,28 +398,9 @@ impl Stretch {
             }
             step -= ch;
         }
-        if self.block.mapped_frequencies {
-            if step < SMOOTH_ENERGY_STEPS {
-                self.smooth_energy(step, smoothing_bins);
-                return;
-            }
-            step -= SMOOTH_ENERGY_STEPS;
-            if step == 0 {
-                self.find_peaks();
-                return;
-            }
-            step -= 1;
-        }
         if step == 0 {
-            if self.block.mapped_frequencies {
-                self.update_output_map();
-            } else {
-                for bin in &mut self.channel_bands {
-                    bin.input_energy = bin.input.norm_sqr();
-                }
-                for (b, m) in self.output_map.iter_mut().enumerate() {
-                    *m = MapPoint { input_bin: b as f32, freq_grad: 1.0 };
-                }
+            for bin in &mut self.channel_bands {
+                bin.input_energy = bin.input.norm_sqr();
             }
             return;
         }
@@ -557,101 +507,6 @@ impl Stretch {
             let channel_prediction = self.predictions[c * bands + b];
             let channel_phase = output * mul_conj(channel_prediction.input, prediction.input);
             self.channel_bands[c * bands + b].output = channel_prediction.make_output(channel_phase);
-        }
-    }
-
-    /// Energy summed over channels, and a smoothed copy of it (two passes down and up).
-    fn smooth_energy(&mut self, step: usize, smoothing_bins: f32) {
-        let bands = self.bands;
-        let slew = 1.0 / (1.0 + smoothing_bins * 0.5);
-        if step == 0 {
-            self.energy.fill(0.0);
-            for c in 0..self.channels {
-                for (bin, e) in self.channel_bands[c * bands..(c + 1) * bands].iter_mut().zip(&mut self.energy) {
-                    bin.input_energy = bin.input.norm_sqr();
-                    *e += bin.input_energy;
-                }
-            }
-            self.smoothed_energy.copy_from_slice(&self.energy);
-            self.smooth_energy_state = 0.0;
-            return;
-        }
-        let mut e = self.smooth_energy_state;
-        for s in self.smoothed_energy.iter_mut().rev() {
-            e += (*s - e) * slew;
-            *s = e;
-        }
-        for s in self.smoothed_energy.iter_mut() {
-            e += (*s - e) * slew;
-            *s = e;
-        }
-        self.smooth_energy_state = e;
-    }
-
-    fn map_freq(&self, freq: f32) -> f32 {
-        if freq > self.freq_tonality_limit {
-            freq + (self.freq_multiplier - 1.0) * self.freq_tonality_limit
-        } else {
-            freq * self.freq_multiplier
-        }
-    }
-
-    /// Spectral peaks of the energy over all channels: runs above the smoothed energy, at their energy centroid.
-    fn find_peaks(&mut self) {
-        let bands = self.bands;
-        self.peaks.clear();
-        let mut start = 0;
-        while start < bands {
-            if self.energy[start] > self.smoothed_energy[start] {
-                let mut end = start;
-                let (mut band_sum, mut energy_sum) = (0f32, 0f32);
-                while end < bands && self.energy[end] > self.smoothed_energy[end] {
-                    band_sum += end as f32 * self.energy[end];
-                    energy_sum += self.energy[end];
-                    end += 1;
-                }
-                let avg_band = band_sum / energy_sum;
-                let output = self.stft.freq_to_bin(self.map_freq(self.stft.bin_to_freq(avg_band)));
-                self.peaks.push(Peak { input: avg_band, output });
-                start = end;
-            }
-            start += 1;
-        }
-    }
-
-    /// For each output bin, the input bin it comes from: peaks move by the frequency map, smoothly in between.
-    fn update_output_map(&mut self) {
-        let bands = self.bands as i32;
-        let map = &mut self.output_map;
-        let (Some(first), Some(last)) = (self.peaks.first(), self.peaks.last()) else {
-            for (b, m) in map.iter_mut().enumerate() {
-                *m = MapPoint { input_bin: b as f32, freq_grad: 1.0 };
-            }
-            return;
-        };
-        let bottom_offset = first.input - first.output;
-        for b in 0..bands.min(first.output.ceil() as i32) {
-            map[b as usize] = MapPoint { input_bin: b as f32 + bottom_offset, freq_grad: 1.0 };
-        }
-        for pair in self.peaks.windows(2) {
-            let (prev, next) = (pair[0], pair[1]);
-            let range_scale = 1.0 / (next.output - prev.output);
-            let out_offset = prev.input - prev.output;
-            let out_scale = next.input - next.output - prev.input + prev.output;
-            let grad_scale = out_scale * range_scale;
-            let start = 0.max(prev.output.ceil() as i32);
-            let end = bands.min(next.output.ceil() as i32);
-            for b in start..end {
-                let r = (b as f32 - prev.output) * range_scale;
-                let h = r * r * (3.0 - 2.0 * r);
-                let out_b = b as f32 + out_offset + h * out_scale;
-                let grad_h = 6.0 * r * (1.0 - r);
-                map[b as usize] = MapPoint { input_bin: out_b, freq_grad: 1.0 + grad_h * grad_scale };
-            }
-        }
-        let top_offset = last.input - last.output;
-        for b in 0.max(last.output as i32)..bands {
-            map[b as usize] = MapPoint { input_bin: b as f32 + top_offset, freq_grad: 1.0 };
         }
     }
 }

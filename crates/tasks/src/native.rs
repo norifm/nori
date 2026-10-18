@@ -183,7 +183,7 @@ impl Drop for Timer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{first, Either, Notify};
+    use crate::Notify;
     use std::sync::mpsc::channel;
 
     #[test]
@@ -202,21 +202,21 @@ mod tests {
     }
 
     #[test]
-    fn a_notice_ends_a_wait_before_its_timer() {
+    fn a_notice_wakes_a_waiting_task() {
         let tasks = Arc::new(Native::new("test").unwrap());
         let notify = Arc::new(Notify::default());
         let (said, heard) = channel();
-        let (t, n) = (tasks.clone(), notify.clone());
+        let n = notify.clone();
         let (ready, started) = channel();
         tasks.spawn(Box::pin(async move {
             let notified = n.notified();
             ready.send(()).unwrap();
-            let woke = first(t.sleep(Duration::from_secs(600)), notified).await;
-            said.send(matches!(woke, Either::Right(()))).unwrap();
+            notified.await;
+            said.send(()).unwrap();
         }));
         started.recv().unwrap();
         notify.notify();
-        assert!(heard.recv_timeout(std::time::Duration::from_secs(5)).unwrap(), "the notice, not the timer");
+        assert!(heard.recv_timeout(std::time::Duration::from_secs(5)).is_ok());
     }
 
     #[test]

@@ -14,6 +14,8 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dev.nori.music.Nori
 import dev.nori.music.ffi.Mirror
+import dev.nori.music.ffi.Press
+import dev.nori.music.ffi.mirrorOp
 import dev.nori.music.ffi.queue.Hand
 import dev.nori.music.ffi.remote.Op
 import dev.nori.music.playback.CarArt
@@ -93,12 +95,15 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
     override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
         val m = mirror ?: return Futures.immediateVoidFuture()
         return when (seekCommand) {
-            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> send(Op.Next)
-            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> send(Op.Previous)
-            Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM -> send(Op.Seek(positionMs.coerceAtLeast(0)))
-            else -> index(mediaItemIndex)?.let { send(Op.Jump(it, m.rev)) } ?: Futures.immediateVoidFuture()
+            Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> press(m, Press.Next)
+            Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> press(m, Press.Previous)
+            Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM -> press(m, Press.Seek(positionMs))
+            else -> index(mediaItemIndex)?.let { press(m, Press.Jump(it)) } ?: Futures.immediateVoidFuture()
         }
     }
+
+    /** [press] as the core asks it of the device [m] (`Mirror::op`). */
+    private fun press(m: Mirror, press: Press): ListenableFuture<*> = mirrorOp(m, press)?.let(::send) ?: Futures.immediateVoidFuture()
 
     override fun handleSetShuffleModeEnabled(shuffleModeEnabled: Boolean): ListenableFuture<*> = send(Op.Shuffle(shuffleModeEnabled))
 
@@ -110,7 +115,7 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
 
     override fun handleDecreaseDeviceVolume(flags: Int): ListenableFuture<*> = volume(deviceVolume - 1)
 
-    private fun volume(steps: Int): ListenableFuture<*> = send(Op.Volume((steps.coerceIn(0, STEPS) * 100 / STEPS).toUByte()))
+    private fun volume(steps: Int): ListenableFuture<*> = mirror?.let { press(it, Press.Volume(steps.coerceIn(0, STEPS).toFloat() / STEPS)) } ?: Futures.immediateVoidFuture()
 
     /** A queue picked in the car or by a controller of this phone: it plays there. */
     override fun handleSetMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
@@ -126,14 +131,14 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
 
     override fun handleRemoveMediaItems(fromIndex: Int, toIndex: Int): ListenableFuture<*> {
         val m = mirror ?: return Futures.immediateVoidFuture()
-        return index(fromIndex)?.takeIf { toIndex == fromIndex + 1 }?.let { send(Op.Remove(it, m.rev)) } ?: Futures.immediateVoidFuture()
+        return index(fromIndex)?.takeIf { toIndex == fromIndex + 1 }?.let { press(m, Press.Remove(it)) } ?: Futures.immediateVoidFuture()
     }
 
     override fun handleMoveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int): ListenableFuture<*> {
         val m = mirror ?: return Futures.immediateVoidFuture()
         val from = index(fromIndex)
         val to = index(newIndex)
-        return if (from != null && to != null && toIndex == fromIndex + 1) send(Op.Move(from, to, m.rev)) else Futures.immediateVoidFuture()
+        return if (from != null && to != null && toIndex == fromIndex + 1) press(m, Press.Move(from, to)) else Futures.immediateVoidFuture()
     }
 
     private companion object {

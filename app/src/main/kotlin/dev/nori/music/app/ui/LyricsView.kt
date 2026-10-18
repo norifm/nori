@@ -120,7 +120,7 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean)
         val view = LocalView.current
         val keptOn = LocalLyricsKeepOn.current
         DisposableEffect(playing) {
-            view.keepScreenOn = dev.nori.music.ffi.lyricsKeepScreenOn(true, true, playing)
+            view.keepScreenOn = dev.nori.music.ffi.look.keepsScreenOn(true, true, playing)
             keptOn.value = view.keepScreenOn
             onDispose { view.keepScreenOn = false; keptOn.value = false }
         }
@@ -360,10 +360,9 @@ private fun LyricsBody(vm: PlayerViewModel, found: dev.nori.music.data.FoundLyri
     val duet = remember(lyrics) { lyrics.lines.any { it.voice.toInt() == 1 } }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val third = with(LocalDensity.current) { (maxHeight / 3).roundToPx() }
-        // The line being sung rests a third of the way down, and the list glides there. It used to call
-        // animateScrollToItem, whose default spring is so stiff that over one line's distance it is
-        // done in two or three frames - on screen, a teleport. This is a measured ease instead, slow
-        // enough to follow with the eye, the way Apple's lyrics move. A line that is not on screen at
+        // The line being sung rests a third of the way down, and the list glides there with a measured
+        // ease, slow enough to follow with the eye, the way Apple's lyrics move: animateScrollToItem's
+        // default spring is done in two or three frames over one line's distance, a teleport. A line that is not on screen at
         // all (a seek, the first line after opening) is still jumped to: gliding past a whole song's
         // worth of words is not a transition, it is a wait.
         val plain = reduceMotion()

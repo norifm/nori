@@ -5,6 +5,7 @@ use crate::cover::MELT;
 
 /// A gradient stop: position and alpha, both 0..1.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Stop {
     pub at: f32,
     pub alpha: f32,
@@ -54,13 +55,15 @@ pub const LYRICS_MASK: [Stop; 4] = [s(0.0, 0.0), s(0.05, 1.0), s(0.66, 1.0), s(0
 
 /// Whether a cover-tinted page renders black: the dark theme with AMOLED on, and the page not set to
 /// keep cover colours. The cover's own page does not depend on the theme; only this does.
+#[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn page_black(dark: bool, amoled: bool, cover_colours: bool) -> bool {
     dark && amoled && !cover_colours
 }
 
 /// Android `ColorMatrix` (4x5, row-major) tinting the blurred band: Rec. 709 luminance scaled per channel
 /// by `k`, mixed in at `strength` (`dress::BAND_TINT`).
-pub fn band_matrix(strength: f32, kr: f32, kg: f32, kb: f32) -> [f32; 20] {
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn band_matrix(strength: f32, kr: f32, kg: f32, kb: f32) -> Vec<f32> {
     let (t, i) = (strength, 1.0 - strength);
     let row = |k: f32, own: usize| {
         let mut r = [t * 0.2126 * k, t * 0.7152 * k, t * 0.0722 * k, 0.0, 0.0];
@@ -68,7 +71,7 @@ pub fn band_matrix(strength: f32, kr: f32, kg: f32, kb: f32) -> [f32; 20] {
         r
     };
     let (r, g, b) = (row(kr, 0), row(kg, 1), row(kb, 2));
-    let mut m = [0.0; 20];
+    let mut m = vec![0.0; 20];
     m[..5].copy_from_slice(&r);
     m[5..10].copy_from_slice(&g);
     m[10..15].copy_from_slice(&b);

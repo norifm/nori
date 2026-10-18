@@ -4,11 +4,11 @@
 use ebur128::{EbuR128, Mode};
 
 /// Block length for every level measurement.
-pub const BLOCK_MS: i64 = 100;
+pub(crate) const BLOCK_MS: i64 = 100;
 /// Silence trim threshold, dBFS RMS.
-pub const SILENCE_DB: f64 = -55.0;
+pub(crate) const SILENCE_DB: f64 = -55.0;
 /// MixRamp threshold relative to integrated loudness, dB.
-pub const MIXRAMP_DB: f64 = -17.0;
+pub(crate) const MIXRAMP_DB: f64 = -17.0;
 
 /// Streaming 100 ms block meter: each block's mean square, K-weighted (by ebur128) and plain.
 ///
@@ -129,7 +129,7 @@ fn momentary(blocks_k: &[f32]) -> impl Iterator<Item = f64> + '_ {
 }
 
 /// Integrated loudness, BS.1770-4 gating (absolute -70 LUFS, relative -10 LU) over 400 ms windows with 75 % overlap.
-pub fn integrated(blocks_k: &[f32]) -> f64 {
+pub(crate) fn integrated(blocks_k: &[f32]) -> f64 {
     let gated: Vec<f64> = momentary(blocks_k).filter(|ms| lufs_of(*ms) > -70.0).collect();
     if gated.is_empty() {
         return -70.0;
@@ -144,7 +144,7 @@ pub fn integrated(blocks_k: &[f32]) -> f64 {
 }
 
 /// First and last audible moment, ms; `(0, 0)` for silence.
-pub fn silence_trim(blocks_raw: &[f32]) -> (i64, i64) {
+pub(crate) fn silence_trim(blocks_raw: &[f32]) -> (i64, i64) {
     let loud = |v: &f32| db(*v as f64) > SILENCE_DB;
     match (blocks_raw.iter().position(loud), blocks_raw.iter().rposition(loud)) {
         (Some(a), Some(b)) => (a as i64 * BLOCK_MS, (b as i64 + 1) * BLOCK_MS),
@@ -153,7 +153,7 @@ pub fn silence_trim(blocks_raw: &[f32]) -> (i64, i64) {
 }
 
 /// The last silence of at least `min_ms` inside the music, (start, end) ms: the gap before a hidden track.
-pub fn last_gap(blocks_raw: &[f32], min_ms: i64) -> Option<(i64, i64)> {
+pub(crate) fn last_gap(blocks_raw: &[f32], min_ms: i64) -> Option<(i64, i64)> {
     let loud = |v: &f32| db(*v as f64) > SILENCE_DB;
     let (first, last) = (blocks_raw.iter().position(loud)?, blocks_raw.iter().rposition(loud)?);
     let min_blocks = (min_ms / BLOCK_MS).max(1) as usize;

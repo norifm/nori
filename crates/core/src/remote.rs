@@ -14,7 +14,8 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::ops::Range;
 use std::sync::Arc;
-use nori_tasks::{first, Either, Notify, Tasks};
+use futures_util::future::{select, Either};
+use nori_tasks::{Notify, Tasks};
 use nori_time::{Duration, Instant};
 
 use nori_remote::clock::{self, ClockSync};
@@ -221,6 +222,61 @@ impl Mirror {
     pub fn heard_ago_ms(&self) -> i64 {
         (clock::now_us() - self.at_us) / 1000
     }
+
+    /// `press` as a command for the device; None when there is nothing to ask.
+    pub fn op(&self, press: Press) -> Option<Op> {
+        Some(match press {
+            Press::Play => Op::Play,
+            Press::Pause => Op::Pause,
+            Press::Toggle if self.playing => Op::Pause,
+            Press::Toggle => Op::Play,
+            Press::Next => Op::Next,
+            Press::Previous => Op::Previous,
+            Press::Seek { ms } => Op::Seek { ms: ms.max(0) },
+            Press::Jump { index } => Op::Jump { index, rev: self.rev },
+            Press::Remove { index } => Op::Remove { index, rev: self.rev },
+            Press::Move { from, to } => Op::Move { from, to, rev: self.rev },
+            Press::Clear => Op::Clear,
+            Press::Shuffle { on } => Op::Shuffle { on },
+            Press::Repeat { mode } => Op::Repeat { mode },
+            Press::Volume { level } => {
+                let percent = (level.clamp(0.0, 1.0) * 100.0).round() as u8;
+                self.volume.filter(|&now| now != percent)?;
+                Op::Volume { percent }
+            }
+        })
+    }
+}
+
+/// [`Mirror::op`]: what a press of the player's controls asks of the mirrored device.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn mirror_op(mirror: Mirror, press: Press) -> Option<Op> {
+    mirror.op(press)
+}
+
+/// What a client's player asks of the music.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum Press {
+    Play,
+    Pause,
+    Toggle,
+    Next,
+    Previous,
+    Seek { ms: i64 },
+    /// The song at this list index (a queue row's).
+    Jump { index: u32 },
+    Shuffle { on: bool },
+    /// Off 0, one 1, all 2 (`nori_player::playlist`).
+    Repeat { mode: u8 },
+    /// 0 to 1.
+    Volume { level: f32 },
+    /// The song at this list index leaves the queue.
+    Remove { index: u32 },
+    /// The song at list index `from` moves to `to`.
+    Move { from: u32, to: u32 },
+    /// Everything after the song playing leaves the queue.
+    Clear,
 }
 
 /// A song of a mirrored queue, and the list index commands name it by.
@@ -1058,67 +1114,63 @@ fn kind_name(kind: DeviceKind) -> String {
     serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
-/// Device ids kept in the app database, one for each copy of a kind of client running at once.
-struct DeviceId;
+/// Device ids are kept in the app database, one for each copy of a kind of client running at once.
+/// The id of the first copy of `kind` over `settings`' app database that no running remote holds
+/// (`remoteDeviceId.desktop.0`, `.1`, ...), made the first time, and its lock. A fresh id while the
+/// database is not open; the first copy's when no lock file can be made.
+fn claim_device_id(settings: &Settings, kind: DeviceKind) -> (String, IdLock) {
+    let Some(db) = settings.app_db() else { return (nori_remote::new_id(), None) };
+    let name = kind_name(kind);
+    let path = db.lock().path().filter(|p| !p.is_empty()).map(str::to_string);
+    let (key, lock) = (0..)
+        .map(|copy| format!("{SHARED_DEVICE_ID}.{name}.{copy}"))
+        .find_map(|key| id_lock(path.as_deref(), &key).map(|lock| (key, lock)))
+        .expect("a copy no remote holds");
+    let id = kept_device_id(&db.lock(), &key, kind != DeviceKind::Guest).unwrap_or_else(|e| {
+        crate::alog::info(&format!("remote: could not keep the device id: {e}"));
+        nori_remote::new_id()
+    });
+    (id, lock)
+}
 
-impl DeviceId {
-    /// The id of the first copy of `kind` over `settings`' app database that no running remote holds
-    /// (`remoteDeviceId.desktop.0`, `.1`, ...), made the first time, and its lock. A fresh id while the
-    /// database is not open; the first copy's when no lock file can be made.
-    fn claim(settings: &Settings, kind: DeviceKind) -> (String, IdLock) {
-        let Some(db) = settings.app_db() else { return (nori_remote::new_id(), None) };
-        let name = kind_name(kind);
-        let path = db.lock().path().filter(|p| !p.is_empty()).map(str::to_string);
-        let (key, lock) = (0..)
-            .map(|copy| format!("{SHARED_DEVICE_ID}.{name}.{copy}"))
-            .find_map(|key| DeviceId::free(path.as_deref(), &key).map(|lock| (key, lock)))
-            .expect("a copy no remote holds");
-        let id = DeviceId::kept(&db.lock(), &key, kind != DeviceKind::Guest).unwrap_or_else(|e| {
-            crate::alog::info(&format!("remote: could not keep the device id: {e}"));
-            nori_remote::new_id()
-        });
-        (id, lock)
-    }
-
-    /// The lock of id `key` next to the app database at `db`; None while another remote holds it.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn free(db: Option<&str>, key: &str) -> Option<IdLock> {
-        let Some(db) = db else { return Some(None) };
-        let opened = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(format!("{db}.{key}.lock"));
-        let locked = opened.and_then(|file| match file.try_lock() {
-            Ok(()) => Ok(Some(file)),
-            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(std::fs::TryLockError::Error(e)) => Err(e),
-        });
-        match locked {
-            Ok(None) => None,
-            Ok(lock) => Some(lock),
-            Err(e) => {
-                crate::alog::info(&format!("remote: no lock for the device id: {e}"));
-                Some(None)
-            }
+/// The lock of id `key` next to the app database at `db`; None while another remote holds it.
+#[cfg(not(target_arch = "wasm32"))]
+fn id_lock(db: Option<&str>, key: &str) -> Option<IdLock> {
+    let Some(db) = db else { return Some(None) };
+    let opened = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(format!("{db}.{key}.lock"));
+    let locked = opened.and_then(|file| match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    });
+    match locked {
+        Ok(None) => None,
+        Ok(lock) => Some(lock),
+        Err(e) => {
+            crate::alog::info(&format!("remote: no lock for the device id: {e}"));
+            Some(None)
         }
     }
+}
 
-    /// A browser runs one copy of a client over its database.
-    #[cfg(target_arch = "wasm32")]
-    fn free(_: Option<&str>, _: &str) -> Option<IdLock> {
-        Some(None)
-    }
+/// A browser runs one copy of a client over its database.
+#[cfg(target_arch = "wasm32")]
+fn id_lock(_: Option<&str>, _: &str) -> Option<IdLock> {
+    Some(None)
+}
 
-    /// The id kept at `key`: made the first time, or the shared one taken over when `shared` allows.
-    fn kept(c: &rusqlite::Connection, key: &str, shared: bool) -> rusqlite::Result<String> {
-        use rusqlite::OptionalExtension;
-        let tx = c.unchecked_transaction()?;
-        if let Some(id) = tx.query_row("SELECT value FROM app_kv WHERE key=?1 AND value<>''", [key], |r| r.get::<_, String>(0)).optional()? {
-            return Ok(id);
-        }
-        let taken = if shared { tx.query_row("DELETE FROM app_kv WHERE key=?1 AND value<>'' RETURNING value", [SHARED_DEVICE_ID], |r| r.get::<_, String>(0)).optional()? } else { None };
-        let id = taken.unwrap_or_else(nori_remote::new_id);
-        tx.execute("INSERT OR REPLACE INTO app_kv(key, value) VALUES(?1, ?2)", [key, id.as_str()])?;
-        tx.commit()?;
-        Ok(id)
+/// The id kept at `key`: made the first time, or the shared one taken over when `shared` allows.
+fn kept_device_id(c: &rusqlite::Connection, key: &str, shared: bool) -> rusqlite::Result<String> {
+    use rusqlite::OptionalExtension;
+    let tx = c.unchecked_transaction()?;
+    if let Some(id) = tx.query_row("SELECT value FROM app_kv WHERE key=?1 AND value<>''", [key], |r| r.get::<_, String>(0)).optional()? {
+        return Ok(id);
     }
+    let taken = if shared { tx.query_row("DELETE FROM app_kv WHERE key=?1 AND value<>'' RETURNING value", [SHARED_DEVICE_ID], |r| r.get::<_, String>(0)).optional()? } else { None };
+    let id = taken.unwrap_or_else(nori_remote::new_id);
+    tx.execute("INSERT OR REPLACE INTO app_kv(key, value) VALUES(?1, ?2)", [key, id.as_str()])?;
+    tx.commit()?;
+    Ok(id)
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -1437,12 +1489,6 @@ impl Remote {
         true
     }
 
-    /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
-    pub fn hand_over(self: Arc<Self>, to: String) {
-        let me = self.id.clone();
-        self.transfer(&Via::Relay(None), &me, to, None, false);
-    }
-
     /// A door the platform's discovery found: service `service` at `host`:`port` with TXT `txt`.
     pub fn lan_found(self: Arc<Self>, service: String, host: String, port: u16, txt: Vec<Param>) {
         let get = |k: &str| txt.iter().find(|p| p.key == k).map(|p| p.value.clone()).unwrap_or_default();
@@ -1738,7 +1784,7 @@ impl Remote {
             }
         };
         #[cfg(not(target_arch = "wasm32"))]
-        transport::block_on(first(sent, self.tasks.sleep(Duration::from_millis(SENT_WAIT_MS))));
+        transport::block_on(select(std::pin::pin!(sent), self.tasks.sleep(Duration::from_millis(SENT_WAIT_MS))));
         // A browser cannot wait: its tasks end and its sends go on their own.
         #[cfg(target_arch = "wasm32")]
         drop(sent);
@@ -1951,13 +1997,7 @@ struct Queued {
 impl Sends {
     /// Until the sender ended.
     async fn ended(&self) {
-        loop {
-            let changed = self.changed.notified();
-            if self.queue.lock().ended {
-                return;
-            }
-            changed.await;
-        }
+        self.changed.until(|| self.queue.lock().ended).await;
     }
 }
 
@@ -2008,13 +2048,7 @@ struct Running {
 impl Running {
     /// Until none runs.
     async fn ended(&self) {
-        loop {
-            let ended = self.ended.notified();
-            if *self.count.lock() == 0 {
-                return;
-            }
-            ended.await;
-        }
+        self.ended.until(|| *self.count.lock() == 0).await;
     }
 }
 
@@ -2042,10 +2076,16 @@ async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
 }
 
 impl Remote {
+    /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
+    pub fn hand_over(self: Arc<Self>, to: String) {
+        let me = self.id.clone();
+        self.transfer(&Via::Relay(None), &me, to, None, false);
+    }
+
     /// A remote whose work runs on `tasks`.
     pub fn with_tasks(client: Arc<Client>, me: RemoteMe, player: Arc<dyn RemotePlayer>, shown: Arc<dyn RemoteShown>, discovery: Option<Arc<dyn Discovery>>, tasks: Arc<dyn Tasks>) -> Arc<Remote> {
         let settings = &client.core.session.settings;
-        let (id, id_lock) = DeviceId::claim(settings, me.kind);
+        let (id, id_lock) = claim_device_id(settings, me.kind);
         // Persist once per process so delayed states stay ordered across restarts.
         let instance = settings.app_db().and_then(|db| {
             db.lock().query_row(
@@ -2099,7 +2139,7 @@ impl Remote {
                     };
                     Duration::from_micros((until - clock::now_us()).max(0) as u64)
                 };
-                if let Either::Right(()) = first(me.tasks.sleep(wait), timing).await {
+                if let Either::Right(_) = select(me.tasks.sleep(wait), timing).await {
                     continue;
                 }
                 let changed = me.inner.lock().mirror.as_mut().is_some_and(|m| m.forget(None, clock::now_us()));
@@ -2191,7 +2231,7 @@ impl Remote {
             if done(&self.inner.lock()) {
                 return;
             }
-            if let Either::Left(()) = first(&mut sleep, timing).await {
+            if let Either::Left(_) = select(&mut sleep, timing).await {
                 return;
             }
         }
@@ -2200,9 +2240,9 @@ impl Remote {
     /// A GET through the client; None when the remote stopped or the request is no longer `current`
     /// meanwhile (it is cancelled).
     async fn get(&self, url: String, timeout_ms: u32, current: impl Fn(&Inner) -> bool) -> Option<Result<Vec<u8>, NetError>> {
-        match first(self.given_up(current), transport::get(&*self.client.transport, url, timeout_ms)).await {
-            Either::Left(()) => None,
-            Either::Right(got) => Some(got),
+        match select(std::pin::pin!(self.given_up(current)), std::pin::pin!(transport::get(&*self.client.transport, url, timeout_ms))).await {
+            Either::Left(_) => None,
+            Either::Right((got, _)) => Some(got),
         }
     }
 
@@ -2405,17 +2445,17 @@ impl Remote {
                 said_serving = i.serving;
                 url
             };
-            let mut poll = std::pin::pin!(transport::get(&*self.client.transport, url, POLL_TIMEOUT_MS));
-            let got = match first(self.given_up(|i| i.generation == generation), &mut poll).await {
-                Either::Left(()) => {
+            let poll = std::pin::pin!(transport::get(&*self.client.transport, url, POLL_TIMEOUT_MS));
+            let got = match select(std::pin::pin!(self.given_up(|i| i.generation == generation)), poll).await {
+                Either::Left(((), poll)) => {
                     // A poll saying this device serves may reach the relay after its leave: the leave goes
                     // again once the relay answered it (or the remote stopped).
                     if said_serving && !self.inner.lock().serving {
-                        first(self.given_up(|_| true), poll).await;
+                        select(std::pin::pin!(self.given_up(|_| true)), poll).await;
                     }
                     return said_serving;
                 }
-                Either::Right(got) => got,
+                Either::Right((got, _)) => got,
             };
             let received = clock::now_us();
             {
@@ -2448,7 +2488,7 @@ impl Remote {
                     }
                     let retry = self.retry.notified();
                     if self.inner.lock().generation == generation {
-                        first(self.tasks.sleep(Duration::from_millis(RETRY_MS)), retry).await;
+                        select(self.tasks.sleep(Duration::from_millis(RETRY_MS)), retry).await;
                     }
                 }
             }
@@ -2559,14 +2599,7 @@ impl Remote {
                 if played {
                     i.heard_playing.insert(from.clone(), received);
                 }
-                for e in a.events {
-                    match e.body {
-                        Body::Command { id, op } => commands.push((id, *op)),
-                        Body::Ack { id, refusal } => note(&mut i, &from, id, refusal),
-                        Body::Page { rev, from: turn, entries, .. } => paged(&mut i, &from, rev, turn, entries),
-                        Body::Clock { t1, t2, t3 } => timed(&mut i, &from, clock::Exchange { t1, t2, t3, t4: received }),
-                    }
-                }
+                commands.extend(a.events.into_iter().filter_map(|e| heard(&mut i, &from, e.body, received)));
                 (from, base)
             };
             for (id, op) in commands {
@@ -2634,12 +2667,9 @@ impl Remote {
                 }
             }
             for e in a.events {
-                let jam = a.rooms.iter().any(|r| r.jam && r.room == e.room);
-                match e.body {
-                    Body::Command { id, op } => commands.push((Via::Relay(jam.then_some(e.room)), e.from, id, *op)),
-                    Body::Ack { id, refusal } => note(&mut i, &e.from, id, refusal),
-                    Body::Page { rev, from, entries, .. } => paged(&mut i, &e.from, rev, from, entries),
-                    Body::Clock { t1, t2, t3 } => timed(&mut i, &e.from, clock::Exchange { t1, t2, t3, t4: received }),
+                if let Some((id, op)) = heard(&mut i, &e.from, e.body, received) {
+                    let jam = a.rooms.iter().any(|r| r.jam && r.room == e.room);
+                    commands.push((Via::Relay(jam.then_some(e.room)), e.from, id, op));
                 }
             }
             i.rooms = a.rooms;
@@ -3181,6 +3211,18 @@ fn plan_of(mix: &Mix, entries: &[Entry]) -> Option<(String, Plan)> {
     Some((from.id.clone(), engine_plan(&plan, &mix.into)?))
 }
 
+/// Event `body` from device `from` arrived at `received` (this device's clock): an answer, a page or a
+/// time exchange is noted in `i`; a command is handed back, to obey once `i` is let go.
+fn heard(i: &mut Inner, from: &str, body: Body, received: i64) -> Option<(u64, Op)> {
+    match body {
+        Body::Command { id, op } => return Some((id, *op)),
+        Body::Ack { id, refusal } => note(i, from, id, refusal),
+        Body::Page { rev, from: turn, entries, .. } => paged(i, from, rev, turn, entries),
+        Body::Clock { t1, t2, t3 } => timed(i, from, clock::Exchange { t1, t2, t3, t4: received }),
+    }
+    None
+}
+
 /// A page of the queue of device `from` arrived.
 fn paged(i: &mut Inner, from: &str, rev: u64, turn: u32, entries: Vec<Entry>) {
     if let Some(m) = i.mirror.as_mut().filter(|m| m.id == from) {
@@ -3259,6 +3301,30 @@ mod tests {
         fn changed(&self) {}
         fn marks_changed(&self) {}
         fn jam_ended(&self, _: Option<String>) {}
+    }
+
+    #[test]
+    fn the_players_controls_become_the_devices_commands() {
+        let mut m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 3, rev: 7, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, volume: Some(40), refused: None };
+        let pressed = [
+            (Press::Toggle, Some(Op::Pause)),
+            (Press::Play, Some(Op::Play)),
+            (Press::Seek { ms: -40 }, Some(Op::Seek { ms: 0 })),
+            (Press::Jump { index: 1 }, Some(Op::Jump { index: 1, rev: 7 })),
+            (Press::Repeat { mode: 2 }, Some(Op::Repeat { mode: 2 })),
+            (Press::Remove { index: 2 }, Some(Op::Remove { index: 2, rev: 7 })),
+            (Press::Move { from: 2, to: 0 }, Some(Op::Move { from: 2, to: 0, rev: 7 })),
+            (Press::Clear, Some(Op::Clear)),
+            (Press::Volume { level: 0.254 }, Some(Op::Volume { percent: 25 })),
+            (Press::Volume { level: 0.4 }, None),
+        ];
+        for (press, op) in pressed {
+            assert_eq!(m.op(press), op, "{press:?}");
+        }
+        m.playing = false;
+        assert_eq!(m.op(Press::Toggle), Some(Op::Play));
+        m.volume = None;
+        assert_eq!(m.op(Press::Volume { level: 0.9 }), None, "a volume the device does not offer");
     }
 
     #[test]
@@ -3468,15 +3534,6 @@ mod tests {
 
     #[test]
     fn a_mix_survives_the_incoming_song_takeover() {
-        struct Quiet;
-        impl RemotePlayer for Quiet {
-            fn apply(&self, _: Op) {}
-        }
-        impl RemoteShown for Quiet {
-            fn changed(&self) {}
-            fn marks_changed(&self) {}
-            fn jam_ended(&self, _: Option<String>) {}
-        }
         let (client, _) = crate::client::tests::client(crate::client::NetProfile {
             url: "http://test".into(),
             ..Default::default()

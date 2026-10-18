@@ -65,7 +65,7 @@ pub fn record(c: &mut Connection, song: &Song, started_ms: i64, heard_ms: i64, t
     }
     // A wrong clock must not mint a score that outlives everything.
     let started_ms = started_ms.clamp(TASTE_EPOCH_MS, now_ms.max(TASTE_EPOCH_MS) + DAY_MS);
-    let known: Option<i64> = c.prepare_cached("SELECT 1 FROM items WHERE server=sid() AND kind=?1 AND id=?2")?.query_row(params![db::SONG, song.id], |r| r.get(0)).optional()?;
+    let known: Option<i64> = c.prepare_cached("SELECT 1 FROM items WHERE server=sid() AND kind=?1 AND id=?2")?.query_row(params![db::ItemKind::Song, song.id], |r| r.get(0)).optional()?;
     if known.is_none() {
         db::index(c, &[], &[], std::slice::from_ref(song))?;
     }

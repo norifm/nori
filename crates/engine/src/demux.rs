@@ -17,8 +17,7 @@ use std::sync::Arc;
 use std::thread::Thread;
 
 use nori_player::automix::resample::{Resampler, Tables};
-use nori_player::automix::PCM_FLOAT;
-use nori_player::decode::{he_aac, later_seek_skip, Codec, Decoder, LaterDecoder, Platform, Setup, MP3_DECODER_DELAY};
+use nori_player::decode::{he_aac, later_seek_skip, rounded_i16, Codec, Decoder, LaterDecoder, Platform, Setup, MP3_DECODER_DELAY};
 use nori_player::pcm::{Encoding, Format};
 use nori_player::pipeline::Reading;
 use nori_player::queue::PlaybackError;
@@ -98,16 +97,11 @@ impl Pcm {
         for (o, b) in made.zip(stored.chunks_exact(self.width())) {
             match (self, to) {
                 (Pcm::U8, Encoding::Pcm16) => o.copy_from_slice(&(((b[0] as i16) - 128) << 8).to_le_bytes()),
-                (_, Encoding::Pcm16) => o.copy_from_slice(&rounded(self.value(b)).to_le_bytes()),
+                (_, Encoding::Pcm16) => o.copy_from_slice(&rounded_i16(self.value(b)).to_le_bytes()),
                 (_, Encoding::Float) => o.copy_from_slice(&self.value(b).to_le_bytes()),
             }
         }
     }
-}
-
-/// A float sample as 16-bit, rounded as `Decoder::take_i16` rounds.
-fn rounded(v: f32) -> i16 {
-    (v * 32768.0).round_ties_even().clamp(-32768.0, 32767.0) as i16
 }
 
 /// Appends `samples` to `out` in `to`, in one pass.
@@ -115,7 +109,7 @@ fn put(samples: &[f32], to: Encoding, out: &mut Vec<u8>) {
     let at = out.len();
     out.resize(at + samples.len() * to.width(), 0);
     match to {
-        Encoding::Pcm16 => out[at..].as_chunks_mut::<2>().0.iter_mut().zip(samples).for_each(|(o, &v)| *o = rounded(v).to_le_bytes()),
+        Encoding::Pcm16 => out[at..].as_chunks_mut::<2>().0.iter_mut().zip(samples).for_each(|(o, &v)| *o = rounded_i16(v).to_le_bytes()),
         Encoding::Float => out[at..].as_chunks_mut::<4>().0.iter_mut().zip(samples).for_each(|(o, v)| *o = v.to_le_bytes()),
     }
 }
@@ -559,11 +553,11 @@ fn reshaped(reshape: &mut Option<Reshape>, from: (u32, usize), to: Format, sampl
     put(samples, Encoding::Float, &mut r.input);
     let frames = samples.len() / from.1.max(1);
     r.output.resize((frames * to.rate as usize / from.0.max(1) as usize + 4) * to.channels * 4, 0);
-    let Some((_, made)) = r.resampler.process(&r.input, PCM_FLOAT, &mut r.output, PCM_FLOAT) else { return 0 };
+    let Some((_, made)) = r.resampler.process(&r.input, Encoding::Float, &mut r.output, Encoding::Float) else { return 0 };
     let made_floats = r.output[..made].as_chunks::<4>().0;
     match to.encoding {
         Encoding::Float => out.extend_from_slice(&r.output[..made]),
-        Encoding::Pcm16 => out.extend(made_floats.iter().flat_map(|b| rounded(f32::from_le_bytes(*b)).to_le_bytes())),
+        Encoding::Pcm16 => out.extend(made_floats.iter().flat_map(|b| rounded_i16(f32::from_le_bytes(*b)).to_le_bytes())),
     }
     made / 4 / to.channels
 }

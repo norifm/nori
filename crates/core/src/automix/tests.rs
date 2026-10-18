@@ -1,5 +1,6 @@
 
 use nori_player::automix::synth::Synth;
+use nori_player::pcm::Encoding;
 
 use super::*;
 use crate::Core;
@@ -11,7 +12,7 @@ fn analysis_stored_or_missing() {
     assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["a".to_string(), "b".to_string()]);
     let s = Synth::new(120.0);
     let bytes: Vec<u8> = s.render().iter().flat_map(|v| v.to_le_bytes()).collect();
-    let t = core.analysis_run("a".into(), bytes, s.rate as i32, 1, PCM_FLOAT).unwrap();
+    let t = core.analysis_run("a".into(), bytes, s.rate as i32, 1, Encoding::Float).unwrap();
     assert_eq!(core.analysis_get("a".into()).unwrap(), Some(t.clone()));
     assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["b".to_string()]);
     core.analysis_store(TrackAnalysis { song_id: "b".into(), analysis_version: ANALYSIS_VERSION - 1, ..t.clone() }).unwrap();
@@ -46,7 +47,7 @@ impl Core {
         Ok(put(&self.db.lock(), &analysis)?)
     }
 
-    fn analysis_run(&self, song_id: String, pcm: Vec<u8>, sample_rate: i32, channels: i32, encoding: i32) -> Result<TrackAnalysis> {
+    fn analysis_run(&self, song_id: String, pcm: Vec<u8>, sample_rate: i32, channels: i32, encoding: Encoding) -> Result<TrackAnalysis> {
         let a = analyse_bytes(&song_id, &pcm, sample_rate, channels, encoding).track;
         Ok(nori_automix::store::put_measured(&self.db.lock(), a)?)
     }
@@ -80,6 +81,6 @@ fn beat_model_grid_survives_reanalysis() {
     // A classical re-analysis keeps the model's grid.
     let s = Synth { secs: 200.0, ..Synth::new(120.0) };
     let bytes: Vec<u8> = s.render().iter().flat_map(|v| v.to_le_bytes()).collect();
-    let again = core.analysis_run("s".into(), bytes, s.rate as i32, 1, PCM_FLOAT).unwrap();
+    let again = core.analysis_run("s".into(), bytes, s.rate as i32, 1, Encoding::Float).unwrap();
     assert_eq!((again.intro_grid_source, again.intro_bpm, again.outro_grid_source), (GRID_NEURAL, 90.0, GRID_CHECKED));
 }

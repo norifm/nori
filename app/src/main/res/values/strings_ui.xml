@@ -646,7 +646,6 @@
     <string name="jam_copy_link">Copy link</string>
     <string name="jam_link_copied">Link copied</string>
     <string name="jam_share">Share</string>
-    <string name="jam_end">End Jam</string>
     <string name="jam_end_short">End</string>
     <string name="jam_people">People</string>
     <string name="jam_people_count">People · %1$d</string>

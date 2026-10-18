@@ -11,10 +11,10 @@ pub fn album_subtitle(artist: &str, year: u32) -> String {
 }
 
 /// Song row subtitle: explicit mark, then the artist unless it matches `page_artist` (case-insensitive).
-pub fn song_line(explicit_status: &str, artist: &str, page_artist: Option<&str>) -> String {
+pub fn song_line(explicit_status: crate::model::ExplicitStatus, artist: &str, page_artist: Option<&str>) -> String {
     let show = page_artist.is_none_or(|p| !artist.to_lowercase().eq(&p.to_lowercase()));
     let mut out = String::new();
-    if explicit_status == "explicit" {
+    if explicit_status == crate::model::ExplicitStatus::Explicit {
         out.push_str("🅴 ");
     }
     if show {
@@ -33,9 +33,9 @@ mod tests {
         assert_eq!((album_subtitle("", 2019), album_subtitle("A", 0), album_subtitle("", 0)), ("2019".into(), "A".into(), String::new()));
 
         // Song line marks explicit and hides page artist.
-        assert_eq!(song_line("explicit", "Muse", None), "🅴 Muse");
-        assert_eq!(song_line("clean", "Muse", Some("muse")), "");
-        assert_eq!(song_line("", "Muse", Some("Other")), "Muse");
+        assert_eq!(song_line(crate::model::ExplicitStatus::Explicit, "Muse", None), "🅴 Muse");
+        assert_eq!(song_line(crate::model::ExplicitStatus::Clean, "Muse", Some("muse")), "");
+        assert_eq!(song_line(crate::model::ExplicitStatus::Unmarked, "Muse", Some("Other")), "Muse");
     }
 
 }

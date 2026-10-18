@@ -21,8 +21,6 @@ pub struct Seen {
     pub in_output_ms: i64,
     /// How long the position stood still while music should move, ms (0 while it moves or bytes are coming).
     pub quiet_ms: i64,
-    /// The awaited song's bytes are still being fetched.
-    pub bytes_coming: bool,
     /// An output (CPU device or offload track) is open.
     pub output_open: bool,
     /// The engine's state in words, for a stall report.

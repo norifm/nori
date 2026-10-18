@@ -54,7 +54,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"shownMs", c"(JI)J", shown_ms),
         native!(c"look", c"(J)V", look),
         native!(c"mixing", c"(J)Z", mixing),
-        native!(c"remoteState", c"(J[J)V", remote_state),
+        native!(c"remotePlayed", c"(JJI)V", remote_played),
         native!(c"chainIn", c"(J)Z", chain_in),
         native!(c"onCpu", c"(J)Z", on_cpu),
         native!(c"pace", c"(J)F", pace),
@@ -983,10 +983,6 @@ impl ByteSource for AheadBytes {
         Err("asked without its cache key".into())
     }
 
-    fn open_keyed(&self, url: &str, key: &str, from: u64) -> Result<Body, OpenError> {
-        open_java(&self.0, url, key, from, &Cancel::new())
-    }
-
     fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
         match key {
             Some(key) => open_java(&self.0, url, key, from, cancel),
@@ -1559,30 +1555,14 @@ extern "system" fn mixing(h: jlong) -> jboolean {
     player(h).is_some_and(|p| p.engine.status_with(|s| s.mixing)) as jboolean
 }
 
-extern "system" fn remote_state(
-    env: JNIEnv,
-    _: JClass,
-    h: jlong,
-    out: JLongArray,
-) {
+/// Tells `remote` (a `Remote.uniffiCloneHandle()`, taken over) where the engine is now, at the media
+/// volume `volume` (0 to 100; -1 where it cannot be set).
+extern "system" fn remote_played(h: jlong, remote: jlong, volume: jint) {
+    // SAFETY: Kotlin passes `Remote.uniffiCloneHandle()`, once.
+    let remote: Arc<nori_core::remote::Remote> = unsafe { crate::uniffi_object(remote) };
     let Some(p) = player(h) else { return };
-    let words = p.engine.status_with(|s| {
-        let playing = s.state == nori_engine::State::Playing;
-        let (position_ms, mix_position_ms) =
-            s.positions_at(std::time::Instant::now(), s.buffering);
-        [
-            playing as jlong,
-            position_ms,
-            s.pace.to_bits() as jlong,
-            s.index.map_or(-1, |i| i as jlong),
-            s.mixing as jlong,
-            s.mix_from.map_or(-1, |i| i as jlong),
-            mix_position_ms,
-            s.speed.to_bits() as jlong,
-            s.buffering as jlong,
-        ]
-    });
-    let _ = env.set_long_array_region(&out, 0, &words);
+    let playing = p.engine.status_with(|s| nori_engine::core::playing(s, u8::try_from(volume).ok()));
+    remote.played(playing);
 }
 /// Whether the sound chain processes the samples.
 extern "system" fn chain_in(h: jlong) -> jboolean {

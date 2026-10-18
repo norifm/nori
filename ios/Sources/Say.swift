@@ -11,6 +11,8 @@ enum Say {
         case "newest": return "Recently added"
         case "recent": return "Recently played"
         case "frequent": return "Most played albums"
+        case "pinned": return "Pinned playlists"
+        case "topSongs": return "Most played songs"
         case "starred": return "Favorite albums"
         case "random": return "Random"
         case "artists": return "Artists"

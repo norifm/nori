@@ -33,22 +33,15 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryScrollableTabRow
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -307,12 +300,7 @@ fun SongsScreen(actions: ActionsViewModel, decade: Int?, vm: SongsViewModel = vi
     val songs by vm.songs.collectAsStateWithLifecycle()
     val sort by vm.sort.collectAsStateWithLifecycle()
     val starred by vm.starredOnly.collectAsStateWithLifecycle()
-    val done = actions.downloads.collectAsState().value.doneIds
-    val selection by actions.selection.collectAsStateWithLifecycle()
-    val selected = remember(selection) { selection.mapTo(HashSet()) { it.id } }
-    val player: dev.nori.music.app.vm.PlayerViewModel = viewModel()
-    val playing by player.currentId.collectAsStateWithLifecycle()
-    val menu = LocalSongMenu.current
+    val rows = rememberSongListState(actions)
     val list = rememberLazyListState()
     // Ask for the next page a screenful before the end, from a snapshot observer rather than from inside item composition.
     LaunchedEffect(list, songs.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= songs.size - 40 }.collect { if (it) vm.loadMore() } }
@@ -326,7 +314,7 @@ fun SongsScreen(actions: ActionsViewModel, decade: Int?, vm: SongsViewModel = vi
             items(SongSort.entries) { s -> Chip(say.songSort(s.name), sort == s) { vm.setSort(s) } }
         }
         if (songs.isEmpty() && indexed) EmptyNote(Note.NO_INDEX)
-        LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) { songRows(songs, actions, playing, done, selected, menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = LIBRARY_SONGS) }
+        LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) { songRows(songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = LIBRARY_SONGS) }
     }
 }
 
@@ -376,7 +364,7 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
         AlertCard(
             title = { Text(say.newPlaylist) },
             text = { FormField(name, { name = it }, label = { Text(say.name) }, singleLine = true) },
-            confirmButton = { TextButton({ vm.create(name.trim()); creating = false }, enabled = name.isNotBlank()) { Text(say.create) } },
+            confirmButton = { TextAction(say.create, { vm.create(name.trim()); creating = false }, enabled = name.isNotBlank()) },
         )
     }
     val smart = LibrarySection.SMART in LocalRules.current.sections
@@ -405,7 +393,7 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
 private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewModel()) {
     val load by vm.starred.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    val menu = LocalSongMenu.current
+    val list = rememberSongListState(actions)
     LoadBox(load) { s ->
         LazyColumn(Modifier.pageToEdges(), contentPadding = pagePadding(LocalChromeInset.current)) {
             // The songs as one list to play, the page the "Favourites" tile on Home opens too.
@@ -427,7 +415,7 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
                     leading = { Cover(vm.cover(a.coverArt, CoverSize.ROW), 44.dp, radius = 22.dp) },
                 )
             }
-            songRows(s.songs, actions, null, emptySet(), emptySet(), menu, cover = { vm.cover(it.coverArt, CoverSize.ROW) })
+            songRows(s.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) })
         }
     }
 }
@@ -455,7 +443,7 @@ private fun Radio(vm: RadioViewModel = viewModel()) {
         AlertCard(
             title = { Text(say.newStation) },
             text = { Column { FormField(name, { name = it }, label = { Text(say.name) }, singleLine = true); Spacer(Modifier.height(10.dp)); FormField(url, { url = it }, label = { Text(say.streamUrl) }, singleLine = true) } },
-            confirmButton = { TextButton({ vm.add(name.trim(), url.trim()); adding = false }, enabled = dev.nori.music.ffi.library.radioCanAdd(name, url)) { Text(say.add) } },
+            confirmButton = { TextAction(say.add, { vm.add(name.trim(), url.trim()); adding = false }, enabled = dev.nori.music.ffi.library.radioCanAdd(name, url)) },
         )
     }
     LoadBox(load) { stations ->
@@ -483,7 +471,7 @@ internal val DOWNLOADED_SONGS = dev.nori.music.ffi.model.PageOrigin(dev.nori.mus
 private fun Downloads(actions: ActionsViewModel) {
     val d by actions.downloads.collectAsState()
     val done by actions.downloadedLibrary.collectAsStateWithLifecycle()
-    val menu = LocalSongMenu.current
+    val list = rememberSongListState(actions)
     val counts by actions.downloadQueueCounts.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
@@ -509,6 +497,6 @@ private fun Downloads(actions: ActionsViewModel) {
                 if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
-        songRows(library?.songs.orEmpty(), actions, null, d.doneIds, emptySet(), menu, cover = { actions.cover(it.coverArt, CoverSize.ROW) }, from = DOWNLOADED_SONGS)
+        songRows(library?.songs.orEmpty(), actions, list, cover = { actions.cover(it.coverArt, CoverSize.ROW) }, from = DOWNLOADED_SONGS)
     }
 }

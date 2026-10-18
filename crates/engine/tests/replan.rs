@@ -35,7 +35,7 @@ impl ByteSource for Net {
 const SECS: usize = 40;
 
 struct Rig {
-    engine: Engine,
+    engine: common::Running,
     core: Arc<Core>,
     time: Stepper<Pull>,
     _dir: nori_testdir::TempDir,
@@ -70,7 +70,7 @@ impl Rig {
         let library = CoreLibrary { client, bytes: net, store: Some(store), analyses };
         let card = Card::new();
         let clock = Virtual::default();
-        let engine = Engine::start_on(library, CoreApp::new(core.session.clone()), CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 128, settings: settings(&prefs, 0.0), ..Config::default() }, clock.clone(), |_| {});
+        let engine = common::Running(Engine::start_on(library, CoreApp::new(core.session.clone()), CoreQueue(core.session.clone()), Box::new(card.clone()), None, Config { memory_mb: 128, settings: settings(&prefs, 0.0), ..Config::default() }, clock.clone(), |_| {}));
         engine.queue_changed();
         Rig { engine, core, time: Stepper::new(clock, card.pull.clone()), _dir: dir }
     }
@@ -112,12 +112,6 @@ impl Rig {
         });
         assert!(came, "song {index} is heard: {:?}", self.engine.status());
         mixed
-    }
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        self.engine.stop();
     }
 }
 

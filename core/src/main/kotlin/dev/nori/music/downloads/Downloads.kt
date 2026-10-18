@@ -38,6 +38,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import dev.nori.music.ffi.transfers.DownloadKnown
 import dev.nori.music.ffi.transfers.DownloadQueued
+import dev.nori.music.ffi.transfers.NoticeKind
+import dev.nori.music.ffi.transfers.SummaryText
+import dev.nori.music.ffi.transfers.SummaryTitle
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.playback.MediaSources
 import dev.nori.music.settings.Settings
@@ -104,8 +107,6 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     /** The index's bookkeeping. Downloads never run here: see [TrackedDownloaders]. */
     private val io = Executors.newFixedThreadPool(2)
     private val main = Handler(Looper.getMainLooper())
-    private var workingAt = 0L
-    private var workingDue = false
     private val _state = MutableStateFlow(DownloadState())
     val state: StateFlow<DownloadState> = _state
 
@@ -296,8 +297,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     /** The service is held: its notification says what the saved songs wait for from now on. Main thread. */
     internal fun held() {
         // media3's last word may be on its notification: built and shown again.
-        lastWorking = null
-        lastWorkingWords = ""
+        working = null
         summarise()
     }
 
@@ -498,7 +498,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         when (DownloadsJni.notice(DownloadsJni.h, downloads.size, notMetRequirements, SystemClock.elapsedRealtime())) {
             0 -> lastProgress?.let { return it }
             // The bytes are in and saved songs are still processing: the service stays for them, and says so.
-            2 -> processingNow()?.let { return workingNotification(it) } ?: return complete ?: NotificationCompat.Builder(context, CHANNEL)
+            2 -> processingNow()?.let { return workingNotification(it, DOWNLOAD_NOTIFICATION, SystemClock.elapsedRealtime()) } ?: return complete ?: NotificationCompat.Builder(context, CHANNEL)
                 // Nothing left: the service is on its way out, and the batch's own summary (its own id,
                 // so stopping the service does not take it) says how it went. No bar here.
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
@@ -512,7 +512,8 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         }
         val names = DownloadsJni.noticeFacts(DownloadsJni.h, noticeFacts) ?: "\n"
         val cut = names.indexOf('\n')
-        val (title, text) = noticeWords(context.resources, names.substring(0, cut), names.substring(cut + 1), noticeFacts)
+        val kind = NoticeKind.entries[noticeFacts[0].toInt()]
+        val (title, text) = noticeWords(context.resources, kind, names.substring(0, cut), names.substring(cut + 1), noticeFacts)
         val permille = noticeFacts[3].toInt()
         lastProgress?.let { if (title == lastTitle && text == lastText && permille == lastPermille) return it }
         lastTitle = title; lastText = text; lastPermille = permille
@@ -540,29 +541,21 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     private var complete: Notification? = null
 
     /**
-     * The notification's title and text from the core's facts: which title applies ([facts] `[0]`: 0
-     * waiting for a network, 1 one song named [current], 2 one song, 3 "12 of 49"), then the song in
-     * flight, the batch's album, how fast and how long, each only when there is one.
+     * The notification's title ([kind], the song in flight [current]) and text from the core's facts: the
+     * song in flight, the batch's album, how fast and how long, each only when there is one.
      */
-    private fun noticeWords(res: Resources, current: String, album: String, facts: LongArray): Pair<String, String> {
-        val title = when (facts[0].toInt()) {
-            0 -> res.getString(R.string.notice_waiting)
-            1 -> res.getString(R.string.notice_downloading_named, current)
-            2 -> res.getString(R.string.notice_downloading_one)
-            else -> res.getString(R.string.notice_downloading_of, facts[1].toInt(), facts[2].toInt())
+    private fun noticeWords(res: Resources, kind: NoticeKind, current: String, album: String, facts: LongArray): Pair<String, String> {
+        val title = when (kind) {
+            NoticeKind.WAITING -> res.getString(R.string.notice_waiting)
+            NoticeKind.ONE_NAMED -> res.getString(R.string.notice_downloading_named, current)
+            NoticeKind.ONE -> res.getString(R.string.notice_downloading_one)
+            NoticeKind.MANY -> res.getString(R.string.notice_downloading_of, facts[1].toInt(), facts[2].toInt())
         }
         val text = StringBuilder()
-        fun part(f: (StringBuilder) -> Unit) {
-            val start = text.length
-            if (start > 0) text.append(" · ")
-            val mark = text.length
-            f(text)
-            if (text.length == mark) text.setLength(start)
-        }
-        if (current.isNotEmpty()) part { it.append(current) }
-        if (album.isNotEmpty()) part { it.append(res.getString(R.string.notice_album, album)) }
-        part { it.append(Fmt.speed(facts[4])) }
-        part { appendEta(res, it, facts[5]) }
+        if (current.isNotEmpty()) text.part { it.append(current) }
+        if (album.isNotEmpty()) text.part { it.append(res.getString(R.string.notice_album, album)) }
+        text.part { it.append(Fmt.speed(facts[4])) }
+        text.part { appendEta(res, it, facts[5]) }
         return title to text.toString()
     }
 
@@ -585,25 +578,21 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
             val on = if (w?.holding == true) DOWNLOAD_NOTIFICATION else DOWNLOAD_RESULT_NOTIFICATION
             // At most one update a second: marks change many times a second while songs process.
             val now = SystemClock.elapsedRealtime()
-            if (on == workingOn && now - workingAt < 1000) {
-                if (!workingDue) {
-                    workingDue = true
-                    main.postDelayed({ workingDue = false; if (summaryWaits) summarise() }, workingAt + 1000 - now)
-                }
+            val shown = working
+            if (shown?.id == on && now - shown.at < 1000) {
+                main.removeCallbacks(summariseAgain)
+                main.postDelayed(summariseAgain, shown.at + 1000 - now)
                 return
             }
-            val shown = lastWorking
-            val n = workingNotification(p)
-            if (n === shown && on == workingOn) return
-            if (workingOn != 0 && workingOn != on && workingOn == DOWNLOAD_RESULT_NOTIFICATION) nm.cancel(DOWNLOAD_RESULT_NOTIFICATION)
-            workingOn = on
-            workingAt = now
+            val n = workingNotification(p, on, now)
+            if (shown?.id == on && n === shown.notification) return
+            if (shown?.id == DOWNLOAD_RESULT_NOTIFICATION && on != DOWNLOAD_RESULT_NOTIFICATION) nm.cancel(DOWNLOAD_RESULT_NOTIFICATION)
             runCatching { nm.notify(on, n) }
             return
         }
         val wasWorking = summaryWaits
         summaryWaits = false
-        workingOn = 0
+        working = null
         // Nothing is processing: the service goes, and its notification with it.
         worker?.release()
         val facts = IntArray(4)
@@ -615,15 +604,15 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         val res = context.resources
         val (done, failedCount) = facts[2] to facts[3]
         val failed = failedCount > 0
-        val title = when (facts[0]) {
-            0 -> res.getQuantityString(R.plurals.summary_failed, failedCount, failedCount)
-            1 -> res.getString(R.string.summary_album, album)
-            else -> res.getQuantityString(R.plurals.summary_downloaded, done, done)
+        val title = when (SummaryTitle.entries[facts[0]]) {
+            SummaryTitle.FAILED -> res.getQuantityString(R.plurals.summary_failed, failedCount, failedCount)
+            SummaryTitle.ALBUM -> res.getString(R.string.summary_album, album)
+            SummaryTitle.DOWNLOADED -> res.getQuantityString(R.plurals.summary_downloaded, done, done)
         }
-        val text = when (facts[1]) {
-            1 -> res.getString(R.string.summary_some_failed, done)
-            2 -> res.getString(R.string.summary_try_again)
-            else -> null
+        val text = when (SummaryText.entries[facts[1]]) {
+            SummaryText.SOME_FAILED -> res.getString(R.string.summary_some_failed, done)
+            SummaryText.TRY_AGAIN -> res.getString(R.string.summary_try_again)
+            SummaryText.NONE -> null
         }
         val b = NotificationCompat.Builder(context, CHANNEL)
             .setContentTitle(title)
@@ -640,9 +629,9 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     /**
      * The notification while saved songs are processing: what most of them wait for as the title ("Finding lyrics
      * for 3 songs…", "Analysing 2 songs…", "Detecting beats for 5 songs…"), the rest and the time left below. The
-     * same one is handed back while its words are.
+     * same one is handed back while its words are; [working] from now on, shown under [id] at [now].
      */
-    private fun workingNotification(p: dev.nori.music.ffi.transfers.Processing): Notification {
+    private fun workingNotification(p: dev.nori.music.ffi.transfers.Processing, id: Int, now: Long): Notification {
         val res = context.resources
         val title = when {
             p.lyrics > 0 -> res.getQuantityString(R.plurals.summary_finding_lyrics, p.lyrics, p.lyrics)
@@ -650,19 +639,11 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
             else -> res.getQuantityString(R.plurals.summary_detecting_beats, p.beats, p.beats)
         }
         val text = StringBuilder()
-        fun part(f: (StringBuilder) -> Unit) {
-            val start = text.length
-            if (start > 0) text.append(" · ")
-            val mark = text.length
-            f(text)
-            if (text.length == mark) text.setLength(start)
-        }
-        if (p.lyrics > 0 && p.analysing > 0) part { it.append(res.getQuantityString(R.plurals.processing_analysing, p.analysing, p.analysing)) }
-        if ((p.lyrics > 0 || p.analysing > 0) && p.beats > 0) part { it.append(res.getQuantityString(R.plurals.processing_beats, p.beats, p.beats)) }
-        part { appendEta(res, it, p.etaS) }
+        if (p.lyrics > 0 && p.analysing > 0) text.part { it.append(res.getQuantityString(R.plurals.processing_analysing, p.analysing, p.analysing)) }
+        if ((p.lyrics > 0 || p.analysing > 0) && p.beats > 0) text.part { it.append(res.getQuantityString(R.plurals.processing_beats, p.beats, p.beats)) }
+        text.part { appendEta(res, it, p.etaS) }
         val words = title + "\n" + text
-        lastWorking?.let { if (words == lastWorkingWords) return it }
-        lastWorkingWords = words
+        working?.let { if (words == it.words) { working = Working(id, now, words, it.notification); return it.notification } }
         return NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
@@ -674,15 +655,15 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
             .setSilent(true)
             .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-            .build().also { lastWorking = it }
+            .build().also { working = Working(id, now, words, it) }
     }
 
     /** Saved songs are processing and the notification says so: [summarise] again as the marks change. Main thread. */
     private var summaryWaits = false
-    /** The processing notification last built, its words, and the id it was last shown under (0 none). */
-    private var lastWorking: Notification? = null
-    private var lastWorkingWords = ""
-    private var workingOn = 0
+    /** The processing notification last shown: the id it was shown under, when, and its words. */
+    private class Working(val id: Int, val at: Long, val words: String, val notification: Notification)
+    private var working: Working? = null
+    private val summariseAgain = Runnable { if (summaryWaits) summarise() }
 
     /** A new batch starting takes the last one's result away: the progress notification replaces it. */
     private fun cancelResult() {
@@ -801,12 +782,12 @@ object DownloadLines {
     fun summary(res: Resources, active: Int, queued: Int, failed: Int): String {
         out.setLength(0)
         if (active > 0) out.append(res.getString(R.string.downloads_active, active))
-        if (queued > 0) part { it.append(res.getString(R.string.downloads_waiting, queued)) }
-        if (failed > 0) part { it.append(res.getString(R.string.downloads_failed, failed)) }
+        if (queued > 0) out.part { it.append(res.getString(R.string.downloads_waiting, queued)) }
+        if (failed > 0) out.part { it.append(res.getString(R.string.downloads_failed, failed)) }
         if (active > 0) {
             DownloadFacts.speedEta(DownloadsJni.h, facts)
-            part { it.append(Fmt.speed(facts[0])) }
-            part { appendEta(res, it, facts[1]) }
+            out.part { it.append(Fmt.speed(facts[0])) }
+            out.part { appendEta(res, it, facts[1]) }
         }
         if (out.isEmpty()) return res.getString(R.string.downloads_nothing)
         return out.toString()
@@ -821,17 +802,19 @@ object DownloadLines {
         if (out.length == mark) out.setLength(start)
     }
 
-    /** Adds `" · "` and what [f] writes, or nothing when it writes nothing (the first part has no dot). */
-    private inline fun part(f: (StringBuilder) -> Unit) {
-        val start = out.length
-        if (start > 0) out.append(" · ")
-        val mark = out.length
-        f(out)
-        if (out.length == mark) out.setLength(start)
-    }
+
 }
 
 /** "45 s left", "12:34 left", "2:05:00 left" onto [out]; nothing when it cannot be said (negative). */
+/** Adds `" · "` and what [f] writes, or nothing when it writes nothing (the first part has no dot). */
+internal inline fun StringBuilder.part(f: (StringBuilder) -> Unit) {
+    val start = length
+    if (start > 0) append(" · ")
+    val mark = length
+    f(this)
+    if (length == mark) setLength(start)
+}
+
 internal fun appendEta(res: Resources, out: StringBuilder, sec: Long) {
     when {
         sec < 0 -> Unit

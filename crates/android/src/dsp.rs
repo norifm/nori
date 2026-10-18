@@ -23,5 +23,5 @@ extern "system" fn effective_preamp_db(
     if env.get_int_array_region(&kinds, 0, &mut k).is_err() || env.get_float_array_region(&gains, 0, &mut g).is_err() {
         return 0.0;
     }
-    nori_core::settings::effective_preamp_db(eq_enabled != 0, (automatic == 0).then_some(eq_preamp_db), k.into_iter().zip(g))
+    nori_core::settings::effective_preamp_db(eq_enabled != 0, (automatic == 0).then_some(eq_preamp_db), k.into_iter().zip(g).filter_map(|(k, g)| Some((nori_core::settings::eq_kind(k)?, g))))
 }

@@ -10,8 +10,9 @@ name = "nori_host"
 
 [features]
 default = ["desktop"]
-# MPRIS media controls. The iOS client leaves the default features off.
-desktop = ["dep:nori-mpris", "dep:mdns-sd"]
+# MPRIS media controls, the cpal sound card and ureq's HTTP: the terminal and desktop clients. The iOS
+# and web clients leave the default features off.
+desktop = ["dep:nori-mpris", "dep:mdns-sd", "dep:nori-output-cpal", "dep:nori-http"]
 
 [dependencies]
 # Time, read the same way natively and in a browser.
@@ -22,6 +23,8 @@ nori-engine = { path = "../engine", default-features = false, features = ["core"
 nori-covers = { path = "../covers" }
 nori-look = { path = "../look" }
 nori-mpris = { path = "../mpris", optional = true }
+nori-output-cpal = { path = "../output-cpal", optional = true }
+nori-http = { path = "../http", optional = true }
 # Nearby devices for remote control (nori-remote lan.rs); started only while it is on.
 mdns-sd = { version = "0.21", optional = true, default-features = false }
 nori-remote = { path = "../remote" }

@@ -44,6 +44,36 @@ fn opt_id<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     }))
 }
 
+/// A song's or album's content advisory (OpenSubsonic `explicitStatus`: "explicit", "clean" or empty).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum ExplicitStatus {
+    #[default]
+    Unmarked,
+    Clean,
+    Explicit,
+}
+
+impl Serialize for ExplicitStatus {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            ExplicitStatus::Unmarked => "",
+            ExplicitStatus::Clean => "clean",
+            ExplicitStatus::Explicit => "explicit",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for ExplicitStatus {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match Option::<String>::deserialize(d)?.as_deref() {
+            Some("explicit") => ExplicitStatus::Explicit,
+            Some("clean") => ExplicitStatus::Clean,
+            _ => ExplicitStatus::Unmarked,
+        })
+    }
+}
+
 /// A string or numeric id as a string; empty when absent.
 pub fn id_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     Ok(opt_id(d)?.unwrap_or_default())
@@ -132,8 +162,7 @@ pub struct Song {
     pub play_count: u32,
     pub played: Option<String>,
     pub path: Option<String>,
-    /// "explicit", "clean" or empty.
-    pub explicit_status: String,
+    pub explicit_status: ExplicitStatus,
     pub channel_count: u32,
     pub music_brainz_id: Option<String>,
     pub bpm: u32,
@@ -169,7 +198,7 @@ impl Song {
     }
 
     fn dress(&mut self) {
-        self.line = crate::lines::song_line(&self.explicit_status, &self.artist, None);
+        self.line = crate::lines::song_line(self.explicit_status, &self.artist, None);
     }
 
     /// A song with only its id (and derived fields) set.
@@ -215,7 +244,7 @@ pub struct Album {
     pub user_rating: u8,
     pub play_count: u32,
     pub created: Option<String>,
-    pub explicit_status: String,
+    pub explicit_status: ExplicitStatus,
     pub music_brainz_id: Option<String>,
     /// Card subtitle ([`crate::lines::album_subtitle`]), filled when read.
     #[serde(skip)]
@@ -731,41 +760,7 @@ pub enum FadeCurve {
     SineSquared,
 }
 
-pub use nori_player::policy::{AudioPolicy, AudioPrefs, GainMode, GainTags, OutputState};
-
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Record)]
-pub struct AudioPrefs {
-    pub dsp: bool,
-    pub skip_silence: bool,
-    pub offload: bool,
-    pub crossfade_s: i32,
-    pub auto_mix: bool,
-    pub speed: f32,
-    pub pitch: f32,
-}
-
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Record)]
-pub struct OutputState {
-    pub hi_res: bool,
-    pub bit_perfect: bool,
-    pub usb: bool,
-    pub offload_refused: bool,
-}
-
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Record)]
-pub struct AudioPolicy {
-    pub untouched: bool,
-    pub float: bool,
-    pub processing: bool,
-    pub transitions_off: bool,
-    pub lock_rate: bool,
-    pub skip_silence: bool,
-    pub offload: bool,
-    pub processor_in_chain: bool,
-}
+pub use nori_player::policy::{AudioPrefs, GainMode, OutputState};
 
 #[cfg(feature = "ffi")]
 #[uniffi::remote(Enum)]
@@ -774,15 +769,6 @@ pub enum GainMode {
     Track,
     Album,
     Auto,
-}
-
-#[cfg(feature = "ffi")]
-#[uniffi::remote(Record)]
-pub struct GainTags {
-    pub track_gain: Option<f32>,
-    pub album_gain: Option<f32>,
-    pub track_peak: Option<f32>,
-    pub album_peak: Option<f32>,
 }
 
 pub use nori_player::device::{Arrival, ArrivalPlan, CurveStep};
@@ -891,4 +877,19 @@ pub enum PlaybackError {
     Output,
     Network,
     Other,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_status_reads_and_keeps_the_servers_words() {
+        for (wire, status) in [(r#""explicit""#, ExplicitStatus::Explicit), (r#""clean""#, ExplicitStatus::Clean), (r#""""#, ExplicitStatus::Unmarked), ("null", ExplicitStatus::Unmarked)] {
+            let song: Song = serde_json::from_str(&format!(r#"{{"id":"1","explicitStatus":{wire}}}"#)).unwrap();
+            assert_eq!(song.explicit_status, status, "{wire}");
+            let kept: Song = serde_json::from_str(&serde_json::to_string(&song).unwrap()).unwrap();
+            assert_eq!(kept.explicit_status, status, "{wire} stored and read back");
+        }
+    }
 }

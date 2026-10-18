@@ -18,7 +18,7 @@ local_server_up
 adb shell am force-stop "$pkg" >/dev/null 2>&1
 app_up >/dev/null || { echo "the app did not come up"; exit 1; }
 remember_settings offload autoMix eq
-for s in "autoMix false" "crossfadeSec 0" "eq false" "speed 1" "pitch 1" "skipSilence false"; do "$app" set $s >/dev/null; done
+plain_sound
 playing_now() { [ "$(field playing)" = True ] && playing_audio || { "$app" play "$song" >/dev/null; sounds 20; }; }
 
 if want play; then section play

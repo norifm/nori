@@ -105,11 +105,11 @@ private fun BannerCard(vm: SettingsViewModel, s: Updates.State) {
             }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
                 if (s is Updates.State.Available && !open && update.notes.isNotEmpty()) {
-                    TextButton({ open = true }) { Text(res.getString(R.string.update_whats_new)) }
+                    TextAction(res.getString(R.string.update_whats_new), { open = true })
                     androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
                 }
                 if (s !is Updates.State.Downloading && s !is Updates.State.Installing) {
-                    TextButton(vm::updateLater) { Text(res.getString(R.string.update_later)) }
+                    TextAction(res.getString(R.string.update_later), vm::updateLater)
                 }
                 updateButton(res, s, installs)?.let { word ->
                     val act = if (s is Updates.State.Downloading) vm::cancelUpdate else vm::updateNow
@@ -129,7 +129,7 @@ fun ChangelogDialog(vm: SettingsViewModel) {
         AlertCard(
             title = { Text(res.getString(R.string.update_changelog_title, BuildConfig.VERSION_NAME)) },
             text = { Text(text, Modifier.verticalScroll(rememberScrollState())) },
-            confirmButton = { TextButton(vm::changelogSeen) { Text(res.getString(R.string.update_changelog_done)) } },
+            confirmButton = { TextAction(res.getString(R.string.update_changelog_done), vm::changelogSeen) },
         )
     }
 }

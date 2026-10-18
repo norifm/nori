@@ -1,28 +1,13 @@
-//! Speed and pitch processor: [`crate::sonic::Sonic`] plus media3 `SonicAudioProcessor`'s byte
-//! counts, which map played output back to media time.
+//! Speed and pitch processor: [`crate::sonic::Sonic`] over little-endian PCM bytes.
 
 use crate::pcm::Encoding;
 use crate::sonic::Sonic;
 
-/// Below this much output the measured ratio is too noisy; the nominal speed is used.
-#[cfg(any(test, feature = "synth"))]
-const MIN_BYTES_FOR_DURATION_SCALING: u64 = 1024;
 const CLOSE_THRESHOLD: f32 = 0.0001;
 
 /// Whether speed or pitch differs from 1 beyond float noise (otherwise the stage is bypassed).
 pub fn speed_active(speed: f32, pitch: f32) -> bool {
     (speed - 1.0).abs() >= CLOSE_THRESHOLD || (pitch - 1.0).abs() >= CLOSE_THRESHOLD
-}
-
-/// Media time covered by `playout_us` of output at the nominal `speed`.
-pub fn nominal_media_us(speed: f32, playout_us: i64) -> i64 {
-    (speed as f64 * playout_us as f64) as i64
-}
-
-/// Output time `media_us` of the song takes at the nominal `speed`.
-#[cfg(any(test, feature = "synth"))]
-pub fn nominal_playout_us(speed: f32, media_us: i64) -> i64 {
-    (media_us as f64 / speed as f64) as i64
 }
 
 #[derive(Clone)]
@@ -38,8 +23,6 @@ pub struct SpeedPitch {
     speed: f32,
     pitch: f32,
     engine: Engine,
-    input_bytes: u64,
-    output_bytes: u64,
     staged_i16: Vec<i16>,
     staged_f32: Vec<f32>,
 }
@@ -56,8 +39,8 @@ impl Clone for SpeedPitch {
             (Engine::Float(a), Engine::Float(b)) => a.clone_from(b),
             (a, b) => *a = b.clone(),
         }
-        let SpeedPitch { rate, ch, enc, speed, pitch, engine: _, input_bytes, output_bytes, staged_i16: _, staged_f32: _ } = *o;
-        (self.rate, self.ch, self.enc, self.speed, self.pitch, self.input_bytes, self.output_bytes) = (rate, ch, enc, speed, pitch, input_bytes, output_bytes);
+        let SpeedPitch { rate, ch, enc, speed, pitch, engine: _, staged_i16: _, staged_f32: _ } = *o;
+        (self.rate, self.ch, self.enc, self.speed, self.pitch) = (rate, ch, enc, speed, pitch);
     }
 }
 
@@ -78,8 +61,6 @@ impl SpeedPitch {
             speed: 1.0,
             pitch: 1.0,
             engine: Engine::Short(Sonic::new(rate, ch, 1.0, 1.0, rate)),
-            input_bytes: 0,
-            output_bytes: 0,
             staged_i16: Vec::new(),
             staged_f32: Vec::new(),
         };
@@ -107,13 +88,10 @@ impl SpeedPitch {
             Encoding::Pcm16 => Engine::Short(Sonic::new(self.rate, self.ch, self.speed, self.pitch, self.rate)),
             Encoding::Float => Engine::Float(Sonic::new(self.rate, self.ch, self.speed, self.pitch, self.rate)),
         };
-        self.input_bytes = 0;
-        self.output_bytes = 0;
     }
 
     /// Takes interleaved bytes in the configured encoding; appends ready output to `out`.
     pub fn process(&mut self, input: &[u8], out: &mut Vec<u8>) {
-        self.input_bytes += input.len() as u64;
         match &mut self.engine {
             Engine::Short(s) => {
                 self.staged_i16.clear();
@@ -130,7 +108,6 @@ impl SpeedPitch {
     }
 
     fn drain(&mut self, out: &mut Vec<u8>) {
-        let before = out.len();
         match &mut self.engine {
             Engine::Short(s) => {
                 let n = s.output_frames() * self.ch;
@@ -145,7 +122,6 @@ impl SpeedPitch {
                 append(out, &self.staged_f32[..got], f32::to_le_bytes);
             }
         }
-        self.output_bytes += (out.len() - before) as u64;
     }
 
     /// Flushes the remaining output at end of input.
@@ -155,25 +131,6 @@ impl SpeedPitch {
             Engine::Float(s) => s.queue_end_of_stream(),
         }
         self.drain(out);
-    }
-
-    #[cfg(any(test, feature = "synth"))]
-    fn processed_input_bytes(&self) -> u64 {
-        let pending = match &self.engine {
-            Engine::Short(s) => s.pending_input_frames() * self.ch * 2,
-            Engine::Float(s) => s.pending_input_frames() * self.ch * 4,
-        } as u64;
-        self.input_bytes.saturating_sub(pending)
-    }
-
-    /// Media time covered by `playout_us` of played output, computed as media3 does.
-    #[cfg(any(test, feature = "synth"))]
-    pub fn media_duration_us(&self, playout_us: i64) -> i64 {
-        if self.output_bytes >= MIN_BYTES_FOR_DURATION_SCALING {
-            (playout_us as i128 * self.processed_input_bytes() as i128 / self.output_bytes as i128) as i64
-        } else {
-            nominal_media_us(self.speed, playout_us)
-        }
     }
 }
 
@@ -211,19 +168,5 @@ mod tests {
         assert!(speed_active(1.25, 1.0));
         assert!(speed_active(1.0, 0.9));
         assert!(speed_active(1.0001, 1.0), "the threshold itself counts");
-        assert_eq!(nominal_media_us(1.5, 1_000_000), 1_500_000);
-        assert_eq!(nominal_playout_us(2.0, 1_000_000), 500_000);
-        assert_eq!(nominal_playout_us(1.0, 7), 7);
-    }
-
-    #[test]
-    fn media_time_runs_at_the_speed() {
-        let mut p = SpeedPitch::new(44100, 2, Encoding::Pcm16);
-        p.set(1.5, 1.0);
-        p.flush();
-        let mut out = Vec::new();
-        p.process(&sine(3.0, 220.0), &mut out);
-        let m = p.media_duration_us(1_000_000);
-        assert!((m - 1_500_000).abs() < 20_000, "{m}");
     }
 }

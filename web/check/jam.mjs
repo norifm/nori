@@ -20,7 +20,6 @@ const logs = [];
 const failures = [];
 const report = {};
 const expect = (ok, what) => ok || failures.push(what);
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A page in a fresh browser profile, signed in and on Listen Now. */
 async function open(name) {
@@ -101,7 +100,7 @@ await guest.evaluate(() => document.querySelectorAll(".tab")[2].click());
 await guest.waitForSelector(".jam .switch");
 await guest.evaluate(() => document.querySelector(".jam .switch").click());
 await until(guest, async () => JSON.parse(await window.ask("jam")).listening === "Playing", null, 30000).catch(() => {});
-await wait(6000);
+await until(guest, () => (window.nori.heard?.seconds ?? 0) > 2, null, 30000).catch(() => {});
 const heard = await guest.evaluate(() => window.nori.heard);
 report.along = { listening: (await json(guest, "jam")).listening, heardS: heard?.seconds ?? 0, dry: heard?.dry ?? null };
 expect((heard?.seconds ?? 0) > 2, "a guest listening along hears the jam");

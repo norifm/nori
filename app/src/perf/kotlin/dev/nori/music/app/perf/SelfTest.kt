@@ -316,7 +316,7 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
             val s = st
             return Snapshot(
                 nori.settings.value.knobs(), s.queue.map { it.id }, s.index, if (s.connected) player.positionMs else 0L, s.playing,
-                s.shuffle, s.repeat.ordinal, PlaybackService.engine != null,
+                s.shuffle, s.repeat.ordinal, PlaybackService.rustPlayer != null,
             )
         }
 
@@ -325,14 +325,14 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
         private suspend fun stopPlayer(): Boolean {
             if (st.playing) { player.toggle(); until(4_000) { !st.playing } }
             player.disconnect()
-            if (PlaybackService.engine == null) return true
+            if (PlaybackService.rustPlayer == null) return true
             app.stopService(Intent(app, PlaybackService::class.java))
-            return until(12_000) { PlaybackService.engine == null }
+            return until(12_000) { PlaybackService.rustPlayer == null }
         }
 
         private suspend fun startPlayer(): Boolean {
             player.connect()
-            return until(12_000) { PlaybackService.engine != null && st.connected }
+            return until(12_000) { PlaybackService.rustPlayer != null && st.connected }
         }
 
         // ---- the steps ----

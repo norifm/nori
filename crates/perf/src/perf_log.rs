@@ -350,19 +350,18 @@ pub fn perf_state(charging: bool, screen_on: bool, playing: bool, foreground: bo
     key.into()
 }
 
-/// One-line summary of cost-relevant settings; a change ends the stretch. `engine`: the running
-/// service's player (default "rust").
+/// One-line summary of cost-relevant settings; a change ends the stretch. It starts "engine rust" as
+/// stretches recorded with the older players do with theirs.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn perf_config(engine: Option<String>) -> String {
+pub fn perf_config() -> String {
     let p = app().and_then(|a| a.current()).unwrap_or_default();
-    config(engine, &p)
+    config(&p)
 }
 
-fn config(engine: Option<String>, p: &nori_settings::settings::StoredPrefs) -> String {
+fn config(p: &nori_settings::settings::StoredPrefs) -> String {
     let on = |b: bool| if b { "on" } else { "off" };
-    let engine = engine.unwrap_or_else(|| "rust".into());
     format!(
-        "engine {engine}, eq {}, automix {}, crossfade {} s, offload {}, hi-res {}, bit-perfect {}",
+        "engine rust, eq {}, automix {}, crossfade {} s, offload {}, hi-res {}, bit-perfect {}",
         on(p.eq_enabled),
         on(p.auto_mix),
         p.crossfade_sec,
@@ -1028,8 +1027,8 @@ pub enum PerfNote {
     Song { song: PerfSong },
     /// Decoder format for song `id`, possibly ahead of it playing.
     Format { id: String, format: PerfFormat },
-    /// The player service started with `engine`, or ended (None).
-    Engine { engine: Option<String> },
+    /// The player service started, or ended.
+    Service { running: bool },
     /// Output `key` opened, or released (None).
     Output { key: i64, output: Option<PerfOutput> },
     /// Output `key`'s underrun count.
@@ -1132,10 +1131,9 @@ impl Timeline {
                     }
                 }
             }
-            PerfNote::Engine { engine } => match engine {
-                Some(e) => self.push(t, "engine", format!("the player service started with the {e} engine")),
-                None => self.push(t, "engine", "the player service ended".into()),
-            },
+            PerfNote::Service { running } => {
+                self.push(t, "service", if running { "the player service started" } else { "the player service ended" }.into())
+            }
             PerfNote::Output { key, output } => self.output(t, key, output, settings_why),
             PerfNote::Underruns { key, count } => self.underruns(t, key, count),
             PerfNote::Error { message } => self.push(t, "error", message.chars().take(400).collect()),
@@ -1272,7 +1270,7 @@ impl Timeline {
 /// Adds a platform event to the current timeline.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn perf_note(wall_ms: i64, note: PerfNote) {
-    if matches!(note, PerfNote::Engine { .. }) {
+    if matches!(note, PerfNote::Service { .. }) {
         crate::invariants::engine_changed(wall_ms);
     }
     let why = offload_reason();
@@ -1799,8 +1797,7 @@ mod tests {
             bit_perfect: false,
             ..Default::default()
         };
-        assert_eq!(config(None, &p), "engine rust, eq on, automix off, crossfade 6 s, offload on, hi-res off, bit-perfect off");
-        assert!(config(Some("other".into()), &p).starts_with("engine other, "));
+        assert_eq!(config(&p), "engine rust, eq on, automix off, crossfade 6 s, offload on, hi-res off, bit-perfect off");
 
         // Output line format.
         assert_eq!(
@@ -2178,7 +2175,7 @@ mod tests {
         // Offload time from output events.
         let mut t = Timeline::default();
         let offloaded = PerfOutput { offloaded: true, encoding: 9, ..output() };
-        t.note(at(10, 0, 0), PerfNote::Engine { engine: Some("exoplayer".into()) }, None);
+        t.note(at(10, 0, 0), PerfNote::Service { running: true }, None);
         t.note(at(10, 0, 1), PerfNote::Output { key: 1, output: Some(offloaded.clone()) }, None);
         // Another offloaded output is not a new offload entry.
         t.note(at(10, 5, 0), PerfNote::Output { key: 2, output: Some(offloaded) }, None);
@@ -2186,7 +2183,7 @@ mod tests {
         let (ev, dropped, off) = t.close(at(10, 0, 0), at(10, 20, 0), true);
         assert_eq!((dropped, off), (0, 10 * 60_000));
         let said: Vec<String> = ev.iter().map(|e| format!("{} {}: {}", clock(e.wall_ms), e.kind, e.detail)).collect();
-        assert_eq!(said[0], "10:00:00 engine: the player service started with the exoplayer engine");
+        assert_eq!(said[0], "10:00:00 service: the player service started");
         assert!(said[1].starts_with("10:00:01 output: opened: rust, 44100 Hz stereo MP3,") && said[1].contains(", offload given,"), "{}", said[1]);
         assert_eq!(said[2], "10:00:01 offload: entered: the audio chip decodes");
         assert!(said[3].starts_with("10:05:00 output: reopened: "));

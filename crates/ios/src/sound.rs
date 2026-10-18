@@ -223,7 +223,7 @@ pub unsafe extern "C" fn nori_ios_device_forget(output: *const c_char) {
 /// undone. Fetching runs on a thread of its own.
 #[no_mangle]
 pub extern "C" fn nori_ios_curve_answer() {
-    with_session(Session::curve_answer);
+    with_session(|s| s.curve_answer());
 }
 
 /// The AutoEQ list's hits for `query`, as JSON to free: `{short, count, hits}`.

@@ -702,7 +702,7 @@ fn server(b: &Build, f: &Facts) -> Vec<Section> {
     accounts.push(Row::Button { title: "Add a server".into(), action: Act::AddServer });
     let mut out = vec![section("Accounts", accounts)];
     if f.folders.len() > 1 {
-        let shown = p.servers.iter().find(|s| s.id == p.active_server_id).map(|s| s.music_folder_ids.clone()).unwrap_or_default();
+        let shown = p.active_server().map(|s| s.music_folder_ids.clone()).unwrap_or_default();
         let switches = nori_core::settings::folder_switches(shown, f.folders.iter().map(|m| m.id.clone()).collect());
         let rows = f.folders.iter().zip(switches).map(|(m, s)| Row::Toggle {
             switch: Switch::Stores("musicFolders".into(), s.tapped),

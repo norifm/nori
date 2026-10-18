@@ -287,11 +287,6 @@ impl<P: Paint> Loader<P> {
         Loader { inner: Arc::new(inner) }
     }
 
-    /// The decoded cover from memory, if cached (lets a view skip the placeholder).
-    pub fn cached(&self, url: &str, width: u32, height: u32) -> Option<P::Picture> {
-        self.inner.memory.get(&Sized { key: Key::of(&self.inner.net, url), width, height })
-    }
-
     /// Requests `url` decoded for `width` x `height` (0 x 0: own size, capped at `decode::WHOLE_SIDE`).
     /// `done` runs on a worker thread, or synchronously on a memory hit; not after the ticket is dropped
     /// (see [`Ticket`]).

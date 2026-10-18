@@ -332,7 +332,7 @@ const DROP_LACK_DB: [f64; 3] = [3.0, 3.0, 3.0];
 
 /// The drop: the first early four-bar line where the song reaches its body (level, low end and chords) from bars
 /// that lacked one. A beatless opening into the full band drops on the first downbeat.
-pub fn drop_point(t: &Tempo, db: &Downbeat, f: &Features, music: (f64, f64)) -> Option<Drop> {
+pub(crate) fn drop_point(t: &Tempo, db: &Downbeat, f: &Features, music: (f64, f64)) -> Option<Drop> {
     let b = bar_lines(t, db, music)?;
     let n = b.units.len() - 1;
     let v: Vec<[f64; 6]> = b.units.windows(2).map(|w| bar_vector(f, w[0], w[1])).collect();
@@ -382,7 +382,7 @@ const BREAK_STAY_DB: f64 = 3.0;
 const BREAK_LOW_DB: f64 = 6.0;
 const BREAK_ONSET: f64 = 0.5;
 /// Only a short ending counts; a longer quiet stretch is part of the song.
-pub const BREAK_MAX_S: f64 = 24.0;
+pub(crate) const BREAK_MAX_S: f64 = 24.0;
 
 /// Where a closing breakdown (coda, fade-out) begins before `end`: the earliest unit in the last `BREAK_MAX_S`
 /// where level and beat drop and never come back. Bars with a usable grid, else 2 s blocks snapped to beats.
@@ -446,7 +446,7 @@ fn pearson(a: &[f64; 12], b: &[f64; 12], shift: usize) -> f64 {
 }
 
 /// Camelot code of a key: 1..12 minor (A), 13..24 major (B).
-pub fn camelot(tonic: usize, minor: bool) -> i32 {
+pub(crate) fn camelot(tonic: usize, minor: bool) -> i32 {
     let major_pc = if minor { (tonic + 3) % 12 } else { tonic % 12 };
     let num = (7 * major_pc + 7) % 12 + 1;
     num as i32 + if minor { 0 } else { 12 }
@@ -464,7 +464,7 @@ pub fn tuning(f: &Features) -> f64 {
 
 /// The song's pitch-class profile with its tuning removed: each 10-cent slot goes to its nearest tuned pitch class,
 /// weighted down towards the half-semitone.
-pub fn tuned_profile(f: &Features) -> [f64; 12] {
+pub(crate) fn tuned_profile(f: &Features) -> [f64; 12] {
     let tune = tuning(f);
     let slots = f.pitch.len().max(1) as f64;
     let mut c = [0f64; 12];
@@ -505,7 +505,7 @@ pub fn camelot_name(code: i32) -> String {
 }
 
 /// Steps on the Camelot wheel: 0 same key, 1 neighbour or relative major/minor; None when either key is unknown.
-pub fn key_distance(a: i32, b: i32) -> Option<i32> {
+pub(crate) fn key_distance(a: i32, b: i32) -> Option<i32> {
     if !(1..=24).contains(&a) || !(1..=24).contains(&b) {
         return None;
     }

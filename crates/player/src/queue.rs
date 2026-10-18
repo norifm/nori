@@ -45,7 +45,7 @@ pub fn place(n: usize, cur: usize, hand: &[bool], order: Option<&[usize]>, last:
 
 /// The play order when shuffle is turned on: the current song first, the hand-added run after it in
 /// order, the rest shuffled.
-pub fn shuffle_around(n: usize, cur: usize, hand: &[bool], seed: u64) -> Vec<usize> {
+pub(crate) fn shuffle_around(n: usize, cur: usize, hand: &[bool], seed: u64) -> Vec<usize> {
     let mut kept = vec![cur];
     let mut i = cur + 1;
     while i < n && hand.get(i).copied().unwrap_or(false) {
@@ -88,7 +88,7 @@ pub fn precache_count(metered: bool, wifi: i32, mobile: i32) -> usize {
 }
 
 /// Upcoming songs (0 = playing) measured ahead for AutoMix.
-pub const MEASURE_AHEAD: usize = 3;
+pub(crate) const MEASURE_AHEAD: usize = 3;
 
 /// Songs to measure ahead: none with AutoMix off.
 pub fn measure_ahead(auto_mix: bool) -> usize {
@@ -181,7 +181,7 @@ pub struct Refill {
 }
 
 /// Songs remaining after the current one when refilling starts.
-pub const FILL_AHEAD: usize = 2;
+pub(crate) const FILL_AHEAD: usize = 2;
 /// How long a next pressed at the end waits for songs.
 pub const NEXT_KEPT_MS: i64 = 2_000;
 
@@ -271,7 +271,7 @@ pub fn arrival(song: bool, skip_explicit: bool, explicit: bool, has_next: bool, 
 }
 
 /// Past this, previous restarts the song (media3's rule) unless set to always skip.
-pub const PREVIOUS_REWINDS_AFTER_MS: i64 = 3_000;
+pub(crate) const PREVIOUS_REWINDS_AFTER_MS: i64 = 3_000;
 
 /// Whether previous restarts the current song.
 pub fn previous_restarts(position_ms: i64, has_previous: bool, always_skips: bool) -> bool {

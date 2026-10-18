@@ -3,17 +3,7 @@
 
 use std::f64::consts::PI;
 
-/// A deterministic noise source (xorshift), so tests never flake.
-pub struct Rng(pub u64);
-
-impl Rng {
-    pub fn next(&mut self) -> f64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        (self.0 >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
-    }
-}
+use super::eval::Rng;
 
 #[derive(Clone)]
 pub struct Synth {
@@ -128,7 +118,7 @@ impl Synth {
         let mut rng = Rng(0x9E3779B97F4A7C15);
         let start = (self.lead_silence * rate) as usize;
         for v in &mut x[start..music_end] {
-            *v += self.noise * rng.next();
+            *v += self.noise * rng.signed();
         }
         x.iter().map(|v| v.clamp(-1.0, 1.0) as f32).collect()
     }

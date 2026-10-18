@@ -253,9 +253,9 @@ internal class Recorder(private val app: Application) : PerfHooks.Recorder, Play
         }
     }
 
-    override fun engine(engine: String?) {
+    override fun service(running: Boolean) {
         val t = System.currentTimeMillis()
-        handler.post { note(t, PerfNote.Engine(engine)) }
+        handler.post { note(t, PerfNote.Service(running)) }
     }
 
     override fun track(opened: OpenedTrack?) {
@@ -320,7 +320,7 @@ internal class Recorder(private val app: Application) : PerfHooks.Recorder, Play
      * judges only while playing through an open output, and not just after the service started).
      */
     private val settingsLook = Runnable {
-        if (PlaybackService.engine == null) return@Runnable
+        if (PlaybackService.rustPlayer == null) return@Runnable
         val nori = Nori.get(app)
         dev.nori.music.ffi.perf.perfWatchSettings(
             System.currentTimeMillis(), PlaybackService.offloadWanted, dev.nori.music.playback.Equalizer.inChain,
@@ -348,7 +348,7 @@ internal class Recorder(private val app: Application) : PerfHooks.Recorder, Play
      * path first: the one the service runs, which took the setting when it started; with no service yet,
      * the one it will start with.
      */
-    private fun cfg(): String = dev.nori.music.ffi.perf.perfConfig(PlaybackService.engine)
+    private fun cfg(): String = dev.nori.music.ffi.perf.perfConfig()
 
     /** Something happened: when it moved the app into another state, one stretch ends and the next begins. */
     private fun changed() {

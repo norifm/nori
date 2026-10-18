@@ -20,8 +20,8 @@ else
   app_up >/dev/null
 fi
 remember_settings offload autoMix eq
-# Every section starts from the settings that let the plain path play: nothing mixing, nothing in the chain.
-plain() { for s in "autoMix false" "crossfadeSec 0" "eq false" "offload false" "speed 1" "crossfadeKeepAlbums true"; do "$app" set $s >/dev/null; done; }
+# Every section starts from the plain path, offload off.
+plain() { plain_sound "offload false"; }
 plain
 
 if want play; then section play

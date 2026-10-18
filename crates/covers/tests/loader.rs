@@ -105,7 +105,6 @@ fn shared_fetches() {
     assert_eq!((first.width, first.height, first.pixels.len()), (16, 16, 16 * 16 * 4));
     assert!(got.iter().all(|r| Arc::ptr_eq(r.as_ref().unwrap(), first)));
     // Served from memory afterwards.
-    assert!(Arc::ptr_eq(&loader.cached(PHOTO, 16, 16).unwrap(), first));
     assert!(Arc::ptr_eq(&loader.load(PHOTO, 16, 16).unwrap(), first));
     assert_eq!(server.calls(), 1);
     // Another size decodes again.
@@ -136,7 +135,6 @@ fn shared_fetches() {
     assert_eq!(**first, Picture { asked: (30, 30), got: (30, 30) });
     assert_eq!(painted.load(Ordering::SeqCst), 1);
     // memory_bytes 0: nothing cached, so it decodes again.
-    assert!(loader.cached(PHOTO, 30, 30).is_none());
     loader.load(PHOTO, 30, 30).unwrap();
     assert_eq!(painted.load(Ordering::SeqCst), 2);
     drop(tickets);

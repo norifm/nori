@@ -271,6 +271,24 @@ pub fn server_for_login(list: ServerList, profile: SavedServer) -> SavedServer {
     }
 }
 
+/// Logs `form` in and keeps it as the active profile of `settings`: the profile saved already for it
+/// takes it in ([`server_for_login`]), and its provider checks it ([`check_profile`]). The profile kept.
+pub async fn log_in(transport: Arc<dyn Transport>, settings: &crate::settings_store::Settings, form: SavedServer) -> NetResult<SavedServer> {
+    let draft = settings.prefs(|p| server_for_login(ServerList { servers: p.servers.clone(), active_server_id: p.active_server_id.clone() }, form));
+    let profile = check_profile(transport, draft).await?;
+    settings.put(profile_activated(settings.current().unwrap_or_default(), profile.clone()));
+    Ok(profile)
+}
+
+/// `prefs` with `profile` the active profile, in place of the saved one with its id or added
+/// ([`crate::settings::servers_activated`]).
+pub fn profile_activated(mut prefs: crate::settings::StoredPrefs, profile: SavedServer) -> crate::settings::StoredPrefs {
+    let list = ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: std::mem::take(&mut prefs.active_server_id) };
+    let list = crate::settings::servers_activated(list, profile);
+    (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
+    prefs
+}
+
 /// Every request a profile's provider has nowhere to send: not an I/O failure, so a write is dropped,
 /// not queued.
 pub(crate) fn nowhere(what: &str) -> NetError {
@@ -381,6 +399,28 @@ mod tests {
         assert_eq!(server_for_login(list.clone(), elsewhere.clone()), elsewhere);
         let edited = SavedServer { url: "https://moved.example.com".into(), ..kept };
         assert_eq!(server_for_login(list, edited.clone()), edited);
+    }
+
+    /// A login to a saved server keeps that profile's library, music folder and bitrate cap, and makes it
+    /// the active one.
+    #[test]
+    fn a_login_keeps_the_saved_profile_and_makes_it_active() {
+        let settings = crate::settings_store::Settings::new();
+        let mut prefs = settings.open("").unwrap();
+        let kept = SavedServer { music_folder_ids: vec!["3".into()], alt_max_bit_rate: 96, ..saved("a1", ServerKind::Subsonic, "https://music.example.com", "ann") };
+        prefs.servers = vec![kept, saved("b2", ServerKind::Subsonic, "https://other.example.com", "bob")];
+        prefs.active_server_id = "b2".into();
+        settings.put(prefs);
+        let fake = Arc::new(crate::client::tests::Fake::default());
+        for _ in 0..4 {
+            fake.answer(r#"{"subsonic-response":{"status":"ok","version":"1.16.1","type":"navidrome"}}"#);
+        }
+        let form = SavedServer { password: "pw".into(), ..saved("new", ServerKind::Subsonic, "https://music.example.com", "ann") };
+        let p = crate::client::tests::block(log_in(fake, &settings, form)).unwrap();
+        assert_eq!((p.id.as_str(), p.music_folder_ids.as_slice(), p.alt_max_bit_rate, p.password.as_str()), ("a1", &["3".to_string()][..], 96, "pw"));
+        let prefs = settings.current().unwrap();
+        let ids: Vec<&str> = prefs.servers.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!((ids, prefs.active_server().map(|s| s.id.as_str())), (vec!["b2", "a1"], Some("a1")));
     }
 
     /// A server's form needs an address, and a user or an API key.

@@ -14,10 +14,6 @@ extern "C" {
 /// The workspace version; a static string, never freed.
 const char *nori_ios_version(void);
 
-/// Opens the app database under `data_dir` and answers a short English note (milestone 1's screen).
-/// Free with `nori_ios_free`; NULL for an unreadable path.
-char *nori_ios_probe(const char *data_dir);
-
 /// Frees a string this library handed out.
 void nori_ios_free(char *s);
 
@@ -26,8 +22,8 @@ void nori_ios_free(char *s);
 /// 9 note, 10 reachable, 11 lyrics, 12 search, 13 title, 14 mixing, 15 bridge, 16 placed, 17 awake,
 /// 18 remote (the devices, the one playing or the jam changed), 19 volume (another device set it: `ms`
 /// thousandths), 20 jam joined, 21 jam left (`nori_ios_jam_join`, `nori_ios_jam_leave`; `index` 1: the jam
-/// ended, `text` its host's name if known), 22 output curve, 23 favorites (`text`: JSON maps
-/// keyed by song, album and artist, each containing item ids and their starred state).
+/// ended, `text` its host's name if known), 22 output curve, 23 favorites (the hearts changed:
+/// `nori_ios_starred` reads them again).
 /// `state`: 0 idle, 1 playing, 2 paused, 3 ended.
 typedef struct NoriReport {
     int32_t kind;
@@ -62,11 +58,8 @@ void nori_ios_next(void);
 void nori_ios_previous(void);
 void nori_ios_seek(int64_t ms);
 
-/// Goes to `index` at `ms`, playing or paused as before. The jump number, or 0 when nothing is open.
-uint64_t nori_ios_go_to(int32_t index, int64_t ms);
-
-/// Repeat off (0), one (1) or all (2).
-void nori_ios_set_repeat(int32_t mode);
+/// The next repeat mode after the one shown: off, all, one.
+void nori_ios_cycle_repeat(void);
 
 /// `on` is 0 or 1.
 void nori_ios_shuffle(int32_t on);
@@ -185,6 +178,9 @@ int32_t nori_ios_collection_download_act(int32_t kind, const char *id, int32_t a
 
 /// Song 1, album 2, artist 3.
 void nori_ios_star(int32_t kind, const char *id, int32_t on);
+
+/// Whether a song (1), album (2) or artist (3) shows starred (1), its record saying `listed`.
+int32_t nori_ios_starred(int32_t kind, const char *id, int32_t listed);
 
 /// What plays now, as JSON; free it. NULL when nothing is open.
 char *nori_ios_now(void);

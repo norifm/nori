@@ -524,7 +524,7 @@ impl Build<'_> {
         }
         let mut out = vec![("Accounts", accounts)];
         if self.f.folders.len() > 1 {
-            let shown = p.servers.iter().find(|s| s.id == p.active_server_id).map(|s| s.music_folder_ids.clone()).unwrap_or_default();
+            let shown = p.active_server().map(|s| s.music_folder_ids.clone()).unwrap_or_default();
             let switches = nori_core::settings::folder_switches(shown, self.f.folders.iter().map(|(_, id)| id.clone()).collect());
             let rows = self.f.folders.iter().zip(switches).map(|((name, _), s)| Row {
                 kind: TOGGLE,

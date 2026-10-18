@@ -1,30 +1,14 @@
 //! The core's [`Transport`] over the worker's `fetch`.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
 use nori_core::transport::{Exchange, FailureKind, Network, Transport, TransportError, TransportResponse};
+use nori_tasks::OneThread;
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Request, RequestInit, Response, WorkerGlobalScope};
 
-/// A future holding JS values, which are not `Send`. The page runs the module on one thread (no wasm
-/// threads), so nothing is ever sent anywhere.
-pub struct OneThread<F>(pub F);
-
-// SAFETY: wasm32-unknown-unknown without the atomics feature has a single thread.
-unsafe impl<F> Send for OneThread<F> {}
-
-impl<F: Future> Future for OneThread<F> {
-    type Output = F::Output;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
-        // SAFETY: the inner future is never moved out of the pinned wrapper.
-        unsafe { self.map_unchecked_mut(|s| &mut s.0) }.poll(cx)
-    }
-}
-
-pub struct Fetch;
+/// The worker's `fetch`; `W` wakes the worker when a song's pushed bytes arrive (the player's
+/// `ByteSource`), `()` where nothing plays.
+pub struct Fetch<W = ()>(pub W);
 
 fn failed(kind: FailureKind, e: JsValue) -> TransportError {
     TransportError::Failed { kind, detail: Some(format!("{e:?}")) }
@@ -57,7 +41,7 @@ pub async fn fetch(x: Exchange) -> Result<TransportResponse, TransportError> {
 }
 
 #[async_trait::async_trait]
-impl Transport for Fetch {
+impl<W: Send + Sync> Transport for Fetch<W> {
     async fn get(&self, url: String, timeout_ms: u32) -> Result<TransportResponse, TransportError> {
         OneThread(fetch(Exchange { url, headers: Default::default(), json: None, timeout_ms })).await
     }

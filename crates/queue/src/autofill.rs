@@ -27,12 +27,6 @@ pub const RANDOM_ALBUMS: i32 = 3;
 /// A server fetch result.
 pub type Got<T> = Result<T, NetError>;
 
-/// Monotonic ms since first use.
-fn mono_ms() -> i64 {
-    static ORIGIN: std::sync::OnceLock<nori_time::Instant> = std::sync::OnceLock::new();
-    ORIGIN.get_or_init(nori_time::Instant::now).elapsed().as_millis() as i64
-}
-
 /// The queue's last entry in play order.
 fn end_of(p: &nori_player::playlist::Playlist) -> Option<usize> {
     match p.shuffle_order() {
@@ -130,13 +124,13 @@ impl Session {
 impl Session {
     /// Next pressed near the queue's end.
     pub fn autofill_next(&self) -> FillNext {
-        self.autofill_next_at(mono_ms())
+        self.autofill_next_at(nori_time::monotonic().as_millis() as i64)
     }
 
     /// The fetched songs are appended: whether to perform a next pressed meanwhile (only on the same
     /// song, within `NEXT_KEPT_MS`).
     pub fn autofill_landed(&self) -> bool {
-        self.autofill_landed_at(mono_ms())
+        self.autofill_landed_at(nori_time::monotonic().as_millis() as i64)
     }
 }
 

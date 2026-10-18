@@ -29,12 +29,12 @@ pub trait Heard: Send {
 }
 
 /// Bytes that may wait for the decoder.
-pub const PIPE: usize = 2 << 20;
+pub(crate) const PIPE: usize = 2 << 20;
 /// A waiting decoder is woken once this many bytes wait (or the song ended).
-pub const WAKE: usize = 256 << 10;
+pub(crate) const WAKE: usize = 256 << 10;
 /// Bytes that may wait for decoding on turns: the fetch never waits there, and a song may come faster
 /// than slices decode it.
-pub const TURNS_PIPE: usize = 64 << 20;
+pub(crate) const TURNS_PIPE: usize = 64 << 20;
 
 #[derive(Default)]
 struct State {
@@ -344,18 +344,23 @@ impl Turned {
                 }
                 (s.bytes.len(), s.ended)
             };
+            // The fetch broke off: the song is not measured, so the rest is not decoded.
+            if ended == Some(false) {
+                return self.over(false);
+            }
             if let Some(decoded) = self.decoded {
                 return match ended {
                     Some(whole) => self.over(whole && decoded),
                     None => Turn::Waits,
                 };
             }
-            if Instant::now() >= until {
-                return Turn::Ready;
-            }
+            // Out of time only with something to do: a song waiting for bytes waits.
             let Some(d) = self.decoding.as_mut() else {
                 if waiting < OPEN_AFTER && ended.is_none() {
                     return Turn::Waits;
+                }
+                if Instant::now() >= until {
+                    return Turn::Ready;
                 }
                 let reader = Reader { pipe: self.pipe.clone(), at: 0, taken: 0, head: Vec::with_capacity(HEAD) };
                 match Decoding::open(Box::new(reader), self.hint.as_deref(), false) {
@@ -366,6 +371,9 @@ impl Turned {
             };
             if waiting < READ_AFTER && ended.is_none() {
                 return Turn::Waits;
+            }
+            if Instant::now() >= until {
+                return Turn::Ready;
             }
             match d.next() {
                 Some((rate, channels, samples)) => {
@@ -433,7 +441,8 @@ pub fn give_memory_back() {
 }
 
 /// The calling thread's CPU time, ms, where available.
-pub fn thread_cpu_ms() -> Option<u64> {
+#[cfg(feature = "core")]
+pub(crate) fn thread_cpu_ms() -> Option<u64> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };

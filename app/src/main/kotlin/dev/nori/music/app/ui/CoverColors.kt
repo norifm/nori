@@ -103,12 +103,9 @@ fun rememberCoverTint(url: String?, amoled: Boolean): CoverTint {
     val context = LocalContext.current
     // Built once per cover, not on every recomposition.
     val key = remember(url, amoled) { url?.let { paletteKey(context, it, amoled) } }
-    // Straight out of the cache, here in composition. It used to come from `produceState`, whose block
-    // is a coroutine that runs *after* the frame the cover changed on: a cover measured long ago still
-    // arrived a frame or two late, and until it did, everything drawn from it - the page, the soft
-    // bottom under the sleeve, the text - was still the last record's. That is the lag that showed as
-    // the old colours sitting under a cover that had already changed, most obviously when the record
-    // coming in was black.
+    // Straight out of the cache, here in composition, not from `produceState`, whose block is a
+    // coroutine that runs *after* the frame the cover changed on: everything drawn from it - the page,
+    // the soft bottom under the sleeve, the text - would be the last record's for a frame or two.
     val ready = key?.let(CoverPalette.cache::get)
     // Only for a cover nobody has measured yet; reset with the key, so the last song's colours are
     // never handed out for this one.

@@ -4,6 +4,8 @@ use super::structure::camelot;
 use super::*;
 use super::eval::{grid, precision, Song, Style, DRUMS, FULL, KEYS};
 use super::synth::*;
+use super::eval::Rng;
+use crate::pcm::Encoding;
 
 fn octave_ok(got: f64, want: f64, tol: f64) -> bool {
     [0.5, 1.0, 2.0].iter().any(|k| (got / (want * k) - 1.0).abs() < tol)
@@ -102,7 +104,7 @@ fn downbeats_follow_the_kick() {
 fn non_music_is_measured() {
     let rate = 44100;
     let mut rng = Rng(12345);
-    let x: Vec<f32> = (0..rate * 60).map(|_| (0.3 * rng.next()) as f32).collect();
+    let x: Vec<f32> = (0..rate * 60).map(|_| (0.3 * rng.signed()) as f32).collect();
     let t = analyse("n", &x, rate as u32).track;
     println!("noise: bpm {:.1} conf {:.2} stab {:.2} key {} ({:.2}) downbeat conf {:.2}", t.bpm, t.bpm_confidence, t.stability, t.key, t.key_confidence, t.downbeat_confidence);
     assert!(t.bpm_confidence < 0.3, "noise got a confident tempo: {}", t.bpm_confidence);
@@ -114,7 +116,7 @@ fn non_music_is_measured() {
     let mut y = 0f64;
     let x: Vec<f32> = (0..rate * 60)
         .map(|i| {
-            y = 0.995 * y + 0.05 * rng.next();
+            y = 0.995 * y + 0.05 * rng.signed();
             (y * (0.6 + 0.4 * (i as f64 / rate as f64 * 0.37).sin())) as f32
         })
         .collect();
@@ -203,15 +205,15 @@ fn input_form_changes_nothing() {
         let b = ((v * 32767.0).round() as i16).to_le_bytes();
         [b[0], b[1], b[0], b[1]]
     }).collect();
-    let t = analyse_bytes("t", &stereo16, 48000, 2, PCM_16).track;
+    let t = analyse_bytes("t", &stereo16, 48000, 2, Encoding::Pcm16).track;
     assert!((t.bpm - reference.bpm).abs() < 0.01 && t.key == reference.key, "{t:?}");
     assert!((t.beat_offset_ms - reference.beat_offset_ms).abs() < 1.0);
     assert_eq!(t.duration_ms, reference.duration_ms);
     let mono: Vec<u8> = x.iter().flat_map(|v| v.to_le_bytes()).collect();
-    let t = analyse_bytes("t", &mono, 48000, 1, PCM_FLOAT).track;
+    let t = analyse_bytes("t", &mono, 48000, 1, Encoding::Float).track;
     assert_eq!(TrackAnalysis { analysed_ms: 0, ..t }, TrackAnalysis { analysed_ms: 0, ..reference });
     // Garbage in: no panic.
-    let t = analyse_bytes("t", &vec![1, 2, 3], 0, 0, 99).track;
+    let t = analyse_bytes("t", &vec![1, 2, 3], 0, 0, Encoding::Pcm16).track;
     assert!(t.bpm == 0.0 && t.duration_ms <= 1, "{t:?}");
 }
 

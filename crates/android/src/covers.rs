@@ -335,7 +335,7 @@ type Covers = Loader<Bitmaps>;
 
 fn loader<'a>(h: jlong) -> Option<&'a Covers> {
     // SAFETY: a non-zero `h` came from `open`; Kotlin never passes it after `close`.
-    (h != 0).then(|| unsafe { &*(h as *const Covers) })
+    unsafe { crate::handle(h) }
 }
 
 /// A loader fetching through `net` (a `CoverNet` handle from `uniffiCloneHandle()`, taken over) with a

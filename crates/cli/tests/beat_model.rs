@@ -31,7 +31,7 @@ fn the_weights_come_from_the_authors() {
     let file = file.expect("the weights file");
     assert_eq!(file, dir.join("models").join(beat_model::FILE_NAME));
     let t1 = std::time::Instant::now();
-    let weights = nori_core::model_download::read(&nori_core::beat_model::BEAT_THIS, &file).unwrap();
+    let weights = nori_core::model_download::read(&file).unwrap();
     nori_player::automix::neural::BeatThis::from_weights(&weights).unwrap();
     println!("read, checked and loaded in {:.2} s; peak RSS {}", t1.elapsed().as_secs_f64(), rss());
 }

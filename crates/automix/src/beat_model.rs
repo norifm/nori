@@ -17,32 +17,8 @@ pub const SHA256: &str = "e9349da04b9da4ad41c5e416c71a9471af3a416249e7addef0101b
 pub const BYTES: u64 = 4_229_216;
 /// Download size shown in settings, MB.
 pub const SIZE_MB: u32 = 8;
-
-/// A model: its authors' checkpoint, the weights file made from it, and the directory beside the database it is
-/// kept in (its own).
-#[derive(Debug)]
-pub struct Model {
-    pub checkpoint_url: &'static str,
-    pub checkpoint_sha256: &'static str,
-    pub checkpoint_bytes: u64,
-    pub dir: &'static str,
-    pub file_name: &'static str,
-    pub sha256: &'static str,
-    pub bytes: u64,
-    /// Download size shown in settings, MB.
-    pub size_mb: u32,
-}
-
-pub const BEAT_THIS: Model = Model {
-    checkpoint_url: CHECKPOINT_URL,
-    checkpoint_sha256: CHECKPOINT_SHA256,
-    checkpoint_bytes: CHECKPOINT_BYTES,
-    dir: "models",
-    file_name: FILE_NAME,
-    sha256: SHA256,
-    bytes: BYTES,
-    size_mb: SIZE_MB,
-};
+/// The directory beside the database the file is kept in (its own).
+const DIR: &str = "models";
 
 /// Where the model's download stands.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,24 +52,26 @@ struct Kept {
     on: bool,
 }
 
-/// A model's file and its download, for one app: placed by the core at open, followed by the settings'
+/// The model's file and its download, for one app: placed by the core at open, followed by the settings'
 /// switch, read by the measurer.
 pub struct ModelFile {
-    pub model: &'static Model,
     kept: Mutex<Kept>,
 }
 
-impl ModelFile {
-    pub fn new(model: &'static Model) -> ModelFile {
-        ModelFile { model, kept: Mutex::new(Kept { dir: None, state: State::Absent, on: false }) }
+impl Default for ModelFile {
+    fn default() -> ModelFile {
+        ModelFile { kept: Mutex::new(Kept { dir: None, state: State::Absent, on: false }) }
     }
+}
+
+impl ModelFile {
 
     /// The model is kept in its directory beside the database at `db_path` (nowhere for an in-memory database).
     pub fn set_home(&self, db_path: &str) {
-        let dir = Path::new(db_path).parent().filter(|_| !db_path.is_empty()).map(|p| p.join(self.model.dir));
+        let dir = Path::new(db_path).parent().filter(|_| !db_path.is_empty()).map(|p| p.join(DIR));
         let mut k = self.kept.lock();
         // Only a checked file is ever renamed into place, so a file there is ready.
-        if k.state != State::Downloading && dir.as_ref().is_some_and(|d| d.join(self.model.file_name).is_file()) {
+        if k.state != State::Downloading && dir.as_ref().is_some_and(|d| d.join(FILE_NAME).is_file()) {
             k.state = State::Ready;
         }
         k.dir = dir;
@@ -106,13 +84,13 @@ impl ModelFile {
 
     /// Where the weights file is or goes.
     pub fn file(&self) -> Option<PathBuf> {
-        self.dir().map(|d| d.join(self.model.file_name))
+        self.dir().map(|d| d.join(FILE_NAME))
     }
 
     /// The weights file, when it is on the device and checked.
     pub fn ready(&self) -> Option<PathBuf> {
         let k = self.kept.lock();
-        let f = k.dir.as_ref()?.join(self.model.file_name);
+        let f = k.dir.as_ref()?.join(FILE_NAME);
         (k.state == State::Ready && f.is_file()).then_some(f)
     }
 
@@ -174,7 +152,7 @@ mod tests {
         let dir = nori_testdir::TempDir::new("model");
         std::fs::create_dir_all(dir.join("models")).unwrap();
         std::fs::write(dir.join("models").join(FILE_NAME), b"model").unwrap();
-        let m = ModelFile::new(&BEAT_THIS);
+        let m = ModelFile::default();
         m.set_home(&dir.join("nori.db").to_string_lossy());
         assert_eq!(m.ready(), Some(dir.join("models").join(FILE_NAME)));
         assert_eq!(m.state(), State::Ready);
@@ -199,7 +177,7 @@ mod tests {
 
     #[test]
     fn mobile_data_waits_for_wifi() {
-        let m = ModelFile::new(&BEAT_THIS);
+        let m = ModelFile::default();
         assert!(m.may_fetch(false, false) && m.may_fetch(true, true));
         assert!(!m.may_fetch(true, false));
         assert_eq!(m.state(), State::WaitingForWifi);

@@ -4,15 +4,15 @@
 //! Unlike media3 it also takes float (judged on the 16-bit scale) and consumes all input per call.
 
 /// Below this absolute 16-bit level a sample is silent.
-pub const THRESHOLD: i32 = 1024;
+pub(crate) const THRESHOLD: i32 = 1024;
 /// Silence shorter than this is left alone.
-pub const MIN_SILENCE_US: i64 = 100_000;
+pub(crate) const MIN_SILENCE_US: i64 = 100_000;
 /// Fraction of a silence kept.
-pub const RETENTION_RATIO: f32 = 0.2;
+pub(crate) const RETENTION_RATIO: f32 = 0.2;
 /// Most silence kept, after the ratio.
-pub const MAX_SILENCE_TO_KEEP_US: i64 = 2_000_000;
+pub(crate) const MAX_SILENCE_TO_KEEP_US: i64 = 2_000_000;
 /// Volume a shortened silence is taken down to, percent.
-pub const MIN_VOLUME_PERCENT: i32 = 10;
+pub(crate) const MIN_VOLUME_PERCENT: i32 = 10;
 const AVOID_TRUNCATION_FACTOR: i32 = 1000;
 
 #[derive(Clone, Copy, PartialEq)]

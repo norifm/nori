@@ -109,7 +109,7 @@ impl ByteSource for Media3 {
 }
 
 struct Rig {
-    engine: Engine,
+    engine: common::Running,
     time: Stepper<Pull>,
     card: Card,
     events: Arc<Mutex<Vec<Event>>>,
@@ -131,7 +131,7 @@ impl Rig {
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = events.clone();
         let config = Config { memory_mb: 128, settings: settings(&prefs, 0.0), ..Config::default() };
-        let engine = Engine::start_on(library, CoreApp::new(core.session.clone()), CoreQueue(core.session.clone()), Box::new(card.clone()), None, config, clock.clone(), move |e| seen.lock().push(e));
+        let engine = common::Running(Engine::start_on(library, CoreApp::new(core.session.clone()), CoreQueue(core.session.clone()), Box::new(card.clone()), None, config, clock.clone(), move |e| seen.lock().push(e)));
         engine.queue_changed();
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), card, events, store, _dir: dir }
     }
@@ -157,12 +157,6 @@ impl Rig {
         // 440 Hz crosses zero 88 times a tenth of a second.
         let tenths = left.chunks_exact(rate / 10).filter(|w| w.windows(2).filter(|p| (p[0] < 0.0) != (p[1] < 0.0)).count().abs_diff(88) <= 4).count();
         tenths as f64 / 10.0
-    }
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        self.engine.stop();
     }
 }
 

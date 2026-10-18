@@ -1,19 +1,20 @@
 //! The sound chain end to end: limiter, equalizer, live setting changes.
 
-use nori_player::automix::synth::Rng;
+use nori_player::automix::eval::Rng;
 use nori_player::compressor::CompressorPreset;
-use nori_player::dsp::{Band, Effects, Equalizer, HIGH_SHELF, LOW_SHELF, PEAKING};
+use nori_player::dsp::{Band, Effects, Equalizer};
+use nori_player::types::EqKind;
 use nori_player::sim::{Player, Sound};
 
 use crate::common::*;
 
-fn band(kind: i32, freq: f64, gain_db: f64, q: f64) -> Band {
+fn band(kind: EqKind, freq: f64, gain_db: f64, q: f64) -> Band {
     Band { kind, freq, gain_db, q, channel: 0 }
 }
 
 /// A curve that does something audible everywhere: bass cut, a presence bump, air.
 fn curve() -> Vec<Band> {
-    vec![band(LOW_SHELF, 200.0, -6.0, 0.7), band(PEAKING, 1000.0, 6.0, 1.0), band(HIGH_SHELF, 5000.0, 4.0, 0.7)]
+    vec![band(EqKind::LowShelf, 200.0, -6.0, 0.7), band(EqKind::Peaking, 1000.0, 6.0, 1.0), band(EqKind::HighShelf, 5000.0, 4.0, 0.7)]
 }
 
 fn limiter() -> Sound {
@@ -60,7 +61,7 @@ fn limiter_holds_ceiling() {
                     eq.configure(&[], preamp, 0.0);
                     eq.configure_output(0.0, false, threshold, release, lookahead);
                     let mut r = Rng(42);
-                    let x: Vec<f32> = (0..12_000).map(|_| r.next() as f32).collect();
+                    let x: Vec<f32> = (0..12_000).map(|_| r.signed() as f32).collect();
                     let mut y = vec![0f32; x.len()];
                     eq.process_f32(&x, &mut y);
                     let peak = y.iter().fold(0f64, |m, v| m.max(v.abs() as f64));

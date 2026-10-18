@@ -1,6 +1,7 @@
 //! Fingerprints of fixed input through the player; update them only with an intended change.
 
-use nori_player::dsp::{Band, HIGH_SHELF, LOW_SHELF, PEAKING};
+use nori_player::dsp::Band;
+use nori_player::types::EqKind;
 use nori_player::sim::{Audio, Player, Sound, Track};
 
 use crate::common::*;
@@ -17,9 +18,9 @@ fn golden_whole_chain() {
     let songs: Vec<Track> = (0..3).map(|k| track(&format!("s{k}"), &music(20.0, 300 + k))).collect();
     let mut p = Player::with_prefs(songs, crossfade(6));
     let bands = vec![
-        Band { kind: LOW_SHELF, freq: 120.0, gain_db: 5.0, q: 0.7, channel: 0 },
-        Band { kind: PEAKING, freq: 2500.0, gain_db: -3.0, q: 1.2, channel: 0 },
-        Band { kind: HIGH_SHELF, freq: 8000.0, gain_db: 4.0, q: 0.7, channel: 0 },
+        Band { kind: EqKind::LowShelf, freq: 120.0, gain_db: 5.0, q: 0.7, channel: 0 },
+        Band { kind: EqKind::Peaking, freq: 2500.0, gain_db: -3.0, q: 1.2, channel: 0 },
+        Band { kind: EqKind::HighShelf, freq: 8000.0, gain_db: 4.0, q: 0.7, channel: 0 },
     ];
     p.set_sound(Sound { bands, preamp_db: 6.0, limiter: true, ..Sound::default() });
     p.play_from(0);

@@ -28,7 +28,7 @@ forward() {
     # Detached: it stays up for the next step and the next run.
     nohup iproxy "$port" 44 >/dev/null 2>&1 < /dev/null &
     disown
-    sleep 1
+    for _ in $(seq 50); do nc -z 127.0.0.1 "$port" 2>/dev/null && break; sleep 0.1; done
   fi
 }
 

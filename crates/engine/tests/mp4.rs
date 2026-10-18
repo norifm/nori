@@ -19,9 +19,7 @@ use nori_player::pipeline::Reading;
 const RATE: usize = 44_100;
 const FRAMES: usize = RATE * 3 + 317;
 
-fn ffmpeg() -> bool {
-    Command::new("ffmpeg").arg("-version").output().is_ok_and(|o| o.status.success())
-}
+use crate::common::ffmpeg;
 
 fn run(args: &[&str]) {
     let ok = Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-y"]).args(args).status().is_ok_and(|s| s.success());
@@ -55,7 +53,6 @@ fn decode(path: &Path, from_ms: i64, aac: Option<PlatformAac>) -> Vec<i16> {
 #[test]
 fn mp4_aac_keeps_exact_length() {
     if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: the MP4 gapless test has nothing to test with");
         return;
     }
     let dir = nori_testdir::TempDir::new("mp4");
@@ -110,7 +107,6 @@ impl PlatformDecoder for Lagging {
 #[test]
 fn lagging_he_aac_ends_whole() {
     if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: the HE-AAC test has nothing to test with");
         return;
     }
     // AAC at 22.05 kHz is taken for HE-AAC with implicit signalling: the platform decodes it.
@@ -191,7 +187,6 @@ fn wait_ready(d: &mut Demuxed, until: Instant, what: impl Fn() -> String) {
 #[test]
 fn mp4_plays_before_it_is_whole() {
     if !ffmpeg() {
-        eprintln!("ffmpeg is not installed: the MP4 start has nothing to test with");
         return;
     }
     let dir = nori_testdir::TempDir::new("mp4-ranges");

@@ -18,11 +18,11 @@ use super::structure::key_distance;
 use super::tempo::{fold, match_ratio};
 use crate::types::{AutoMixSettings, BassSwap, Echo, FadeCurve, Sweep, TrackAnalysis, TransitionKind, TransitionPlan, VocalDuck};
 
-pub const MAX_SKIP_MS: i64 = 15_000;
-pub const MIN_BPM_CONFIDENCE: f32 = 0.5;
-pub const MIN_STABILITY: f32 = 0.6;
+pub(crate) const MAX_SKIP_MS: i64 = 15_000;
+pub(crate) const MIN_BPM_CONFIDENCE: f32 = 0.5;
+pub(crate) const MIN_STABILITY: f32 = 0.6;
 /// Varispeed moves pitch 0.34 semitone per 2 %; beyond that detuning is audible.
-pub const VARISPEED_MAX_PCT: f64 = 2.0;
+pub(crate) const VARISPEED_MAX_PCT: f64 = 2.0;
 /// Longest fixed crossfade.
 const MAX_BLIND_FADE_MS: i64 = 12_000;
 /// Shortest overlap that is still a fade rather than a click guard.

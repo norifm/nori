@@ -12,6 +12,12 @@ pub fn since_epoch() -> Duration {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default()
 }
 
+/// Monotonic time since the process first asked.
+pub fn monotonic() -> Duration {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed()
+}
+
 /// The wall clock in milliseconds since the Unix epoch.
 pub fn unix_ms() -> i64 {
     since_epoch().as_millis() as i64

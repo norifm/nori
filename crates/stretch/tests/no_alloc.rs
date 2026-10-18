@@ -1,4 +1,4 @@
-//! Nothing allocates after construction: `process`, `flush`, `reset` and transposing run on the audio thread.
+//! Nothing allocates after construction: `process`, `flush` and `reset` run on the audio thread.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -36,7 +36,7 @@ static GLOBAL: Counting = Counting;
 #[test]
 fn processing_never_allocates() {
     let (rate, ch) = (44_100usize, 2);
-    // Tones, noise and silence, so the silence path and peak picking both run.
+    // Tones, noise and silence, so the silence path runs too.
     let mut seed = 1u32;
     let x: Vec<f32> = (0..rate * 6)
         .flat_map(|i| {
@@ -51,8 +51,7 @@ fn processing_never_allocates() {
     let mut out = vec![0f32; 2048 * ch];
     let mut flushed = vec![0f32; s.output_latency() * ch];
     let before = ALLOCS.with(Cell::get);
-    for semitones in [0.0, 2.0] {
-        s.set_transpose_semitones(semitones);
+    for _ in 0..2 {
         for (i, block) in x.chunks(256 * ch).enumerate() {
             // AutoMix's range of ratios, 0.5 to 2.
             let ratio = 0.5 + 1.5 * (i % 64) as f64 / 63.0;

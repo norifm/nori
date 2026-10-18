@@ -245,22 +245,23 @@ final class Core {
         NotificationCenter.default.post(name: .noriJam, object: nil)
     }
 
-    /// Hearts changed in this session, by item id, until a page read brings the server's word.
-    private var marks: [String: [String: Bool]] = [:]
-
-    func isFavorite(_ item: Item) -> Bool { marks[item.kind]?[item.id] ?? item.starred }
-
-    /// Hearts (or un-hearts) a song, album or artist.
-    func favorite(_ item: Item, _ on: Bool) {
-        let kind: Int32
+    /// The library's code for an item's kind: song 1, album 2, artist 3.
+    private func starKind(_ item: Item) -> Int32 {
         switch item.kind {
-        case "album": kind = 2
-        case "artist": kind = 3
-        default: kind = 1
+        case "album": return 2
+        case "artist": return 3
+        default: return 1
         }
-        marks[item.kind, default: [:]][item.id] = on
-        item.id.withCString { nori_ios_star(kind, $0, on ? 1 : 0) }
-        NotificationCenter.default.post(name: .noriFavorites, object: nil)
+    }
+
+    /// Whether the item shows starred: the session's word over its record.
+    func isFavorite(_ item: Item) -> Bool {
+        item.id.withCString { nori_ios_starred(starKind(item), $0, item.starred ? 1 : 0) } != 0
+    }
+
+    /// Hearts (or un-hearts) a song, album or artist; the hearts are drawn again once it is marked.
+    func favorite(_ item: Item, _ on: Bool) {
+        item.id.withCString { nori_ios_star(starKind(item), $0, on ? 1 : 0) }
     }
 
     func start(in window: UIWindow) {
@@ -429,12 +430,8 @@ final class Core {
         case 11:
             NotificationCenter.default.post(name: .noriLyrics, object: id)
         case 23:
-            if let data = text.data(using: .utf8),
-               let values = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Bool]] {
-                marks = values
-                refresh()
-                NotificationCenter.default.post(name: .noriFavorites, object: nil)
-            }
+            refresh()
+            NotificationCenter.default.post(name: .noriFavorites, object: nil)
         case 22:
             askCurve(text, offered: flag != 0)
         default:

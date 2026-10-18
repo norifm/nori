@@ -7,121 +7,52 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::analysis::Analyzer;
 use super::ANALYSIS_VERSION;
 
-const COLUMNS: &str = "song_id, analysis_version, duration_ms, bpm, bpm_confidence, beat_offset_ms, stability, downbeat_phase, \
-     downbeat_confidence, lufs, key, key_confidence, silence_start_ms, silence_end_ms, mixramp_start_ms, mixramp_end_ms, \
-     intro_end_ms, outro_start_ms, outro_vocal, intro_vocal, outro_centroid, intro_centroid, analysed_ms, \
-     outro_bpm, outro_bpm_confidence, outro_beat_offset_ms, outro_stability, outro_downbeat_phase, \
-     intro_bpm, intro_bpm_confidence, intro_beat_offset_ms, intro_stability, intro_downbeat_phase, beats_per_bar, \
-     drop_ms, drop_runup_vocal, drop_vocal, exit_ms, gap_ms, gap_end_ms, exit_vocal, drop_runup_tonal_db, intro_beats_per_bar, outro_beats_per_bar, intro_grid_source, outro_grid_source";
+/// The `track_analysis` columns in [`TrackAnalysis`] field order; `or` gives what a column that does not read as
+/// its type stands for.
+macro_rules! columns {
+    ($($field:ident $(or $default:expr)?),* $(,)?) => {
+        const COLUMNS: &[&str] = &[$(stringify!($field)),*];
+
+        fn values(a: &TrackAnalysis) -> [&dyn rusqlite::ToSql; COLUMNS.len()] {
+            [$(&a.$field),*]
+        }
+
+        fn row(r: &rusqlite::Row) -> rusqlite::Result<TrackAnalysis> {
+            let mut at = 0..;
+            Ok(TrackAnalysis { $($field: column!(r, at.next().expect("unbounded") $(, $default)?)),* })
+        }
+    };
+}
+
+macro_rules! column {
+    ($r:expr, $i:expr) => {
+        $r.get($i)?
+    };
+    ($r:expr, $i:expr, $default:expr) => {
+        $r.get($i).unwrap_or($default)
+    };
+}
+
+columns! {
+    song_id, analysis_version, duration_ms, bpm, bpm_confidence, beat_offset_ms, stability, downbeat_phase,
+    downbeat_confidence, lufs, key, key_confidence, silence_start_ms, silence_end_ms, mixramp_start_ms, mixramp_end_ms,
+    intro_end_ms, outro_start_ms, outro_vocal or 0.0, intro_vocal or 0.0, outro_centroid or 0.0, intro_centroid or 0.0,
+    analysed_ms, outro_bpm or 0.0, outro_bpm_confidence or 0.0, outro_beat_offset_ms or 0.0, outro_stability or 0.0,
+    outro_downbeat_phase or 0, intro_bpm or 0.0, intro_bpm_confidence or 0.0, intro_beat_offset_ms or 0.0,
+    intro_stability or 0.0, intro_downbeat_phase or 0, beats_per_bar or 0, drop_ms or 0, drop_runup_vocal or 0.0,
+    drop_vocal or 0.0, exit_ms or 0, gap_ms or 0, gap_end_ms or 0, exit_vocal or 0.0, drop_runup_tonal_db or 0.0,
+    intro_beats_per_bar or 0, outro_beats_per_bar or 0, intro_grid_source or 0, outro_grid_source or 0,
+}
 
 pub fn put(c: &Connection, a: &TrackAnalysis) -> rusqlite::Result<()> {
-    c.prepare_cached(&format!(
-        "INSERT OR REPLACE INTO track_analysis(server, {COLUMNS}) VALUES(sid(), ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32,?33,?34,?35,?36,?37,?38,?39,?40,?41,?42,?43,?44,?45,?46)"
-    ))?
-    .execute(params![
-        a.song_id,
-        a.analysis_version,
-        a.duration_ms,
-        a.bpm,
-        a.bpm_confidence,
-        a.beat_offset_ms,
-        a.stability,
-        a.downbeat_phase,
-        a.downbeat_confidence,
-        a.lufs,
-        a.key,
-        a.key_confidence,
-        a.silence_start_ms,
-        a.silence_end_ms,
-        a.mixramp_start_ms,
-        a.mixramp_end_ms,
-        a.intro_end_ms,
-        a.outro_start_ms,
-        a.outro_vocal,
-        a.intro_vocal,
-        a.outro_centroid,
-        a.intro_centroid,
-        a.analysed_ms,
-        a.outro_bpm,
-        a.outro_bpm_confidence,
-        a.outro_beat_offset_ms,
-        a.outro_stability,
-        a.outro_downbeat_phase,
-        a.intro_bpm,
-        a.intro_bpm_confidence,
-        a.intro_beat_offset_ms,
-        a.intro_stability,
-        a.intro_downbeat_phase,
-        a.beats_per_bar,
-        a.drop_ms,
-        a.drop_runup_vocal,
-        a.drop_vocal,
-        a.exit_ms,
-        a.gap_ms,
-        a.gap_end_ms,
-        a.exit_vocal,
-        a.drop_runup_tonal_db,
-        a.intro_beats_per_bar,
-        a.outro_beats_per_bar,
-        a.intro_grid_source,
-        a.outro_grid_source
-    ])
-    .map(|_| ())
+    let marks: Vec<String> = (1..=COLUMNS.len()).map(|i| format!("?{i}")).collect();
+    c.prepare_cached(&format!("INSERT OR REPLACE INTO track_analysis(server, {}) VALUES(sid(), {})", COLUMNS.join(", "), marks.join(",")))?
+        .execute(&values(a)[..])
+        .map(|_| ())
 }
 
 pub fn get(c: &Connection, song_id: &str) -> rusqlite::Result<Option<TrackAnalysis>> {
-    c.prepare_cached(&format!("SELECT {COLUMNS} FROM track_analysis WHERE server=sid() AND song_id=?1"))?
-        .query_row([song_id], |r| {
-            Ok(TrackAnalysis {
-                song_id: r.get(0)?,
-                analysis_version: r.get(1)?,
-                duration_ms: r.get(2)?,
-                bpm: r.get(3)?,
-                bpm_confidence: r.get(4)?,
-                beat_offset_ms: r.get(5)?,
-                stability: r.get(6)?,
-                downbeat_phase: r.get(7)?,
-                downbeat_confidence: r.get(8)?,
-                lufs: r.get(9)?,
-                key: r.get(10)?,
-                key_confidence: r.get(11)?,
-                silence_start_ms: r.get(12)?,
-                silence_end_ms: r.get(13)?,
-                mixramp_start_ms: r.get(14)?,
-                mixramp_end_ms: r.get(15)?,
-                intro_end_ms: r.get(16)?,
-                outro_start_ms: r.get(17)?,
-                outro_vocal: r.get(18).unwrap_or(0.0),
-                intro_vocal: r.get(19).unwrap_or(0.0),
-                outro_centroid: r.get(20).unwrap_or(0.0),
-                intro_centroid: r.get(21).unwrap_or(0.0),
-                analysed_ms: r.get(22)?,
-                outro_bpm: r.get(23).unwrap_or(0.0),
-                outro_bpm_confidence: r.get(24).unwrap_or(0.0),
-                outro_beat_offset_ms: r.get(25).unwrap_or(0.0),
-                outro_stability: r.get(26).unwrap_or(0.0),
-                outro_downbeat_phase: r.get(27).unwrap_or(0),
-                intro_bpm: r.get(28).unwrap_or(0.0),
-                intro_bpm_confidence: r.get(29).unwrap_or(0.0),
-                intro_beat_offset_ms: r.get(30).unwrap_or(0.0),
-                intro_stability: r.get(31).unwrap_or(0.0),
-                intro_downbeat_phase: r.get(32).unwrap_or(0),
-                beats_per_bar: r.get(33).unwrap_or(0),
-                drop_ms: r.get(34).unwrap_or(0),
-                drop_runup_vocal: r.get(35).unwrap_or(0.0),
-                drop_vocal: r.get(36).unwrap_or(0.0),
-                exit_ms: r.get(37).unwrap_or(0),
-                gap_ms: r.get(38).unwrap_or(0),
-                gap_end_ms: r.get(39).unwrap_or(0),
-                exit_vocal: r.get(40).unwrap_or(0.0),
-                drop_runup_tonal_db: r.get(41).unwrap_or(0.0),
-                intro_beats_per_bar: r.get(42).unwrap_or(0),
-                outro_beats_per_bar: r.get(43).unwrap_or(0),
-                intro_grid_source: r.get(44).unwrap_or(0),
-                outro_grid_source: r.get(45).unwrap_or(0),
-            })
-        })
-        .optional()
+    c.prepare_cached(&format!("SELECT {} FROM track_analysis WHERE server=sid() AND song_id=?1", COLUMNS.join(", ")))?.query_row([song_id], row).optional()
 }
 
 /// Stores a fresh classical analysis, keeping the Beat This! grids and "model has looked" marks of the stored row
@@ -196,5 +127,29 @@ impl AnalysisStream {
 
     pub fn into_analyzer(self) -> Analyzer {
         self.a
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_keep_the_stored_format() {
+        let c = nori_db::open("", "s").unwrap();
+        // A row as stored: each column holds its position, so a field read from another column shows.
+        let names = &COLUMNS[1..];
+        let values: Vec<String> = (2..=COLUMNS.len()).map(|i| i.to_string()).collect();
+        c.execute_batch(&format!("INSERT INTO track_analysis(server, song_id, {}) VALUES('s', 'a', {})", names.join(", "), values.join(", "))).unwrap();
+        let a = get(&c, "a").unwrap().expect("the row");
+        let shown = format!("{a:?}");
+        for (name, v) in names.iter().zip(&values) {
+            assert!([",", ".0,", " }", ".0 }"].iter().any(|end| shown.contains(&format!(" {name}: {v}{end}"))), "{name} is not {v}: {shown}");
+        }
+        put(&c, &TrackAnalysis { song_id: "b".into(), ..a }).unwrap();
+        let stored = |id: &str| -> String {
+            c.query_row(&format!("SELECT {} FROM track_analysis WHERE song_id=?1", names.join(" || ',' || ")), [id], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(stored("a"), stored("b"), "written back as read");
     }
 }

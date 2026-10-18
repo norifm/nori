@@ -15,12 +15,12 @@ use tract_onnx::prelude::*;
 
 use super::tempo;
 
-pub const MELS: usize = 128;
-pub const FPS: f64 = 50.0;
+pub(crate) const MELS: usize = 128;
+pub(crate) const FPS: f64 = 50.0;
 /// Frames read at once: 30 s, the model's training length.
 pub const WINDOW: usize = 1500;
 /// Frames at each edge of a chunk the model was not trained to answer for.
-pub const BORDER: usize = 6;
+pub(crate) const BORDER: usize = 6;
 /// Frames per model run: a window plus a border of silence either side.
 pub const CHUNK: usize = WINDOW + 2 * BORDER;
 const MODEL_RATE: f64 = 22050.0;
@@ -124,7 +124,7 @@ impl LogMel {
 }
 
 /// Mono samples decimated by averaging to about 22 kHz; returns the samples and their rate.
-pub fn decimate(x: &[f32], rate: u32) -> (Vec<f32>, f64) {
+pub(crate) fn decimate(x: &[f32], rate: u32) -> (Vec<f32>, f64) {
     let k = ((rate as f64 / MODEL_RATE).round() as usize).max(1);
     (x.chunks_exact(k).map(|c| c.iter().sum::<f32>() / k as f32).collect(), rate as f64 / k as f64)
 }

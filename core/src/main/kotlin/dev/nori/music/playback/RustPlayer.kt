@@ -68,7 +68,8 @@ internal object RustPlayerJni {
     /** The engine reads its output once, now. */
     @JvmStatic @CriticalNative external fun look(h: Long)
     @JvmStatic @CriticalNative external fun mixing(h: Long): Boolean
-    @JvmStatic @FastNative external fun remoteState(h: Long, words: LongArray)
+    /** Tells [remote] (`Remote.uniffiCloneHandle()`, taken over) where the engine is now, at media [volume] 0 to 100 (-1: none). */
+    @JvmStatic @CriticalNative external fun remotePlayed(h: Long, remote: Long, volume: Int)
     @JvmStatic @CriticalNative external fun chainIn(h: Long): Boolean
     @JvmStatic @CriticalNative external fun onCpu(h: Long): Boolean
     /** Song ms per real ms: the speed times a mix's tempo. */
@@ -330,15 +331,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     fun replan() = RustPlayerJni.replan(h)
     val mixing: Boolean get() = RustPlayerJni.mixing(h)
     internal var onRemoteStateChanged: (() -> Unit)? = null
-    private var remoteWords: LongArray? = null
-    internal fun remotePlaying(): dev.nori.music.ffi.Playing {
-        val w = remoteWords ?: LongArray(9).also { remoteWords = it }
-        RustPlayerJni.remoteState(h, w)
-        return dev.nori.music.ffi.Playing(
-            w[0] != 0L, w[8] != 0L, w[4] != 0L, w[5].takeIf { it >= 0 }?.toUInt(), w[6], Float.fromBits(w[7].toInt()),
-            w[1], Float.fromBits(w[2].toInt()), w[3].takeIf { it >= 0 }?.toUInt(), null,
-        )
-    }
+    /** Tells [remote] where the engine is now, at media [volume] 0 to 100 (null: none): the core's `playing`. */
+    internal fun remotePlayed(remote: dev.nori.music.ffi.Remote, volume: Int?) = RustPlayerJni.remotePlayed(h, remote.uniffiCloneHandle(), volume ?: -1)
     /** How fast the place moves: the speed times a mix's tempo. */
     val pace: Float get() = RustPlayerJni.pace(h)
     /** Plays along with the jam whose guest [remote] is, while it listens along (the core says when). */

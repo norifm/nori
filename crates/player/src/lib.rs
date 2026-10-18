@@ -26,7 +26,6 @@ pub mod silence;
 pub mod sink;
 #[cfg(any(test, feature = "synth"))]
 pub mod sim;
-pub mod sound;
 pub mod sonic;
 pub mod spatial;
 pub mod speed;

@@ -10,7 +10,8 @@
 //! Gauss-Newton on the exact response. Accuracy over random ±12 dB curves: ~0.3 dB at centres and
 //! 0.7 dB between (to 16 kHz). Runs when a slider moves, never per buffer.
 
-use crate::dsp::{band_db, Band, CH_BOTH, HIGH_SHELF, PEAKING};
+use crate::dsp::{band_db, Band, CH_BOTH};
+use crate::types::EqKind;
 
 /// The layouts offered, by band count.
 pub const LAYOUTS: [usize; 4] = [5, 10, 15, 31];
@@ -71,11 +72,11 @@ pub fn response_db(rate: f64, bands: &[Band], freq: f64) -> f64 {
 }
 
 fn bell(freq: f64, gain_db: f64, q: f64) -> Band {
-    Band { kind: PEAKING, freq, gain_db, q, channel: CH_BOTH }
+    Band { kind: EqKind::Peaking, freq, gain_db, q, channel: CH_BOTH }
 }
 
 /// Largest filter gain (a ±12 dB zigzag needs about 28 dB).
-pub const MAX_FILTER_DB: f64 = 30.0;
+pub(crate) const MAX_FILTER_DB: f64 = 30.0;
 /// The gain `B` is first measured at (the paper's prototype gain).
 const PROTOTYPE_DB: f64 = 12.0;
 /// A midpoint's weight against a centre's 1 in the fit.
@@ -105,7 +106,7 @@ pub fn design(rate: f64, sliders: &[f64]) -> Vec<Band> {
     let shelf_top = n > 1 && freqs[n - 1] > 0.4 * rate;
     let filter = |j: usize, g: f64| {
         if shelf_top && j == n - 1 {
-            Band { kind: HIGH_SHELF, freq: (freqs[j] * freqs[j - 1]).sqrt(), gain_db: g, q: SHELF_Q, channel: CH_BOTH }
+            Band { kind: EqKind::HighShelf, freq: (freqs[j] * freqs[j - 1]).sqrt(), gain_db: g, q: SHELF_Q, channel: CH_BOTH }
         } else {
             let w = std::f64::consts::TAU * freqs[j] / rate;
             bell(freqs[j], g, q_for(octaves * w / w.sin()))
@@ -428,9 +429,9 @@ mod tests {
                 let t: Vec<&str> = l.split_whitespace().collect();
                 let at = |k: &str| t.iter().position(|w| *w == k).and_then(|i| t.get(i + 1)?.parse::<f64>().ok());
                 let kind = match *t.get(3)? {
-                    "LSC" => crate::dsp::LOW_SHELF,
-                    "HSC" => HIGH_SHELF,
-                    "PK" => PEAKING,
+                    "LSC" => EqKind::LowShelf,
+                    "HSC" => EqKind::HighShelf,
+                    "PK" => EqKind::Peaking,
                     _ => return None,
                 };
                 Some(Band { kind, freq: at("Fc")?, gain_db: at("Gain")?, q: at("Q")?, channel: CH_BOTH })
@@ -570,7 +571,7 @@ mod tests {
 
     #[test]
     fn parametric_preset_to_sliders() {
-        let shelf = [Band { kind: crate::dsp::LOW_SHELF, freq: 100.0, gain_db: 6.0, q: 0.7, channel: CH_BOTH }];
+        let shelf = [Band { kind: EqKind::LowShelf, freq: 100.0, gain_db: 6.0, q: 0.7, channel: CH_BOTH }];
         let s = sliders_for(&shelf, 10, 12.0);
         assert!(s[0] > 5.0 && s[9].abs() < 0.1, "{s:?}");
     }
