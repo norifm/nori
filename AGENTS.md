@@ -196,4 +196,5 @@ One line, conventional: `<type>: <what is different now>`, type in `feat fix per
 test chore`, lowercase, no full stop, under 72 chars. No body, no trailers, no `Co-Authored-By`, even if
 your tool asks for one. One commit per piece of work. Fixing your own unpushed work: amend it into the
 commit it fixes; never stack "fix the fix" commits. Small finished work (a fix, docs) goes
-straight to master as one commit; bigger development goes through a PR, squash-merged.
+straight to master as one commit; bigger development goes through a PR,
+squash-merged only after the owner approves the merge.
