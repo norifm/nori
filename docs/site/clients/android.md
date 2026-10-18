@@ -22,7 +22,7 @@ system's media controls, notification and lock screen.
   share one outline over the page, which shows blurred inside it (Android 12 and later); on its side
   they sit in one row along the bottom. **Colors
   from the cover** is two switches, Pages and Player: where one is off it stays black in dark mode.
-  **Keep the screen on** and hiding the status or navigation bar work the same way: each condition
+  **Keep the screen on** and hiding the status bar work the same way: each condition
   (sideways, upright, charging, burn-in protection) is a button of its own, and any one lit that holds
   is enough. Text follows Android's font size; with a large display size the layout keeps a phone's proportions.
   Burn-in pixel shifting and idle dimming are off by default from 0.6.3. Upgrading resets the old

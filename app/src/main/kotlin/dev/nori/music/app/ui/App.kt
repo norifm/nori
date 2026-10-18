@@ -334,7 +334,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         val config = androidx.compose.ui.platform.LocalConfiguration.current
         val wide = isWide(config.screenWidthDp, config.screenHeightDp)
         // The bars the app has put away, set below where they are decided, read by its dialogs' windows.
-        val hiddenBars = remember { mutableStateOf(HiddenBars(status = false, gesture = false)) }
+        val hiddenBars = remember { mutableStateOf(HiddenBars(status = false)) }
         CompositionLocalProvider(
             LocalNav provides nav,
             LocalLyricsKeepOn provides lyricsKeepOn,
@@ -384,15 +384,11 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
             }
             // Burn-in protection while nori keeps the screen on: everything drifts a few dp once a minute (the
-            // core's `burn_in_drift`) and after a while untouched the screen dims. Either bar can be put away
+            // core's `burn_in_drift`) and after a while untouched the screen dims. The status bar can be put away
             // while it is at work (the core's `bar_hidden`).
             val protecting = prefs.burnInProtection && (awake || lyricsKeepOn.value)
             val hideBar = remember(prefs.hideStatusBar, wide, protecting) { dev.nori.music.ffi.settings.barHidden(prefs.hideStatusBar, wide, protecting) }
-            // From Android 11, where the bar's room reads the same while it is away (gestureBarRoom).
-            val hideGestureBar = remember(prefs.hideGestureBar, wide, protecting) {
-                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && dev.nori.music.ffi.settings.barHidden(prefs.hideGestureBar, wide, protecting)
-            }
-            val bars = remember(hideBar, hideGestureBar) { HiddenBars(hideBar, hideGestureBar) }
+            val bars = remember(hideBar) { HiddenBars(hideBar) }
             androidx.compose.runtime.SideEffect { hiddenBars.value = bars }
             LaunchedEffect(bars) {
                 val window = (barsView.context as? android.app.Activity)?.window ?: return@LaunchedEffect

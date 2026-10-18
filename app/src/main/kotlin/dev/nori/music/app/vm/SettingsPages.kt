@@ -208,7 +208,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "coverColors" to (R.string.settings_cover_colours to R.string.settings_hint_cover_colours),
     "movingCovers" to (R.string.settings_moving_covers to R.string.settings_hint_moving_covers),
     "hideStatusBar" to (R.string.settings_hide_status_bar to R.string.settings_hint_hide_status_bar),
-    "hideGestureBar" to (R.string.settings_hide_gesture_bar to R.string.settings_hint_hide_gesture_bar),
     "keepAwake" to (R.string.settings_keep_awake to R.string.settings_hint_keep_awake),
     "burnInProtection" to (R.string.settings_burn_in to R.string.settings_hint_burn_in),
     "dimWhenIdle" to (R.string.settings_dim_idle to R.string.settings_hint_dim_idle),
@@ -257,7 +256,6 @@ private val NAMED: Map<String, IntArray> = mapOf(
     "coverColors" to intArrayOf(R.string.settings_cover_colours_pages, R.string.settings_cover_colours_player),
     "motion" to intArrayOf(R.string.settings_motion_full, R.string.settings_motion_reduced, R.string.settings_motion_eink),
     "hideStatusBar" to HIDE_BAR,
-    "hideGestureBar" to HIDE_BAR,
     "keepAwake" to intArrayOf(R.string.settings_hide_bar_sideways, R.string.settings_hide_bar_upright, R.string.settings_when_charging),
     "dimWhenIdle" to intArrayOf(R.string.settings_dim_idle_never, R.string.settings_dim_idle_half_minute, R.string.settings_dim_idle_minute, R.string.settings_dim_idle_five_minutes),
     "dimLevel" to intArrayOf(R.string.settings_dim_level_light, R.string.settings_dim_level_medium, R.string.settings_dim_level_strong),
@@ -554,7 +552,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         "coverColors" -> str(R.string.settings_cover_colours_detail)
         "movingCovers" -> str(if (s.values["movingCovers"] != "off" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) R.string.settings_moving_covers_still else R.string.settings_moving_covers_detail)
         "hideStatusBar" -> str(R.string.settings_hide_status_bar_detail)
-        "hideGestureBar" -> str(R.string.settings_hide_gesture_bar_detail)
         "keepAwake" -> str(R.string.settings_keep_awake_detail)
         "burnInProtection" -> str(R.string.settings_burn_in_detail)
         "dimWhenIdle" -> str(R.string.settings_dim_idle_detail)

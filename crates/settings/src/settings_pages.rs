@@ -398,7 +398,6 @@ impl Page<'_> {
             let home = vec![row(RowItem::Link { to: SettingsLink::HomeRows }), row(RowItem::Link { to: SettingsLink::LibrarySections })];
             let mut screen = vec![
                 self.setting("hideStatusBar"),
-                self.setting("hideGestureBar"),
                 self.setting("keepAwake"),
                 self.setting("burnInProtection"),
                 self.chips("dimWhenIdle").under().shown(p.burn_in_protection),

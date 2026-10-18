@@ -169,8 +169,6 @@
     <string name="settings_library_sections">Library sections</string>
     <string name="settings_hide_status_bar">Hide the status bar</string>
     <string name="settings_hide_status_bar_detail">Swipe down from the top to see it</string>
-    <string name="settings_hide_gesture_bar">Hide the navigation bar</string>
-    <string name="settings_hide_gesture_bar_detail">Swipe up from the bottom to see it</string>
     <string name="settings_hide_bar_sideways">Sideways</string>
     <string name="settings_hide_bar_upright">Upright</string>
     <string name="settings_hide_bar_protected">Burn-in protection</string>
@@ -421,7 +419,6 @@
     <string name="settings_hint_burn_in">OLED, dock, stand, charger. Moves pixels so nothing burns in</string>
     <string name="settings_hint_dim_idle">Dock, stand. Darken an untouched screen</string>
     <string name="settings_hint_controls_side">Car. Left or right hand drive, steering wheel</string>
-    <string name="settings_hint_hide_gesture_bar">Gesture bar, pill, home bar, navigation buttons. Full screen</string>
     <string name="settings_hint_hide_status_bar">Full screen. Hides the clock and battery bar at the top</string>
     <string name="settings_hint_lyrics_sweep">For lyrics timed word by word</string>
     <string name="settings_hint_lyrics_translation">When your server has them</string>

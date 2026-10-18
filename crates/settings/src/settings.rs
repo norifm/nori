@@ -539,8 +539,6 @@ pub struct StoredPrefs {
     pub theme: ThemeMode,
     #[setting("hideStatusBarWhen", Flags, default = vec![HideBarWhen::Sideways], name = "hideStatusBar", show = K::Flags(HideBarWhen::NAMES))]
     pub hide_status_bar: Vec<HideBarWhen>,
-    #[setting("hideGestureBarWhen", Flags, default = vec![HideBarWhen::Protected], name = "hideGestureBar", show = K::Flags(HideBarWhen::NAMES))]
-    pub hide_gesture_bar: Vec<HideBarWhen>,
     #[setting("keepAwakeWhen", Flags, default = Vec::new(), name = "keepAwake", show = K::Flags(AwakeWhen::NAMES))]
     pub keep_awake: Vec<AwakeWhen>,
     /// While nori keeps the screen on, everything drawn drifts a few dp ([`nori_look::burn_in`]).
@@ -1263,9 +1261,6 @@ fn migrate_picks(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
     };
     if let Some(v) = old("hideStatusBar") {
         p.hide_status_bar = bar(v, p.hide_status_bar.clone());
-    }
-    if let Some(v) = old("hideGestureBar") {
-        p.hide_gesture_bar = bar(v, p.hide_gesture_bar.clone());
     }
     if let Some(v) = old("coverColorsWhere") {
         p.cover_colors = match v {
