@@ -191,9 +191,9 @@ val LocalLyricsKeepOn = staticCompositionLocalOf<androidx.compose.runtime.Mutabl
 
 private val tabs = listOf(
     Tab("home", say.home, Icons.Filled.Home),
-    Tab("search", say.search, Icons.Filled.Search),
     Tab("library", say.library, Icons.Filled.LibraryMusic),
     Tab("settings", say.settings, Icons.Filled.Settings),
+    Tab("search", say.search, Icons.Filled.Search),
 )
 
 /**
@@ -533,13 +533,15 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
               }
               }
               Box(
-                  Modifier.align(Alignment.BottomCenter).padding(start = pageStart, end = pageEnd)
+                  // On its side the mini player reaches the rail, whose foot it is (TabRail).
+                  Modifier.align(Alignment.BottomCenter)
+                      .padding(start = if (wide && railLeft) tabRailReach() else pageStart, end = if (wide && !railLeft) tabRailReach() else pageEnd)
                       .onGloballyPositioned { chromeHeight = with(density) { it.size.height.toDp() } },
               ) {
                   // The now playing bar has a heart now, and it reads the stars the user has just
                   // changed from here like every other one. Outside this, it saw only the server's
                   // answer, so a tap on it changed nothing until the song came round again.
-                  CompositionLocalProvider(LocalStarMarks provides marks) { BottomChrome(player, actions, nav::player, if (wide) 0.dp else tabsHeight, chromeLook) }
+                  CompositionLocalProvider(LocalStarMarks provides marks) { BottomChrome(player, actions, nav::player, if (wide) 0.dp else tabsHeight, chromeLook, railLeft) }
               }
               }
               }

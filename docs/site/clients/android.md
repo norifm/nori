@@ -16,10 +16,10 @@ system's media controls, notification and lock screen.
   black for OLED screens. From 0.6.3 the theme is one of four seasons, each a palette of traditional
   Japanese colors: spring's plum, summer's dayflower blue, autumn's persimmon and winter's ink with one
   camellia red. By default it **follows the seasons**, turning on the first days of the old calendar's
-  seasons (4 February, 6 May, 8 August, 7 November; half a year round south of the equator) over a
+  seasons (4 February, 5 May, 7 August, 7 November; half a year round south of the equator) over a
   week. The theme's accent marks the current tab, a favorite and what is playing, on every page and in
-  the player, whatever the cover; a favorite is a seal stamped with 好. The tab bar and the now-playing
-  bar are outlines over the page. **Colors
+  the player, whatever the cover; a favorite is a seal stamped with 好. The now-playing bar and the tabs
+  share one outline over the page; on its side the bar stands on the rail's foot. **Colors
   from the cover** is two switches, Pages and Player: where one is off it stays black in dark mode.
   **Keep the screen on** and hiding the status or navigation bar work the same way: each condition
   (sideways, upright, charging, burn-in protection) is a button of its own, and any one lit that holds
