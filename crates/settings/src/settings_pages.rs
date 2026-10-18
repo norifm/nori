@@ -211,7 +211,7 @@ pub fn pages(client: SettingsClient, parts: &[SettingsPart]) -> Vec<SettingsPage
     let offered = |p: SettingsPage| match client {
         SettingsClient::Phone => true,
         SettingsClient::Desktop | SettingsClient::Terminal => p != SettingsPage::LyricsSources,
-        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Lyrics | SettingsPage::Library),
+        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Look | SettingsPage::Lyrics | SettingsPage::Library),
     };
     SettingsPage::ALL.into_iter().filter(|p| !page_parts(*p).iter().all(|part| !parts.contains(part)) && offered(*p)).collect()
 }
@@ -385,8 +385,11 @@ impl Page<'_> {
     fn look(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let p = self.p;
         let mut theme = vec![self.chips("season")];
-        if self.phone() {
+        if self.phone() || self.web() {
             theme.extend([self.chips("theme"), self.setting("amoled").under().shown(p.theme != crate::settings::ThemeMode::Light)]);
+        }
+        if self.web() {
+            return vec![(SectionId::Theme, theme)];
         }
         let mut cover = vec![self.setting("coverColors")];
         if self.phone() {
@@ -639,13 +642,13 @@ mod tests {
     #[test]
     fn a_browser_offers_what_applies_there() {
         let d = StoredPrefs::default();
-        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Lyrics, SettingsPage::Library]);
+        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library]);
         let rows = every_row(SettingsClient::Web, &d, &facts());
         let has = names(&rows, false);
-        for kept in ["autoMix", "crossfadeSec", "speed", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl"] {
+        for kept in ["autoMix", "crossfadeSec", "speed", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "theme", "amoled"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
-        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
+        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize", "coverColors", "movingCovers"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::Link { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");

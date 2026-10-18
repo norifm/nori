@@ -139,6 +139,24 @@ impl Nori {
         self.client().map_or_else(String::new, |c| pages::cover(c.core(), &id, px))
     }
 
+    /// The colors the page wears on a date in the browser's zone, from the season and appearance
+    /// settings: `{ season (the calendar's now), dark, page, surface, ink, ink2, hair, outline, accent, on, onAccent }`, each a `#rrggbb`.
+    /// `system_dark`: the browser's color scheme, followed while the appearance is System.
+    pub fn theme(&self, month: u32, day: u32, zone: String, system_dark: bool) -> String {
+        use nori_look::theme::{roles, season_now, southern};
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let (palette, dark) = nori_core::settings::theme_palette(&prefs, system_dark, month, day, southern(&zone));
+        let r = roles(palette);
+        let season = format!("{:?}", season_now(month, day, southern(&zone)).season).to_uppercase();
+        let hex = |c: u32| format!("#{:06x}", c & 0xFF_FFFF);
+        json!({
+            "season": season, "dark": dark, "page": hex(palette.page), "surface": hex(palette.surface), "ink": hex(palette.ink),
+            "ink2": hex(r.on_surface_variant), "hair": hex(r.outline_variant), "outline": hex(r.outline),
+            "accent": hex(palette.accent), "on": hex(palette.on), "onAccent": hex(r.on_primary),
+        })
+        .to_string()
+    }
+
     /// The settings `names` (comma separated) as `{ name: value }`.
     pub fn settings(&self, names: String) -> String {
         let prefs = self.app.settings.current().unwrap_or_default();
