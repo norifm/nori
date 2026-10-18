@@ -117,7 +117,11 @@ available quadrants. Content-provider pipes, Bitmap decoding, and Canvas paintin
 `NORI_E2E_SERVER=local tools/feature-e2e.sh --only youtube-music` adds a YouTube Music profile,
 plays searched songs, checks their AutoMix transition and lyric alignment, downloads one and plays
 its saved files offline, then switches back to the fixture server. It also opens downloads through
-Android Auto's media browser and renders the YouTube song in each widget size. The profile's rules,
+Android Auto's media browser and renders the YouTube song in each widget size. It pairs the phone
+with the terminal client on a YouTube profile, moves the queue there and back, and checks that a
+pairing reset locks the terminal out: pairing and signing are Rust's (`crates/host/tests/lan_jam.rs`),
+but the JNI pairing call, the media session's handover and the service telling a new remote what
+plays are Android's. The profile's rules,
 reads, stream resolution and WebM decoding are Rust tests; the resolved googlevideo URL passing
 through media3's data source and OkHttp (with the core's own User-Agent) requires Android. It is
 opt-in because YouTube can refuse on any day. The same section opens Google's sign-in page from the

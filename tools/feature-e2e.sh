@@ -281,6 +281,47 @@ WIDGET
   check "YouTube offers song radio" tapnode text 'Start radio from this song'
   check "YouTube radio fills the queue" wait_for queue '>1' 30
   check "YouTube radio plays through the AudioTrack" sounds 20
+  # Crossplay without a server: the terminal client on a YouTube profile, paired by its random secret.
+  # Pairing, signing and the door's refusals are Rust's (crates/host tests/lan_jam.rs); here the phone
+  # pairs through JNI, follows the door and hands its YouTube queue over.
+  ytpeer="nori-e2e-ytpeer-$ANDROID_SERIAL"; ytdata="$here/../build/e2e/$ANDROID_SERIAL/ytpeer"
+  python3 "$here/with-resource.py" build cargo build -j4 -p nori-cli >/dev/null
+  tmux kill-session -t "$ytpeer" 2>/dev/null; rm -rf "$ytdata"; mkdir -p "$ytdata"
+  python3 - "$ytdata/nori.db" <<'PY'
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
+    db.execute("INSERT OR REPLACE INTO settings VALUES('remoteControl', '{\"b\":true}')")
+PY
+  tmux new-session -d -s "$ytpeer" -x 160 -y 45 "$here/../target/debug/nori-cli --data $ytdata --provider youtubeMusic --no-images --no-mpris"
+  for _ in $(seq 16); do tmux send-keys -t "$ytpeer" -- -; done
+  yt_secret() { python3 -c 'import sqlite3,sys; r=sqlite3.connect(sys.argv[1]).execute("select value from app_kv where key=?",("remoteLanSecret",)).fetchone(); print(r[0]) if r else sys.exit(1)' "$ytdata/nori.db" 2>/dev/null; }
+  check "the YouTube terminal peer makes its pairing secret" wait_until 20 yt_secret
+  "$app" set remoteControl true >/dev/null
+  check "the phone pairs with the terminal's code" test "$("$app" remote pair "nori://pair#k=$(yt_secret)")" = paired
+  ytresolved=$(python3 "$here/mdns-door.py" "$ytdata/nori.db")
+  check "the YouTube terminal peer announces its door" test -n "$ytresolved"
+  ytname=$(printf '%s' "$ytresolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
+  ytdoor=$(printf '%s' "$ytresolved" | python3 -c 'import json,sys; print(json.load(sys.stdin)["door"])')
+  ytpeer_id=$(printf '%s' "$ytdoor" | python3 -c 'import sys; print(dict(p.split("=",1) for p in sys.stdin.read().split("|",2)[2].split(";"))["id"])')
+  "$app" remote watch on >/dev/null
+  "$app" remote found "$ytdoor" >/dev/null
+  check "the paired YouTube peer is listed" wait_until 15 bash -c "'$app' remote devices | grep -Fq '$ytname'"
+  "$app" remote watch off >/dev/null
+  "$app" remote pick "$ytpeer_id" >/dev/null
+  check "the phone hands its YouTube queue to the terminal" wait_for playingOn "$ytname" 15
+  check "this phone's output is let go" silent 10
+  check "the terminal resolves and plays the YouTube song" wait_until 45 bash -c "'$app' remote devices | grep -Fq '$ytname (nearby): playing'"
+  "$app" remote pick here >/dev/null
+  check "\"This phone\" brings the YouTube queue back" wait_for playingOn "" 15
+  check "and it sounds here" sounds 20
+  check "resetting pairing answers" test "$("$app" remote reset-pairing)" = reset
+  "$app" remote watch on >/dev/null
+  "$app" remote found "$ytdoor" >/dev/null
+  check "after a reset the terminal is no longer controllable" wait_until 15 bash -c "! '$app' remote devices | grep -Fq '$ytname'"
+  "$app" remote watch off >/dev/null
+  tmux kill-session -t "$ytpeer" 2>/dev/null
+  "$app" set remoteControl false >/dev/null
   "$app" login "$APP_URL|$USER|$PASS" >/dev/null
   check "the server's profile opens again" wait_for server "$APP_URL" 30
   "$app" play "$SONG" >/dev/null
