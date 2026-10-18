@@ -37,9 +37,9 @@ fn id(raw: &str) -> String {
     format!("{ID_PREFIX}{raw}")
 }
 
-/// YouTube's id inside nori's `id`; None when it is not a YouTube id.
+/// YouTube's id inside nori's `id` (a live stream's radio id too); None when it is not a YouTube id.
 fn raw_id(id: &str) -> Option<&str> {
-    id.strip_prefix(ID_PREFIX).filter(|r| !r.is_empty())
+    crate::unradio(id).strip_prefix(ID_PREFIX).filter(|r| !r.is_empty())
 }
 
 /// The YouTube id inside nori's `id`, or a parse error naming it.
@@ -107,8 +107,10 @@ fn artist_refs(links: &[yt::ArtistLink]) -> Vec<ArtistRef> {
 fn song(s: yt::Song) -> Song {
     let artists = artist_refs(&s.artists);
     let (album, album_id) = s.album.map_or((String::new(), None), |a| (a.name, Some(id(&a.id))));
+    // A live stream plays as a radio station.
+    let song_id = if s.live { crate::radio_id(&id(&s.video_id)) } else { id(&s.video_id) };
     Song {
-        id: id(&s.video_id),
+        id: song_id,
         title: s.title,
         artist: s.artist,
         artist_id: artists.first().map(|a| a.id.clone()),
@@ -439,35 +441,97 @@ impl Provider for YouTube {
 
 /// A song's stream address opens at the URL YouTube serves it at now, asked of YouTube unless one is
 /// kept; a refused one is asked again.
+#[derive(Clone)]
 struct Resolver {
     state: Arc<State>,
     transport: Arc<dyn Transport>,
+}
+
+impl Resolver {
+    /// The stream `video` plays from, asked of YouTube unless one is kept. Blocks the caller.
+    fn stream(&self, video: &str) -> NetResult<yt::Stream> {
+        let now = Instant::now();
+        let streams = &self.state.streams;
+        if let Some(s) = streams.get(video, now) {
+            return Ok(s);
+        }
+        let s = block_on(self.state.api.player(&Wire(&*self.transport), video)).map_err(net_error)?;
+        crate::alog::info(&format!("YouTube stream of {video}: itag {}, {}", s.format.itag, s.format.mime));
+        streams.keep(video, s.clone(), now);
+        Ok(s)
+    }
 }
 
 impl ResolveStream for Resolver {
     /// Blocks the caller while YouTube is asked.
     fn resolve(&self, address: &str, from: u64) -> Option<NetResult<String>> {
         let video = address_video(address)?;
-        let now = Instant::now();
-        let streams = &self.state.streams;
-        let stream = match streams.get(video, now) {
-            Some(s) => s,
-            None => match block_on(self.state.api.player(&Wire(&*self.transport), video)) {
-                Ok(s) => {
-                    crate::alog::info(&format!("YouTube stream of {video}: itag {}, {}", s.format.itag, s.format.mime));
-                    streams.keep(video, s.clone(), now);
-                    s
-                }
-                Err(e) => return Some(Err(net_error(e))),
-            },
-        };
-        Some(Ok(stream.url_from(from)))
+        Some(self.stream(video).map(|s| s.url_from(from)))
     }
 
     fn refused(&self, address: &str) {
         if let Some(video) = address_video(address) {
             self.state.streams.forget(video);
         }
+    }
+
+    fn live(&self, address: &str) -> Option<Box<dyn std::io::Read + Send>> {
+        let video = address_video(address)?.to_string();
+        Some(Box::new(LiveAudio { resolver: self.clone(), video, next: None, bytes: Vec::new(), read: 0 }))
+    }
+}
+
+/// Pieces a live stream starts behind the newest: the next is made only as the last plays out, so
+/// starting at the newest would leave nothing in hand while it is.
+const LIVE_BEHIND: u64 = 2;
+
+/// A live video's audio as one endless ADTS stream ([`yt::live`]), asked of YouTube a piece at a time on
+/// the reading thread.
+struct LiveAudio {
+    resolver: Resolver,
+    video: String,
+    /// The next piece's number; None until the newest one's is known.
+    next: Option<u64>,
+    bytes: Vec<u8>,
+    read: usize,
+}
+
+impl LiveAudio {
+    /// The next piece into `bytes`. Its URL refused (served URLs expire), the stream is asked anew once.
+    fn fetch(&mut self) -> NetResult<()> {
+        self.bytes.clear();
+        self.read = 0;
+        let mut fresh = false;
+        loop {
+            let stream = self.resolver.stream(&self.video)?;
+            match block_on(self.resolver.state.api.live_piece(&Wire(&*self.resolver.transport), &stream, self.next, &mut self.bytes)) {
+                Ok(n) if self.next.is_none() => {
+                    self.bytes.clear();
+                    self.next = Some(n.saturating_sub(LIVE_BEHIND));
+                }
+                Ok(n) => {
+                    self.next = Some(n + 1);
+                    return Ok(());
+                }
+                Err(yt::Error::Status(403)) if !fresh => {
+                    fresh = true;
+                    self.resolver.state.streams.forget(&self.video);
+                }
+                Err(e) => return Err(net_error(e)),
+            }
+        }
+    }
+}
+
+impl std::io::Read for LiveAudio {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        while self.read == self.bytes.len() {
+            self.fetch().map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
+        let n = buf.len().min(self.bytes.len() - self.read);
+        buf[..n].copy_from_slice(&self.bytes[self.read..self.read + n]);
+        self.read += n;
+        Ok(n)
     }
 }
 
@@ -838,6 +902,40 @@ mod tests {
         assert_eq!(t.asked.lock().len(), 2);
         assert!(r.resolve("https://nas/rest/stream?id=1", 0).is_none(), "a server's URL is opened as it is");
         assert!(r.resolve("youtube:gone", 0).unwrap().is_err(), "a failed request fails the open");
+    }
+
+    /// A live video is a radio station that streams from its YouTube address.
+    #[test]
+    fn a_live_video_plays_as_a_radio_station() {
+        let s = song(yt::Song { video_id: "v1".into(), live: true, ..Default::default() });
+        assert_eq!(s.id, "radio:yt-v1");
+        assert_eq!(raw_id(&s.id), Some("v1"));
+        let (c, _) = youtube(&[]);
+        assert_eq!(c.resolve(s.id, false, false).url, "youtube:v1");
+    }
+
+    /// A live stream starts two pieces behind the newest and goes on by number; its URL refused (an
+    /// expired one), the stream is asked again and the same piece asked anew.
+    #[test]
+    fn a_live_stream_is_read_piece_by_piece() {
+        let piece = std::fs::read(format!("{}/../youtube/tests/fixtures/live_piece.mp4", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let numbered = |n: &str| {
+            let at = piece.windows(19).position(|w| w == b"Sequence-Number: 41").unwrap() + 17;
+            let mut p = piece.clone();
+            p[at..at + 2].copy_from_slice(n.as_bytes());
+            TransportResponse { status: 200, body: p, set_cookies: Vec::new() }
+        };
+        let player = || answer(200, "player", &[]);
+        let (c, t) = youtube_answering(vec![player(), numbered("41"), numbered("39"), answer(403, "", &[]), player(), numbered("40")]);
+        let mut frames = Vec::new();
+        assert_eq!(yt::live::adts(&piece, &mut frames), Some(41));
+        let mut live = resolver(&c).live("youtube:dQw4w9WgXcQ").unwrap();
+        let mut heard = vec![0; 2 * frames.len()];
+        std::io::Read::read_exact(&mut live, &mut heard).unwrap();
+        assert_eq!(heard, [&frames[..], &frames[..]].concat(), "39, then 40");
+        let asked: Vec<String> = t.asked.lock().iter().map(|e| e.url.rsplit_once('&').map_or("player", |(_, q)| if q.starts_with("sq=") { q } else { "newest" }).to_string()).collect();
+        assert_eq!(asked, ["player", "newest", "sq=39", "sq=40", "player", "sq=40"]);
+        assert!(resolver(&c).live("https://nas/rest/stream?id=1").is_none());
     }
 
     /// An unplayable video's error carries YouTube's reason.

@@ -195,6 +195,16 @@ pub fn is_radio(id: &str) -> bool {
     id.starts_with(RADIO_PREFIX)
 }
 
+/// The id of live stream `id` (a provider's live video), played as a radio station.
+pub fn radio_id(id: &str) -> String {
+    format!("{RADIO_PREFIX}{id}")
+}
+
+/// `id` without the radio prefix a live stream wears.
+pub fn unradio(id: &str) -> &str {
+    id.strip_prefix(RADIO_PREFIX).unwrap_or(id)
+}
+
 /// Whether AutoMix can analyse `id`: not a provider song or radio stream.
 pub fn analysable(id: &str) -> bool {
     !is_provider_id(id) && !is_radio(id)

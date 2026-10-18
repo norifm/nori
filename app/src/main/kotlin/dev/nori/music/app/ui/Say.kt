@@ -142,6 +142,7 @@ class Say(private val r: Resources) {
     val decades: String = r.getString(R.string.decades)
     val folders: String = r.getString(R.string.folders)
     val radio: String = r.getString(R.string.radio)
+    val playerLive: String = r.getString(R.string.player_live)
     val downloads: String = r.getString(R.string.downloads)
     val filterArtists: String = r.getString(R.string.filter_artists)
     val newPlaylist: String = r.getString(R.string.new_playlist)
