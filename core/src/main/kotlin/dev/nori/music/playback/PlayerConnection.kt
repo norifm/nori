@@ -649,13 +649,13 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     /** Presses one of the session's own buttons (the notification's heart or shuffle) the way the notification does; for the test bridge. */
     fun pressSessionButton(action: String) = with { it.sendCustomCommand(SessionCommand(action, Bundle.EMPTY), Bundle.EMPTY) }
 
-    /** The notification's extra buttons as the session last published them, e.g. "heart_filled shuffle_off"; for the test bridge. */
+    /** The notification's extra buttons as the session last published them, e.g. "sealed shuffle_off"; for the test bridge. */
     val sessionButtons: String get() = controller?.mediaButtonPreferences.orEmpty().joinToString(" ") {
-        when (it.icon) {
-            androidx.media3.session.CommandButton.ICON_HEART_FILLED -> "heart_filled"
-            androidx.media3.session.CommandButton.ICON_HEART_UNFILLED -> "heart"
-            androidx.media3.session.CommandButton.ICON_SHUFFLE_ON -> "shuffle_on"
-            androidx.media3.session.CommandButton.ICON_SHUFFLE_OFF -> "shuffle_off"
+        when {
+            it.iconResId == R.drawable.seal -> "sealed"
+            it.iconResId == R.drawable.seal_outline -> "seal"
+            it.icon == androidx.media3.session.CommandButton.ICON_SHUFFLE_ON -> "shuffle_on"
+            it.icon == androidx.media3.session.CommandButton.ICON_SHUFFLE_OFF -> "shuffle_off"
             else -> it.sessionCommand?.customAction ?: "?"
         }
     }
