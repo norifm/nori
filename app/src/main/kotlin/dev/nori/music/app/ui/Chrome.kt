@@ -279,7 +279,7 @@ private val CHROME_CORNER = MINI_COVER_CORNER + MINI_PAD
 private val BACKDROP_BLUR = 24.dp
 private const val BLURRED_TINT = 0.55f
 /** How long a tab takes to light, and its name to open. */
-private val TAB_FADE = androidx.compose.animation.core.tween<Color>(220)
+private val TAB_FADE = androidx.compose.animation.core.tween<Float>(220)
 
 /**
  * The chrome's colors, all of them the page's: its ink, the idle tabs' quieter ink, the outline and the
@@ -329,8 +329,11 @@ fun rememberChromeLook(): Look {
     val t = remember { androidx.compose.animation.core.Animatable(1f) }
     val live = remember { LiveLook { t.value }.also { it.set(null, target, 0) } }
     var first by remember { mutableStateOf(true) }
+    val theme = remember { arrayOf(base) }
     LaunchedEffect(target) {
         if (first) { first = false; return@LaunchedEffect }
+        // A new theme is drawn at once, as the pages are; only a change of page fades.
+        if (theme[0] !== base) { theme[0] = base; t.snapTo(1f); live.set(null, target, 0); return@LaunchedEffect }
         // From wherever it has got to, so a page change mid-fade turns round instead of jumping.
         val now = IntArray(CoverLook.LEN) { live.argb(it) }
         t.snapTo(0f)
@@ -350,7 +353,9 @@ data class Tab(val route: String, val label: String, val icon: ImageVector)
 @Composable
 private fun TabButton(tab: Tab, selected: Boolean, named: Boolean, chrome: ChromeColours, modifier: Modifier, onClick: () -> Unit) {
     val turn = LocalGlyphTurn.current
-    val colour by androidx.compose.animation.animateColorAsState(if (selected) chrome.accent else chrome.quiet, TAB_FADE, label = "tab")
+    // Only the choosing fades; the accent itself is already the chrome's, drawn as it is.
+    val chosen by androidx.compose.animation.core.animateFloatAsState(if (selected) 1f else 0f, TAB_FADE, label = "tab")
+    val colour = androidx.compose.ui.graphics.lerp(chrome.quiet, chrome.accent, chosen)
     val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Row(
         modifier.clip(PillShape)
