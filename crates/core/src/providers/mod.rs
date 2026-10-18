@@ -110,6 +110,12 @@ pub trait ResolveStream: Send + Sync {
 
     /// The URL `address` resolved to was refused: the next open resolves it anew.
     fn refused(&self, address: &str);
+
+    /// Live stream `address` as one endless body, read on the reading thread; None when `address` is no
+    /// live stream of the provider's.
+    fn live(&self, _address: &str) -> Option<Box<dyn std::io::Read + Send>> {
+        None
+    }
 }
 
 /// What adding a profile of a kind asks for, and how its account signs in.

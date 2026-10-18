@@ -74,6 +74,8 @@
     <string name="decades">Decades</string>
     <string name="folders">Folders</string>
     <string name="radio">Radio</string>
+    <!-- In the player in place of the seek bar while a radio station or live stream plays. -->
+    <string name="player_live">Live</string>
     <string name="downloads">Downloads</string>
     <string name="filter_artists">Filter artists</string>
     <string name="new_playlist">New playlist</string>

@@ -86,6 +86,8 @@ matters to you, use YouTube Music signed out.
 - Playing, the queue, AutoMix, the equalizer and the rest of the sound settings.
 - Lyrics from the lyrics services (there is no server to ask).
 - Songs played once are kept in the stream cache like any other, and play again from there.
+- Live streams (a 24-hour lofi radio, say) play as a radio station, from a little behind live and for
+  as long as you listen. On Android, "Live" stands where the seek bar is and lyrics are off.
 
 ## What is off
 

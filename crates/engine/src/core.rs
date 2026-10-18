@@ -233,6 +233,9 @@ impl Library for CoreLibrary {
             return Ok(Located { source: Source::File(vec![path]), hint: None, duration_ms, estimated: false, from_second: None });
         }
         let target = self.client.resolve(id.to_string(), false, self.client.metered());
+        if nori_core::queue::is_radio(id) {
+            return Ok(Located { source: Source::Live { url: target.url, bytes: self.bytes.clone() }, hint: None, duration_ms: None, estimated: false, from_second: None });
+        }
         let hint = key_format(&target.key).or_else(|| song.as_ref().map(|s| s.suffix.clone())).filter(|s| !s.is_empty());
         let (url, bytes) = (target.url, self.bytes.clone());
         // A transcode (its key names the format) starts where it is asked to.
@@ -304,7 +307,10 @@ impl ByteSource for Resolving {
     }
 
     fn open_live(&self, url: &str) -> Result<(crate::source::Body, Option<usize>), String> {
-        self.bytes.open_live(url)
+        match self.resolver.live(url) {
+            Some(reader) => Ok((crate::source::Body { start: 0, len: None, reader }, None)),
+            None => self.bytes.open_live(url),
+        }
     }
 
     fn forget(&self, url: &str) -> bool {

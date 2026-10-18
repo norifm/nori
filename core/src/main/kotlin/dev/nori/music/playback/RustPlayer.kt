@@ -616,7 +616,10 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     private fun stations(added: List<MediaItem>) {
         for (item in added) {
             if (!item.isRadio) continue
-            val url = (item.localConfiguration?.uri ?: item.requestMetadata.mediaUri)?.toString() ?: continue
+            val uri = item.localConfiguration?.uri ?: item.requestMetadata.mediaUri ?: continue
+            // A provider's live stream is a song: the core knows where it plays from.
+            if (uri.scheme == SONG_SCHEME) continue
+            val url = uri.toString()
             RustPlayerJni.radio(h, item.mediaId, url)
         }
     }
