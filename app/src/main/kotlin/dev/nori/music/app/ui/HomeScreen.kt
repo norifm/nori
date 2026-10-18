@@ -105,7 +105,17 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                         exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms * 2 / 3)) +
                             androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(ms), targetScale = 0.94f) +
                             androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(ms, easing = androidx.compose.animation.core.FastOutSlowInEasing)),
-                    ) { QueueOfferCard(o, actions, { taking = true }, vm::dismissOffer) }
+                    ) {
+                        // Flicked away to either side, it is turned down, as its cross does: the room it leaves folds away after.
+                        androidx.compose.runtime.key(o) {
+                            val swipe = androidx.compose.material3.rememberSwipeToDismissBoxState(
+                                confirmValueChange = { it != androidx.compose.material3.SwipeToDismissBoxValue.Settled && run { vm.dismissOffer(); true } },
+                            )
+                            androidx.compose.material3.SwipeToDismissBox(swipe, backgroundContent = {}) {
+                                QueueOfferCard(o, actions, { taking = true }, vm::dismissOffer)
+                            }
+                        }
+                    }
                 }
             }
             if (closed && ui.rows.all { it.isEmpty }) item(key = "closed") {
