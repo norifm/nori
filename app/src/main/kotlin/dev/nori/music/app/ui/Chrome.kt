@@ -335,7 +335,7 @@ fun rememberChromeLook(): Look {
         val now = IntArray(CoverLook.LEN) { live.argb(it) }
         t.snapTo(0f)
         live.set(now, target, 0)
-        t.animateTo(1f, androidx.compose.animation.core.tween(420))
+        t.animateTo(1f, androidx.compose.animation.core.tween(CHROME_FADE_MS))
     }
     return live
 }
@@ -507,6 +507,9 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
 
 private val pagePalette = androidx.compose.runtime.mutableStateOf<PagePalette?>(null)
 
+/** How long the chrome takes to go from one page's colours to the next's. */
+private const val CHROME_FADE_MS = 340
+
 /**
  * How much room the floating chrome takes at the bottom. Screens add it to the bottom of their own
  * scrolling content, so a list can run underneath the mini player - the page's colour reaches the
@@ -529,17 +532,35 @@ val LocalPageLeaving = androidx.compose.runtime.compositionLocalOf { false }
 private val pagesWaiting = androidx.compose.runtime.mutableIntStateOf(0)
 
 /**
- * A tinted page (an album, an artist, the player) lends its colours to the chrome while it is open, and
- * gives them back as soon as it is on its way out ([LocalPageLeaving]): the chrome fades to the page coming
- * back while the two cross, not after. Kept until the page was gone, the pill wore the old page's colour
- * over the old page's colour as it slid under it, and nothing of the pill showed for a moment.
+ * The colours each of the last few pages of the stack lent the chrome, by entry id: what a page coming back
+ * wears from the moment the one over it starts to leave, before it is composed again and has worked them out.
+ */
+private val pageTints = object : LinkedHashMap<String, PagePalette>() {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PagePalette>?) = size > 8
+}
+
+/** The stack entry of the page this is in. */
+val LocalPageEntry = androidx.compose.runtime.compositionLocalOf<String?> { null }
+
+/**
+ * A tinted page (an album, an artist, the player) lends its colours to the chrome while it is open. As soon
+ * as it is on its way out ([LocalPageLeaving]) the chrome turns to the page coming back - the colours it
+ * last lent, or the theme's for a page with none - while the two cross, not after: kept until the page was
+ * gone, the pill wore the old page's colour over the old page's as it slid under it. Given back plainly, it
+ * went to the theme's on the way from an album back to its artist, and only then to the artist's.
  * [waiting]: it will have colours, but they are not worked out yet.
  */
 @Composable
 fun PageTint(palette: PagePalette?, waiting: Boolean = false) {
     val leaving = LocalPageLeaving.current
+    val entry = LocalPageEntry.current
+    val swipe = LocalPageSwipe.current
     androidx.compose.runtime.DisposableEffect(palette, waiting, leaving) {
-        if (leaving) return@DisposableEffect onDispose {}
+        if (entry != null && palette != null) pageTints[entry] = palette
+        if (leaving) {
+            pagePalette.value = entry?.let { swipe?.comingBack(it) }?.let(pageTints::get)
+            return@DisposableEffect onDispose {}
+        }
         if (waiting) pagesWaiting.intValue++ else pagePalette.value = palette
         onDispose {
             if (waiting) pagesWaiting.intValue--

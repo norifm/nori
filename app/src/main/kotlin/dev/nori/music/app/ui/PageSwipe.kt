@@ -79,6 +79,10 @@ class PageSwipe(private val controller: NavHostController, private val scope: Co
         return (edge || top.destination.route !in ROOTS) && back.id in pictures
     }
 
+    /** The page shown once [id] has gone: the one under it while it is on top, the one on top once the stack has let it go. */
+    fun comingBack(id: String): String? =
+        if (controller.currentBackStackEntry?.id == id) controller.previousBackStackEntry?.id else controller.currentBackStackEntry?.id
+
     /** Starts a motion back, showing the page underneath; false when there is none to show. */
     fun begin(edge: Boolean = false): Boolean {
         if (moving != null || width <= 0f || !canGoBack(edge)) return false

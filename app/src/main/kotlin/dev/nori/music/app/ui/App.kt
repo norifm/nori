@@ -846,7 +846,7 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
     ) {
         val leaving = swiped ||
             PageMotion.pop == true && transition.targetState == androidx.compose.animation.EnterExitState.PostExit
-        androidx.compose.runtime.CompositionLocalProvider(LocalPageLeaving provides leaving) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalPageLeaving provides leaving, LocalPageEntry provides entry.id) {
             Box(Modifier.fillMaxSize().padding(start = outStart, end = outEnd)) { content() }
         }
     }
