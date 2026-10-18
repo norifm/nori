@@ -39,8 +39,8 @@ use crate::types::TrackAnalysis;
 use analysis::Analyzer;
 use analysis::Features;
 
-/// Bump when stored rows should be measured again. 12: vocal curve measured on the stereo middle.
-pub const ANALYSIS_VERSION: i32 = 12;
+/// Bump when stored rows should be measured again. 13: vocal curve read from the strongest harmonic series.
+pub const ANALYSIS_VERSION: i32 = 13;
 /// Seconds of music at each end the intro and outro grids are measured over: dozens of beats, short enough that
 /// a live band drifts a fraction of a beat.
 pub(crate) const GRID_WINDOW_S: f64 = 40.0;
