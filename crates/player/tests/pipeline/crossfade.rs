@@ -251,11 +251,9 @@ fn off_planner_logs_reason() {
 
 #[test]
 fn crossfade_curve_and_level() {
-    use nori_player::transitions::TransitionPrefs;
-    use nori_player::types::FadeCurve;
     // The outgoing song at 440 Hz, the incoming one at 1 kHz: each side's gain read by its own tone.
     let (a, b) = (sine(440.0, 0.3, 40.0), sine(1000.0, 0.3, 40.0));
-    let heard = |prefs: TransitionPrefs| {
+    let heard = |prefs: nori_player::transitions::TransitionPrefs| {
         let mut p = Player::with_prefs(vec![track("a", &a), track("b", &b)], prefs);
         p.play_from(0);
         assert!(p.run_to_end(120_000));
@@ -265,10 +263,7 @@ fn crossfade_curve_and_level() {
     let at = |x: &[f64], hz: f64, secs: f64| level_at(&x[frames(30.0 + secs - 0.25)..frames(30.0 + secs + 0.25)], hz, RATE as f64) / 0.3;
     let plain = heard(crossfade(10));
     let rise = (0.3 * std::f64::consts::FRAC_PI_2).sin();
-    assert!((at(&plain, 1000.0, 3.0) - rise).abs() < 0.05, "equal power, by default: {}", at(&plain, 1000.0, 3.0));
-    let shaped = heard(TransitionPrefs { fade_curve: FadeCurve::Linear, fade_in_ms: 2_000, ..crossfade(10) });
-    assert!(at(&shaped, 1000.0, 3.0) > 0.97, "the incoming song is up after two seconds: {}", at(&shaped, 1000.0, 3.0));
-    assert!((at(&shaped, 440.0, 5.0) - 0.5).abs() < 0.05, "the outgoing one falls in a straight line, half way at the middle: {}", at(&shaped, 440.0, 5.0));
+    assert!((at(&plain, 1000.0, 3.0) - rise).abs() < 0.05, "equal power: {}", at(&plain, 1000.0, 3.0));
 
     // Equal power fade keeps level.
     // Two independent noises at the same level: through an equal-power fade their sum keeps that level.

@@ -22,7 +22,7 @@ object Bench {
         run(out, "empty loop", 200_000) { i -> sink += i }
         run(out, "kotlin seekStep", 200_000) { i -> sink += kotlinSeekStep(0.3f + i * 1e-7f, 0.31f, 0.016f, 900f, 0.003f) }
         run(out, "jni seekStep", 200_000) { i -> sink += dev.nori.music.look.CoverLook.seekStep(0.3f + i * 1e-7f, 0.31f, 0.016f, 900f, 0.003f) }
-        run(out, "uniffi motionReduced", 20_000) { i -> if (dev.nori.music.ffi.motionReduced(false, i % 3 == 0, i % 2 == 0)) sink++ }
+        run(out, "uniffi pageBlack", 20_000) { i -> if (dev.nori.music.ffi.look.pageBlack(i % 3 == 0, i % 2 == 0, false)) sink++ }
         val a = IntArray(dev.nori.music.look.CoverLook.LEN) { 0xFF102030.toInt() + it * 997 }
         val b = IntArray(dev.nori.music.look.CoverLook.LEN) { 0xFFF0E0D0.toInt() - it * 991 }
         val o = IntArray(a.size)

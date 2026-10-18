@@ -18,7 +18,7 @@ import dev.nori.music.ffi.settings.eqPresets
 import dev.nori.music.ffi.settings.SoundTool
 import dev.nori.music.ffi.settings.EqLevel
 import dev.nori.music.ffi.settings.SettingChange
-import dev.nori.music.ffi.settings.serverNewId
+import dev.nori.music.ffi.settings.newServerId
 import dev.nori.music.ffi.settings.soundFromJson
 import dev.nori.music.ffi.settings.storageIndexFiles
 import dev.nori.music.ffi.model.NamedPreset
@@ -136,8 +136,8 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** The rows whose title (first) or words (after) contain [query]; the index is built once per [res]. */
     fun searchSettings(query: String, res: android.content.res.Resources): List<SettingsHit> {
         val s = search?.takeIf { it.first === res }?.second
-            ?: SettingsSearch(res, nori.settings.core.settingsState(false, false).beatModel !is dev.nori.music.ffi.settings.BeatModel.Unavailable).also { search = res to it }
-        return s.find(query, nori.rules.settings)
+            ?: SettingsSearch(res, prefs.value, nori.settings.core.settingsState(false, false), settingsFacts.value, nori.rules.settings).also { search = res to it }
+        return s.find(query)
     }
 
     /**
@@ -161,9 +161,8 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     private fun factsOf(d: DacState, s: SyncUi, st: StorageUi, analysed: Int, folders: List<MusicFolder>) = SettingsFacts(
         dac = d,
-        // Wallpaper colours and the blurred sleeve both need Android 12.
+        // Wallpaper colours need Android 12.
         wallpaperColours = android.os.Build.VERSION.SDK_INT >= 31,
-        coverBlur = android.os.Build.VERSION.SDK_INT >= 31,
         analysed = analysed,
         sync = s,
         storage = st,
@@ -301,7 +300,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     }
 
     /** A blank profile for the "add server" form, with a fresh id from the core. */
-    fun newProfile() = dev.nori.music.settings.newServer(serverNewId())
+    fun newProfile() = dev.nori.music.settings.newServer(newServerId())
 
     /** The kinds of profile this build adds, and how each is added and signed in (the core's `providers`). */
     val providers: List<dev.nori.music.ffi.ProviderInfo> by lazy { dev.nori.music.ffi.providers() }
@@ -422,7 +421,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     /** One band changed, held in the equalizer's ranges by the core; on every step of a drag, so edited in place there. */
     fun setBand(index: Int, band: SoundBand) = nori.settings.setBand(index, band)
 
-    /** Pre-amp, balance, limiter ceiling or crossfeed moved; the core holds it in range and snaps it, in place like a band. */
+    /** Pre-amp, balance, limiter ceiling or volume boost moved; the core holds it in range and snaps it, in place like a band. */
     fun setLevel(level: EqLevel, value: Float) = nori.settings.setLevel(level, value)
 
     /** One graphic equalizer slider moved; in place in the core, like a band. */

@@ -535,10 +535,7 @@ pub(crate) mod tests {
         let rg = nori_model::ReplayGain { track_gain: Some(-6.0), album_gain: Some(-2.0), track_peak: Some(0.5), album_peak: Some(0.5), ..Default::default() };
         let song = |id: &str, track: u32| Song { duration: 200, album_id: Some("GA".into()), track, disc_number: 1, replay_gain: Some(rg.clone()), ..Song::only_id(id.to_string()) };
         let db = |g: f32| (20.0 * g.log10() * 10.0).round() / 10.0;
-        let (_dir, s) = opened(|p| {
-            p.replay_gain = GainMode::Auto;
-            p.preamp_db = 0.0;
-        });
+        let (_dir, s) = opened(|p| p.replay_gain = GainMode::Auto);
         s.register(vec![song("ga1", 1), song("ga2", 2), song("ga3", 3)]);
         s.set(ids(&["ga1", "ga2", "ga3"]), Some(0), false, None);
         let list = s.playlist(nori_player::playlist::Playlist::clone);
@@ -561,10 +558,7 @@ pub(crate) mod tests {
         use nori_player::policy::GainMode;
         let song = |id: &str, track_gain: f32| Song { duration: 200, replay_gain: Some(nori_model::ReplayGain { track_gain: Some(track_gain), ..Default::default() }), ..Song::only_id(id.to_string()) };
         let db = |g: f32| (20.0 * g.log10() * 10.0).round() / 10.0;
-        let (_dir, s) = opened(|p| {
-            p.replay_gain = GainMode::Track;
-            p.preamp_db = 0.0;
-        });
+        let (_dir, s) = opened(|p| p.replay_gain = GainMode::Track);
         s.register(vec![song("a", -2.0), song("b", -6.0), song("c", -4.0)]);
         s.set(ids(&["a", "b", "c"]), Some(0), false, None);
         let held = s.playlist(nori_player::playlist::Playlist::clone);

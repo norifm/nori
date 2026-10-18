@@ -8,7 +8,7 @@
 #   tools/feature-e2e.sh [--only <section>,...] [--list]     NORI_E2E_SERVER=local for tools/dev-server.sh
 #   (the real server's credentials come from ~/.music.pass: url, blank, user, password)
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="lyrics motion notification album-page bridge download-notification downloads car-art foryou dac device-sound sheets remote jam"
+SECTIONS="lyrics motion notification album-page bridge download-notification downloads mobile-data car-art foryou dac device-sound sheets remote jam"
 OPT_IN="lyrics-services scrobble download-albums youtube-music"
 list_sections
 if { want scrobble || want download-albums; } && [ "$NORI_E2E_SERVER" != local ]; then
@@ -76,9 +76,8 @@ remember_settings offload autoMix eq remoteControl
 id=$(long_song)
 
 if want scrobble; then section scrobble
-  remember_settings scrobble scrobblePercent
+  remember_settings scrobble
   "$app" set scrobble true >/dev/null
-  "$app" set scrobblePercent 25 >/dev/null
   "$app" set autoMix false >/dev/null
   scrobble_first=$(song_id 'Long Track 01'); scrobble_second=$(song_id 'Long Track 02'); scrobble_third=$(song_id 'Long Track 03')
   count() { api getSong "&id=$1" | python3 -c 'import json,sys;print(json.load(sys.stdin)["subsonic-response"]["song"].get("playCount",0))'; }
@@ -95,7 +94,7 @@ if want scrobble; then section scrobble
   check 'pause does not submit a play' test "$(count "$scrobble_second")" = "$scrobble_before_second"
   "$app" do resume >/dev/null
   check 'resuming starts audio' sounds 10
-  check 'enough audio is heard' wait_for positionMs '>25000' 40
+  check 'half the song is heard' wait_for positionMs '>45000' 60
   "$app" play "song:$scrobble_third" >/dev/null
   count_is() { [ "$(count "$1")" = "$2" ]; }
   check 'the server counts the completed listen exactly once' wait_until 10 count_is "$scrobble_second" "$((scrobble_before_second + 1))"
@@ -109,11 +108,10 @@ if want lyrics; then section lyrics
   # Which answer wins, word timing, the lookups switch and every service's format are the lyrics crate's
   # (crates/lyrics tests, over recorded answers). Here: that an answer comes back through the platform.
   if [ "$NORI_E2E_SERVER" = local ]; then
-    remember_settings lyricsOnline lyricsPrefetch autoFill
+    remember_settings lyricsOnline autoFill
     lyrics_fill=$(field autoFill | tr 'TF' 'tf')
     "$app" set autoFill false >/dev/null
     "$app" set lyricsOnline false >/dev/null
-    "$app" set lyricsPrefetch true >/dev/null
     "$app" play "$LYRICS_SONG" >/dev/null; sounds 20
     check "the lyrics fixture is the current song" wait_for title "Long Track 05" 10
     lyric_id=$(song_id "Long Track 05")
@@ -210,17 +208,17 @@ fi
 
 if want motion; then section "moving covers"
   # Off, which is the default, opening the player builds nothing: no video player and no lookup.
-  "$app" set motionArtwork false >/dev/null; "$app" open player >/dev/null
+  "$app" set movingCovers off >/dev/null; "$app" open player >/dev/null
   wait_for route player 5 >/dev/null
   check "switched off, the open player makes no video player" test "$(field motionPlayers)" = 0
   # On, over any network. Whether an album has one is Apple's to say, and a test server's generated
   # music has none, so a video found is reported here rather than required.
-  "$app" set motionArtwork true >/dev/null; "$app" set motionArtworkWifiOnly false >/dev/null
+  "$app" set movingCovers always >/dev/null
   wait_for motionPlayers ">0" 8 2>/dev/null
   echo "     video for this album: '$(field motionVideo)', players: $(field motionPlayers)"
   "$app" open home >/dev/null
   check "put away, the video player is let go" wait_for motionPlayers 0 5
-  "$app" set motionArtwork false >/dev/null; "$app" set motionArtworkWifiOnly true >/dev/null
+  "$app" set movingCovers off >/dev/null
   "$app" set thirdPartyLookups true >/dev/null
 fi
 
@@ -375,6 +373,31 @@ if want download-notification; then section "the download queue from its notific
   "$app" open home >/dev/null
   adb shell am start -a dev.nori.music.OPEN_DOWNLOADS -n "$pkg/dev.nori.music.app.MainActivity" >/dev/null 2>&1
   check "tapping the download notification opens the queue" wait_for route downloads 8
+fi
+
+if want mobile-data; then section "a download asked for on mobile data waits for a yes"
+  # Whether the phone is on mobile data is Android's (ConnectivityManager); asking first is the app's.
+  check "the emulator starts on Wi-Fi" wait_until 30 active_network WIFI
+  dl=$(song_id "Long Track 02")
+  saved() { [ "$(adb shell "run-as $pkg sqlite3 files/nori.db \"select count(*) from downloads where id='$dl' and done=1\"" | tr -d '\r')" = "$1" ]; }
+  "$app" do "undownload song:$dl" >/dev/null
+  check "the song starts with no download" wait_until 10 saved 0
+  "$app" open home >/dev/null
+  "$app" do "download song:$dl" >/dev/null
+  check "on Wi-Fi it downloads without asking" wait_until 60 saved 1
+  check "and nothing asks" off_screen 'text="Download on mobile data?"'
+  "$app" do "undownload song:$dl" >/dev/null
+  wait_until 10 saved 0
+  adb shell svc wifi disable; adb shell svc data enable
+  check "the emulator is on mobile data" wait_until 30 active_network MOBILE
+  "$app" do "download song:$dl" >/dev/null
+  check "on mobile data it asks first" wait_until 10 on_screen 'text="Download on mobile data?"'
+  check "and has not downloaded" saved 0
+  tapnode text "Download"
+  check "a yes downloads it" wait_until 60 saved 1
+  online
+  check "and Wi-Fi is back" active_network WIFI
+  "$app" do "undownload song:$dl" >/dev/null
 fi
 
 if want downloads; then section "downloads run side by side through media3 and survive a force stop"
@@ -541,7 +564,7 @@ if want dac; then section "a USB DAC, faked"
   # "dac"). Which mode a DAC gets and why one cannot be fed is dac.rs; here what the platform does: offload
   # stands down when the device appears, and the track is opened in the DAC's own format.
   "$app" set autoMix false >/dev/null; "$app" set crossfadeSec 0 >/dev/null
-  "$app" set crossfeedDb 0 >/dev/null; "$app" set offload true >/dev/null; "$app" set eq false >/dev/null
+  "$app" set headphoneSound OFF >/dev/null; "$app" set offload true >/dev/null; "$app" set eq false >/dev/null
   "$app" do "dac off" >/dev/null
   "$app" play "$PLAIN" >/dev/null; sounds 20
   check "offload is asked for on the phone's own output" wait_for offloadWanted True 10
@@ -622,7 +645,7 @@ import sqlite3, sys
 with sqlite3.connect(sys.argv[1]) as db:
     db.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
     db.executemany("INSERT OR REPLACE INTO settings VALUES(?, ?)", [
-        ("remoteControl", '{"b":true}'), ("crossfadeSec", '{"i":4}'), ("crossfadeKeepAlbums", '{"b":false}'),
+        ("remoteControl", '{"b":true}'), ("crossfadeSec", '{"i":4}'),
     ])
 PY
     tmux new-session -d -s "$peer" -x 160 -y 45 "$cli --data $data --url http://localhost:4533 --user $USER --password $PASS --no-images --no-mpris"
@@ -673,6 +696,8 @@ PY
     done
     check "remote skips keep this phone silent" silent 10
     for _ in $(seq 16); do keys -; done
+    # Songs of one album in order never mix: shuffled, the next one does.
+    "$app" do shuffle >/dev/null
     "$app" do "seek $(( $(field durationMs) - 4000 ))" >/dev/null
     check "remote playback reports the host's active mix" wait_for displayMixing True 10
     check "the controlling phone shows Mixing" wait_until 5 on_screen 'text="MIXING"'

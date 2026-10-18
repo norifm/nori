@@ -891,7 +891,7 @@ impl App {
 
     fn retheme(&mut self) {
         self.theme = match &self.colours {
-            Some(c) if self.prefs.cover_colors && self.images => Theme::from_cover(c),
+            Some(c) if self.prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player) && self.images => Theme::from_cover(c),
             _ => Theme::plain(self.prefs.accent),
         };
     }
@@ -1467,8 +1467,8 @@ impl App {
 
     fn typed(&mut self) {
         self.cmds.push(Cmd::SearchTyped(self.search.text.clone()));
-        let delay = self.prefs.live_search_delay_ms.clamp(100, 2000) as u64;
-        self.search.ask_at = (!self.search.text.trim().is_empty()).then(|| Instant::now() + Duration::from_millis(delay));
+        let delay = nori_core::search::live_delay_ms(&self.search.text, nori_core::search::LIVE_SEARCH_DELAY_MS);
+        self.search.ask_at = (delay > 0).then(|| Instant::now() + Duration::from_millis(delay as u64));
         self.search.sel = Sel::default();
         self.search.settle(true);
     }

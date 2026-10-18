@@ -111,7 +111,7 @@ impl Session {
             (run, song, known.map_or(0, |s| s.channel_count))
         });
         let untagged = song.tags.is_none_or(|g| g.track_gain.is_none() && g.album_gain.is_none()) && song.fallback_db.is_none();
-        if untagged && prefs.measured && prefs.mode != PlayerGainMode::Off {
+        if untagged && prefs.mode != PlayerGainMode::Off {
             // Outside the store's lock: the database's is never taken inside it.
             song.measured_lufs = measured_lufs(&self.db, &current).map(|mid| stereo_loudness_of_mid(mid, channels));
         }

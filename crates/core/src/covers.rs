@@ -138,6 +138,15 @@ pub(crate) fn cover_neighbours(index: i32, previous: i32, next: i32, ahead: i32,
     out
 }
 
+/// Upcoming songs' covers a phone fetches ahead.
+pub const COVERS_AHEAD: i32 = 5;
+
+/// [`COVERS_AHEAD`], for the platform.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn covers_ahead() -> i32 {
+    COVERS_AHEAD
+}
+
 /// Covers to colour and prefetch around the current song.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]

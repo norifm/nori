@@ -374,7 +374,7 @@ pub(crate) mod tests {
     #[test]
     fn device_arrival() {
         let c = core();
-        let warm = SoundSettings { crossfeed_db: 3.0, ..sound() };
+        let warm = SoundSettings { mono: true, ..sound() };
         c.profile_save(SoundProfile { name: "Warm".into(), json: sound_json(&warm), outputs: vec!["USB: K3".into()] }).unwrap();
         let playing = SoundSettings { balance: 0.5, ..sound() };
         let a = c.arrive_as("USB: K3".into(), &now(playing.clone()));
@@ -458,17 +458,17 @@ pub(crate) mod tests {
     fn device_lists() {
         let c = core();
         c.set_loose(LooseChange::Store { json: "{}".into() });
-        let playing = SoundSettings { eq_enabled: true, crossfeed_db: 2.0, ..sound() };
+        let playing = SoundSettings { eq_enabled: true, balance: 0.5, ..sound() };
         let s = c.assign_as("USB: K3", ChoiceKind::Flat, String::new(), true, &now(playing.clone())).unwrap();
         let flat = s.effect.apply.clone().unwrap();
         assert!(!flat.eq_enabled);
-        assert_eq!(flat.crossfeed_db, 2.0);
+        assert_eq!(flat.balance, 0.5);
         assert_eq!(s.loose, LooseChange::Keep, "a sound was already saved");
         assert_eq!(s.quiet, Some(false));
         assert_eq!(c.profile_for_output("USB: K3".into()).unwrap().unwrap().name, FLAT);
         // "Flat" is created once.
         c.assign_as("Wired headphones", ChoiceKind::Flat, String::new(), false, &now(sound())).unwrap();
-        assert_eq!(sound_from(&c.profiles().unwrap()[0].json).unwrap().crossfeed_db, 2.0);
+        assert_eq!(sound_from(&c.profiles().unwrap()[0].json).unwrap().balance, 0.5);
 
         let q = c.assign_as("USB: K3", ChoiceKind::Quiet, String::new(), true, &now(sound())).unwrap();
         assert_eq!((q.quiet, q.effect.refresh, q.effect.arrive, q.effect.apply), (Some(true), true, true, None));
@@ -488,7 +488,7 @@ pub(crate) mod tests {
         // "No processing": like "Flat" but with the chain bypassed.
         let b = c.assign_as("USB: DAC", ChoiceKind::Bypass, String::new(), true, &now(playing.clone())).unwrap();
         let none = b.effect.apply.unwrap();
-        assert!(none.bypass && none.eq_enabled && none.crossfeed_db == 2.0);
+        assert!(none.bypass && none.eq_enabled && none.balance == 0.5);
         assert!(!crate::settings::StoredPrefs::default().with_sound(none).sound_chain_on());
         assert_eq!(c.profile_for_output("USB: DAC".into()).unwrap().unwrap().name, BYPASS);
         let rows = device_rows(vec!["USB: DAC".into()], SPEAKER.into(), c.profiles().unwrap(), Vec::new());

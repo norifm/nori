@@ -130,7 +130,7 @@ impl Rig {
         let card = Card::new();
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = events.clone();
-        let config = Config { memory_mb: 128, settings: settings(&prefs, 0.0), ..Config::default() };
+        let config = Config { memory_mb: 128, settings: settings(&prefs), ..Config::default() };
         let engine = common::Running(Engine::start_on(library, CoreApp::new(core.session.clone()), CoreQueue(core.session.clone()), Box::new(card.clone()), None, config, clock.clone(), move |e| seen.lock().push(e)));
         engine.queue_changed();
         Rig { engine, time: Stepper::new(clock, card.pull.clone()), card, events, store, _dir: dir }

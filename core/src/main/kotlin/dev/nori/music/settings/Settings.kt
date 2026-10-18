@@ -62,12 +62,9 @@ private object Preamp {
 val StoredPrefs.effectivePreampDb: Float
     get() = synchronized(Preamp) {
         if (Preamp.of !== this) {
-            // The graphic equalizer's sliders are peaks (kind 0) for the automatic pre-amp.
-            val graphic = eqMode == dev.nori.music.ffi.settings.EqMode.GRAPHIC
             Preamp.db = dev.nori.music.playback.Dsp.effectivePreampDb(
-                eqEnabled, eqPreampDb ?: 0f, eqPreampDb == null,
-                if (graphic) IntArray(eqGraphic.size) else IntArray(eqBands.size) { eqBands[it].kind.ordinal },
-                if (graphic) eqGraphic.toFloatArray() else FloatArray(eqBands.size) { eqBands[it].gainDb },
+                eqEnabled, eqPreampDb ?: 0f, eqPreampDb == null, eqMode == dev.nori.music.ffi.settings.EqMode.GRAPHIC,
+                IntArray(eqBands.size) { eqBands[it].kind.ordinal }, FloatArray(eqBands.size) { eqBands[it].gainDb }, eqGraphic.toFloatArray(),
             )
             Preamp.of = this
         }
@@ -132,7 +129,7 @@ class Settings(private val context: Context) {
         if (effect != 0) _effects.tryEmit(effect)
     }
 
-    /** Pre-amp, balance, limiter ceiling or crossfeed moved; edited in the core like a band, which holds and snaps it. */
+    /** Pre-amp, balance, limiter ceiling or volume boost moved; edited in the core like a band, which holds and snaps it. */
     fun setLevel(level: EqLevel, value: Float) {
         val r = SoundEdit.setLevel(handle, level.ordinal, value)
         if (r == -1L) return
@@ -142,22 +139,7 @@ class Settings(private val context: Context) {
                 EqLevel.PREAMP -> p.copy(eqPreampDb = kept)
                 EqLevel.BALANCE -> p.copy(balance = kept)
                 EqLevel.LIMITER -> p.copy(limiterThresholdDb = kept)
-                EqLevel.CROSSFEED -> p.copy(crossfeedDb = kept)
-                EqLevel.REPLAY_GAIN_PREAMP -> p.copy(preampDb = kept)
-                EqLevel.BASS_BOOST -> p.copy(bassBoostDb = kept)
-                EqLevel.VIRTUALIZER -> p.copy(virtualizer = kept)
                 EqLevel.VOLUME_BOOST -> p.copy(volumeBoostDb = kept)
-                EqLevel.COMP_THRESHOLD -> p.copy(compThresholdDb = kept)
-                EqLevel.COMP_RATIO -> p.copy(compRatio = kept)
-                EqLevel.COMP_ATTACK -> p.copy(compAttackMs = kept)
-                EqLevel.COMP_RELEASE -> p.copy(compReleaseMs = kept)
-                EqLevel.COMP_MAKEUP -> p.copy(compMakeupDb = kept)
-                EqLevel.COMP_KNEE -> p.copy(compKneeDb = kept)
-                EqLevel.CROSSFEED_CUT -> p.copy(crossfeedHz = kept)
-                EqLevel.EXP_THRESHOLD -> p.copy(expThresholdDb = kept)
-                EqLevel.EXP_RATIO -> p.copy(expRatio = kept)
-                EqLevel.EXP_ATTACK -> p.copy(expAttackMs = kept)
-                EqLevel.EXP_RELEASE -> p.copy(expReleaseMs = kept)
             }
         }
         val effect = r.toInt()

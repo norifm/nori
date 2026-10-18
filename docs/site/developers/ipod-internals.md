@@ -45,7 +45,7 @@ declared mode; a playing session keeps the process alive, a paused one gets susp
 due. It loads each song in bursts (`load_control`: 60 s to 10 min ahead, byte cap a quarter of the memory
 budget, 16 to 48 MB), demuxes with symphonia's readers, decodes with `nori-player::decode` (MP3, FLAC, AAC-LC,
 Vorbis, ALAC, Opus; gapless with the encoder delay and padding cut), runs the sound chain (EQ, pre-amp,
-limiter, crossfeed, balance, ReplayGain, speed and pitch, silence skip), holds and mixes endings (crossfade,
+limiter, headphone sound, balance, volume leveling, speed and pitch, silence skip), holds and mixes endings (crossfade,
 AutoMix), walks the core's queue, and writes float frames into a lock-free ring (`crates/engine/src/output.rs`)
 sized `BUFFER_US` 10 s + 2 s slack (4.2 MB at 44.1 kHz stereo float). The device's thread calls `Feed::pull`
 for every buffer it plays - no lock, no allocation; when the ring falls under the low mark the pull unparks
@@ -241,8 +241,8 @@ on a simulated sink and the virtual clock, as track.rs's do; the device check is
 iOS keeps the volume to itself: the hardware buttons and `MPVolumeView` set the system volume; an app
 cannot read a slider's value into its own chain without `MPVolumeView`. So the player's volume slider is an
 `MPVolumeView` (styled, iOS 12 still lets its thumb and track be tinted), the chain runs at full scale,
-and `OutputVolume` (the loudness compensation the chain reads) is fed from
-`AVAudioSession.outputVolume` KVO, which also moves the slider. Nothing of nori's own multiplies samples
+and the volume nori shows other devices is fed from `AVAudioSession.outputVolume` KVO, which also moves
+the slider. Nothing of nori's own multiplies samples
 for volume - one fewer pass, and the system's ramp on the buttons is the one iPod users already know.
 
 ### 5.3 Offload: measured later, not promised
@@ -292,8 +292,8 @@ the battery gauge before deciding (section 8); v1 ships without it.
 ### 5.5 What the engine already gives this device
 
 Gapless, crossfade, AutoMix (the analysis FFT and Signalsmith stretch are fine on A8 for one song at a time;
-"Better beat detection" is off, see section 3), the 10-band EQ with its limiter, crossfeed (headphones are
-this device's life), ReplayGain with the boost cap, speed and pitch, silence skip, sleep timer, the offline
+"Better beat detection" is off, see section 3), the 10-band EQ with its limiter, the headphone sound (headphones are
+this device's life), volume leveling, speed and pitch, silence skip, sleep timer, the offline
 bridge, songs fetched ahead over Wi-Fi in one burst then the radio left alone. All tested in Rust on the
 virtual clock; nothing of it is re-implemented here.
 
@@ -626,7 +626,7 @@ album / artist / playlist / genre / smart pages with Play and Shuffle, swipe act
 long press (`menus::song_menu` through `crates/ios/src/menu.rs`: favorite, play next, queue, add to a
 playlist or a new one, download, go to album / artist, radio, instant mix, exclude from mixes, share,
 details, and from the player the sleep timer), removing from and deleting a playlist, Search (debounced
-by `liveSearchDelayMs`, recent searches, provider items marked), Downloads with the open-or-playing
+by the core's `nori_ios_search_delay_ms`, recent searches, provider items marked), Downloads with the open-or-playing
 line. A headed page's Play and Shuffle are the core's `hero_buttons` (`nori_ios_hero`): while the queue
 playing was started from that page, Play is Pause and Shuffle, lit, turns its shuffle off. The queue is
 a sheet from the player (`Queue.swift`): play order from `queue_rows`, the song
@@ -701,7 +701,7 @@ Headphone presets is the AutoEQ list (download, search, apply to the current sou
 Licenses lists `core_credits`, the Material icons from `android_credits` and `data_credits`, with the
 texts from Android's assets. Settings has Android's Queue section (skip explicit songs, keep playing when
 the queue ends and, while it does, carry on with songs or albums, chosen by, remote songs) and When
-something goes wrong (skip songs that won't play, play downloads when offline).
+something goes wrong (play downloads when offline).
 
 The curated settings pages for this client (what a phone-only setting is, is hidden: metered network,
 offload, bit-perfect, USB, AMOLED), each row from `settings_model::specs` and `state`, changes through
