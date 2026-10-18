@@ -81,6 +81,9 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
 
     private fun send(op: Op): ListenableFuture<*> = remotes.command(op)
 
+    /** Whether the device's song playing is a favorite, as the device last said; false with none playing. */
+    val currentStarred: Boolean get() = mirror?.let { m -> m.at?.let { m.rows.getOrNull(it.toInt())?.song?.starred } } == true
+
     /** The list index the device names the row at [position] by. */
     private fun index(position: Int): UInt? = mirror?.rows?.getOrNull(position)?.index
 

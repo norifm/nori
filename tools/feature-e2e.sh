@@ -825,6 +825,13 @@ PY
     "$app" play "search:Long Track 04" >/dev/null
     check "a new remote play clears the mix indicator" wait_for displayMixing False 10
     check "the peer returns to the selected song" wait_for title "Long Track 04" 10
+    # The notification's seal stands for the peer's song: its star is the one the peer's queue holds.
+    was=$(field starred); flip=$([ "$was" = True ] && echo False || echo True)
+    "$app" do "notification favourite" >/dev/null
+    check "the notification's seal stars the peer's song ($was -> $flip)" wait_for starred "$flip" 10
+    peer_seal() { local b; b=$(field notification); [[ "$flip" == True && "$b" == *sealed* ]] || [[ "$flip" == False && "$b" != *sealed* ]]; }
+    check "the notification's seal redraws for the peer's song" wait_until 10 peer_seal
+    "$app" do "notification favourite" >/dev/null; wait_for starred "$was" 10 >/dev/null   # put it back
     adb shell am broadcast -a com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG -p com.android.systemui --es package_name "$pkg" >/dev/null
     check "the native output picker opens" wait_until 10 on_screen 'package="com.android.systemui"'
     check "the native picker offers this phone" wait_until 10 on_screen 'text="This phone"'
