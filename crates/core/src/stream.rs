@@ -60,7 +60,7 @@ impl Client {
 impl Client {
     /// The cache key [`Self::stream_target`] would give.
     pub fn stream_key(&self, id: String, metered: bool, wifi: StreamQuality, mobile: StreamQuality) -> String {
-        stream_cache_key(&id, &self.quality(metered, wifi, mobile))
+        self.stream_target(id, metered, wifi, mobile).key
     }
 
     /// Where `id` opens: the download (`downloaded`) at download quality, else a stream for the network.
@@ -76,7 +76,7 @@ impl Client {
     /// The URL and cache key of `id`'s download.
     pub fn download_target(&self, id: String, quality: StreamQuality) -> StreamTarget {
         let key = download_key(id.clone());
-        StreamTarget { url: self.core.stream_url(id, quality.bit_rate, quality.format), key }
+        StreamTarget { url: self.core.provider().stream(self, id, quality).url, key }
     }
 }
 

@@ -79,6 +79,8 @@ matters to you, use YouTube Music signed out.
 
 - Home: YouTube Music's own shelves (Quick picks, new releases, playlists), everyone's when signed out.
   The desktop and the terminal show their albums; Android and the iPod show the songs and playlists too.
+  Home stays as it is until the app starts again. Pulling to refresh (Android) keeps every shelf and
+  pick where it was and adds only what YouTube has new, at the end of its shelf or as a new shelf below.
 - Searching songs, albums and artists, and opening albums, artists and playlists.
 - Signed in: your saved albums, liked songs and playlists in Library, and hearts that like songs.
 - Playing, the queue, AutoMix, the equalizer and the rest of the sound settings.

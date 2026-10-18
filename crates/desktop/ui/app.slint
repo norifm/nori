@@ -991,6 +991,8 @@ component SongLine inherits Rectangle {
     callback later;
     callback jam;
     callback star;
+    callback download;
+    callback radio;
     height: root.thumb ? 56px : 44px;
     border-radius: 7px;
     background: root.song.playing ? root.ink : (touch.has-hover ? Theme.hover : transparent);
@@ -1032,8 +1034,12 @@ component SongLine inherits Rectangle {
                         root.star();
                     } else if m.kind == 1 {
                         Go.album(m.id);
-                    } else {
+                    } else if m.kind == 2 {
                         Go.artist(m.id);
+                    } else if m.kind == 3 {
+                        root.download();
+                    } else {
+                        root.radio();
                     }
                 }
             }
@@ -1568,11 +1574,34 @@ component PlayerControls inherits Rectangle {
     }
 }
 
+// A small rounded button of the Mac's.
+component SmallButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked;
+    height: 24px;
+    width: bl.preferred-width + 22px;
+    border-radius: 6px;
+    background: ba.pressed ? #ffffff36 : (ba.has-hover ? #ffffff2b : #ffffff1f);
+    opacity: root.enabled ? 1 : 0.4;
+    bl := Text {
+        text: root.text;
+        color: Theme.text;
+        font-size: 13px;
+    }
+    ba := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
 // Where the music plays (remote control), as Music's AirPlay list and Spotify's devices: this computer
 // first, then the account's other devices with what each plays, the one playing ticked. A click moves the
 // music there; this player then shows and controls it.
 component DevicesView inherits Rectangle {
     in property <[DeviceRow]> devices;
+    in property <string> pairing-link;
+    callback forget-devices();
     callback pick(string);
     // The jam's row was clicked while it is on: the queue panel shows it.
     callback open-jam();
@@ -1659,6 +1688,14 @@ component DevicesView inherits Rectangle {
                         wrap: word-wrap;
                     }
                 }
+            }
+            if root.pairing-link != "": VerticalLayout {
+                spacing: 6px;
+                Text { text: "Pair devices"; color: Theme.text; font-weight: 600; }
+                Text { text: "Copy this code to your other device. Paste its code in Join a jam or pair devices."; color: Theme.dim; wrap: word-wrap; font-size: 12px; }
+                TextInput { text: root.pairing-link; read-only: true; color: Theme.text; font-size: 12px; height: 28px; single-line: true; }
+                SmallButton { text: "Enter pairing code"; clicked => { root.join-jam(); } }
+                SmallButton { text: "Forget paired devices"; clicked => { root.forget-devices(); } }
             }
             // The jam: starting one, or the one on (its row opens it in the queue panel) and ending it.
             if Jam.on || Jam.hosting || Jam.note != "": Rectangle {
@@ -1786,27 +1823,6 @@ component DevicesView inherits Rectangle {
                 }
             }
         }
-    }
-}
-
-// A small rounded button of the Mac's.
-component SmallButton inherits Rectangle {
-    in property <string> text;
-    in property <bool> enabled: true;
-    callback clicked;
-    height: 24px;
-    width: bl.preferred-width + 22px;
-    border-radius: 6px;
-    background: ba.pressed ? #ffffff36 : (ba.has-hover ? #ffffff2b : #ffffff1f);
-    opacity: root.enabled ? 1 : 0.4;
-    bl := Text {
-        text: root.text;
-        color: Theme.text;
-        font-size: 13px;
-    }
-    ba := TouchArea {
-        enabled: root.enabled;
-        clicked => { root.clicked(); }
     }
 }
 
@@ -3475,6 +3491,7 @@ component SidebarContent inherits Rectangle {
 
 
 export component AppWindow inherits Window {
+    in property <bool> downloads;
     title: "nori";
     icon: @image-url("assets/logo.png");
     preferred-width: 1280px;
@@ -3579,6 +3596,8 @@ export component AppWindow inherits Window {
     in property <[DeviceRow]> devices;
     // A device row was clicked: the music moves there ("" for this computer).
     callback pick-device(string);
+    in property <string> pairing-link;
+    callback forget-devices();
     // "Playing on <device>" while another device plays: the player shows and controls it.
     in property <string> playing-on;
     property <int> shown-panel: 1;
@@ -3713,6 +3732,7 @@ export component AppWindow inherits Window {
     callback jam-play(int, string);
     // The page's songs added at the end of the queue.
     callback page-later();
+    callback page-download();
     callback more();
     callback search-edited(string);
     callback toggle();
@@ -4029,6 +4049,8 @@ export component AppWindow inherits Window {
                                         play => { root.song(2, i, 0); }
                                         jam => { root.song(2, i, 3); }
                                         star => { root.song(2, i, 4); }
+                                        download => { root.song(2, i, 5); }
+                                        radio => { root.song(2, i, 6); }
                                         next => { root.song(2, i, 1); }
                                         later => { root.song(2, i, 2); }
                                     }
@@ -4236,6 +4258,8 @@ export component AppWindow inherits Window {
                                     play => { root.song(1, i, 0); }
                                     jam => { root.song(1, i, 3); }
                                     star => { root.song(1, i, 4); }
+                                    download => { root.song(1, i, 5); }
+                                    radio => { root.song(1, i, 6); }
                                     next => { root.song(1, i, 1); }
                                     later => { root.song(1, i, 2); }
                                 }
@@ -4399,6 +4423,10 @@ export component AppWindow inherits Window {
                                                 base: Theme.fill;
                                                 clicked => { root.page-later(); }
                                             }
+                                            if root.downloads && (root.page-kind == 0 || root.page-kind == 2): SmallButton {
+                                                text: "Download";
+                                                clicked => { root.page-download(); }
+                                            }
                                         }
                                     }
                                 }
@@ -4445,6 +4473,8 @@ export component AppWindow inherits Window {
                                             play => { root.song(0, s.index, 0); }
                                             jam => { root.song(0, s.index, 3); }
                                             star => { root.song(0, s.index, 4); }
+                                            download => { root.song(0, s.index, 5); }
+                                            radio => { root.song(0, s.index, 6); }
                                             next => { root.song(0, s.index, 1); }
                                             later => { root.song(0, s.index, 2); }
                                         }
@@ -4805,6 +4835,8 @@ export component AppWindow inherits Window {
                     y: 30px;
                     height: parent.height - 30px - 76px;
                     devices: root.devices;
+                    pairing-link: root.pairing-link;
+                    forget-devices => { root.forget-devices(); }
                     pick(id) => { root.pick-device(id); }
                     open-jam => { root.inspector = 1; }
                     join-jam => { root.join-open = true; }
@@ -5337,7 +5369,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     Text {
-                        text: "Join a Jam";
+                        text: "Join a jam or pair devices";
                         color: Theme.text;
                         font-size: 17px;
                         font-weight: 700;

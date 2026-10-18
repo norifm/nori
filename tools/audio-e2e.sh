@@ -7,7 +7,7 @@
 #   tools/audio-e2e.sh [--only <section>,...] [--list] [song-ref] [other-song-ref]
 #   NORI_E2E_SERVER=local for tools/dev-server.sh
 source "$(dirname "$0")/e2e-lib.sh"
-SECTIONS="play transport coldkey processing crossfade eq tuning automix restart transcode errors"
+SECTIONS="play transport coldkey processing crossfade eq tuning automix restart container-seek transcode errors"
 list_sections
 song=${1:-$SONG}
 other=${2:-$OTHER}
@@ -25,6 +25,21 @@ if want play; then section play
   "$app" play "$song" >/dev/null
   check "plays a song" sounds 20
   check "and the bursts keep coming over a whole buffer" bursts_continue
+fi
+
+if want container-seek && [ "$NORI_E2E_SERVER" = local ]; then section "M4A seeking through Android's source"
+  "$app" play 'search:Lossless Song' >/dev/null
+  check "the M4A fixture plays" sounds 20
+  check "the M4A fixture is selected" wait_for title 'Lossless Song' 10
+  "$app" do pause >/dev/null
+  check "M4A pauses" silent 10
+  "$app" do 'seek 10000' >/dev/null
+  m4a_sought() { local at; at=$(field positionMs); [ "${at:-0}" -ge 9500 ] && [ "${at:-0}" -le 10500 ]; }
+  check "the paused M4A seek sticks" wait_until 10 m4a_sought
+  "$app" do resume >/dev/null
+  check "the sought M4A plays through the AudioTrack" sounds 10
+  check "M4A continues beyond the seek" wait_for positionMs '>11500' 10
+  check "the sought M4A stays selected" test "$(field title)" = 'Lossless Song'
 fi
 
 if want transport; then section "transport from outside the app"

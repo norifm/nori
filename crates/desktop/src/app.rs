@@ -586,6 +586,11 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_song, h, |a, list, i, how| a.song(list, i as usize, how));
     on!(ui.on_play_page, h, |a, shuffle| a.play_page(shuffle));
     on!(ui.on_page_later, h, |a| a.enqueue_page());
+    on!(ui.on_page_download, h, |a| {
+        if let Some(fetch) = a.page_fetch.clone() {
+            a.on_session(|s| { if s.rules.downloads { s.download_later(fetch); } });
+        }
+    });
     on!(ui.on_more, h, |a| a.more_songs());
     on!(ui.on_search_edited, h, |a, t| a.search_edited(&t));
     on!(ui.on_toggle, h, |a| a.on_session(|s| s.toggle()));
@@ -652,6 +657,11 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(jam.on_copy_link, h, |a| a.jam_copy_link());
     on!(jam.on_leave, h, |a| a.leave_jam());
+    on!(ui.on_forget_devices, h, |a| {
+        if let Some(remote) = a.session.as_ref().and_then(|s| s.remote()) { remote.reset_pairing(); }
+        a.devices_shown();
+        a.jam_shown();
+    });
     on!(ui.on_join_jam, h, |a, link| a.join_jam(link.trim().to_string()));
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
@@ -824,6 +834,7 @@ impl App {
             Ok(s) => {
                 s.check();
                 ui.set_volume(s.volume());
+                ui.set_downloads(s.rules.downloads);
                 self.session = Some(s);
                 self.heard = None;
                 self.song = None;
@@ -1172,7 +1183,7 @@ impl App {
         let heard = self.heard.as_deref();
         let find = self.find.to_lowercase();
         let hit = |s: &Song| find.is_empty() || [&s.title, &s.artist, &s.album].iter().any(|t| t.to_lowercase().contains(&find));
-        let row = |(i, s): (usize, &Song)| SongRow { by: if self.asked.contains(&s.id) { words::ASKED.into() } else { SharedString::default() }, ..row(s, i, heard == Some(s.id.as_str()), self.heart(s)) };
+        let row = |(i, s): (usize, &Song)| SongRow { by: if self.asked.contains(&s.id) { words::ASKED.into() } else { SharedString::default() }, ..row(s, i, heard == Some(s.id.as_str()), self.heart(s), self.session.as_ref().is_some_and(|x| x.rules.downloads), self.session.as_ref().is_some_and(|x| x.rules.radio)) };
         ModelRc::new(VecModel::from(songs.iter().enumerate().filter(|(_, s)| hit(s)).map(row).collect::<Vec<_>>()))
     }
 
@@ -1268,6 +1279,14 @@ impl App {
         if how == 4 {
             return self.star(&one);
         }
+        if how == 5 {
+            self.on_session(|s| { if s.rules.downloads { s.download(vec![one]); } });
+            return;
+        }
+        if how == 6 {
+            self.on_session(|s| { if s.rules.radio { s.play_later(Fetch::Radio(one.id), false); } });
+            return;
+        }
         // A guest asks for the song (the session does), and starts no jam of its own.
         if how == 3 && self.guest() {
             return;
@@ -1358,6 +1377,13 @@ impl App {
     /// Joins the jam `link` invites to, as a guest profile of its own.
     fn join_jam(&mut self, link: String) {
         let ui = self.ui();
+        if nori_core::remote::pairing_valid(link.clone()) {
+            let paired = self.session.as_ref().and_then(|s| s.remote()).is_some_and(|r| r.pair(link));
+            ui.set_join_open(!paired);
+            if !paired { ui.set_join_error(words::PAIR_FAILED.into()); }
+            self.devices_shown();
+            return;
+        }
         if !nori_core::remote::is_invite(&link) {
             return ui.set_join_error(words::NOT_AN_INVITE.into());
         }
@@ -1787,9 +1813,11 @@ impl App {
         let remote = self.session.as_ref().and_then(|s| s.remote()).filter(|_| jams);
         let unsupported = remote.as_ref().is_some_and(|r| r.relay() == nori_core::remote::RelaySupport::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());
-        g.set_on(remote.is_some() && !unsupported && !guest);
+        let lan = remote.as_ref().is_some_and(|r| r.pairing_link().is_some());
+        ui.set_pairing_link(remote.as_ref().and_then(|r| r.pairing_link()).unwrap_or_default().into());
+        g.set_on(remote.is_some() && (!unsupported || lan) && !guest);
         g.set_guest(guest);
-        g.set_note(if unsupported && !guest { words::JAM_UNSUPPORTED.into() } else { "".into() });
+        g.set_note(if unsupported && !lan && !guest { words::JAM_UNSUPPORTED.into() } else { "".into() });
         g.set_hosting(view.as_ref().is_some_and(|v| v.hosting));
         g.set_along(view.as_ref().is_some_and(|v| v.along));
         g.set_remote_songs(view.as_ref().is_some_and(|v| v.remote_songs));
@@ -1996,7 +2024,7 @@ impl App {
         if let Some(q) = queue {
             ui.set_shuffle(q.view.shuffle);
             ui.set_repeat(q.view.repeat as i32);
-            let rows = q.upcoming().map(|(i, s)| SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), ..row(s, i as usize, false, self.heart(s)) }).collect();
+            let rows = q.upcoming().map(|(i, s)| SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), ..row(s, i as usize, false, self.heart(s), self.session.as_ref().is_some_and(|x| x.rules.downloads), self.session.as_ref().is_some_and(|x| x.rules.radio)) }).collect();
             self.queue_shown(rows);
             ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
             self.queue = Some(q);
@@ -2045,12 +2073,12 @@ fn artist_card(a: &nori_core::Artist) -> Card {
 }
 
 /// `starred`: its heart as shown; None where there is no heart (a jam guest's lists).
-fn row(s: &Song, index: usize, playing: bool, starred: Option<bool>) -> SongRow {
+fn row(s: &Song, index: usize, playing: bool, starred: Option<bool>, downloads: bool, radio: bool) -> SongRow {
     SongRow {
         title: s.title.as_str().into(),
         artist: s.artist.as_str().into(),
         credits: credits(s),
-        menu: song_menu(s, starred),
+        menu: song_menu(s, starred, downloads, radio),
         album: s.album.as_str().into(),
         artist_id: s.artist_id.clone().unwrap_or_default().into(),
         album_id: s.album_id.clone().unwrap_or_default().into(),
@@ -2078,9 +2106,9 @@ fn credits(s: &Song) -> Credits {
 
 /// The heart, album and artists of `s`'s menu (menus.rs's `song_menu`), `starred` as its heart shows
 /// (None: no heart).
-fn song_menu(s: &Song, starred: Option<bool>) -> ModelRc<SongGo> {
+fn song_menu(s: &Song, starred: Option<bool>, downloads: bool, radio: bool) -> ModelRc<SongGo> {
     use nori_core::menus::{song_menu, SongAction, SongDownload};
-    let lines: Vec<SongGo> = song_menu(s.clone(), starred.unwrap_or_default(), SongDownload::None, false, false, starred.is_some(), false, None)
+    let lines: Vec<SongGo> = song_menu(s.clone(), starred.unwrap_or_default(), SongDownload::None, false, false, starred.is_some(), false, downloads, radio, None)
         .into_iter()
         .filter_map(|item| {
             let title = words::song_action(&item.action)?.into();
@@ -2088,6 +2116,8 @@ fn song_menu(s: &Song, starred: Option<bool>) -> ModelRc<SongGo> {
                 SongAction::Favourite { .. } => (0, String::new()),
                 SongAction::GoToAlbum { id } => (1, id),
                 SongAction::GoToArtist { id, .. } => (2, id),
+                SongAction::Download => (3, String::new()),
+                SongAction::StartRadio => (4, String::new()),
                 _ => return None,
             };
             Some(SongGo { title, kind, id: id.into() })

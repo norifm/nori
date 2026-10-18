@@ -54,6 +54,14 @@ impl Core {
         let json: String = c.query_row("SELECT json FROM downloads WHERE server=sid() AND id=?1 AND done=1", [id], |r| r.get(0)).optional().ok()??;
         serde_json::from_str(&json).ok()
     }
+
+    /// Song `id` as the local index keeps it.
+    pub(crate) fn indexed_song(&self, id: &str) -> Option<Song> {
+        use rusqlite::OptionalExtension;
+        let c = self.db.lock();
+        let json: String = c.query_row("SELECT json FROM items WHERE server=sid() AND kind=?1 AND id=?2", rusqlite::params![crate::db::ItemKind::Song, id], |r| r.get(0)).optional().ok()??;
+        serde_json::from_str(&json).ok()
+    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -61,7 +69,14 @@ impl Client {
     /// A radio from song `id`: similar songs, else random songs of its genre ([radio_queue]).
     pub async fn radio(&self, id: String) -> NetResult<Vec<Song>> {
         let similar = self.songs(Read::SimilarSongs { id: id.clone(), count: RADIO }).await?;
-        let seed = self.song_of(id).await?;
+        let listed = similar.iter().find(|s| s.id == id);
+        let seed = match (self.stored_song_of(&id), listed) {
+            // A YouTube Home row says no length; the radio's copy does.
+            (Some(seed), Some(l)) if seed.duration == 0 => Song { duration: l.duration, ..seed },
+            (Some(seed), _) => seed,
+            (None, Some(l)) => l.clone(),
+            (None, None) => self.song_of(id).await?,
+        };
         if let Some(queue) = radio_queue(seed.clone(), similar) {
             return Ok(queue);
         }

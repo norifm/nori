@@ -167,6 +167,8 @@ class Library(
     fun playlists(): Flow<List<Playlist>> = cached(Read.PlaylistList) { (it as Page.Playlists).v }
     /** The source's own home feed (`ProfileRules.feed`), shelf by shelf. */
     fun homeFeed(): Flow<List<dev.nori.music.ffi.model.FeedShelf>> = cached(Read.HomeFeed) { (it as Page.Feed).v }
+    suspend fun featuredAlbums(limit: Int): List<Album> = withContext(Dispatchers.IO) { client.featuredAlbums(limit.coerceAtLeast(0).toUInt()) }
+    suspend fun featuredPlaylists(): List<Playlist> = withContext(Dispatchers.IO) { client.featuredPlaylists() }
     fun playlist(id: String): Flow<PlaylistDetail> = cached(Read.PlaylistById(id)) { (it as Page.PlaylistPage).v }
     /** The favourites, with this session's marks laid over them by the core as they are read. */
     fun starred(): Flow<Starred> = cached(Read.StarredItems) { (it as Page.StarredPage).v }

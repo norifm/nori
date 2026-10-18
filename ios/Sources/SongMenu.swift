@@ -17,7 +17,7 @@ enum SongMenu {
                 let sheet = UIAlertController.sheet(song.title, message)
                 for item in items {
                     guard let a = item["a"] as? Int else { continue }
-                    sheet.add(Say.songAction(a, item)) {
+                    sheet.add(Say.songAction(a, item), enabled: item["enabled"] as? Bool ?? true) {
                         act(a, item, song: song, token: token, index: index, details: details, host: host, go: go)
                     }
                 }

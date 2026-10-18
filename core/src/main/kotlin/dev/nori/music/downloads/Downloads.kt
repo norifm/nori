@@ -136,8 +136,11 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         // rings standing at nought.
         // What comes from the network is analysed as it downloads (MeasuringSink): AutoMix, the lyrics' sync and
         // the loudness of an untagged song read it later, and a song so measured is not read back from the disk.
+        val resolved = androidx.media3.datasource.ResolvingDataSource.Factory(sources.network) { spec ->
+            spec.withUri(Uri.parse(clientOf().resolveStreamUrl(spec.uri.toString(), spec.position.toULong())))
+        }
         val measured = androidx.media3.datasource.DataSource.Factory {
-            androidx.media3.datasource.TeeDataSource(sources.network.createDataSource(), dev.nori.music.playback.MeasuringSink(analyses()))
+            androidx.media3.datasource.TeeDataSource(resolved.createDataSource(), dev.nori.music.playback.MeasuringSink(analyses()))
         }
         val upstream = CacheDataSource.Factory().setCache(sources.downloadCache).setUpstreamDataSourceFactory(measured)
         DownloadManager(context, DefaultDownloadIndex(sources.database), TrackedDownloaders(DefaultDownloaderFactory(upstream, Runnable::run))).apply {

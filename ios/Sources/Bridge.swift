@@ -128,6 +128,7 @@ struct Now {
 struct Rules {
     var asks = false
     var account = true
+    var downloads = true
     /// Songs carry hearts (an account's, or a provider account's likes).
     var stars = true
     /// Home is the source's own feed.
@@ -142,6 +143,7 @@ struct Rules {
     init(_ d: [String: Any]) {
         asks = d["asks"] as? Bool ?? false
         account = d["account"] as? Bool ?? true
+        downloads = d["downloads"] as? Bool ?? account
         stars = d["stars"] as? Bool ?? account
         feed = d["feed"] as? Bool ?? false
         sections = Set(d["sections"] as? [Int] ?? [])

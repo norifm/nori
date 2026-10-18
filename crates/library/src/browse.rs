@@ -153,7 +153,7 @@ pub fn pins_toggled(pins: Vec<String>, id: String, on: bool) -> Vec<String> {
 /// The cached answers a manual refresh drops, so it reaches the server.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn home_refresh_drops() -> Vec<String> {
-    ["getAlbumList2", "getPlaylists", "getStarred2"].map(String::from).to_vec()
+    ["getAlbumList2", "getPlaylists", "getStarred2", "homeFeed"].map(String::from).to_vec()
 }
 
 // ---- long lists ---------------------------------------------------------------
@@ -278,10 +278,13 @@ pub struct ProfileRules {
     /// Playing or queueing songs asks the jam's host for them: a tap or Play asks for the song that
     /// would start, Play next and Add to queue for each song.
     pub asks: bool,
-    /// What is the account's: hearts and ratings, playlists, downloads, sharing, mixes and history, the
-    /// settings; and its work in the background: scrobbles and now playing, queue pushes, downloads,
-    /// analysis read ahead, being a device remote control reaches.
+    /// Subsonic account work: ratings, playlist edits, sharing, library mixes and their settings,
+    /// scrobbles, now playing and queue pushes. Local history does not require an account.
     pub account: bool,
+    /// Songs, albums and playlists can be kept for offline playback on this device.
+    pub downloads: bool,
+    /// A song can start a radio queue from the provider's related tracks.
+    pub radio: bool,
     /// The library is kept in the offline index (synced); without it the songs list reads the server a
     /// page at a time.
     pub indexed: bool,
@@ -319,7 +322,7 @@ pub fn profile_rules(guest: bool) -> ProfileRules {
     let sections = if guest { vec![Albums, Artists, Songs, Genres] } else { vec![Albums, Favourites, Artists, Songs, Playlists, Smart, History, Genres, Decades, Folders, Radio, Downloads] };
     let account_only = [SettingsPart::ServerOptions, SettingsPart::Library, SettingsPart::Downloads];
     let settings = SETTINGS_PARTS.into_iter().filter(|p| !guest || !account_only.contains(p)).collect();
-    ProfileRules { asks: guest, account: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, feed: false }
+    ProfileRules { asks: guest, account: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, feed: false }
 }
 
 /// A decade's years, first and last, from its first year.

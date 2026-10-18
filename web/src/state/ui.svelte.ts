@@ -1,7 +1,7 @@
 // What the shell shows over the pages: a line of news, an action sheet, a question, the side panel and
 // the full player.
 
-export type Item = { label: string; icon?: string; run: () => unknown; danger?: boolean };
+export type Item = { label: string; icon?: string; run: () => unknown; danger?: boolean; disabled?: boolean };
 /** What the side panel (or the full player's) shows. */
 export type Pane = "lyrics" | "queue" | "devices";
 

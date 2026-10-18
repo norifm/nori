@@ -48,14 +48,14 @@ pub trait Provider: Send + Sync {
     async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Page>>;
 
     /// The answer kept for `read`, fresh within `within_ms` (None: the read's own window). Kept answers
-    /// show at once and offline; a source that keeps none has none.
-    fn read_stored(&self, _client: &Client, _read: Read, _within_ms: Option<i64>) -> NetResult<Stored> {
-        Ok(Stored { page: None, digest: None, fresh: false })
+    /// show at once; by default a source's are kept in memory for the session.
+    fn read_stored(&self, client: &Client, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
+        Ok(client.kept_stored(read, within_ms))
     }
 
     /// `read` asked anew; the page only when it differs from the kept one of `digest`.
     async fn read_fetch(&self, client: &Client, read: Read, _digest: Option<u64>) -> NetResult<Option<Page>> {
-        client.read_now(read).await.map(Some)
+        client.kept_fetch(read).await
     }
 
     /// Sends one change.
@@ -334,6 +334,7 @@ impl Core {
     /// Points the core at saved `profile` through its kind's provider. Clears the library when the
     /// profile now names another server, user or kind.
     pub fn configure_profile(&self, profile: SavedServer) -> nori_model::Result<()> {
+        *self.lan_jam.write() = nori_remote::lan::guest_secret(&profile.api_key).map(|secret| (profile.url.clone(), secret.into()));
         self.install_kind(profile.kind)?.configure(self, &profile)
     }
 
@@ -359,6 +360,14 @@ impl Client {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
+    /// Resolves a provider address for a platform's download worker. May block on the provider.
+    pub fn resolve_stream_url(self: Arc<Self>, address: String, from: u64) -> NetResult<String> {
+        match self.stream_resolver().and_then(|r| r.resolve(&address, from)) {
+            Some(url) => url,
+            None => Ok(address),
+        }
+    }
+
     /// Signs the profile's account in with `answer` (a sign-in page's cookies, or what was pasted).
     /// Anything but success leaves the account as it was.
     pub async fn sign_in(&self, answer: String) -> SignInResult {

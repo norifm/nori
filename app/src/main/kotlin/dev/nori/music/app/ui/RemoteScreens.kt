@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -86,7 +87,7 @@ private fun DeviceState.current(): Entry? = entries.firstOrNull { it.index == in
  * picker), and the jam: "Start a Jam", or "Your Jam" with End while one is on. Up only while remote control
  * or jams are on.
  */
-private enum class RoomPage { MAIN, INVITE, SETTINGS }
+private enum class RoomPage { MAIN, INVITE, SETTINGS, PAIR }
 
 @Composable
 fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jams: Boolean) {
@@ -99,13 +100,17 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         val jam by vm.jam.collectAsStateWithLifecycle()
         val relay by vm.relay.collectAsStateWithLifecycle()
         val mirror by vm.mirror.collectAsStateWithLifecycle()
+        val pairing by vm.pairingLink.collectAsStateWithLifecycle()
         val unsupported = relay == dev.nori.music.ffi.RelaySupport.UNSUPPORTED
         val pick = { device: String? -> vm.pick(device); onDismiss() }
         val hosted = jam?.takeIf { it.hosting }
         var page by remember(hosted?.link) { mutableStateOf(RoomPage.MAIN) }
         BackHandler(page != RoomPage.MAIN) { page = RoomPage.MAIN }
         Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
-            if (hosted != null && page != RoomPage.MAIN) {
+            if (page == RoomPage.PAIR && pairing != null) {
+                ActionRow(words(R.string.back), Icons.AutoMirrored.Filled.ArrowBack, { page = RoomPage.MAIN }, divider = false)
+                PairingBody(pairing!!, vm) { page = RoomPage.MAIN }
+            } else if (hosted != null && page != RoomPage.MAIN) {
                 ActionRow(words(R.string.back), Icons.AutoMirrored.Filled.ArrowBack, { page = RoomPage.MAIN }, divider = false)
                 if (page == RoomPage.INVITE) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
             } else {
@@ -128,13 +133,14 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 }
                 // The phone's own speaker, headphones or Bluetooth: Android's picker, a row like the devices'.
                 SheetRow(words(R.string.devices_output), Icons.Filled.Speaker, onOutput)
+                if (pairing != null) SheetRow(words(R.string.pair_devices), Icons.Filled.PhoneAndroid, { page = RoomPage.PAIR })
                 val start by vm.jamStarting.collectAsStateWithLifecycle()
                 when {
                     !jams -> {}
                     hosted != null -> {
                         YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
                     }
-                    unsupported -> Text(
+                    unsupported && start == dev.nori.music.ffi.JamStart.UNAVAILABLE -> Text(
                         words(R.string.jam_unsupported), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -150,6 +156,47 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                 }
             }
         }
+    }
+}
+
+/** An incoming pairing code waits for an explicit choice. */
+@Composable
+internal fun PairingRequest(vm: RemoteViewModel = viewModel()) {
+    val request by vm.pairRequest.collectAsStateWithLifecycle()
+    val tell = LocalMessages.current
+    val paired = words(R.string.pair_done)
+    val failed = words(R.string.pair_failed)
+    NoriDialog(request, vm::dismissPairing) { link ->
+        AlertCard(
+            title = { Text(words(R.string.pair_confirm)) },
+            text = { Text(words(R.string.pair_hint)) },
+            confirmButton = { TextAction(words(R.string.pair_action), { vm.pair(link) { ok -> tell(if (ok) paired else failed); vm.dismissPairing() } }) },
+            dismissButton = { TextAction(words(R.string.cancel), vm::dismissPairing) },
+        )
+    }
+}
+
+@Composable
+private fun PairingBody(link: String, vm: RemoteViewModel, onPaired: () -> Unit) {
+    var entered by remember { mutableStateOf("") }
+    var resetting by remember { mutableStateOf(false) }
+    val tell = LocalMessages.current
+    val paired = words(R.string.pair_done)
+    val failed = words(R.string.pair_failed)
+    LinkCode(link, words(R.string.pair_devices), words(R.string.pair_hint))
+    Column(Modifier.padding(horizontal = Space.gutter), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        FormField(entered, { entered = it }, Modifier.fillMaxWidth(), label = { Text(words(R.string.pair_link)) }, singleLine = true)
+        PillButton(words(R.string.pair_action), Icons.Filled.PhoneAndroid, {
+            vm.pair(entered) { ok -> tell(if (ok) paired else failed); if (ok) onPaired() }
+        }, enabled = dev.nori.music.ffi.pairingValid(entered))
+        TextAction(words(R.string.pair_reset), { resetting = true })
+    }
+    NoriDialog(resetting, { resetting = false }) {
+        AlertCard(
+            title = { Text(words(R.string.pair_reset)) }, text = { Text(words(R.string.pair_reset_hint)) },
+            confirmButton = { TextAction(words(R.string.pair_reset), { vm.resetPairing(); resetting = false }) },
+            dismissButton = { TextAction(words(R.string.cancel), { resetting = false }) },
+        )
     }
 }
 

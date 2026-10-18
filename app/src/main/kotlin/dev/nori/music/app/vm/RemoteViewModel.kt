@@ -37,6 +37,20 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
     /** [devices]' names as the picker lists them, told apart where two share one (the core's `device_names`). */
     val names: StateFlow<List<String>> = _names.asStateFlow()
 
+    private val _pairingLink = MutableStateFlow<String?>(null)
+    val pairingLink: StateFlow<String?> = _pairingLink.asStateFlow()
+    private val _pairRequest = MutableStateFlow<String?>(null)
+    val pairRequest: StateFlow<String?> = _pairRequest.asStateFlow()
+
+    fun offerPairing(link: String) { _pairRequest.value = link }
+    fun dismissPairing() { _pairRequest.value = null }
+    fun pair(link: String, then: (Boolean) -> Unit) = viewModelScope.launch {
+        val paired = remotes.pair(link)
+        if (paired) refresh()
+        then(paired)
+    }
+    fun resetPairing() = viewModelScope.launch { if (remotes.resetPairing()) refresh() }
+
     private val me = dev.nori.music.ffi.RemoteMe(dev.nori.music.remote.Remotes.deviceName(app), dev.nori.music.ffi.remote.DeviceKind.PHONE)
     private val kinds = app.resources.let { r ->
         dev.nori.music.ffi.KindWords(
@@ -79,9 +93,10 @@ class RemoteViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch { remotes.changes.collect { if (watchers > 0) refresh() } }
     }
 
-    private fun refresh() = remotes.ask({ r -> r.devices().let { d -> d to dev.nori.music.ffi.deviceNames(d, me, kinds) } }) { (d, n) ->
+    private fun refresh() = remotes.ask({ r -> r.devices().let { d -> Triple(d, dev.nori.music.ffi.deviceNames(d, me, kinds), r.pairingLink()) } }) { (d, n, link) ->
         _devices.value = d
         _names.value = n
+        _pairingLink.value = link
     }
 
     /** A sheet that shows devices is on screen (true) or gone (false): other devices are followed while it is. */

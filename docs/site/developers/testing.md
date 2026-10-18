@@ -115,13 +115,21 @@ provider, then repeats with one unavailable cover. It compares decoded pixels in
 available quadrants. Content-provider pipes, Bitmap decoding, and Canvas painting require Android.
 
 `NORI_E2E_SERVER=local tools/feature-e2e.sh --only youtube-music` adds a YouTube Music profile,
-plays the first song a search finds, and switches back to the fixture server. The profile's rules,
+plays searched songs, checks their AutoMix transition and lyric alignment, downloads one and plays
+its saved files offline, then switches back to the fixture server. It also opens downloads through
+Android Auto's media browser and renders the YouTube song in each widget size. It pairs the phone
+with the terminal client on a YouTube profile, moves the queue there and back, and checks that a
+pairing reset locks the terminal out: pairing and signing are Rust's (`crates/host/tests/lan_jam.rs`),
+but the JNI pairing call, the media session's handover and the service telling a new remote what
+plays are Android's. The profile's rules,
 reads, stream resolution and WebM decoding are Rust tests; the resolved googlevideo URL passing
 through media3's data source and OkHttp (with the core's own User-Agent) requires Android. It is
 opt-in because YouTube can refuse on any day. The same section opens Google's sign-in page from the
 new profile's offer, sees Google's form, taps Cancel, and checks that the WebView keeps no cookies:
 when a sign-in is done is Rust's (`auth::signed_in_at`), but the WebView, its CookieManager and the
 sheet over it are Android's.
+Widget RemoteViews rendering and media3's browse callbacks also require Android; the generated
+widget images are available in the app's cache as `widget-<face>-<width>x<height>.png`.
 
 The `jam` section also checks that media3 receives the guest timeline without issuing a seek to
 zero after Rust has aligned playback with the host. This queue handoff belongs to the Android service.
@@ -232,6 +240,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | next track plays | b | smoke `controls` |
 | previous track plays | a | controls.rs, queue |
 | a seek while paused after a restart sticks; play resumes from it (2) | b | audio-e2e `restart` (a new service restoring the saved queue) |
+| an M4A seek while paused resumes through AudioTrack | b | audio-e2e `container-seek`, local ALAC fixture; checks Android source and output glue after Rust's timestamped-container seek test |
 | no playback errors | b | audio-e2e `errors`, smoke `crashes` (over the whole run's log now) |
 | (new) a transcode stated longer than it is plays past its real end | b | audio-e2e `transcode`, local server only |
 
@@ -245,6 +254,8 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | each lyrics service answers (a report, no check) | - | feature-e2e `lyrics-services`, opt-in: 16 × up to 12 s, the services' health rather than the app's |
 | a YouTube Music profile plays a searched song, and the server's profile plays after it | - | feature-e2e `youtube-music`, opt-in: YouTube's to answer |
 | Google's sign-in page opens; Cancel closes it and leaves the WebView no cookies (3) | - | feature-e2e `youtube-music` (WebView, CookieManager) |
+| Home's feed is kept for the visit: scrolled away and back, its shelves show the same | a | crates/core providers/fake.rs `home_feed_is_kept_until_refreshed`; feature-e2e `youtube-music` (the LazyColumn's rows leaving and coming back) |
+| YouTube WebM songs mix, keep the vocal curve, download and play offline | a | engine `webm_pair_plays_through_its_mix`, `webm_arrivals_keep_analysis_and_voice`; feature-e2e `youtube-music` checks the AudioTrack, media3 resolver, download cache and downloaded-file bridge |
 | a sign-in page is done only back on music.youtube.com with a session | a | crates/youtube auth.rs |
 | no video player while off; let go when put away (2) | b | feature-e2e `motion` (ExoPlayer, Kotlin) |
 | starring reaches the server | a | client.rs |

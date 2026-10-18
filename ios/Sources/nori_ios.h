@@ -116,6 +116,9 @@ void nori_ios_remote_watch(int32_t on);
 /// queue changed there, 2 not allowed, 3 gone, 4 too many.
 char *nori_ios_remote_devices(void);
 /// Moves the music to device `id`, or here (empty).
+char *nori_ios_pairing(void);
+int32_t nori_ios_pair(const char *link);
+int32_t nori_ios_forget_pairs(void);
 void nori_ios_remote_pick(const char *id);
 
 /// Note report codes (`flag`; `index` is the count where there is one).

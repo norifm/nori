@@ -76,6 +76,9 @@ function item(a: MenuAction, s: Song): Item | null {
 export async function songMenu(s: Song, extra: Item[] = [], inPlayer = false) {
   const lyrics = inPlayer && !!player.shown && player.shown.song === s.id;
   const actions = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics)) as MenuAction[];
-  const items = actions.map((a) => item(a, s)).filter((i): i is Item => i !== null);
+  const items = actions.flatMap((a): Item[] => {
+    const i = item(a, s);
+    return i ? [{ ...i, disabled: !a.enabled }] : [];
+  });
   ui.menu(s.title, [...items, ...extra]);
 }

@@ -29,3 +29,6 @@ nori-net = { path = "../net" }
 # The remote timing clock (clock.rs): CLOCK_BOOTTIME, which std does not read.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+getrandom = "0.4"

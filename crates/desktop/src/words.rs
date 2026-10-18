@@ -24,7 +24,7 @@ pub fn provider(kind: ServerKind) -> ProviderWords {
         ServerKind::Subsonic => ProviderWords { name: "Your server", note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In", no_user: "API key" },
         ServerKind::YouTubeMusic => ProviderWords {
             name: "YouTube Music",
-            note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Favorites, playlists, downloads, scrobbling, remote control and jams are off.",
+            note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.",
             add: "Add YouTube Music",
             no_user: "best effort",
         },
@@ -135,6 +135,8 @@ pub fn song_action(a: &nori_core::menus::SongAction) -> Option<String> {
     Some(match a {
         A::Favourite { on: true } => "Add to Favorites".into(),
         A::Favourite { on: false } => "Remove from Favorites".into(),
+        A::Download => "Download".into(),
+        A::StartRadio => "Start Radio".into(),
         A::GoToAlbum { .. } => "Go to Album".into(),
         A::GoToArtist { name, named: true, .. } => format!("Go to {name}"),
         A::GoToArtist { named: false, .. } => "Go to Artist".into(),
@@ -303,3 +305,5 @@ mod tests {
         assert_eq!(quality(&s).as_deref(), Some("FLAC 24/96.0"));
     }
 }
+
+pub const PAIR_FAILED: &str = "Pairing failed";

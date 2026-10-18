@@ -413,6 +413,17 @@ pub struct JamPass {
     pub api_key: String,
 }
 
+/// Whether a link is a device pairing code, separate from a jam invite.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn pairing_valid(link: String) -> bool { lan::parse_pairing(&link).is_some() }
+
+/// The temporary guest profile contains only a scoped room credential.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn jam_profile(pass: JamPass, id: String, name: String) -> crate::settings::SavedServer {
+    let kind = if lan::guest_secret(&pass.api_key).is_some() { crate::settings::ServerKind::YouTubeMusic } else { crate::settings::ServerKind::Subsonic };
+    crate::settings::SavedServer { id, name, kind, url: pass.url, api_key: pass.api_key, ..Default::default() }
+}
+
 /// Where a command came from, and so how to answer it.
 #[derive(Debug, Clone)]
 enum Via {
@@ -421,6 +432,9 @@ enum Via {
     /// This device's door.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code, reason = "a browser opens no door"))]
     Door,
+    /// A member authenticated with this door’s scoped jam credential.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code, reason = "a browser opens no door"))]
+    LanJam,
     /// The door of a nearby device this one watches.
     Peer(String),
 }
@@ -1185,6 +1199,43 @@ impl Remote {
         Remote::with_tasks(client, me, player, shown, discovery, tasks)
     }
 
+    /// The QR/code used to pair this device's YouTube profiles with its other devices.
+    pub fn pairing_link(&self) -> Option<String> {
+        if self.me.kind == DeviceKind::Guest || self.client.core.kind() != crate::settings::ServerKind::YouTubeMusic { return None; }
+        lan_secret(&self.client).map(|secret| lan::pairing_link(&secret))
+    }
+
+    /// Accepts a pairing code explicitly chosen by the user, then reannounces the door.
+    pub fn pair(self: Arc<Self>, link: String) -> bool {
+        let Some(secret) = lan::parse_pairing(&link) else { return false };
+        if self.pairing_link().is_none() { return false; }
+        if !keep_pairing(&self.client.core.session.settings, &secret) { return false; }
+        let announce = {
+            let mut i = self.inner.lock();
+            i.peers.clear();
+            i.lan_generation += 1;
+            i.mirror = None;
+            i.taking = None;
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(door) = &i.door { door.pair_secret(lan_secret(&self.client).expect("pairing secret")); }
+            #[cfg(not(target_arch = "wasm32"))]
+            let announce = i.door.as_ref().map(|door| self.announcement(door.port()));
+            #[cfg(target_arch = "wasm32")]
+            let announce = None;
+            announce
+        };
+        if let Some(discovery) = &self.discovery { discovery.announce(announce); }
+        self.shown.changed();
+        true
+    }
+
+    /// Forgets all paired devices by rotating this device's pairing credential.
+    pub fn reset_pairing(self: Arc<Self>) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok(secret) = lan::new_secret() { return self.pair(lan::pairing_link(&secret)); }
+        false
+    }
+
     /// Current library favorites, including changes received from nearby devices.
     pub fn star_marks(&self) -> crate::stars::StarMarks {
         self.client.core.stars.lock().clone()
@@ -1533,6 +1584,8 @@ impl Remote {
             room: String,
             invite: String,
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.client.core.kind() == crate::settings::ServerKind::YouTubeMusic { return self.open_lan_jam(); }
         if self.relay() == RelaySupport::Unsupported {
             return Err(NetError::Http { status: 404 });
         }
@@ -1644,7 +1697,13 @@ impl Remote {
         };
         self.retime();
         self.hear_plans();
-        self.out(Out::Get(self.relay_url("noriRemote.close", &[("room", room)])));
+        #[cfg(not(target_arch = "wasm32"))]
+        if room == "lan-jam" {
+            let mut i = self.inner.lock();
+            if let Some(door) = &i.door { door.close_jam(); }
+            if !i.serving { i.door = None; }
+        }
+        if room != "lan-jam" { self.out(Out::Get(self.relay_url("noriRemote.close", &[("room", room)]))); }
         self.keep_polling();
         self.shown.changed();
     }
@@ -1711,7 +1770,7 @@ impl Remote {
             JamStart::Hosting
         } else if i.opening.is_some() {
             JamStart::Starting
-        } else if on && self.me.kind != DeviceKind::Guest && i.relay != RelaySupport::Unsupported {
+        } else if on && self.me.kind != DeviceKind::Guest && (i.relay != RelaySupport::Unsupported || self.client.core.kind() == crate::settings::ServerKind::YouTubeMusic) {
             JamStart::Offered
         } else {
             JamStart::Unavailable
@@ -1904,6 +1963,23 @@ pub async fn jam_join(transport: Arc<dyn Transport>, settings: Arc<Settings>, re
         return Ok(own);
     }
     let (server, invite) = nori_remote::parse_invite(&link).ok_or_else(|| NetError::Parse { reason: "not a jam invite".into() })?;
+    let local = invite.strip_prefix("lan-");
+    if local.is_some() && !nori_remote::is_home_only(&server) { return Err(NetError::Parse { reason: "LAN invitation requires a local address".into() }); }
+    #[cfg(not(target_arch = "wasm32"))]
+    let nonce = if local.is_some() { lan::new_secret().map_err(|e| NetError::Parse { reason: e.to_string() })? } else { String::new() };
+    #[cfg(target_arch = "wasm32")]
+    let nonce = if local.is_some() { return Err(NetError::Parse { reason: "LAN YouTube jams require a native client".into() }); } else { String::new() };
+    if let Some(secret) = local {
+        let url = format!("{}{}", server.trim_end_matches('/'), lan::signed(secret, "GET", &lan::target("noriRemote.join", &[("name".into(), name), ("nonce".into(), nonce.clone())]), b"", db::now_ms()));
+        // A door refuses with 401 and a JSON body, which `transport::get` would take for an answer.
+        match transport.get(url, 0).await?.status {
+            401 => return Ok(JamJoin::Ended),
+            200..=299 => {}
+            status => return Err(NetError::Http { status }),
+        }
+        let key = format!("lan-{}", lan::member_secret(secret, &nonce));
+        return Ok(JamJoin::Joined { pass: JamPass { url: server, api_key: nori_remote::guest_key(&key) } });
+    }
     let url = api::Server::with(&server, api::Auth::ApiKey(&nori_remote::guest_key(&invite))).url("noriRemote.join", &[("name".into(), name)]);
     let body = match transport::get(&*transport, url, 0).await {
         Err(NetError::Http { status: 401 }) => return Ok(JamJoin::Ended),
@@ -2052,6 +2128,35 @@ impl Running {
     }
 }
 
+/// The paired-device credential; YouTube has no server account credential.
+fn keep_pairing(settings: &Settings, secret: &str) -> bool {
+    settings.app_db().is_some_and(|db| db.lock().execute("INSERT OR REPLACE INTO app_kv(key,value) VALUES('remoteLanSecret',?1)", [secret]).is_ok())
+}
+
+fn lan_secret(client: &Client) -> Option<String> {
+    if let Some((_, secret)) = client.core.lan_jam.read().as_ref() { return Some(secret.clone()); }
+    if let Some((_, secret)) = client.core.account.read().as_ref() { return Some(secret.clone()); }
+    let settings = &client.core.session.settings;
+    let db = settings.app_db()?;
+    let db = db.lock();
+    if let Ok(secret) = db.query_row("SELECT value FROM app_kv WHERE key='remoteLanSecret'", [], |r| r.get::<_, String>(0)) { return Some(secret); }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let secret = lan::new_secret().ok()?;
+        db.execute("INSERT INTO app_kv(key,value) VALUES('remoteLanSecret',?1)", [&secret]).ok()?;
+        Some(secret)
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+fn remote_url(client: &Client, endpoint: &str, params: &[(String, String)], method: &str, body: &[u8]) -> String {
+    if let Some((base, secret)) = client.core.lan_jam.read().as_ref() {
+        return format!("{}{}", base.trim_end_matches('/'), lan::signed(secret, method, &lan::target(endpoint, params), body, db::now_ms()));
+    }
+    client.core.server.read().url(endpoint, params)
+}
+
 /// Sends `o`; `who` is this device's [`Remote::who`].
 async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
     let (url, json) = match o {
@@ -2059,9 +2164,9 @@ async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
         Out::Send(link, outgoing) => {
             let json = serde_json::to_string(&outgoing).unwrap_or_default();
             let url = match link {
-                Link::Relay => client.core.server.read().url("noriRemote.send", who),
+                Link::Relay => remote_url(client, "noriRemote.send", who, "POST", json.as_bytes()),
                 Link::Lan(base) => {
-                    let Some((_, secret)) = client.core.account.read().clone() else { return };
+                    let Some(secret) = lan_secret(client) else { return };
                     let dev = &who[0].1;
                     format!("{base}{}", lan::signed(&secret, "POST", &format!("/rest/noriRemote.send?dev={dev}"), json.as_bytes(), db::now_ms()))
                 }
@@ -2097,7 +2202,9 @@ impl Remote {
         let remote = Arc::new(Remote { client, id, id_lock: Mutex::new(id_lock), instance, me, player, shown, discovery, inner: Mutex::default(), tasks, retry: Notify::default(), timing: Notify::default(), cancel: Notify::default(), out: Mutex::new(Some(Outbox(sends.clone()))), running: Arc::default(), follower: Mutex::default() });
         remote.tasks.spawn(Box::pin(send_all(sends, remote.client.clone(), remote.who())));
         *remote.client.core.remote.lock() = Arc::downgrade(&remote);
-        remote.probe();
+        if remote.client.core.kind() == crate::settings::ServerKind::YouTubeMusic && remote.client.core.lan_jam.read().is_none() {
+            remote.inner.lock().relay = RelaySupport::Unsupported;
+        } else { remote.probe(); }
         remote
     }
 
@@ -2268,7 +2375,7 @@ impl Remote {
 
     fn relay_url(&self, endpoint: &str, params: &[(&str, String)]) -> String {
         let p: Vec<(String, String)> = params.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
-        self.client.core.server.read().url(endpoint, &p)
+        remote_url(&self.client, endpoint, &p, "GET", b"")
     }
 
     /// This device's id, name and kind, as the relay is told them (the device id first).
@@ -2287,11 +2394,12 @@ impl Remote {
                 p.push(("hold".into(), "1".into()));
             }
         }
-        self.client.core.server.read().url("noriRemote.poll", &p)
+        remote_url(&self.client, "noriRemote.poll", &p, "GET", b"")
     }
 
     fn account_tag(&self) -> Option<String> {
-        self.client.core.account.read().as_ref().map(|(user, secret)| lan::account_tag(user, secret))
+        let user = self.client.core.account.read().as_ref().map(|(user, _)| user.clone()).unwrap_or_else(|| "youtube".into());
+        lan_secret(&self.client).map(|secret| lan::account_tag(&user, &secret))
     }
 
     pub(crate) fn sync_mark(&self, kind: crate::client::Starrable, id: String) {
@@ -2334,11 +2442,12 @@ impl Remote {
     /// Closes this device's door, and opens a new one while it serves; what is announced of it.
     #[cfg(not(target_arch = "wasm32"))]
     fn reopen_door(self: &Arc<Self>, i: &mut Inner, serving: bool) -> Option<Announcement> {
-        i.door = None;
-        if serving {
-            i.door = self.open_door();
+        let hosting = i.hosted.as_ref().is_some_and(|h| h.jam.room == "lan-jam");
+        if !hosting || i.door.is_none() {
+            i.door = None;
+            if serving { i.door = self.open_door(); }
         }
-        i.door.as_ref().map(|d| self.announcement(d.port()))
+        i.door.as_ref().filter(|_| serving).map(|d| self.announcement(d.port()))
     }
 
     /// A browser opens no door.
@@ -2348,8 +2457,41 @@ impl Remote {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn open_lan_jam(self: &Arc<Self>) -> Result<Option<String>, NetError> {
+        let secret = lan::new_secret().map_err(|e| NetError::Parse { reason: e.to_string() })?;
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0").and_then(|s| { s.connect("192.0.2.1:9")?; Ok(s) }).map_err(|e| NetError::Parse { reason: e.to_string() })?;
+        let ip = socket.local_addr().map_err(|e| NetError::Parse { reason: e.to_string() })?.ip();
+        let link = {
+            let mut i = self.inner.lock();
+            if i.hosted.is_some() || self.me.kind == DeviceKind::Guest { return Ok(None); }
+            if i.door.is_none() { i.door = self.open_door(); }
+            let door = i.door.as_ref().ok_or_else(|| NetError::Parse { reason: "LAN listener unavailable".into() })?;
+            let invite = format!("lan-{secret}");
+            let link = nori_remote::app_invite_link(&format!("http://{ip}:{}", door.port()), &invite);
+            let weak = Arc::downgrade(self);
+            let members = weak.clone();
+            door.open_jam(secret, Box::new(move |from, body| {
+                if let (Some(remote), Body::Command { id, op }) = (weak.upgrade(), body) { remote.obey(Via::LanJam, from.into(), id, *op, clock::now_us()); }
+            }), Box::new(move |listed| {
+                if let Some(remote) = members.upgrade() {
+                    if let Some(hosted) = remote.inner.lock().hosted.as_mut() { hosted.jam.present(&listed); }
+                    remote.publish();
+                }
+            }));
+            remember_hosted(&self.client.core.session.settings, &invite);
+            i.hosted = Some(Hosted { jam: Jam::new("lan-jam".into(), invite, self.id.clone(), self.me.name.clone()), link: link.clone(), along: true });
+            i.published = None;
+            link
+        };
+        self.retime();
+        self.publish();
+        self.hear_plans();
+        Ok(Some(link))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_door(self: &Arc<Self>) -> Option<Door> {
-        let (_, secret) = self.client.core.account.read().clone()?;
+        let secret = lan_secret(&self.client)?;
         let me = Member { id: self.id.clone(), name: self.me.name.clone(), kind: self.me.kind, state: None };
         let weak = Arc::downgrade(self);
         let opened = Door::open(
@@ -2367,6 +2509,7 @@ impl Remote {
     /// Asks whether the server relays: the relay poller's first poll, which is not held. Polls side by
     /// side could reach the relay out of order, a late one saying this device does not serve.
     fn probe(self: &Arc<Self>) {
+        if self.client.core.kind() == crate::settings::ServerKind::YouTubeMusic && self.client.core.lan_jam.read().is_none() { return; }
         let generation = {
             let mut i = self.inner.lock();
             i.probing = true;
@@ -2498,6 +2641,7 @@ impl Remote {
     /// Whether a relay poll's answer says this guest's jam is gone: the relay no longer takes its key, or
     /// no longer lists its jam's room (it lists it while the jam lasts).
     fn jam_gone(&self, got: &Result<Vec<u8>, NetError>) -> bool {
+        if self.me.kind == DeviceKind::Guest && self.client.core.lan_jam.read().is_some() && matches!(got, Err(NetError::Http { status: 401 })) { return true; }
         let Ok(body) = got else { return false };
         self.me.kind == DeviceKind::Guest && (refusal_code(body) == Some(40) || answer(body).is_some_and(|a| !a.rooms.iter().any(|r| r.jam)))
     }
@@ -2557,7 +2701,7 @@ impl Remote {
                 }
                 (i.peers[at].base(), i.peers[at].since)
             };
-            let Some((_, secret)) = self.client.core.account.read().clone() else { return };
+            let Some(secret) = lan_secret(&self.client) else { return };
             let query = match since {
                 Some(s) => format!("/rest/noriRemote.poll?dev={}&since={s}&hold=1", self.id),
                 None => format!("/rest/noriRemote.poll?dev={}", self.id),
@@ -2787,7 +2931,7 @@ impl Remote {
                     }
                 }
                 (Timed::Device { id, .. }, Some(Link::Lan(base))) => {
-                    let Some((_, secret)) = self.client.core.account.read().clone() else { return };
+                    let Some(secret) = lan_secret(&self.client) else { return };
                     let t1 = clock::now_us();
                     let url = format!("{base}{}", lan::signed(&secret, "GET", &format!("/rest/noriRemote.time?dev={}&t1={t1}", self.id), b"", db::now_ms()));
                     let Some(got) = self.get(url, 5_000, |_| true).await else { return };
@@ -2911,7 +3055,7 @@ impl Remote {
                 Body::Ack { id, refusal }
             }
             Op::Clock { t1 } => Body::Clock { t1, t2: received, t3: clock::now_us() },
-            Op::Page { from: turn, count } if !matches!(via, Via::Relay(Some(_))) => {
+            Op::Page { from: turn, count } if !matches!(via, Via::Relay(Some(_)) | Via::LanJam) => {
                 let q = self.read_queue(|_, len| turn as usize..(turn.saturating_add(count.min(PAGE_MAX)) as usize).min(len));
                 Body::Page { id, rev: q.rev, from: turn, entries: q.entries }
             }
@@ -2924,19 +3068,19 @@ impl Remote {
         match via {
             Via::Relay(room) => self.out(Out::send(Link::Relay, Outgoing { room, to: Some(to), body: Some(body), state: None })),
             #[cfg(not(target_arch = "wasm32"))]
-            Via::Door => {
+            Via::Door | Via::LanJam => {
                 if let Some(d) = &self.inner.lock().door {
                     d.reply(&to, body);
                 }
             }
             #[cfg(target_arch = "wasm32")]
-            Via::Door => {}
+            Via::Door | Via::LanJam => {}
             Via::Peer(base) => self.out(Out::send(Link::Lan(base), Outgoing { to: Some(to), body: Some(body), ..Default::default() })),
         }
     }
 
     fn carry_out(self: &Arc<Self>, via: &Via, from: &str, id: u64, op: Op) -> Result<(), Refusal> {
-        let in_jam = matches!(via, Via::Relay(Some(_)));
+        let in_jam = matches!(via, Via::Relay(Some(_)) | Via::LanJam);
         if is_jam(&op) {
             let kick = match &op {
                 Op::Kick { member } => Some(member.clone()),
@@ -2952,7 +3096,9 @@ impl Remote {
                 self.player.apply(Op::Add { songs: vec![song], next: false });
             }
             if let Some(member) = kick {
-                self.out(Out::Get(self.relay_url("noriRemote.kick", &[("room", room), ("member", member)])));
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(door) = &self.inner.lock().door { if room == "lan-jam" { door.kick(&member); } }
+                if room != "lan-jam" { self.out(Out::Get(self.relay_url("noriRemote.kick", &[("room", room), ("member", member)]))); }
             }
             self.publish();
             return Ok(());

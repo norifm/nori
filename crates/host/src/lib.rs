@@ -79,7 +79,7 @@ pub fn jam_joined(settings: &Settings, pass: JamPass, name: &str) -> SavedServer
     if prefs.active_server().is_some_and(|s| !nori_remote::is_guest_key(&s.api_key)) {
         settings.keep_app_value(BEFORE_JAM, prefs.active_server_id.clone());
     }
-    let guest = SavedServer { id: nori_core::settings::new_server_id(), name: name.into(), url: pass.url, api_key: pass.api_key, ..Default::default() };
+    let guest = nori_core::remote::jam_profile(pass, nori_core::settings::new_server_id(), name.into());
     prefs.servers.retain(|s| !nori_remote::is_guest_key(&s.api_key));
     settings.put(nori_core::providers::profile_activated(prefs, guest.clone()));
     guest
@@ -148,6 +148,7 @@ pub enum Fetch {
     DownloadedAlbum(String),
     Playlist(String),
     Artist(String),
+    Radio(String),
     /// One of the core's mixes (or the favourites), as its page lists it.
     Mix(String),
 }
@@ -160,6 +161,7 @@ impl Fetch {
             Fetch::DownloadedAlbum(id) => PageOrigin::new(OriginKind::Downloads, id.as_str()),
             Fetch::Playlist(id) => PageOrigin::new(OriginKind::Playlist, id.as_str()),
             Fetch::Artist(id) => PageOrigin::new(OriginKind::Artist, id.as_str()),
+            Fetch::Radio(id) => PageOrigin::new(OriginKind::Songs, id.as_str()),
             Fetch::Mix(id) => PageOrigin::new(OriginKind::Mix, id.as_str()),
         }
     }
@@ -183,6 +185,7 @@ impl Fetch {
                 _ => Vec::new(),
             },
             Fetch::Mix(id) => client.mix_songs(id).await?,
+            Fetch::Radio(id) => client.radio(id).await?,
         })
     }
 }
@@ -353,6 +356,21 @@ mod tests {
         assert_eq!(jam_left(&settings).map(|s| s.id), Some("work".into()), "the profile open before the jams");
         let p = settings.current().unwrap();
         assert_eq!((p.servers.len(), p.active_server_id.as_str()), (2, "work"));
+    }
+
+    #[test]
+    fn youtube_jam_guest_is_signed_out_and_temporary() {
+        let dir = nori_testdir::TempDir::new("host-youtube-jam");
+        let settings = Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        let own = SavedServer { id: "mine".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "private-account".into(), password: "private-cookie".into(), ..Default::default() };
+        prefs.servers.push(own.clone());
+        prefs.active_server_id = own.id.clone();
+        settings.put(prefs);
+        let guest = jam_joined(&settings, JamPass { url: "http://192.168.1.2:5678".into(), api_key: nori_remote::guest_key("lan-guestsecret") }, "Jam");
+        assert_eq!(guest.kind, nori_core::settings::ServerKind::YouTubeMusic);
+        assert!(guest.user.is_empty() && guest.password.is_empty());
+        assert_eq!(jam_left(&settings).unwrap(), own);
     }
 
     /// With the profile open before the jam gone, leaving opens the one used last, else the login.

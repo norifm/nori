@@ -1,6 +1,6 @@
 //! A controllable device's door: the listener and its connections, native only.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,8 +21,9 @@ const KEPT_EVENTS: usize = 64;
 /// Whether `target` (path and query, `sig` last) was signed with `secret` within [`SKEW_MS`] of `now_ms`.
 fn verified(secret: &str, method: &str, target: &str, body: &[u8], now_ms: i64) -> bool {
     let Some((signed, sig)) = target.rsplit_once("&sig=") else { return false };
-    let fresh = query(signed, "ts").and_then(|t| t.parse::<i64>().ok()).is_some_and(|ts| (now_ms - ts).abs() <= SKEW_MS);
-    fresh && signature(secret, method, signed, body) == sig
+    let fresh = query(signed, "ts").and_then(|t| t.parse::<i64>().ok()).is_some_and(|ts| now_ms.abs_diff(ts) <= SKEW_MS as u64);
+    let expected = signature(secret, method, signed, body);
+    fresh && expected.len() == sig.len() && expected.bytes().zip(sig.bytes()).fold(0, |difference, (a, b)| difference | (a ^ b)) == 0
 }
 
 /// Parameter `key` of a request target, undecoded (doors are only sent unreserved characters).
@@ -57,10 +58,19 @@ impl Inside {
 }
 
 struct Shared {
-    secret: String,
+    secret: Mutex<String>,
     closed: AtomicBool,
     inside: Mutex<Inside>,
     handler: Handler,
+    jam: Mutex<Option<LanJam>>,
+}
+
+struct LanJam {
+    invite: String,
+    revoked: HashSet<String>,
+    members: Vec<(String, Member)>,
+    handler: Arc<Handler>,
+    changed: Arc<dyn Fn(Vec<Member>) + Send + Sync>,
 }
 
 /// A controllable device's listener. Its thread blocks in `accept` (no wakeups); each connection gets a
@@ -75,7 +85,7 @@ impl Door {
     pub fn open(me: Member, secret: String, handler: Handler) -> std::io::Result<Door> {
         let listener = TcpListener::bind(("0.0.0.0", 0))?;
         let port = listener.local_addr()?.port();
-        let shared = Arc::new(Shared { secret, closed: AtomicBool::new(false), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0 }), handler });
+        let shared = Arc::new(Shared { secret: Mutex::new(secret), closed: AtomicBool::new(false), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0 }), handler, jam: Mutex::new(None) });
         let s = shared.clone();
         std::thread::Builder::new().name("nori-door".into()).spawn(move || {
             for conn in listener.incoming() {
@@ -88,6 +98,34 @@ impl Door {
             }
         })?;
         Ok(Door { port, shared })
+    }
+
+    /// Rotates paired-device access without changing the independent jam credentials.
+    pub fn pair_secret(&self, secret: String) {
+        *self.shared.secret.lock() = secret;
+        self.change(|_| {});
+    }
+
+    /// Opens a room whose invite and member credentials cannot control paired devices.
+    pub fn open_jam(&self, invite: String, handler: Handler, changed: Box<dyn Fn(Vec<Member>) + Send + Sync>) {
+        *self.shared.jam.lock() = Some(LanJam { invite, revoked: HashSet::new(), members: Vec::new(), handler: Arc::new(handler), changed: Arc::from(changed) });
+        self.change(|_| {});
+    }
+
+    pub fn close_jam(&self) {
+        *self.shared.jam.lock() = None;
+        self.change(|_| {});
+    }
+
+    pub fn kick(&self, member: &str) {
+        let mut jam = self.shared.jam.lock();
+        if let Some(jam) = jam.as_mut() {
+            let revoked: Vec<_> = jam.members.iter().filter(|(_, m)| m.id == member).map(|(key, _)| key.clone()).collect();
+            jam.revoked.extend(revoked);
+            jam.members.retain(|(_, m)| m.id != member);
+        }
+        drop(jam);
+        self.change(|_| {});
     }
 
     pub fn port(&self) -> u16 {
@@ -177,11 +215,32 @@ fn read_request(r: &mut impl BufRead) -> Option<(String, String, Vec<u8>)> {
 /// The answer to a request read at `received_us` (the device's clock) from `conn`; None when the
 /// controller hung up while its poll was held.
 fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8], received_us: i64) -> Option<(&'static str, String)> {
-    if !verified(&s.secret, method, target, body, now_ms()) {
-        return Some(("401 Unauthorized", "{}".into()));
-    }
-    let Some(dev) = query(target, "dev").map(str::to_string) else { return Some(("400 Bad Request", "{}".into())) };
     let path = target.split('?').next().unwrap_or_default();
+    if path == "/rest/noriRemote.join" {
+        let mut jams = s.jam.lock();
+        let Some(jam) = jams.as_mut() else { return Some(("401 Unauthorized", "{}".into())) };
+        if !verified(&jam.invite, method, target, body, now_ms()) || jam.members.len() >= 32 {
+            return Some(("401 Unauthorized", "{}".into()));
+        }
+        let Some(nonce) = query(target, "nonce").filter(|nonce| nonce.len() == 64 && nonce.bytes().all(|b| b.is_ascii_hexdigit())) else { return Some(("400 Bad Request", "{}".into())) };
+        let secret = super::member_secret(&jam.invite, nonce);
+        if jam.revoked.contains(&secret) { return Some(("401 Unauthorized", "{}".into())); }
+        if jam.members.iter().any(|(key, _)| key == &secret) { return Some(("200 OK", "{}".into())); }
+        let id = super::account_tag("guest", &secret);
+        let name = query(target, "name").and_then(crate::decode).unwrap_or_default();
+        jam.members.push((secret.clone(), Member { id, name, kind: crate::wire::DeviceKind::Guest, state: None }));
+        let changed = jam.changed.clone();
+        let members = jam.members.iter().map(|(_, m)| m.clone()).collect();
+        drop(jams);
+        changed(members);
+        return Some(("200 OK", "{}".into()));
+    }
+    let guest = if verified(&s.secret.lock(), method, target, body, now_ms()) { None } else {
+        let jam = s.jam.lock();
+        let member = jam.as_ref().and_then(|j| j.members.iter().find(|(key, _)| verified(key, method, target, body, now_ms()))).map(|(_, m)| m.id.clone());
+        match member { Some(id) => Some(id), None => return Some(("401 Unauthorized", "{}".into())) }
+    };
+    let Some(dev) = guest.clone().or_else(|| query(target, "dev").map(str::to_string)) else { return Some(("400 Bad Request", "{}".into())) };
     match path {
         "/rest/noriRemote.poll" => {
             let since = query(target, "since").and_then(|v| v.parse::<u64>().ok());
@@ -190,14 +249,37 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
             if let (Some(since), true) = (since, hold) {
                 hold_poll(s, &mut i, conn, since)?;
             }
+            // A pairing reset or revoked membership can wake a held poll.
+            if guest.is_none() && !verified(&s.secret.lock(), method, target, body, now_ms()) {
+                return Some(("401 Unauthorized", "{}".into()));
+            }
             let events = i
                 .events
                 .iter()
                 .filter(|(seq, to, _)| since.is_some_and(|since| *seq > since) && *to == dev)
-                .map(|(seq, _, body)| Event { seq: *seq, room: ROOM.into(), from: i.me.id.clone(), body: body.clone() })
+                .map(|(seq, _, body)| Event { seq: *seq, room: if guest.is_some() { "lan-jam".into() } else { ROOM.into() }, from: i.me.id.clone(), body: body.clone() })
                 .collect();
-            let a = Answer { seq: i.seq, you: dev.clone(), rooms: vec![Room { room: ROOM.into(), jam: false, members: vec![i.me.clone()] }], events, ..Default::default() };
+            let (room, members) = if guest.is_some() {
+                let jam = s.jam.lock();
+                let Some(jam) = jam.as_ref() else { return Some(("401 Unauthorized", "{}".into())) };
+                if !jam.members.iter().any(|(key, member)| member.id == dev && verified(key, method, target, body, now_ms())) {
+                    return Some(("401 Unauthorized", "{}".into()));
+                }
+                ("lan-jam", std::iter::once(i.me.clone()).chain(jam.members.iter().map(|(_, m)| m.clone())).collect())
+            } else { (ROOM, vec![i.me.clone()]) };
+            let a = Answer { seq: i.seq, you: dev.clone(), rooms: vec![Room { room: room.into(), jam: guest.is_some(), members }], events, along: guest.is_some(), ..Default::default() };
             Some(("200 OK", serde_json::to_string(&a).unwrap_or_default()))
+        }
+        "/rest/noriRemote.leave" if guest.is_some() => {
+            let mut jams = s.jam.lock();
+            if let Some(jam) = jams.as_mut() {
+                jam.members.retain(|(_, m)| m.id != dev);
+                let changed = jam.changed.clone();
+                let members = jam.members.iter().map(|(_, m)| m.clone()).collect();
+                drop(jams);
+                changed(members);
+            }
+            Some(("200 OK", "{}".into()))
         }
         // A time exchange (`crate::clock`), answered at once, stamped as near the socket as this gets.
         "/rest/noriRemote.time" => {
@@ -208,7 +290,10 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
         "/rest/noriRemote.send" if method == "POST" => {
             let Ok(out) = serde_json::from_slice::<Outgoing>(body) else { return Some(("400 Bad Request", "{}".into())) };
             if let Some(b) = out.body {
-                (s.handler)(&dev, b);
+                if guest.is_some() {
+                    let handler = s.jam.lock().as_ref().map(|jam| jam.handler.clone());
+                    if let Some(handler) = handler { handler(&dev, b); }
+                } else { (s.handler)(&dev, b); }
             }
             let seq = s.inside.lock().seq;
             Some(("200 OK", format!(r#"{{"seq":{seq}}}"#)))
@@ -354,6 +439,70 @@ mod tests {
         let mut b = vec![0; length];
         r.read_exact(&mut b).unwrap();
         (status.split_whitespace().nth(1).unwrap().parse().unwrap(), String::from_utf8(b).unwrap())
+    }
+
+    #[test]
+    fn held_polls_recheck_access() {
+        for guest in [false, true] {
+            let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(|_, _| {})).unwrap();
+            let secret = if guest {
+                door.open_jam("invite-secret".into(), Box::new(|_, _| {}), Box::new(|_| {}));
+                let nonce = "a".repeat(64);
+                let join = format!("/rest/noriRemote.join?name=Guest&nonce={nonce}");
+                assert_eq!(request(door.port(), "invite-secret", "GET", &join, "").0, 200);
+                super::super::member_secret("invite-secret", &nonce)
+            } else { "paired-secret".into() };
+            let (_, body) = request(door.port(), &secret, "GET", "/rest/noriRemote.poll?dev=own", "");
+            let first: Answer = serde_json::from_str(&body).unwrap();
+            let port = door.port();
+            let held = std::thread::spawn(move || request(port, &secret, "GET", &format!("/rest/noriRemote.poll?dev=own&since={}&hold=1", first.seq), ""));
+            let until = Instant::now() + Duration::from_secs(5);
+            while door.shared.inside.lock().holds.is_empty() {
+                assert!(Instant::now() < until, "poll reached its hold");
+                std::thread::yield_now();
+            }
+            if guest { door.kick(&first.you); } else { door.pair_secret("new-paired-secret".into()); }
+            assert_eq!(held.join().unwrap().0, 401, "held poll is revoked, guest={guest}");
+        }
+    }
+
+    #[test]
+    fn jam_credentials_are_scoped_and_revoked() {
+        let device_commands = Arc::new(Mutex::new(Vec::new()));
+        let jam_commands = Arc::new(Mutex::new(Vec::new()));
+        let members = Arc::new(Mutex::new(Vec::new()));
+        let got = device_commands.clone();
+        let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body)))).unwrap();
+        let got = jam_commands.clone();
+        let listed = members.clone();
+        door.open_jam("invite-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body))), Box::new(move |m| *listed.lock() = m));
+        let nonce = "a".repeat(64);
+        let join = format!("/rest/noriRemote.join?name=Guest&nonce={nonce}");
+        assert_eq!(request(door.port(), "wrong", "GET", &join, "").0, 401);
+        let (status, body) = request(door.port(), "invite-secret", "GET", &join, "");
+        assert_eq!(status, 200);
+        let secret = super::super::member_secret("invite-secret", &nonce);
+        assert!(!body.contains(&secret), "member credentials are derived, never sent");
+        assert_eq!(request(door.port(), "invite-secret", "GET", "/rest/noriRemote.poll?dev=pretender", "").0, 401, "invite cannot control devices or poll");
+        let (_, body) = request(door.port(), &secret, "GET", "/rest/noriRemote.poll?dev=host", "");
+        let answer: Answer = serde_json::from_str(&body).unwrap();
+        assert!(answer.rooms[0].jam && answer.along);
+        assert_ne!(answer.you, "host", "identity comes from the credential");
+        assert_eq!(members.lock().len(), 1);
+        let command = serde_json::to_string(&Outgoing { body: Some(Body::Command { id: 1, op: Box::new(Op::Pause) }), ..Default::default() }).unwrap();
+        assert_eq!(request(door.port(), &secret, "POST", "/rest/noriRemote.send?dev=host", &command).0, 200);
+        assert!(device_commands.lock().is_empty(), "guests only reach the jam permission boundary");
+        assert_eq!(jam_commands.lock()[0].0, answer.you);
+        door.pair_secret("new-paired-secret".into());
+        assert_eq!(request(door.port(), "paired-secret", "GET", "/rest/noriRemote.poll?dev=own", "").0, 401);
+        assert_eq!(request(door.port(), &secret, "GET", "/rest/noriRemote.poll?dev=guest", "").0, 200, "pair rotation preserves the separate jam");
+        door.kick(&answer.you);
+        assert_eq!(request(door.port(), &secret, "GET", "/rest/noriRemote.poll?dev=guest", "").0, 401);
+        assert_eq!(request(door.port(), "invite-secret", "GET", &join, "").0, 401, "replaying the join cannot revive a revoked member");
+        door.close_jam();
+        assert_eq!(request(door.port(), &secret, "GET", "/rest/noriRemote.poll?dev=guest", "").0, 401);
+        assert_eq!(request(door.port(), "invite-secret", "GET", &join, "").0, 401);
+        assert_eq!(request(door.port(), "new-paired-secret", "GET", "/rest/noriRemote.poll?dev=own", "").0, 200);
     }
 
     #[test]

@@ -3,6 +3,12 @@ import Foundation
 /// The app's words. The library answers with codes and keys; this is where they become English,
 /// following the Android app's `strings.xml`.
 enum Say {
+    static let pairDevices = "Pair devices"
+    static let forgetDevices = "Forget paired devices"
+    static let pairHow = "Copy this device's code to your other device, or paste its pairing code here. Only pair devices you own."
+    static let pairCopy = "Copy my pairing code"
+    static let pairAccept = "Pair"
+    static let pairFailed = "Pairing failed"
     static let mixing = "Mixing"
     static let jamNotPlayingHere = "Not playing here"
     static func shelf(_ key: String) -> String {
@@ -238,7 +244,7 @@ enum Say {
         case "youtubeMusic":
             return ProviderWords(
                 name: "YouTube Music",
-                note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Favorites, playlists, downloads, scrobbling, remote control and jams are off.",
+                note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.",
                 add: "Add YouTube Music")
         default:
             return ProviderWords(name: kind, note: "", add: connect)

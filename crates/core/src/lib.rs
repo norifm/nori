@@ -392,11 +392,15 @@ pub struct Core {
     stars: Mutex<stars::StarMarks>,
     remote: Mutex<std::sync::Weak<remote::Remote>>,
     cache_revision: AtomicU64,
+    /// A provider's answers this session, by cache key, with when they came ([`Client::kept_stored`]).
+    kept: Mutex<std::collections::HashMap<String, (cache_policy::Page, i64)>>,
     /// The queue this core saves and restores and its clients fill.
     pub session: Arc<nori_queue::Session>,
     /// The user and the Subsonic secret (password or API key) the LAN's remote control proves the account
     /// with; None for a jam guest.
     account: RwLock<Option<(String, String)>>,
+    /// Endpoint and scoped credential of a temporary LAN jam guest.
+    lan_jam: RwLock<Option<(String, String)>>,
     /// The user and password Navidrome's own API logs in with; None with an API key.
     native_login: RwLock<Option<(String, String)>>,
     /// What the app offers over the profile (a jam guest's: the host's library, read only).
@@ -505,8 +509,9 @@ impl Core {
             stars: Mutex::new(stars::StarMarks::default()),
             remote: Mutex::default(),
             cache_revision: AtomicU64::new(0),
+            kept: Mutex::default(),
             session,
-            account: RwLock::new(None),
+            account: RwLock::new(None), lan_jam: RwLock::new(None),
             native_login: RwLock::new(None),
             rules: RwLock::new(browse::profile_rules(false)),
             provider: RwLock::default(),
@@ -730,7 +735,8 @@ impl Core {
     /// Drops cached responses whose key starts with `prefix`.
     pub(crate) fn cache_evict(&self, prefix: String) -> Result<()> {
         let c = self.db.lock();
-        c.execute("DELETE FROM cache WHERE server=sid() AND key >= ?1 AND key < ?1 || x'ff'", [prefix])?;
+        c.execute("DELETE FROM cache WHERE server=sid() AND key >= ?1 AND key < ?1 || x'ff'", [&prefix])?;
+        self.kept.lock().retain(|k, _| !k.starts_with(&prefix));
         self.cache_revision.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }

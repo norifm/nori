@@ -61,6 +61,11 @@ pub fn invite_link(server: &str, invite: &str) -> String {
     format!("{}{INVITE_PAGE}#s={}&k={}", server.trim_end_matches('/'), encode(server), encode(invite))
 }
 
+/// An app invitation for a LAN host without a web landing page.
+pub fn app_invite_link(server: &str, invite: &str) -> String {
+    format!("{APP_INVITE}?s={}&k={}", encode(server), encode(invite))
+}
+
 /// The relay's address and the invite key of an invite link, the page's or the app's; None for anything else.
 pub fn parse_invite(link: &str) -> Option<(String, String)> {
     let link = link.trim();

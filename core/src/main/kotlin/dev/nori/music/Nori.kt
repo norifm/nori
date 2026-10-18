@@ -127,8 +127,7 @@ class Nori private constructor(private val context: Context) {
     suspend fun joinJam(link: String): dev.nori.music.ffi.JamJoin = withContext(Dispatchers.IO) {
         val joined = lifted { dev.nori.music.ffi.jamJoin(transport, settings.core, remotes.peek(), link, dev.nori.music.remote.Remotes.deviceName(context)) }
         if (joined is dev.nori.music.ffi.JamJoin.Joined) {
-            val guest = dev.nori.music.settings.newServer(dev.nori.music.ffi.settings.newServerId())
-                .copy(name = context.getString(dev.nori.music.core.R.string.jam_profile), url = joined.pass.url, apiKey = joined.pass.apiKey)
+            val guest = dev.nori.music.ffi.jamProfile(joined.pass, dev.nori.music.ffi.settings.newServerId(), context.getString(dev.nori.music.core.R.string.jam_profile))
             withContext(Dispatchers.Main) { activate(guest) }
         }
         joined

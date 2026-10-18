@@ -15,6 +15,9 @@ use crate::providers::{AccountState, SignInResult};
 /// The profile row the session is kept in.
 const KEY: &str = "youtube_session";
 
+/// The profile row YouTube's visitor id is kept in: the same visitor is served the same Home.
+const VISITOR: &str = "youtube_visitor";
+
 /// The session as kept.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,12 +38,15 @@ pub(super) fn unix_now() -> u64 {
 }
 
 impl State {
-    /// The kept session, read from the profile's rows on first use; signed in, its cookies are the
-    /// requests'.
+    /// The kept session, read from the profile's rows on first use with the kept visitor id; signed in,
+    /// its cookies are the requests'.
     fn kept(&self, c: &Client) -> Option<Kept> {
         let mut s = self.session.0.lock();
         if s.is_none() {
-            let kept: Option<Kept> = crate::db::kv_get(&c.core.db.lock(), KEY).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
+            let db = c.core.db.lock();
+            self.api.set_visitor(crate::db::kv_get(&db, VISITOR).ok().flatten());
+            let kept: Option<Kept> = crate::db::kv_get(&db, KEY).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
+            drop(db);
             if let Some(k) = kept.as_ref().filter(|k| !k.ended) {
                 self.api.set_cookies(Some(yt::Cookies::parse(&k.cookies)));
             }
@@ -84,8 +90,14 @@ impl State {
         }
     }
 
-    /// After a call: cookies YouTube changed are kept at once; a session it refused is marked ended.
+    /// After a call: a visitor id and cookies YouTube gave are kept at once; a session it refused is
+    /// marked ended.
     pub(super) fn after<T>(&self, c: &Client, r: yt::Result<T, crate::transport::NetError>) -> NetResult<T> {
+        if let Some(visitor) = self.api.take_new_visitor() {
+            if let Err(e) = crate::db::kv_put(&c.core.db.lock(), VISITOR, &visitor) {
+                crate::alog::info(&format!("YouTube visitor id: could not keep it: {e}"));
+            }
+        }
         if let Some(kept) = self.kept(c).filter(|k| !k.ended) {
             if matches!(r, Err(yt::Error::SignedOut)) {
                 self.keep(c, Some(Kept { ended: true, ..kept }));

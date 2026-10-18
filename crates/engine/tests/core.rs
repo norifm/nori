@@ -76,6 +76,36 @@ fn beat_wav() -> Vec<u8> {
 }
 
 #[test]
+fn webm_arrivals_keep_analysis_and_voice() {
+    let dir = nori_testdir::TempDir::new("webm-analysis");
+    let (core, client) = common::own_core(&dir, |p| p.auto_mix = true);
+    let songs: Vec<Song> = ["yt-a", "yt-b"].map(|id| Song { id: id.into(), duration: 40, ..Default::default() }).into();
+    core.session.register(songs.clone());
+    core.session.set(songs.iter().map(|s| s.id.clone()).collect(), Some(0), false, None);
+    let input = dir.join("beat.wav");
+    let output = dir.join("beat.webm");
+    std::fs::write(&input, beat_wav()).unwrap();
+    let made = std::process::Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-y", "-i"]).arg(input)
+        .args(["-c:a", "libopus", "-b:a", "128k"]).arg(&output).status().unwrap();
+    assert!(made.success());
+    let bytes = std::fs::read(output).unwrap();
+    let analyses = Analyses::new(move || Some(client.clone()));
+    for song in &songs {
+        let mut listening = analyses.measure_as_it_comes(&song.id, None, true).expect("measuring the playback bytes");
+        for piece in bytes.chunks(256 << 10) { listening.take(piece); }
+        listening.end(true);
+        analyses.wait_arrivals();
+        let found = core.analysis_get(song.id.clone()).unwrap().expect("a whole WebM song is analyzed");
+        assert!((found.duration_ms - 40_000).abs() < 100, "{} ms", found.duration_ms);
+        assert!(nori_core::race::LyricsCache::voice(&*core, song).is_some(), "the same pass keeps the vocal curve for lyrics sync");
+    }
+    core.session.window();
+    let plan = core.session.planner.plan_for("yt-a").expect("a transition from the two analyses");
+    assert_eq!(plan.incoming_id, "yt-b");
+    assert!(plan.mixer.duration_ms > 0);
+}
+
+#[test]
 fn downloads_and_measuring_over_core() {
     let dir = nori_testdir::TempDir::new("core");
     let settings = Arc::new(nori_core::settings_store::Settings::default());

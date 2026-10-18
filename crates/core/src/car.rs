@@ -42,7 +42,14 @@ impl Client {
     /// Page `page` of `page_size` rows of the root's tabs, `limit` at most, the downloads first while
     /// `offline` (nori-library's `root`).
     pub fn car_root(&self, limit: u32, offline: bool, page: u32, page_size: u32) -> BrowsePage {
-        page_of(&BrowsePage { folders: root(limit, offline), ..Default::default() }, page, page_size)
+        let rules = self.core.rules();
+        let folders = root(4, offline).into_iter().filter(|f| match f.kind {
+            Some(CarFolder::Favourites) => rules.stars,
+            Some(CarFolder::Library) => rules.account || rules.sections.iter().any(|s| matches!(s, crate::browse::LibrarySection::Albums | crate::browse::LibrarySection::Playlists)),
+            Some(CarFolder::Downloads) => rules.downloads,
+            _ => true,
+        }).take(limit.max(1) as usize).collect();
+        page_of(&BrowsePage { folders, ..Default::default() }, page, page_size)
     }
 
     /// Page `page` of `page_size` rows of folder `parent`: nothing for one that is not known, `failed`
@@ -140,9 +147,19 @@ impl Client {
     async fn listed(&self, parent: &str) -> BrowsePage {
         let (kind, arg) = parent.split_once(':').unwrap_or((parent, ""));
         let page = match kind {
-            ROOT => BrowsePage { folders: root(4, false), ..Default::default() },
+            ROOT => self.car_root(4, false, 0, u32::MAX),
             "home" => self.car_home().await,
-            "library" => BrowsePage { folders: library(), ..Default::default() },
+            "library" => {
+                let rules = self.core.rules();
+                let folders = if rules.feed {
+                    library().into_iter().filter(|f| match f.kind {
+                        Some(CarFolder::Albums) => rules.sections.contains(&crate::browse::LibrarySection::Albums),
+                        Some(CarFolder::Playlists) => rules.sections.contains(&crate::browse::LibrarySection::Playlists),
+                        _ => false,
+                    }).collect()
+                } else { library() };
+                BrowsePage { folders, ..Default::default() }
+            },
             "albums" => match crate::browse::AlbumSort::of_api(arg) {
                 Some(crate::browse::AlbumSort::ByName) => match self.every_album(crate::browse::AlbumSort::ByName, None).await {
                     Some(v) => BrowsePage { folders: album_folders(&v, None, usize::MAX), ..Default::default() },
@@ -247,6 +264,23 @@ impl Client {
 
     /// Home: favourites and today's mixes as on the phone's Home, then what was played and added lately.
     async fn car_home(&self) -> BrowsePage {
+        if self.core.rules().feed {
+            let Ok(Some(Page::Feed { v })) = self.cached_or_fetched(Read::HomeFeed).await else { return failed() };
+            let mut songs = Vec::new();
+            let mut folders = Vec::new();
+            for shelf in v {
+                for song in shelf.songs {
+                    if !songs.iter().any(|s: &Song| s.id == song.id) { songs.push(song); }
+                }
+                folders.extend(album_folders(&shelf.albums, Some(CarGroup::Albums), usize::MAX));
+                folders.extend(shelf.playlists.iter().map(playlist_folder));
+                folders.extend(shelf.artists.iter().map(|a| artist_folder(a, Some(CarGroup::Artists))));
+            }
+            let mut page = self.songs_page(songs, false);
+            page.folders = folders;
+            page.songs_group = Some(CarGroup::Songs);
+            return page;
+        }
         let taste = self.settings().prefs(|p| p.taste_model);
         // The starred songs handed to the mixes, as the Home row hands them before it is drawn.
         if let Ok(h) = self.mix_favourites_stored() {
