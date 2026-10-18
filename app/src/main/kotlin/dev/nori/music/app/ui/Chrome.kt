@@ -515,6 +515,12 @@ private val pagePalette = androidx.compose.runtime.mutableStateOf<PagePalette?>(
 val LocalChromeInset = androidx.compose.runtime.compositionLocalOf { 0.dp }
 
 /**
+ * Whether the page this is in is on its way out: being popped, or held by a swipe back, which may yet put it
+ * back (and the chrome turns back with it).
+ */
+val LocalPageLeaving = androidx.compose.runtime.compositionLocalOf { false }
+
+/**
  * Pages whose cover's colors are still being worked out. While there are any, the chrome keeps the
  * colors it has: from one album to the next they went to the playing song's (or the
  * theme's) for the moment the new cover took, and then to the new page's, flashing twice where the page
@@ -523,12 +529,17 @@ val LocalChromeInset = androidx.compose.runtime.compositionLocalOf { 0.dp }
 private val pagesWaiting = androidx.compose.runtime.mutableIntStateOf(0)
 
 /**
- * A tinted page (an album, an artist, the player) lends its colours to the chrome while it is open.
+ * A tinted page (an album, an artist, the player) lends its colours to the chrome while it is open, and
+ * gives them back as soon as it is on its way out ([LocalPageLeaving]): the chrome fades to the page coming
+ * back while the two cross, not after. Kept until the page was gone, the pill wore the old page's colour
+ * over the old page's colour as it slid under it, and nothing of the pill showed for a moment.
  * [waiting]: it will have colours, but they are not worked out yet.
  */
 @Composable
 fun PageTint(palette: PagePalette?, waiting: Boolean = false) {
-    androidx.compose.runtime.DisposableEffect(palette, waiting) {
+    val leaving = LocalPageLeaving.current
+    androidx.compose.runtime.DisposableEffect(palette, waiting, leaving) {
+        if (leaving) return@DisposableEffect onDispose {}
         if (waiting) pagesWaiting.intValue++ else pagePalette.value = palette
         onDispose {
             if (waiting) pagesWaiting.intValue--

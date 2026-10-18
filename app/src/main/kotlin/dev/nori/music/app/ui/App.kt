@@ -439,8 +439,6 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             val cutout = androidx.compose.foundation.layout.WindowInsets.displayCutout.asPaddingValues()
             val pageStart = if (!wide) 0.dp else if (chromeLeft) sideRoom else cutout.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
             val pageEnd = if (!wide) 0.dp else if (chromeLeft) cutout.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else sideRoom
-            val beyond = with(androidx.compose.ui.platform.LocalDensity.current) { (pageStart + pageEnd).roundToPx() }
-            androidx.compose.runtime.SideEffect { swipe.beyond = beyond.toFloat(); PageMotion.beyond = beyond }
             // A turn of the phone: the system dissolves the old layout into the new (MainActivity), the chrome is
             // laid out again where it already lay, and its glyphs turn upright from where they were.
             val turn = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -480,8 +478,10 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
               }
               CompositionLocalProvider(LocalStarMarks provides marks, LocalChromeInset provides chromeHeight) {
               val pageBackground = MaterialTheme.colorScheme.background
+              // The pages span the whole width and keep their content off the strips themselves (Page): the stack
+              // clips to its own bounds while some of its changes run, and a page's colour and rows run on under the strips.
               Box(
-                  Modifier.fillMaxSize().padding(start = pageStart, end = pageEnd)
+                  Modifier.fillMaxSize()
                       // What the chrome blurs behind itself (Pill).
                       .drawsBackdrop(backdrop)
                       .onSizeChanged { swipe.width = it.width.toFloat() }
@@ -530,7 +530,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 }
                 // A newer release, and its download and install once asked for; under the player, so the
                 // player covers it. See UpdateBanner.
-                UpdateBanner(settings, Modifier.align(Alignment.TopCenter))
+                UpdateBanner(settings, Modifier.align(Alignment.TopCenter).padding(start = pageStart, end = pageEnd))
                 ChangelogDialog(settings)
               }
               }
@@ -675,9 +675,6 @@ internal object PageMotion {
     /** The pop under way has been shown by [PageSwipe] already: the stack changes with no motion. */
     var instant = false
 
-    /** How far past their sides pages draw, px ([PageSwipe.beyond]): a page coming in or going out travels it too. */
-    var beyond = 0
-
     /**
      * True while the change under way is a pop, false for a push, null for a tab change or none. Read by
      * each page in flight: the page coming in on a push and the page leaving on a pop are on top; the
@@ -705,7 +702,7 @@ internal object PageMotion {
     fun enter(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean): androidx.compose.animation.EnterTransition {
         if (s.begin(pop = false)) return fadeIn(if (plain) 90 else TAB_MS)
         if (plain) return fadeIn(90)
-        return androidx.compose.animation.slideInHorizontally(travel) { it + beyond }
+        return androidx.compose.animation.slideInHorizontally(travel) { it }
     }
 
     fun exit(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean): androidx.compose.animation.ExitTransition {
@@ -725,7 +722,7 @@ internal object PageMotion {
         if (instant) { pop = null; return androidx.compose.animation.ExitTransition.None }
         if (s.begin(pop = true)) return fadeOut(if (plain) 90 else TAB_MS)
         if (plain) return fadeOut(90)
-        return androidx.compose.animation.slideOutHorizontally(travel) { it + beyond }
+        return androidx.compose.animation.slideOutHorizontally(travel) { it }
     }
 
     /** The page coming back under the back gesture when the stack scrubs it, from the side the swipe started on. */
@@ -739,7 +736,7 @@ internal object PageMotion {
     fun held(s: androidx.compose.animation.AnimatedContentTransitionScope<androidx.navigation.NavBackStackEntry>, plain: Boolean, edge: Int): androidx.compose.animation.ExitTransition {
         if (s.begin(pop = true)) return fadeOut(if (plain) 90 else TAB_MS)
         if (plain) return fadeOut(90)
-        return androidx.compose.animation.slideOutHorizontally(heldTravel()) { side(edge) * (it + beyond) }
+        return androidx.compose.animation.slideOutHorizontally(heldTravel()) { side(edge) * it }
     }
 
     /** How dark a page in [state] is: only the page underneath, covered on a push or uncovered on a pop. */
@@ -753,8 +750,9 @@ internal object PageMotion {
     fun dimSpec(plain: Boolean): androidx.compose.animation.core.FiniteAnimationSpec<Float> =
         if (plain) androidx.compose.animation.core.tween(90) else androidx.compose.animation.core.tween(MS, easing = Settle)
 
-    /** The shadow the page on top casts on the one under it while it moves. */
+    /** The shadow the page on top casts on the one under it while it moves: how far it reaches, and how dark at the edge. */
     val EDGE_SHADOW = 16.dp
+    const val EDGE_SHADE = 0.28f
 }
 
 /**
@@ -783,40 +781,51 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
         null -> false
     }
     val top = entry.destination.route !in PageSwipe.ROOTS && transition.targetState == androidx.compose.animation.EnterExitState.Visible
-    // On its side a page draws on past its sides, under the camera's strip and the chrome's (HeroPage): its
-    // shadow and its background reach as far, so the edge that casts the shadow is the edge that shows.
-    val out = PageOut(LocalPageStart.current, LocalPageEnd.current)
-    // Where the page stands in the window, the motion's slide included: its shadow goes as its edge reaches
-    // the edge of the pages (the screen's, or the side chrome's), rather than showing past the chrome after
-    // the edge that casts it has gone under it.
+    // On its side a page spans the strips beside it (the camera's, the chrome's) and keeps its content off them; its
+    // background and rows run on under them (HeroPage, bleedsToEdges), and its edges are the screen's.
+    val outStart = LocalPageStart.current
+    val outEnd = LocalPageEnd.current
+    // Where the page stands in the window, the motion's slide included: its shadow goes as its edge reaches the
+    // edge of the pages (the strip's), rather than showing past the chrome after the edge that casts it has gone under it.
     var at by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     Box(
         Modifier.fillMaxSize()
             .onGloballyPositioned { at = it.positionInRoot().x }
-            .graphicsLayer {
-                translationX = if (swiped) swipe.offset else 0f
-                val start = out.start.toPx()
-                val x = at + translationX
-                val room = minOf(start + size.width - (x - start), x + size.width + out.end.toPx() - start)
-                val shadow = PageMotion.EDGE_SHADOW.toPx()
-                shadowElevation = if (onTop) shadow * (room / (shadow * 2f)).coerceIn(0f, 1f) else 0f
-                shape = out
+            .graphicsLayer { translationX = if (swiped) swipe.offset else 0f }
+            .drawBehind {
+                if (!moving && !swiped) return@drawBehind
+                drawRect(background)
+                if (!onTop) return@drawBehind
+                // Drawn beside the page rather than cast by an elevation: a layer with one is drawn in front of the
+                // chrome over the page, and the page passing under the side pill showed over it for a moment.
+                val x = at + if (swiped) swipe.offset else 0f
+                val room = minOf(size.width - outEnd.toPx() - x, x + size.width - outStart.toPx())
+                val w = PageMotion.EDGE_SHADOW.toPx()
+                val shade = androidx.compose.ui.graphics.Color.Black.copy(alpha = PageMotion.EDGE_SHADE * (room / (w * 2f)).coerceIn(0f, 1f))
+                val clear = androidx.compose.ui.graphics.Color.Transparent
+                val soft = shade.copy(alpha = shade.alpha * 0.3f)
+                drawRect(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(0f to clear, 0.6f to soft, 1f to shade, startX = -w, endX = 0f),
+                    topLeft = androidx.compose.ui.geometry.Offset(-w, 0f), size = androidx.compose.ui.geometry.Size(w, size.height),
+                )
+                drawRect(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(0f to shade, 0.4f to soft, 1f to clear, startX = size.width, endX = size.width + w),
+                    topLeft = androidx.compose.ui.geometry.Offset(size.width, 0f), size = androidx.compose.ui.geometry.Size(w, size.height),
+                )
             }
-            .drawBehind { if (moving || swiped) with(out) { drawRect(background, topLeft = androidx.compose.ui.geometry.Offset(-start.toPx(), 0f), size = androidx.compose.ui.geometry.Size(size.width + (start + end).toPx(), size.height)) } }
             .drawWithContent {
                 layer.record { this@drawWithContent.drawContent() }
                 drawLayer(layer)
                 if (dim > 0.002f) drawRect(androidx.compose.ui.graphics.Color.Black.copy(alpha = dim))
             }
             .swipeBack(swipe, enabled = top),
-    ) { content() }
-}
-
-/** A page's outline: its own box and the [start] and [end] it draws on past it. */
-@androidx.compose.runtime.Immutable
-private data class PageOut(val start: androidx.compose.ui.unit.Dp, val end: androidx.compose.ui.unit.Dp) : androidx.compose.ui.graphics.Shape {
-    override fun createOutline(size: androidx.compose.ui.geometry.Size, layoutDirection: androidx.compose.ui.unit.LayoutDirection, density: androidx.compose.ui.unit.Density) =
-        with(density) { androidx.compose.ui.graphics.Outline.Rectangle(androidx.compose.ui.geometry.Rect(-start.toPx(), 0f, size.width + end.toPx(), size.height)) }
+    ) {
+        val leaving = swiped ||
+            PageMotion.pop == true && transition.targetState == androidx.compose.animation.EnterExitState.PostExit
+        androidx.compose.runtime.CompositionLocalProvider(LocalPageLeaving provides leaving) {
+            Box(Modifier.fillMaxSize().padding(start = outStart, end = outEnd)) { content() }
+        }
+    }
 }
 
 /**
