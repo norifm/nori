@@ -67,15 +67,17 @@ fi
 if want coldkey; then section "a play key with nori not running"
   # media3's receiver starts the service as a foreground service, which only playing brings into the
   # foreground: with nothing saved to play the press must start nothing (MediaButtons).
+  # A key pressed while the system still routes it to the stopped app's window or session is lost.
+  let_go() { ! adb shell dumpsys window | grep -q "mCurrentFocus=.*$pkg/" && ! adb shell dumpsys media_session | grep -q "Media button session is $pkg/"; }
   playing_now
   "$app" do pause >/dev/null; wait_for playing False 10 >/dev/null
-  adb shell am force-stop "$pkg" >/dev/null 2>&1
+  adb shell am force-stop "$pkg" >/dev/null 2>&1; wait_until 10 let_go
   key KEYCODE_MEDIA_PLAY
   check "resumes the saved queue" sounds 20
   app_up >/dev/null
   "$app" do clearqueue >/dev/null
   check "the emptied queue is saved" wait_until 15 bash -c "'$app' queuesaved 2>/dev/null | grep -qx false"
-  adb shell am force-stop "$pkg" >/dev/null 2>&1
+  adb shell am force-stop "$pkg" >/dev/null 2>&1; wait_until 10 let_go
   adb logcat -c
   key KEYCODE_MEDIA_PLAY
   declined() { adb logcat -d -s MediaButtonReceiver:I | grep -q "does not start the media button event target service"; }
