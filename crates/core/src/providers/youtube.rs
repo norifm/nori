@@ -605,14 +605,14 @@ mod tests {
 
     #[test]
     fn featured_collections_come_from_the_feed() {
-        let (c, t) = youtube(&[&fixture("home"), &fixture("home_more")]);
+        let (c, t) = youtube(&[&fixture("home"), &fixture("home_more"), &fixture("queue")]);
         let albums = block(c.featured_albums(1)).unwrap();
         assert_eq!(albums.len(), 1);
         assert!(albums[0].id.starts_with("yt-MPREb_"));
         let playlists = block(c.featured_playlists()).unwrap();
         assert_eq!(playlists.len(), 4);
         assert_eq!(playlists[0].id, "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA");
-        assert_eq!(t.asked.lock().len(), 2, "the feed is shared and no playlist or audio is opened");
+        assert_eq!(t.asked.lock().len(), 3, "the feed is shared and no playlist or audio is opened");
     }
 
     #[test]
@@ -677,11 +677,11 @@ mod tests {
     /// Home read again in the session is the page first shown, however long ago, without a request.
     #[test]
     fn home_stays_for_the_session() {
-        let (c, t) = youtube(&[&fixture("home"), &fixture("home_more"), &reshuffled_home(), &fixture("home_more")]);
+        let (c, t) = youtube(&[&fixture("home"), &fixture("home_more"), &fixture("queue"), &reshuffled_home(), &fixture("home_more")]);
         let first = feed(&c);
         c.core.kept.lock().values_mut().for_each(|(_, at)| *at = 0);
         assert_eq!(feed(&c), first);
-        assert_eq!(t.asked.lock().len(), 2);
+        assert_eq!(t.asked.lock().len(), 3);
     }
 
     /// The app started again takes YouTube's feed as it is now.
@@ -704,13 +704,13 @@ mod tests {
     /// added, at the end.
     #[test]
     fn a_refresh_adds_new_picks_without_reshuffling() {
-        let (c, t) = youtube(&[&reshuffled_home(), &fixture("home_more"), &fixture("home"), &fixture("home_more"), &reshuffled_home(), &fixture("home_more")]);
+        let (c, t) = youtube(&[&reshuffled_home(), &fixture("home_more"), &fixture("queue"), &fixture("home"), &fixture("home_more"), &fixture("queue"), &reshuffled_home(), &fixture("home_more"), &fixture("queue")]);
         let first = feed(&c);
         assert_eq!(first[0].0, "All hits");
         let picks = first[1].1.clone();
         c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
         let merged = feed(&c);
-        assert_eq!(t.asked.lock().len(), 4);
+        assert_eq!(t.asked.lock().len(), 6);
         assert_eq!(merged.iter().map(|s| &s.0).collect::<Vec<_>>(), first.iter().map(|s| &s.0).collect::<Vec<_>>(), "no shelf moves");
         assert_eq!(merged[1].1[..picks.len()], picks[..], "shown picks keep their places");
         assert_eq!(merged[1].1[picks.len()..], ["yt-hHZ4ej144rc".to_string()], "the new pick goes last");
@@ -962,7 +962,7 @@ mod tests {
     /// profile goes on as a visitor's until signed in again.
     #[test]
     fn a_refused_session_ends_but_is_not_wiped() {
-        let (c, t) = signed_in(601, vec![answer(401, "", &[]), answer(200, "home", &[]), answer(200, "home_more", &[])]);
+        let (c, t) = signed_in(601, vec![answer(401, "", &[]), answer(200, "home", &[]), answer(200, "home_more", &[]), answer(200, "queue", &[])]);
         let Page::Feed { v } = block(c.read_now(Read::HomeFeed)).unwrap() else { panic!() };
         assert_eq!(v.len(), 4, "everyone's feed");
         assert_eq!(c.account(), AccountState::Ended);
@@ -970,7 +970,7 @@ mod tests {
         assert!(kept.ended() && kept.cookies() == SESSION);
         assert!(!t.asked.lock()[1].headers.contains_key("Cookie"), "asked as a visitor");
         assert!(matches!(block(c.read_now(Read::PlaylistList)), Ok(Page::Playlists { v }) if v.is_empty()));
-        assert_eq!(t.asked.lock().len(), 3, "the library is not asked");
+        assert_eq!(t.asked.lock().len(), 4, "the library is not asked");
     }
 
     /// A refusal that a rotation does not set right ends the session too.

@@ -264,6 +264,11 @@ WIDGET
   "$app" play home >/dev/null
   check "the Home feed's first song plays" wait_for title "!$before" 30
   check "through the AudioTrack" sounds 45
+  # Home's rows show no length; the core asks YouTube for them, so the seek bar has one and moves.
+  home_song=$(field songId)
+  check "the Home song has its length" wait_for durationMs '>0' 5
+  check "and plays past 20 s" wait_for positionMs '>20000' 45
+  check "without moving on" wait_for songId "$home_song" 1
   # The feed is read once for the visit (the core keeps it): scrolled away and back, YouTube is not
   # asked again, so the shelves show what they showed.
   "$app" open home >/dev/null
