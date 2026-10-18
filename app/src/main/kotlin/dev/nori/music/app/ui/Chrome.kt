@@ -71,6 +71,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -131,8 +132,9 @@ fun BottomChrome(
                 }
             }
         }
-        Spacer(Modifier.height(BAR_OFF))
-        Spacer(Modifier.windowInsetsPadding(gestureBarRoom))
+        // The gesture bar's room is gap enough above its handle; without one the pill keeps off the edge.
+        val room = with(androidx.compose.ui.platform.LocalDensity.current) { gestureBarRoom.getBottom(this).toDp() }
+        Spacer(Modifier.height(room.coerceAtLeast(BAR_OFF)))
     }
 }
 
