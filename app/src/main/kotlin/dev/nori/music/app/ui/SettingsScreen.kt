@@ -171,6 +171,8 @@ private fun Flags(row: SettingRow.Flags, onChange: (String) -> Unit) {
 private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
     val following = row.chosen == row.following
     val worn = if (following) row.now else row.tiles.indexOfFirst { it.value == row.chosen }
+    // Across a wide window four upright tiles would fill the screen's height; there they lie on their side.
+    val tileRatio = if (LocalWide.current) WIDE_TILE else UPRIGHT_TILE
     Column(Modifier.spotlight(row.key)) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp), Arrangement.spacedBy(10.dp)) {
             row.tiles.forEachIndexed { i, t ->
@@ -179,7 +181,7 @@ private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
                 val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     androidx.compose.foundation.layout.Box(
-                        Modifier.fillMaxWidth().aspectRatio(0.84f).clip(shape)
+                        Modifier.fillMaxWidth().aspectRatio(tileRatio).clip(shape)
                             .background(androidx.compose.ui.graphics.Color(t.page))
                             .border(ring, if (i == worn) accent else MaterialTheme.colorScheme.outlineVariant, shape)
                             .clickable { if (t.value != row.chosen) onChange(t.value) }
@@ -199,6 +201,9 @@ private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
         Toggle(row.followTitle, row.follow, following) { on -> onChange(if (on) row.following else row.tiles[row.now].value) }
     }
 }
+
+private const val UPRIGHT_TILE = 0.84f
+private const val WIDE_TILE = 2f
 
 /** What a setting the app is going to ignore looks like: still there, still readable, plainly not live. */
 private const val DIMMED = 0.38f
