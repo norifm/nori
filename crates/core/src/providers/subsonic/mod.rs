@@ -1,16 +1,26 @@
-//! A Subsonic server's profile (Navidrome, octo-fiesta): the [`Client`]'s requests, response cache and
-//! offline write queue (client.rs, cache_policy.rs), its stream and cover URLs.
+//! A Subsonic server's profile (Navidrome, octo-fiesta): each read as an endpoint and its answer as a
+//! page (reads.rs, wire.rs), kept raw and read again; the server's addresses, signing, writes and their
+//! offline queue, and the library walk (server.rs); its stream and cover URLs.
+
+mod reads;
+mod server;
+pub(crate) mod wire;
 
 use std::sync::Arc;
 
-use super::{FieldSpec, FormField, Provider, ProviderInfo};
+use super::{Answer, FieldSpec, FormField, Provider, ProviderInfo};
 use crate::browse::{profile_rules, ProfileRules};
-use crate::cache_policy::{Page, Read, Stored};
-use crate::client::{login_check, Client, NetResult, Write};
+use crate::cache_policy::{Page, Read};
+use crate::client::{Client, NetResult, Write};
 use crate::settings::{SavedServer, ServerKind};
 use crate::stream::{StreamQuality, StreamTarget};
-use crate::transport::Transport;
+use crate::transport::{NetError, Transport};
 use crate::Core;
+
+pub use server::login_check;
+
+/// The Subsonic error for an item the server does not have.
+const NOT_FOUND: i32 = 70;
 
 pub(crate) struct Subsonic;
 
@@ -58,16 +68,22 @@ impl Provider for Subsonic {
         true
     }
 
-    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Page>> {
-        client.subsonic_read(read).await.map(Some)
+    /// The server's answer, kept raw; a server has no home feed.
+    async fn read(&self, client: &Client, read: Read) -> NetResult<Option<Answer>> {
+        let Some((endpoint, params, _)) = reads::request(&read) else { return Ok(None) };
+        Ok(Some(Answer::Raw(client.fetch(endpoint, params).await?)))
     }
 
-    fn read_stored(&self, client: &Client, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
-        client.subsonic_stored(read, within_ms)
+    fn parse(&self, client: &Client, read: &Read, raw: &[u8]) -> NetResult<Page> {
+        reads::page(client, read, raw)
     }
 
-    async fn read_fetch(&self, client: &Client, read: Read, digest: Option<u64>) -> NetResult<Option<Page>> {
-        client.subsonic_fetch(read, digest).await
+    fn scope(&self, client: &Client, read: &Read) -> String {
+        reads::scope(client, read)
+    }
+
+    fn gone(&self, e: &NetError) -> bool {
+        matches!(e, NetError::Api { code: NOT_FOUND, .. })
     }
 
     async fn write(&self, client: &Client, w: Write) -> NetResult<()> {
@@ -81,11 +97,11 @@ impl Provider for Subsonic {
 
     fn cover_address(&self, core: &Core, cover: &str, size: u32) -> String {
         let mut out = String::new();
-        crate::covers::cover_url_into(&mut out, &core.url_prefix("getCoverArt".into()), cover, size as i32);
+        crate::covers::cover_url_into(&mut out, &core.url_prefix("getCoverArt"), cover, size as i32);
         out
     }
 
     fn cover_prefix(&self, core: &Core) -> Option<String> {
-        Some(core.url_prefix("getCoverArt".into()))
+        Some(core.url_prefix("getCoverArt"))
     }
 }

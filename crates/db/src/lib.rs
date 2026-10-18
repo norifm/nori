@@ -92,6 +92,7 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
     c.execute_batch(APP_SCHEMA)?;
     c.execute_batch(SCHEMA)?;
     drop_old_lyrics(&c)?;
+    drop_old_pages(&c)?;
     Ok(c)
 }
 
@@ -108,6 +109,13 @@ fn connect(path: &str) -> rusqlite::Result<Connection> {
 /// Deletes this server's obsolete LRC lyrics cache (`lrclib2|` keys), via an index range scan.
 fn drop_old_lyrics(c: &Connection) -> rusqlite::Result<()> {
     c.execute("DELETE FROM cache WHERE server=sid() AND key >= 'lrclib2|' AND key < 'lrclib2|' || x'ff'", [])?;
+    Ok(())
+}
+
+/// Deletes this server's pages kept under the Subsonic request keys used before pages had keys of
+/// their own (`getAlbum&id=…`, `homeFeed`).
+fn drop_old_pages(c: &Connection) -> rusqlite::Result<()> {
+    c.execute("DELETE FROM cache WHERE server=sid() AND ((key >= 'get' AND key < 'geu') OR key = 'homeFeed')", [])?;
     Ok(())
 }
 

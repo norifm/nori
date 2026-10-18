@@ -1,11 +1,8 @@
-//! Client request values: the server profile, writes and the cached answers each makes stale.
+//! Client request values: the server profile and the writes.
 
 use crate::transport::NetError;
 
 pub type NetResult<T> = std::result::Result<T, NetError>;
-
-/// The endpoints that take `musicFolderId`.
-pub const FOLDERED: [&str; 7] = ["getAlbumList2", "getArtists", "search3", "getRandomSongs", "getStarred2", "getSongsByGenre", "getIndexes"];
 
 /// The parts of a server profile the client uses; headers, certificates and Wi-Fi only are the platform's.
 #[derive(Debug, Clone, Default)]
@@ -38,16 +35,6 @@ pub enum Starrable {
     Artist,
 }
 
-impl Starrable {
-    pub fn param(self) -> &'static str {
-        match self {
-            Starrable::Song => "id",
-            Starrable::Album => "albumId",
-            Starrable::Artist => "artistId",
-        }
-    }
-}
-
 /// Every change the app asks the server for.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -72,83 +59,5 @@ impl Write {
     /// Whether the server getting it twice changes nothing more.
     pub fn repeatable(&self) -> bool {
         !matches!(self, Write::CreatePlaylist { .. } | Write::AddToPlaylist { .. } | Write::RemoveFromPlaylist { .. } | Write::CreateRadio { .. })
-    }
-}
-
-/// Cached answers a star change makes stale, as key prefixes (keys are the endpoint then `&k=v` each, so
-/// `getAlbum&` is an album page and not an album list).
-const STAR_STALE: [&str; 5] = ["getStarred2", "getAlbum&", "getArtist&", "getPlaylist&", "getAlbumList2&type=starred"];
-/// Cached answers a playlist change makes stale.
-const PLAYLIST_STALE: [&str; 2] = ["getPlaylist&", "getPlaylists"];
-
-/// The endpoint, parameters and stale cache prefixes of a write.
-pub fn request(w: Write) -> (&'static str, Vec<(String, String)>, &'static [&'static str]) {
-    let one = |k: &str, v: String| vec![(k.to_string(), v)];
-    let many = |k: &str, ids: Vec<String>| ids.into_iter().map(|v| (k.to_string(), v)).collect::<Vec<_>>();
-    match w {
-        Write::Star { kind, id, on } => (if on { "star" } else { "unstar" }, one(kind.param(), id), &STAR_STALE),
-        Write::CreatePlaylist { name, song_ids } => {
-            let mut p = one("name", name);
-            p.extend(many("songId", song_ids));
-            ("createPlaylist", p, &["getPlaylists"])
-        }
-        Write::AddToPlaylist { id, song_ids } => {
-            let mut p = one("playlistId", id);
-            p.extend(many("songIdToAdd", song_ids));
-            ("updatePlaylist", p, &PLAYLIST_STALE)
-        }
-        Write::RemoveFromPlaylist { id, index } => {
-            ("updatePlaylist", pairs(&[("playlistId", id), ("songIndexToRemove", index.to_string())]), &PLAYLIST_STALE)
-        }
-        Write::RenamePlaylist { id, name } => ("updatePlaylist", pairs(&[("playlistId", id), ("name", name)]), &PLAYLIST_STALE),
-        // `createPlaylist` with a playlist's id replaces its songs.
-        Write::ReplacePlaylist { id, song_ids } => {
-            let mut p = one("playlistId", id);
-            p.extend(many("songId", song_ids));
-            ("createPlaylist", p, &PLAYLIST_STALE)
-        }
-        Write::DeletePlaylist { id } => ("deletePlaylist", one("id", id), &PLAYLIST_STALE),
-        Write::CreateRadio { name, stream_url } => {
-            ("createInternetRadioStation", pairs(&[("name", name), ("streamUrl", stream_url)]), &["getInternetRadioStations"])
-        }
-        Write::DeleteRadio { id } => ("deleteInternetRadioStation", one("id", id), &["getInternetRadioStations"]),
-        Write::Scrobble { id, submission, time_ms } => {
-            let mut p = pairs(&[("id", id), ("submission", submission.to_string())]);
-            if let Some(t) = time_ms {
-                p.push(("time".into(), t.to_string()));
-            }
-            ("scrobble", p, &[])
-        }
-        Write::SaveQueue { ids, current, position_ms } => {
-            let mut p = many("id", ids);
-            if let Some(c) = current {
-                p.push(("current".into(), c));
-            }
-            p.push(("position".into(), position_ms.to_string()));
-            ("savePlayQueue", p, &[])
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn write_requests() {
-        let (_, p, s) = request(Write::SaveQueue { ids: vec!["a".into(), "b".into()], current: None, position_ms: 7 });
-        assert_eq!(p, pairs(&[("id", "a".into()), ("id", "b".into()), ("position", "7".into())]));
-        assert!(s.is_empty());
-        let (e, p, s) = request(Write::Star { kind: Starrable::Artist, id: "x".into(), on: false });
-        assert_eq!((e, p), ("unstar", pairs(&[("artistId", "x".into())])));
-        assert_eq!(s, &STAR_STALE);
-        let (e, p, _) = request(Write::Scrobble { id: "s".into(), submission: false, time_ms: None });
-        assert_eq!((e, p), ("scrobble", pairs(&[("id", "s".into()), ("submission", "false".into())])));
-        let (e, p, s) = request(Write::RenamePlaylist { id: "1".into(), name: "Road".into() });
-        assert_eq!((e, p), ("updatePlaylist", pairs(&[("playlistId", "1".into()), ("name", "Road".into())])));
-        assert_eq!(s, &PLAYLIST_STALE);
-        let (e, p, s) = request(Write::ReplacePlaylist { id: "1".into(), song_ids: vec!["b".into(), "a".into()] });
-        assert_eq!((e, p), ("createPlaylist", pairs(&[("playlistId", "1".into()), ("songId", "b".into()), ("songId", "a".into())])));
-        assert_eq!(s, &PLAYLIST_STALE, "the playlist's page is read again in its new order");
     }
 }
