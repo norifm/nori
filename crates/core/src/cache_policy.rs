@@ -263,6 +263,27 @@ fn page_digest(page: &Page) -> u64 {
     digest(format!("{page:?}").as_bytes())
 }
 
+/// `shown` with what `fresh` adds: items new to a shelf at its end, new shelves at the end, so nothing
+/// shown moves or leaves.
+fn merged(mut shown: Vec<FeedShelf>, fresh: Vec<FeedShelf>) -> Vec<FeedShelf> {
+    fn add<T>(to: &mut Vec<T>, from: Vec<T>, id: impl Fn(&T) -> &str) {
+        let new: Vec<T> = from.into_iter().filter(|f| !to.iter().any(|t| id(t) == id(f))).collect();
+        to.extend(new);
+    }
+    for f in fresh {
+        match shown.iter_mut().find(|s| s.title == f.title) {
+            Some(s) => {
+                add(&mut s.songs, f.songs, |x| &x.id);
+                add(&mut s.albums, f.albums, |x| &x.id);
+                add(&mut s.playlists, f.playlists, |x| &x.id);
+                add(&mut s.artists, f.artists, |x| &x.id);
+            }
+            None => shown.push(f),
+        }
+    }
+    shown
+}
+
 /// A page kept in memory for the session, when it came and its digest.
 #[derive(Clone)]
 pub(crate) struct Kept {
@@ -387,7 +408,33 @@ impl Client {
 impl Client {
     /// The kept page for `read` (None if absent or unparseable) and whether it is fresh.
     pub(crate) fn read_stored(&self, read: Read) -> NetResult<Stored> {
+        if matches!(read, Read::HomeFeed) {
+            return Ok(self.home_stored());
+        }
         self.core.provider().read_stored(self, read, None)
+    }
+
+    /// Home stays as first shown for the whole session; after a refresh dropped it, the last one shows
+    /// until the merged one comes.
+    fn home_stored(&self) -> Stored {
+        let kept = self.kept_stored(Read::HomeFeed, Some(i64::MAX));
+        if kept.page.is_some() {
+            return kept;
+        }
+        Stored { page: self.core.home.lock().clone().map(|v| Page::Feed { v }), digest: None, fresh: false }
+    }
+
+    /// A source may reshuffle Home on every request: a refresh keeps what was shown and adds what is new.
+    async fn home_fetch(&self, digest: Option<u64>) -> NetResult<Option<Page>> {
+        let Page::Feed { v } = self.read_now(Read::HomeFeed).await? else { return Ok(None) };
+        let shown = self.core.home.lock().take();
+        let v = match shown {
+            Some(shown) => merged(shown, v),
+            None => v,
+        };
+        *self.core.home.lock() = Some(v.clone());
+        let page = Page::Feed { v };
+        Ok((self.keep(Read::HomeFeed, page.clone()) != digest).then_some(page))
     }
 
     /// [`Client::read_stored`] with a custom freshness window (for cached reads only).
@@ -407,6 +454,9 @@ impl Client {
     /// Asks the source; returns the page only if it differs from `stored_digest`, and keeps it either
     /// way (restarting the window). Uncached reads always return their page.
     pub(crate) async fn read_fetch(&self, read: Read, stored_digest: Option<u64>) -> NetResult<Option<Page>> {
+        if matches!(read, Read::HomeFeed) {
+            return self.home_fetch(stored_digest).await;
+        }
         self.core.provider().read_fetch(self, read, stored_digest).await
     }
 

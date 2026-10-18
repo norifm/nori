@@ -12,7 +12,7 @@ use innertube_music as yt;
 
 use super::{AccountState, FieldSpec, FormField, Provider, ProviderInfo, ResolveStream, SignIn, SignInResult};
 use crate::browse::{LibrarySection, ProfileRules, SettingsPart};
-use crate::cache_policy::{Page, Read, Stored};
+use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult, Starrable, Write};
 use crate::settings::{SavedServer, ServerKind};
 use crate::stream::{StreamQuality, StreamTarget};
@@ -207,27 +207,6 @@ fn shelf(s: yt::Shelf) -> FeedShelf {
     f
 }
 
-/// `shown` with what `fresh` adds: items new to a shelf at its end, new shelves at the end, so nothing
-/// shown moves or leaves.
-fn merged(mut shown: Vec<FeedShelf>, fresh: Vec<FeedShelf>) -> Vec<FeedShelf> {
-    fn add<T>(to: &mut Vec<T>, from: Vec<T>, id: impl Fn(&T) -> &str) {
-        let new: Vec<T> = from.into_iter().filter(|f| !to.iter().any(|t| id(t) == id(f))).collect();
-        to.extend(new);
-    }
-    for f in fresh {
-        match shown.iter_mut().find(|s| s.title == f.title) {
-            Some(s) => {
-                add(&mut s.songs, f.songs, |x| &x.id);
-                add(&mut s.albums, f.albums, |x| &x.id);
-                add(&mut s.playlists, f.playlists, |x| &x.id);
-                add(&mut s.artists, f.artists, |x| &x.id);
-            }
-            None => shown.push(f),
-        }
-    }
-    shown
-}
-
 /// A stream is asked again this long before YouTube stops serving it, so a song opened just before
 /// still loads whole.
 const MARGIN: Duration = Duration::from_secs(5 * 60);
@@ -263,9 +242,6 @@ struct State {
     api: yt::InnerTube,
     session: account::Session,
     streams: Streams,
-    /// Home as last shown this session: a refresh drops the kept page, and the new feed is merged into
-    /// this one.
-    home: parking_lot::Mutex<Option<Vec<FeedShelf>>>,
 }
 
 /// The YouTube Music provider, over the profile's [`State`].
@@ -378,35 +354,6 @@ impl Provider for YouTube {
 
     fn stream(&self, _: &Client, id: String, _: StreamQuality) -> StreamTarget {
         stream_target(id)
-    }
-
-    /// Home stays as first shown for the whole session; after a refresh dropped it, the last one shows
-    /// until the merged one comes.
-    fn read_stored(&self, client: &Client, read: Read, within_ms: Option<i64>) -> NetResult<Stored> {
-        if !matches!(read, Read::HomeFeed) {
-            return Ok(client.kept_stored(read, within_ms));
-        }
-        let kept = client.kept_stored(read, Some(i64::MAX));
-        if kept.page.is_some() {
-            return Ok(kept);
-        }
-        Ok(Stored { page: self.0.home.lock().clone().map(|v| Page::Feed { v }), digest: None, fresh: false })
-    }
-
-    /// YouTube reshuffles Home on every request: a refresh keeps what was shown and adds what is new.
-    async fn read_fetch(&self, client: &Client, read: Read, digest: Option<u64>) -> NetResult<Option<Page>> {
-        if !matches!(read, Read::HomeFeed) {
-            return client.kept_fetch(read, digest).await;
-        }
-        let Page::Feed { v } = client.read_now(read.clone()).await? else { return Ok(None) };
-        let shown = self.0.home.lock().take();
-        let v = match shown {
-            Some(shown) => merged(shown, v),
-            None => v,
-        };
-        *self.0.home.lock() = Some(v.clone());
-        let page = Page::Feed { v };
-        Ok((client.keep(read, page.clone()) != digest).then_some(page))
     }
 
     fn ahead(&self) -> Option<usize> {

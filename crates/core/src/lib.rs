@@ -394,6 +394,9 @@ pub struct Core {
     cache_revision: AtomicU64,
     /// A provider's answers this session, by cache key, with when they came ([`Client::kept_stored`]).
     kept: Mutex<std::collections::HashMap<String, cache_policy::Kept>>,
+    /// Home as last shown this session: a refresh drops the kept page, and the new feed is merged into
+    /// this one.
+    home: Mutex<Option<Vec<FeedShelf>>>,
     /// The queue this core saves and restores and its clients fill.
     pub session: Arc<nori_queue::Session>,
     /// The user and the Subsonic secret (password or API key) the LAN's remote control proves the account
@@ -510,6 +513,7 @@ impl Core {
             remote: Mutex::default(),
             cache_revision: AtomicU64::new(0),
             kept: Mutex::default(),
+            home: Mutex::default(),
             session,
             account: RwLock::new(None), lan_jam: RwLock::new(None),
             native_login: RwLock::new(None),

@@ -227,7 +227,6 @@ asked getInternetRadioStations
 asked getLyricsBySongId&id=s1&enhanced=true
 asked getIndexes&musicFolderId=7
 asked getMusicDirectory&id=d1
-asked homeFeed
 == aged, changed answers: the kept page, then the server's
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
@@ -308,7 +307,6 @@ asked getInternetRadioStations
 asked getLyricsBySongId&id=s1&enhanced=true
 asked getIndexes&musicFolderId=7
 asked getMusicDirectory&id=d1
-asked homeFeed
 == reads always asked
 read_now AlbumList { kind: Random, size: 5, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
@@ -461,7 +459,7 @@ read_now FolderById { id: "d1" }
 page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
 read_now HomeFeed
 page feed  #ef0697f9bdeeb4b1
-kept sssssssssssssssssss
+kept ssssssssssssssssssF
 asked getAlbumList2&type=newest&size=20&offset=0&musicFolderId=7
 asked getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7
 asked getAlbumList2&type=byGenre&size=20&offset=0&genre=Rock&musicFolderId=7
@@ -1326,7 +1324,7 @@ asked unstar&id=s2
 kept FsFFsFssFFFssFFFFFF
 stored StarredItems: starred [ar1] [] [s1*/200,s9*/90] 2 #4504663f8835b13e digest=true fresh=false
 == Home's refresh drops the lists
-kept -----FssFF-s-FFFFF-
+kept -----FssFF-s-FFFFFs
 == a page the server no longer has is dropped
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17

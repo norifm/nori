@@ -146,21 +146,22 @@ mod tests {
         assert!(c.core.rules().feed && !c.core.rules().remote);
     }
 
-    /// Home's feed is read once and kept for the session: read again while fresh it is the same page,
-    /// asked anew only after Home's refresh drops it.
+    /// Home's feed is read once and kept for the whole session, however long ago; Home's refresh asks
+    /// anew and adds what is new after what was shown, as for every provider.
     #[test]
-    fn home_feed_is_kept_until_refreshed() {
+    fn home_feed_is_kept_for_the_session_and_merged_on_refresh() {
         let (c, fake) = fake();
-        let shelf = || {
-            let mut titles = Vec::new();
-            block(c.read_each(Read::HomeFeed, |p| if let Page::Feed { v } = p { titles.push(v[0].title.clone()) })).unwrap();
-            titles
+        let shown = || {
+            let mut pages = Vec::new();
+            block(c.read_each(Read::HomeFeed, |p| if let Page::Feed { v } = p { pages.push(v.iter().map(|s| s.title.clone()).collect::<Vec<_>>()) })).unwrap();
+            pages
         };
-        assert_eq!(shelf(), ["feed 1"]);
-        assert_eq!(shelf(), ["feed 1"], "kept: not asked again");
+        assert_eq!(shown(), [["feed 1"]]);
+        crate::providers::harness::age(&c);
+        assert_eq!(shown(), [["feed 1"]], "kept: not asked again");
         assert_eq!(*fake.feeds.lock(), 1);
         c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
-        assert_eq!(shelf(), ["feed 2"], "a refresh asks again");
+        assert_eq!(shown(), [vec!["feed 1"], vec!["feed 1", "feed 2"]], "a refresh asks again and keeps what was shown");
     }
 
     /// A song plays from the provider's address, opened at the URL it resolves to; covers are its own.
