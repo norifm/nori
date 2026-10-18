@@ -3037,7 +3037,7 @@ impl Remote {
                     for mark in &marks {
                         let (_, _, stale) = nori_net::requests::request(crate::client::Write::Star { kind: mark.kind, id: mark.id.clone(), on: mark.on });
                         for prefix in stale {
-                            let _ = self.client.core.cache_evict((*prefix).into());
+                            let _ = self.client.core.cache_stale(prefix);
                         }
                     }
                     {

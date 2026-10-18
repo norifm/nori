@@ -1292,6 +1292,17 @@ mod tests {
         t.finish();
     }
 
+    /// A heart makes the kept favourites stale, as a server's: YouTube is asked for them on the next read.
+    #[test]
+    fn a_heart_asks_the_favourites_anew() {
+        let (c, t) = signed_in(30, vec![answer(200, "playlist", &[]), answer(200, "", &[]), answer(200, "playlist", &[])]);
+        block(c.cached_or_fetched(Read::StarredItems)).unwrap();
+        block(c.star(Starrable::Song, "yt-khnokW3Mw24".into(), false, Arc::new(Shown))).unwrap();
+        assert!(!c.read_stored(Read::StarredItems).unwrap().fresh);
+        block(c.cached_or_fetched(Read::StarredItems)).unwrap();
+        assert_eq!(t.urls(), [BROWSE, "https://music.youtube.com/youtubei/v1/like/removelike", BROWSE]);
+    }
+
     /// Signed-in library features and a temporary guest's requests follow the profile rules.
     #[test]
     fn its_rules_follow_the_account() {

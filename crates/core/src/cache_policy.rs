@@ -702,6 +702,25 @@ mod tests {
         assert_eq!(v.songs.iter().map(|s| (s.id.as_str(), s.starred)).collect::<Vec<_>>(), [("s2", true), ("s1", false)]);
     }
 
+    /// A heart queued offline leaves the favourites and the album's page readable offline, stale: the
+    /// server is asked for them once it answers.
+    #[test]
+    fn an_offline_heart_keeps_its_pages_readable() {
+        let (c, fake) = setup();
+        fake.answer(r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s1","title":"One"}]}}}"#);
+        block(c.read_fetch(Read::StarredItems, None)).unwrap();
+        fake.answer(r#"{"subsonic-response":{"status":"ok","album":{"id":"al1","name":"A","song":[{"id":"s2","title":"Two"}]}}}"#);
+        block(c.read_fetch(Read::AlbumById { id: "al1".into() }, None)).unwrap();
+        fake.fail(FailureKind::Connect);
+        block(c.star(crate::client::Starrable::Song, "s2".into(), true, Arc::new(crate::providers::harness::Marked))).unwrap();
+        assert!(c.core.pending_any().unwrap(), "queued");
+        for read in [Read::StarredItems, Read::AlbumById { id: "al1".into() }] {
+            let stored = c.read_stored(read.clone()).unwrap();
+            assert!(stored.page.is_some() && !stored.fresh, "{read:?}");
+            assert!(block(c.cached_or_fetched(read.clone())).unwrap().is_some(), "{read:?} offline");
+        }
+    }
+
     #[test]
     fn failures_reach_the_caller() {
         let (c, fake) = setup();

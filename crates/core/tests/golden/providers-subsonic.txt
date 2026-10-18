@@ -547,7 +547,7 @@ kept FFFFFFFFFFFFFFFFFFF
 == a heart: sent, and what lists hearts is asked again
 star s1: ok
 asked star&id=s1
-kept F-FF-F--FFF--FFFFFF
+kept FsFFsFssFFFssFFFFFF
 read_each StarredItems
 page starred [ar1] [al2*/1] [s1*/200,s2*/180] 2 #5d8aa1998e469f71
 ended: ok
@@ -563,19 +563,21 @@ asked getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7
 == an album unstarred leaves the favourites at once
 unstar al2: ok
 asked unstar&albumId=al2
-kept F-FF-F--FFF--FFFFFF
-stored FavouriteAlbums { size: 20 }: none digest=false fresh=false
-stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: none digest=false fresh=false
-stored StarredItems: none digest=false fresh=false
+kept FsFFsFssFFFssFFFFFF
+stored FavouriteAlbums { size: 20 }: albums [al1/2] #0ec106fc480360b5 digest=true fresh=false
+stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=false
+stored StarredItems: starred [ar1] [] [s1*/200,s2*/180] 2 #1b095473e42e0333 digest=true fresh=false
 == offline: a heart is queued and the favourites show it
 star s9: ok
 pending 1
 read_each StarredItems
-ended: error Transport { kind: Connect, detail: None }
-stored StarredItems: none digest=false fresh=false
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+ended: ok
+stored StarredItems: starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2 digest=true fresh=false
 read_each AlbumById { id: "al1" }
-ended: error Transport { kind: Connect, detail: None }
-stored AlbumById { id: "al1" }: none digest=false fresh=false
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+stored AlbumById { id: "al1" }: album al1/2 [s1/200,s2*/180] #048f055c9190ce17 digest=true fresh=false
 read_each PlaylistList
 page playlists [p1/1] #97710a49413c558f
 ended: ok
@@ -589,7 +591,7 @@ asked star&id=s9
 asked getStarred2&musicFolderId=7
 asked getAlbum&id=al1
 asked star&id=s9
-kept F-FF-F--FF---FFFFFF
+kept FsFFsFssFFsssFFFFFF
 == online again: the queue goes first
 scrobble: ok
 pending 0
@@ -660,7 +662,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 Star { kind: Artist, id: "ar1", on: false }: ok
 asked unstar&artistId=ar1
-kept F-FF-F--FFF--FFFFFF
+kept FsFFsFssFFFssFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -720,7 +722,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 CreatePlaylist { name: "New", song_ids: ["s1", "s2"] }: ok
 asked createPlaylist&name=New&songId=s1&songId=s2
-kept FFFFFFFFFF-FFFFFFFF
+kept FFFFFFFFFFsFFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -780,7 +782,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 AddToPlaylist { id: "p1", song_ids: ["s2"] }: ok
 asked updatePlaylist&playlistId=p1&songIdToAdd=s2
-kept FFFFFFFFFF--FFFFFFF
+kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -840,7 +842,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 RemoveFromPlaylist { id: "p1", index: 0 }: ok
 asked updatePlaylist&playlistId=p1&songIndexToRemove=0
-kept FFFFFFFFFF--FFFFFFF
+kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -900,7 +902,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 RenamePlaylist { id: "p1", name: "Road" }: ok
 asked updatePlaylist&playlistId=p1&name=Road
-kept FFFFFFFFFF--FFFFFFF
+kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -960,7 +962,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 ReplacePlaylist { id: "p1", song_ids: ["s2", "s1"] }: ok
 asked createPlaylist&playlistId=p1&songId=s2&songId=s1
-kept FFFFFFFFFF--FFFFFFF
+kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -1020,7 +1022,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 DeletePlaylist { id: "p1" }: ok
 asked deletePlaylist&id=p1
-kept FFFFFFFFFF--FFFFFFF
+kept FFFFFFFFFFssFFFFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -1080,7 +1082,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 CreateRadio { name: "R", stream_url: "http://r" }: ok
 asked createInternetRadioStation&name=R&streamUrl=http%3A%2F%2Fr
-kept FFFFFFFFFFFFFF-FFFF
+kept FFFFFFFFFFFFFFsFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -1140,7 +1142,7 @@ page feed  #ef0697f9bdeeb4b1
 ended: ok
 DeleteRadio { id: "r1" }: ok
 asked deleteInternetRadioStation&id=r1
-kept FFFFFFFFFFFFFF-FFFF
+kept FFFFFFFFFFFFFFsFFFF
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
@@ -1321,12 +1323,13 @@ ended: ok
 == a refused write changes nothing
 star refused: ok
 asked unstar&id=s2
-kept F-FF-F--FFF--FFFFFF
-stored StarredItems: none digest=false fresh=false
+kept FsFFsFssFFFssFFFFFF
+stored StarredItems: starred [ar1] [] [s1*/200,s9*/90] 2 #4504663f8835b13e digest=true fresh=false
 == Home's refresh drops the lists
-kept -----F--FF---FFFFF-
+kept -----FssFF-s-FFFFF-
 == a page the server no longer has is dropped
 read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: error Api { code: 70, reason: "no" }
 stored AlbumById { id: "al1" }: none digest=false fresh=false
 asked getAlbum&id=al1

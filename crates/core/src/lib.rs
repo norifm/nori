@@ -741,6 +741,16 @@ impl Core {
         Ok(())
     }
 
+    /// Kept answers whose key starts with `prefix` are stale: still shown (offline too) until the
+    /// source answers anew.
+    pub(crate) fn cache_stale(&self, prefix: &str) -> Result<()> {
+        let c = self.db.lock();
+        c.execute("UPDATE cache SET ts = 0 WHERE server=sid() AND key >= ?1 AND key < ?1 || x'ff'", [prefix])?;
+        self.kept.lock().iter_mut().filter(|(k, _)| k.starts_with(prefix)).for_each(|(_, (_, at))| *at = 0);
+        self.cache_revision.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
     pub(crate) fn pending_add(&self, endpoint: &str, params: &[(String, String)]) -> Result<()> {
         let json = serde_json::to_string(params).unwrap_or_default();
         self.db.lock().execute("INSERT INTO pending(server, endpoint, params) VALUES(sid(), ?1, ?2)", params![endpoint, json])?;

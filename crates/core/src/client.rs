@@ -278,9 +278,15 @@ pub use nori_db::{db_file_name, db_forget_server, DB_FILE};
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// Sends one change to the profile's provider.
+    /// Sends one change to the profile's provider; once it took it (or queued it), the pages it changes
+    /// are stale.
     pub async fn write(&self, w: Write) -> NetResult<()> {
-        self.core.provider().write(self, w).await
+        let (_, _, stale) = request(w.clone());
+        self.core.provider().write(self, w).await?;
+        for s in stale {
+            self.core.cache_stale(s)?;
+        }
+        Ok(())
     }
 }
 
@@ -288,10 +294,9 @@ impl Client {
     /// Sends one change to a Subsonic server, or queues it (reported as success) while the server is
     /// unreachable. Behind queued changes it is queued too, so the server gets them in order. A change
     /// that must not reach the server twice is queued only when the failure shows nothing was sent.
-    /// Evicts the change's stale cache prefixes when sent or queued.
     pub(crate) async fn subsonic_write(&self, w: Write) -> NetResult<()> {
         let repeatable = w.repeatable();
-        let (endpoint, params, stale) = request(w);
+        let (endpoint, params, _) = request(w);
         if self.core.pending_any()? {
             {
                 let _replaying = self.replaying.lock();
@@ -306,9 +311,6 @@ impl Client {
                 Err(e) if e.nothing_sent() || (repeatable && e.is_io()) => self.core.pending_add(endpoint, &params)?,
                 Err(e) => return Err(e),
             }
-        }
-        for s in stale {
-            self.core.cache_evict(s.to_string())?;
         }
         Ok(())
     }
@@ -483,7 +485,7 @@ pub(crate) mod tests {
             fake.fail(FailureKind::UnknownHost);
             block(c.write(Write::Scrobble { id: "s".into(), submission: true, time_ms: Some(5) })).unwrap();
             assert_eq!(c.core.pending_list().unwrap().len(), 2);
-            assert_eq!(c.core.cache_get("getPlaylist&id=1".into()).unwrap(), None, "evicted even when queued");
+            assert!(c.core.cache_get("getPlaylist&id=1".into()).unwrap().is_some() && !c.core.cache_fresh("getPlaylist&id=1".into(), 60_000).unwrap(), "stale even when queued, and still shown");
 
             // Online: the queue in order, then the new write; the rejected one is dropped.
             fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"gone"}}}"#);
@@ -567,7 +569,7 @@ pub(crate) mod tests {
         }
         fake.fail(FailureKind::Connect);
         block(c.write(Write::Star { kind: Starrable::Song, id: "s".into(), on: true })).unwrap();
-        let kept: Vec<&str> = keys.into_iter().filter(|k| c.core.cache_get(k.to_string()).unwrap().is_some()).collect();
+        let kept: Vec<&str> = keys.into_iter().filter(|k| c.core.cache_fresh(k.to_string(), 60_000).unwrap()).collect();
         assert_eq!(kept, ["getAlbumList2&type=newest&size=20", "getArtistInfo2&id=1&count=10", "getArtists", "getPlaylists"]);
     }
 
@@ -580,10 +582,10 @@ pub(crate) mod tests {
             fake.answer(OK);
         }
         block(c.write(Write::Star { kind: Starrable::Song, id: "s1".into(), on: true })).unwrap();
-        assert_eq!(c.core.cache_get("getStarred2".into()).unwrap(), None);
+        assert!(!c.core.cache_fresh("getStarred2".into(), 60_000).unwrap());
         block(c.write(Write::Star { kind: Starrable::Song, id: "s1".into(), on: false })).unwrap();
         block(c.write(Write::CreatePlaylist { name: "nori check".into(), song_ids: vec!["s1".into(), "s2".into()] })).unwrap();
-        assert_eq!(c.core.cache_get("getPlaylists".into()).unwrap(), None);
+        assert!(!c.core.cache_fresh("getPlaylists".into(), 60_000).unwrap());
         block(c.read_now(crate::cache_policy::Read::NowPlaying { id: "s1".into() })).unwrap();
         let asked = fake.asked();
         assert!(asked[0].contains("/rest/star?") && asked[0].ends_with("&id=s1"), "{}", asked[0]);
