@@ -352,7 +352,11 @@ System font (San Francisco: the exact Apple Music typeface), Dynamic Type throug
 Symbols on iOS 12: the glyphs are Android's own Material icons (`Icons.Filled.*`), their path data
 carried into `ios/Sources/Glyphs.swift` and drawn as templates at the size each place needs; the
 Licenses page credits them. Themes: iOS 12 has no system dark mode, so the app's own `theme` setting (dark by
-default, light as the option; the AMOLED-black one is pointless on an LCD and is hidden).
+default, light as the option; the AMOLED-black one is pointless on an LCD and is hidden). The season theme
+is colors only: `Theme.swift` reads the palette from `nori_ios_palette` (`crates/ios/src/theme.rs`, over
+`nori_look::theme::palette` on the device's date and zone) and rebuilds the views when the `theme` or `season`
+setting changes, when the app becomes active on a new day, and at launch. Settings, Theme lists the four
+seasons with their kanji and a follow switch.
 
 ### 6.6 Motion
 
