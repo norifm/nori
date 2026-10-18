@@ -294,7 +294,7 @@ impl Client {
             Parser::Playlist => Page::PlaylistPage { v: r.playlist.unwrap_or_default().into() },
             Parser::PlaylistSongs => Page::Songs { v: r.playlist.unwrap_or_default().entry },
             // This session's star changes apply to cached and fresh answers alike.
-            Parser::Starred => Page::StarredPage { v: stars().overlay(r.starred2.unwrap_or_default().into()) },
+            Parser::Starred => Page::StarredPage { v: self.marked_favourites(r.starred2.unwrap_or_default().into()) },
             Parser::Genres => {
                 let mut v = r.genres.unwrap_or_default().genre;
                 v.sort_by_key(|g| std::cmp::Reverse(g.song_count));
@@ -688,6 +688,18 @@ mod tests {
             Some(Page::Albums { v }) => assert_eq!(v.len(), 2, "plain AlbumList is not overlaid"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A heart shows in the favourites at once, while the server's answer does not list it yet.
+    #[test]
+    fn a_heart_shows_in_the_favourites_before_the_server_lists_it() {
+        let (c, fake) = setup();
+        c.core.session.register(vec![Song { id: "s2".into(), title: "Two".into(), ..Default::default() }]);
+        fake.answer(crate::client::tests::OK);
+        block(c.star(crate::client::Starrable::Song, "s2".into(), true, Arc::new(crate::providers::harness::Marked))).unwrap();
+        fake.answer(r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s1","title":"One"}]}}}"#);
+        let Some(Page::StarredPage { v }) = block(c.cached_or_fetched(Read::StarredItems)).unwrap() else { panic!() };
+        assert_eq!(v.songs.iter().map(|s| (s.id.as_str(), s.starred)).collect::<Vec<_>>(), [("s2", true), ("s1", false)]);
     }
 
     #[test]

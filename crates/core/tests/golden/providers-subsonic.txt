@@ -549,7 +549,7 @@ star s1: ok
 asked star&id=s1
 kept F-FF-F--FFF--FFFFFF
 read_each StarredItems
-page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+page starred [ar1] [al2*/1] [s1*/200,s2*/180] 2 #5d8aa1998e469f71
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
@@ -597,7 +597,7 @@ asked star&id=s9
 asked createPlaylist&name=x&songId=s1
 asked scrobble&id=s1&submission=true&time=5
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 asked getStarred2&musicFolderId=7
 == each write and what it leaves kept
@@ -638,7 +638,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -698,7 +698,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -758,7 +758,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -818,7 +818,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -878,7 +878,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -938,7 +938,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -998,7 +998,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1058,7 +1058,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1118,7 +1118,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1178,7 +1178,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1238,7 +1238,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1298,7 +1298,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
