@@ -1133,6 +1133,163 @@ mod tests {
         assert_eq!(ids(block(c.read_now(Read::StarredItems)).ok()), shown, "YouTube lags; the marks do not");
     }
 
+    /// Answers InnerTube by what is asked, as YouTube would, and keeps each request's path and target.
+    #[derive(Default)]
+    struct Answers {
+        asked: parking_lot::Mutex<Vec<String>>,
+    }
+
+    impl Answers {
+        fn taken(&self) -> Vec<String> {
+            std::mem::take(&mut *self.asked.lock())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Transport for Answers {
+        async fn get(&self, url: String, _: u32) -> Result<TransportResponse, TransportError> {
+            panic!("a Subsonic request in a YouTube Music profile: {url}");
+        }
+        async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
+            let path = request.url.split('?').next().unwrap_or_default().rsplit("/v1/").next().unwrap_or_default().to_string();
+            let body: serde_json::Value = request.json.as_deref().and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default();
+            let at = |k: &str| body.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let target = ["browseId", "continuation", "videoId", "query"].iter().map(|k| at(k)).find(|v| !v.is_empty()).unwrap_or_default();
+            self.asked.lock().push(format!("{path} {target}"));
+            let browse = at("browseId");
+            let name = match path.as_str() {
+                "browse" if !at("continuation").is_empty() => "home_more",
+                "browse" if browse == "FEmusic_home" => "home",
+                "browse" if browse == "FEmusic_liked_albums" => "library_albums",
+                "browse" if browse == "FEmusic_liked_playlists" => "library_playlists",
+                "browse" if browse.starts_with("MPREb") => "album",
+                "browse" if browse.starts_with("UC") => "artist",
+                "browse" if browse.starts_with("VL") => "playlist",
+                "next" => "radio",
+                "music/get_queue" => "queue",
+                "player" => "player",
+                "search" => match at("params").as_str() {
+                    "EgWKAQIIAWoKEAkQBRAKEAMQBA==" => "search_songs",
+                    "EgWKAQIYAWoKEAkQBRAKEAMQBA==" => "search_albums",
+                    _ => "search_artists",
+                },
+                _ => "",
+            };
+            Ok(answer(200, name, &[]))
+        }
+        fn address_changed(&self) {}
+        fn network(&self) -> Network {
+            Network::Unmetered
+        }
+    }
+
+    /// The differential harness's YouTube Music session ([`crate::providers::harness`]): signed in,
+    /// its pages read, kept and refreshed, hearts given and taken back.
+    #[test]
+    fn a_youtube_session() {
+        use crate::providers::harness::{age, each, kept, now, Marked, Transcript};
+        let mut t = Transcript::new("providers-youtube");
+        let core = crate::Core::new(String::new(), "yt".into(), Default::default()).unwrap();
+        core.configure_profile(SavedServer { kind: ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() }).unwrap();
+        let yt = Arc::new(Answers::default());
+        let c = Client::new(core, yt.clone(), Default::default());
+        account::tests::store(&c, &account::tests::session(SESSION, 30));
+        let asked = |t: &mut Transcript| yt.taken().into_iter().for_each(|a| t.line(format!("asked {a}")));
+        let reads = [
+            Read::HomeFeed,
+            Read::AlbumById { id: "yt-MPREb_K8qWMWVqXGi".into() },
+            Read::ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA".into() },
+            Read::ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA".into() },
+            Read::PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA".into() },
+            Read::PlaylistList,
+            Read::AlbumList { kind: crate::browse::AlbumSort::ByName, size: 60, offset: 0, genre: None },
+            Read::AlbumList { kind: crate::browse::AlbumSort::ByName, size: 60, offset: 60, genre: None },
+            Read::StarredItems,
+            Read::FavouriteAlbums { size: 20 },
+            Read::GenreList,
+            Read::LyricsBySong { song_id: "yt-x".into() },
+        ];
+
+        t.step("first reads");
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+            asked(&mut t);
+        }
+        t.step("stored");
+        for r in &reads {
+            t.stored(r, &c.read_stored(r.clone()));
+        }
+        t.step("read again while fresh");
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+        }
+        asked(&mut t);
+        t.step("aged");
+        age(&c);
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+        }
+        asked(&mut t);
+
+        t.step("reads always asked");
+        for r in [
+            Read::Search { query: "daft punk".into(), songs: 2, albums: 2, artists: 1 },
+            Read::SimilarSongs { id: "yt-dQw4w9WgXcQ".into(), count: 3 },
+            Read::SongById { id: "yt-djV11Xbc914".into() },
+            Read::AlbumSongs { id: "yt-MPREb_K8qWMWVqXGi".into() },
+            Read::PlaylistSongs { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA".into() },
+            Read::RandomSongs { size: 5, genre: None },
+            Read::Ping,
+            Read::PullQueue,
+        ] {
+            now(&mut t, &c, r.clone());
+            t.stored(&r, &c.read_stored(r.clone()));
+            asked(&mut t);
+        }
+
+        t.step("Home's refresh");
+        c.drop_cached(crate::browse::home_refresh_drops()).unwrap();
+        kept(&mut t, &c, &reads);
+        each(&mut t, &c, Read::HomeFeed);
+        asked(&mut t);
+        kept(&mut t, &c, &reads);
+
+        t.step("hearts");
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+        }
+        yt.taken();
+        t.result("heart", &block(c.star(Starrable::Song, "yt-zhl-Cs1-sG4".into(), true, Arc::new(Marked))));
+        t.result("unheart", &block(c.star(Starrable::Song, "yt-khnokW3Mw24".into(), false, Arc::new(Marked))));
+        t.result("album", &block(c.star(Starrable::Album, "yt-MPREb_K8qWMWVqXGi".into(), true, Arc::new(Marked))));
+        asked(&mut t);
+        kept(&mut t, &c, &reads);
+        for r in &reads {
+            t.stored(r, &c.read_stored(r.clone()));
+        }
+        for r in &reads {
+            each(&mut t, &c, r.clone());
+        }
+        asked(&mut t);
+        now(&mut t, &c, Read::StarredItems);
+        asked(&mut t);
+
+        t.step("writes with nowhere to go");
+        t.result("playlist", &block(c.write(Write::CreatePlaylist { name: "x".into(), song_ids: vec!["yt-a".into()] })));
+        t.result("scrobble", &block(c.write(Write::Scrobble { id: "yt-a".into(), submission: true, time_ms: None })));
+        t.line(format!("pending {}", c.core.pending_any().unwrap()));
+        asked(&mut t);
+
+        t.step("streams, downloads and covers");
+        let r = c.resolve("yt-dQw4w9WgXcQ".into(), false, false);
+        t.line(format!("stream {} {}", r.url, r.key));
+        let d = c.download_target("yt-dQw4w9WgXcQ".into(), StreamQuality { bit_rate: 192, format: "mp3".into() });
+        t.line(format!("download {} {}", d.url, d.key));
+        t.line(format!("cover {}", c.core.cover_address("https://yt3.googleusercontent.com/abc".into(), 320)));
+        t.line(format!("download covers {:?}", c.core.download_cover_urls(vec!["https://yt3.googleusercontent.com/abc".into()])));
+        t.finish();
+    }
+
     /// Signed-in library features and a temporary guest's requests follow the profile rules.
     #[test]
     fn its_rules_follow_the_account() {

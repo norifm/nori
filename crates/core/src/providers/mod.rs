@@ -8,6 +8,8 @@ mod subsonic;
 mod youtube;
 #[cfg(test)]
 mod fake;
+#[cfg(test)]
+pub(crate) mod harness;
 
 use std::sync::Arc;
 

@@ -1,0 +1,1363 @@
+== first reads: the server's pages, kept
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+asked getAlbumList2&type=newest&size=20&offset=0&musicFolderId=7
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+asked getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+asked getAlbumList2&type=byGenre&size=20&offset=0&genre=Rock&musicFolderId=7
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+asked getAlbumList2&type=byYear&fromYear=2000&toYear=2010&size=20&offset=0&musicFolderId=7
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+asked getArtists&musicFolderId=7
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+asked getAlbum&id=al1
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+asked getArtist&id=ar1
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+asked getArtistInfo2&id=ar1&count=10
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+asked getTopSongs&artist=A&count=20
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+asked getPlaylists
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+asked getPlaylist&id=p1
+read_each StarredItems
+page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+ended: ok
+asked getStarred2&musicFolderId=7
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+asked getGenres
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+asked getInternetRadioStations
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+asked getLyricsBySongId&id=s1&enhanced=true
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+asked getIndexes&musicFolderId=7
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+asked getMusicDirectory&id=d1
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+asked homeFeed
+== stored
+stored AlbumList { kind: Newest, size: 20, offset: 0, genre: None }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
+stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
+stored AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
+stored AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
+stored FavouriteAlbums { size: 20 }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
+stored ArtistIndex: artists [ar1] #e4328b60ef4d3dea digest=true fresh=true
+stored AlbumById { id: "al1" }: album al1/2 [s1/200,s2*/180] #048f055c9190ce17 digest=true fresh=true
+stored ArtistById { id: "ar1" }: artist ar1 [al1/2] #c9c86854de016ea9 digest=true fresh=true
+stored ArtistAbout { id: "ar1" }: about Some("http://m") [ar1] #875a0b766ae914c0 digest=true fresh=true
+stored TopSongs { artist: "A" }: songs [s1/200] #16a140f7cf8f4e2c digest=true fresh=true
+stored PlaylistList: playlists [p1/1] #97710a49413c558f digest=true fresh=true
+stored PlaylistById { id: "p1" }: playlist p1/0 [s1/200] #ca5e40173283c07d digest=true fresh=true
+stored StarredItems: starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918 digest=true fresh=true
+stored GenreList: genres [Rock:9,Jazz:1] #51661f63a458e397 digest=true fresh=true
+stored RadioList: stations [r1] #1138e27d000362dc digest=true fresh=true
+stored LyricsBySong { song_id: "s1" }: lyrics synced=true lines=1 #6c8ce2a474f6df7e digest=true fresh=true
+stored FolderIndex: artists [d1] #f40db99784f6a43d digest=true fresh=true
+stored FolderById { id: "d1" }: folder d1 [d2] [s1/200] #60d1ecafd6f08b38 digest=true fresh=true
+stored HomeFeed: feed  #ef0697f9bdeeb4b1 digest=true fresh=true
+== read again while fresh: nothing asked
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+== aged, the same answers: the kept pages only
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+asked getAlbumList2&type=newest&size=20&offset=0&musicFolderId=7
+asked getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7
+asked getAlbumList2&type=byGenre&size=20&offset=0&genre=Rock&musicFolderId=7
+asked getAlbumList2&type=byYear&fromYear=2000&toYear=2010&size=20&offset=0&musicFolderId=7
+asked getArtists&musicFolderId=7
+asked getAlbum&id=al1
+asked getArtist&id=ar1
+asked getArtistInfo2&id=ar1&count=10
+asked getTopSongs&artist=A&count=20
+asked getPlaylists
+asked getPlaylist&id=p1
+asked getStarred2&musicFolderId=7
+asked getGenres
+asked getInternetRadioStations
+asked getLyricsBySongId&id=s1&enhanced=true
+asked getIndexes&musicFolderId=7
+asked getMusicDirectory&id=d1
+asked homeFeed
+== aged, changed answers: the kept page, then the server's
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al2*/1] #ec85722c6e335ae5
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al2*/1] #ec85722c6e335ae5
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al2*/1] #ec85722c6e335ae5
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+page albums [al2*/1] #ec85722c6e335ae5
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al2*/1] #ec85722c6e335ae5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+page genres [Pop:3] #1f6516e1210f60c6
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+asked getAlbumList2&type=newest&size=20&offset=0&musicFolderId=7
+asked getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7
+asked getAlbumList2&type=byGenre&size=20&offset=0&genre=Rock&musicFolderId=7
+asked getAlbumList2&type=byYear&fromYear=2000&toYear=2010&size=20&offset=0&musicFolderId=7
+asked getArtists&musicFolderId=7
+asked getAlbum&id=al1
+asked getArtist&id=ar1
+asked getArtistInfo2&id=ar1&count=10
+asked getTopSongs&artist=A&count=20
+asked getPlaylists
+asked getPlaylist&id=p1
+asked getStarred2&musicFolderId=7
+asked getGenres
+asked getInternetRadioStations
+asked getLyricsBySongId&id=s1&enhanced=true
+asked getIndexes&musicFolderId=7
+asked getMusicDirectory&id=d1
+asked homeFeed
+== reads always asked
+read_now AlbumList { kind: Random, size: 5, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+stored AlbumList { kind: Random, size: 5, offset: 0, genre: None }: none digest=false fresh=false
+read_each AlbumList { kind: Random, size: 5, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+asked getAlbumList2&type=random&size=5&offset=0&musicFolderId=7
+asked getAlbumList2&type=random&size=5&offset=0&musicFolderId=7
+read_now MusicFolders
+page folders [Music] #a6d684f2b7ef6b17
+stored MusicFolders: none digest=false fresh=false
+read_each MusicFolders
+page folders [Music] #a6d684f2b7ef6b17
+ended: ok
+asked getMusicFolders
+asked getMusicFolders
+read_now Ping
+page status ServerInfo { version: "1.16.1", server_type: "", server_version: "", open_subsonic: false } #3f27b5f7ea228672
+stored Ping: none digest=false fresh=false
+read_each Ping
+page status ServerInfo { version: "1.16.1", server_type: "", server_version: "", open_subsonic: false } #3f27b5f7ea228672
+ended: ok
+asked ping
+asked ping
+read_now Search { query: "a", songs: 5, albums: 5, artists: 5 }
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] #8bfb1ded44a1f1db
+stored Search { query: "a", songs: 5, albums: 5, artists: 5 }: none digest=false fresh=false
+read_each Search { query: "a", songs: 5, albums: 5, artists: 5 }
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] #8bfb1ded44a1f1db
+ended: ok
+asked search3&query=a&songCount=5&albumCount=5&artistCount=5&musicFolderId=7
+asked search3&query=a&songCount=5&albumCount=5&artistCount=5&musicFolderId=7
+read_now SongPage { offset: 0, count: 10 }
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] #8bfb1ded44a1f1db
+stored SongPage { offset: 0, count: 10 }: none digest=false fresh=false
+read_each SongPage { offset: 0, count: 10 }
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] #8bfb1ded44a1f1db
+ended: ok
+asked search3&query=&songCount=10&songOffset=0&albumCount=0&artistCount=0&musicFolderId=7
+asked search3&query=&songCount=10&songOffset=0&albumCount=0&artistCount=0&musicFolderId=7
+read_now RandomSongs { size: 5, genre: Some("Rock") }
+page songs [s1/200,s2*/180] #97749f946d1cfedb
+stored RandomSongs { size: 5, genre: Some("Rock") }: none digest=false fresh=false
+read_each RandomSongs { size: 5, genre: Some("Rock") }
+page songs [s1/200,s2*/180] #97749f946d1cfedb
+ended: ok
+asked getRandomSongs&size=5&genre=Rock&musicFolderId=7
+asked getRandomSongs&size=5&genre=Rock&musicFolderId=7
+read_now SongsByGenre { genre: "Rock", count: 5 }
+page songs [s2*/180] #15dab7bb8054d2eb
+stored SongsByGenre { genre: "Rock", count: 5 }: none digest=false fresh=false
+read_each SongsByGenre { genre: "Rock", count: 5 }
+page songs [s2*/180] #15dab7bb8054d2eb
+ended: ok
+asked getSongsByGenre&genre=Rock&count=5&musicFolderId=7
+asked getSongsByGenre&genre=Rock&count=5&musicFolderId=7
+read_now SimilarSongs { id: "s1", count: 5 }
+page songs [s2*/180] #15dab7bb8054d2eb
+stored SimilarSongs { id: "s1", count: 5 }: none digest=false fresh=false
+read_each SimilarSongs { id: "s1", count: 5 }
+page songs [s2*/180] #15dab7bb8054d2eb
+ended: ok
+asked getSimilarSongs2&id=s1&count=5
+asked getSimilarSongs2&id=s1&count=5
+read_now SongById { id: "s1" }
+page song Some("s1/200") #52e731cca0ca7450
+stored SongById { id: "s1" }: none digest=false fresh=false
+read_each SongById { id: "s1" }
+page song Some("s1/200") #52e731cca0ca7450
+ended: ok
+asked getSong&id=s1
+asked getSong&id=s1
+read_now AlbumSongs { id: "al1" }
+page songs [s1/200,s2*/180] #97749f946d1cfedb
+stored AlbumSongs { id: "al1" }: none digest=false fresh=false
+read_each AlbumSongs { id: "al1" }
+page songs [s1/200,s2*/180] #97749f946d1cfedb
+ended: ok
+asked getAlbum&id=al1
+asked getAlbum&id=al1
+read_now PlaylistSongs { id: "p1" }
+page songs [s1/200] #16a140f7cf8f4e2c
+stored PlaylistSongs { id: "p1" }: none digest=false fresh=false
+read_each PlaylistSongs { id: "p1" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+asked getPlaylist&id=p1
+asked getPlaylist&id=p1
+read_now NowPlaying { id: "s1" }
+page status ServerInfo { version: "1.16.1", server_type: "", server_version: "", open_subsonic: false } #3f27b5f7ea228672
+stored NowPlaying { id: "s1" }: none digest=false fresh=false
+read_each NowPlaying { id: "s1" }
+page status ServerInfo { version: "1.16.1", server_type: "", server_version: "", open_subsonic: false } #3f27b5f7ea228672
+ended: ok
+asked scrobble&id=s1&submission=false
+asked scrobble&id=s1&submission=false
+read_now ShareLink { id: "s1" }
+page share http://share/1 #e47869551e8ab265
+stored ShareLink { id: "s1" }: none digest=false fresh=false
+read_each ShareLink { id: "s1" }
+page share http://share/1 #e47869551e8ab265
+ended: ok
+asked createShare&id=s1
+asked createShare&id=s1
+read_now PullQueue
+page queue [s1/200,s2*/180] at 1 1234 ms by "web" #bf9fbc75c9f1c5b4
+stored PullQueue: none digest=false fresh=false
+read_each PullQueue
+page queue [s1/200,s2*/180] at 1 1234 ms by "web" #bf9fbc75c9f1c5b4
+ended: ok
+asked getPlayQueue
+asked getPlayQueue
+== read_now of kept reads keeps nothing new
+read_now AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+read_now AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+read_now AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+read_now AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+read_now FavouriteAlbums { size: 20 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+read_now ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+read_now AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+read_now ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+read_now ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+read_now TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+read_now PlaylistList
+page playlists [p1/1] #97710a49413c558f
+read_now PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+read_now StarredItems
+page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+read_now GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+read_now RadioList
+page stations [r1] #1138e27d000362dc
+read_now LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+read_now FolderIndex
+page artists [d1] #f40db99784f6a43d
+read_now FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+read_now HomeFeed
+page feed  #ef0697f9bdeeb4b1
+kept sssssssssssssssssss
+asked getAlbumList2&type=newest&size=20&offset=0&musicFolderId=7
+asked getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7
+asked getAlbumList2&type=byGenre&size=20&offset=0&genre=Rock&musicFolderId=7
+asked getAlbumList2&type=byYear&fromYear=2000&toYear=2010&size=20&offset=0&musicFolderId=7
+asked getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7
+asked getArtists&musicFolderId=7
+asked getAlbum&id=al1
+asked getArtist&id=ar1
+asked getArtistInfo2&id=ar1&count=10
+asked getTopSongs&artist=A&count=20
+asked getPlaylists
+asked getPlaylist&id=p1
+asked getStarred2&musicFolderId=7
+asked getGenres
+asked getInternetRadioStations
+asked getLyricsBySongId&id=s1&enhanced=true
+asked getIndexes&musicFolderId=7
+asked getMusicDirectory&id=d1
+asked homeFeed
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al2*/1] #ec85722c6e335ae5
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al2*/1] #ec85722c6e335ae5
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al2*/1] #ec85722c6e335ae5
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al2*/1] #ec85722c6e335ae5
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+ended: ok
+read_each GenreList
+page genres [Pop:3] #1f6516e1210f60c6
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+kept FFFFFFFFFFFFFFFFFFF
+== a heart: sent, and what lists hearts is asked again
+star s1: ok
+asked star&id=s1
+kept F-FF-F--FFF--FFFFFF
+read_each StarredItems
+page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+asked getStarred2&musicFolderId=7
+asked getAlbum&id=al1
+asked getAlbumList2&type=starred&size=20&offset=0&musicFolderId=7
+== an album unstarred leaves the favourites at once
+unstar al2: ok
+asked unstar&albumId=al2
+kept F-FF-F--FFF--FFFFFF
+stored FavouriteAlbums { size: 20 }: none digest=false fresh=false
+stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: none digest=false fresh=false
+stored StarredItems: none digest=false fresh=false
+== offline: a heart is queued and the favourites show it
+star s9: ok
+pending 1
+read_each StarredItems
+ended: error Transport { kind: Connect, detail: None }
+stored StarredItems: none digest=false fresh=false
+read_each AlbumById { id: "al1" }
+ended: error Transport { kind: Connect, detail: None }
+stored AlbumById { id: "al1" }: none digest=false fresh=false
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+stored PlaylistList: playlists [p1/1] #97710a49413c558f digest=true fresh=true
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+stored HomeFeed: feed  #ef0697f9bdeeb4b1 digest=true fresh=true
+create playlist offline: ok
+asked star&id=s9
+asked getStarred2&musicFolderId=7
+asked getAlbum&id=al1
+asked star&id=s9
+kept F-FF-F--FF---FFFFFF
+== online again: the queue goes first
+scrobble: ok
+pending 0
+asked star&id=s9
+asked createPlaylist&name=x&songId=s1
+asked scrobble&id=s1&submission=true&time=5
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+asked getStarred2&musicFolderId=7
+== each write and what it leaves kept
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+Star { kind: Artist, id: "ar1", on: false }: ok
+asked unstar&artistId=ar1
+kept F-FF-F--FFF--FFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+CreatePlaylist { name: "New", song_ids: ["s1", "s2"] }: ok
+asked createPlaylist&name=New&songId=s1&songId=s2
+kept FFFFFFFFFF-FFFFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+AddToPlaylist { id: "p1", song_ids: ["s2"] }: ok
+asked updatePlaylist&playlistId=p1&songIdToAdd=s2
+kept FFFFFFFFFF--FFFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+RemoveFromPlaylist { id: "p1", index: 0 }: ok
+asked updatePlaylist&playlistId=p1&songIndexToRemove=0
+kept FFFFFFFFFF--FFFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+RenamePlaylist { id: "p1", name: "Road" }: ok
+asked updatePlaylist&playlistId=p1&name=Road
+kept FFFFFFFFFF--FFFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+ReplacePlaylist { id: "p1", song_ids: ["s2", "s1"] }: ok
+asked createPlaylist&playlistId=p1&songId=s2&songId=s1
+kept FFFFFFFFFF--FFFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+DeletePlaylist { id: "p1" }: ok
+asked deletePlaylist&id=p1
+kept FFFFFFFFFF--FFFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+CreateRadio { name: "R", stream_url: "http://r" }: ok
+asked createInternetRadioStation&name=R&streamUrl=http%3A%2F%2Fr
+kept FFFFFFFFFFFFFF-FFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+DeleteRadio { id: "r1" }: ok
+asked deleteInternetRadioStation&id=r1
+kept FFFFFFFFFFFFFF-FFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+Scrobble { id: "s1", submission: false, time_ms: None }: ok
+asked scrobble&id=s1&submission=false
+kept FFFFFFFFFFFFFFFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+SaveQueue { ids: ["s1", "s2"], current: Some("s2"), position_ms: 7 }: ok
+asked savePlayQueue&id=s1&id=s2&current=s2&position=7
+kept FFFFFFFFFFFFFFFFFFF
+read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: Starred, size: 20, offset: 0, genre: None }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }
+page albums [al1/2,al2*/1] #e14ca79ccd5f3637
+ended: ok
+read_each FavouriteAlbums { size: 20 }
+page albums [al1/2] #0ec106fc480360b5
+ended: ok
+read_each ArtistIndex
+page artists [ar1] #e4328b60ef4d3dea
+ended: ok
+read_each AlbumById { id: "al1" }
+page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
+ended: ok
+read_each ArtistById { id: "ar1" }
+page artist ar1 [al1/2] #c9c86854de016ea9
+ended: ok
+read_each ArtistAbout { id: "ar1" }
+page about Some("http://m") [ar1] #875a0b766ae914c0
+ended: ok
+read_each TopSongs { artist: "A" }
+page songs [s1/200] #16a140f7cf8f4e2c
+ended: ok
+read_each PlaylistList
+page playlists [p1/1] #97710a49413c558f
+ended: ok
+read_each PlaylistById { id: "p1" }
+page playlist p1/0 [s1/200] #ca5e40173283c07d
+ended: ok
+read_each StarredItems
+page starred [ar1] [] [s2*/180] 1 #0fcf28a0b1713a77
+ended: ok
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: ok
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+read_each LyricsBySong { song_id: "s1" }
+page lyrics synced=true lines=1 #6c8ce2a474f6df7e
+ended: ok
+read_each FolderIndex
+page artists [d1] #f40db99784f6a43d
+ended: ok
+read_each FolderById { id: "d1" }
+page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+ended: ok
+read_each HomeFeed
+page feed  #ef0697f9bdeeb4b1
+ended: ok
+== a refused write changes nothing
+star refused: ok
+asked unstar&id=s2
+kept F-FF-F--FFF--FFFFFF
+stored StarredItems: none digest=false fresh=false
+== Home's refresh drops the lists
+kept -----F--FF---FFFFF-
+== a page the server no longer has is dropped
+read_each AlbumById { id: "al1" }
+ended: error Api { code: 70, reason: "no" }
+stored AlbumById { id: "al1" }: none digest=false fresh=false
+asked getAlbum&id=al1
+read_each GenreList
+page genres [Rock:9,Jazz:1] #51661f63a458e397
+ended: error Api { code: 50, reason: "no" }
+stored GenreList: genres [Rock:9,Jazz:1] #51661f63a458e397 digest=true fresh=false
+asked getGenres
+read_each RadioList
+page stations [r1] #1138e27d000362dc
+ended: ok
+asked getInternetRadioStations
+== a page listing a provider item is never fresh
+read_each AlbumById { id: "al1" }
+page album al1/0 [s1/200,ext-deezer-song-9/100] #2d8da6efbd1568eb
+ended: ok
+stored AlbumById { id: "al1" }: album al1/0 [s1/200,ext-deezer-song-9/100] #2d8da6efbd1568eb digest=true fresh=false
+read_each AlbumById { id: "al1" }
+page album al1/0 [s1/200,ext-deezer-song-9/100] #2d8da6efbd1568eb
+ended: ok
+asked getAlbum&id=al1
+asked getAlbum&id=al1
+== streams, downloads and covers
+stream s1: stream?u=u&t=72522a71fcba970e88914fe3e835c8f7&s=5e61cf413573&v=1.16.1&c=nori&f=json&id=s1 s1:0
+download s1: stream?u=u&t=72522a71fcba970e88914fe3e835c8f7&s=5e61cf413573&v=1.16.1&c=nori&f=json&id=s1&maxBitRate=192&format=mp3 dl:s1
+stream al 1: stream?u=u&t=72522a71fcba970e88914fe3e835c8f7&s=5e61cf413573&v=1.16.1&c=nori&f=json&id=al%201 al 1:0
+download al 1: stream?u=u&t=72522a71fcba970e88914fe3e835c8f7&s=5e61cf413573&v=1.16.1&c=nori&f=json&id=al%201&maxBitRate=192&format=mp3 dl:al 1
+cover getCoverArt?u=u&t=72522a71fcba970e88914fe3e835c8f7&s=5e61cf413573&v=1.16.1&c=nori&f=json&id=al%201&size=320
+cover prefix Some("getCoverArt?u=u&t=72522a71fcba970e88914fe3e835c8f7&s=5e61cf413573&v=1.16.1&c=nori&f=json")
+download covers ["getCoverArt?u=u&t=72522a71fcba970e88914fe3e835c8f7&s=5e61cf413573&v=1.16.1&c=nori&f=json&id=al%201&size=320", "getCoverArt?u=u&t=72522a71fcba970e88914fe3e835c8f7&s=5e61cf413573&v=1.16.1&c=nori&f=json&id=al%201&size=800"]
+== the library walk
+synced 1 1 2
+asked search3&query=&songCount=500&songOffset=0&albumCount=500&albumOffset=0&artistCount=500&artistOffset=0&musicFolderId=7
+asked search3&query=&songCount=500&songOffset=500&albumCount=500&albumOffset=500&artistCount=500&artistOffset=500&musicFolderId=7
