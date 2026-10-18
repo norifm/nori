@@ -101,14 +101,16 @@ fun BottomChrome(
     val wide = LocalWide.current
     Column(
         Modifier.drawWithCache {
-            // Clear at the top of the wash, mostly page at the mini player's top edge, all page by its middle.
+            // Clear a little above the mini player, half page at its top edge and all page only by its foot,
+            // where the tabs begin: the bar stays see-through, the wash only keeps its words readable.
             val above = WASH_ABOVE.toPx()
             val total = size.height + above
             val page = look.color(CoverLook.CHROME_PAGE)
             val top = above / total
             val fade = androidx.compose.ui.graphics.Brush.verticalGradient(
-                0f to Color.Transparent, top * 0.55f to look.color(CoverLook.CHROME_FADE), top to page.copy(alpha = 0.94f),
-                (top + 22.dp.toPx() / total).coerceAtMost(1f) to page, 1f to page,
+                0f to Color.Transparent, top to page.copy(alpha = 0.55f),
+                (top + 28.dp.toPx() / total).coerceAtMost(1f) to look.color(CoverLook.CHROME_FADE),
+                (top + 52.dp.toPx() / total).coerceAtMost(1f) to page, 1f to page,
                 startY = -above, endY = size.height,
             )
             onDrawBehind { if (!wide) drawRect(fade, Offset(0f, -above), androidx.compose.ui.geometry.Size(size.width, size.height + above)) }
@@ -288,7 +290,7 @@ private val BAR_OFF = 6.dp
 /** The corners of the outline the mini player and the tabs share. */
 private val CHROME_CORNER = 22.dp
 /** How far above the mini player the page's wash begins. */
-private val WASH_ABOVE = 40.dp
+private val WASH_ABOVE = 14.dp
 /** How long a tab takes to light, and its name to open. */
 private val TAB_FADE = androidx.compose.animation.core.tween<Color>(220)
 
