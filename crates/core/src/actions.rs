@@ -54,6 +54,14 @@ impl Core {
         let json: String = c.query_row("SELECT json FROM downloads WHERE server=sid() AND id=?1 AND done=1", [id], |r| r.get(0)).optional().ok()??;
         serde_json::from_str(&json).ok()
     }
+
+    /// Song `id` as the local index keeps it.
+    pub(crate) fn indexed_song(&self, id: &str) -> Option<Song> {
+        use rusqlite::OptionalExtension;
+        let c = self.db.lock();
+        let json: String = c.query_row("SELECT json FROM items WHERE server=sid() AND kind=?1 AND id=?2", rusqlite::params![crate::db::ItemKind::Song, id], |r| r.get(0)).optional().ok()??;
+        serde_json::from_str(&json).ok()
+    }
 }
 
 #[cfg_attr(feature = "ffi", uniffi::export)]

@@ -279,7 +279,7 @@ impl State {
             Read::AlbumList { offset: 0, .. } if signed_in => Page::Albums { v: self.after(c, api.library_albums(t).await)?.into_iter().map(album).collect() },
             Read::StarredItems if signed_in => {
                 let liked = self.after(c, api.liked_songs(t).await)?.into_iter().map(|s| Song { starred: true, ..song(s) }).collect();
-                Page::StarredPage { v: c.core.stars.lock().overlay(Starred::new(Vec::new(), Vec::new(), liked)) }
+                Page::StarredPage { v: c.marked_favourites(Starred::new(Vec::new(), Vec::new(), liked)) }
             }
             _ => return Ok(None),
         }))
@@ -886,6 +886,30 @@ mod tests {
         assert!(v[3].albums.iter().all(|a| a.id.starts_with("yt-MPREb_")));
         assert!(t.asked.lock().iter().all(|e| !e.headers.contains_key("Cookie")), "signed out, a visitor's feed");
         assert!(matches!(block(c.read_now(Read::StarredItems)), Ok(Page::StarredPage { v }) if v.songs.is_empty()));
+    }
+
+    struct Shown;
+    impl crate::library::StarsShown for Shown {
+        fn marks(&self, _: crate::stars::StarMarks) {}
+    }
+
+    /// A heart shows in the favorites at once, in the kept list and in YouTube's next answer that does
+    /// not list the like yet; an unhearted song leaves both.
+    #[test]
+    fn hearts_show_in_the_favorites_at_once() {
+        let (c, _) = signed_in(30, vec![answer(200, "playlist", &[]), answer(200, "album", &[]), answer(200, "", &[]), answer(200, "", &[]), answer(200, "playlist", &[])]);
+        let ids = |p: Option<Page>| match p {
+            Some(Page::StarredPage { v }) => v.songs.into_iter().map(|s| (s.id, s.starred)).collect::<Vec<_>>(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(ids(block(c.cached_or_fetched(Read::StarredItems)).unwrap()).len(), 3);
+        block(c.read_now(Read::AlbumById { id: "yt-MPREb_K8qWMWVqXGi".into() })).unwrap();
+        block(c.star(Starrable::Song, "yt-zhl-Cs1-sG4".into(), true, Arc::new(Shown))).unwrap();
+        block(c.star(Starrable::Song, "yt-khnokW3Mw24".into(), false, Arc::new(Shown))).unwrap();
+        let shown = ids(c.read_stored(Read::StarredItems).unwrap().page);
+        assert_eq!(shown[0], ("yt-zhl-Cs1-sG4".to_string(), true), "{shown:?}");
+        assert!(shown.len() == 3 && !shown.iter().any(|(id, _)| id == "yt-khnokW3Mw24"), "{shown:?}");
+        assert_eq!(ids(block(c.read_now(Read::StarredItems)).ok()), shown, "YouTube lags; the marks do not");
     }
 
     /// Signed-in library features and a temporary guest's requests follow the profile rules.
