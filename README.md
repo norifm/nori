@@ -6,6 +6,10 @@
   A music player for your own Navidrome or Subsonic server, on Android, desktop, the terminal and the iPod touch.
 </p>
 
+> **Still in development.** nori changes quickly: its screens and settings will change between versions,
+> and it will soon get its own design language. Bugs and ideas are welcome in
+> [Issues](https://github.com/norifm/nori/issues).
+
 <p align="center">
   <a href="https://github.com/norifm/nori/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/norifm/nori?style=flat-square&label=release&color=3d6b52"></a>
   <img alt="Android · Linux · macOS · terminal · iPod" src="https://img.shields.io/badge/Android%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20terminal%20%C2%B7%20iPod-555?style=flat-square">

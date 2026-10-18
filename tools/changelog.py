@@ -157,7 +157,9 @@ def write_unreleased(body: str) -> None:
     seen = False
     for heading, content in parts:
         if heading.startswith("## [Unreleased]"):
-            out.append((heading, "\n" + body))
+            # A note written by hand above the generated lists stays.
+            note = content.split("\n### ", 1)[0].strip()
+            out.append((heading, "\n" + (note + "\n\n" if note else "") + body))
             seen = True
         else:
             out.append((heading, content))
