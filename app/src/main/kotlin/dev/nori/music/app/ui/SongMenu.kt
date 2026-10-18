@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -66,9 +67,11 @@ import dev.nori.music.ffi.model.Song
  * than a list of actions, and they are left plain.
  */
 @Composable
-private fun Item(text: String, icon: ImageVector? = null, onClick: () -> Unit) {
+private fun Item(text: String, icon: ImageVector? = null, enabled: Boolean = true, onClick: () -> Unit) {
+    // Not offered now (the core's `SongMenuItem::enabled`): there, greyed, and a tap does nothing.
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = Space.gutter, vertical = 15.dp),
+        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).alpha(if (enabled) 1f else 0.38f)
+            .padding(horizontal = Space.gutter, vertical = 15.dp),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         if (icon != null) Icon(icon, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -166,7 +169,7 @@ fun SongMenu(
                     nav.artist(a.id, Artist(a.id, a.name, song.coverArt.takeIf { song.artists.size <= 1 }, null, 0u, false, false)); onDismiss()
                 } }
                 dev.nori.music.ffi.library.SongAction.AddToLibrary -> Item(label, Icons.Filled.LibraryAdd) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(label, Icons.Filled.Lyrics) { timing = true }
+                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(label, Icons.Filled.Lyrics, enabled = i.enabled) { timing = true }
                 dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(label, Icons.Filled.Bedtime) { sleeping = true }
                 dev.nori.music.ffi.library.SongAction.StartRadio -> Item(label, Icons.Filled.Radio) { actions.startRadio(song); onDismiss() }
                 dev.nori.music.ffi.library.SongAction.InstantMix -> Item(label, Icons.Filled.AutoAwesome) { actions.instantMix(song); onDismiss() }

@@ -80,4 +80,4 @@ export type SettingRow = {
 };
 export type SettingsSection = { id: string; rows: SettingRow[] };
 
-export type MenuAction = { action: string; more: boolean; on?: boolean; id?: string; name?: string; named?: boolean };
+export type MenuAction = { action: string; more: boolean; enabled: boolean; on?: boolean; id?: string; name?: string; named?: boolean };

@@ -39,7 +39,7 @@ fn action_code(a: &SongAction) -> i32 {
 }
 
 fn item_json(m: &SongMenuItem) -> Value {
-    let mut v = json!({ "a": action_code(&m.action), "more": m.more });
+    let mut v = json!({ "a": action_code(&m.action), "more": m.more, "enabled": m.enabled });
     match &m.action {
         SongAction::Favourite { on } => v["on"] = json!(on),
         SongAction::GoToAlbum { id } => v["id"] = json!(id),
@@ -74,6 +74,8 @@ fn details_json(s: &Song) -> Value {
 fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, rules: &ProfileRules) -> Value {
     let items: Vec<Value> = song_menu(song.clone(), starred, download, player, false, rules.stars, rules.account, rules.downloads, rules.radio, rules.asks.then_some(JamOffer::Guest))
         .iter()
+        // The iPod has no sheet for the lyrics' source and timing.
+        .filter(|i| i.action != SongAction::Lyrics)
         .map(item_json)
         .collect();
     json!({ "items": items, "details": details_json(song) })

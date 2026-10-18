@@ -177,7 +177,7 @@ impl Nori {
         Ok(Value::from(sections).to_string())
     }
 
-    /// Song `song`'s menu (JSON, as a page read it), most used first (`menus::song_menu`): `[{ action,
+    /// Song `song`'s menu (JSON, as a page read it), most used first (`menus::song_menu`): `[{ action, enabled,
     /// more, on, id, name, named }]`. `player`: opened from the player, showing `lyrics`.
     pub fn menu(&self, song: String, player: bool, lyrics: bool) -> Result<String, JsValue> {
         use nori_core::menus::{song_menu, SongAction, SongDownload};
@@ -186,7 +186,7 @@ impl Nori {
         let items: Vec<Value> = song_menu(song.clone(), song.starred, SongDownload::None, player, lyrics, rules.stars, rules.account, false, rules.radio, self.jam_offer())
             .into_iter()
             .map(|m| {
-                let mut v = json!({ "more": m.more });
+                let mut v = json!({ "more": m.more, "enabled": m.enabled });
                 let action = match m.action {
                     SongAction::Favourite { on } => {
                         v["on"] = json!(on);

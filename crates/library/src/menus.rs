@@ -52,6 +52,8 @@ pub struct SongMenuItem {
     pub action: SongAction,
     /// Under "More".
     pub more: bool,
+    /// Shown but not offered now (greyed): the player's Lyrics while the song has none.
+    pub enabled: bool,
 }
 
 /// Where a song's download stands, as its menu needs to know.
@@ -65,7 +67,7 @@ pub enum SongDownload {
 }
 
 /// The menu of `song`, most used first. `starred` as shown; `player`: opened from the player, which adds
-/// the sleep timer, and the lyrics' source and timing when it shows `lyrics`. `stars`: songs carry hearts ([`crate::browse::ProfileRules::stars`]). `account`: the
+/// the sleep timer, and the lyrics' source and timing (greyed while it shows no `lyrics`). `stars`: songs carry hearts ([`crate::browse::ProfileRules::stars`]). `account`: the
 /// profile has an account's playlists, mixes and shares (not a jam guest's, nor a
 /// profile without a Subsonic account). A provider's song has no mix or share actions: those need it
 /// on the server. `jam`: what a jam adds.
@@ -73,57 +75,57 @@ pub enum SongDownload {
 #[allow(clippy::too_many_arguments)]
 pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool, lyrics: bool, stars: bool, account: bool, downloads: bool, radio: bool, jam: Option<JamOffer>) -> Vec<SongMenuItem> {
     let mut out = Vec::with_capacity(16);
-    let mut add = |action: SongAction, more: bool| out.push(SongMenuItem { action, more });
+    let mut add = |action: SongAction, more: bool, enabled: bool| out.push(SongMenuItem { action, more, enabled });
     if stars {
-        add(SongAction::Favourite { on: !starred }, false);
+        add(SongAction::Favourite { on: !starred }, false, true);
     }
-    add(SongAction::PlayNext, false);
-    add(SongAction::AddToQueue, false);
+    add(SongAction::PlayNext, false, true);
+    add(SongAction::AddToQueue, false, true);
     if account {
-        add(SongAction::AddToPlaylist, false);
+        add(SongAction::AddToPlaylist, false, true);
     }
     if downloads {
         match download {
-            SongDownload::Done => add(SongAction::RemoveDownload, false),
-            SongDownload::Pending => add(SongAction::StopDownload, false),
-            SongDownload::None => add(SongAction::Download, false),
+            SongDownload::Done => add(SongAction::RemoveDownload, false, true),
+            SongDownload::Pending => add(SongAction::StopDownload, false, true),
+            SongDownload::None => add(SongAction::Download, false, true),
         }
     }
     if let Some(id) = &song.album_id {
-        add(SongAction::GoToAlbum { id: id.clone() }, false);
+        add(SongAction::GoToAlbum { id: id.clone() }, false, true);
     }
     if song.artists.len() > 1 {
         for a in song.artists.iter().filter(|a| !a.id.is_empty()) {
-            add(SongAction::GoToArtist { id: a.id.clone(), name: a.name.clone(), named: true }, false);
+            add(SongAction::GoToArtist { id: a.id.clone(), name: a.name.clone(), named: true }, false, true);
         }
     } else if let Some(id) = &song.artist_id {
-        add(SongAction::GoToArtist { id: id.clone(), name: song.artist.clone(), named: false }, false);
+        add(SongAction::GoToArtist { id: id.clone(), name: song.artist.clone(), named: false }, false, true);
     }
     if jam == Some(JamOffer::Guest) {
-        add(SongAction::Details, false);
+        add(SongAction::Details, false, true);
         return out;
     }
     if account && song.is_provider() {
-        add(SongAction::AddToLibrary, false);
+        add(SongAction::AddToLibrary, false, true);
     }
     if jam == Some(JamOffer::Start) {
-        add(SongAction::StartJam, false);
-    }
-    if player && lyrics {
-        add(SongAction::Lyrics, false);
+        add(SongAction::StartJam, false, true);
     }
     if player {
-        add(SongAction::SleepTimer, false);
+        add(SongAction::Lyrics, false, lyrics);
+    }
+    if player {
+        add(SongAction::SleepTimer, false, true);
     }
     if radio {
-        add(SongAction::StartRadio, true);
+        add(SongAction::StartRadio, true, true);
     }
     if account && !song.is_provider() {
-        add(SongAction::InstantMix, true);
-        add(SongAction::ExcludeFromMixes, true);
-        add(SongAction::Share, true);
+        add(SongAction::InstantMix, true, true);
+        add(SongAction::ExcludeFromMixes, true, true);
+        add(SongAction::Share, true, true);
     }
-    add(SongAction::Details, true);
+    add(SongAction::Details, true, true);
     out
 }
 
@@ -360,7 +362,9 @@ mod tests {
             [(PlayNext, false), (AddToQueue, false), (GoToAlbum { id: "al".into() }, false), (GoToArtist { id: "ar".into(), name: "Björk".into(), named: false }, false), (Lyrics, false), (SleepTimer, false), (Details, true)],
             "without an account only the queue, the pages and what plays here"
         );
-        assert!(!actions(&song_menu(s.clone(), false, SongDownload::None, true, false, true, true, true, true, None)).contains(&(Lyrics, false)), "no lyrics, no lyrics line");
+        let without = song_menu(s.clone(), false, SongDownload::None, true, false, true, true, true, true, None);
+        assert_eq!(without.iter().find(|i| i.action == Lyrics).map(|i| i.enabled), Some(false), "no lyrics: the line is there, greyed");
+        assert!(m.iter().all(|i| i.enabled), "everything else is offered");
         assert!(!actions(&song_menu(s.clone(), false, SongDownload::None, false, true, true, true, true, true, None)).contains(&(Lyrics, false)), "only the player's menu has it");
         assert_eq!(
             actions(&song_menu(s, true, SongDownload::None, false, false, true, false, false, false, None))[..3],
@@ -389,7 +393,7 @@ mod tests {
             [
                 (Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false), (StopDownload, false),
                 (GoToArtist { id: "a".into(), name: "A".into(), named: true }, false), (GoToArtist { id: "b".into(), name: "B".into(), named: true }, false),
-                (AddToLibrary, false), (SleepTimer, false),
+                (AddToLibrary, false), (Lyrics, false), (SleepTimer, false),
                 (StartRadio, true), (Details, true),
             ]
         );
