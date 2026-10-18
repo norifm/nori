@@ -118,5 +118,33 @@ current trust score is in `crates/lyrics/src/trust.rs`, and the race is in `race
        −3285 ms where the answer is ~0.8 s late); several 350-400 ms moves have an unclear truth (Teardrop,
        Change). The owner's wanted offsets (+300 ms, +500 ms) are 0.3-0.5 s sooner than the voice on these
        streams for both songs, which points to how the playhead is heard on the phone rather than the check.
+   - *Voice told from instruments, 2026-10-18* (classical, no model; `vocal.rs`, analysis version 13, curve
+     version 3): the curve now sums, per frame, only over the peaks of the strongest harmonic series (F0
+     80-1000 Hz, found among peaks that last three frames: 8 strongest × harmonics 1-8, scored by amplitude
+     decaying 0.92 per harmonic): their level movement as before plus 0.5 × amplitude × how far their frequency
+     moved over two frames (full at 30 cents: vibrato, glides). Noise, drums and cymbal swells have peaks that
+     come and go and fit no series; a held note does not move. Measured on the same 22 songs' audio again
+     (nori-cli renders, 6 dB under the stream, so fed back at ×2: that reproduces the stored curves' results).
+     - Truth fixed for Smells Like Teen Spirit: BiniLyrics' (Apple) timing runs 1.0 s before the voice the
+       spectrogram shows (first word 33.5 s, voice from 34.7 s); Unison's (34.57 s) is on it and is now the
+       reference. Old and new curves both moved those lyrics by about +1.1 s, counted wrong until now.
+     - All 128 answers (wrong = moved > 300 ms off, Teardrop's doubtful truth apart; missed = off 0.3-6 s
+       and left alone): old curve wrong 0 (Teardrop 4), right 5, missed 19, median error 17 ms; new wrong 0
+       (Teardrop 3), right 13, missed 12, median 17 ms. Shown answers (22): right 0 → 2, missed 2 → 1, wrong
+       0. Frames inside Apple's words told from frames away from any word: AUC 0.73 → 0.78 (19 songs).
+     - Climbing Up the Walls' swell is broadband noise, not a chord: its KuGou and LyricsPlus answers (414 ms
+       late) are now moved to within 164 ms. A synthetic noise swell before every line reads 1.05 of the voice
+       on the old curve, 0.38 on the new (`a_swell_is_not_a_voice`). A swelling chord of detuned strings
+       still reads as voice (its notes form a series and beat): not solved.
+     - Change's Apple timing is wanted −0.4 s by the new curve; its word spans gain 0.0094 there, so
+       `SPAN_GAIN` went 0.01 → 0.02 (real moves gain 0.03-0.3) to keep it Fits in every nearby setting
+       tried. Nearby settings (frequency weight 0.25-1, peak reach 1.25-2 bins) gave right 11-14, missed
+       12-14; one moved California's LRCLIB answer 301-305 ms off (right direction, just past 300).
+     - Cost: the analysis front end 47.7 → 61.6 ms CPU per minute of audio on the host (×1.29).
+     - The synthetic voice (no consonants) is heard about 120 ms late now, the busy synthetic funk band's moves
+       are mostly passed up (8 of 10, was 3), and the corpus AUC fell from ≥ 0.98 to ≥ 0.95 mean: the
+       series waits for a note's harmonics to last. Real word-timed answers sit at −2 ms median (was +29).
+     - Left: KuGou answers whose words tile the line (Vitamin R) still missed; pads and string chords; the
+       real-song set is 22 songs, so the thresholds are tuned on little.
 3. **Sources:** survey all 17 on a sample of the user's library (the feature-e2e `lyrics-services` section exists
    and is opt-in): hit rate, sync level, latency and junk. Then choose the default set with numbers.
