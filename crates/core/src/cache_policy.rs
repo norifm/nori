@@ -258,6 +258,19 @@ fn digest(bytes: &[u8]) -> u64 {
     h.finish()
 }
 
+/// What tells two kept pages apart.
+fn page_digest(page: &Page) -> u64 {
+    digest(format!("{page:?}").as_bytes())
+}
+
+/// A page kept in memory for the session, when it came and its digest.
+#[derive(Clone)]
+pub(crate) struct Kept {
+    page: Page,
+    pub(crate) at: i64,
+    digest: u64,
+}
+
 /// Whether `page` lists a provider item. Such answers change as provider songs get downloaded, so they
 /// are never fresh.
 fn lists_provider_items(page: &Page) -> bool {
@@ -428,12 +441,13 @@ impl Client {
         let sp = spec(read);
         let Some(fresh_ms) = sp.fresh_ms.map(|ms| within_ms.unwrap_or(ms)) else { return Stored { page: None, digest: None, fresh: false } };
         let kept = self.core.kept.lock().get(&key(sp.endpoint, &sp.params)).cloned();
-        let fresh = kept.as_ref().is_some_and(|(_, at)| crate::db::now_ms() - at < fresh_ms);
-        let page = kept.map(|(p, _)| match p {
+        let fresh = kept.as_ref().is_some_and(|k| crate::db::now_ms() - k.at < fresh_ms);
+        let digest = kept.as_ref().map(|k| k.digest);
+        let page = kept.map(|k| match k.page {
             Page::StarredPage { v } => Page::StarredPage { v: self.marked_favourites(v) },
             p => p,
         });
-        Stored { page, digest: None, fresh }
+        Stored { page, digest, fresh }
     }
 
     /// A source's favourites with this session's marks laid over them: unstarred items leave, and a
@@ -453,19 +467,21 @@ impl Client {
         Starred::new(starred.artists, starred.albums, songs)
     }
 
-    /// [`Client::read_fetch`] of a provider that stores nothing: asked anew, and kept ([`Client::kept_stored`]).
-    pub(crate) async fn kept_fetch(&self, read: Read) -> NetResult<Option<Page>> {
+    /// [`Client::read_fetch`] of a provider that stores nothing: asked anew, and kept ([`Client::kept_stored`]);
+    /// the page only when it differs from the kept one of `digest`.
+    pub(crate) async fn kept_fetch(&self, read: Read, digest: Option<u64>) -> NetResult<Option<Page>> {
         let page = self.read_now(read.clone()).await?;
-        self.keep(read, page.clone());
-        Ok(Some(page))
+        Ok((self.keep(read, page.clone()) != digest).then_some(page))
     }
 
-    /// Keeps `page` as `read`'s answer this session ([`Client::kept_stored`]); cached reads only.
-    pub(crate) fn keep(&self, read: Read, page: Page) {
+    /// Keeps `page` as `read`'s answer this session ([`Client::kept_stored`]), cached reads only; its digest.
+    pub(crate) fn keep(&self, read: Read, page: Page) -> Option<u64> {
         let sp = spec(read);
+        let digest = page_digest(&page);
         if sp.fresh_ms.is_some() {
-            self.core.kept.lock().insert(key(sp.endpoint, &sp.params), (page, crate::db::now_ms()));
+            self.core.kept.lock().insert(key(sp.endpoint, &sp.params), Kept { page, at: crate::db::now_ms(), digest });
         }
+        Some(digest)
     }
 
     /// [`Client::read_fetch`] of the Subsonic server, whose answers are cached whole.

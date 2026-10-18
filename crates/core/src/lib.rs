@@ -393,7 +393,7 @@ pub struct Core {
     remote: Mutex<std::sync::Weak<remote::Remote>>,
     cache_revision: AtomicU64,
     /// A provider's answers this session, by cache key, with when they came ([`Client::kept_stored`]).
-    kept: Mutex<std::collections::HashMap<String, (cache_policy::Page, i64)>>,
+    kept: Mutex<std::collections::HashMap<String, cache_policy::Kept>>,
     /// The queue this core saves and restores and its clients fill.
     pub session: Arc<nori_queue::Session>,
     /// The user and the Subsonic secret (password or API key) the LAN's remote control proves the account
@@ -746,7 +746,7 @@ impl Core {
     pub(crate) fn cache_stale(&self, prefix: &str) -> Result<()> {
         let c = self.db.lock();
         c.execute("UPDATE cache SET ts = 0 WHERE server=sid() AND key >= ?1 AND key < ?1 || x'ff'", [prefix])?;
-        self.kept.lock().iter_mut().filter(|(k, _)| k.starts_with(prefix)).for_each(|(_, (_, at))| *at = 0);
+        self.kept.lock().iter_mut().filter(|(k, _)| k.starts_with(prefix)).for_each(|(_, kept)| kept.at = 0);
         self.cache_revision.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }

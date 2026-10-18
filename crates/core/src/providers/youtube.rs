@@ -394,9 +394,9 @@ impl Provider for YouTube {
     }
 
     /// YouTube reshuffles Home on every request: a refresh keeps what was shown and adds what is new.
-    async fn read_fetch(&self, client: &Client, read: Read, _digest: Option<u64>) -> NetResult<Option<Page>> {
+    async fn read_fetch(&self, client: &Client, read: Read, digest: Option<u64>) -> NetResult<Option<Page>> {
         if !matches!(read, Read::HomeFeed) {
-            return client.kept_fetch(read).await;
+            return client.kept_fetch(read, digest).await;
         }
         let Page::Feed { v } = client.read_now(read.clone()).await? else { return Ok(None) };
         let shown = self.0.home.lock().take();
@@ -406,8 +406,7 @@ impl Provider for YouTube {
         };
         *self.0.home.lock() = Some(v.clone());
         let page = Page::Feed { v };
-        client.keep(read, page.clone());
-        Ok(Some(page))
+        Ok((client.keep(read, page.clone()) != digest).then_some(page))
     }
 
     fn ahead(&self) -> Option<usize> {
@@ -743,7 +742,7 @@ mod tests {
     fn home_stays_for_the_session() {
         let (c, t) = youtube(&[&fixture("home"), &fixture("home_more"), &fixture("queue"), &reshuffled_home(), &fixture("home_more")]);
         let first = feed(&c);
-        c.core.kept.lock().values_mut().for_each(|(_, at)| *at = 0);
+        c.core.kept.lock().values_mut().for_each(|k| k.at = 0);
         assert_eq!(feed(&c), first);
         assert_eq!(t.asked.lock().len(), 3);
     }
@@ -1290,6 +1289,18 @@ mod tests {
         t.line(format!("cover {}", c.core.cover_address("https://yt3.googleusercontent.com/abc".into(), 320)));
         t.line(format!("download covers {:?}", c.core.download_cover_urls(vec!["https://yt3.googleusercontent.com/abc".into()])));
         t.finish();
+    }
+
+    /// A kept page asked anew that YouTube answers the same is not shown again.
+    #[test]
+    fn an_unchanged_page_is_shown_once() {
+        let (c, t) = youtube(&[&fixture("album"), &fixture("album")]);
+        let read = || Read::AlbumById { id: "yt-MPREb_K8qWMWVqXGi".into() };
+        block(c.read_each(read(), |_| {})).unwrap();
+        c.core.kept.lock().values_mut().for_each(|k| k.at = 0);
+        let mut shown = 0;
+        block(c.read_each(read(), |_| shown += 1)).unwrap();
+        assert_eq!((shown, t.asked.lock().len()), (1, 2), "the kept page, and YouTube asked");
     }
 
     /// A heart makes the kept favourites stale, as a server's: YouTube is asked for them on the next read.

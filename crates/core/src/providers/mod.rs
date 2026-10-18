@@ -56,8 +56,8 @@ pub trait Provider: Send + Sync {
     }
 
     /// `read` asked anew; the page only when it differs from the kept one of `digest`.
-    async fn read_fetch(&self, client: &Client, read: Read, _digest: Option<u64>) -> NetResult<Option<Page>> {
-        client.kept_fetch(read).await
+    async fn read_fetch(&self, client: &Client, read: Read, digest: Option<u64>) -> NetResult<Option<Page>> {
+        client.kept_fetch(read, digest).await
     }
 
     /// Sends one change.

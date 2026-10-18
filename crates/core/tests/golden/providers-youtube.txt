@@ -46,18 +46,18 @@ read_each LyricsBySong { song_id: "yt-x" }
 page lyrics synced=false lines=0 #c40a3bc18c3fe121
 ended: ok
 == stored
-stored HomeFeed: feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/229] [] [] []},{All hits: [] [] [] [yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA,yt-VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8]},{Party music: [] [] [] [yt-VLRDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ,yt-VLRDCLAK5uy_mVQsicmiGWIirrcMMQO4g7QL3BQKuKCSM]},{New releases: [] [yt-MPREb_avc015OeXxY/0,yt-MPREb_belO7bZVmAt/0] [] []} #a7400dc9472979d0 digest=false fresh=true
-stored AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }: album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008 digest=false fresh=true
-stored ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] #f91a53a17b1e7e11 digest=false fresh=true
-stored ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #3686cb5620f42aad digest=false fresh=true
-stored PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169 digest=false fresh=true
-stored PlaylistList: playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f digest=false fresh=true
-stored AlbumList { kind: ByName, size: 60, offset: 0, genre: None }: albums [yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_NP5KiWDRCjf/0] #67588f093b146986 digest=false fresh=true
-stored AlbumList { kind: ByName, size: 60, offset: 60, genre: None }: albums [] #7cb24232f87d40dd digest=false fresh=true
-stored StarredItems: starred [] [] [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] 3 #4ead149829469ca9 digest=false fresh=true
-stored FavouriteAlbums { size: 20 }: albums [] #7cb24232f87d40dd digest=false fresh=true
-stored GenreList: genres [] #2f02b9c19be34a47 digest=false fresh=true
-stored LyricsBySong { song_id: "yt-x" }: lyrics synced=false lines=0 #c40a3bc18c3fe121 digest=false fresh=true
+stored HomeFeed: feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/229] [] [] []},{All hits: [] [] [] [yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA,yt-VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8]},{Party music: [] [] [] [yt-VLRDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ,yt-VLRDCLAK5uy_mVQsicmiGWIirrcMMQO4g7QL3BQKuKCSM]},{New releases: [] [yt-MPREb_avc015OeXxY/0,yt-MPREb_belO7bZVmAt/0] [] []} #a7400dc9472979d0 digest=true fresh=true
+stored AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }: album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008 digest=true fresh=true
+stored ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] #f91a53a17b1e7e11 digest=true fresh=true
+stored ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #3686cb5620f42aad digest=true fresh=true
+stored PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169 digest=true fresh=true
+stored PlaylistList: playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f digest=true fresh=true
+stored AlbumList { kind: ByName, size: 60, offset: 0, genre: None }: albums [yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_NP5KiWDRCjf/0] #67588f093b146986 digest=true fresh=true
+stored AlbumList { kind: ByName, size: 60, offset: 60, genre: None }: albums [] #7cb24232f87d40dd digest=true fresh=true
+stored StarredItems: starred [] [] [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] 3 #4ead149829469ca9 digest=true fresh=true
+stored FavouriteAlbums { size: 20 }: albums [] #7cb24232f87d40dd digest=true fresh=true
+stored GenreList: genres [] #2f02b9c19be34a47 digest=true fresh=true
+stored LyricsBySong { song_id: "yt-x" }: lyrics synced=false lines=0 #c40a3bc18c3fe121 digest=true fresh=true
 == read again while fresh
 read_each HomeFeed
 page feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/229] [] [] []},{All hits: [] [] [] [yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA,yt-VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8]},{Party music: [] [] [] [yt-VLRDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ,yt-VLRDCLAK5uy_mVQsicmiGWIirrcMMQO4g7QL3BQKuKCSM]},{New releases: [] [yt-MPREb_avc015OeXxY/0,yt-MPREb_belO7bZVmAt/0] [] []} #a7400dc9472979d0
@@ -101,46 +101,35 @@ page feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/22
 ended: ok
 read_each AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }
 page album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008
-page album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008
 ended: ok
 read_each ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
-page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] #f91a53a17b1e7e11
 page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] #f91a53a17b1e7e11
 ended: ok
 read_each ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
 page about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #3686cb5620f42aad
-page about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #3686cb5620f42aad
 ended: ok
 read_each PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }
-page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169
 page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169
 ended: ok
 read_each PlaylistList
 page playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f
-page playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f
 ended: ok
 read_each AlbumList { kind: ByName, size: 60, offset: 0, genre: None }
-page albums [yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_NP5KiWDRCjf/0] #67588f093b146986
 page albums [yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_NP5KiWDRCjf/0] #67588f093b146986
 ended: ok
 read_each AlbumList { kind: ByName, size: 60, offset: 60, genre: None }
 page albums [] #7cb24232f87d40dd
-page albums [] #7cb24232f87d40dd
 ended: ok
 read_each StarredItems
-page starred [] [] [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] 3 #4ead149829469ca9
 page starred [] [] [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] 3 #4ead149829469ca9
 ended: ok
 read_each FavouriteAlbums { size: 20 }
 page albums [] #7cb24232f87d40dd
-page albums [] #7cb24232f87d40dd
 ended: ok
 read_each GenreList
 page genres [] #2f02b9c19be34a47
-page genres [] #2f02b9c19be34a47
 ended: ok
 read_each LyricsBySong { song_id: "yt-x" }
-page lyrics synced=false lines=0 #c40a3bc18c3fe121
 page lyrics synced=false lines=0 #c40a3bc18c3fe121
 ended: ok
 asked browse MPREb_K8qWMWVqXGi
@@ -235,34 +224,31 @@ album: error Api { code: 0, reason: "this profile has no write" }
 asked like/like 
 asked like/removelike 
 kept FssFsFFFssFF
-stored HomeFeed: feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/229] [] [] []},{All hits: [] [] [] [yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA,yt-VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8]},{Party music: [] [] [] [yt-VLRDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ,yt-VLRDCLAK5uy_mVQsicmiGWIirrcMMQO4g7QL3BQKuKCSM]},{New releases: [] [yt-MPREb_avc015OeXxY/0,yt-MPREb_belO7bZVmAt/0] [] []} #a7400dc9472979d0 digest=false fresh=true
-stored AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }: album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008 digest=false fresh=false
-stored ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] #f91a53a17b1e7e11 digest=false fresh=false
-stored ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #3686cb5620f42aad digest=false fresh=true
-stored PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169 digest=false fresh=false
-stored PlaylistList: playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f digest=false fresh=true
-stored AlbumList { kind: ByName, size: 60, offset: 0, genre: None }: albums [yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_NP5KiWDRCjf/0] #67588f093b146986 digest=false fresh=true
-stored AlbumList { kind: ByName, size: 60, offset: 60, genre: None }: albums [] #7cb24232f87d40dd digest=false fresh=true
-stored StarredItems: starred [] [] [yt-zhl-Cs1-sG4*/545,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] 3 #6e026048ea83162c digest=false fresh=false
-stored FavouriteAlbums { size: 20 }: albums [] #7cb24232f87d40dd digest=false fresh=false
-stored GenreList: genres [] #2f02b9c19be34a47 digest=false fresh=true
-stored LyricsBySong { song_id: "yt-x" }: lyrics synced=false lines=0 #c40a3bc18c3fe121 digest=false fresh=true
+stored HomeFeed: feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/229] [] [] []},{All hits: [] [] [] [yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA,yt-VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8]},{Party music: [] [] [] [yt-VLRDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ,yt-VLRDCLAK5uy_mVQsicmiGWIirrcMMQO4g7QL3BQKuKCSM]},{New releases: [] [yt-MPREb_avc015OeXxY/0,yt-MPREb_belO7bZVmAt/0] [] []} #a7400dc9472979d0 digest=true fresh=true
+stored AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }: album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008 digest=true fresh=false
+stored ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] #f91a53a17b1e7e11 digest=true fresh=false
+stored ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #3686cb5620f42aad digest=true fresh=true
+stored PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169 digest=true fresh=false
+stored PlaylistList: playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f digest=true fresh=true
+stored AlbumList { kind: ByName, size: 60, offset: 0, genre: None }: albums [yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_NP5KiWDRCjf/0] #67588f093b146986 digest=true fresh=true
+stored AlbumList { kind: ByName, size: 60, offset: 60, genre: None }: albums [] #7cb24232f87d40dd digest=true fresh=true
+stored StarredItems: starred [] [] [yt-zhl-Cs1-sG4*/545,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] 3 #6e026048ea83162c digest=true fresh=false
+stored FavouriteAlbums { size: 20 }: albums [] #7cb24232f87d40dd digest=true fresh=false
+stored GenreList: genres [] #2f02b9c19be34a47 digest=true fresh=true
+stored LyricsBySong { song_id: "yt-x" }: lyrics synced=false lines=0 #c40a3bc18c3fe121 digest=true fresh=true
 read_each HomeFeed
 page feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/229] [] [] []},{All hits: [] [] [] [yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA,yt-VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8]},{Party music: [] [] [] [yt-VLRDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ,yt-VLRDCLAK5uy_mVQsicmiGWIirrcMMQO4g7QL3BQKuKCSM]},{New releases: [] [yt-MPREb_avc015OeXxY/0,yt-MPREb_belO7bZVmAt/0] [] []} #a7400dc9472979d0
 ended: ok
 read_each AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }
 page album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008
-page album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008
 ended: ok
 read_each ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
-page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] #f91a53a17b1e7e11
 page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] #f91a53a17b1e7e11
 ended: ok
 read_each ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
 page about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #3686cb5620f42aad
 ended: ok
 read_each PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }
-page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169
 page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169
 ended: ok
 read_each PlaylistList
@@ -279,7 +265,6 @@ page starred [] [] [yt-zhl-Cs1-sG4*/545,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321]
 page starred [] [] [yt-zhl-Cs1-sG4*/545,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] 3 #6e026048ea83162c
 ended: ok
 read_each FavouriteAlbums { size: 20 }
-page albums [] #7cb24232f87d40dd
 page albums [] #7cb24232f87d40dd
 ended: ok
 read_each GenreList

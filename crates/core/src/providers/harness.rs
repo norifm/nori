@@ -130,7 +130,7 @@ pub(crate) fn said(p: &Page) -> String {
 /// Ages every kept answer past its freshness window.
 pub(crate) fn age(c: &Client) {
     c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
-    c.core.kept.lock().values_mut().for_each(|(_, at)| *at = 0);
+    c.core.kept.lock().values_mut().for_each(|k| k.at = 0);
 }
 
 /// Every page `read_each` shows, then how it ended.
