@@ -49,8 +49,8 @@
     box.scrollTo({ top: el.offsetTop - box.clientHeight * 0.38, behavior: "smooth" });
   });
 
-  /** The sung part of line `i`'s text, in UTF-16 units (JavaScript's own). */
-  const sungPart = (i: number, text: string) => (i === player.line && player.sung > 0 ? Math.min(text.length, Math.floor(player.sung)) : -1);
+  /** How much of line `i`'s text is sung, in fractional UTF-16 units (JavaScript's own); -1 while it is not swept. */
+  const sungPart = (i: number, text: string) => (i === player.line && player.sung > 0 ? Math.min(text.length, player.sung) : -1);
 </script>
 
 <div class="lyrics" class:synced id="lyrics" bind:this={box}>
@@ -63,7 +63,11 @@
       {@const cut = sungPart(i, l.text)}
       {#if synced}
         <button class="line" class:on={i === player.line} disabled={!taps} class:past={i < player.line} class:duet={l.voice === 1} data-i={i} onclick={() => void player.tapLine(i)}>
-          {#if cut >= 0}<span class="sung">{l.text.slice(0, cut)}</span><span class="rest">{l.text.slice(cut)}</span>{:else}{l.text || "♪"}{/if}
+          {#if cut >= 0}
+            {@const whole = Math.floor(cut)}
+            <!-- The letter being sung fills from the left as the core's place moves through it, as Android draws it. -->
+            <span class="sung">{l.text.slice(0, whole)}</span>{#if whole < l.text.length}<span class="edge" style="--fill: {(cut - whole) * 100}%">{l.text[whole]}</span>{/if}<span class="rest">{l.text.slice(whole + 1)}</span>
+          {:else}{l.text || "♪"}{/if}
           {#if l.translation}<span class="tr">{l.translation}</span>{/if}
         </button>
       {:else}
@@ -115,6 +119,12 @@
   }
   .line.on .sung {
     color: var(--text);
+  }
+  .edge {
+    background: linear-gradient(90deg, var(--text) var(--fill), var(--faint) var(--fill));
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
   }
   .line.past {
     color: var(--dim);
