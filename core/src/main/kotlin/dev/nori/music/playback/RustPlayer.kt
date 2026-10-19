@@ -126,8 +126,8 @@ internal object RustPlayerJni {
 internal class RustBridge(private val player: EnginePlayer) {
     /** [encoding] is `AudioFormat.ENCODING_*`: 16-bit, 24-bit packed (a song played as it is) or float. */
     fun openTrack(rate: Int, channels: Int, encoding: Int, frames: Int): AudioTrack? = player.openTrack(rate, channels, encoding, frames)
-    /** [ticket]: the request's number, by which [cancel] calls it off (see [Tickets]). */
-    fun open(url: String, key: String, from: Long, ticket: Long): RustBody? = player.open(url, key, from, ticket)
+    /** [end]: the byte the request stops before, -1 for the rest. [ticket]: the request's number, by which [cancel] calls it off (see [Tickets]). */
+    fun open(url: String, key: String, from: Long, end: Long, ticket: Long): RustBody? = player.open(url, key, from, end, ticket)
     /** The Rust side lets a request go that has not answered or sends nothing: its call is cancelled. From any of its threads. */
     fun cancel(ticket: Long) = player.tickets.cancel(ticket)
     fun openLive(url: String): RustBody? = player.openLive(url)
@@ -1044,9 +1044,9 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
      * cache, then the network on the app's one OkHttp client (its TLS, certificates and headers). Called
      * on a loader thread; while one is open the service holds the Wi-Fi lock.
      */
-    internal fun open(url: String, key: String, from: Long, ticket: Long = 0): RustBody? {
+    internal fun open(url: String, key: String, from: Long, end: Long, ticket: Long = 0): RustBody? {
         val (source, length) = try {
-            nori.sources.openResolved(url, key, from, tickets.start(ticket))
+            nori.sources.openResolved(url, key, from, end, tickets.start(ticket))
         } catch (e: MediaSources.PastEnd) {
             tickets.end(ticket)
             // Not a failure: the song ends before [from] (a transcode's estimated length was longer).

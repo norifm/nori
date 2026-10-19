@@ -835,16 +835,44 @@ fn queue_origin_is_page() {
     assert_eq!(a.cmds.iter().filter_map(from).collect::<Vec<_>>(), [(Some(PageOrigin::new(OriginKind::Playlist, "pl-1")), 0)]);
 }
 
+/// An artist with no albums (a YouTube Music profile) lists its songs; Enter plays them from the row,
+/// as the artist's queue.
+#[test]
+fn an_artist_without_albums_lists_its_songs() {
+    use nori_core::{Artist, ArtistDetail, OriginKind, PageOrigin};
+    let mut a = app();
+    a.open_artist("ar-1".into());
+    let songs = vec![song("v1", "First Video", 200), song("v2", "Second Video", 300)];
+    let d = ArtistDetail::new(Artist { id: "ar-1".into(), name: "Studio".into(), ..Default::default() }, vec![], songs);
+    a.handle(Msg::Data(Req::Artist("ar-1".into()), Ok(Data::Artist(Box::new(d)))));
+    let s = draw(&mut a, 160, 40);
+    assert!(s.contains("2 songs") && s.contains("First Video") && s.contains("Second Video"), "{s}");
+    a.cmds.clear();
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    let played: Vec<_> = a.cmds.iter().filter_map(|c| match c {
+        Cmd::Play { songs, start, from, .. } => Some((songs.len(), *start, from.clone())),
+        _ => None,
+    }).collect();
+    assert_eq!(played, [(2, 1, Some(PageOrigin::new(OriginKind::Artist, "ar-1")))]);
+}
+
 #[test]
 fn search_results_list() {
     let mut a = app();
     key(&mut a, KeyCode::Char('/'));
     chars(&mut a, "one");
-    let found = nori_core::SearchResult { songs: vec![song("s1", "One", 200)], albums: vec![album("al-1", "One Album")], artists: vec![nori_core::Artist { id: "ar-1".into(), name: "The Ones".into(), ..Default::default() }] };
+    let found = nori_core::SearchResult {
+        songs: vec![song("s1", "One", 200)],
+        albums: vec![album("al-1", "One Album")],
+        artists: vec![nori_core::Artist { id: "ar-1".into(), name: "The Ones".into(), ..Default::default() }],
+        playlists: vec![nori_core::Playlist { id: "yt-VLone".into(), name: "One Mix".into(), comment: Some("Ann • 17 views".into()), ..Default::default() }],
+    };
     a.search.view = Some(nori_core::search::SearchView { query: "one".into(), shown: Some(found), from_server: true, ..Default::default() });
     key(&mut a, KeyCode::Enter);
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Songs") && s.contains("One Album") && s.contains("The Ones") && s.contains("From the server"), "{s}");
+    assert!(s.contains("One Mix") && s.contains("Ann • 17 views"), "an uncounted playlist shows its own line: {s}");
     dump("search", &s);
     assert!(matches!(a.selected(), Some(crate::app::Item::Song(..))), "the first song, not its title");
     key(&mut a, KeyCode::Down);

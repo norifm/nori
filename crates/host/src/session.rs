@@ -149,6 +149,14 @@ impl ByteSource for Audio {
         self.http.open_cancellable(url, key, from, cancel)
     }
 
+    fn open_part(&self, url: &str, key: Option<&str>, from: u64, end: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+        if self.offline {
+            return Err("offline".into());
+        }
+        self.requests.fetch_add(1, Ordering::Relaxed);
+        self.http.open_part(url, key, from, end, cancel)
+    }
+
     fn open_live(&self, url: &str) -> Result<(Body, Option<usize>), String> {
         if self.offline {
             return Err("offline".into());

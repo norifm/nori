@@ -149,6 +149,7 @@ fn found(r: yt::SearchResults, songs: usize, albums: usize, artists: usize) -> S
         songs: r.songs.into_iter().take(songs).map(song).collect(),
         albums: r.albums.into_iter().take(albums).map(album).collect(),
         artists: r.artists.into_iter().take(artists).map(artist).collect(),
+        playlists: r.playlists.into_iter().map(|p| playlist(p, &[])).collect(),
     }
 }
 
@@ -160,7 +161,7 @@ fn album_detail(p: yt::AlbumPage) -> AlbumDetail {
     AlbumDetail::new(a, songs, Vec::new())
 }
 
-/// The artist's albums and the page's about part.
+/// The artist's albums and songs, and the page's about part.
 fn artist_detail(p: yt::ArtistPage) -> (ArtistDetail, ArtistInfo) {
     let about = ArtistInfo {
         biography: p.description,
@@ -169,9 +170,10 @@ fn artist_detail(p: yt::ArtistPage) -> (ArtistDetail, ArtistInfo) {
         ..Default::default()
     };
     let albums: Vec<Album> = p.albums.into_iter().map(album).collect();
+    let songs = p.top_songs.into_iter().map(song).collect();
     let mut a = artist(p.artist);
     a.album_count = albums.len() as u32;
-    (ArtistDetail::new(a, albums), about)
+    (ArtistDetail::new(a, albums, songs), about)
 }
 
 /// Playlist `l`, of which `songs` are shown.
@@ -410,15 +412,32 @@ impl Resolver {
 
 impl ResolveStream for Resolver {
     /// Blocks the caller while YouTube is asked.
-    fn resolve(&self, address: &str, from: u64) -> Option<NetResult<String>> {
+    fn resolve(&self, address: &str) -> Option<NetResult<String>> {
         let video = address_video(address)?;
-        Some(self.stream(video).map(|s| s.url_from(from)))
+        Some(self.stream(video).map(|s| s.format.url))
+    }
+
+    /// From the start, the whole file as a range in the URL, which YouTube sends at full speed (up to
+    /// about 50 MB); later bytes plain, with the requester's `Range`.
+    fn resolve_rest(&self, address: &str, from: u64) -> Option<NetResult<String>> {
+        let video = address_video(address)?;
+        Some(self.stream(video).map(|s| match s.format.length {
+            Some(len) if from == 0 && len > 0 => format!("{}&range=0-{}", s.format.url, len - 1),
+            _ => s.format.url,
+        }))
     }
 
     fn refused(&self, address: &str) {
         if let Some(video) = address_video(address) {
             self.state.streams.forget(video);
         }
+    }
+
+    /// YouTube sends a range longer than [`yt::PART`] (or one without an end) at about the speed it
+    /// plays, so a song opened past its start waited seconds for its first bytes; parts come at once.
+    fn parts(&self, address: &str) -> Option<super::StreamParts> {
+        let len = self.state.streams.get(address_video(address)?, Instant::now())?.format.length?;
+        Some(super::StreamParts { len, most: yt::PART })
     }
 
     fn live(&self, address: &str) -> Option<Box<dyn std::io::Read + Send>> {
@@ -737,7 +756,7 @@ mod tests {
         let session = Arc::new(crate::queue::Session::new(settings));
         let own = crate::Core::new(path.clone(), "owner".into(), session.clone()).unwrap();
         own.configure_profile(SavedServer { id: "owner".into(), kind: ServerKind::YouTubeMusic, user: "private".into(), ..Default::default() }).unwrap();
-        let transport = Arc::new(InnerTube { answers: parking_lot::Mutex::new(vec![answer(200, "search_artists", &[]), answer(200, "search_albums", &[]), answer(200, "search_songs", &[])]), ..Default::default() });
+        let transport = Arc::new(InnerTube { answers: parking_lot::Mutex::new(vec![answer(200, "search_artists", &[]), answer(200, "search_albums", &[]), answer(200, "search_songs", &[]), answer(200, "search_all", &[])]), ..Default::default() });
         let owner = Client::new(own, transport.clone(), Default::default());
         account::tests::store(&owner, &account::tests::session(SESSION, 30));
         let profile = crate::remote::jam_profile(crate::remote::JamPass { url: "http://192.168.1.2:1234".into(), api_key: nori_remote::guest_key("lan-guest") }, "guest".into(), "Jam".into());
@@ -751,15 +770,16 @@ mod tests {
         assert!(account::tests::stored(&guest).is_none());
     }
 
-    /// A search keeps at most as many of each kind as asked.
+    /// A search keeps at most as many songs, albums and artists as asked, and its playlists under `yt-` ids.
     #[test]
     fn a_search_is_cut_to_the_counts_asked() {
-        let (s, al, ar) = (fixture("search_songs"), fixture("search_albums"), fixture("search_artists"));
-        let (c, _) = youtube(&[&s, &al, &ar]);
+        let (all, s, al, ar) = (fixture("search_all"), fixture("search_songs"), fixture("search_albums"), fixture("search_artists"));
+        let (c, _) = youtube(&[&all, &s, &al, &ar]);
         let Page::Found { v } = block(c.read_now(Read::Search { query: "daft punk".into(), songs: 2, albums: 10, artists: 1 })).unwrap() else { panic!() };
-        assert_eq!(v.songs.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(), ["Robot Rock (Edit)", "Da Funk"]);
+        assert_eq!(v.songs.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(), ["Fragments of Time (feat. Todd Edwards)", "Aerodynamic"]);
         assert_eq!(v.albums.len(), 3);
         assert_eq!(v.artists.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["yt-UCRr1xG_2WIDs18a6cIiCxeA"]);
+        assert_eq!(v.playlists.iter().map(|p| (p.id.as_str(), p.comment.as_deref())).collect::<Vec<_>>(), [("yt-VLPLqP3lYoQXDt7bqs9876k5BLSeTihDiyCu", Some("TimeStats • 223 views"))]);
     }
 
     /// Pages come from InnerTube, are indexed for local search, and are never served from the cache.
@@ -833,23 +853,25 @@ mod tests {
         assert_eq!(c.core.cover_prefix(), None, "each cover's address is its own");
     }
 
-    /// A stream is asked once and kept; refused, it is asked again. The first open asks the whole file
-    /// as a range, later ones come plain (with the byte source's `Range`).
+    /// A stream is asked once and kept, and asked for in parts of its length; refused, it is asked again.
     #[test]
     fn a_stream_is_resolved_once_until_refused() {
         let player = fixture("player");
         let (c, t) = youtube(&[&player, &player]);
         let r = resolver(&c);
-        let first = r.resolve("youtube:dQw4w9WgXcQ", 0).unwrap().unwrap();
-        assert!(first.contains("itag=251") && first.ends_with("&range=0-3433754"), "{first}");
-        let later = r.resolve("youtube:dQw4w9WgXcQ", 2_000_000).unwrap().unwrap();
-        assert!(!later.contains("&range="));
+        assert_eq!(r.parts("youtube:dQw4w9WgXcQ"), None, "not yet resolved");
+        let first = r.resolve("youtube:dQw4w9WgXcQ").unwrap().unwrap();
+        assert!(first.contains("itag=251") && !first.contains("&range="), "{first}");
+        assert_eq!(r.parts("youtube:dQw4w9WgXcQ"), Some(crate::providers::StreamParts { len: 3_433_755, most: yt::PART }));
+        assert_eq!(r.resolve("youtube:dQw4w9WgXcQ").unwrap().unwrap(), first);
+        assert_eq!(r.resolve_rest("youtube:dQw4w9WgXcQ", 0).unwrap().unwrap(), format!("{first}&range=0-3433754"), "a download asks it whole");
+        assert_eq!(r.resolve_rest("youtube:dQw4w9WgXcQ", 1000).unwrap().unwrap(), first);
         assert_eq!(t.asked.lock().len(), 1);
         r.refused("youtube:dQw4w9WgXcQ");
-        assert!(r.resolve("youtube:dQw4w9WgXcQ", 0).unwrap().is_ok());
+        assert!(r.resolve("youtube:dQw4w9WgXcQ").unwrap().is_ok());
         assert_eq!(t.asked.lock().len(), 2);
-        assert!(r.resolve("https://nas/rest/stream?id=1", 0).is_none(), "a server's URL is opened as it is");
-        assert!(r.resolve("youtube:gone", 0).unwrap().is_err(), "a failed request fails the open");
+        assert!(r.resolve("https://nas/rest/stream?id=1").is_none(), "a server's URL is opened as it is");
+        assert!(r.resolve("youtube:gone").unwrap().is_err(), "a failed request fails the open");
     }
 
     /// A live video is a radio station that streams from its YouTube address.
@@ -890,7 +912,7 @@ mod tests {
     #[test]
     fn an_unplayable_video_says_why() {
         let (c, _) = youtube(&[&fixture("unplayable")]);
-        match resolver(&c).resolve("youtube:x", 0) {
+        match resolver(&c).resolve("youtube:x") {
             Some(Err(NetError::Api { reason, .. })) => assert_eq!(reason, "YouTube will not play it: This video is unavailable"),
             other => panic!("{other:?}"),
         }
@@ -1119,6 +1141,7 @@ mod tests {
                 "search" => match at("params").as_str() {
                     "EgWKAQIIAWoKEAkQBRAKEAMQBA==" => "search_songs",
                     "EgWKAQIYAWoKEAkQBRAKEAMQBA==" => "search_albums",
+                    "" => "search_all",
                     _ => "search_artists",
                 },
                 _ => "",
