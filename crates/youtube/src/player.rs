@@ -33,16 +33,9 @@ pub struct Stream {
     pub expires_in: Duration,
 }
 
-impl Stream {
-    /// The URL to open from byte `from`. A request without a range is throttled to about twice real
-    /// time, so the whole file is asked as a range from the start; later bytes need a `Range` header.
-    pub fn url_from(&self, from: u64) -> String {
-        match self.format.length {
-            Some(len) if from == 0 && len > 0 => format!("{}&range=0-{}", self.format.url, len - 1),
-            _ => self.format.url.clone(),
-        }
-    }
-}
+/// The most bytes one request of a stream's URL asks for (a `Range` header with an end): YouTube sends
+/// a longer range, or one without an end, at about the speed it plays.
+pub const PART: u64 = 10 * 1024 * 1024;
 
 /// Opus 160 kbps (itag 251), else AAC 128 kbps (140), else the richest Opus, else the richest AAC.
 pub fn pick(formats: &[Format]) -> Option<&Format> {
@@ -147,14 +140,5 @@ mod tests {
         assert_eq!(pick(&[f(249, opus, 50), f(250, opus, 65)]).map(|f| f.itag), Some(250));
         assert_eq!(pick(&[f(139, aac, 48), f(141, aac, 256)]).map(|f| f.itag), Some(141));
         assert_eq!(pick(&[]), None);
-    }
-
-    #[test]
-    fn the_first_open_asks_a_range() {
-        let s = stream(&answer("player")).unwrap();
-        assert_eq!(s.url_from(0), format!("{}&range=0-3433754", s.format.url));
-        assert_eq!(s.url_from(1000), s.format.url);
-        let lengthless = Stream { format: Format { length: None, ..s.format.clone() }, ..s };
-        assert_eq!(lengthless.url_from(0), lengthless.format.url);
     }
 }

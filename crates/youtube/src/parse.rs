@@ -80,12 +80,13 @@ pub struct Playlist {
     pub thumbnail: Option<String>,
 }
 
-/// Songs, albums and artists of a search, in YouTube's order.
+/// Songs, albums, artists and playlists of a search, in YouTube's order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchResults {
     pub songs: Vec<Song>,
     pub albums: Vec<Album>,
     pub artists: Vec<Artist>,
+    pub playlists: Vec<Playlist>,
 }
 
 /// An album and its songs, which carry the album's name, year and, where they lack their own, its
@@ -96,7 +97,8 @@ pub struct AlbumPage {
     pub songs: Vec<Song>,
 }
 
-/// An artist, its albums and singles, its top songs, similar artists and description.
+/// An artist, its albums and singles, its top songs (a channel's videos when it has none), similar
+/// artists and description.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArtistPage {
     pub artist: Artist,
@@ -135,6 +137,8 @@ enum Leads {
     Album,
     Artist,
     Playlist,
+    /// A podcast episode.
+    Episode,
     Elsewhere,
 }
 
@@ -143,6 +147,7 @@ fn leads(page_type: &str) -> Leads {
         "MUSIC_PAGE_TYPE_ALBUM" | "MUSIC_PAGE_TYPE_AUDIOBOOK" => Leads::Album,
         "MUSIC_PAGE_TYPE_ARTIST" | "MUSIC_PAGE_TYPE_USER_CHANNEL" => Leads::Artist,
         "MUSIC_PAGE_TYPE_PLAYLIST" => Leads::Playlist,
+        "MUSIC_PAGE_TYPE_NON_MUSIC_AUDIO_TRACK_PAGE" => Leads::Episode,
         _ => Leads::Elsewhere,
     }
 }
@@ -180,6 +185,11 @@ fn runs(text: &Value) -> Vec<Run<'_>> {
 
 fn joined(runs: &[Run]) -> String {
     runs.iter().map(|r| r.text).collect()
+}
+
+/// `runs` after their first segment.
+fn after_first<'b, 'a>(runs: &'b [Run<'a>]) -> &'b [Run<'a>] {
+    runs.iter().position(|r| r.text.trim() == "•").map_or(&[], |i| &runs[i + 1..])
 }
 
 /// Runs split at YouTube's " • " separators.
@@ -246,32 +256,55 @@ fn columns(item: &Value) -> Vec<Vec<Run<'_>>> {
     flex.chain(fixed).collect()
 }
 
-/// A `musicResponsiveListItemRenderer`: a song when it plays a video, else what it links to.
-fn list_item(item: &Value) -> Option<Item> {
+/// Song `video` titled `title`, its artists, album and length read from `lines` (the columns after the
+/// title, or a card's subtitle).
+fn song_of(video: &str, title: String, thumbnail: Option<String>, live: bool, lines: &[&[Run]]) -> Song {
+    let mut song = Song { video_id: video.to_string(), title, thumbnail, live, ..Default::default() };
+    for (i, line) in lines.iter().enumerate() {
+        for (k, seg) in segments(line).enumerate() {
+            if let Some((name, links)) = artists_of(seg).filter(|_| song.artists.is_empty()) {
+                song.artist = name;
+                song.artists = links;
+            } else if let Some((b, Leads::Album)) = seg.iter().find_map(|r| r.browse) {
+                song.album = Some(AlbumLink { id: b.to_string(), name: joined(seg) });
+            } else if let Some(s) = seconds(&joined(seg)) {
+                song.duration = s;
+            } else if i == 0 && k == 0 && song.artist.is_empty() {
+                song.artist = joined(seg);
+            }
+        }
+    }
+    song
+}
+
+/// What an item's subtitle says once its kind is left out: an unfiltered search opens it with the kind
+/// ("Song", "Playlist", ...), which for an album is its release type.
+fn unlabelled<'b, 'a>(kind: Leads, subtitle: &'b [Run<'a>]) -> &'b [Run<'a>] {
+    if kind == Leads::Album {
+        subtitle
+    } else {
+        after_first(subtitle)
+    }
+}
+
+/// A `musicResponsiveListItemRenderer`: a song when it plays a video, else what it links to. A podcast
+/// episode is none: nori plays no podcasts. `labelled`: its second column opens with its kind, as in an
+/// unfiltered search.
+fn list_item(item: &Value, labelled: bool) -> Option<Item> {
     let cols = columns(item);
-    let title = joined(cols.first()?);
+    if cols.first()?.iter().any(|r| matches!(r.browse, Some((_, Leads::Episode)))) {
+        return None;
+    }
+    let title = joined(&cols[0]);
     let thumb = item.get("thumbnail").and_then(thumbnail);
     let video = str_at(item, "/playlistItemData/videoId").or_else(|| cols[0].iter().find_map(|r| r.video));
     if let Some(v) = video {
-        let mut song = Song { video_id: v.to_string(), title, thumbnail: thumb, live: live(item), ..Default::default() };
-        for (i, col) in cols.iter().enumerate().skip(1) {
-            for (k, seg) in segments(col).enumerate() {
-                if let Some((name, links)) = artists_of(seg).filter(|_| song.artists.is_empty()) {
-                    song.artist = name;
-                    song.artists = links;
-                } else if let Some((b, Leads::Album)) = seg.iter().find_map(|r| r.browse) {
-                    song.album = Some(AlbumLink { id: b.to_string(), name: joined(seg) });
-                } else if let Some(s) = seconds(&joined(seg)) {
-                    song.duration = s;
-                } else if i == 1 && k == 0 && song.artist.is_empty() {
-                    song.artist = joined(seg);
-                }
-            }
-        }
-        return Some(Item::Song(song));
+        let lines: Vec<&[Run]> = cols[1..].iter().enumerate().map(|(i, c)| if labelled && i == 0 { after_first(c) } else { c.as_slice() }).collect();
+        return Some(Item::Song(song_of(v, title, thumb, live(item), &lines)));
     }
     let (b, kind) = browse(item)?;
-    linked(kind, b, title, thumb, cols.get(1).map_or(&[], Vec::as_slice))
+    let subtitle = cols.get(1).map_or(&[][..], Vec::as_slice);
+    linked(kind, b, title, thumb, if labelled { unlabelled(kind, subtitle) } else { subtitle })
 }
 
 /// A card (`musicTwoRowItemRenderer`): a song when it plays a video, else the album, artist or
@@ -315,13 +348,40 @@ fn linked(kind: Leads, browse_id: &str, title: String, thumb: Option<String>, su
         }
         Leads::Artist => Item::Artist(Artist { id: browse_id.to_string(), name: title, thumbnail: thumb }),
         Leads::Playlist => Item::Playlist(Playlist { id: browse_id.to_string(), title, description: Some(joined(subtitle)).filter(|d| !d.is_empty()), thumbnail: thumb, ..Default::default() }),
-        Leads::Elsewhere => return None,
+        Leads::Episode | Leads::Elsewhere => return None,
     })
 }
 
-/// Every list item in a shelf's `contents`.
-fn shelf_items(shelf: &Value) -> impl Iterator<Item = Item> + '_ {
-    shelf.get("contents").and_then(Value::as_array).into_iter().flatten().filter_map(|c| c.get("musicResponsiveListItemRenderer")).filter_map(list_item)
+/// Every list item in a shelf's `contents` ([`list_item`] says what `labelled` is).
+fn shelf_items(shelf: &Value, labelled: bool) -> impl Iterator<Item = Item> + '_ {
+    shelf.get("contents").and_then(Value::as_array).into_iter().flatten().filter_map(|c| c.get("musicResponsiveListItemRenderer")).filter_map(move |i| list_item(i, labelled))
+}
+
+/// An unfiltered search's top result (`musicCardShelfRenderer`): what its title links to, then the
+/// items under it, whose songs without an artist are the top result's.
+fn top_result(card: &Value) -> Vec<Item> {
+    let title = card.get("title").map(runs).unwrap_or_default();
+    let subtitle = card.get("subtitle").map(runs).unwrap_or_default();
+    let thumb = card.get("thumbnail").and_then(thumbnail);
+    let top = title.first().and_then(|first| match (first.video, first.browse) {
+        (Some(v), _) => Some(Item::Song(song_of(v, joined(&title), thumb, live(card), &[after_first(&subtitle)]))),
+        (None, Some((b, kind))) => linked(kind, b, joined(&title), thumb, unlabelled(kind, &subtitle)),
+        (None, None) => None,
+    });
+    let by = match &top {
+        Some(Item::Artist(a)) => Some(a.clone()),
+        _ => None,
+    };
+    let under = shelf_items(card, true).map(|mut item| {
+        if let (Item::Song(s), Some(a)) = (&mut item, &by) {
+            if s.artist.is_empty() {
+                s.artist = a.name.clone();
+                s.artists = vec![ArtistLink { id: a.id.clone(), name: a.name.clone() }];
+            }
+        }
+        item
+    });
+    top.into_iter().chain(under).collect()
 }
 
 /// The sections of a browse or search answer at `pointer`.
@@ -329,16 +389,24 @@ fn sections<'a>(v: &'a Value, pointer: &str) -> impl Iterator<Item = &'a Value> 
     v.pointer(pointer).and_then(Value::as_array).into_iter().flatten()
 }
 
-/// A search answer's songs, albums and artists, in YouTube's order.
+/// A search answer's songs, albums, artists and playlists, in YouTube's order: a filtered search's
+/// shelf, or an unfiltered one's top result and the items after it, one per section.
 pub(crate) fn search(v: &Value) -> SearchResults {
     let mut found = SearchResults::default();
     for s in sections(v, "/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents") {
-        for item in s.get("musicShelfRenderer").into_iter().flat_map(shelf_items) {
+        let items: Vec<Item> = if let Some(shelf) = s.get("musicShelfRenderer") {
+            shelf_items(shelf, false).collect()
+        } else if let Some(card) = s.get("musicCardShelfRenderer") {
+            top_result(card)
+        } else {
+            s.get("itemSectionRenderer").into_iter().flat_map(|i| shelf_items(i, true)).collect()
+        };
+        for item in items {
             match item {
                 Item::Song(s) => found.songs.push(s),
                 Item::Album(a) => found.albums.push(a),
                 Item::Artist(a) => found.artists.push(a),
-                Item::Playlist(_) => {}
+                Item::Playlist(p) => found.playlists.push(p),
             }
         }
     }
@@ -354,7 +422,7 @@ fn responsive_header(v: &Value) -> Option<&Value> {
 fn listed_songs(v: &Value, shelf: &str) -> Vec<Song> {
     sections(v, "/contents/twoColumnBrowseResultsRenderer/secondaryContents/sectionListRenderer/contents")
         .filter_map(|s| s.get(shelf))
-        .flat_map(shelf_items)
+        .flat_map(|s| shelf_items(s, false))
         .filter_map(|i| match i {
             Item::Song(s) => Some(s),
             _ => None,
@@ -394,15 +462,21 @@ pub(crate) fn album(v: &Value, id: &str) -> AlbumPage {
     AlbumPage { album, songs }
 }
 
-/// An artist page (`browse` of `UC...`, which is `id`). Albums without artists of their own are the
-/// artist's.
+/// Where an artist page's shelves are.
+const ARTIST_SHELVES: &str = "/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents";
+
+/// An artist page (`browse` of `UC...`, which is `id`). Albums and songs without artists of their own
+/// are the artist's. A channel without top songs (a profile's) shows its videos in a carousel instead.
 pub(crate) fn artist(v: &Value, id: &str) -> ArtistPage {
     let header = v.get("header").and_then(|h| h.get("musicImmersiveHeaderRenderer").or_else(|| h.get("musicVisualHeaderRenderer"))).unwrap_or(&Value::Null);
     let name = header.get("title").map(|t| joined(&runs(t))).unwrap_or_default();
-    let mut page = ArtistPage { artist: Artist { id: id.to_string(), name, thumbnail: header.get("thumbnail").and_then(thumbnail) }, ..Default::default() };
-    for s in sections(v, "/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents") {
+    // A profile's header has its avatar in front of its banner (`thumbnail`), if it has a banner at all.
+    let picture = header.get("foregroundThumbnail").or_else(|| header.get("thumbnail")).and_then(thumbnail);
+    let mut page = ArtistPage { artist: Artist { id: id.to_string(), name, thumbnail: picture }, ..Default::default() };
+    let mut videos: Vec<Song> = Vec::new();
+    for s in sections(v, ARTIST_SHELVES) {
         if let Some(shelf) = s.get("musicShelfRenderer") {
-            page.top_songs.extend(shelf_items(shelf).filter_map(|i| match i {
+            page.top_songs.extend(shelf_items(shelf, false).filter_map(|i| match i {
                 Item::Song(s) => Some(s),
                 _ => None,
             }));
@@ -417,6 +491,7 @@ pub(crate) fn artist(v: &Value, id: &str) -> ArtistPage {
                         page.albums.push(a);
                     }
                     Item::Artist(a) => page.similar.push(a),
+                    Item::Song(s) if !videos.iter().any(|v| v.video_id == s.video_id) => videos.push(s),
                     _ => {}
                 }
             }
@@ -424,7 +499,49 @@ pub(crate) fn artist(v: &Value, id: &str) -> ArtistPage {
             page.description = about.get("description").map(|d| joined(&runs(d))).filter(|b| !b.trim().is_empty());
         }
     }
+    if page.top_songs.is_empty() {
+        page.top_songs = videos;
+    }
+    by(&page.artist, &mut page.top_songs);
     page
+}
+
+/// Gives `songs` without artists of their own `artist`.
+fn by(artist: &Artist, songs: &mut [Song]) {
+    for s in songs.iter_mut().filter(|s| s.artist.is_empty()) {
+        s.artist = artist.name.clone();
+        s.artists = vec![ArtistLink { id: artist.id.clone(), name: artist.name.clone() }];
+    }
+}
+
+/// The `browse` request body for all of a channel's videos, when its page (`v`) has no top songs and
+/// shows only the first of its videos, with a More: None for an artist with top songs.
+pub(crate) fn all_videos(v: &Value) -> Option<Value> {
+    let mut more = None;
+    for s in sections(v, ARTIST_SHELVES) {
+        if s.get("musicShelfRenderer").is_some() {
+            return None;
+        }
+        let Some(shelf) = s.get("musicCarouselShelfRenderer") else { continue };
+        let videos = shelf.get("contents").and_then(Value::as_array).into_iter().flatten().any(|c| c.pointer("/musicTwoRowItemRenderer/navigationEndpoint/watchEndpoint").is_some());
+        if more.is_none() && videos {
+            more = shelf.pointer("/header/musicCarouselShelfBasicHeaderRenderer/moreContentButton/buttonRenderer/navigationEndpoint/browseEndpoint");
+        }
+    }
+    let more = more?;
+    Some(serde_json::json!({ "browseId": more.get("browseId")?, "params": more.get("params")? }))
+}
+
+/// A channel's videos, as the answer to [`all_videos`]' request lists them, by `artist` where they
+/// name no one.
+pub(crate) fn channel_videos(v: &Value, artist: &Artist) -> Vec<Song> {
+    let grid = sections(v, ARTIST_SHELVES).find_map(|s| s.pointer("/gridRenderer/items")).and_then(Value::as_array);
+    let mut songs: Vec<Song> = grid.into_iter().flatten().filter_map(|i| i.get("musicTwoRowItemRenderer")).filter_map(card).filter_map(|i| match i {
+        Item::Song(s) => Some(s),
+        _ => None,
+    }).collect();
+    by(artist, &mut songs);
+    songs
 }
 
 /// A playlist page (`browse` of `VL...`, which is `id`).
@@ -486,7 +603,7 @@ fn carousel(shelf: &Value) -> Option<Shelf> {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|c| c.get("musicResponsiveListItemRenderer").and_then(list_item).or_else(|| c.get("musicTwoRowItemRenderer").and_then(card)))
+        .filter_map(|c| c.get("musicResponsiveListItemRenderer").and_then(|i| list_item(i, false)).or_else(|| c.get("musicTwoRowItemRenderer").and_then(card)))
         .collect::<Vec<_>>();
     (!title.is_empty() && !items.is_empty()).then_some(Shelf { title, items })
 }
@@ -514,7 +631,7 @@ pub(crate) fn library(v: &Value) -> Vec<Item> {
                 items.extend(grid.iter().filter_map(|c| c.get("musicTwoRowItemRenderer")).filter_map(card));
             }
             if let Some(shelf) = holder.get("musicShelfRenderer") {
-                items.extend(shelf_items(shelf));
+                items.extend(shelf_items(shelf, false));
             }
         }
     }
@@ -577,6 +694,37 @@ mod tests {
         assert!(found.artists[0].thumbnail.is_some());
     }
 
+    /// An unfiltered answer: the top result's songs are its artist's, no kind label is taken for a name,
+    /// a profile is an artist, and podcasts and their episodes are dropped.
+    #[test]
+    fn search_every_kind() {
+        let found = search(&json("search_all"));
+        let songs: Vec<(&str, &str, &str, u32)> = found.songs.iter().map(|s| (s.title.as_str(), s.artist.as_str(), s.artists[0].id.as_str(), s.duration)).collect();
+        assert_eq!(songs, [
+            ("Fragments of Time (feat. Todd Edwards)", "Daft Punk", DAFT_PUNK, 280),
+            ("Aerodynamic", "Daft Punk", DAFT_PUNK, 213),
+            ("Technologic", "Daft Punk", DAFT_PUNK, 0),
+            ("Daft Punk — Fresh (Extended)", "Endless Stream", "UCHZfDgh3RUXo8sgIbHQWeZw", 0),
+        ]);
+        let a = &found.albums[0];
+        assert_eq!((a.title.as_str(), a.artist.as_str(), a.year, a.release_type.as_deref()), ("Random Access Memories", "Daft Punk", 2013, Some("Album")));
+        assert_eq!(found.artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Daft Punk", "The Weeknd", "dafter"]);
+        let p = &found.playlists[0];
+        assert_eq!((p.id.as_str(), p.title.as_str(), p.description.as_deref()), ("VLPLqP3lYoQXDt7bqs9876k5BLSeTihDiyCu", "Daft Punk Underrated Hit Songs", Some("TimeStats • 223 views")));
+        assert_eq!(found.playlists.len(), 1);
+    }
+
+    /// A video as the top result is a song, by whoever its subtitle names after the kind.
+    #[test]
+    fn a_video_top_result() {
+        let card = serde_json::json!({
+            "title": { "runs": [{ "text": "late night set", "navigationEndpoint": { "watchEndpoint": { "videoId": "v1" } } }] },
+            "subtitle": { "runs": [{ "text": "Video" }, { "text": " • " }, { "text": "jazz house studio" }, { "text": " • " }, { "text": "9.9M views" }, { "text": " • " }, { "text": "2:25:08" }] },
+        });
+        let [Item::Song(s)] = &top_result(&card)[..] else { panic!() };
+        assert_eq!((s.video_id.as_str(), s.title.as_str(), s.artist.as_str(), s.duration), ("v1", "late night set", "jazz house studio", 8708));
+    }
+
     /// Album tracks carry no album, thumbnail or year of their own: they take the album's.
     #[test]
     fn album_page() {
@@ -591,6 +739,33 @@ mod tests {
             assert_eq!(s.thumbnail, a.thumbnail);
         }
         assert_eq!(p.songs[0].video_id, "IluRBvnYMoY");
+    }
+
+    /// A channel's page shows its first videos; its More asks for them all, and they list as songs by it.
+    #[test]
+    fn a_channel_lists_all_its_videos_through_its_more() {
+        let page = json("artist_channel");
+        let more = all_videos(&page).unwrap();
+        assert_eq!(more["browseId"], "UCRv7T0DoP6Ndf469wcGiQNg");
+        assert!(more["params"].as_str().is_some_and(|p| p.starts_with("6gPg")), "{more}");
+        assert_eq!(all_videos(&json("artist")), None, "an artist with top songs");
+        let artist = Artist { id: "UCRv7T0DoP6Ndf469wcGiQNg".into(), name: "jazz house".into(), thumbnail: None };
+        let all = channel_videos(&json("artist_channel_videos"), &artist);
+        assert_eq!(all.iter().map(|s| s.video_id.as_str()).collect::<Vec<_>>(), ["hE0h9PUcQ_s", "RzStn1l4iDw", "lXCi_kLIC5M", "lzPuJfnVQMI"]);
+        assert!(all.iter().all(|s| s.artists.len() == 1 && s.artists[0].id == artist.id), "{:?}", all[0].artists);
+    }
+
+    /// A profile's channel has no top songs: its videos are its songs, by it.
+    #[test]
+    fn a_channel_page_shows_its_videos() {
+        let p = artist(&json("artist_channel"), "UCRv7T0DoP6Ndf469wcGiQNg");
+        assert!(p.albums.is_empty());
+        assert!(p.artist.thumbnail.as_deref().is_some_and(|t| t.starts_with("https://yt3.googleusercontent.com/e0SKqnwy") && !t.contains('=')), "the avatar, not the banner: {:?}", p.artist.thumbnail);
+        let mut bannerless = json("artist_channel");
+        bannerless["header"]["musicVisualHeaderRenderer"].as_object_mut().unwrap().remove("thumbnail");
+        assert_eq!(artist(&bannerless, "UCRv7T0DoP6Ndf469wcGiQNg").artist.thumbnail, p.artist.thumbnail, "a profile without a banner");
+        assert_eq!(p.top_songs.iter().map(|s| s.video_id.as_str()).collect::<Vec<_>>(), ["hE0h9PUcQ_s", "RzStn1l4iDw", p.top_songs[2].video_id.as_str()]);
+        assert!(p.top_songs.iter().all(|s| s.artists.len() == 1 && s.artists[0].id == "UCRv7T0DoP6Ndf469wcGiQNg" && s.artist == p.artist.name), "{:?}", p.top_songs[0]);
     }
 
     #[test]
