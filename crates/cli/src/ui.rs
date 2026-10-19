@@ -848,6 +848,7 @@ fn cover_box(area: Rect, rows: u16) -> Rect {
 }
 
 /// A page button, bold when strong; advances `x`.
+#[allow(clippy::too_many_arguments)]
 fn pill(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, x: &mut u16, y: u16, end: u16, label: &str, strong: bool, b: Button, t: &Theme) {
     let s = format!(" {label} ");
     let w = s.width() as u16;
@@ -1509,7 +1510,7 @@ fn full_player(f: &mut Frame, area: Rect, app: &mut App, mut art: Option<&mut Ar
     let wide = inner.width >= 84;
     let left_w = if wide { (inner.width * 2 / 5).clamp(32, 46) } else { inner.width };
     let left = Rect { width: left_w, ..inner };
-    let used = song_column(f, left, app, &t, art.as_deref_mut());
+    let used = song_column(f, left, app, &t, art);
     let panel = if wide {
         Rect { x: left.x + left.width + 4, width: inner.width.saturating_sub(left.width + 4), ..inner }
     } else {
@@ -1674,7 +1675,7 @@ fn player_bar(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, mut art: Opti
     // The song, and a click on it opens the full player.
     if let Some(c) = bar.cover {
         let key = app.song.as_ref().and_then(|s| s.cover_art.clone());
-        cover(f, c, art.as_deref_mut(), key.as_deref(), t);
+        cover(f, c, art, key.as_deref(), t);
     }
     let open = Rect { x: bar.cover.map_or(bar.song[0].x, |c| c.x), width: bar.song[0].x + bar.song[0].width - bar.cover.map_or(bar.song[0].x, |c| c.x), ..bar.song[0] };
     match &app.song {
