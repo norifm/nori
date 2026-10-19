@@ -387,6 +387,54 @@ impl Feed {
     }
 }
 
+/// When the last frame a device pulled in a callback will have been heard: the device's own delay from
+/// its last callback, plus that callback's frames, plus what the ring gave since. Written by the callback,
+/// read by the engine for [`AudioOutput::latency_us`]. What was pulled is the ring's own count: the engine
+/// reads the place heard as what the ring gave less what the device holds, and a pull wakes it before the
+/// callback has said when that is heard. Times are µs on the output's own clock.
+#[derive(Default)]
+pub struct Heard {
+    last: parking_lot::Mutex<Last>,
+    /// The ring's count of frames pulled ([`Feed::pulled`]).
+    ring: parking_lot::Mutex<Option<Box<dyn Fn() -> u64 + Send + Sync>>>,
+}
+
+/// The last callback's music: heard until `until_us`, the ring's count `taken` after it.
+#[derive(Default, Clone, Copy)]
+struct Last {
+    until_us: u64,
+    taken: u64,
+    rate: u32,
+}
+
+impl Heard {
+    /// Counts what the ring behind `pulled` ([`Feed::pulled`]) gives from now on.
+    pub fn follow(&self, pulled: impl Fn() -> u64 + Send + Sync + 'static) {
+        *self.ring.lock() = Some(Box::new(pulled));
+    }
+
+    fn taken(&self) -> u64 {
+        self.ring.lock().as_ref().map_or(0, |r| r())
+    }
+
+    /// A callback took `frames` of music at `rate`, the first of them heard at `heard_us`.
+    pub fn pulled(&self, heard_us: u64, frames: usize, rate: u32) {
+        let taken = self.taken();
+        let mut last = self.last.lock();
+        // Silent pulls may discard a skipped song; those frames never reach the device.
+        let until_us = if frames == 0 { last.until_us } else { heard_us + frames as u64 * 1_000_000 / rate.max(1) as u64 };
+        *last = Last { until_us, taken, rate };
+    }
+
+    /// How long until what was pulled has been heard.
+    pub fn left_us(&self, now_us: u64) -> u64 {
+        // The callback's word first: a pull after it counts as held.
+        let last = *self.last.lock();
+        let since = self.taken().saturating_sub(last.taken) * 1_000_000 / last.rate.max(1) as u64;
+        last.until_us.saturating_sub(now_us) + since
+    }
+}
+
 /// Where a written stretch ends: ring frames and sink frames since the flush, song time, the ring
 /// frames slipped in (less those left out, [`Slipper`]), and how far they put the place back, song ms.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -1121,6 +1169,49 @@ impl Drop for RingTrack {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A [`Heard`] following a ring count the test moves.
+    fn heard_from(taken: u64) -> (Heard, Arc<AtomicU64>) {
+        let (heard, count) = (Heard::default(), Arc::new(AtomicU64::new(taken)));
+        let ring = count.clone();
+        heard.follow(move || ring.load(Ordering::Relaxed));
+        (heard, count)
+    }
+
+    #[test]
+    fn a_pull_counts_till_heard() {
+        let (heard, _) = heard_from(0);
+        heard.pulled(1_020_000, 4_410, 44_100);
+        assert_eq!(heard.left_us(1_000_000), 120_000, "the device's delay and the period it took");
+        assert_eq!(heard.left_us(1_070_000), 50_000);
+        assert_eq!(heard.left_us(1_130_000), 0, "all heard");
+    }
+
+    /// The engine, woken by a pull, reads before the callback says when that pull is heard: the frames
+    /// the ring gave since count as held.
+    #[test]
+    fn a_pull_not_yet_said_counts_as_held() {
+        let (heard, taken) = heard_from(4_410);
+        heard.pulled(1_020_000, 4_410, 44_100);
+        taken.store(8_820, Ordering::Relaxed);
+        assert_eq!(heard.left_us(1_100_000), 120_000, "the delay left and the period pulled");
+        heard.pulled(1_120_000, 4_410, 44_100);
+        assert_eq!(heard.left_us(1_100_000), 120_000, "as the callback then says");
+    }
+
+    #[test]
+    fn a_silent_pull_holds_no_discarded_music() {
+        let (heard, taken) = heard_from(4_410);
+        heard.pulled(1_020_000, 4_410, 44_100);
+        // A skip discards ten seconds in the ring before new music is ready.
+        taken.store(445_410, Ordering::Relaxed);
+        heard.pulled(1_120_000, 0, 44_100);
+        assert_eq!(heard.left_us(1_100_000), 20_000);
+        assert_eq!(heard.left_us(1_130_000), 0);
+        taken.store(449_820, Ordering::Relaxed);
+        heard.pulled(1_220_000, 4_410, 44_100);
+        assert_eq!(heard.left_us(1_200_000), 120_000);
+    }
 
     /// Keeps the feed for pulling by hand; holds what the test says, µs, and has mixed what it says of it.
     struct Hand(Arc<parking_lot::Mutex<Option<Feed>>>, Arc<AtomicU64>, Arc<AtomicU64>);

@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Device, DeviceType, ErrorKind, InterfaceType, SampleFormat, SizedSample, Stream, StreamConfig};
-use nori_engine::{AudioOutput, DeviceWatch, Feed, OutputFormat, OutputKind};
+use nori_engine::{AudioOutput, DeviceWatch, Feed, Heard, OutputFormat, OutputKind};
 use parking_lot::Mutex;
 
 #[derive(Default)]
@@ -28,7 +28,7 @@ pub struct CpalOutput {
     playing: bool,
     /// Equalizer tuning: the period is [`SHALLOW_PERIOD_MS`].
     shallow: bool,
-    /// When what the device took has been heard.
+    /// When what the device took has been heard, on [`clock_us`].
     heard: Arc<Heard>,
     /// Why the stream stopped for good (its device went away), for [`AudioOutput::failed`].
     failed: Arc<Mutex<Option<String>>>,
@@ -36,59 +36,10 @@ pub struct CpalOutput {
     volume: Volume,
 }
 
-/// When the last frame the device pulled will have been heard: the device's own delay from its last
-/// callback, plus that callback's frames, plus what the ring gave since. Written by the callback, read by
-/// the engine. What was pulled is the ring's own count: the engine reads the place heard as what the ring
-/// gave less what the device holds, and a pull wakes it before the callback has said when that is heard.
-struct Heard {
-    base: Instant,
-    last: Mutex<Last>,
-    /// The ring's count of frames pulled.
-    ring: Mutex<Option<Pulled>>,
-}
-
-type Pulled = Box<dyn Fn() -> u64 + Send + Sync>;
-
-/// The last callback's music: heard until `until_us` after `base`, the ring's count `taken` after it.
-#[derive(Default, Clone, Copy)]
-struct Last {
-    until_us: u64,
-    taken: u64,
-    rate: u32,
-}
-
-impl Default for Heard {
-    fn default() -> Self {
-        Heard { base: Instant::now(), last: Mutex::default(), ring: Mutex::default() }
-    }
-}
-
-impl Heard {
-    fn follow(&self, ring: Pulled) {
-        *self.ring.lock() = Some(ring);
-    }
-
-    fn taken(&self) -> u64 {
-        self.ring.lock().as_ref().map_or(0, |r| r())
-    }
-
-    /// A callback at `now` took `frames` at `rate`, heard `delay_us` after it starts.
-    fn pulled(&self, now: Instant, delay_us: u64, frames: usize, rate: u32) {
-        let at = now.saturating_duration_since(self.base).as_micros() as u64;
-        let taken = self.taken();
-        let mut last = self.last.lock();
-        // Silent pulls may discard a skipped song; those frames never reach the device.
-        let until_us = if frames == 0 { last.until_us } else { at + delay_us + frames as u64 * 1_000_000 / rate.max(1) as u64 };
-        *last = Last { until_us, taken, rate };
-    }
-
-    /// How long until what was pulled has been heard.
-    fn left_us(&self, now: Instant) -> u64 {
-        // The callback's word first: a pull after it counts as held.
-        let last = *self.last.lock();
-        let since = self.taken().saturating_sub(last.taken) * 1_000_000 / last.rate.max(1) as u64;
-        last.until_us.saturating_sub(now.saturating_duration_since(self.base).as_micros() as u64) + since
-    }
+/// This output's clock for [`Heard`], µs from an arbitrary base.
+fn clock_us() -> u64 {
+    static BASE: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    BASE.get_or_init(Instant::now).elapsed().as_micros() as u64
 }
 
 /// Listener volume, 0 to 1, applied after the engine's chain so ReplayGain, limiter and fades see full
@@ -206,7 +157,7 @@ fn build_stream<T: SizedSample + Default + Send + 'static>(
                 let music = pull(&mut feed, data);
                 let t = info.timestamp();
                 let delay = t.playback.saturating_duration_since(t.callback).as_micros() as u64;
-                heard.pulled(Instant::now(), delay, music, rate);
+                heard.pulled(clock_us() + delay, music, rate);
                 // A flush wakes the engine before its discarded frames are accounted for here.
                 if feed.flushed() {
                     feed.wake_engine();
@@ -314,7 +265,7 @@ impl AudioOutput for CpalOutput {
     }
 
     fn start(&mut self, feed: Feed) -> Result<(), String> {
-        self.heard.follow(Box::new(feed.pulled()));
+        self.heard.follow(feed.pulled());
         self.feed = Some(Arc::new(Mutex::new(feed)));
         self.rebuild()
     }
@@ -340,7 +291,7 @@ impl AudioOutput for CpalOutput {
     }
 
     fn latency_us(&self) -> u64 {
-        self.heard.left_us(Instant::now())
+        self.heard.left_us(clock_us())
     }
 
     fn holding(&self) -> bool {
@@ -384,54 +335,6 @@ impl AudioOutput for CpalOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicU64;
-    use std::time::Duration;
-
-    #[test]
-    fn pulled_period_counts_till_heard() {
-        let heard = Heard::default();
-        let t = heard.base + Duration::from_secs(1);
-        heard.pulled(t, 20_000, 4_410, 44_100);
-        assert_eq!(heard.left_us(t), 120_000, "the device's delay and the period it took");
-        assert_eq!(heard.left_us(t + Duration::from_millis(70)), 50_000);
-        assert_eq!(heard.left_us(t + Duration::from_millis(130)), 0, "all heard");
-    }
-
-    /// The engine, woken by a pull, reads before the callback says when that pull is heard: the frames
-    /// the ring gave since count as held.
-    #[test]
-    fn a_pull_not_yet_said_counts_as_held() {
-        let heard = Heard::default();
-        let taken = Arc::new(AtomicU64::new(0));
-        let ring = taken.clone();
-        heard.follow(Box::new(move || ring.load(Ordering::Relaxed)));
-        let t = heard.base + Duration::from_secs(1);
-        taken.store(4_410, Ordering::Relaxed);
-        heard.pulled(t, 20_000, 4_410, 44_100);
-        let next = t + Duration::from_millis(100);
-        taken.store(8_820, Ordering::Relaxed);
-        assert_eq!(heard.left_us(next), 120_000, "the delay left and the period pulled");
-        heard.pulled(next, 20_000, 4_410, 44_100);
-        assert_eq!(heard.left_us(next), 120_000, "as the callback then says");
-    }
-
-    #[test]
-    fn silent_pull_does_not_hold_discarded_music() {
-        let heard = Heard::default();
-        let taken = Arc::new(AtomicU64::new(4_410));
-        let ring = taken.clone();
-        heard.follow(Box::new(move || ring.load(Ordering::Relaxed)));
-        let t = heard.base + Duration::from_secs(1);
-        heard.pulled(t, 20_000, 4_410, 44_100);
-        // A skip discards ten seconds in the ring before new music is ready.
-        taken.store(445_410, Ordering::Relaxed);
-        heard.pulled(t + Duration::from_millis(100), 20_000, 0, 44_100);
-        assert_eq!(heard.left_us(t + Duration::from_millis(100)), 20_000);
-        assert_eq!(heard.left_us(t + Duration::from_millis(130)), 0);
-        taken.store(449_820, Ordering::Relaxed);
-        heard.pulled(t + Duration::from_millis(200), 20_000, 4_410, 44_100);
-        assert_eq!(heard.left_us(t + Duration::from_millis(200)), 120_000);
-    }
 
     #[test]
     fn a_device_gone_stops_the_engine() {
