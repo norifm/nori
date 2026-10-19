@@ -94,10 +94,8 @@ pub enum Row {
     Server { id: String, label: String, detail: String, active: bool },
     Button { title: String, action: Act },
     /// A lyrics service in the ranked list: enter switches it, ← → move it.
-    /// `keyed`: it needs a key, asked for when it is switched on.
-    Ranked { name: String, id: String, title: String, detail: String, on: bool, keyed: bool },
-    /// Free text (a service's API key).
-    Text { name: String, title: String, detail: String, value: String, secret: bool },
+    /// `keyed`: it takes a key, asked for when it is switched on.
+    Ranked { name: String, id: String, title: String, detail: String, on: bool, keyed: bool, enabled: bool },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -275,12 +273,12 @@ impl SettingsView {
                 }
                 Opened::Cmds(vec![Cmd::SwitchServer(id)])
             }
-            // Switched on, one that needs a key asks for it (empty clears it and switches it off).
-            Row::Ranked { id, keyed: true, on: false, .. } => {
-                Opened::Overlay(Overlay::Input { title: format!("{} key (empty: none)", text::LYRICS_KEY), text: String::new(), secret: true, name: format!("lyricsKey:{id}") })
+            // Switched on, one that takes a key asks for it (empty: none).
+            Row::Ranked { enabled: false, .. } => return None,
+            Row::Ranked { id, title, keyed: true, on: false, .. } => {
+                Opened::Overlay(Overlay::Input { title: format!("{title} key (empty: none)"), text: String::new(), secret: true, name: format!("lyricsKey:{id}") })
             }
             Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
-            Row::Text { name, title, value, secret, .. } => Opened::Overlay(Overlay::Input { title, text: value, secret, name }),
             _ => return None,
         })
     }
@@ -323,7 +321,7 @@ impl SettingsView {
                     None => vec![Cmd::Setting(name, v.to_string())],
                 }
             }
-            Row::Ranked { id, .. } => vec![Cmd::Setting("lyricsMove".into(), format!("{id}:{}", if up { 1 } else { -1 }))],
+            Row::Ranked { id, enabled: true, .. } => vec![Cmd::Setting("lyricsMove".into(), format!("{id}:{}", if up { 1 } else { -1 }))],
             _ => Vec::new(),
         }
     }
@@ -390,7 +388,7 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
                 .map(|sec| Section { title: section_title(sec.id).into(), rows: sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, s).or_else(|| season_rows(&r, p, s, today)).unwrap_or_else(|| row_of(r, p, s, f).into_iter().collect())).collect() })
                 .collect();
             if let (SettingsPage::Look, Some(look)) = (page, sections.first_mut()) {
-                look.rows.push(Row::Toggle { switch: Switch::Transparent, title: "Transparent background".into(), detail: "The terminal's own background and text show instead of the season's page".into(), on: !own.paint, enabled: true });
+                look.rows.push(Row::Toggle { switch: Switch::Transparent, title: "Transparent background".into(), detail: String::new(), on: !own.paint, enabled: true });
             }
             sections
         }
@@ -445,9 +443,7 @@ fn section_title(id: SectionId) -> &'static str {
         Display => "Display",
         Sources => "Online",
         AskedOrder => "Sources, in order",
-        Keys => "Keys",
         Lists => "Lists",
-        Playlists => "Playlists",
         Search => "Index and search",
         History => "History",
         Online => "Lookups",
@@ -502,7 +498,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "lyricsTranslation" => ("Translations", ""),
         "lyricsOnline" => ("Online lookups", ""),
         "lyricsPreferWords" => ("Prefer word timing", ""),
-        "betterLyricsKey" => ("BetterLyrics key", ""),
         "tasteModel" => ("Listening history", ""),
         "scrobble" => ("Scrobble", ""),
         "thirdPartyLookups" => ("Third-party lookups", ""),
@@ -631,7 +626,6 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
                     let label = format!("{title} {}", if v > 0.0 { format!("+{v:.1} dB") } else { "off".into() });
                     Row::Slider { name: spec.name, label, value: v, min: spec.min, max: spec.max, centred: false, level }
                 }
-                SettingKind::Text => Row::Text { name: spec.name, title, detail, value, secret: true },
                 // Drawn by `flag_rows`.
                 SettingKind::Flags => return None,
             }
@@ -663,8 +657,7 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
         RowItem::Note { note } => Row::Note {
             text: match note {
                 SettingsNote::HeldByDac => "Bit-exact output is on: no mixing, skipping or effects.",
-                SettingsNote::Boost => "The boost brings the limiter with it, so nothing clips.",
-                SettingsNote::LyricsSources => "Enter switches a source; ← → move it. The best-scored answer wins; order breaks near ties.",
+                SettingsNote::LyricsSources => "Enter switches a source; ← → move it. The best match wins; the order breaks ties.",
                 SettingsNote::Dac => return None,
             }
             .into(),
@@ -686,10 +679,10 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }
         }
         RowItem::LyricsSource { index } => {
-            let LyricsSource { id, on, needs_key, key_set } = s.lyrics_sources.get(index as usize)?;
+            let LyricsSource { id, on, takes_key, key_set, .. } = s.lyrics_sources.get(index as usize)?;
             let (title, detail) = service(id);
             let detail = if *key_set { format!("{detail} · key set") } else { detail.to_string() };
-            Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail, on: *on, keyed: *needs_key }
+            Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail, on: *on, keyed: *takes_key, enabled: r.enabled }
         }
     })
 }
@@ -748,15 +741,6 @@ pub fn row_value(row: &Row) -> String {
         Row::Action { button, .. } => format!("[ {button} ]"),
         Row::Button { title, .. } => format!("[ {title} ]"),
         Row::Server { active, .. } => (if *active { "● in use" } else { "" }).into(),
-        Row::Text { value, secret, .. } => {
-            if value.is_empty() {
-                "none".into()
-            } else if *secret {
-                "••••••".into()
-            } else {
-                value.clone()
-            }
-        }
         _ => String::new(),
     }
 }
@@ -764,7 +748,7 @@ pub fn row_value(row: &Row) -> String {
 /// A row's title and detail.
 pub fn row_words(row: &Row) -> (String, String) {
     match row {
-        Row::Toggle { title, detail, .. } | Row::Ranked { title, detail, .. } | Row::Text { title, detail, .. } | Row::Info { title, detail, .. } => (title.clone(), detail.clone()),
+        Row::Toggle { title, detail, .. } | Row::Ranked { title, detail, .. } | Row::Info { title, detail, .. } => (title.clone(), detail.clone()),
         Row::Choice { title, .. } | Row::Link { title, .. } => (title.clone(), String::new()),
         Row::Note { text } => (String::new(), text.clone()),
         Row::Action { title, detail, .. } => (title.clone(), detail.clone()),
@@ -777,7 +761,7 @@ pub fn row_words(row: &Row) -> (String, String) {
 /// Whether the row is live; inactive settings are drawn dimmed.
 pub fn row_enabled(row: &Row) -> bool {
     match row {
-        Row::Toggle { enabled, .. } | Row::Choice { enabled, .. } | Row::Action { enabled, .. } => *enabled,
+        Row::Toggle { enabled, .. } | Row::Choice { enabled, .. } | Row::Action { enabled, .. } | Row::Ranked { enabled, .. } => *enabled,
         _ => true,
     }
 }
@@ -1140,23 +1124,27 @@ mod tests {
         let ranked: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| matches!(l, Line::Row(Row::Ranked { .. }))).map(|(i, _)| i).collect();
         assert_eq!(ranked.len(), nori_core::lyrics_sources::LyricsService::ALL.len());
         assert!(lines.iter().all(|l| !matches!(l, Line::Row(Row::Ranked { title, .. }) if title == "?")), "every service has a name");
-        let off = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { on: false, .. }))).unwrap();
+        let off = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { on: false, keyed: false, .. }))).unwrap();
         let Line::Row(Row::Ranked { id, name, .. }) = lines[off] else { unreachable!() };
         let (id, name) = (id.clone(), name.clone());
         v.row.at = off;
         assert!(matches!(&v.step(false)[..], [Cmd::Setting(n, value)] if n == "lyricsMove" && *value == format!("{id}:-1")));
         let Some(Opened::Cmds(c)) = v.open() else { panic!() };
         assert!(matches!(&c[..], [Cmd::Setting(n, value)] if *n == name && value == "true"));
-        // A service that needs a key asks for it when switched on.
-        let keyed = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { keyed: true, .. }))).unwrap();
+        // A service that takes a key asks for it when switched on.
+        let keyed = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { keyed: true, on: false, .. }))).unwrap();
         v.row.at = keyed;
         let Some(Opened::Overlay(Overlay::Input { name, secret: true, .. })) = v.open() else { panic!("no key asked") };
         assert!(name.starts_with("lyricsKey:"), "{name}");
-        // Third-party lookups off: no sources listed.
+        // Third-party lookups off: the sources stay listed, grayed, and take no keys.
         let quiet = StoredPrefs { third_party_lookups: false, ..prefs };
         v.invalidate();
         let pages = v.pages(&quiet).to_vec();
-        assert!(!SettingsView::lines(&pages).iter().any(|l| matches!(l, Line::Row(Row::Ranked { .. }))));
+        let lines = SettingsView::lines(&pages);
+        assert!(lines.iter().any(|l| matches!(l, Line::Row(Row::Ranked { .. }))));
+        assert!(lines.iter().all(|l| !matches!(l, Line::Row(Row::Ranked { enabled: true, .. }))));
+        v.row.at = keyed;
+        assert!(v.open().is_none() && v.step(true).is_empty(), "a grayed source does nothing");
     }
 
     #[test]
