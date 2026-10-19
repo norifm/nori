@@ -411,18 +411,15 @@ component Glass inherits Rectangle {
     border-color: Theme.outline;
 }
 
-// The press feedback: the ink at 16 % spreading from the middle over the whole of what was pressed, kept
-// inside its shape (`radius`, its corner), growing from half size and gone in about 400 ms. It runs on a
+// The press feedback: the ink at 16 % in the shape of what was pressed (`radius`, its corner), spreading
+// evenly from the middle out to its edges, growing from half size and gone in about 400 ms. It runs on a
 // timer only while it lasts; reduced motion draws none.
 component Ripple inherits Rectangle {
     in property <bool> pressed;
     in property <length> radius;
-    border-radius: root.radius;
-    clip: true;
     // 0 as it starts, 1 once it is gone.
     property <float> t: 1;
-    // Wide enough to reach the corners.
-    property <length> reach: Math.sqrt(root.width / 1px * root.width / 1px + root.height / 1px * root.height / 1px) * 1px;
+    property <float> scale: 0.5 + 0.5 * root.t;
     changed pressed => {
         if self.pressed && !Motion.reduced {
             self.t = 0;
@@ -441,9 +438,9 @@ component Ripple inherits Rectangle {
     }
     Rectangle {
         visible: root.t < 1;
-        width: root.reach * (0.5 + 0.5 * root.t);
-        height: self.width;
-        border-radius: self.width / 2;
+        width: root.width * root.scale;
+        height: root.height * root.scale;
+        border-radius: root.radius * root.scale;
         background: Theme.text.with-alpha(0.16 * (1 - root.t));
     }
 }
