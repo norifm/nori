@@ -1668,8 +1668,12 @@ component PlayerControls inherits Rectangle {
             width: root.side-w;
             alignment: end;
             spacing: 2px;
+            // As big as the icons beside it look: a seal fills its square, their glyphs do not.
             if root.has-song && !root.guest: Seal {
                 y: (parent.height - self.height) / 2;
+                size: 18px;
+                width: 34px;
+                height: 34px;
                 liked: root.now-starred;
                 clicked => { root.star(); }
             }
