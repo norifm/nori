@@ -41,11 +41,10 @@
     margin-bottom: 28px;
   }
   .art {
-    width: 270px;
+    width: 240px;
     flex: none;
   }
   .art :global(.cover) {
-    border-radius: 8px;
     box-shadow: var(--shadow);
   }
   .circle .art :global(.cover) {
@@ -59,21 +58,22 @@
     gap: 4px;
   }
   h1 {
-    font-size: 30px;
+    font-size: 34px;
     font-weight: 700;
+    letter-spacing: -0.3px;
     line-height: 1.15;
   }
   .by {
-    font-size: 22px;
-    color: var(--accent);
+    font-size: 20px;
+    color: var(--ink2);
   }
   .by :global(a:hover) {
-    text-decoration: underline;
+    color: var(--ink);
   }
   .facts {
     font-size: 12px;
     font-weight: 600;
-    color: var(--dim);
+    color: var(--ink2);
     text-transform: uppercase;
     letter-spacing: 0.02em;
   }
@@ -89,11 +89,7 @@
   .grow {
     flex: 1;
   }
-  .hero-actions :global(.round) {
-    color: var(--accent);
-    background: var(--fill);
-  }
-  @media (max-width: 899px) {
+  @media (max-width: 719px) {
     .hero {
       flex-direction: column;
       align-items: center;
@@ -104,10 +100,10 @@
       width: min(260px, 70vw);
     }
     h1 {
-      font-size: 22px;
+      font-size: 28px;
     }
     .by {
-      font-size: 19px;
+      font-size: 17px;
     }
     .hero-actions {
       justify-content: center;

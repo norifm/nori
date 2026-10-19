@@ -1,7 +1,7 @@
 # nori music
 
 Android client for Navidrome / octo-fiesta (Subsonic API): a Kotlin UI over a Rust core. Battery and
-performance come first; the UI should look and move like Apple Music, cheaply.
+performance come first; the UI speaks nori's own design language, Nori Seasons (below), cheaply.
 
 ## Commands
 
@@ -122,6 +122,26 @@ Internal notes, never published: `docs/features.md` (planned features, owner's d
   (`NORI_BLESS=1` only for an intended change).
 - Every optional feature sits behind a `StoredPrefs` switch; off, it costs nothing (no init, listener,
   socket or audio processor).
+
+## Design: Nori Seasons
+
+Android is the reference; the Mac, web, terminal and iPod clients follow it, not another app. The full
+system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw.
+
+- Paper, not white: every page is its season's paper (Spring, Summer, Autumn, Winter, marked 春 夏 秋 冬),
+  light, dark or AMOLED. Five roles carry it: page, surface, ink, accent, on; every other grey is a fixed
+  share of ink. No shadows on chrome: a step of paper and a hairline set surfaces apart.
+- One accent, only for "you, now": the current tab, the song playing, a lit shuffle or repeat, a liked
+  seal, a focused field. A selected row is raised, never filled with the accent.
+- A favorite is the seal 好, never a heart. Inter for everything; Literata only for what a page is called.
+- Shapes: covers, cards and grouped rows, sheets and popovers, pills each have their radius; nested
+  corners are concentric (outer = inner + inset). Navigation and the player are one outlined pill each,
+  the page blurred inside; content scrolls under them. Panels float as sheets over the page; opening one
+  moves nothing else.
+- Words are short and plain: a title names the thing, a control says what it does. Settings say only
+  what is not obvious from their name (a state, a cost), never what the setting does.
+- Nothing animates unless the user touched it; nori's Motion setting (not the system's) turns flourishes
+  into direct changes.
 
 ## Code
 

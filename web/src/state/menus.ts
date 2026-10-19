@@ -21,7 +21,6 @@ export async function addToPlaylist(songs: Song[]) {
       run: async () => {
         const name = await ui.ask(W.playlistName);
         if (name) await library.change({ kind: "createPlaylist", name, songIds });
-        void library.readPlaylists();
       },
     },
     ...(playlists ?? []).map((p) => ({ label: p.name, run: () => library.change({ kind: "addToPlaylist", id: p.id, songIds }) })),
@@ -32,7 +31,6 @@ export async function newPlaylist() {
   const name = await ui.ask(W.playlistName);
   if (!name) return;
   await library.change({ kind: "createPlaylist", name, songIds: [] });
-  await library.readPlaylists();
 }
 
 /** What a song menu's action is, or null for one a browser has nothing for (downloads, the sleep
@@ -40,7 +38,7 @@ export async function newPlaylist() {
 function item(a: MenuAction, s: Song): Item | null {
   switch (a.action) {
     case "Favourite":
-      return { label: a.on ? W.favorite : W.unfavorite, icon: a.on ? "heart-line" : "heart", run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
+      return { label: a.on ? W.favorite : W.unfavorite, icon: a.on ? "seal-line" : "seal", run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
     case "PlayNext":
       return { label: W.playNext, icon: "next-up", run: () => player.enqueue([s], true) };
     case "AddToQueue":

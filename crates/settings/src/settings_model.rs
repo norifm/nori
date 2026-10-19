@@ -25,8 +25,6 @@ pub enum SettingKind {
     /// A number from [`SettingSpec::min`] to [`SettingSpec::max`].
     Level,
     Text,
-    /// One of [`SettingSpec::options`], as ARGB numbers.
-    Colour,
 }
 
 /// One setting: its name for [`setting_set`], kind, offered values, range and default. Values are in
@@ -49,7 +47,6 @@ fn spec(name: &str, k: &K) -> SettingSpec {
         K::Flags(o) => (SettingKind::Flags, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Level(lo, hi) => (SettingKind::Level, Vec::new(), (*lo, *hi)),
         K::Text => (SettingKind::Text, Vec::new(), (0.0, 0.0)),
-        K::Colour => (SettingKind::Colour, nori_look::theme::ACCENTS.iter().map(|c| (*c as i64).to_string()).collect(), (0.0, 0.0)),
     };
     let default = value_of(&StoredPrefs::default(), name).unwrap_or_default();
     SettingSpec { name: name.into(), kind, options, min, max, default }

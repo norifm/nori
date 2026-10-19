@@ -3,6 +3,7 @@ package dev.nori.music.app.ui
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
@@ -17,6 +18,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -24,8 +26,9 @@ import kotlinx.coroutines.launch
 /**
  * The full player as a sheet over the app rather than a page navigated to. It is one number,
  * [progress], from 0 (only the mini player showing) to 1 (the player filling the screen), and every
- * part of the transition is drawn from it: the sheet's top edge travels from the mini player's top to
- * the top of the screen, and the cover grows from the mini player's thumbnail into the sleeve. A drag
+ * part of the transition is drawn from it: the sheet's leading edge travels from the mini player's inner
+ * edge to the far side of the screen (up from the bottom, or across from the side the mini player stands
+ * on, [edge]), and the cover grows from the mini player's thumbnail into the sleeve. A drag
  * sets the number directly, so the whole thing follows the finger and holds wherever it is held; a
  * release settles it with the finger's own speed. Closing is the same path backwards.
  *
@@ -55,11 +58,21 @@ class PlayerSheet(private val scope: CoroutineScope) {
     /** The panel the player opens on (the lyrics widget's tap, a jam strip's); the player takes it and clears it. */
     var panelAsked by mutableStateOf<Panel?>(null)
 
-    /** The top of the mini player, in root coordinates: where the sheet's top edge starts. */
-    var miniTop by mutableFloatStateOf(0f)
+    /** The edge of the window the mini player stands on, which the sheet comes in from and goes back to. */
+    var edge by mutableStateOf(SheetEdge.BOTTOM)
 
-    /** The window's height, for when there is no mini player to start from. */
-    var rootHeight by mutableFloatStateOf(0f)
+    /** Going down off the screen, whatever [edge]: on its side, the player pulled down (see [dragsSheet]). */
+    var sinking by mutableStateOf(false)
+        private set
+
+    /**
+     * The mini player's side facing the page, in root coordinates along [edge]'s way: its top, or its inner
+     * side when it stands on a side. Where the sheet's leading edge starts; 0 with no mini player.
+     */
+    var miniEdge by mutableFloatStateOf(0f)
+
+    /** The window's size, for when there is no mini player to start from. */
+    var rootSize by mutableStateOf(IntSize.Zero)
 
     /** Settle quickly and without a spring: the user's reduce-motion switch. */
     var plain = false
@@ -76,13 +89,27 @@ class PlayerSheet(private val scope: CoroutineScope) {
     var isOpen by mutableStateOf(false)
         private set
 
-    /** How far the sheet's top edge travels, in pixels. */
-    val travel: Float get() = if (miniTop > 0f) miniTop else rootHeight.coerceAtLeast(1f)
+    /** How far the sheet's leading edge travels, in pixels. */
+    val travel: Float get() = if (sinking && edge != SheetEdge.BOTTOM) rootSize.height.toFloat().coerceAtLeast(1f) else when (edge) {
+        SheetEdge.BOTTOM -> if (miniEdge > 0f) miniEdge else rootSize.height.toFloat()
+        SheetEdge.RIGHT -> if (miniEdge > 0f) miniEdge else rootSize.width.toFloat()
+        SheetEdge.LEFT -> rootSize.width - miniEdge
+    }.coerceAtLeast(1f)
 
-    /** The sheet's top edge, relative to the top of the screen. */
-    fun offset(): Float = (1f - progress.value) * travel
+    /** Where the sheet sits put away, relative to filling the window. */
+    fun closed(): Offset = if (sinking) Offset(0f, travel) else when (edge) {
+        SheetEdge.BOTTOM -> Offset(0f, travel)
+        SheetEdge.RIGHT -> Offset(travel, 0f)
+        SheetEdge.LEFT -> Offset(-travel, 0f)
+    }
 
-    fun open() = settle(1f, 0f)
+    /** Where the sheet is now, relative to filling the window. */
+    fun offset(): Offset = closed() * (1f - progress.value)
+
+    fun open() {
+        sinking = false
+        settle(1f, 0f)
+    }
 
     /** Open at once, no travel: the sheet as it was before the app was put back together. */
     suspend fun openAtOnce() {
@@ -95,10 +122,14 @@ class PlayerSheet(private val scope: CoroutineScope) {
      * of where it is going, not the whole trip, which is the release's to make.
      */
     suspend fun backBy(progress: Float) {
+        sinking = false
         val eased = 1f - (1f - progress.coerceIn(0f, 1f)).let { it * it }
         this.progress.snapTo(1f - BACK_TRAVEL * eased)
     }
-    fun close() = settle(0f, 0f)
+    fun close() {
+        sinking = false
+        settle(0f, 0f)
+    }
 
     /**
      * Put away by the back gesture: quicker than a close from a tap. The gesture has already carried the
@@ -109,16 +140,20 @@ class PlayerSheet(private val scope: CoroutineScope) {
     /** Which end the sheet was nearer when the finger went down. */
     private var from = 0f
 
-    fun dragStart() { from = if (progress.value > 0.5f) 1f else 0f }
-
-    /** Moves the sheet with a finger that moved [dy] pixels (down is positive). */
-    fun dragBy(dy: Float) {
-        scope.launch { progress.snapTo((progress.value - dy / travel).coerceIn(0f, 1f)) }
+    /** A drag begins; [down]: it pulls the player straight down (see [sinking]). */
+    fun dragStart(down: Boolean) {
+        from = if (progress.value > 0.5f) 1f else 0f
+        sinking = down
     }
 
-    /** The finger let go at [velocityY] pixels a second: the sheet settles where [sheetTarget] says. */
-    fun release(velocityY: Float) {
-        settle(sheetTarget(from, progress.value, velocityY), -velocityY / travel)
+    /** Moves the sheet with a finger that moved [d] pixels its way, towards putting it away. */
+    fun dragBy(d: Float) {
+        scope.launch { progress.snapTo((progress.value - d / travel).coerceIn(0f, 1f)) }
+    }
+
+    /** The finger let go at [velocity] pixels a second, towards putting it away: it settles where [sheetTarget] says. */
+    fun release(velocity: Float) {
+        settle(sheetTarget(from, progress.value, velocity), -velocity / travel)
     }
 
     private fun settle(target: Float, velocity: Float, stiffness: Float = 420f) {
@@ -131,6 +166,9 @@ class PlayerSheet(private val scope: CoroutineScope) {
     }
 
 }
+
+/** Where the mini player stands: along the bottom, or on its side down the right or the left edge. */
+enum class SheetEdge { BOTTOM, RIGHT, LEFT }
 
 val LocalPlayerSheet = staticCompositionLocalOf<PlayerSheet> { error("no player sheet") }
 
@@ -156,24 +194,34 @@ fun seen(): Boolean {
 }
 
 /**
- * Vertical drags on this element move the sheet. The velocity is taken from the summed deltas, not
- * from the pointer's position: inside the sheet the element moves with the finger, so its local
- * position barely changes and would report a flick as standing still.
+ * Drags along the sheet's way move it: up and down when it rises from the bottom, across towards the edge
+ * the mini player stands on when it comes in from the side. The mini player itself is turned with its pill
+ * ([onMini]), so its own vertical is the sheet's way either way. A drag the other way is left to whatever
+ * else wants it (the songs either side, scrolling). The velocity is taken from the summed deltas, not from
+ * the pointer's position: inside the sheet the element moves with the finger, so its local position barely
+ * changes and would report a flick as standing still. [down] takes a pull down instead, which on its side
+ * carries the player straight down off the screen.
  */
-internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true): Modifier =
-    if (!enabled) this else pointerInput(sheet) {
+internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true, onMini: Boolean = false, down: Boolean = false): Modifier {
+    if (!enabled) return this
+    val across = !onMini && !down && sheet.edge != SheetEdge.BOTTOM
+    // Towards putting it away is positive: down, or out to the edge the mini player stands on.
+    val sign = if (across && sheet.edge == SheetEdge.LEFT) -1f else 1f
+    return pointerInput(sheet, across, sign, down) {
         val tracker = VelocityTracker()
-        var y = 0f
-        detectVerticalDragGestures(
-            onDragStart = { tracker.resetTracking(); y = 0f; sheet.dragStart() },
-            onDragEnd = { sheet.release(tracker.calculateVelocity().y) },
-            onDragCancel = { sheet.release(0f) },
-        ) { change, dy ->
-            y += dy
-            tracker.addPosition(change.uptimeMillis, Offset(0f, y))
-            sheet.dragBy(dy)
+        var moved = 0f
+        val start = { _: Offset -> tracker.resetTracking(); moved = 0f; sheet.dragStart(down && sheet.edge != SheetEdge.BOTTOM) }
+        val end = { sheet.release(sign * tracker.calculateVelocity().let { if (across) it.x else it.y }) }
+        val cancel = { sheet.release(0f) }
+        val step = { change: androidx.compose.ui.input.pointer.PointerInputChange, d: Float ->
+            moved += d
+            tracker.addPosition(change.uptimeMillis, if (across) Offset(moved, 0f) else Offset(0f, moved))
+            sheet.dragBy(sign * d)
         }
+        if (across) detectHorizontalDragGestures(start, end, cancel, step)
+        else detectVerticalDragGestures(start, end, cancel, step)
     }
+}
 
 /** How far the back gesture takes the player down before it is let go. */
 private const val BACK_TRAVEL = 0.2f
@@ -184,10 +232,10 @@ private const val SHEET_COMMIT = 0.15f
 
 /**
  * Where the player sheet settles when the finger lifts: 1 open, 0 put away. [from] is the end it was
- * nearer when the drag began, [progress] where it is now and [velocity] the finger's (down positive). A
- * flick goes the way it was flicked; a drag that has come a little way finishes the move it started, and
- * a smaller one goes back. Deciding by the halfway point instead meant a pull down from the player had to
- * cover half the screen before it would close.
+ * nearer when the drag began, [progress] where it is now and [velocity] the finger's, positive towards
+ * putting it away. A flick goes the way it was flicked; a drag that has come a little way finishes the move
+ * it started, and a smaller one goes back. Deciding by the halfway point instead meant a pull down from the
+ * player had to cover half the screen before it would close.
  */
 private fun sheetTarget(from: Float, progress: Float, velocity: Float): Float {
     val moved = progress - from

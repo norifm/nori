@@ -83,7 +83,6 @@ pub(crate) struct Plain<T> {
 
 pub(crate) const FLAG: Plain<bool> = Plain { range: None, held: false };
 pub(crate) const TEXT: Plain<String> = Plain { range: None, held: false };
-pub(crate) const LONG: Plain<i64> = Plain { range: None, held: false };
 pub(crate) const FLOAT: Plain<f32> = Plain { range: None, held: false };
 
 /// A number whose changes by name are held in `lo..=hi`.
@@ -289,7 +288,6 @@ pub(crate) enum K {
     Flags(&'static [&'static str]),
     Level(f32, f32),
     Text,
-    Colour,
 }
 
 impl K {

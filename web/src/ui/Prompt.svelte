@@ -31,11 +31,11 @@
 
 <style>
   .menu {
-    border: 0;
-    padding: 16px;
-    border-radius: 14px;
-    background: var(--raised);
-    color: var(--text);
+    border: 1px solid var(--hair);
+    padding: 18px;
+    border-radius: 22px;
+    background: var(--surface);
+    color: var(--ink);
     box-shadow: var(--shadow);
     width: min(360px, calc(100vw - 32px));
   }

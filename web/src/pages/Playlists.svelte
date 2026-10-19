@@ -26,15 +26,15 @@
 <style>
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-    gap: 24px 20px;
+    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+    gap: 22px 16px;
   }
   @media (min-width: 1600px) {
     .grid {
       grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
     }
   }
-  @media (max-width: 899px) {
+  @media (max-width: 719px) {
     .grid {
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
       gap: 18px 14px;

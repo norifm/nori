@@ -338,6 +338,9 @@ fn loader<'a>(h: jlong) -> Option<&'a Covers> {
     unsafe { crate::handle(h) }
 }
 
+/// Imagination's Vulkan driver, there on a device whose GPU is PowerVR.
+const POWERVR_VULKAN: &str = "/vendor/lib64/hw/vulkan.powervr.so";
+
 /// A loader fetching through `net` (a `CoverNet` handle from `uniffiCloneHandle()`, taken over) with a
 /// disk cache in `dir` of at most `disk_bytes`. Cheap: nothing is read until the first request. 0 when
 /// the Java side is missing.
@@ -349,7 +352,9 @@ extern "system" fn open(env: JNIEnv, _: JClass, net: jlong, dir: JString, disk_b
     }
     let Some(dir) = with_str(&env, &dir, |d| PathBuf::from(d)) else { return 0 };
     let config = Config { disk_bytes: disk_bytes.max(0) as u64, memory_bytes: 0, ..Config::new(dir) };
-    let paint = Bitmaps { hardware: hardware != 0, rgb565: rgb565 != 0, idle: Mutex::new(Vec::new()), colours: Mutex::new(Vec::new()) };
+    let gpu = if std::path::Path::new(POWERVR_VULKAN).exists() { nori_covers::Gpu::PowerVr } else { nori_covers::Gpu::Other };
+    let hardware = nori_covers::hardware_bitmaps(hardware != 0, gpu);
+    let paint = Bitmaps { hardware, rgb565: rgb565 != 0, idle: Mutex::new(Vec::new()), colours: Mutex::new(Vec::new()) };
     Box::into_raw(Box::new(Loader::with_paint(config, net, paint))) as jlong
 }
 

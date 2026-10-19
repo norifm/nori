@@ -2,11 +2,14 @@
 //! setting name and the picked value.
 
 use nori_core::numbers::{self, POINT};
-use nori_core::settings::{EqLevel, StoredPrefs};
+use nori_core::settings::{season_follow_value, season_of, EqLevel, StoredPrefs, ThemeSeason};
 use nori_core::settings_model::{self, BeatModel, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsRow};
-use slint::{Color, ModelRc, SharedString, VecModel};
+use slint::{ModelRc, SharedString, VecModel};
 
+use nori_look::theme;
+
+use crate::look::Today;
 use crate::{words, SettingRow};
 
 // Row kinds, as app.slint numbers them.
@@ -20,9 +23,62 @@ const RANKED: i32 = 6;
 const TEXT: i32 = 7;
 const SERVER: i32 = 8;
 const NOTE: i32 = 9;
-const PALETTE: i32 = 10;
 const LINK: i32 = 11;
 const BUTTON: i32 = 12;
+/// The season tiles, and light / dark / AMOLED.
+const SEASONS: i32 = 13;
+const APPEARANCE_ROW: i32 = 14;
+
+/// The appearance row's name: it is not one setting but two (the theme and AMOLED).
+pub const APPEARANCE: &str = "appearance";
+
+/// The appearance a pick stands for: the system's, light, dark, or AMOLED (dark on black).
+pub fn appearance_settings(pick: usize) -> [(&'static str, &'static str); 2] {
+    match pick {
+        1 => [("theme", "LIGHT"), ("amoled", "false")],
+        2 => [("theme", "DARK"), ("amoled", "false")],
+        3 => [("theme", "DARK"), ("amoled", "true")],
+        _ => [("theme", "SYSTEM"), ("amoled", "false")],
+    }
+}
+
+/// The season tiles and the "follow the seasons" switch under them.
+pub struct Seasons {
+    /// The tile worn (0 spring to 3 winter): the calendar's while following.
+    pub worn: i32,
+    pub following: bool,
+    /// The switch's row name: the setting and the value flipping it sets ([`toggled`]).
+    pub switch: String,
+    /// "Autumn now · Winter from November 7" while following.
+    pub detail: String,
+}
+
+const SEASON_NAMES: [&str; 4] = ["Spring", "Summer", "Autumn", "Winter"];
+const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+pub fn seasons(p: &StoredPrefs, today: Today) -> Seasons {
+    let now = theme::season_now(today.month, today.day, today.southern);
+    let following = p.season == ThemeSeason::Follow;
+    let worn = season_of(p.season).unwrap_or(now.season) as i32;
+    let detail = if following {
+        format!("{} now · {} from {} {}", SEASON_NAMES[now.season as usize], SEASON_NAMES[now.next as usize], MONTHS[now.next_month as usize - 1], now.next_day)
+    } else {
+        "Changes with the calendar".into()
+    };
+    let switch = format!("season={}", season_follow_value(!following, today.month, today.day, today.southern));
+    Seasons { worn, following, switch, detail }
+}
+
+/// Which appearance the settings stand for ([`appearance_settings`]'s pick).
+pub fn appearance_pick(p: &StoredPrefs) -> i32 {
+    use nori_core::settings::ThemeMode;
+    match p.theme {
+        ThemeMode::System => 0,
+        ThemeMode::Light => 1,
+        ThemeMode::Dark if p.amoled => 3,
+        ThemeMode::Dark => 2,
+    }
+}
 
 /// Non-setting facts the pages show (sizes, counts, devices).
 #[derive(Default, Clone)]
@@ -122,7 +178,6 @@ struct Row {
     min: f32,
     max: f32,
     centred: bool,
-    swatches: Vec<u32>,
 }
 
 fn options(name: &str) -> Vec<String> {
@@ -131,12 +186,6 @@ fn options(name: &str) -> Vec<String> {
 
 fn minus(v: &str) -> String {
     v.replace('-', "−")
-}
-
-/// The accent to draw: the core's default (Android purple) becomes red here; others as picked.
-pub fn accent_shown(argb: u32) -> u32 {
-    let default = StoredPrefs::default().accent as u32;
-    if argb == default { 0xFFFA2D48 } else { argb }
 }
 
 /// The settings page a tab shows.
@@ -165,7 +214,7 @@ fn section_title(id: SectionId) -> &'static str {
         Effects => "Effects",
         Volume => "Volume",
         Output => "Output",
-        Theme | Cover => "Look",
+        Theme => "Look",
         Home => "Home",
         Screen => "Screen",
         Motion => "Motion",
@@ -186,60 +235,60 @@ fn section_title(id: SectionId) -> &'static str {
     }
 }
 
-/// A setting's title and the line under it.
+/// A setting's title and the line under it, which says only how things stand now.
 fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
     let (title, detail) = match name {
-        "crossfadeSec" => ("Crossfade", "Songs fade into each other."),
-        "autoMix" => ("AutoMix", "Blends songs like a DJ, matching the beat."),
+        "crossfadeSec" => ("Crossfade", ""),
+        "autoMix" => ("AutoMix", ""),
         "autoMixBetterBeats" => {
             let mb = s.beat_model_mb;
             let detail = match &s.beat_model {
-                BeatModel::Ready => "On. Each song is listened to once, just before it plays, which uses more battery.".into(),
+                BeatModel::Ready => String::new(),
                 BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
                 BeatModel::Failed { .. } => "The download didn't work. It tries again at the next song.".into(),
                 BeatModel::WaitingForWifi => format!("Waits for Wi-Fi to download (about {mb} MB)."),
-                _ => format!("Listens to the start and end of each song so mixes land on the beat. Uses more battery. A one-time download of about {mb} MB over Wi-Fi, from the model's authors."),
+                _ => format!("A download of about {mb} MB"),
             };
             return ("Better beat detection".into(), detail);
         }
-        "crossfadeKeepAlbums" => ("Keep albums gapless", "Songs of one album that follow each other in order play without mixing."),
+        "crossfadeKeepAlbums" => ("Keep albums gapless", ""),
         "fadeMs" => ("Fade on play and pause", ""),
-        "previousAlwaysSkips" => ("Previous goes back a song", "Instead of restarting the current one."),
+        "previousAlwaysSkips" => ("Previous goes back a song", ""),
         "speed" => ("Speed", ""),
         "pitch" => ("Pitch", ""),
-        "skipSilence" => ("Skip silence", if s.untouched { "Off while the audio is played untouched." } else { "Cuts quiet gaps in and between songs." }),
-        "skipExplicit" => ("Skip explicit songs", "Songs your server marks explicit."),
-        "autoFill" => ("Keep playing when the queue ends", "Adds more music automatically."),
+        "skipSilence" => ("Skip silence", if s.untouched { "Off while the audio is played untouched." } else { "" }),
+        "skipExplicit" => ("Skip explicit songs", ""),
+        "autoFill" => ("Keep playing when the queue ends", ""),
         "autoFillKind" => ("Carry on with", ""),
         "autoFillBasis" => ("Chosen by", ""),
-        "autoFillRemote" => ("Include remote songs", "Songs not in your library yet, from the server's streaming providers. Each one played is downloaded into the library."),
-        "bridgeOffline" => ("Play downloads when offline", "If the server drops, keep playing from downloads."),
-        "autoEqAuto" => ("AutoEQ for headphones", "Applies a known correction curve when headphones connect."),
-        "autoEqDownload" => ("Keep the AutoEQ list", "Downloads the headphone list (850 kB, from github.com), and again once a month, so headphones find their curve."),
-        "profilePerOutput" => ("Remember sound per device", "Each device keeps its own equalizer settings."),
-        "soundBypass" => ("No processing on this output", "No equalizer or effects reach this output. Saved with the device's sound."),
-        "headphoneSound" => ("Headphone sound", "Natural sounds like speakers, Wide sounds bigger."),
-        "compressor" => ("Compressor", "Evens out quiet and loud parts."),
+        "autoFillRemote" => ("Include remote songs", ""),
+        "bridgeOffline" => ("Play downloads when offline", ""),
+        "autoEqAuto" => ("AutoEQ for headphones", ""),
+        "autoEqDownload" => ("Keep the AutoEQ list", ""),
+        "profilePerOutput" => ("Remember sound per device", ""),
+        "soundBypass" => ("No processing on this output", ""),
+        "headphoneSound" => ("Headphone sound", ""),
+        "compressor" => ("Compressor", ""),
         "compressorPreset" => ("For", ""),
-        "replayGain" => ("Volume leveling", "Every song plays equally loud."),
-        "loudnessLevel" => ("Level", "How loud leveled songs play."),
+        "replayGain" => ("Volume leveling", ""),
+        "loudnessLevel" => ("Level", ""),
         "volumeBoostDb" => ("Volume boost", ""),
-        "hiRes" => ("High quality output", "Plays 24-bit files in full, and runs the equalizer and effects in floating point. Starts with the next song."),
+        "hiRes" => ("High quality output", ""),
         "maxRate" => ("Highest sample rate", ""),
-        "accent" => ("Accent color", ""),
-        "coverColors" => ("Colors from the cover", "Where the artwork's colors show."),
-        "lyricsSweep" => ("Fill in words as they're sung", "For lyrics timed word by word."),
-        "lyricsTranslation" => ("Show translations", "When your server has them."),
-        "lyricsOnline" => ("Find missing lyrics online", "When your server has no timed lyrics. Sends the artist, song and album name to the lyrics sources."),
-        "lyricsPreferWords" => ("Prefer word-by-word lyrics", "Keeps looking past lyrics timed line by line."),
-        "betterLyricsKey" => ("BetterLyrics key", "Without one it answers only for songs it has already stored."),
-        "tasteModel" => ("Keep listening history", "Stored on this Mac. Powers mixes and stats."),
-        "scrobble" => ("Tell the server what you play", "Sends your plays to your server once you've heard half a song or four minutes of it."),
-        "thirdPartyLookups" => ("Look things up online", "Missing lyrics (sends the artist, song and album name) and the AutoEQ headphone list, each with its own switch. Off, nothing is asked."),
-        "remoteControl" => ("Remote control and jams", "Control playback on your other devices, or invite guests to a jam. Uses your network directly or the octo-fiesta relay."),
+        "season" => ("Season", ""),
+        "coverColors" => ("Colors from the cover", ""),
+        "lyricsSweep" => ("Fill in words as they're sung", ""),
+        "lyricsTranslation" => ("Show translations", ""),
+        "lyricsOnline" => ("Find missing lyrics online", ""),
+        "lyricsPreferWords" => ("Prefer word-by-word lyrics", ""),
+        "betterLyricsKey" => ("BetterLyrics key", ""),
+        "tasteModel" => ("Keep listening history", ""),
+        "scrobble" => ("Tell the server what you play", ""),
+        "thirdPartyLookups" => ("Look things up online", ""),
+        "remoteControl" => ("Remote control and jams", ""),
         "wifi" => ("Streaming quality", ""),
         "download" => ("Quality for downloads", ""),
-        "songsAheadWifi" => ("Prepare songs ahead", "Upcoming songs and their lyrics are fetched before you get to them."),
+        "songsAheadWifi" => ("Prepare songs ahead", ""),
         "cacheMb" => ("Space for streamed music", ""),
         other => (other, ""),
     };
@@ -262,6 +311,11 @@ fn option_words(name: &str, v: &str) -> String {
             let pct = ((v.parse::<f32>().unwrap_or(1.0) - 1.0) * 100.0).round() as i32;
             if pct < 0 { format!("−{} %", -pct) } else { format!("+{pct} %") }
         }
+        ("season", "FOLLOW") => "Follow the seasons".into(),
+        ("season", "SPRING") => "Spring".into(),
+        ("season", "SUMMER") => "Summer".into(),
+        ("season", "AUTUMN") => "Autumn".into(),
+        ("season", "WINTER") => "Winter".into(),
         ("autoFillKind", "SONGS") => "Songs".into(),
         ("autoFillKind", "ALBUMS") => "Albums".into(),
         ("autoFillBasis", "SIMILAR") => "Similar music".into(),
@@ -346,7 +400,8 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                 SettingKind::Switch => Row { kind: TOGGLE, name: spec.name, title, detail, on: value == "true", enabled, ..Default::default() },
                 SettingKind::Choice => {
                     let options = spec.options.iter().map(|v| (option_words(&spec.name, v), v.clone())).collect();
-                    Row { kind: CHOICE, name: spec.name, title, options, enabled, ..Default::default() }
+                    let kind = if spec.name == "season" { SEASONS } else { CHOICE };
+                    Row { kind, name: spec.name, title, options, enabled, ..Default::default() }
                 }
                 SettingKind::Level => {
                     let v: f32 = value.parse().unwrap_or(spec.min);
@@ -354,10 +409,6 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                     Row { kind: SLIDER, name: spec.name, title, value: v.clamp(spec.min, spec.max), min: spec.min, max: spec.max, enabled: true, ..Default::default() }
                 }
                 SettingKind::Text => Row { kind: TEXT, name: spec.name, title, detail, button: value, enabled: true, ..Default::default() },
-                SettingKind::Colour => {
-                    let swatches = spec.options.iter().filter_map(|c| c.parse::<i64>().ok()).map(|c| c as u32).collect();
-                    Row { kind: PALETTE, name: spec.name, title, swatches, value: p.accent as u32 as f32, enabled: true, ..Default::default() }
-                }
                 // Drawn by `flag_rows`.
                 SettingKind::Flags => return None,
             }
@@ -450,7 +501,7 @@ fn service(id: &str) -> Option<(&'static str, &'static str)> {
 
 /// The groups of settings tab `tab`: each section's title and rows. Tab 0 adds the desktop's own:
 /// the output device and the version.
-fn groups(p: &StoredPrefs, f: &Facts, tab: i32) -> Vec<(&'static str, Vec<Row>)> {
+fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static str, Vec<Row>)> {
     let s = settings_model::state(p, settings_model::Output::default(), &crate::session::app().settings.model);
     let facts = PageFacts {
         parts: f.rules.settings.clone(),
@@ -466,7 +517,18 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32) -> Vec<(&'static str, Vec<Row>)>
     };
     let mut groups: Vec<(&'static str, Vec<Row>)> = Vec::new();
     for sec in settings_pages::page(tab_page(tab), SettingsClient::Desktop, p, &s, &facts) {
-        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f).into_iter().collect())).collect();
+        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f).into_iter().collect())).flat_map(|r| {
+            if r.kind != SEASONS {
+                return vec![r];
+            }
+            // The four seasons' tiles, following the calendar as a switch under them, then the appearance: the
+            // theme and AMOLED have no rows on the desktop's page of the core, and it stands for both.
+            let s = seasons(p, today);
+            let tiles = Row { options: SEASON_NAMES.map(|n| (n.to_string(), n.to_string())).to_vec(), ..r };
+            let follow = Row { kind: TOGGLE, name: s.switch, title: "Follow the seasons".into(), detail: s.detail, on: s.following, enabled: true, ..Default::default() };
+            let appearance = Row { kind: APPEARANCE_ROW, name: APPEARANCE.into(), options: ["System", "Light", "Dark", "AMOLED"].map(|o| (o.to_string(), o.to_string())).to_vec(), enabled: true, ..Default::default() };
+            vec![tiles, follow, appearance]
+        }).collect();
         let title = section_title(sec.id);
         // Sections that share a title are one group here.
         match groups.last_mut() {
@@ -489,20 +551,25 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32) -> Vec<(&'static str, Vec<Row>)>
 }
 
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.
-pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32) -> ModelRc<SettingRow> {
+pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<SettingRow> {
     let mut out = Vec::new();
-    for (title, rows) in groups(p, f, tab) {
+    for (title, rows) in groups(p, f, tab, today) {
         out.push(SettingRow { kind: HEADING, title: title.into(), ..Default::default() });
+        // Rows on a plate share it; the plate's corners round where a row without one (a note, the tiles,
+        // the appearance) or the group's end meets it.
+        let plated: Vec<bool> = rows.iter().map(|r| !matches!(r.kind, NOTE | SEASONS | APPEARANCE_ROW)).collect();
         let n = rows.len();
         for (i, r) in rows.into_iter().enumerate() {
             let v = match Target::of(&r.name) {
                 Target::Device => f.device.clone(),
                 Target::Setting(name) => settings_model::value_of(p, name).unwrap_or_default(),
             };
-            let chosen = r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32);
+            let chosen = if r.kind == APPEARANCE_ROW {
+                appearance_pick(p)
+            } else if r.kind == SEASONS {
+                seasons(p, today).worn
+            } else { r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32) };
             let labels: Vec<SharedString> = r.options.iter().map(|o| o.0.as_str().into()).collect();
-            let swatches: Vec<Color> = r.swatches.iter().map(|c| Color::from_argb_encoded(accent_shown(*c))).collect();
-            let picked = r.swatches.iter().position(|c| *c == p.accent as u32).map_or(-1, |i| i as i32);
             out.push(SettingRow {
                 kind: r.kind,
                 name: r.name.into(),
@@ -511,15 +578,14 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32) -> ModelRc<SettingRow> {
                 on: r.on,
                 enabled: r.enabled,
                 options: ModelRc::new(VecModel::from(labels)),
-                chosen: if r.kind == PALETTE { picked } else { chosen },
+                chosen,
                 button: r.button.into(),
                 value: r.value,
                 min: r.min,
                 max: r.max,
                 centred: r.centred,
-                swatches: ModelRc::new(VecModel::from(swatches)),
-                first: i == 0,
-                last: i + 1 == n,
+                first: i == 0 || !plated[i - 1],
+                last: i + 1 == n || !plated[i + 1],
             });
         }
     }
@@ -556,6 +622,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_appearance_sets_the_theme_and_amoled_and_reads_back() {
+        for pick in 0..4 {
+            let mut p = StoredPrefs::default();
+            for (name, value) in appearance_settings(pick) {
+                p = nori_core::settings::set_by_name(&p, name, value).expect("a setting").prefs;
+            }
+            assert_eq!(appearance_pick(&p), pick as i32, "pick {pick}");
+        }
+    }
+
+    const OCTOBER: Today = Today { month: 10, day: 19, southern: false };
+
+    #[test]
+    fn the_look_page_has_season_tiles_then_the_appearance() {
+        use slint::Model;
+        let rows = rows(&StoredPrefs::default(), &Facts::default(), 0, OCTOBER);
+        let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
+        let at = kinds.iter().position(|k| *k == SEASONS).expect("a season row");
+        assert_eq!(kinds[at + 1..at + 3], [TOGGLE, APPEARANCE_ROW]);
+        let tiles = rows.row_data(at).unwrap();
+        assert_eq!((tiles.options.row_count(), tiles.chosen), (4, 2), "the four seasons, autumn worn while following");
+        let follow = rows.row_data(at + 1).unwrap();
+        assert_eq!((follow.on, follow.detail.as_str()), (true, "Autumn now · Winter from November 7"));
+        // Turned off, it keeps the calendar's season.
+        assert_eq!(toggled(&follow.name, false), ("season", "AUTUMN".to_string()));
+        let fixed = StoredPrefs { season: ThemeSeason::Spring, ..StoredPrefs::default() };
+        let s = seasons(&fixed, OCTOBER);
+        assert_eq!((s.worn, s.following, toggled(&s.switch, true).1.as_str()), (0, false, "FOLLOW"));
+    }
+
+    #[test]
     fn a_toggle_stores_its_state_or_the_value_its_name_carries() {
         assert_eq!(toggled("mono", true), ("mono", "true".to_string()));
         assert_eq!(toggled("musicFolders=1,3", false), ("musicFolders", "1,3".to_string()));
@@ -568,7 +665,7 @@ mod tests {
         let f = Facts::default();
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
-            for (_, rows) in groups(&p, &f, tab) {
+            for (_, rows) in groups(&p, &f, tab, OCTOBER) {
                 for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE | TEXT) && r.name != DEVICE) {
                     let name = toggled(&r.name, r.on).0;
                     assert!(specs.iter().any(|s| s == name), "{name} is not a core setting");

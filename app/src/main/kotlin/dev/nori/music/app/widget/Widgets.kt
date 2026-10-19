@@ -115,14 +115,14 @@ object Widgets {
     fun ids(context: Context, provider: Class<*>): IntArray =
         AppWidgetManager.getInstance(context).getAppWidgetIds(ComponentName(context, provider))
 
-    /** The app's theme as its screens wear it: AMOLED black or not, and the look dressed from its scheme. */
-    class Theme(val amoled: Boolean, val look: IntArray)
+    /** The app's theme as its screens wear it: AMOLED black or not, the look dressed from its scheme, and its accents. */
+    class Theme(val amoled: Boolean, val look: IntArray, val accents: dev.nori.music.app.ui.Accents)
 
     fun theme(context: Context): Theme {
         val prefs = Nori.get(context).settings.value
         val system = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         val dark = dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system)
-        return Theme(dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, false), dev.nori.music.app.ui.plainLook(dev.nori.music.app.ui.schemeOf(context, prefs, dark)))
+        return Theme(dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, false), dev.nori.music.app.ui.plainLook(dev.nori.music.app.ui.schemeOf(prefs, dark)), dev.nori.music.app.ui.accentsOf(prefs))
     }
 
     /** A cover's look and its wash, as its page in the app has them. */
@@ -133,13 +133,13 @@ object Widgets {
     /** The look of the page [url]'s cover heads in [theme]; null when there is no cover to take it from. */
     suspend fun coverLook(context: Context, url: String?, theme: Theme): Dressed? {
         if (url == null) return null
-        val key = "$url|${theme.amoled}"
+        val key = "$url|${theme.amoled}|${theme.accents}"
         looks.get(key)?.let { return it }
         val pages = withContext(Dispatchers.IO) {
             runCatching { CoverLoader.get(context).colours(url, CoverSize.ROW, !theme.amoled, theme.amoled) }.getOrNull()
         } ?: return null
         val c = (if (theme.amoled) pages.black else pages.plain) ?: return null
-        return Dressed(c.look, c.wash).also { looks.put(key, it) }
+        return Dressed(dev.nori.music.look.CoverLook.accented(c.look, theme.accents.light, theme.accents.dark), c.wash).also { looks.put(key, it) }
     }
 
     /**

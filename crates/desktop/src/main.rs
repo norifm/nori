@@ -7,6 +7,7 @@ mod compositor;
 mod control;
 mod eq;
 mod jam;
+mod look;
 mod lyrics;
 mod menu;
 mod session;
@@ -76,11 +77,6 @@ fn main() -> Result<(), String> {
     }
     let compositor = compositor::install()?;
     let ui = AppWindow::new().map_err(|e| e.to_string())?;
-    // Room for the traffic lights; SF Pro on macOS (the bundled Inter elsewhere).
-    if cfg!(target_os = "macos") {
-        ui.set_inset_top(44.0);
-        ui.set_font("System Font".into());
-    }
     // Held for the whole run: the exit hook only has a weak handle.
     let _app = app::start(&ui, data, compositor);
     #[cfg(all(feature = "test-control", unix))]

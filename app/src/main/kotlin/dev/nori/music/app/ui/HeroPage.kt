@@ -230,7 +230,7 @@ fun HeroPage(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    title, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center,
+                    title, style = titled(MaterialTheme.typography.headlineSmall), textAlign = TextAlign.Center,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
                 if (!subtitle.isNullOrEmpty()) Text(
@@ -278,7 +278,7 @@ fun HeroPage(
             }
         }
         }
-        // On its side the page's colour runs out under the strips beside it (the camera's, the rail's), which it
+        // On its side the page's colour runs out under the camera's strip beside it, which it
         // leaves as it goes, rather than the app's own colour there showing the page's edges.
         val outStart = LocalPageStart.current
         val outEnd = LocalPageEnd.current
@@ -311,7 +311,7 @@ fun HeroPage(
                         val under = UNDER_TEXT
                         Box(
                             // Takes up the room up to the words and draws on past it, under them, to [half]; and out
-                            // over the strip the page is kept off (the camera's, or the rail's), to the screen's edge.
+                            // over the strip the page is kept off (the camera's), to the screen's edge.
                             Modifier.width(textAt).fillMaxHeight().layout { measurable, constraints ->
                                 val extra = cutout.roundToPx()
                                 val w = constraints.maxWidth + extra + under.roundToPx()

@@ -647,7 +647,7 @@ final class PageHeader: UIView {
 
     private static func round(_ b: UIButton) {
         b.backgroundColor = Theme.row
-        b.tintColor = Theme.accent
+        b.tintColor = Theme.label
         b.layer.cornerRadius = 22
         b.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([b.widthAnchor.constraint(equalToConstant: 44), b.heightAnchor.constraint(equalToConstant: 44)])
@@ -659,8 +659,8 @@ final class PageHeader: UIView {
         b.setImage(image, for: .normal)
         b.titleLabel?.font = UIFont.preferredFont(forTextStyle: .headline)
         b.titleLabel?.adjustsFontForContentSizeCategory = true
-        b.backgroundColor = filled ? Theme.accent : Theme.row
-        b.tintColor = filled ? Theme.background : Theme.accent
+        b.backgroundColor = filled ? Theme.label : Theme.row
+        b.tintColor = filled ? Theme.background : Theme.label
         b.layer.cornerRadius = 10
         return b
     }

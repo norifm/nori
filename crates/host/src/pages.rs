@@ -7,7 +7,7 @@ use nori_core::client::Client;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
 use nori_core::settings::HomeRow;
 use nori_core::transport::{block_on, NetError};
-use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, CoreError, FeedShelf, Playlist, PlaylistDetail, Song};
+use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, CoreError, FeedShelf, Playlist, PlaylistDetail, Song, Starred};
 
 use crate::session::{read_pages, Handle};
 
@@ -18,6 +18,8 @@ pub enum PageAsk {
     Albums { offset: u32 },
     Artists,
     Playlists,
+    /// What the account has starred.
+    Favorites,
     /// The offline index's songs by title, a page from `offset`.
     Songs { offset: u32 },
     Album(String),
@@ -32,6 +34,7 @@ pub enum PageGot {
     Albums(Vec<Album>),
     Artists(Vec<Artist>),
     Playlists(Vec<Playlist>),
+    Favorites(Box<Starred>),
     Songs { songs: Vec<Song>, exhausted: bool },
     Album(Box<AlbumDetail>),
     Artist(Box<ArtistDetail>),
@@ -101,6 +104,7 @@ impl Handle {
                 pages(read, &|p| if let Page::Albums { v } = p { Some(PageGot::Albums(v)) } else { None });
             }
             PageAsk::Artists => pages(Read::ArtistIndex, &|p| if let Page::Artists { v } = p { Some(PageGot::Artists(v)) } else { None }),
+            PageAsk::Favorites => pages(Read::StarredItems, &|p| if let Page::StarredPage { v } = p { Some(PageGot::Favorites(Box::new(v))) } else { None }),
             PageAsk::Playlists => pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(PageGot::Playlists(v)) } else { None }),
             PageAsk::Album(id) => pages(Read::AlbumById { id }, &|p| if let Page::AlbumPage { v } = p { Some(PageGot::Album(Box::new(v))) } else { None }),
             PageAsk::Artist(id) => pages(Read::ArtistById { id }, &|p| if let Page::ArtistPage { v } = p { Some(PageGot::Artist(Box::new(v))) } else { None }),

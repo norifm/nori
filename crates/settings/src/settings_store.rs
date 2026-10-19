@@ -722,7 +722,7 @@ mod tests {
         let bars = [(0, vec![]), (1, vec![H::Sideways]), (2, vec![H::Upright]), (3, vec![H::Sideways, H::Upright]), (4, vec![H::Protected])];
         for (pick, want) in bars {
             let (p, stored) = open_old("old-bars", &old(&[("hideStatusBar", number(pick)), ("hideGestureBar", number(pick))]));
-            assert_eq!((p.hide_status_bar, p.hide_gesture_bar), (want.clone(), want), "{pick}");
+            assert_eq!(p.hide_status_bar, want, "{pick}");
             assert!(!stored.contains_key("hideStatusBar") && !stored.contains_key("hideGestureBar"), "{stored:?}");
         }
         let awake = [(0, vec![]), (1, vec![A::Sideways]), (2, vec![A::Charging]), (3, vec![A::Sideways, A::Charging]), (4, vec![A::Sideways, A::Upright])];

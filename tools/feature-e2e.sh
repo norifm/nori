@@ -352,7 +352,7 @@ if want motion; then section "moving covers"
   "$app" set thirdPartyLookups true >/dev/null
 fi
 
-if want notification; then section "the notification's heart and shuffle"
+if want notification; then section "the notification's seal and shuffle"
   # "notification <x>" sends the same session command the notification's button sends; "notification"
   # in the state is what the session last published to its controllers (the notification is one of them).
   # That the star reaches the server as Subsonic asks is client.rs a_heart_a_new_playlist_...
@@ -361,12 +361,12 @@ if want notification; then section "the notification's heart and shuffle"
     check "the notification fixture is the current song" wait_for title "Far Song Three" 10
   fi
   buttons=$(field notification); echo "     buttons: $buttons"
-  check "the notification has a heart and a shuffle button" bash -c '[[ "'"$buttons"'" == *heart* && "'"$buttons"'" == *shuffle* ]]'
+  check "the notification has a seal and a shuffle button" bash -c '[[ "'"$buttons"'" == *seal* && "'"$buttons"'" == *shuffle* ]]'
   was=$(field starred); flip=$([ "$was" = True ] && echo False || echo True)
   "$app" do "notification favourite" >/dev/null
-  check "the notification's heart stars the song in the app ($was -> $flip)" wait_for starred "$flip" 10
+  check "the notification's seal stars the song in the app ($was -> $flip)" wait_for starred "$flip" 10
   buttons=$(field notification)
-  check "the notification's heart redraws ($buttons)" bash -c '[[ "'"$flip"'" == True && "'"$buttons"'" == *heart_filled* ]] || [[ "'"$flip"'" == False && "'"$buttons"'" != *heart_filled* ]]'
+  check "the notification's seal redraws ($buttons)" bash -c '[[ "'"$flip"'" == True && "'"$buttons"'" == *sealed* ]] || [[ "'"$flip"'" == False && "'"$buttons"'" != *sealed* ]]'
   "$app" do "notification favourite" >/dev/null; wait_for starred "$was" 10 >/dev/null   # put it back
   shuffle=$(field notification | grep -o 'shuffle_o[nf]*')
   "$app" do "notification shuffle" >/dev/null
@@ -825,6 +825,13 @@ PY
     "$app" play "search:Long Track 04" >/dev/null
     check "a new remote play clears the mix indicator" wait_for displayMixing False 10
     check "the peer returns to the selected song" wait_for title "Long Track 04" 10
+    # The notification's seal stands for the peer's song: its star is the one the peer's queue holds.
+    was=$(field starred); flip=$([ "$was" = True ] && echo False || echo True)
+    "$app" do "notification favourite" >/dev/null
+    check "the notification's seal stars the peer's song ($was -> $flip)" wait_for starred "$flip" 10
+    peer_seal() { local b; b=$(field notification); [[ "$flip" == True && "$b" == *sealed* ]] || [[ "$flip" == False && "$b" != *sealed* ]]; }
+    check "the notification's seal redraws for the peer's song" wait_until 10 peer_seal
+    "$app" do "notification favourite" >/dev/null; wait_for starred "$was" 10 >/dev/null   # put it back
     adb shell am broadcast -a com.android.systemui.action.LAUNCH_MEDIA_OUTPUT_DIALOG -p com.android.systemui --es package_name "$pkg" >/dev/null
     check "the native output picker opens" wait_until 10 on_screen 'package="com.android.systemui"'
     check "the native picker offers this phone" wait_until 10 on_screen 'text="This phone"'
