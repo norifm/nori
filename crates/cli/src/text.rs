@@ -274,6 +274,9 @@ pub fn search_fallback(reason: Option<&str>) -> String {
 
 // ---- other devices and jams ----
 
+/// The hint line under the player, and in the full player.
+pub const HINT: &str = "space play  s shuffle  r repeat  f favorite  / search  1-9 go  F player  ? help";
+pub const HINT_FULL: &str = "esc back  space play  tab panel  L lyrics  Q queue  C devices  ? help";
 pub const THIS_COMPUTER: &str = "This computer";
 pub const PLAY_ON: &str = "Play on";
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";

@@ -11,6 +11,42 @@ The terminal client is a whole music player in a terminal, drawn with ratatui. S
 Download the `nori-cli` archive for your system and processor, or build it with
 `cargo run --release -p nori-cli` (see [Install](../start/install.md#desktop-and-terminal)).
 
+## The window
+
+Two rounded outlines frame the page. Along the top are the tabs, Home, Albums, Artists, Songs, Playlists and
+Favorites (the open one in the accent color, bold and underlined), then search and settings. Along the
+bottom is the player: the song on the left; shuffle, previous, play, next and repeat with the seek bar under
+them in the middle; on the right the seal, devices, lyrics, queue and the volume. Downloads, the equalizer
+and the server's state are in the line of keys under the player.
+
+A narrow terminal keeps what fits: under 100 columns the volume goes, under 80 the panel buttons and the tabs'
+names, under 60 the player is the song and play.
+
+The page scrolls under the outlines and fades into the page color before them: the two rows nearest an
+outline blend a third, then two thirds of the way. The terminal cannot blur, so this stands in for it, and
+only where the page really is scrolled.
+
+Clicking the song, or `F`, opens the full player: the cover, the title with its seal, the seek bar, the
+transport and the volume on the left, and beside them the lyrics, the queue or the devices (`tab` moves
+between them, `esc` goes back).
+
+## Colors
+
+The page is painted in the colors of the season, which follows the calendar (a week before a season starts to a
+week after, the colors blend) or stays on the one chosen in **Settings, Look**, with light, dark or black
+(AMOLED) appearance; "as the terminal" takes light or dark from the terminal's background (`COLORFGBG`). The
+accent marks only what is current: the open tab, the song playing, shuffle or repeat while on, a liked seal.
+A selected row is the raised surface, never the accent.
+
+- Terminals that do not report true color (`COLORTERM`) get the nearest of the 256 colors.
+- `NO_COLOR` shows no colors at all: weights, underline and reverse video only.
+- `--no-paint`, or **Paint the page** off in **Settings, Interface**, leaves the terminal's own background and
+  text, with only the season's accent on top.
+- The seal 好 is the favorite: an outline when not liked, filled in the accent when liked.
+- Pressing play, next, previous, shuffle or repeat (by key or mouse) shows the glyph reversed for a quarter of
+  a second, and a like does the same to the seal. Nothing else moves, and nothing redraws on its own while the
+  music is paused. `NORI_REDUCE_MOTION=1` turns both off.
+
 ## Covers
 
 Covers are drawn in whichever picture protocol the terminal answers to: kitty graphics, sixel or
@@ -32,10 +68,10 @@ the outer terminal, and nori draws them again when the pane has focus back; it t
 | `+` / `-` | volume |
 | `s` / `r` | shuffle on or off; repeat off, all, one |
 | `/` | search |
-| `1` … `7` | Home, Albums, Artists, Songs, Downloads, Equalizer, Settings |
-| `tab` | sidebar, page, panel |
-| `N` / `Q` / `L` / `C` | the right panel: now playing, queue, lyrics, devices |
-| `F` | the player over the whole window |
+| `1` … `9` | Home, Albums, Artists, Songs, Playlists, Favorites, Downloads, Equalizer, Settings |
+| `L` / `Q` / `C` | the full player on its lyrics, queue or devices (again: back) |
+| `tab` | in the full player, the next panel |
+| `F` / `N` | the player over the whole window |
 | `enter` / `l` | open, or play from here |
 | `a` / `A` | add to the queue, or play next |
 | `x` / `X` | play the whole page, or shuffle it |

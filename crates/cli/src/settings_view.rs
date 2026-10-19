@@ -38,6 +38,7 @@ pub enum Switch {
     Mouse,
     Images,
     CardCovers,
+    Paint,
 }
 
 /// A settings group: a headed part of the page.
@@ -159,6 +160,8 @@ pub struct Own {
     pub mouse: bool,
     pub images: bool,
     pub card_covers: bool,
+    /// The page is painted in the season's colors.
+    pub paint: bool,
     pub protocol: String,
     pub data: String,
     /// Output device for the next start; empty for the system default.
@@ -197,6 +200,11 @@ impl SettingsView {
             }
         }
         out
+    }
+
+    /// Whether rows are hidden above and below, as last drawn.
+    pub fn cut(&self) -> (bool, bool) {
+        self.row.cut
     }
 
     /// The selection and line count, for list navigation.
@@ -249,7 +257,7 @@ impl SettingsView {
             Row::Toggle { switch, .. } => Opened::Own(switch),
             Row::Choice { target, title, options, shown, enabled: true } => {
                 let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
-                Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, top: 0 }, target })
+                Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, ..Sel::default() }, target })
             }
             Row::Link { action, .. } | Row::Action { action, enabled: true, .. } | Row::Button { action, .. } => match action {
                 Act::Equalizer => Opened::View(View::Equalizer),
@@ -301,6 +309,7 @@ impl SettingsView {
                     Switch::Mouse => vec![Cmd::Mouse(up)],
                     Switch::Images => vec![Cmd::Images(up)],
                     Switch::CardCovers => vec![Cmd::CardCovers(up)],
+                    Switch::Paint => vec![Cmd::Paint(up)],
                 }
             }
             Row::Slider { name, value, min, max, level, .. } => {
@@ -395,6 +404,7 @@ fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
         toggle(Switch::Mouse, "Mouse", "Clicks, the wheel and dragging the bars. Off, the terminal selects text (m)", o.mouse, true),
         toggle(Switch::Images, "Covers", "Album art in the player and on album pages (I)", o.images, true),
         toggle(Switch::CardCovers, "Covers on album cards", "Small pictures on Home and Albums; off keeps a slow link or terminal light", o.card_covers, o.images),
+        toggle(Switch::Paint, "Paint the page", "The season's colors across the whole window; off, the terminal's own background and text show", o.paint, true),
         Row::Choice { target: Target::Device, title: "Output device".into(), options: devices, shown, enabled: true },
         Row::Note { text: "The device is opened at start; --device overrides it for one run.".into() },
     ];
@@ -480,6 +490,8 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "hiRes" => ("High quality output", "Float samples to the device; 24-bit files kept whole, effects in float"),
         "maxRate" => ("Highest sample rate", ""),
         "season" => ("Season", "The theme's colors; following the seasons, they change with the calendar"),
+        "theme" => ("Appearance", "Light, dark, or as the terminal's own background (system)"),
+        "amoled" => ("Black page", "The dark theme on pure black"),
         "coverColors" => ("Colors from the cover", "Where the artwork's colors show (with covers on)"),
         "lyricsSweep" => ("Word fill", "Color words in as they are sung (word-timed lyrics)"),
         "lyricsTranslation" => ("Translations", "When the server has them"),
@@ -507,10 +519,13 @@ fn option_words(name: &str, v: &str) -> String {
         ("fadeMs", v) => off_or(v, &|v| format!("{v} ms")),
         ("speed" | "pitch", v) => format!("{v}×"),
         ("season", "FOLLOW") => "following the seasons".into(),
-        ("season", "SPRING") => "spring".into(),
-        ("season", "SUMMER") => "summer".into(),
-        ("season", "AUTUMN") => "autumn".into(),
-        ("season", "WINTER") => "winter".into(),
+        ("season", "SPRING") => "Spring 春".into(),
+        ("season", "SUMMER") => "Summer 夏".into(),
+        ("season", "AUTUMN") => "Autumn 秋".into(),
+        ("season", "WINTER") => "Winter 冬".into(),
+        ("theme", "SYSTEM") => "as the terminal".into(),
+        ("theme", "LIGHT") => "light".into(),
+        ("theme", "DARK") => "dark".into(),
         ("autoFillKind", "SONGS") => "songs".into(),
         ("autoFillKind", "ALBUMS") => "albums".into(),
         ("autoFillBasis", "SIMILAR") => "similarity".into(),
@@ -1035,7 +1050,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        for phone in ["swipeLeft", "swipeRight", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "lyricsKeepScreenOn", "motion", "soundBypass", "altMaxBitRate"] {
+        for phone in ["swipeLeft", "swipeRight", "tapAction", "offload", "bitPerfect", "movingCovers", "lyricsKeepScreenOn", "motion", "soundBypass", "altMaxBitRate"] {
             assert!(!names.iter().any(|n| n == phone), "{phone} offered in a terminal");
         }
     }

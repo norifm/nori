@@ -1,6 +1,7 @@
-//! Drawing: sidebar, page, right panel (in the cover's colours) and the player bar. A narrow terminal
-//! drops the sidebar and panel and shows the focused one in the page's place. Every clickable area is
-//! recorded in `App::hits` as it is drawn. Lists and grids draw only visible rows.
+//! Drawing: the page under two outlines, the tabs along the top and the player along the bottom, and the
+//! full player with its panel. The page is painted in the season's colors; where it scrolls under an outline
+//! its nearest two rows fade into the page instead of blurring. Every clickable area is recorded in
+//! `App::hits` as it is drawn. Lists and grids draw only visible rows.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -10,7 +11,7 @@ use nori_core::client::Starrable;
 use nori_core::stars::StarMarks;
 use nori_core::Song;
 use nori_engine::State;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
@@ -19,15 +20,12 @@ use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, Button, DeviceRow, Focus, Hit, ListRef, Load, Nav, Overlay, Page, Panel, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, NAV_TOP, PANELS};
+use crate::app::{App, Button, DeviceRow, Focus, Hit, ListRef, Load, Overlay, Page, Panel, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
 use crate::art::{Art, Theme};
 use crate::keys::{Scope, BINDINGS};
 use crate::settings_view::{self, EqRow, Line as SLine, SettingsView};
 use crate::text::clock;
 
-/// Sidebar width, and the narrowest page allowed beside the sidebar and panel.
-const SIDE_W: u16 = 26;
-const MAIN_MIN: u16 = 50;
 /// Album card minimum width and height without covers.
 const CARD_W: u16 = 22;
 const CARD_H: u16 = 4;
@@ -86,14 +84,6 @@ fn spread<'a>(left: Vec<Span<'a>>, right: Span<'a>, w: usize) -> Line<'a> {
     Line::from(spans)
 }
 
-/// Black or white, whichever reads on `bg`.
-fn on(bg: Color) -> Color {
-    match bg {
-        Color::Rgb(r, g, b) if (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000 > 140 => Color::Black,
-        _ => Color::White,
-    }
-}
-
 /// Renders `w` clipped to the frame.
 fn put<W: Widget>(f: &mut Frame, w: W, r: Rect) {
     let r = r.intersection(f.area());
@@ -106,20 +96,8 @@ fn text(f: &mut Frame, r: Rect, s: &str, style: Style) {
     put(f, Paragraph::new(Span::styled(fit(s, r.width as usize).into_owned(), style)), Rect { height: r.height.min(1), ..r });
 }
 
-fn selected(t: &Theme, focused: bool) -> Style {
-    if focused {
-        Style::default().bg(t.accent).fg(on(t.accent)).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
-    }
-}
-
 fn bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
-}
-
-fn dim(t: &Theme) -> Style {
-    Style::default().fg(t.dim)
 }
 
 /// A scrolling list with the selection kept in view and a scrollbar when it overflows.
@@ -133,8 +111,8 @@ fn list<'a>(f: &mut Frame, area: Rect, sel: &mut Sel, len: usize, lref: ListRef,
         let r = Rect { x: area.x, y: area.y + n as u16, width, height: 1 };
         let mut line = row(i, width as usize);
         if i == sel.at {
-            // Patch every span so coloured spans stay readable on the selection.
-            let st = selected(t, focused);
+            // The raised surface under every span, which keep their colors.
+            let st = t.select(focused);
             line.spans.iter_mut().for_each(|s| s.style = s.style.patch(st));
             line = line.style(st);
         }
@@ -147,7 +125,7 @@ fn list<'a>(f: &mut Frame, area: Rect, sel: &mut Sel, len: usize, lref: ListRef,
         let y0 = (sel.top * h) / len.max(1);
         for y in 0..h {
             let lit = y >= y0 && y < y0 + thumb;
-            put(f, Paragraph::new(Span::styled(if lit { "┃" } else { "│" }, if lit { Style::default().fg(t.accent) } else { dim(t) })), Rect { x, y: area.y + y as u16, width: 1, height: 1 });
+            put(f, Paragraph::new(Span::styled(if lit { "┃" } else { "│" }, Style::default().fg(if lit { t.quiet } else { t.hair }))), Rect { x, y: area.y + y as u16, width: 1, height: 1 });
         }
     }
 }
@@ -186,6 +164,7 @@ fn cards(f: &mut Frame, area: Rect, sel: &mut Sel, len: usize, lref: ListRef, hi
     } else if row_at >= sel.top + rows {
         sel.top = row_at + 1 - rows;
     }
+    sel.cut = (sel.top > 0, (sel.top + rows) * cols < len);
     for r in 0..rows {
         for c in 0..cols {
             let i = (sel.top + r) * cols + c;
@@ -203,6 +182,9 @@ fn cards(f: &mut Frame, area: Rect, sel: &mut Sel, len: usize, lref: ListRef, hi
 
 #[allow(clippy::too_many_arguments)]
 fn one_card(f: &mut Frame, r: Rect, title: &str, sub: &str, art: Option<&str>, pics: &mut Pics, t: &Theme, chosen: bool, focused: bool) {
+    // The chosen card is raised: the surface under the cover and the words.
+    let ground = if chosen { t.select(focused).remove_modifier(Modifier::BOLD) } else { Style::default() };
+    put(f, Block::default().style(ground), r);
     if pics.on {
         let h = r.height.saturating_sub(1).min(CARD_H + 1);
         let cr = Rect { width: (h * 2).min(r.width), height: h, ..r };
@@ -215,28 +197,17 @@ fn one_card(f: &mut Frame, r: Rect, title: &str, sub: &str, art: Option<&str>, p
         cover(f, cr, pics.art.as_deref_mut(), key.as_deref(), t);
         let words = Rect { x: cr.x + cr.width + 1, y: r.y + h.saturating_sub(3) / 2, width: r.width.saturating_sub(cr.width + 1), height: 3.min(h) };
         let w = words.width as usize;
-        let title_style = if chosen && focused {
-            Style::default().bg(t.accent).fg(on(t.accent)).add_modifier(Modifier::BOLD)
-        } else if chosen {
-            Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
-        } else {
-            bold().fg(t.text)
-        };
         let (who, when) = sub.split_once(" · ").unwrap_or((sub, ""));
-        let lines = vec![Line::from(Span::styled(pad(title, w), title_style)), Line::from(Span::styled(fit(who, w).into_owned(), dim(t))), Line::from(Span::styled(fit(when, w).into_owned(), dim(t)))];
+        let lines = vec![Line::from(Span::styled(fit(title, w).into_owned(), bold().fg(t.ink))), Line::from(Span::styled(fit(who, w).into_owned(), t.dim())), Line::from(Span::styled(fit(when, w).into_owned(), t.dim()))];
         put(f, Paragraph::new(lines), words);
-        if chosen {
-            put(f, Paragraph::new(Span::styled("▔".repeat(cr.width as usize), Style::default().fg(t.accent))), Rect { y: cr.y + cr.height, height: 1, ..cr });
-        }
         return;
     }
-    let border = if chosen && focused { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else if chosen { Style::default().fg(t.accent) } else { dim(t) };
-    let block = Block::default().borders(Borders::ALL).border_type(if chosen { BorderType::Thick } else { BorderType::Rounded }).border_style(border);
+    let border = if chosen { Style::default().fg(t.ink) } else { Style::default().fg(t.hair) };
+    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(border);
     let inner = block.inner(r);
     put(f, block, r);
     let w = inner.width.saturating_sub(1) as usize;
-    let title_style = if chosen { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { bold() };
-    let lines = vec![Line::from(Span::styled(format!(" {}", fit(title, w)), title_style)), Line::from(Span::styled(format!(" {}", fit(sub, w)), dim(t)))];
+    let lines = vec![Line::from(Span::styled(format!(" {}", fit(title, w)), bold().fg(t.ink))), Line::from(Span::styled(format!(" {}", fit(sub, w)), t.dim()))];
     put(f, Paragraph::new(lines), inner);
 }
 
@@ -246,9 +217,9 @@ fn centred(area: Rect, w: u16, h: u16) -> Rect {
     Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }
 }
 
-/// A titled accent box over `r`; returns its inner area.
+/// A titled box on the raised surface over `r`, outlined; returns its inner area.
 fn popup(f: &mut Frame, r: Rect, title: Span, t: &Theme) -> Rect {
-    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).title(title).border_style(Style::default().fg(t.accent));
+    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).title(title).border_style(Style::default().fg(t.line)).style(t.raised());
     let inner = block.inner(r);
     put(f, Clear, r);
     put(f, block, r);
@@ -260,7 +231,7 @@ fn heading(f: &mut Frame, area: Rect, title: &str, caption: &str, t: &Theme) -> 
     if area.height < 3 {
         return area;
     }
-    let line = spread(vec![Span::styled(title.to_string(), bold().fg(t.text))], Span::styled(caption.to_string(), dim(t)), area.width as usize);
+    let line = spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(caption.to_string(), t.dim()), area.width as usize);
     put(f, Paragraph::new(line), Rect { height: 1, ..area });
     Rect { y: area.y + 2, height: area.height - 2, ..area }
 }
@@ -300,13 +271,13 @@ fn table_head(f: &mut Frame, area: Rect, t: &Theme, album: bool) -> Rect {
         s.push_str(&pad("Album", c[3]));
     }
     s.push_str(&format!("{:>w$}", "Time ", w = c[4]));
-    put(f, Paragraph::new(Span::styled(s, dim(t).add_modifier(Modifier::BOLD))), Rect { height: 1, ..area });
-    put(f, Paragraph::new(Span::styled("─".repeat(area.width as usize), dim(t))), Rect { y: area.y + 1, height: 1, ..area });
+    put(f, Paragraph::new(Span::styled(s, t.dim().add_modifier(Modifier::BOLD))), Rect { height: 1, ..area });
+    put(f, Paragraph::new(Span::styled("─".repeat(area.width as usize), Style::default().fg(t.hair))), Rect { y: area.y + 1, height: 1, ..area });
     Rect { y: area.y + 2, height: area.height - 2, ..area }
 }
 
-/// What a song row marks after its title: that a jam guest asked for the song, else its heart where the
-/// profile has hearts, as the session's star marks show it.
+/// What a song row marks after its title: that a jam guest asked for the song, else its seal where the
+/// profile has favorites, as the session's star marks show it.
 struct Marks<'a> {
     stars: &'a StarMarks,
     hearts: bool,
@@ -322,211 +293,208 @@ impl<'a> Marks<'a> {
         if self.asked.contains(s.id.as_str()) {
             format!(" {}", crate::text::ASKED)
         } else if self.hearts && self.stars.starred(Starrable::Song, &s.id, s.starred) {
-            " ♥".into()
+            format!(" {SEAL}")
         } else {
             String::new()
         }
     }
 }
 
+/// The seal: a liked song's mark in rows.
+const SEAL: &str = "好";
+
 /// A song table row; `number` 0 shows none, `playing` shows a marker instead; its mark as `marks` say.
 fn song_line(s: &Song, marks: &Marks, number: usize, w: usize, t: &Theme, playing: bool, album: bool) -> Line<'static> {
     let c = columns(w, album);
     let num = if playing {
-        Span::styled(pad("  ▶", c[0]), Style::default().fg(t.accent).add_modifier(Modifier::BOLD))
+        Span::styled(pad("  ▶", c[0]), t.current())
     } else if number == 0 {
         Span::raw(pad("", c[0]))
     } else {
-        Span::styled(pad(&format!("{number:>3}"), c[0]), dim(t))
+        Span::styled(pad(&format!("{number:>3}"), c[0]), t.dim())
     };
     let mut title = s.title.clone();
     if s.is_provider() {
         title.push_str(" ☁");
     }
     let mark = marks.mark(s);
-    let title_style = if playing { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text) };
+    let title_style = if playing { t.current() } else { Style::default().fg(t.ink) };
     let tw = c[1].saturating_sub(mark.width() + 2);
-    let mut spans = vec![num, Span::styled(pad(&title, tw), title_style), Span::styled(pad(&mark, mark.width() + 2), Style::default().fg(t.accent))];
+    let mut spans = vec![num, Span::styled(pad(&title, tw), title_style), Span::styled(pad(&mark, mark.width() + 2), if mark.trim() == SEAL { Style::default().fg(t.accent) } else { t.dim() })];
     if c[2] > 0 {
-        spans.push(Span::styled(pad(&s.artist, c[2].saturating_sub(2)), dim(t)));
+        spans.push(Span::styled(pad(&s.artist, c[2].saturating_sub(2)), t.dim()));
         spans.push(Span::raw("  "));
     }
     if c[3] > 0 {
-        spans.push(Span::styled(pad(&s.album, c[3].saturating_sub(2)), dim(t)));
+        spans.push(Span::styled(pad(&s.album, c[3].saturating_sub(2)), t.dim()));
         spans.push(Span::raw("  "));
     }
-    spans.push(Span::styled(format!("{:>w$} ", clock(s.duration as i64 * 1000), w = c[4] - 1), dim(t)));
+    spans.push(Span::styled(format!("{:>w$} ", clock(s.duration as i64 * 1000), w = c[4] - 1), t.dim()));
     Line::from(spans)
 }
 
 // ---- the frame ----
 
+/// The two rows nearest an outline where scrolled content fades: a third, then two thirds of the way to the
+/// page.
+const FADE: [f32; 2] = [0.66, 0.33];
+
 #[allow(clippy::needless_option_as_deref)]
 pub fn draw(f: &mut Frame, app: &mut App, mut art: Option<&mut Art>) {
     app.hits.clear();
     let area = f.area();
-    let ui = app.plain;
+    let t = app.look;
+    put(f, Block::default().style(t.ground()), area);
     if app.view == View::Login {
-        login(f, area, app, &ui);
-        overlay(f, area, app, &ui);
+        login(f, area, app, &t);
+        overlay(f, area, app, &t);
+        crate::art::finish(f.buffer_mut(), app.colors);
         return;
     }
-    let bar_h = if area.height >= 8 { 3 } else { 0 };
-    let [body, bar] = Layout::vertical([Constraint::Min(0), Constraint::Length(bar_h)]).areas(area);
+    let rows = crate::chrome::rows(area);
     if app.full {
+        let body = Rect { height: area.height.saturating_sub(rows.foot.height), ..area };
         full_player(f, body, app, art.as_deref_mut());
     } else {
-        let side = area.width >= SIDE_W + MAIN_MIN;
-        let panel_w = (area.width / 4).clamp(34, 48);
-        let panel = app.panel.is_some() && area.width >= SIDE_W + MAIN_MIN + panel_w;
-        app.shown.side = side;
-        app.shown.panel = panel;
-        let [s, m, p] = Layout::horizontal([Constraint::Length(if side { SIDE_W } else { 0 }), Constraint::Min(0), Constraint::Length(if panel { panel_w } else { 0 })]).areas(body);
-        if side {
-            sidebar(f, s, app, &ui);
+        main(f, rows.page, app, &t, art.as_deref_mut());
+        fade_edges(f, rows.page, app, &t);
+        toast(f, rows.page, app);
+        top_outline(f, rows.top, app, &t);
+        if rows.bar.height > 0 {
+            player_bar(f, rows.bar, app, &t, art.as_deref_mut());
         }
-        match app.focus {
-            Focus::Side if !side => sidebar(f, m, app, &ui),
-            Focus::Panel if !panel && app.panel.is_some() => right_panel(f, m, app, art.as_deref_mut()),
-            _ => main(f, m, app, &ui, art.as_deref_mut()),
-        }
-        if panel {
-            right_panel(f, p, app, art.as_deref_mut());
-        }
-        toast(f, m, app);
     }
-    if bar_h > 0 {
-        player_bar(f, bar, app, &ui);
+    footer(f, rows.foot, app, &t);
+    overlay(f, area, app, &t);
+    crate::art::finish(f.buffer_mut(), app.colors);
+}
+
+/// Fades the rows next to an outline where the page scrolls under it: toward the page color, or dimmed
+/// where the page is the terminal's own.
+fn fade_edges(f: &mut Frame, page: Rect, app: &App, t: &Theme) {
+    let (above, below) = app.page_cut();
+    let bottom = page.y + page.height;
+    if above {
+        fade_row(f.buffer_mut(), Rect { y: page.y, height: 1, ..page }, t, FADE[0]);
+        fade_row(f.buffer_mut(), Rect { y: page.y + 1, height: 1, ..page }, t, FADE[1]);
     }
-    overlay(f, area, app, &ui);
+    if below && page.height >= 2 {
+        fade_row(f.buffer_mut(), Rect { y: bottom - 1, height: 1, ..page }, t, FADE[0]);
+        fade_row(f.buffer_mut(), Rect { y: bottom - 2, height: 1, ..page }, t, FADE[1]);
+    }
+}
+
+/// Blends the colors of the cells in a one-row `r` toward the page by `strength`.
+pub fn fade_row(buf: &mut ratatui::buffer::Buffer, r: Rect, t: &Theme, strength: f32) {
+    let r = r.intersection(buf.area);
+    if r.is_empty() {
+        return;
+    }
+    for x in r.left()..r.right() {
+        let cell = &mut buf[(x, r.y)];
+        if t.painted {
+            cell.fg = t.fade(cell.fg, strength);
+            cell.bg = t.fade(cell.bg, strength);
+        } else if strength > 0.5 {
+            cell.modifier.insert(Modifier::DIM);
+        }
+    }
 }
 
 /// The status note, bottom right of the page.
 fn toast(f: &mut Frame, area: Rect, app: &App) {
     let Some((msg, error, _)) = &app.note else { return };
+    let t = app.look;
     let w = (msg.width() as u16 + 4).min(area.width);
     if w < 8 || area.height < 4 {
         return;
     }
     let r = Rect { x: area.x + area.width.saturating_sub(w + 1), y: area.y + area.height - 3, width: w, height: 3 };
-    let colour = if *error { Color::LightRed } else { app.theme.accent };
-    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(colour));
+    let colour = if *error { Style::default().fg(Color::LightRed) } else { Style::default().fg(t.ink) };
+    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(t.line)).style(t.raised());
     let inner = block.inner(r);
     put(f, Clear, r);
     put(f, block, r);
-    text(f, Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner }, msg, Style::default().fg(colour));
+    text(f, Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner }, msg, colour);
 }
 
-// ---- the sidebar ----
+/// A rounded outline in the chrome's line color with the page inside it.
+fn outline(f: &mut Frame, r: Rect, t: &Theme) {
+    put(f, Clear, r);
+    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(t.line)).style(t.ground());
+    put(f, block, r);
+}
 
-fn sidebar(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    if area.width < 6 || area.height < 3 {
+// ---- the top outline ----
+
+/// The tabs, then search and settings, each in its own outline. The open tab is accent, bold and underlined.
+fn top_outline(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    if area.height == 0 {
         return;
     }
-    let sep = Rect { x: area.x + area.width - 1, width: 1, ..area };
-    for y in sep.top()..sep.bottom() {
-        put(f, Paragraph::new(Span::styled("│", dim(t))), Rect { y, height: 1, ..sep });
+    let tabs = app.tabs();
+    let top = crate::chrome::top(area, &tabs);
+    let boxed = area.height >= 3;
+    if boxed {
+        outline(f, top.tabs, t);
     }
-    let area = Rect { width: area.width - 1, ..area };
-    app.hits.push((area, Hit::List(ListRef::Side)));
-    let focused = app.focus == Focus::Side;
-    let w = area.width as usize;
-    let mut y = area.y;
-    let bottom = area.y + area.height;
-    put(f, Paragraph::new(Line::from(vec![Span::styled(" ♫ ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), Span::styled("nori", bold())])), Rect { y, height: 1, ..area });
-    y += 2;
-    let item = |f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, y: u16, i: usize, n: Nav, name: &str| {
-        if y >= bottom {
-            return;
-        }
-        let r = Rect { y, height: 1, ..area };
-        let open = app.root == n;
-        let chosen = focused && app.side.at == i;
-        let label = format!("  {}  {}", n.icon(), name);
-        let style = if chosen {
-            selected(t, true)
-        } else if open {
-            Style::default().fg(t.accent).add_modifier(Modifier::BOLD)
+    for (view, r) in &top.items {
+        let style = if *view == app.view {
+            t.current().add_modifier(Modifier::UNDERLINED)
         } else {
-            Style::default().fg(t.text)
+            t.dim()
         };
-        put(f, Paragraph::new(Span::styled(pad(&label, w), style)), r);
-        if open {
-            put(f, Paragraph::new(Span::styled("▌", Style::default().fg(t.accent))), Rect { width: 1, ..r });
-        }
-        hits.push((r, Hit::Nav(i)));
-    };
-    let label = |f: &mut Frame, y: u16, s: &str| {
-        if y < bottom {
-            put(f, Paragraph::new(Span::styled(format!("  {s}"), dim(t).add_modifier(Modifier::BOLD))), Rect { y, height: 1, ..area });
-        }
-    };
-    let mut i = 0;
-    for n in NAV_TOP {
-        item(f, &mut app.hits, y, i, n, n.name());
-        y += 1;
-        i += 1;
+        put(f, Paragraph::new(Span::styled(crate::chrome::tab_label(*view, top.names), style)), *r);
+        app.hits.push((*r, Hit::Tab(*view)));
     }
-    y += 1;
-    label(f, y, "LIBRARY");
-    y += 1;
-    for n in app.nav_library() {
-        item(f, &mut app.hits, y, i, n, n.name());
-        y += 1;
-        i += 1;
+    if let (Some(x), true) = (top.rule, boxed) {
+        put(f, Paragraph::new(Span::styled("│", Style::default().fg(t.hair))), Rect { x, y: area.y + 1, width: 1, height: 1 });
     }
-    y += 1;
-    let lists = app.rules.sections.contains(&nori_core::browse::LibrarySection::Playlists);
-    if lists {
-        label(f, y, "PLAYLISTS");
-        y += 1;
-    }
-    // Playlists fill the space above the foot, scrolled to keep the selection visible.
-    let foot = 5u16;
-    let room = bottom.saturating_sub(y + foot) as usize;
-    let names: Vec<String> = app.library.playlists.ready().map_or_else(Vec::new, |v| v.iter().map(|p| p.name.clone()).collect());
-    let first = i;
-    if names.is_empty() && lists {
-        let what = match &app.library.playlists {
-            Load::Loading => "Loading…",
-            Load::Failed(_) => "Could not load",
-            _ => "None yet",
-        };
-        if room > 0 {
-            put(f, Paragraph::new(Span::styled(format!("     {what}"), dim(t))), Rect { y, height: 1, ..area });
-        }
-    } else if room > 0 {
-        let at = app.side.at.checked_sub(first).filter(|a| *a < names.len());
-        let top = &mut app.side.top;
-        if let Some(at) = at {
-            if at < *top {
-                *top = at;
-            } else if at >= *top + room {
-                *top = at + 1 - room;
+    if let Some(r) = top.search {
+        let editing = app.view == View::Search && app.search.editing;
+        if boxed {
+            outline(f, r, t);
+            if editing {
+                put(f, Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(t.current()), r);
             }
         }
-        *top = (*top).min(names.len().saturating_sub(room));
-        let top = *top;
-        for (k, name) in names.iter().enumerate().skip(top).take(room) {
-            item(f, &mut app.hits, y + (k - top) as u16, first + k, Nav::Playlist(k), name);
-        }
-        if names.len() > room {
-            let more = if top + room < names.len() { "  ⌄" } else { "" };
-            if !more.is_empty() {
-                put(f, Paragraph::new(Span::styled(more, dim(t))), Rect { x: area.x + area.width.saturating_sub(4), y: y + room as u16 - 1, width: 4, height: 1 });
-            }
-        }
+        let inner = Rect { x: r.x + 2, y: area.y + boxed as u16, width: r.width.saturating_sub(4), height: 1 };
+        let shown = if top.search_small {
+            Span::styled("⌕", t.dim())
+        } else if app.search.text.is_empty() && !editing {
+            Span::styled("⌕ Search", t.dim())
+        } else {
+            let cursor = if editing { "▏" } else { "" };
+            let typed = format!("{}{cursor}", app.search.text);
+            let room = inner.width.saturating_sub(2) as usize;
+            // The end of what is typed, where the cursor is.
+            let tail: String = typed.chars().rev().take(room).collect::<Vec<_>>().into_iter().rev().collect();
+            Span::styled(format!("⌕ {tail}"), Style::default().fg(t.ink))
+        };
+        put(f, Paragraph::new(shown), inner);
+        app.hits.push((r, Hit::SearchField));
     }
-    i = first + names.len();
-    // Foot: equalizer, settings, server status, help hint.
-    let fy = bottom.saturating_sub(foot);
-    if fy <= y {
+    if let Some(r) = top.settings {
+        if boxed {
+            outline(f, r, t);
+        }
+        let open = app.view == View::Settings;
+        let style = if open { t.current() } else { t.dim() };
+        put(f, Paragraph::new(Span::styled("✱", style)).alignment(Alignment::Center), Rect { x: r.x + 1, y: area.y + boxed as u16, width: r.width.saturating_sub(2), height: 1 });
+        app.hits.push((r, Hit::Tab(View::Settings)));
+    }
+}
+
+// ---- the hint line ----
+
+/// The keys under the player, and on the right the destinations the tabs have no room for and the
+/// server's state.
+fn footer(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    if area.height == 0 {
         return;
     }
-    put(f, Paragraph::new(Span::styled("─".repeat(w), dim(t))), Rect { y: fy, height: 1, ..area });
-    for (k, n) in crate::app::NAV_BOTTOM.iter().enumerate() {
-        item(f, &mut app.hits, fy + 1 + k as u16, i + k, *n, n.name());
-    }
+    let m = crate::chrome::margin(area.width);
+    let quiet = Style::default().fg(t.lit(0.32));
     let (dot, colour, word) = if app.offline {
         ("●", Color::Yellow, "offline · ")
     } else if app.unreachable.is_some() {
@@ -534,11 +502,40 @@ fn sidebar(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     } else {
         ("●", Color::Green, "")
     };
-    let server = Line::from(vec![Span::styled(format!("  {dot} "), Style::default().fg(colour)), Span::styled(fit(&format!("{word}{}", app.server), w.saturating_sub(4)).into_owned(), dim(t))]);
-    put(f, Paragraph::new(server), Rect { y: fy + 3, height: 1, ..area });
-    let r = Rect { y: fy + 4, height: 1, ..area };
-    put(f, Paragraph::new(Span::styled("  ? keys · q quit", dim(t))), r);
-    app.hits.push((Rect { width: 8.min(r.width), ..r }, Hit::Button(Button::Help)));
+    let server = fit(&format!("{word}{}", app.server), 24).into_owned();
+    let mut items = vec![(format!("{dot} {server}"), None), ("≋ Equalizer".to_string(), Some(View::Equalizer)), ("↓ Downloads".to_string(), Some(View::Downloads))];
+    items.retain(|(_, link)| link.is_none_or(|v| app.reaches(v)));
+    let mut x = area.x + area.width.saturating_sub(m);
+    let mut right = Vec::new();
+    for (label, link) in items {
+        let w = label.width() as u16;
+        // The hint keeps 20 columns.
+        if x < area.x + m + 20 + w + 2 {
+            break;
+        }
+        x -= w;
+        right.push((Rect { x, y: area.y, width: w, height: 1 }, label, link));
+        x -= 2;
+    }
+    let hint = if app.full { crate::text::HINT_FULL } else { crate::text::HINT };
+    let room = x.saturating_sub(area.x + m + 1) as usize;
+    let hint_r = Rect { x: area.x + m, y: area.y, width: room as u16, height: 1 };
+    text(f, hint_r, hint, quiet);
+    // A click on the hint shows every key.
+    app.hits.push((hint_r, Hit::Button(Button::Help)));
+    for (r, label, link) in right {
+        match link {
+            Some(view) => {
+                let style = if app.view == view { t.current() } else { t.dim() };
+                put(f, Paragraph::new(Span::styled(label, style)), r);
+                app.hits.push((r, Hit::Tab(view)));
+            }
+            None => {
+                let (d, rest) = label.split_at(dot.len());
+                put(f, Paragraph::new(Line::from(vec![Span::styled(d.to_string(), Style::default().fg(if t.mono { Color::Reset } else { colour })), Span::styled(rest.to_string(), t.dim())])), r);
+            }
+        }
+    }
 }
 
 // ---- the page ----
@@ -578,6 +575,8 @@ fn page_view(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, pics: &mut Pic
         View::Albums => albums(f, inner, app, t, focused, pics),
         View::Artists => artists(f, inner, app, t, focused),
         View::Songs => songs(f, inner, app, t, focused),
+        View::Playlists => playlists(f, inner, app, t, focused),
+        View::Favorites => favorites(f, inner, app, t, focused),
         View::Downloads => downloads(f, inner, app, t, focused),
         View::Equalizer => equalizer(f, inner, app, t, focused),
         View::Settings => settings(f, inner, app, t, focused),
@@ -588,34 +587,23 @@ fn page_view(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, pics: &mut Pic
 fn failed(f: &mut Frame, area: Rect, t: &Theme, e: &str) {
     let text = vec![
         Line::from(Span::styled("Could not load this page", Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD))),
-        Line::from(Span::styled(e.to_string(), Style::default().fg(t.text))),
+        Line::from(Span::styled(e.to_string(), Style::default().fg(t.ink))),
         Line::from(""),
-        Line::from(Span::styled("R tries again", dim(t))),
+        Line::from(Span::styled("R tries again", t.dim())),
     ];
     put(f, Paragraph::new(text).alignment(Alignment::Center).wrap(ratatui::widgets::Wrap { trim: true }), centred(area, area.width.min(70), 6));
 }
 
 fn loading(f: &mut Frame, area: Rect, t: &Theme) {
-    put(f, Paragraph::new(Span::styled("Loading…", dim(t))).alignment(Alignment::Center), centred(area, 20, 1));
+    put(f, Paragraph::new(Span::styled("Loading…", t.dim())).alignment(Alignment::Center), centred(area, 20, 1));
 }
 
 fn empty(f: &mut Frame, area: Rect, t: &Theme, text: &str) {
-    put(f, Paragraph::new(Span::styled(text.to_string(), dim(t))).alignment(Alignment::Center).wrap(ratatui::widgets::Wrap { trim: true }), centred(area, area.width, 2));
-}
-
-/// Greeting by local time of day.
-fn greeting() -> &'static str {
-    let now = nori_core::db::now_ms() / 1000;
-    let hour = (now + nori_core::library::local_offset_s(now)).rem_euclid(86_400) / 3600;
-    match hour {
-        5..=11 => "Good morning",
-        12..=17 => "Good afternoon",
-        _ => "Good evening",
-    }
+    put(f, Paragraph::new(Span::styled(text.to_string(), t.dim())).alignment(Alignment::Center).wrap(ratatui::widgets::Wrap { trim: true }), centred(area, area.width, 2));
 }
 
 fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics: &mut Pics) {
-    let area = heading(f, area, greeting(), "", t);
+    let area = heading(f, area, "Listen now", "", t);
     let shelves: Vec<(usize, String, usize)> = app.home.shelves().iter().map(|(i, title, v)| (*i, title.to_string(), v.len())).collect();
     if shelves.is_empty() {
         match &app.home.error {
@@ -636,6 +624,7 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         h.top = at + 1 - fits;
     }
     h.top = h.top.min(shelves.len().saturating_sub(1));
+    h.below = h.top + fits < shelves.len();
     let cols = ((area.width + 1) / (min_w + 1)).max(1) as usize;
     let w = ((area.width + 1) / cols as u16).saturating_sub(1).max(1);
     for (k, (i, title, len)) in shelves.iter().enumerate().skip(app.home.top).take(fits) {
@@ -653,8 +642,7 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         }
         let left = *left;
         let more = if *len > cols { format!("{} of {len}  ‹ ›", pos + 1) } else { String::new() };
-        let title_style = if chosen_shelf && focused { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { bold() };
-        put(f, Paragraph::new(spread(vec![Span::styled(title.to_string(), title_style)], Span::styled(more, dim(t)), area.width as usize)), Rect { y, height: 1, ..area });
+        put(f, Paragraph::new(spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(more, t.dim()), area.width as usize)), Rect { y, height: 1, ..area });
         let row = Rect { y: y + 1, height: card_h.min((area.y + area.height).saturating_sub(y + 1)), ..area };
         app.hits.push((row, Hit::List(ListRef::Shelf(*i))));
         let Some(Some((_, albums))) = app.home.rows.get(*i) else { continue };
@@ -698,8 +686,8 @@ fn artists(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Load::Ready(v) => {
             let row = |i: usize, w: usize| {
                 let a = &v[i];
-                let heart = if hearts && marks.starred(Starrable::Artist, &a.id, a.starred) { " ♥" } else { "" };
-                spread(vec![Span::styled("  ◉  ", Style::default().fg(t.accent)), Span::styled(a.name.as_str(), bold()), Span::styled(heart, Style::default().fg(t.accent))], Span::styled(crate::text::albums(a.album_count) + " ", dim(t)), w)
+                let seal = if hearts && marks.starred(Starrable::Artist, &a.id, a.starred) { format!(" {SEAL}") } else { String::new() };
+                spread(vec![Span::styled("  ◉  ", t.dim()), Span::styled(a.name.as_str(), bold()), Span::styled(seal, Style::default().fg(t.accent))], Span::styled(crate::text::albums(a.album_count) + " ", t.dim()), w)
             };
             list(f, body, &mut l.artists_sel, v.len(), ListRef::Artists, hits, t, focused, &row);
         }
@@ -726,35 +714,60 @@ fn songs(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     }
 }
 
+fn playlists(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
+    let App { library: l, hits, .. } = app;
+    let caption = l.playlists.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "playlist", "playlists"));
+    let body = heading(f, area, "Playlists", &caption, t);
+    match &l.playlists {
+        Load::Ready(v) if v.is_empty() => empty(f, body, t, "No playlists yet"),
+        Load::Ready(v) => {
+            let row = |i: usize, w: usize| {
+                let p = &v[i];
+                let owner = p.owner.clone().filter(|o| !o.is_empty()).map(|o| format!("{o} · ")).unwrap_or_default();
+                spread(vec![Span::styled("  ≡  ", t.dim()), Span::styled(p.name.as_str(), bold())], Span::styled(format!("{owner}{} ", crate::text::count(p.song_count as u64, "song", "songs")), t.dim()), w)
+            };
+            list(f, body, &mut l.playlists_sel, v.len(), ListRef::Playlists, hits, t, focused, &row);
+        }
+        Load::Failed(e) => failed(f, body, t, e),
+        _ => loading(f, body, t),
+    }
+}
+
+fn favorites(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
+    let playing = app.song.as_ref().map(|s| s.id.clone());
+    let App { library: l, hits, marks, rules, devices, .. } = app;
+    let marks = Marks::of(marks, rules, devices);
+    let caption = l.favorites.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "song", "songs"));
+    let body = heading(f, area, "Favorites", &caption, t);
+    match &l.favorites {
+        Load::Ready(v) if v.is_empty() => empty(f, body, t, "No favorites yet · f marks one"),
+        Load::Ready(v) => {
+            let body = table_head(f, body, t, true);
+            let row = |i: usize, w: usize| song_line(&v[i], &marks, i + 1, w, t, playing.as_deref() == Some(v[i].id.as_str()), true);
+            list(f, body, &mut l.favorites_sel, v.len(), ListRef::Favorites, hits, t, focused, &row);
+        }
+        Load::Failed(e) => failed(f, body, t, e),
+        _ => loading(f, body, t),
+    }
+}
+
 fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    if area.height < 4 {
+    if area.height < 3 {
         return;
     }
     let s = &app.search;
-    let field = Rect { height: 3, width: area.width.min(72), ..area };
-    let editing = s.editing && focused;
-    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(if editing { Style::default().fg(t.accent) } else { dim(t) });
-    let inner = block.inner(field);
-    put(f, block, field);
-    let line = if s.text.is_empty() && !editing {
-        Line::from(vec![Span::styled(" ⌕  ", dim(t)), Span::styled("What do you want to hear?", dim(t))])
-    } else {
-        let cursor = if editing { "▏" } else { "" };
-        Line::from(vec![Span::styled(" ⌕  ", Style::default().fg(t.accent)), Span::styled(format!("{}{cursor}", s.text), Style::default().fg(t.text))])
-    };
-    put(f, Paragraph::new(line), inner);
-    app.hits.push((field, Hit::SearchField));
-    let note = Rect { y: area.y + 3, height: 1, ..area };
+    text(f, Rect { height: 1, ..area }, "Search", bold().fg(t.ink));
+    let note = Rect { y: area.y + 1, height: 1, ..area };
     let view = s.view.as_ref();
     let (words, style) = match view {
         Some(v) if v.error.is_some() => (crate::text::search_fallback(v.error.as_ref().and_then(|e| e.reason.as_deref())), Style::default().fg(Color::LightRed)),
-        Some(v) if v.searching => ("Asking the server…".to_string(), dim(t)),
-        Some(v) if v.nothing_found => ("Nothing found".to_string(), dim(t)),
-        Some(v) if !v.query.is_empty() => ((if v.from_server { "From the server" } else { "From the offline index · the server is asked when you pause" }).to_string(), dim(t)),
-        _ => ("Songs, albums and artists, from the library".to_string(), dim(t)),
+        Some(v) if v.searching => ("Asking the server…".to_string(), t.dim()),
+        Some(v) if v.nothing_found => ("Nothing found".to_string(), t.dim()),
+        Some(v) if !v.query.is_empty() => ((if v.from_server { "From the server" } else { "From the offline index · the server is asked when you pause" }).to_string(), t.dim()),
+        _ => ("Songs, albums and artists, from the library".to_string(), t.dim()),
     };
-    text(f, Rect { x: note.x + 1, width: note.width.saturating_sub(1), ..note }, &words, style);
-    let body = Rect { y: area.y + 5, height: area.height.saturating_sub(5), ..area };
+    text(f, note, &words, style);
+    let body = Rect { y: area.y + 3, height: area.height.saturating_sub(3), ..area };
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let App { search: s, hits, marks, rules, devices, .. } = app;
     let marks = Marks::of(marks, rules, devices);
@@ -766,13 +779,13 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     }
     let len = rows.len();
     let row = |i: usize, w: usize| match &rows[i] {
-        SearchRow::Title(title, n) => spread(vec![Span::styled(title.to_string(), bold().fg(t.text))], Span::styled(format!("{n} "), dim(t)), w),
+        SearchRow::Title(title, n) => spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(format!("{n} "), t.dim()), w),
         SearchRow::Song(song) => song_line(song, &marks, 0, w, t, playing.as_deref() == Some(song.id.as_str()), true),
         SearchRow::Album(a) => {
             let year = if a.year > 0 { format!("{} ", a.year) } else { String::new() };
-            spread(vec![Span::styled("  ◫  ", Style::default().fg(t.accent)), Span::styled(a.name.clone(), Style::default().fg(t.text)), Span::styled(format!("  {}", a.artist), dim(t))], Span::styled(year, dim(t)), w)
+            spread(vec![Span::styled("  ◫  ", t.dim()), Span::styled(a.name.clone(), Style::default().fg(t.ink)), Span::styled(format!("  {}", a.artist), t.dim())], Span::styled(year, t.dim()), w)
         }
-        SearchRow::Artist(a) => spread(vec![Span::styled("  ◉  ", Style::default().fg(t.accent)), Span::styled(a.name.clone(), Style::default().fg(t.text))], Span::styled(crate::text::albums(a.album_count) + " ", dim(t)), w),
+        SearchRow::Artist(a) => spread(vec![Span::styled("  ◉  ", t.dim()), Span::styled(a.name.clone(), Style::default().fg(t.ink))], Span::styled(crate::text::albums(a.album_count) + " ", t.dim()), w),
     };
     list(f, body, &mut sel, len, ListRef::Search, hits, t, lit, &row);
     drop(rows);
@@ -804,10 +817,10 @@ fn cover(f: &mut Frame, area: Rect, art: Option<&mut Art>, key: Option<&str>, t:
             }
         }
         None => {
-            let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(dim(t));
+            let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(t.dim());
             let inner = block.inner(area);
             put(f, block, area);
-            put(f, Paragraph::new(Span::styled("♫", Style::default().fg(t.accent))).alignment(Alignment::Center), centred(inner, 1, 1));
+            put(f, Paragraph::new(Span::styled("♫", t.dim())).alignment(Alignment::Center), centred(inner, 1, 1));
         }
     }
 }
@@ -834,14 +847,14 @@ fn cover_box(area: Rect, rows: u16) -> Rect {
     Rect { x: area.x, y: area.y, width: h * 2, height: h }
 }
 
-/// A pill button, filled or plain accent; advances `x`.
-fn pill(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, x: &mut u16, y: u16, end: u16, label: &str, filled: bool, b: Button, t: &Theme) {
+/// A page button, bold when strong; advances `x`.
+fn pill(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, x: &mut u16, y: u16, end: u16, label: &str, strong: bool, b: Button, t: &Theme) {
     let s = format!(" {label} ");
     let w = s.width() as u16;
     if *x + w > end {
         return;
     }
-    let style = if filled { Style::default().bg(t.accent).fg(on(t.accent)).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) };
+    let style = if strong { bold().fg(t.ink) } else { Style::default().fg(t.ink) };
     let r = Rect { x: *x, y, width: w, height: 1 };
     put(f, Paragraph::new(Span::styled(s, style)), r);
     hits.push((r, Hit::Button(b)));
@@ -876,11 +889,11 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         words = Rect { x: c.x + c.width + 3, width: head.width.saturating_sub(c.width + 3), ..head };
     }
     let w = words.width as usize;
-    let mut lines = vec![Line::from(Span::styled(kind, dim(t).add_modifier(Modifier::BOLD))), Line::from(Span::styled(fit(&title, w).into_owned(), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)))];
+    let mut lines = vec![Line::from(Span::styled(kind, t.dim().add_modifier(Modifier::BOLD))), Line::from(Span::styled(fit(&title, w).into_owned(), bold().fg(t.ink)))];
     if !sub.is_empty() {
-        lines.push(Line::from(Span::styled(fit(&sub, w).into_owned(), bold().fg(t.text))));
+        lines.push(Line::from(Span::styled(fit(&sub, w).into_owned(), bold().fg(t.ink))));
     }
-    lines.push(Line::from(Span::styled(fit(&caption, w).into_owned(), dim(t))));
+    lines.push(Line::from(Span::styled(fit(&caption, w).into_owned(), t.dim())));
     let top = if with_cover { words.y + words.height.saturating_sub(6) } else { words.y };
     put(f, Paragraph::new(lines), Rect { y: top, height: 4.min(words.height), ..words });
     let y = top + 5;
@@ -891,7 +904,14 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         pill(f, hits, &mut x, y, end, "⤮ Shuffle", false, Button::ShuffleAll, t);
         // Hearts and downloads are the account's.
         if let Some(on) = star.filter(|_| account) {
-            pill(f, hits, &mut x, y, end, if on { "♥ Favorite" } else { "♡ Favorite" }, false, Button::Star, t);
+            let label = " Favorite";
+            let w = 4 + label.width() as u16;
+            if x + w <= end {
+                let r = Rect { x, y, width: w, height: 1 };
+                put(f, Paragraph::new(Line::from(vec![seal(on, false, t), Span::styled(label, Style::default().fg(t.ink))])), r);
+                hits.push((r, Hit::Button(Button::Star)));
+                x += w + 2;
+            }
         }
         if downloads && !matches!(p, Page::DownloadedAlbum { .. }) {
             pill(f, hits, &mut x, y, end, "↓ Download", false, Button::Download, t);
@@ -899,7 +919,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         let back = "‹ Back";
         if x + back.width() as u16 <= end {
             let r = Rect { x, y, width: back.width() as u16, height: 1 };
-            put(f, Paragraph::new(Span::styled(back, dim(t))), r);
+            put(f, Paragraph::new(Span::styled(back, t.dim())), r);
             hits.push((r, Hit::Button(Button::Back)));
         }
     }
@@ -945,11 +965,11 @@ fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     let lines: Vec<Line> = rows
         .iter()
         .map(|row| match row {
-            crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.text))),
-            crate::app::DownloadRow::Album(a) => Line::from(vec![Span::styled("  ↓  ", Style::default().fg(t.accent)), Span::raw(a.name.clone()), Span::styled(format!("  {} · {} songs", a.artist, a.song_count), dim(t))]),
+            crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.ink))),
+            crate::app::DownloadRow::Album(a) => Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(a.name.clone()), Span::styled(format!("  {} · {} songs", a.artist, a.song_count), t.dim())]),
             crate::app::DownloadRow::Song(list, i) => {
                 let s = &list[*i];
-                Line::from(vec![Span::styled("  ↓  ", Style::default().fg(t.accent)), Span::raw(s.title.clone()), Span::styled(format!("  {}", s.artist), dim(t))])
+                Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(s.title.clone()), Span::styled(format!("  {}", s.artist), t.dim())])
             }
         })
         .collect();
@@ -985,7 +1005,7 @@ fn equalizer(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     let under_h = chips_height(area.width, &under, &chip, boxed);
     let bottom = area.y + area.height;
     let under_area = Rect { y: bottom.saturating_sub(under_h + 1), height: under_h, ..area };
-    text(f, Rect { y: bottom - 1, height: 1, ..area }, hint, dim(t));
+    text(f, Rect { y: bottom - 1, height: 1, ..area }, hint, t.dim());
     chips(f, under_area, &under, &chip, chosen, focused, boxed, &mut app.hits, t, &|i| lit(&rows[i], &p));
     let mid = Rect { y: area.y + top_h + 1, height: under_area.y.saturating_sub(area.y + top_h + 2), ..area };
     let on_ = p.eq_enabled && bypass.is_none();
@@ -1020,8 +1040,7 @@ fn chips_height(w: u16, which: &[usize], label: &dyn Fn(usize) -> String, boxed:
     lines * if boxed { 3 } else { 1 }
 }
 
-/// Wrapped chips; the selected one filled (bold only when unfocused), switches that are on in the
-/// accent. Returns the rows used.
+/// Wrapped chips; the selected one raised, switches that are on in the `on` color. Returns the rows used.
 #[allow(clippy::too_many_arguments)]
 fn chips(f: &mut Frame, area: Rect, which: &[usize], label: &dyn Fn(usize) -> String, chosen: usize, focused: bool, boxed: bool, hits: &mut Vec<(Rect, Hit)>, t: &Theme, on_: &dyn Fn(usize) -> bool) -> u16 {
     let line_h = if boxed { 3 } else { 1 };
@@ -1038,16 +1057,14 @@ fn chips(f: &mut Frame, area: Rect, which: &[usize], label: &dyn Fn(usize) -> St
         }
         let r = Rect { x, y, width: cw.min(area.width), height: line_h };
         let is = i == chosen;
-        let fg = if is && focused { on(t.accent) } else if is || on_(i) { t.accent } else { t.text };
-        let mut style = Style::default().fg(fg);
-        if is && focused {
-            style = style.bg(t.accent).add_modifier(Modifier::BOLD);
-        } else if is {
-            style = style.add_modifier(Modifier::BOLD);
+        // A switch that is on takes the `on` color; the chosen chip is raised.
+        let mut style = Style::default().fg(if on_(i) { t.on } else { t.ink });
+        if is {
+            style = style.patch(t.select(focused));
         }
         if boxed {
-            let border = if is { Style::default().fg(t.accent) } else { dim(t) };
-            let block = Block::default().borders(Borders::ALL).border_type(if is { BorderType::Thick } else { BorderType::Rounded }).border_style(border);
+            let border = if is { Style::default().fg(t.ink) } else { Style::default().fg(t.hair) };
+            let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(border);
             let inner = block.inner(r);
             put(f, block, r);
             put(f, Paragraph::new(Span::styled(format!(" {text} "), style)), inner);
@@ -1077,16 +1094,16 @@ fn sliders(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_
     let col = ((area.width.saturating_sub(6)) / n).clamp(4, 10);
     let x0 = area.x + 6 + (area.width.saturating_sub(6 + col * n)) / 2;
     for (y, s) in [(0, format!("+{range:.0}")), (mid, "0 dB".into()), (h - 1, format!("-{range:.0}"))] {
-        put(f, Paragraph::new(Span::styled(format!("{s:>5}"), dim(t))), Rect { x: area.x, y: top + y, width: 5, height: 1 });
+        put(f, Paragraph::new(Span::styled(format!("{s:>5}"), t.dim())), Rect { x: area.x, y: top + y, width: 5, height: 1 });
     }
     let line_w = col * n;
-    put(f, Paragraph::new(Span::styled("┈".repeat(line_w as usize), dim(t))), Rect { x: x0, y: top + mid, width: line_w, height: 1 });
+    put(f, Paragraph::new(Span::styled("┈".repeat(line_w as usize), t.dim())), Rect { x: x0, y: top + mid, width: line_w, height: 1 });
     for (k, &i) in bands.iter().enumerate() {
         let Some((_, gain)) = rows[i].band(p) else { continue };
         let x = x0 + k as u16 * col;
         let c = x + (col - 1) / 2;
         let is = i == chosen;
-        let fill_colour = if !on_ { t.dim } else if is { t.accent } else { t.text };
+        let fill_colour = if !on_ { t.quiet } else if is { t.accent } else { t.ink };
         let knob_y = (mid as f32 - (gain / range).clamp(-1.0, 1.0) * mid as f32).round() as u16;
         for y in 0..h {
             let (sym, style) = if y == knob_y {
@@ -1094,18 +1111,18 @@ fn sliders(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_
             } else if (y > knob_y && y < mid) || (y < knob_y && y > mid) || (y == mid && knob_y != mid) {
                 ("┃", Style::default().fg(fill_colour))
             } else {
-                ("│", dim(t))
+                ("│", t.dim())
             };
             let w = sym.width() as u16;
             put(f, Paragraph::new(Span::styled(sym, style)), Rect { x: c + 1 - w.div_ceil(2), y: top + y, width: w, height: 1 });
         }
         let (name, _) = rows[i].words(p);
-        let label_style = if is { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { dim(t) };
+        let label_style = if is { t.current() } else { t.dim() };
         let cw = (col - 1) as usize;
         let centre = |s: &str| format!("{:^cw$}", fit(s, cw));
         put(f, Paragraph::new(Span::styled(centre(&name), label_style)), Rect { x, y: top + h, width: col - 1, height: 1 });
         let value = nori_core::numbers::signed_db(gain, nori_core::numbers::POINT);
-        let value_style = if is { Style::default().fg(t.accent) } else { dim(t) };
+        let value_style = if is { Style::default().fg(t.accent) } else { t.dim() };
         put(f, Paragraph::new(Span::styled(centre(&value), value_style)), Rect { x, y: top + h + 1, width: col - 1, height: 1 });
         app.hits.push((Rect { x, y: top, width: col, height: h + 2 }.intersection(area), Hit::Row(ListRef::Eq, i)));
     }
@@ -1114,7 +1131,7 @@ fn sliders(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_
 fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let prefs = app.prefs.clone();
     let own = &app.settings.own;
-    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, card_covers: app.card_covers, protocol: app.protocol.to_string(), data: own.data.clone(), device: own.device.clone() };
+    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, card_covers: app.card_covers, paint: app.paint, protocol: app.protocol.to_string(), data: own.data.clone(), device: own.device.clone() };
     let body = heading(f, area, "Settings", "enter switches or opens · ← → change · [ ] groups", t);
     let App { settings: v, hits, .. } = app;
     let pages = v.pages(&prefs).to_vec();
@@ -1131,9 +1148,9 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
             if r.y >= body.y + body.height {
                 break;
             }
-            let style = if g == at { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { dim(t) };
+            let style = if g == at { t.current() } else { t.dim() };
             let mark = if g == at { "▌ " } else { "  " };
-            put(f, Paragraph::new(Line::from(vec![Span::styled(mark, Style::default().fg(t.accent)), Span::styled(group.title, style)])), r);
+            put(f, Paragraph::new(Line::from(vec![Span::styled(mark, style), Span::styled(group.title, style)])), r);
             hits.push((r, Hit::Group(g)));
         }
         Rect { x: body.x + 20, width: (body.width - 20).min(110), ..body }
@@ -1146,13 +1163,13 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
 /// One settings page line.
 fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
     let row = match line {
-        SLine::Group(title) => return Line::from(vec![Span::styled(format!("{title}  "), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), Span::styled("─".repeat(w.saturating_sub(title.width() + 3)), dim(t))]),
-        SLine::Title(title) => return Line::from(Span::styled(format!("  {title}"), bold().fg(t.text))),
+        SLine::Group(title) => return Line::from(vec![Span::styled(format!("{title}  "), t.current()), Span::styled("─".repeat(w.saturating_sub(title.width() + 3)), t.dim())]),
+        SLine::Title(title) => return Line::from(Span::styled(format!("  {title}"), bold().fg(t.ink))),
         SLine::Row(r) => *r,
     };
     let (title, detail) = settings_view::row_words(row);
     let live = settings_view::row_enabled(row);
-    let text_style = if live { Style::default().fg(t.text) } else { dim(t) };
+    let text_style = if live { Style::default().fg(t.ink) } else { t.dim() };
     if let Some((share, centred)) = settings_view::slider_share(row) {
         let bar_w = (w / 3).clamp(8, 30);
         let at = (share * (bar_w - 1) as f32).round() as usize;
@@ -1169,10 +1186,10 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
             });
         }
         bar.push(' ');
-        return spread(vec![Span::styled(format!("    {title}"), text_style)], Span::styled(bar, Style::default().fg(t.accent)), w);
+        return spread(vec![Span::styled(format!("    {title}"), text_style)], Span::styled(bar, Style::default().fg(t.ink)), w);
     }
     if title.is_empty() && !detail.is_empty() {
-        return Line::from(Span::styled(fit(&format!("    {detail}"), w).into_owned(), dim(t).add_modifier(Modifier::ITALIC)));
+        return Line::from(Span::styled(fit(&format!("    {detail}"), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC)));
     }
     let value = match row {
         settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } => (if *on { "━━●" } else { "○──" }).to_string(),
@@ -1180,92 +1197,40 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
     };
     let mut left = vec![Span::styled(format!("    {title}"), text_style)];
     if !detail.is_empty() {
-        left.push(Span::styled(format!("  {detail}"), dim(t)));
+        left.push(Span::styled(format!("  {detail}"), t.dim()));
     }
-    let value_style = if live { Style::default().fg(t.accent) } else { dim(t) };
+    let switched = matches!(row, settings_view::Row::Toggle { on: true, .. } | settings_view::Row::Ranked { on: true, .. });
+    let value_style = if !live { t.dim() } else if switched { Style::default().fg(t.on) } else { Style::default().fg(t.ink) };
     spread(left, Span::styled(value + " ", value_style), w)
-}
-
-// ---- the panel on the right ----
-
-/// The right panel in the cover's colours: tabs, then the chosen panel.
-fn right_panel(f: &mut Frame, area: Rect, app: &mut App, art: Option<&mut Art>) {
-    let Some(which) = app.panel else { return };
-    if area.width < 10 || area.height < 4 {
-        return;
-    }
-    let t = app.theme;
-    match t.page {
-        Some(page) => put(f, Block::default().style(Style::default().bg(page).fg(t.text)), area),
-        None => {
-            for y in area.top()..area.bottom() {
-                put(f, Paragraph::new(Span::styled("│", dim(&t))), Rect { x: area.x, y, width: 1, height: 1 });
-            }
-        }
-    }
-    let area = Rect { x: area.x + 2, width: area.width.saturating_sub(3), y: area.y + 1, height: area.height.saturating_sub(1) };
-    app.shown.panel_w = area.width;
-    let focused = app.focus == Focus::Panel;
-    let mut x = area.x;
-    let tabs: Vec<(Panel, &str)> = PANELS.into_iter().filter(|(p, _)| *p != Panel::Devices || app.devices.on).collect();
-    // Without their padding when they would not fit.
-    let roomy = tabs.iter().map(|(_, name)| name.width() as u16 + 3).sum::<u16>() <= area.width + 1;
-    for (p, name) in tabs {
-        let chosen = p == which;
-        let style = if chosen && focused {
-            Style::default().bg(t.accent).fg(on(t.accent)).add_modifier(Modifier::BOLD)
-        } else if chosen {
-            Style::default().fg(t.accent).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else {
-            dim(&t)
-        };
-        let label = if roomy { format!(" {name} ") } else { name.to_string() };
-        let w = label.width() as u16;
-        if x + w > area.x + area.width {
-            break;
-        }
-        let r = Rect { x, y: area.y, width: w, height: 1 };
-        put(f, Paragraph::new(Span::styled(label, style)), r);
-        app.hits.push((r, Hit::Button(Button::Panel(p))));
-        x += w + 1;
-    }
-    let body = Rect { y: area.y + 2, height: area.height.saturating_sub(2), ..area };
-    match which {
-        Panel::Playing => now_playing(f, body, app, art, focused),
-        Panel::Queue => queue(f, body, app, focused),
-        Panel::Lyrics => lyrics(f, body, app),
-        Panel::Devices => devices(f, body, app, focused),
-    }
 }
 
 /// Where the music plays: this computer first, then the account's other devices with what each plays,
 /// the one playing ticked; then the jam.
-fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool) {
-    let t = app.theme;
-    text(f, area, crate::text::PLAY_ON, bold().fg(t.text));
+fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
+    text(f, area, crate::text::PLAY_ON, bold().fg(t.ink));
     let rows = app.devices.rows();
     let body = Rect { y: area.y + 2, height: area.height.saturating_sub(2).min(rows.len() as u16), ..area };
     let App { devices, hits, .. } = app;
     let d = &*devices;
     let active = d.active.as_ref().map(|(id, _)| id.as_str());
-    let tick = |on: bool| Span::styled(if on { "✓ " } else { "  " }, Style::default().fg(t.accent).add_modifier(Modifier::BOLD));
-    let name = |s: &str, on: bool| Span::styled(s.to_string(), if on { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { bold().fg(t.text) });
+    let tick = |on: bool| Span::styled(if on { "✓ " } else { "  " }, t.current());
+    let name = |s: &str, on: bool| Span::styled(s.to_string(), if on { t.current() } else { bold().fg(t.ink) });
     let listeners = d.listeners().len();
     let mut sel = d.sel;
-    list(f, body, &mut sel, rows.len(), ListRef::Devices, hits, &t, focused, &|i, w| match rows[i] {
+    list(f, body, &mut sel, rows.len(), ListRef::Devices, hits, t, focused, &|i, w| match rows[i] {
         DeviceRow::Here => Line::from(vec![tick(active.is_none()), name(crate::text::THIS_COMPUTER, active.is_none())]),
         DeviceRow::Device(k) => {
             let x = &d.list[k];
             let on = active == Some(x.id.as_str());
-            spread(vec![tick(on), name(&x.name, on)], Span::styled(crate::text::device_kind(x.kind), dim(&t)), w)
+            spread(vec![tick(on), name(&x.name, on)], Span::styled(crate::text::device_kind(x.kind), t.dim()), w)
         }
         DeviceRow::Playing(k) => {
             let x = &d.list[k];
-            Line::from(Span::styled(fit(&format!("  {}", crate::text::device_line(x)), w).into_owned(), if x.refused.is_some() { Style::default().fg(Color::LightRed) } else { dim(&t) }))
+            Line::from(Span::styled(fit(&format!("  {}", crate::text::device_line(x)), w).into_owned(), if x.refused.is_some() { Style::default().fg(Color::LightRed) } else { t.dim() }))
         }
-        DeviceRow::Jam if d.jam.is_some() => spread(vec![Span::styled("◉ ", Style::default().fg(t.accent)), name(&crate::text::jam_strip(listeners), true)], Span::styled(crate::text::JAM_INVITE, dim(&t)), w),
-        DeviceRow::Jam => Line::from(vec![Span::styled("◉ ", Style::default().fg(t.accent)), Span::styled(crate::text::JAM_START, Style::default().fg(t.text))]),
-        DeviceRow::Join => Line::from(vec![Span::styled("+ ", Style::default().fg(t.accent)), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.text))]),
+        DeviceRow::Jam if d.jam.is_some() => spread(vec![Span::styled("◉ ", t.current()), name(&crate::text::jam_strip(listeners), true)], Span::styled(crate::text::JAM_INVITE, t.dim()), w),
+        DeviceRow::Jam => Line::from(vec![Span::styled("◉ ", t.dim()), Span::styled(crate::text::JAM_START, Style::default().fg(t.ink))]),
+        DeviceRow::Join => Line::from(vec![Span::styled("+ ", t.dim()), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.ink))]),
         DeviceRow::Pair => Line::from(crate::text::PAIR_DEVICES),
         DeviceRow::ResetPairing => Line::from(crate::text::FORGET_DEVICES),
     });
@@ -1277,74 +1242,15 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool) {
             if y >= area.y + area.height {
                 return;
             }
-            text(f, Rect { y, height: 1, ..area }, &l, dim(&t));
+            text(f, Rect { y, height: 1, ..area }, &l, t.dim());
             y += 1;
         }
         y += 1;
     }
 }
 
-fn now_playing(f: &mut Frame, area: Rect, app: &mut App, art: Option<&mut Art>, focused: bool) {
-    let t = app.theme;
-    let Some(song) = app.song.clone() else {
-        let lines = vec![Line::from(Span::styled("♫", Style::default().fg(t.accent))), Line::from(""), Line::from(Span::styled("Nothing playing", bold())), Line::from(Span::styled("Pick something and press enter", dim(&t)))];
-        put(f, Paragraph::new(lines).alignment(Alignment::Center), centred(area, area.width, 4));
-        return;
-    };
-    let mut y = area.y;
-    if app.images && area.height >= 16 {
-        let rows = (area.width / 2).min(area.height / 2);
-        let c = Rect { x: area.x + (area.width - rows * 2) / 2, y, width: rows * 2, height: rows };
-        cover(f, c, art, song.cover_art.as_deref(), &t);
-        y += rows + 1;
-    }
-    let w = area.width as usize;
-    let mut lines = vec![
-        Line::from(Span::styled(fit(&song.title, w).into_owned(), bold().fg(t.text))),
-        Line::from(Span::styled(fit(&song.artist, w).into_owned(), Style::default().fg(t.accent))),
-    ];
-    let mut facts = Vec::new();
-    if !song.album.is_empty() {
-        facts.push(song.album.clone());
-    }
-    if song.year > 0 {
-        facts.push(song.year.to_string());
-    }
-    lines.push(Line::from(Span::styled(fit(&facts.join(" · "), w).into_owned(), dim(&t))));
-    if let Some(q) = crate::text::quality(&song) {
-        lines.push(Line::from(Span::styled(fit(&q, w).into_owned(), dim(&t))));
-    }
-    lines.push(Line::from(""));
-    lines.extend(mix_lines(app, w));
-    let n = lines.len() as u16;
-    put(f, Paragraph::new(lines), Rect { y, height: n.min((area.y + area.height).saturating_sub(y)), ..area });
-    y += n + 1;
-    if y + 2 >= area.y + area.height {
-        return;
-    }
-    up_next(f, Rect { y, height: (area.y + area.height).saturating_sub(y), ..area }, app, focused, true);
-}
-
-/// "Next up" and the upcoming songs.
-fn up_next(f: &mut Frame, area: Rect, app: &mut App, focused: bool, say_end: bool) {
-    let t = app.theme;
-    text(f, area, "Next up", bold().fg(t.text));
-    let body = Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
-    let upcoming = app.up_next();
-    let App { queue, up_next_sel, hits, .. } = app;
-    let Some(q) = queue.as_ref() else { return };
-    if upcoming.is_empty() && say_end {
-        return text(f, body, "The queue ends here", dim(&t));
-    }
-    list(f, body, up_next_sel, upcoming.len(), ListRef::UpNext, hits, &t, focused, &|row, w| match q.songs.get(upcoming[row]) {
-        Some(s) => spread(vec![Span::styled(s.title.clone(), Style::default().fg(t.text)), Span::styled(format!("  {}", s.artist), dim(&t))], Span::styled(clock(s.duration as i64 * 1000), dim(&t)), w),
-        None => Line::from(""),
-    });
-}
-
 /// The current mix and the planned transition.
-fn mix_lines(app: &App, w: usize) -> Vec<Line<'static>> {
-    let t = app.theme;
+fn mix_lines(app: &App, w: usize, t: &Theme) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     // While mixing, `song` is the louder of the two.
     if app.now.mixing {
@@ -1353,21 +1259,21 @@ fn mix_lines(app: &App, w: usize) -> Vec<Line<'static>> {
             Some(from) => format!("Mixing in from “{from}”"),
             None => "Mixing into the next".to_string(),
         };
-        lines.push(Line::from(vec![Span::styled("◇ ", Style::default().fg(t.accent)), Span::styled(fit(&heard, w.saturating_sub(2)).into_owned(), Style::default().fg(t.text))]));
+        lines.push(Line::from(vec![Span::styled("◇ ", t.dim()), Span::styled(fit(&heard, w.saturating_sub(2)).into_owned(), Style::default().fg(t.ink))]));
         if let Some(n) = &app.mixed_in {
-            lines.push(Line::from(Span::styled(fit(&format!("  {}", how_mixed(n)), w).into_owned(), dim(&t))));
+            lines.push(Line::from(Span::styled(fit(&format!("  {}", how_mixed(n)), w).into_owned(), t.dim())));
         }
     }
     if let Some(n) = &app.transition {
         let next = crate::backend::app().song(&n.incoming_id).map(|s| s.title).unwrap_or_default();
-        lines.push(Line::from(vec![Span::styled("⇢ ", Style::default().fg(t.accent)), Span::styled(fit(&format!("Next: “{next}”"), w.saturating_sub(2)).into_owned(), Style::default().fg(t.text))]));
-        lines.push(Line::from(Span::styled(fit(&format!("  {}", how_mixed(n)), w).into_owned(), dim(&t))));
+        lines.push(Line::from(vec![Span::styled("⇢ ", t.dim()), Span::styled(fit(&format!("Next: “{next}”"), w.saturating_sub(2)).into_owned(), Style::default().fg(t.ink))]));
+        lines.push(Line::from(Span::styled(fit(&format!("  {}", how_mixed(n)), w).into_owned(), t.dim())));
         if !n.reason.is_empty() {
-            lines.push(Line::from(Span::styled(fit(&format!("  {}", n.reason), w).into_owned(), dim(&t))));
+            lines.push(Line::from(Span::styled(fit(&format!("  {}", n.reason), w).into_owned(), t.dim())));
         }
     } else if app.prefs.auto_mix || app.prefs.crossfade_sec > 0 {
         let what = if app.prefs.auto_mix { "AutoMix" } else { "Crossfade" };
-        lines.push(Line::from(Span::styled(fit(&format!("⇢ {what} on · planned as this plays"), w).into_owned(), dim(&t))));
+        lines.push(Line::from(Span::styled(fit(&format!("⇢ {what} on · planned as this plays"), w).into_owned(), t.dim())));
     }
     lines
 }
@@ -1393,11 +1299,10 @@ fn words_kind(kind: nori_core::automix::planner::TransitionKind) -> &'static str
     }
 }
 
-fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool) {
-    let t = app.theme;
+fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let rows = app.queue_rows();
     if rows.is_empty() {
-        let lines = vec![Line::from(Span::styled("The queue is empty", bold())), Line::from(Span::styled("enter plays, a adds to the queue", dim(&t)))];
+        let lines = vec![Line::from(Span::styled("The queue is empty", bold())), Line::from(Span::styled("enter plays, a adds to the queue", t.dim()))];
         put(f, Paragraph::new(lines).alignment(Alignment::Center), centred(area, area.width, 2));
         return;
     }
@@ -1412,7 +1317,7 @@ fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool) {
             nori_core::rules::REPEAT_ALL => modes.push_str(" · repeat all"),
             _ => {}
         }
-        text(f, Rect { height: 1, ..area }, &format!("{}{modes}", crate::text::songs_caption(q.len, secs)), dim(&t));
+        text(f, Rect { height: 1, ..area }, &format!("{}{modes}", crate::text::songs_caption(q.len, secs)), t.dim());
     }
     let body = Rect { y: area.y + 2, height: area.height.saturating_sub(2), ..area };
     let listeners: Vec<String> = app.devices.listeners().iter().map(|m| crate::text::jam_member(&m.name, m.role)).collect();
@@ -1427,40 +1332,41 @@ fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool) {
     let strip = devices.jam_strip().unwrap_or_default();
     let here = devices.listening() != nori_core::remote::Listening::Watching;
     let playing_here = devices.listening() == nori_core::remote::Listening::Playing;
-    let accent = Style::default().fg(t.accent);
-    list(f, body, queue_sel, rows.len(), ListRef::Queue, hits, &t, focused, &|row, w| match rows[row] {
-        QueueRow::Jam => spread(vec![Span::styled("◉ ", accent), Span::styled(strip.clone(), accent.add_modifier(Modifier::BOLD))], Span::styled(if hosting { crate::text::JAM_INVITE } else { "" }, dim(&t)), w),
-        QueueRow::Listeners => Line::from(Span::styled(fit(&format!("  {}", listeners.join(", ")), w).into_owned(), Style::default().fg(t.text))),
+    let accent = t.dim();
+    let cur = t.current();
+    list(f, body, queue_sel, rows.len(), ListRef::Queue, hits, t, focused, &|row, w| match rows[row] {
+        QueueRow::Jam => spread(vec![Span::styled("◉ ", cur), Span::styled(strip.clone(), cur)], Span::styled(if hosting { crate::text::JAM_INVITE } else { "" }, t.dim()), w),
+        QueueRow::Listeners => Line::from(Span::styled(fit(&format!("  {}", listeners.join(", ")), w).into_owned(), Style::default().fg(t.ink))),
         QueueRow::Listen => {
             // Asked for, it is lit whether or not the host lets it play (the note under it says why not).
             let words = if playing_here { crate::text::PLAYING_HERE } else { crate::text::LISTEN_HERE };
-            let (keys, style) = if here { (crate::text::STOP_KEYS, accent.add_modifier(Modifier::BOLD)) } else { (crate::text::LISTEN_KEYS, Style::default().fg(t.text)) };
-            spread(vec![Span::styled("  ♪ ", accent), Span::styled(words, style)], Span::styled(if row == chosen { keys } else { "" }, dim(&t)), w)
+            let (keys, style) = if here { (crate::text::STOP_KEYS, cur) } else { (crate::text::LISTEN_KEYS, Style::default().fg(t.ink)) };
+            spread(vec![Span::styled("  ♪ ", accent), Span::styled(words, style)], Span::styled(if row == chosen { keys } else { "" }, t.dim()), w)
         }
-        QueueRow::AlongNote(n) => Line::from(Span::styled(format!("{:>w$}{}", "", along[n], w = crate::app::QUEUE_NOTE_INDENT), dim(&t))),
-        QueueRow::Asking => Line::from(Span::styled(format!("  {}", crate::text::YOU_ASKED), dim(&t).add_modifier(Modifier::BOLD))),
+        QueueRow::AlongNote(n) => Line::from(Span::styled(format!("{:>w$}{}", "", along[n], w = crate::app::QUEUE_NOTE_INDENT), t.dim())),
+        QueueRow::Asking => Line::from(Span::styled(format!("  {}", crate::text::YOU_ASKED), t.dim().add_modifier(Modifier::BOLD))),
         // The keys show on the request chosen.
         QueueRow::Ask(k) => {
             let p = asks[k];
             let keys = if hosting && rows.get(chosen).and_then(|r| r.ask()) == Some(k) { crate::text::JAM_DECIDE } else { "" };
             let who = if hosting { crate::text::jam_asked(&p.from_name) } else { crate::text::jam_waiting(devices.host()) };
-            let asked = vec![Span::styled("  ? ", accent), Span::styled(p.song.title.clone(), Style::default().fg(t.text)), Span::styled(who, dim(&t))];
-            spread(asked, Span::styled(keys, dim(&t)), w)
+            let asked = vec![Span::styled("  ? ", accent), Span::styled(p.song.title.clone(), Style::default().fg(t.ink)), Span::styled(who, t.dim())];
+            spread(asked, Span::styled(keys, t.dim()), w)
         }
         QueueRow::Downloads(_, n) => {
             let mark = if n == 0 { "☁ " } else { "  " };
-            Line::from(Span::styled(format!("{:>w$}{}", mark, note[n], w = crate::app::QUEUE_NOTE_INDENT), dim(&t)))
+            Line::from(Span::styled(format!("{:>w$}{}", mark, note[n], w = crate::app::QUEUE_NOTE_INDENT), t.dim()))
         }
-        QueueRow::End => Line::from(vec![Span::styled("  ✕ ", dim(&t)), Span::styled(if hosting { crate::text::JAM_END } else { crate::text::JAM_LEAVE }, dim(&t))]),
+        QueueRow::End => Line::from(vec![Span::styled("  ✕ ", t.dim()), Span::styled(if hosting { crate::text::JAM_END } else { crate::text::JAM_LEAVE }, t.dim())]),
         QueueRow::Song(i) => {
             let Some(s) = queue.as_ref().and_then(|q| q.songs.get(i)) else { return Line::from("") };
             let playing = i as i32 == current;
             let mark = if playing { "▶ " } else if by_hand.contains(&(i as u32)) { "+ " } else { "  " };
-            let title_style = if playing { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text) };
+            let title_style = if playing { t.current() } else { Style::default().fg(t.ink) };
             // Who asked for it before the artist, which is cut first.
-            let by = devices.added.get(&s.id).map(|by| Span::styled(format!(" · {by}"), accent));
-            let spans = [Span::styled(mark, accent), Span::styled(s.title.clone(), title_style)].into_iter().chain(by).chain([Span::styled(format!("  {}", s.artist), dim(&t))]);
-            spread(spans.collect(), Span::styled(clock(s.duration as i64 * 1000), dim(&t)), w)
+            let by = devices.added.get(&s.id).map(|by| Span::styled(format!(" · {by}"), t.dim()));
+            let spans = [Span::styled(mark, if playing { cur } else { accent }), Span::styled(s.title.clone(), title_style)].into_iter().chain(by).chain([Span::styled(format!("  {}", s.artist), t.dim())]);
+            spread(spans.collect(), Span::styled(clock(s.duration as i64 * 1000), t.dim()), w)
         }
     });
 }
@@ -1495,18 +1401,17 @@ pub(crate) fn wrap(s: &str, w: usize) -> Vec<String> {
     out
 }
 
-fn lyrics(f: &mut Frame, area: Rect, app: &mut App) {
-    let t = app.theme;
+fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let Some(l) = &app.lyrics else {
         let text = match (&app.song, &app.lyrics_for) {
             (None, _) => "Nothing playing",
             (Some(_), Some(_)) => "Looking for lyrics…",
             _ => "No lyrics",
         };
-        return empty(f, area, &t, text);
+        return empty(f, area, t, text);
     };
     if l.pick.lyrics.lines.is_empty() {
-        return empty(f, area, &t, "No lyrics for this song");
+        return empty(f, area, t, "No lyrics for this song");
     }
     let frame = l.clock.shown();
     let synced = l.pick.lyrics.synced;
@@ -1558,11 +1463,11 @@ fn lyrics(f: &mut Frame, area: Rect, app: &mut App) {
                     sung = sung.saturating_sub(chars + 1);
                     let cut = part.char_indices().nth(cut_at).map_or(part.len(), |(b, _)| b);
                     vec![
-                        Span::styled(part[..cut].to_string(), Style::default().fg(t.accent).add_modifier(Modifier::BOLD)),
+                        Span::styled(part[..cut].to_string(), t.current()),
                         Span::styled(part[cut..].to_string(), Style::default().fg(t.lit(nori_look::lyrics::UNSUNG)).add_modifier(Modifier::BOLD)),
                     ]
                 }
-                0 if is_active => vec![Span::styled(part, Style::default().fg(t.accent).add_modifier(Modifier::BOLD))],
+                0 if is_active => vec![Span::styled(part, t.current())],
                 0 => vec![Span::styled(part, Style::default().fg(lit))],
                 1 => vec![Span::styled(part, Style::default().fg(t.lit(strength * 0.7)).add_modifier(Modifier::ITALIC))],
                 _ => vec![Span::styled(part, Style::default().fg(t.lit(strength * 0.8)))],
@@ -1581,58 +1486,172 @@ fn lyrics(f: &mut Frame, area: Rect, app: &mut App) {
         at += 1;
     }
     if let Some(c) = credit {
-        text(f, Rect { y: area.y + area.height - 1, height: 1, ..area }, &c, dim(&t));
+        text(f, Rect { y: area.y + area.height - 1, height: 1, ..area }, &c, t.dim());
     }
 }
 
 // ---- the full player ----
 
-/// The full-window player: large cover, song info, and lyrics or the up-next list.
-fn full_player(f: &mut Frame, area: Rect, app: &mut App, art: Option<&mut Art>) {
+/// The full-window player: the cover, the title with its seal, the seek bar, the transport and the volume on
+/// the left, the lyrics, queue or devices in an outline beside it. A narrow window gives the panel the room
+/// under the song.
+fn full_player(f: &mut Frame, area: Rect, app: &mut App, mut art: Option<&mut Art>) {
     let t = app.theme;
-    if let Some(page) = t.page {
-        put(f, Block::default().style(Style::default().bg(page).fg(t.text)), area);
-    }
+    put(f, Block::default().style(t.ground()), area);
     if area.width < 10 || area.height < 4 {
         return;
     }
-    let Some(song) = app.song.clone() else {
-        return empty(f, area, &t, "Nothing playing · F or esc goes back");
+    // Closing is the top edge's.
+    put(f, Paragraph::new(Span::styled("⌄", t.dim())).alignment(Alignment::Center), Rect { height: 1, ..area });
+    app.hits.push((Rect { height: 2.min(area.height), ..area }, Hit::Button(Button::Full)));
+    let m = crate::chrome::margin(area.width) + 2;
+    let inner = Rect { x: area.x + m, y: area.y + 1, width: area.width.saturating_sub(2 * m), height: area.height.saturating_sub(2) };
+    let wide = inner.width >= 84;
+    let left_w = if wide { (inner.width * 2 / 5).clamp(32, 46) } else { inner.width };
+    let left = Rect { width: left_w, ..inner };
+    let used = song_column(f, left, app, &t, art.as_deref_mut());
+    let panel = if wide {
+        Rect { x: left.x + left.width + 4, width: inner.width.saturating_sub(left.width + 4), ..inner }
+    } else {
+        Rect { y: inner.y + used + 1, height: inner.height.saturating_sub(used + 1), ..inner }
     };
-    let inner = Rect { x: area.x + 3, y: area.y + 1, width: area.width.saturating_sub(6), height: area.height.saturating_sub(2) };
-    let wide = inner.width >= 90 && app.images;
-    let mut words = inner;
-    if wide {
-        let rows = inner.height.min(inner.width / 4);
-        let c = Rect { x: inner.x, y: inner.y + (inner.height - rows) / 2, width: rows * 2, height: rows };
-        cover(f, c, art, song.cover_art.as_deref(), &t);
-        words = Rect { x: c.x + c.width + 4, width: inner.width.saturating_sub(c.width + 4), ..inner };
+    if panel.height >= 5 && panel.width >= 20 {
+        side_panel(f, panel, app, &t);
     }
-    let w = words.width as usize;
-    let mut lines = vec![
-        Line::from(Span::styled(fit(&song.title, w).into_owned(), bold().fg(t.text))),
-        Line::from(Span::styled(fit(&song.artist, w).into_owned(), Style::default().fg(t.accent).add_modifier(Modifier::BOLD))),
-        Line::from(Span::styled(fit(&[song.album.as_str(), &if song.year > 0 { song.year.to_string() } else { String::new() }].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(" · "), w).into_owned(), dim(&t))),
-    ];
-    lines.extend(mix_lines(app, w));
-    let n = lines.len() as u16;
-    put(f, Paragraph::new(lines), Rect { height: n.min(words.height), ..words });
-    let rest = Rect { y: words.y + n + 1, height: words.height.saturating_sub(n + 1), ..words };
-    if app.lyrics.as_ref().is_some_and(|l| !l.pick.lyrics.lines.is_empty()) || app.lyrics_for.is_some() {
-        lyrics(f, rest, app);
-    } else if rest.height >= 3 {
-        up_next(f, rest, app, false, false);
+}
+
+/// The song in the full player's left column: returns the rows it took.
+fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<&mut Art>) -> u16 {
+    let Some(song) = app.song.clone() else {
+        text(f, Rect { y: area.y + 1, height: 1, ..area }, "Nothing playing · esc goes back", t.dim());
+        return 2;
+    };
+    // Below the cover: title, artist, a blank, seek, a blank, transport, a blank, volume.
+    const BELOW: u16 = 8;
+    let cover_rows = if app.images && art.is_some() { area.height.saturating_sub(BELOW).min(area.width / 2).min(22) } else { 0 };
+    let mut y = area.y;
+    if cover_rows >= 6 {
+        let c = Rect { x: area.x, y, width: cover_rows * 2, height: cover_rows };
+        cover(f, c, art, song.cover_art.as_deref(), t);
+        y += cover_rows + 1;
+    }
+    let w = area.width;
+    let row = |y: u16| Rect { y, height: 1, ..area };
+    // The title with the seal at the right end.
+    let sealed = app.rules.stars;
+    let title_w = w.saturating_sub(if sealed { 5 } else { 0 });
+    text(f, Rect { width: title_w, ..row(y) }, &song.title, bold().fg(t.ink));
+    if sealed {
+        let liked = app.starred(Starrable::Song, &song.id, song.starred);
+        let r = Rect { x: area.x + w - 4, width: 4, ..row(y) };
+        let flash = liked && app.flash.is_some_and(|(b, _)| b == Button::StarSong);
+        put(f, Paragraph::new(seal(liked, flash, t)), r);
+        app.hits.push((r, Hit::Button(Button::StarSong)));
+    }
+    y += 1;
+    let by = [song.artist.as_str(), song.album.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
+    text(f, row(y), &by, Style::default().fg(t.accent).add_modifier(Modifier::BOLD));
+    y += 1;
+    if let Some(q) = crate::text::quality(&song) {
+        text(f, row(y), &q, t.dim());
+        y += 1;
+    }
+    y += 1;
+    let time = 5;
+    let track_w = w.saturating_sub(2 * (time + 1)).min(60);
+    let x = area.x;
+    seek_line(f, app, t, [Rect { x, width: time, ..row(y) }, Rect { x: x + time + 1, width: track_w, ..row(y) }, Rect { x: x + time + 2 + track_w, width: time, ..row(y) }]);
+    y += 2;
+    let buttons = offered_buttons(app);
+    let step = (w.saturating_sub(2) / buttons.len().max(1) as u16).clamp(4, 8);
+    let span = step * buttons.len().saturating_sub(1) as u16 + 1;
+    let x0 = area.x + w.saturating_sub(span) / 2;
+    for (i, b) in buttons.iter().enumerate() {
+        transport_button(f, app, t, *b, Rect { x: x0 + i as u16 * step, width: 1, ..row(y) });
+    }
+    y += 2;
+    text(f, Rect { width: 2, ..row(y) }, "◁)", t.dim());
+    let vol = Rect { x: area.x + 3, width: 16.min(w.saturating_sub(3)), ..row(y) };
+    track_bar(f, vol, app.volume, t);
+    app.volume_rect = vol;
+    app.hits.push((vol, Hit::Volume));
+    y += 2;
+    // The mix being heard or planned, where there is room.
+    let lines = mix_lines(app, w as usize, t);
+    let room = (area.y + area.height).saturating_sub(y);
+    let n = (lines.len() as u16).min(room);
+    if n > 0 {
+        put(f, Paragraph::new(lines), Rect { y, height: n, ..area });
+        y += n;
+    }
+    y - area.y
+}
+
+/// The panel beside the song: its tabs on the raised surface, a hairline, then the lyrics, the queue or
+/// the devices.
+fn side_panel(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(t.line)).style(t.raised());
+    put(f, block, area);
+    // Inside, the raised surface is the page, and a selected row one step above it.
+    let mut p = *t;
+    p.page = t.surface;
+    if t.painted {
+        p.surface = crate::art::blend(t.surface, t.ink, 0.06);
+    }
+    let inner = Rect { x: area.x + 3, y: area.y + 1, width: area.width.saturating_sub(6), height: area.height.saturating_sub(2) };
+    app.shown.panel_w = inner.width;
+    let mut x = inner.x;
+    let tabs: Vec<(Panel, &str, &str)> = PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.on).map(|(p, name)| (*p, panel_icon(*p), *name)).collect();
+    for (which, icon, name) in tabs {
+        let label = format!("{icon} {name}");
+        let w = label.width() as u16;
+        if x + w > inner.x + inner.width {
+            break;
+        }
+        let style = if which == app.panel { t.current().add_modifier(Modifier::UNDERLINED) } else { t.dim() };
+        let r = Rect { x, y: inner.y, width: w, height: 1 };
+        put(f, Paragraph::new(Span::styled(label, style)), r);
+        app.hits.push((Rect { x: x.saturating_sub(1), width: w + 2, ..r }, Hit::Button(Button::Panel(which))));
+        x += w + 4;
+    }
+    put(f, Paragraph::new(Span::styled("─".repeat(area.width.saturating_sub(2) as usize), Style::default().fg(t.hair))), Rect { x: area.x + 1, y: inner.y + 1, width: area.width.saturating_sub(2), height: 1 });
+    let body = Rect { y: inner.y + 3, height: inner.height.saturating_sub(3), ..inner };
+    let focused = app.focus == Focus::Panel;
+    match app.panel {
+        Panel::Lyrics => lyrics(f, body, app, &p),
+        Panel::Queue => queue(f, body, app, focused, &p),
+        Panel::Devices => devices(f, body, app, focused, &p),
+    }
+}
+
+fn panel_icon(p: Panel) -> &'static str {
+    match p {
+        Panel::Lyrics => "≣",
+        Panel::Queue => "☰",
+        Panel::Devices => "⇄",
     }
 }
 
 // ---- the player bar ----
 
-/// The player bar: song on the left, controls and seek bar in the middle, panel switches and volume
-/// on the right.
-fn player_bar(f: &mut Frame, area: Rect, app: &mut App, ui: &Theme) {
-    let t = *ui;
-    put(f, Paragraph::new(Span::styled("─".repeat(area.width as usize), dim(&t))), Rect { height: 1, ..area });
-    // On the rule: where the music plays while it is another device, and the jam hosted.
+/// The seal: not liked its outline in quiet ink, liked reversed in the accent (`flash`: the one frame of
+/// the stamp, inverted). Four cells wide.
+pub fn seal(liked: bool, flash: bool, t: &Theme) -> Span<'static> {
+    let style = if liked { t.liked() } else { t.dim() };
+    let style = if flash { style.add_modifier(Modifier::REVERSED) } else { style };
+    Span::styled(if liked { "▐好▌" } else { "▕好▏" }, style)
+}
+
+/// The player: the song on the left, shuffle, previous, play, next and repeat with the seek bar under them in
+/// the middle, and on the right the seal, devices, lyrics and queue buttons and the volume.
+fn player_bar(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, mut art: Option<&mut Art>) {
+    let m = crate::chrome::margin(area.width);
+    let frame = Rect { x: area.x + m, width: area.width.saturating_sub(2 * m), ..area };
+    if frame.width < 12 {
+        return;
+    }
+    outline(f, frame, t);
+    // On the top edge: where the music plays while it is another device, and the jam hosted.
     let mut said: Vec<String> = Vec::new();
     if let Some((_, name)) = &app.devices.active {
         said.push(format!("⇄ {}", crate::text::playing_on(name)));
@@ -1642,128 +1661,124 @@ fn player_bar(f: &mut Frame, area: Rect, app: &mut App, ui: &Theme) {
     }
     if !said.is_empty() {
         let line = format!(" {} ", said.join(" · "));
-        let r = Rect { x: area.x + 2, width: (line.width() as u16).min(area.width.saturating_sub(4)), height: 1, ..area };
-        text(f, r, &line, Style::default().fg(t.accent).add_modifier(Modifier::BOLD));
+        let r = Rect { x: frame.x + 3, y: frame.y, width: (line.width() as u16).min(frame.width.saturating_sub(6)), height: 1 };
+        put(f, Clear, r);
+        text(f, r, &line, t.current());
         // A guest's jam is in the queue panel.
         app.hits.push((r, Hit::Button(Button::Panel(if app.guest() { Panel::Queue } else { Panel::Devices }))));
     }
-    let l1 = Rect { y: area.y + 1, height: 1, ..area };
-    let l2 = Rect { y: area.y + 2, height: 1, ..area };
-    let w = area.width;
-    let wide = w >= 100;
-    let left_w = if wide { (w / 4).min(40) } else if w >= 60 { w / 4 } else { 0 };
-    let right_w = if wide { 30 } else { 0 };
-    let mid = Rect { x: area.x + left_w, width: w.saturating_sub(left_w + right_w), ..area };
-    if left_w > 4 {
-        let lw = left_w as usize - 2;
-        match &app.song {
-            Some(s) => {
-                if app.rules.stars {
-                    let on = app.starred(Starrable::Song, &s.id, s.starred);
-                    let hr = Rect { x: area.x + 1, width: 2, ..l1 };
-                    put(f, Paragraph::new(Span::styled(if on { "♥ " } else { "♡ " }, Style::default().fg(if on { t.accent } else { t.dim }))), hr);
-                    app.hits.push((hr, Hit::Button(Button::StarSong)));
-                }
-                put(f, Paragraph::new(Span::styled(fit(&s.title, lw.saturating_sub(2)).into_owned(), bold())), Rect { x: area.x + 3, width: left_w.saturating_sub(3), ..l1 });
-                text(f, Rect { x: area.x + 3, width: left_w.saturating_sub(3), ..l2 }, &s.artist, dim(&t));
+    let buttons = offered_buttons(app);
+    let covers = app.images && art.is_some();
+    let bar = crate::chrome::bar(frame, &buttons, covers, app.devices.on);
+    let flash = app.flash.map(|(b, _)| b);
+    // The song, and a click on it opens the full player.
+    if let Some(c) = bar.cover {
+        let key = app.song.as_ref().and_then(|s| s.cover_art.clone());
+        cover(f, c, art.as_deref_mut(), key.as_deref(), t);
+    }
+    let open = Rect { x: bar.cover.map_or(bar.song[0].x, |c| c.x), width: bar.song[0].x + bar.song[0].width - bar.cover.map_or(bar.song[0].x, |c| c.x), ..bar.song[0] };
+    match &app.song {
+        Some(s) => {
+            let artist = if s.album.is_empty() { s.artist.clone() } else { format!("{} · {}", s.artist, s.album) };
+            if bar.song[1].width > 0 {
+                text(f, bar.song[0], &s.title, bold().fg(t.ink));
+                text(f, bar.song[1], &artist, t.dim());
+            } else {
+                let line = Line::from(vec![Span::styled(s.title.clone(), bold().fg(t.ink)), Span::styled(format!("  {}", s.artist), t.dim())]);
+                put(f, Paragraph::new(line), bar.song[0]);
             }
-            None => text(f, Rect { x: area.x + 1, width: left_w - 1, ..l1 }, "Nothing playing", dim(&t)),
+            app.hits.push((Rect { height: bar.song[1].y.max(bar.song[0].y) + 1 - bar.song[0].y, ..open }, Hit::Button(Button::Full)));
+        }
+        None => text(f, bar.song[0], "Nothing playing", t.dim()),
+    }
+    for (b, r) in &bar.buttons {
+        transport_button(f, app, t, *b, *r);
+    }
+    if let Some(clock) = bar.clock {
+        seek_line(f, app, t, clock);
+    }
+    if let (Some(r), true) = (bar.seal, app.rules.stars) {
+        if let Some(s) = &app.song {
+            let liked = app.starred(Starrable::Song, &s.id, s.starred);
+            put(f, Paragraph::new(seal(liked, liked && flash == Some(Button::StarSong), t)), r);
+            app.hits.push((r, Hit::Button(Button::StarSong)));
         }
     }
-    let playing = app.devices
-        .controls
-        .map_or(app.now.state == State::Playing, |c| c.playing);
-    let lit = |on: bool| if on { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { dim(&t) };
-    let repeat = if app.repeat() == nori_core::rules::REPEAT_ONE { "↻¹" } else { "↻" };
-    let toggle = if app.now.buffering { " ⋯ " } else if playing { " ⏸ " } else { " ▶ " };
-    let controls: [(&str, Style, Button); 5] = [
-        ("⤮", lit(app.queue_shuffled()), Button::Shuffle),
-        ("⏮", Style::default().fg(t.text), Button::Previous),
-        (toggle, Style::default().bg(t.accent).fg(on(t.accent)).add_modifier(Modifier::BOLD), Button::Toggle),
-        ("⏭", Style::default().fg(t.text), Button::Next),
-        (repeat, lit(app.repeat() != nori_core::rules::REPEAT_OFF), Button::Repeat),
-    ];
-    // A jam guest's are those its role offers: shuffle and repeat are the host's.
+    for (p, r) in &bar.panels {
+        let (glyph, on) = match p {
+            Panel::Devices => ("⇄", app.devices.active.is_some()),
+            Panel::Lyrics => ("≣", false),
+            Panel::Queue => ("☰", false),
+        };
+        put(f, Paragraph::new(Span::styled(glyph, if on { t.current() } else { t.dim() })), *r);
+        app.hits.push((Rect { x: r.x.saturating_sub(1), width: 3, ..*r }, Hit::Button(Button::Panel(*p))));
+    }
+    // Radio from the song, above the seal where the bar is tall enough.
+    if let (Some(seal), true) = (bar.seal, app.rules.radio && app.song.is_some()) {
+        if seal.y > frame.y + 1 {
+            let r = Rect { y: seal.y - 1, width: crate::text::RADIO.width() as u16, ..seal };
+            text(f, r, crate::text::RADIO, t.dim());
+            app.hits.push((r, Hit::Button(Button::RadioSong)));
+        }
+    }
+    if let Some([icon, track]) = bar.volume {
+        text(f, icon, if app.volume <= 0.0 { "◁×" } else { "◁)" }, t.dim());
+        track_bar(f, track, app.volume, t);
+        app.volume_rect = track;
+        app.hits.push((track, Hit::Volume));
+    }
+}
+
+/// The transport buttons the player offers, in order. A jam guest's are those its role offers: shuffle and
+/// repeat are the host's.
+fn offered_buttons(app: &App) -> Vec<Button> {
     let offered = |b: Button| match b {
         Button::Toggle => app.offers(|c| c.play_pause),
         Button::Previous | Button::Next => app.offers(|c| c.skip),
         _ => !app.guest(),
     };
-    let controls: Vec<_> = controls.into_iter().filter(|c| offered(c.2)).collect();
-    let gap = 3u16;
-    let total: u16 = controls.iter().map(|c| c.0.width() as u16).sum::<u16>() + gap * 4;
-    let mut x = mid.x + mid.width.saturating_sub(total) / 2;
-    for &(label, style, b) in &controls {
-        let cw = label.width() as u16;
-        if x + cw > mid.x + mid.width {
-            break;
-        }
-        let r = Rect { x, y: l1.y, width: cw, height: 1 };
-        put(f, Paragraph::new(Span::styled(label, style)), r);
-        app.hits.push((Rect { x: r.x.saturating_sub(1), width: r.width + 2, ..r }, Hit::Button(b)));
-        x += cw + gap;
-    }
-    let now = Instant::now();
+    [Button::Shuffle, Button::Previous, Button::Toggle, Button::Next, Button::Repeat].into_iter().filter(|b| offered(*b)).collect()
+}
+
+/// A transport glyph at `r`: bare, shuffle and repeat lit in the accent while on, reversed for a moment after
+/// a press.
+fn transport_button(f: &mut Frame, app: &mut App, t: &Theme, b: Button, r: Rect) {
+    let lit = |on: bool| if on { t.current() } else { t.dim() };
+    let playing = app.devices.controls.map_or(app.now.state == State::Playing, |c| c.playing);
+    let (glyph, style) = match b {
+        Button::Shuffle => ("⤮", lit(app.queue_shuffled())),
+        Button::Previous => ("⏮", Style::default().fg(t.ink)),
+        Button::Toggle => (if app.now.buffering { "⋯" } else if playing { "⏸" } else { "▶" }, Style::default().fg(t.ink)),
+        Button::Next => ("⏭", Style::default().fg(t.ink)),
+        _ => (if app.repeat() == nori_core::rules::REPEAT_ONE { "↻¹" } else { "↻" }, lit(app.repeat() != nori_core::rules::REPEAT_OFF)),
+    };
+    let style = if app.flash.is_some_and(|(p, _)| p == b) { style.add_modifier(Modifier::REVERSED) } else { style };
+    let r = Rect { width: glyph.width() as u16, height: 1, ..r };
+    put(f, Paragraph::new(Span::styled(glyph, style)), r);
+    app.hits.push((Rect { x: r.x.saturating_sub(1), width: r.width + 2, ..r }, Hit::Button(b)));
+}
+
+/// The elapsed time, the seek bar and the time left in `[a, track, b]`; the bar takes the seek clicks.
+fn seek_line(f: &mut Frame, app: &mut App, t: &Theme, [a, track, b]: [Rect; 3]) {
     let len = app.song.as_ref().map_or(0, |s| s.duration as i64 * 1000);
     let pos = match app.drag {
         Some(crate::app::Drag::Seek(share)) => (share * len as f32) as i64,
-        _ => app.now.position(now).clamp(0, len.max(0)),
+        _ => app.now.position(Instant::now()).clamp(0, len.max(0)),
     };
-    let (a, b) = (clock(pos), clock(len));
-    let bar_w = mid.width.saturating_sub(a.width() as u16 + b.width() as u16 + 6).min(80);
-    let total = bar_w + a.width() as u16 + b.width() as u16 + 2;
-    let mut x = mid.x + mid.width.saturating_sub(total) / 2;
-    text(f, Rect { x, width: a.width() as u16, ..l2 }, &a, dim(&t));
-    x += a.width() as u16 + 1;
-    if bar_w >= 4 {
-        let share = if len > 0 { pos as f32 / len as f32 } else { 0.0 };
-        let filled = ((share * bar_w as f32) as u16).min(bar_w.saturating_sub(1));
-        let knob = if app.song.is_some() { "●" } else { "─" };
-        let bar = Line::from(vec![
-            Span::styled("━".repeat(filled as usize), Style::default().fg(t.accent)),
-            Span::styled(knob, Style::default().fg(t.accent)),
-            Span::styled("─".repeat((bar_w - filled - 1) as usize), dim(&t)),
-        ]);
-        let r = Rect { x, width: bar_w, ..l2 };
-        put(f, Paragraph::new(bar), r);
-        app.seek_rect = r;
-        if app.offers(|c| c.seek) {
-            app.hits.push((r, Hit::Seek));
-        }
-        x += bar_w + 1;
+    text(f, a, &clock(pos), t.dim());
+    text(f, b, &clock(len), t.dim());
+    track_bar(f, track, if len > 0 { pos as f32 / len as f32 } else { 0.0 }, t);
+    app.seek_rect = track;
+    if app.offers(|c| c.seek) {
+        app.hits.push((track, Hit::Seek));
     }
-    text(f, Rect { x, width: b.width() as u16, ..l2 }, &b, dim(&t));
-    if right_w > 0 {
-        let rx = area.x + w - right_w;
-        let mut x = rx;
-        let devices = app.devices.on.then_some((Panel::Devices, "⇄"));
-        for (p, label) in [(Panel::Playing, "♫"), (Panel::Queue, "≡"), (Panel::Lyrics, "❝")].into_iter().chain(devices) {
-            let on = app.panel == Some(p) && !app.full;
-            let r = Rect { x, width: 1, ..l1 };
-            put(f, Paragraph::new(Span::styled(label, lit(on))), r);
-            app.hits.push((Rect { x: x.saturating_sub(1), width: 3, ..r }, Hit::Button(Button::Panel(p))));
-            x += 4;
-        }
-        let r = Rect { x, width: 1, ..l1 };
-        put(f, Paragraph::new(Span::styled("⤢", lit(app.full))), r);
-        app.hits.push((Rect { x: x.saturating_sub(1), width: 3, ..r }, Hit::Button(Button::Full)));
-        if app.rules.radio && app.song.is_some() {
-            let r = Rect { x: x + 4, width: 7, ..l1 };
-            text(f, r, crate::text::RADIO, dim(&t));
-            app.hits.push((r, Hit::Button(Button::RadioSong)));
-        }
-        let vw = 12u16;
-        let label = format!("{:>3}%", (app.volume * 100.0).round() as i32);
-        let icon = if app.volume <= 0.0 { "mute" } else { "vol" };
-        text(f, Rect { x: rx, width: 5, ..l2 }, icon, dim(&t));
-        let filled = ((app.volume * vw as f32).round() as u16).min(vw);
-        let bar = Line::from(vec![Span::styled("━".repeat(filled as usize), Style::default().fg(t.text)), Span::styled("─".repeat((vw - filled) as usize), dim(&t))]);
-        let vr = Rect { x: rx + 5, width: vw, ..l2 };
-        put(f, Paragraph::new(bar), vr);
-        app.volume_rect = vr;
-        app.hits.push((vr, Hit::Volume));
-        text(f, Rect { x: rx + 6 + vw, width: 5, ..l2 }, &label, dim(&t));
-    }
+}
+
+/// A bar of `share` in `r`: heavy in ink up to it, a hairline after.
+fn track_bar(f: &mut Frame, r: Rect, share: f32, t: &Theme) {
+    let filled = ((share.clamp(0.0, 1.0) * r.width as f32).round() as usize).min(r.width as usize);
+    let line = Line::from(vec![Span::styled("━".repeat(filled), Style::default().fg(t.ink)), Span::styled("─".repeat(r.width as usize - filled), Style::default().fg(t.hair))]);
+    put(f, Paragraph::new(line), r);
 }
 
 // ---- the login and what goes on top ----
@@ -1772,11 +1787,11 @@ fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let servers = app.prefs.servers.len() as u16;
     let h = 17 + if servers > 0 { servers + 2 } else { 0 };
     let r = centred(area, 64, h);
-    let inner = popup(f, r, Span::styled(" ♫ nori · connect to a server ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), t);
+    let inner = popup(f, r, Span::styled(" ♫ nori · connect to a server ", bold().fg(t.ink)), t);
     let l = &app.login;
     let bottom = inner.y + inner.height;
     let mut y = inner.y + 1;
-    text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 }, "Navidrome, octo-fiesta or any Subsonic server", dim(t));
+    text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 }, "Navidrome, octo-fiesta or any Subsonic server", t.dim());
     y += 2;
     for (i, label) in LOGIN_FIELDS.iter().enumerate() {
         if y >= bottom {
@@ -1786,8 +1801,8 @@ fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         let value = if i == 3 { "•".repeat(l.fields[i].chars().count()) } else { l.fields[i].clone() };
         let cursor = if focused { "▏" } else { "" };
         let line = Line::from(vec![
-            Span::styled(format!("  {label:<16}"), if focused { Style::default().fg(t.accent).add_modifier(Modifier::BOLD) } else { dim(t) }),
-            Span::styled(format!("{value}{cursor}"), Style::default().fg(t.text)),
+            Span::styled(format!("  {label:<16}"), if focused { t.current() } else { t.dim() }),
+            Span::styled(format!("{value}{cursor}"), Style::default().fg(t.ink)),
         ]);
         let row = Rect { x: inner.x, y, width: inner.width, height: 1 };
         put(f, Paragraph::new(line), row);
@@ -1796,17 +1811,17 @@ fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     }
     let button = if l.busy { " Connecting… " } else { " Connect " };
     let br = Rect { x: inner.x + 18, y, width: button.width() as u16, height: 1 };
-    put(f, Paragraph::new(Span::styled(button, Style::default().bg(t.accent).fg(on(t.accent)).add_modifier(Modifier::BOLD))), br);
+    put(f, Paragraph::new(Span::styled(button, t.select(true))), br);
     app.hits.push((br, Hit::Button(Button::Connect)));
     y += 2;
     let msg = match &l.error {
         Some(e) => Span::styled(format!("  {e}"), Style::default().fg(Color::LightRed)),
-        None => Span::styled("  tab next field · enter connect · esc back", dim(t)),
+        None => Span::styled("  tab next field · enter connect · esc back", t.dim()),
     };
     put(f, Paragraph::new(msg).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x, y, width: inner.width, height: 2.min(bottom.saturating_sub(y)) });
     y += 3;
     if servers > 0 && y + 1 < bottom {
-        text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(2), height: 1 }, "Or use a saved server", Style::default().fg(t.accent).add_modifier(Modifier::BOLD));
+        text(f, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(2), height: 1 }, "Or use a saved server", bold().fg(t.ink));
         y += 1;
         let area = Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: servers.min(bottom - y) };
         let App { login, prefs, hits, .. } = app;
@@ -1838,17 +1853,17 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     match o {
         Overlay::Help { scroll } => {
             let r = centred(area, 88, area.height.saturating_sub(4));
-            let inner = popup(f, r, Span::styled(" Keys · any key closes ", Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), t);
+            let inner = popup(f, r, Span::styled(" Keys · any key closes ", bold().fg(t.ink)), t);
             let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner };
             let mut lines = Vec::new();
             for scope in Scope::ALL {
-                lines.push(Line::from(Span::styled(scope.title(), Style::default().fg(t.accent).add_modifier(Modifier::BOLD))));
+                lines.push(Line::from(Span::styled(scope.title(), bold().fg(t.ink))));
                 for b in BINDINGS.iter().filter(|b| b.scope == scope && !b.label.is_empty()) {
-                    lines.push(Line::from(vec![Span::styled(format!("  {:<22}", b.label), Style::default().fg(t.text)), Span::styled(b.help, dim(t))]));
+                    lines.push(Line::from(vec![Span::styled(format!("  {:<22}", b.label), Style::default().fg(t.ink)), Span::styled(b.help, t.dim())]));
                 }
                 lines.push(Line::from(""));
             }
-            lines.push(Line::from(Span::styled("The mouse: click the sidebar, cards, rows and buttons; click or drag the seek bar and the volume; the wheel scrolls.", dim(t))));
+            lines.push(Line::from(Span::styled("The mouse: click the tabs, cards, rows and buttons; click or drag the seek bar and the volume; the wheel scrolls.", t.dim())));
             *scroll = (*scroll).min(lines.len().saturating_sub(inner.height as usize));
             put(f, Paragraph::new(lines).scroll((*scroll as u16, 0)), inner);
             hits.push((r, Hit::List(ListRef::Help)));
@@ -1857,7 +1872,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             let h = (options.len() as u16 + 2).min(area.height.saturating_sub(4));
             let w = options.iter().map(|o| o.0.width()).max().unwrap_or(10).max(title.width()) as u16 + 8;
             let r = centred(area, w, h);
-            let inner = popup(f, r, Span::styled(format!(" {title} "), Style::default().fg(t.accent)), t);
+            let inner = popup(f, r, Span::styled(format!(" {title} "), bold().fg(t.ink)), t);
             hits.push((r, Hit::List(ListRef::Picker)));
             let opts = options.clone();
             list(f, inner, sel, opts.len(), ListRef::Picker, hits, t, true, &|i, w| Line::from(fit(&format!(" {}", opts[i].0), w).into_owned()));
@@ -1882,30 +1897,30 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 lines.extend(qr);
                 lines.push(Line::from(""));
             } else {
-                lines.push(Line::from(Span::styled(crate::text::INVITE_ROOM, dim(t))));
+                lines.push(Line::from(Span::styled(crate::text::INVITE_ROOM, t.dim())));
             }
-            lines.push(Line::from(Span::styled(crate::text::INVITE_HOW, dim(t))));
+            lines.push(Line::from(Span::styled(crate::text::INVITE_HOW, t.dim())));
             lines.push(Line::from(crate::text::JAM_SETTINGS_KEY));
-            lines.extend(link_lines.into_iter().map(|l| Line::from(Span::styled(l, Style::default().fg(t.accent)))));
+            lines.extend(link_lines.into_iter().map(|l| Line::from(Span::styled(l, Style::default().fg(t.ink)))));
             let r = centred(area, w, lines.len() as u16 + 4);
-            let inner = popup(f, r, Span::styled(crate::text::INVITE_TITLE, Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), t);
+            let inner = popup(f, r, Span::styled(crate::text::INVITE_TITLE, bold().fg(t.ink)), t);
             put(f, Paragraph::new(lines).alignment(Alignment::Center), Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner });
         }
         Overlay::Join { text: typed, error, busy } => {
             let w = 72.min(area.width);
             let r = centred(area, w, 7);
-            let inner = popup(f, r, Span::styled(crate::text::JOIN_TITLE, Style::default().fg(t.accent).add_modifier(Modifier::BOLD)), t);
+            let inner = popup(f, r, Span::styled(crate::text::JOIN_TITLE, bold().fg(t.ink)), t);
             let iw = inner.width.saturating_sub(2) as usize;
             // The end of a long link, where typing goes.
             let shown: String = typed.chars().rev().take(iw.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect();
             let (said, style) = match (error, *busy) {
                 (Some(e), _) => (e.clone(), Style::default().fg(Color::LightRed)),
-                (None, true) => (crate::text::JOINING.to_string(), dim(t)),
-                (None, false) => (String::new(), dim(t)),
+                (None, true) => (crate::text::JOINING.to_string(), t.dim()),
+                (None, false) => (String::new(), t.dim()),
             };
             let lines = vec![
-                Line::from(Span::styled(crate::text::JOIN_HOW, dim(t))),
-                Line::from(Span::styled(format!("{shown}▏"), Style::default().fg(t.text))),
+                Line::from(Span::styled(crate::text::JOIN_HOW, t.dim())),
+                Line::from(Span::styled(format!("{shown}▏"), Style::default().fg(t.ink))),
                 Line::from(""),
                 Line::from(Span::styled(said, style)),
             ];
@@ -1913,7 +1928,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         }
         Overlay::Input { title, text: typed, secret, .. } => {
             let r = centred(area, 60, 3);
-            let inner = popup(f, r, Span::styled(format!(" {title} · enter keeps, esc drops "), Style::default().fg(t.accent)), t);
+            let inner = popup(f, r, Span::styled(format!(" {title} · enter keeps, esc drops "), bold().fg(t.ink)), t);
             let shown = if *secret { "•".repeat(typed.chars().count()) } else { typed.clone() };
             put(f, Paragraph::new(format!(" {shown}▏")), inner);
         }

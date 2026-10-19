@@ -15,7 +15,7 @@ use ratatui::crossterm::event::{self, Event as TermEvent};
 use ratatui_image::picker::Picker;
 
 use crate::app::{App, Cmd, Now, Panel, View};
-use crate::art::{protocol_name, Art, COVER_PX};
+use crate::art::{protocol_name, Art, Colors, COVER_PX};
 use crate::backend::{own, Msg, Open, Session};
 use crate::Options;
 
@@ -183,6 +183,10 @@ pub fn run(o: Options) -> Result<(), String> {
     let (tx, rx) = channel();
     read_input(tx.clone());
     let mut app = App::new(prefs.clone());
+    app.colors = Colors::detect(|k| std::env::var(k).ok());
+    app.paint = o.paint.unwrap_or_else(|| own::flag(own::PAINT, true));
+    app.reduced_motion = std::env::var("NORI_REDUCE_MOTION").is_ok_and(|v| !v.is_empty() && v != "0");
+    app.retheme();
     app.mouse = mouse;
     app.images = images;
     app.card_covers = own::flag(own::CARD_COVERS, true);
@@ -236,9 +240,10 @@ impl Runner {
                 self.heard = None;
                 // Fresh screens for the new server, keeping client-wide state.
                 let prefs = app.prefs.clone();
-                let keep = (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.data.clone());
+                let keep = (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.data.clone(), app.colors, app.paint, app.reduced_motion);
                 *app = App::new(prefs);
-                (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server, app.settings.own.data) = keep;
+                (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server, app.settings.own.data, app.colors, app.paint, app.reduced_motion) = keep;
+                app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules.clone()).unwrap_or_default();
                 self.remote_read(app);
                 self.follow(app);
@@ -410,7 +415,7 @@ impl Runner {
         let Some(s) = &self.session else { return };
         // A guest follows its jam all along.
         if let Some(r) = s.remote().filter(|_| !s.guest) {
-            r.watch(app.panel == Some(Panel::Devices));
+            r.watch(app.full && app.panel == Panel::Devices);
         }
         let now = s.now();
         app.follow_now(Now { state: now.state, position_ms: now.position_ms, at: now.at, speed: now.pace, mixing: now.mixing, buffering: now.buffering });
@@ -483,6 +488,13 @@ impl Runner {
                 app.settings.invalidate();
                 let said = if name.is_empty() { "the system default".to_string() } else { name };
                 app.say(format!("Output device: {said}, from the next start"), false);
+                return;
+            }
+            Cmd::Paint(on) => {
+                own::keep(own::PAINT, on.to_string());
+                app.paint = on;
+                app.retheme();
+                app.settings.invalidate();
                 return;
             }
             Cmd::CardCovers(on) => {
@@ -665,7 +677,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::CardCovers(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) => {}
+            Cmd::Quit | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::CardCovers(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) => {}
         }
     }
 
