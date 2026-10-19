@@ -38,7 +38,7 @@ const TOP_Y: f32 = 12.0;
 const TOP_RADIUS: f32 = 24.0;
 const PLAYER_H: f32 = 64.0;
 const PLAYER_BOTTOM: f32 = 12.0;
-const PLAYER_RADIUS: f32 = 26.0;
+const PLAYER_RADIUS: f32 = 20.0;
 const PILL_MAX_W: f32 = 1040.0;
 /// The window's side margin, and at the top left what the traffic lights take.
 const SIDE: f32 = 16.0;

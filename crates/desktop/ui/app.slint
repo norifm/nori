@@ -177,7 +177,8 @@ export global Chrome {
     in property <length> player-x;
     in property <length> player-w;
     out property <length> top-radius: 24px;
-    out property <length> player-radius: 26px;
+    // Concentric with the song's cover: its 10 px corner plus the 10 px it sits in from the edge.
+    out property <length> player-radius: 20px;
     // How much of the page's colour lies over the blurred page inside a pill: 55 %, or 88 % where it is not blurred.
     in property <float> tint: 0.55;
     // The room a page keeps under the top pill and above the player pill; content runs on under them.
@@ -731,7 +732,7 @@ component Bar inherits Rectangle {
     property <duration> transition: 0ms;
     init => { root.previous = root.value; }
     changed value => {
-        root.transition = !root.progress || abs(root.value - root.previous) * root.width >= 1px ? root.settling : 0ms;
+        root.transition = !Motion.reduced && (!root.progress || abs(root.value - root.previous) * root.width >= 1px) ? root.settling : 0ms;
         root.previous = root.value;
     }
     in property <length> thin: 3px;
@@ -1028,7 +1029,7 @@ component ShelfView inherits VerticalLayout {
             x: root.inset;
             width: root.seen;
             content-width: root.gap + root.shown * root.step;
-            animate content-x { duration: root.paging ? 420ms : 0ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
+            animate content-x { duration: root.paging && !Motion.reduced ? 420ms : 0ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
             if root.loading: Rectangle {
                 for i in root.columns: Rectangle {
                     x: root.gap + i * root.step;
@@ -1483,6 +1484,9 @@ component PlayerControls inherits Rectangle {
     property <bool> roomy: root.room >= 720px;
     property <int> dragged: -1;
     property <int> shown-ms: root.dragged >= 0 ? root.dragged : root.position-ms;
+    // The transport sits in the middle; the song and the buttons share what is left equally.
+    property <length> transport-w: clamp(root.room * 0.34, 260px, 420px);
+    property <length> side-w: max(120px, (root.room - 22px - 24px - root.transport-w) / 2);
 
     function clock(ms: int) -> string {
         let s = floor(max(0, ms) / 1000);
@@ -1495,9 +1499,7 @@ component PlayerControls inherits Rectangle {
         spacing: 12px;
         // The song: its cover (the player on a click), the title, and the artist and album as links.
         HorizontalLayout {
-            horizontal-stretch: 1;
-            preferred-width: 0;
-            min-width: 120px;
+            width: root.side-w;
             spacing: 10px;
             Art {
                 y: (parent.height - self.height) / 2;
@@ -1547,6 +1549,7 @@ component PlayerControls inherits Rectangle {
                     }
                 }
                 if root.playing-on == "" && root.jam == "": HorizontalLayout {
+                    alignment: start;
                     ArtistLine {
                         max-width: self.preferred-width;
                         // The artists before the album, which elides first.
@@ -1575,7 +1578,7 @@ component PlayerControls inherits Rectangle {
         }
         // The transport, and the seek bar with its times under it.
         VerticalLayout {
-            width: clamp(root.room * 0.34, 260px, 420px);
+            width: root.transport-w;
             alignment: center;
             spacing: 0;
             HorizontalLayout {
@@ -1661,9 +1664,7 @@ component PlayerControls inherits Rectangle {
         }
         // The right: the seal, the speaker, lyrics, the queue, the volume.
         HorizontalLayout {
-            horizontal-stretch: 1;
-            preferred-width: 0;
-            min-width: 120px;
+            width: root.side-w;
             alignment: end;
             spacing: 2px;
             if root.has-song && !root.guest: Seal {
@@ -2581,6 +2582,7 @@ component QueueView inherits Rectangle {
                             overflow: elide;
                         }
                         HorizontalLayout {
+                            alignment: start;
                             ArtistLine {
                                 max-width: self.preferred-width;
                                 // The artists before the album, which elides first.
@@ -5151,6 +5153,7 @@ export component AppWindow inherits Window {
                             }
                         }
                         HorizontalLayout {
+                            alignment: start;
                             ArtistLine {
                                 max-width: self.preferred-width;
                                 // The artists before the album, which elides first.

@@ -2508,6 +2508,33 @@ mod tests {
     }
 
     #[test]
+    fn the_pills_transport_stays_put_whatever_the_song_says() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let bar = pill();
+        let (w, h) = (1000u32, 64u32);
+        bar.window().set_size(slint::PhysicalSize::new(w, h));
+        bar.set_room(w as f32);
+        bar.set_has_song(true);
+        bar.show().unwrap();
+        // The middle third, which only the transport and the seek bar draw into.
+        let middle = |title: &str, artist: &str, album: &str| {
+            bar.set_now_title(title.into());
+            bar.set_now_artist(artist.into());
+            bar.set_now_album(album.into());
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let shot = bar.window().take_snapshot().unwrap();
+            let px = shot.as_slice();
+            (0..h as usize).flat_map(|y| px[y * w as usize + w as usize / 3..y * w as usize + 2 * w as usize / 3].to_vec()).collect::<Vec<_>>()
+        };
+        let with_album = middle("Paper Boats", "fakemink", "Some Album");
+        assert!(with_album == middle("Paper Boats", "fakemink", ""), "a song without an album");
+        assert!(with_album == middle("A Long Title (Official Music Video) [Remastered]", "One, Two & Three", "A Long Album Name"), "a long song");
+    }
+
+    #[test]
     fn volume_and_seek_animate_between_updates() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
