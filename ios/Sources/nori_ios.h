@@ -221,6 +221,20 @@ void nori_ios_lyric_free(LyricClock *clock);
 float nori_ios_lyric_strength(int32_t synced, int32_t line, int32_t active);
 float nori_ios_lyric_unsung(void);
 
+/// The season theme (crates/ios/src/theme.rs). Colors are ARGB. `season` is the `season` setting's value
+/// (FOLLOW, SPRING, SUMMER, AUTUMN, WINTER); the date is `unix_s` in the zone with `offset_min` from UTC.
+/// `quiet` is the secondary text color.
+typedef struct NoriPalette {
+    uint32_t page, surface, ink, accent, on, quiet;
+} NoriPalette;
+void nori_ios_palette(const char *season, int32_t dark, int64_t unix_s, int32_t offset_min, const char *zone, NoriPalette *out);
+/// The calendar's season (0 spring to 3 winter), the next one and the date it starts.
+typedef struct NoriSeasonNow {
+    int32_t season, next;
+    uint32_t next_month, next_day;
+} NoriSeasonNow;
+void nori_ios_season_now(int64_t unix_s, int32_t offset_min, const char *zone, NoriSeasonNow *out);
+
 /// The settings with kinds, options and values, as JSON (free it); set one by name (1 if changed).
 /* A long list's orders, JSON {now, all} to free; NULL for a page without orders. */
 char *nori_ios_sorts(int32_t kind);

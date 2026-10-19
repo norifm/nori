@@ -136,7 +136,7 @@ pub fn song_action(a: &nori_core::menus::SongAction) -> Option<String> {
         A::Favourite { on: true } => "Add to Favorites".into(),
         A::Favourite { on: false } => "Remove from Favorites".into(),
         A::Download => "Download".into(),
-        A::StartRadio => "Start Radio".into(),
+        A::StartRadio => "Start radio".into(),
         A::GoToAlbum { .. } => "Go to Album".into(),
         A::GoToArtist { name, named: true, .. } => format!("Go to {name}"),
         A::GoToArtist { named: false, .. } => "Go to Artist".into(),

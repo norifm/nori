@@ -13,18 +13,30 @@
 </script>
 
 <Page title={W.albums} back ready={!!page.data} error={page.error}>
-  {#snippet head()}
-    <select class="field sort" aria-label={W.sortBy} onchange={(e) => go("albums", e.currentTarget.value)}>
-      {#each Object.entries(W.sorts) as [k, v] (k)}<option value={k} selected={k === sort}>{v}</option>{/each}
-    </select>
-  {/snippet}
+  <div class="chips" role="radiogroup" aria-label={W.sortBy}>
+    {#each Object.entries(W.sorts) as [k, v] (k)}
+      <button class="chip" class:on={k === sort} role="radio" aria-checked={k === sort} onclick={() => go("albums", k)}>{v}</button>
+    {/each}
+  </div>
   <Cards albums={page.data ?? []} />
 </Page>
 
 <style>
-  .sort {
-    width: auto;
-    height: 32px;
-    font-size: 13px;
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .chip {
+    border: 1px solid var(--outline);
+    border-radius: 999px;
+    padding: 5px 13px;
+    color: var(--ink2);
+  }
+  .chip.on {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--page);
   }
 </style>

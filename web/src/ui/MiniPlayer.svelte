@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A phone's mini player over the tab bar; a tap opens the full player.
+  // A phone's mini player: the top row of the bottom bar, over the tabs; a tap opens the full player.
   import { player } from "../state/player.svelte";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
@@ -38,24 +38,17 @@
 
 <style>
   .mini {
-    position: fixed;
-    left: 8px;
-    right: 8px;
-    bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom) + 6px);
-    height: var(--mini-h);
-    z-index: 31;
+    position: relative;
+    height: 56px;
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 0 10px 0 8px;
-    border-radius: 14px;
-    background: var(--raised);
-    box-shadow: var(--shadow);
+    padding: 0 8px 0 10px;
     cursor: pointer;
     overflow: hidden;
   }
   .art {
-    width: 44px;
+    width: 40px;
     flex: none;
   }
   .text {
@@ -66,7 +59,11 @@
   }
   .title {
     font-size: 14px;
-    font-weight: 500;
+    font-weight: 600;
+  }
+  .sub {
+    color: var(--ink2);
+    font-size: 12px;
   }
   .round :global(.icon) {
     width: 26px;
@@ -74,8 +71,8 @@
   }
   .line {
     position: absolute;
-    left: 0;
-    right: 0;
+    left: 14px;
+    right: 14px;
     bottom: 0;
   }
 </style>

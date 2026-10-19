@@ -25,11 +25,9 @@ pub(crate) static COVER: Class = Class {
         native!(c"seekPaceHold", c"(JFJJ)V", seek_pace_hold),
         native!(c"seekPaceStep", c"(JJJFFF)I", seek_pace_step),
         native!(c"transportGlyph", c"(ZZZ)I", transport_glyph),
-        native!(c"readable", c"(III)I", readable),
         native!(c"heroButtons", c"(ZZZZZZ)I", hero_buttons),
         native!(c"plain", c"([I[I)V", plain),
-        native!(c"tones", c"(IZ[I)V", tones),
-        native!(c"amoled", c"([I)V", amoled),
+        native!(c"accented", c"([III[I)V", accented),
     ],
 };
 
@@ -216,26 +214,19 @@ extern "system" fn plain(env: JNIEnv, _: JClass, roles: JIntArray, out: JIntArra
     let _ = env.set_int_array_region(&out, 0, &dress::plain(&s).map(|v| v as i32));
 }
 
-/// `nori_look::theme::seeded` into `out` (11 colours).
-extern "system" fn tones(env: JNIEnv, _: JClass, seed: jint, dark: jboolean, out: JIntArray) {
-    let tones = nori_look::theme::seeded(seed as u32, dark != 0).map(|v| v as i32);
-    let _ = env.set_int_array_region(&out, 0, &tones);
-}
-
-/// `dress::AMOLED` (8 colours) into `out`.
-extern "system" fn amoled(env: JNIEnv, _: JClass, out: JIntArray) {
-    let _ = env.set_int_array_region(&out, 0, &dress::AMOLED.map(|v| v as i32));
+/// `dress::accented`: `table`'s look with the theme's accent, `light` or `dark`, into `out`.
+extern "system" fn accented(env: JNIEnv, _: JClass, table: JIntArray, light: jint, dark: jint, out: JIntArray) {
+    let mut t = [0i32; dress::LEN];
+    if env.get_int_array_region(&table, 0, &mut t).is_err() {
+        return;
+    }
+    let _ = env.set_int_array_region(&out, 0, &dress::accented(&t.map(|v| v as u32), light as u32, dark as u32).map(|v| v as i32));
 }
 
 /// [`nori_core::stage::seek_times`] per scrub frame, packed `at_s << 32 | left_s`.
 extern "system" fn seek_times(dragging: jboolean, drag: jfloat, held_ms: jlong, position_ms: jlong, duration_ms: jlong) -> jlong {
     let t = nori_core::stage::seek_times(dragging != 0, drag, held_ms, position_ms, duration_ms);
     ((t.at_s.clamp(0, u32::MAX as i64)) << 32) | t.left_s.clamp(0, u32::MAX as i64)
-}
-
-/// [`nori_look::cover::readable_either_way`], ARGB ints.
-extern "system" fn readable(color: jint, background: jint, fallback: jint) -> jint {
-    nori_look::cover::readable_either_way(color as u32, background as u32, fallback as u32) as jint
 }
 
 /// `stage::transport_glyph` as its `TransportGlyph` ordinal.

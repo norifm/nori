@@ -50,7 +50,7 @@ final class ServersPage: UITableViewController {
         let cell = row(tableView, id: "server", style: .subtitle)
         if indexPath.section == 1 {
             cell.textLabel?.text = Say.addServer
-            cell.textLabel?.textColor = Theme.accent
+            cell.textLabel?.textColor = Theme.label
             cell.detailTextLabel?.text = nil
             cell.accessoryType = .disclosureIndicator
             return cell

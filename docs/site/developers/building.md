@@ -891,6 +891,14 @@ Applies to the `slim` development branch (not in a release yet). The web client 
 workspace's tests and clippy do not see it) and `web/` (Svelte 5 with runes, TypeScript and Vite).
 `docs/research/web-client.md` has how it works and what remains.
 
+The look follows the other clients' redesign (`docs/redesign-contract.md`): no sidebar, an outlined bar along
+the top (Home, Albums, Artists, Songs, Playlists, Favorites, search, settings) and one along the bottom for
+the player, both blurring the page (`backdrop-filter`) with the page's color over it; below 720 px wide the
+phone's layout, one bottom bar holding the mini player over the tabs. Colors come from the core
+(`Nori.theme` in `crates/web`, from the `season` and `theme` settings and the browser's date and zone) into
+CSS variables (`web/src/state/theme.ts`), never copied into the shell. Inter and Literata are the Android
+app's font files; `web/build.sh` copies them into `web/src/fonts` (not in git).
+
 ### What it needs
 
 - the `wasm32-unknown-unknown` Rust target: `rustup target add wasm32-unknown-unknown`;

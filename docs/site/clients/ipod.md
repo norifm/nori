@@ -10,7 +10,7 @@ Applies to nori 0.6 on the iPod touch 6th generation, iOS 12.2 or later, jailbro
 The iPod client is a UIKit app over the same core: Home, Library, Search and Settings tabs, the player
 and mini player, the queue, lyrics, the equalizer and per-device sound, downloads,
 [remote control](../connected/remote-control.md) and [jams](../connected/jams.md), and the lock screen's
-controls. It has a dark theme by default, and a light one.
+controls. It has a dark theme by default, and a light one. Settings, Theme picks a season (Spring, Summer, Autumn or Winter) or follows the seasons with the calendar, as on the other clients; the season only changes the colors.
 
 ## What you need
 

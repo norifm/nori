@@ -47,16 +47,19 @@
     align-items: center;
     gap: 12px;
     padding: 10px;
-    border-radius: 10px;
+    border-radius: 12px;
     text-align: left;
     font-weight: 500;
   }
   .device:hover {
     background: var(--hover);
   }
-  .device.on {
+  .device.on :global(.icon:first-child),
+  .device.on .name {
     color: var(--accent);
-    background: var(--chosen);
+  }
+  .device.on .name {
+    font-weight: 600;
   }
   .device :global(.icon) {
     width: 22px;

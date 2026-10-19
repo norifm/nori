@@ -1,5 +1,5 @@
 <script lang="ts">
-  // What has a heart: artists, albums and songs.
+  // What has a seal: artists, albums and songs.
   import { read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import type { Album, Artist, Song } from "../state/types";

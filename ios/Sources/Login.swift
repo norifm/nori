@@ -47,7 +47,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         connect.setTitleColor(Theme.background, for: .normal)
         connect.titleLabel?.font = UIFont.preferredFont(forTextStyle: .headline)
         connect.titleLabel?.adjustsFontForContentSizeCategory = true
-        connect.backgroundColor = Theme.accent
+        connect.backgroundColor = Theme.label
         connect.layer.cornerRadius = 10
         connect.addTarget(self, action: #selector(submit), for: .touchUpInside)
 

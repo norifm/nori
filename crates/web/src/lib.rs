@@ -139,6 +139,50 @@ impl Nori {
         self.client().map_or_else(String::new, |c| pages::cover(c.core(), &id, px))
     }
 
+    /// The colors the page wears on a date in the browser's zone, from the season and appearance
+    /// settings: `{ season (the calendar's now), next, nextMonth, nextDay (the season after and its first day),
+    /// dark, page, surface, ink, ink2, hair, outline, accent, on, onAccent, still }`, the colors each a `#rrggbb`;
+    /// `still` when the Motion setting asks for less than full motion.
+    /// `system_dark`: the browser's color scheme, followed while the appearance is System.
+    pub fn theme(&self, month: u32, day: u32, zone: String, system_dark: bool) -> String {
+        use nori_look::theme::{roles, season_now, southern};
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let (palette, dark) = nori_core::settings::theme_palette(&prefs, system_dark, month, day, southern(&zone));
+        let r = roles(palette);
+        let now = season_now(month, day, southern(&zone));
+        let name = |s: nori_look::theme::Season| format!("{s:?}").to_uppercase();
+        let hex = |c: u32| format!("#{:06x}", c & 0xFF_FFFF);
+        json!({
+            "season": name(now.season), "next": name(now.next), "nextMonth": now.next_month, "nextDay": now.next_day, "dark": dark, "page": hex(palette.page), "surface": hex(palette.surface), "ink": hex(palette.ink),
+            "ink2": hex(r.on_surface_variant), "hair": hex(r.outline_variant), "outline": hex(r.outline),
+            "accent": hex(palette.accent), "on": hex(palette.on), "onAccent": hex(r.on_primary),
+            "still": prefs.motion != nori_core::settings::Motion::Full,
+        })
+        .to_string()
+    }
+
+    /// What Now Playing wears for a cover, from `rgba` (a `w` x `h` copy the page decoded): `[colors,
+    /// wash]`, the colors JSON `{ page, surface, ink, ink2, outline, hair, accent, onAccent }` (each a
+    /// `#rrggbbaa`) and the wash (the cover blurred, RGBA, `washSide` square) or null; as Android's player.
+    pub fn cover_look(&self, rgba: Vec<u8>, w: u32, h: u32) -> js_sys::Array {
+        use nori_look::dress;
+        let argb: Vec<u32> = rgba.chunks_exact(4).map(|p| u32::from_be_bytes([p[3], p[0], p[1], p[2]])).collect();
+        let c = nori_look::cover::derive(&argb, w.max(1) as usize, h.max(1) as usize, false);
+        let t = dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
+        let hex = |argb: u32| format!("#{:06x}{:02x}", argb & 0xFF_FFFF, argb >> 24);
+        let side = c.wash.as_ref().map_or(0, |w| (w.len() as f64).sqrt() as u32);
+        let colors = json!({
+            "page": hex(t[dress::BACKGROUND]), "surface": hex(t[dress::SURFACE_CONTAINER]), "ink": hex(t[dress::ON]),
+            "ink2": hex(t[dress::ON_60]), "outline": hex(t[dress::ON_35]), "hair": hex(t[dress::VEIL_13]),
+            "accent": hex(t[dress::ACCENT]), "onAccent": hex(t[dress::ON_PRIMARY]), "washSide": side,
+        });
+        let wash = c.wash.map_or(JsValue::NULL, |w| {
+            let bytes: Vec<u8> = w.iter().flat_map(|p| { let [a, r, g, b] = p.to_be_bytes(); [r, g, b, a] }).collect();
+            js_sys::Uint8ClampedArray::from(bytes.as_slice()).into()
+        });
+        js_sys::Array::of2(&JsValue::from_str(&colors.to_string()), &wash)
+    }
+
     /// The settings `names` (comma separated) as `{ name: value }`.
     pub fn settings(&self, names: String) -> String {
         let prefs = self.app.settings.current().unwrap_or_default();

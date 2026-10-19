@@ -13,7 +13,8 @@
   import { player } from "../state/player.svelte";
   import { W } from "../words";
 
-  let { times = true, thin = false }: { times?: boolean; thin?: boolean } = $props();
+  /** `inline`: the times at the ends of the bar, in a row. */
+  let { times = true, thin = false, inline = false }: { times?: boolean; thin?: boolean; inline?: boolean } = $props();
 
   let run = $state<HTMLDivElement>();
   let dragging = $state(false);
@@ -71,30 +72,34 @@
   });
 </script>
 
-<div class="seek" class:thin>
-  <div class="track"><div class="run" bind:this={run}></div></div>
-  {#if !thin}
-    <input
-      type="range"
-      min="0"
-      max={Math.max(1, length)}
-      step="1000"
-      value={shownMs}
-      aria-label={W.seek}
-      oninput={(e) => {
-        dragging = true;
-        dragMs = Number(e.currentTarget.value);
-      }}
-      onchange={(e) => {
-        const ms = Number(e.currentTarget.value);
-        at = ms;
-        dragging = false;
-        void player.seek(ms);
-      }}
-    />
-  {/if}
-  {#if times && !thin}
-    <div class="times"><span class="at">{W.time(shownMs)}</span><span>-{W.time(length - shownMs)}</span></div>
+<div class="seek" class:thin class:inline>
+  {#if times && inline}<span class="time">{W.time(shownMs)}</span>{/if}
+  <div class="bar">
+    <div class="track"><div class="run" bind:this={run}></div></div>
+    {#if !thin}
+      <input
+        type="range"
+        min="0"
+        max={Math.max(1, length)}
+        step="1000"
+        value={shownMs}
+        aria-label={W.seek}
+        oninput={(e) => {
+          dragging = true;
+          dragMs = Number(e.currentTarget.value);
+        }}
+        onchange={(e) => {
+          const ms = Number(e.currentTarget.value);
+          at = ms;
+          dragging = false;
+          void player.seek(ms);
+        }}
+      />
+    {/if}
+  </div>
+  {#if times && inline}<span class="time">-{W.time(length - shownMs)}</span>{/if}
+  {#if times && !inline && !thin}
+    <div class="times"><span>{W.time(shownMs)}</span><span>-{W.time(length - shownMs)}</span></div>
   {/if}
 </div>
 
@@ -104,28 +109,29 @@
     width: 100%;
     padding: 6px 0 0;
   }
+  .inline {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0;
+  }
+  .bar {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
   .track {
     height: 4px;
     border-radius: 2px;
-    background: var(--fill);
+    background: var(--hair);
     overflow: hidden;
-    transition: height 0.12s;
   }
   .run {
     height: 100%;
-    background: var(--dim);
+    background: var(--ink);
     border-radius: 2px;
     transform: translateX(-100%);
     will-change: transform;
-  }
-  .seek:hover .track {
-    height: 6px;
-  }
-  .seek:hover .run {
-    background: var(--text);
-  }
-  .thin {
-    padding: 0;
   }
   .thin .track {
     height: 2px;
@@ -135,20 +141,29 @@
     position: absolute;
     left: 0;
     right: 0;
-    top: -4px;
+    top: -9px;
     width: 100%;
     height: 22px;
     margin: 0;
     opacity: 0;
     cursor: pointer;
   }
+  .time,
+  .times {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink2);
+    font-variant-numeric: tabular-nums;
+  }
+  .time {
+    min-width: 34px;
+  }
+  .time:last-child {
+    text-align: right;
+  }
   .times {
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--faint);
-    font-variant-numeric: tabular-nums;
-    padding-top: 4px;
+    padding-top: 6px;
   }
 </style>

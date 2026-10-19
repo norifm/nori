@@ -1,6 +1,7 @@
 <script lang="ts">
-  // The player bar under the page on a wide screen: the song (its cover opens the full player), the
-  // controls with the seek bar, and the panels beside the page (lyrics, the queue, other devices).
+  // The player bar on a wide screen: one outline along the bottom. The song on the left (its cover opens
+  // the full player); shuffle, previous, play, next and repeat with the seek bar under them in the middle;
+  // the seal, the speaker (Play On), lyrics, the queue and the volume on the right.
   import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
   import { href } from "../state/route.svelte";
@@ -8,31 +9,35 @@
   import { W } from "../words";
   import Controls from "./Controls.svelte";
   import Cover from "./Cover.svelte";
-  import Heart from "./Heart.svelte";
   import Icon from "./Icon.svelte";
+  import Seal from "./Seal.svelte";
   import Seek from "./Seek.svelte";
+  import Volume from "./Volume.svelte";
 
   const s = $derived(player.song);
   const n = $derived(player.now);
-  const panes: [Pane, string, string][] = [
+  const panes = $derived<[Pane, string, string][]>([
+    ["devices", n?.device ? "devices" : "speaker", W.playOn],
     ["lyrics", "lyrics", W.lyrics],
     ["queue", "queue", W.queue],
-    ["devices", "devices", W.playOn],
-  ];
+  ]);
 </script>
 
-<footer class="bar" id="bar" aria-label={W.nothingPlaying}>
+<footer class="bar chrome" id="bar" aria-label={W.nothingPlaying}>
   <div class="song">
     {#if s}
       <button class="art" aria-label={s.title} onclick={() => (ui.full = true)}><Cover src={s.cover} /></button>
       <div class="text">
         <span class="title clip">{s.title}</span>
         <span class="sub clip">
-          {#if s.artistId}<a href={href("artist", s.artistId)}>{s.artist}</a>{:else}{s.artist}{/if}
-          {#if s.albumId}&nbsp;—&nbsp;<a href={href("album", s.albumId)}>{s.album}</a>{/if}
+          {#if n?.device}{W.playingOn(n.device)}{:else}
+            {#if s.artistId}<a href={href("artist", s.artistId)}>{s.artist}</a>{:else}{s.artist}{/if}
+            {#if s.albumId}&nbsp;·&nbsp;<a href={href("album", s.albumId)}>{s.album}</a>{/if}
+          {/if}
+          {#if n?.mixing}&nbsp;·&nbsp;{W.autoMix}{/if}
         </span>
+        {#if player.held}<button class="held" onclick={() => player.unhold()}>{W.tapToPlay}</button>{/if}
       </div>
-      {#if !n?.jam}<Heart what="song" id={s.id} on={!!s.starred} />{/if}
     {:else}
       <div class="art"><Cover /></div>
       <span class="sub">{W.nothingPlaying}</span>
@@ -40,37 +45,36 @@
   </div>
   <div class="middle">
     <Controls />
-    <div class="seek-row">
-      {#if s}<Seek />{/if}
-    </div>
-    {#if n?.device}<span class="on-device"><Icon name="devices" />{W.playingOn(n.device)}</span>{/if}
-    {#if n?.mixing}<span class="badge">{W.autoMix}</span>{/if}
-    {#if player.held}<button class="badge held" onclick={() => player.unhold()}>{W.tapToPlay}</button>{/if}
+    {#if s}<Seek inline />{/if}
   </div>
-  <div class="panes">
+  <div class="right">
+    {#if s && !n?.jam}<Seal what="song" id={s.id} on={!!s.starred} />{/if}
     {#each panes as [pane, icon, label] (pane)}
       {#if pane !== "devices" || remote.devices.on}
-        <button class="round" class:on={ui.panel === pane} title={label} aria-label={label} aria-pressed={ui.panel === pane} data-pane={pane} onclick={() => ui.show(pane)}><Icon name={icon} /></button>
+        <button class="round" class:on={ui.full && ui.pane === pane} title={label} aria-label={label} data-pane={pane} onclick={() => ui.show(pane)}><Icon name={icon} /></button>
       {/if}
     {/each}
+    <Volume />
   </div>
 </footer>
 
 <style>
   .bar {
     position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: var(--bar-h);
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 16px;
+    width: min(1040px, calc(100% - 32px));
+    height: 78px;
     z-index: 30;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(320px, 520px) minmax(0, 1fr);
+    /* Equal sides, so the transport sits in the middle whatever the song is called. */
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 1.1fr) minmax(0, 1fr);
     align-items: center;
-    gap: 24px;
-    padding: 0 16px;
-    background: var(--bar);
-    border-top: 1px solid var(--hair);
+    gap: 14px;
+    /* The cover sits 7px in on three sides; the corner is its 16px corner plus that. */
+    padding: 0 16px 0 7px;
+    border-radius: 23px;
   }
   .song {
     display: flex;
@@ -79,11 +83,11 @@
     min-width: 0;
   }
   .art {
-    width: 48px;
+    width: 64px;
     flex: none;
   }
   .art :global(.cover) {
-    border-radius: 5px;
+    border-radius: 16px;
   }
   .text {
     display: flex;
@@ -91,61 +95,50 @@
     min-width: 0;
   }
   .title {
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .sub {
+    color: var(--ink2);
+    font-size: 12px;
   }
   .sub a:hover {
     text-decoration: underline;
   }
+  .held {
+    font-size: 11px;
+    font-weight: 600;
+    text-align: left;
+    color: var(--accent);
+  }
   .middle {
-    position: relative;
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 0;
-    padding-top: 2px;
+    gap: 2px;
   }
-  .seek-row {
-    height: 26px;
-    margin-top: -4px;
-  }
-  .seek-row :global(.times) {
-    padding-top: 2px;
-  }
-  .on-device,
-  .badge {
-    position: absolute;
-    right: 0;
-    top: 10px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--accent);
-  }
-  .on-device {
-    left: 0;
-    right: auto;
-  }
-  .on-device :global(.icon) {
-    width: 14px;
-    height: 14px;
-  }
-  .held {
-    top: auto;
-    bottom: -2px;
-  }
-  .panes {
+  .right {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
-    gap: 4px;
+    gap: 2px;
+    min-width: 0;
   }
-  .panes .round {
-    color: var(--dim);
+  .right .round {
+    color: var(--ink2);
   }
-  .panes .round.on {
+  .right .round.on {
     color: var(--accent);
-    background: var(--chosen);
+  }
+  .right :global(.vol) {
+    margin-left: 8px;
+  }
+  @media (max-width: 899px) {
+    .bar {
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 1.2fr) auto;
+    }
+    .right :global(.vol) {
+      display: none;
+    }
   }
 </style>

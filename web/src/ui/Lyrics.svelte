@@ -63,7 +63,7 @@
     {#each shown.lyrics.lines as l, i (i)}
       {@const cut = sungPart(i, l.text)}
       {#if synced}
-        <button class="line" class:on={i === player.line} disabled={!taps} class:past={i < player.line} class:duet={l.voice === 1} data-i={i} onclick={() => void player.tapLine(i)}>
+        <button class="line" class:on={i === player.line} disabled={!taps} class:duet={l.voice === 1} data-i={i} onclick={() => void player.tapLine(i)}>
           {#if cut >= 0}
             {@const whole = Math.floor(cut)}
             <!-- The letter being sung fills from the left as the core's place moves through it, as Android draws it. -->
@@ -80,6 +80,7 @@
 
 <style>
   .lyrics {
+    --quiet: color-mix(in srgb, var(--ink2) 50%, transparent);
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -88,7 +89,7 @@
     mask-image: linear-gradient(transparent, #000 6%, #000 80%, transparent);
   }
   .none {
-    color: var(--dim);
+    color: var(--ink2);
     text-align: center;
     padding-top: 30%;
   }
@@ -98,12 +99,11 @@
     text-align: left;
     padding: 8px 10px;
     margin: 0 0 4px;
-    border-radius: 10px;
-    font: 700 26px/1.25 var(--display);
+    border-radius: 12px;
+    font: 700 24px/1.25 var(--font);
     letter-spacing: -0.01em;
-    color: var(--faint);
-    transition: color 0.25s, transform 0.3s;
-    transform-origin: left center;
+    color: var(--quiet);
+    transition: color 0.25s;
   }
   .line:disabled {
     cursor: default;
@@ -112,24 +112,18 @@
   .line:hover:enabled {
     background: var(--hover);
   }
-  .line.on {
-    color: var(--text);
+  .line.on,
+  .line.on .sung {
+    color: var(--ink);
   }
   .line.on .rest {
-    color: var(--faint);
-  }
-  .line.on .sung {
-    color: var(--text);
+    color: var(--quiet);
   }
   .edge {
-    background: linear-gradient(90deg, var(--text) var(--fill), var(--faint) var(--fill));
+    background: linear-gradient(90deg, var(--ink) var(--fill), var(--quiet) var(--fill));
     background-clip: text;
     -webkit-background-clip: text;
     color: transparent;
-  }
-  .line.past {
-    color: var(--dim);
-    opacity: 0.6;
   }
   .duet {
     text-align: right;
@@ -141,13 +135,8 @@
     margin-top: 4px;
   }
   .plain {
-    font: 600 20px/1.4 var(--display);
+    font: 600 20px/1.4 var(--font);
     margin: 0 0 14px;
     padding: 0 10px;
-  }
-  @media (max-width: 899px) {
-    .line {
-      font-size: 24px;
-    }
   }
 </style>

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -82,7 +83,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
         ) {
         // The page follows the pull down, and stays down while the refresh runs, so the ring has a gap of its
         // own above the title rather than landing on whatever comes first.
-        LazyColumn(Modifier.pageToEdges().graphicsLayer { translationY = pullGap(pull).toPx() }, contentPadding = pagePadding(LocalChromeInset.current)) {
+        LazyColumn(Modifier.pageToEdges().underStatusBar().graphicsLayer { translationY = pullGap(pull).toPx() }, contentPadding = pagePadding(LocalChromeInset.current, top = LocalStatusRoom.current)) {
             // Only the title, as Apple's: shuffling the library lives in Library, and which rows this page has
             // in Settings, Appearance.
             item(key = "title") { LargeTitle(say.listenNow, Modifier.arriving(arrival, 0, rise)) }
@@ -104,7 +105,17 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                         exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(ms * 2 / 3)) +
                             androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(ms), targetScale = 0.94f) +
                             androidx.compose.animation.shrinkVertically(androidx.compose.animation.core.tween(ms, easing = androidx.compose.animation.core.FastOutSlowInEasing)),
-                    ) { QueueOfferCard(o, actions, { taking = true }, vm::dismissOffer) }
+                    ) {
+                        // Flicked away to either side, it is turned down, as its cross does: the room it leaves folds away after.
+                        androidx.compose.runtime.key(o) {
+                            val swipe = androidx.compose.material3.rememberSwipeToDismissBoxState(
+                                confirmValueChange = { it != androidx.compose.material3.SwipeToDismissBoxValue.Settled && run { vm.dismissOffer(); true } },
+                            )
+                            androidx.compose.material3.SwipeToDismissBox(swipe, backgroundContent = {}) {
+                                QueueOfferCard(o, actions, { taking = true }, vm::dismissOffer)
+                            }
+                        }
+                    }
                 }
             }
             if (closed && ui.rows.all { it.isEmpty }) item(key = "closed") {
@@ -339,10 +350,11 @@ private fun QueueOfferCard(offer: dev.nori.music.ffi.library.QueueOffer, actions
     val song = offer.songs.getOrNull(offer.index.toInt()) ?: return
     androidx.compose.material3.Surface(
         onClick = onPlay, shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-        // Spaced as a shelf is under its heading: the large title's line leaves more room under its letters than a
-        // section heading's, so 4 dp here puts the card as far below them as a row sits below a heading; below it,
-        // only what the next heading keeps above itself.
-        color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 4.dp),
+        // Halfway between the large title's letters and the next heading's: with 4 dp of room above it and only what
+        // the next heading keeps above itself below, the letters stood 15 and 21 dp off it, so it is drawn 3 dp
+        // lower than its place; the page under it does not move.
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 4.dp).offset(y = 3.dp),
     ) {
         Row(Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Cover(actions.cover(song.coverArt, CoverSize.ROW), 48.dp, radius = 8.dp)

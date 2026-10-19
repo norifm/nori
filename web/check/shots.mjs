@@ -50,7 +50,7 @@ await (await page.$$(".songs li .play"))[0].click();
 await page.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 1, { timeout: 60000 });
 await page.click("#bar [data-pane=lyrics]");
 await page.waitForFunction(() => window.nori.lyrics, { timeout: 30000 });
-await page.click("#panel [aria-label=Close]");
+await page.click("#full [aria-label=Close]");
 await ask("jam_open").catch(() => {});
 await wait(1500);
 
@@ -91,13 +91,13 @@ for (const scheme of ["light", "dark"]) {
       await page.click("#bar [data-pane=lyrics]");
       await wait(800);
       await shot(name("player-bar-lyrics"));
-      await page.click("#bar [data-pane=queue]");
+      await page.click("#full [data-pane=queue]");
       await wait(400);
       await shot(name("player-bar-queue"));
-      await page.click("#bar [data-pane=devices]");
+      await page.click("#full [data-pane=devices]");
       await wait(400);
       await shot(name("devices"));
-      await page.click("#panel [aria-label=Close]");
+      await page.click("#full [aria-label=Close]");
       await page.click("#bar .art");
     } else {
       await shot(name("mini-player"));

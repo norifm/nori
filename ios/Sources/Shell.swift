@@ -129,7 +129,7 @@ final class MiniPlayer: UIView {
         heart.tintColor = Theme.label
         heart.accessibilityLabel = Say.favorite
         heart.addTarget(self, action: #selector(heartTapped), for: .touchUpInside)
-        progress.backgroundColor = Theme.accent
+        progress.backgroundColor = Theme.label
 
         sliding = [cover, text]
         // The song's side, clipped where the controls start: a swiped song leaves at that edge rather
@@ -618,7 +618,7 @@ final class SettingsPage: UITableViewController {
                 cell.accessoryType = .disclosureIndicator
             default:
                 cell.textLabel?.text = Say.theme
-                cell.detailTextLabel?.text = Theme.light ? Say.light : Say.dark
+                cell.detailTextLabel?.text = ThemePage.summary
                 cell.selectionStyle = .default
                 cell.accessoryType = .disclosureIndicator
             }
@@ -670,7 +670,7 @@ final class SettingsPage: UITableViewController {
             return
         }
         if indexPath.section == sections.count + 1 {
-            if indexPath.row == 2 { pickTheme() }
+            if indexPath.row == 2 { navigationController?.pushViewController(ThemePage(), animated: true) }
             if indexPath.row == 4 { navigationController?.pushViewController(CreditsPage(), animated: true) }
             return
         }
@@ -691,17 +691,84 @@ final class SettingsPage: UITableViewController {
         }
         sheet.show(from: self)
     }
+}
 
-    private func pickTheme() {
-        let sheet = UIAlertController.sheet(Say.theme)
-        for (title, light) in [(Say.light, true), (Say.dark, false)] {
-            sheet.add(title, checked: light == Theme.light) {
-                guard light != Theme.light else { return }
-                _ = "theme".withCString { n in (light ? "LIGHT" : "DARK").withCString { v in nori_ios_set(n, v) } }
-                (UIApplication.shared.delegate as? AppDelegate)?.restyle(light: light)
-            }
+/// The theme: the season (or following the calendar's) and light or dark. The core owns the settings and
+/// the colours; a change builds the interface again in them.
+final class ThemePage: UITableViewController {
+    init() { super.init(style: .grouped) }
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// "Autumn · Dark", for the settings row.
+    static var summary: String {
+        let name = Say.seasons[Theme.season == "FOLLOW" ? Int(Theme.calendar().season) : Say.seasonValues.firstIndex(of: Theme.season) ?? 0].0
+        return name + " · " + (Theme.light ? Say.light : Say.dark)
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = Say.theme
+        navigationItem.largeTitleDisplayMode = .never
+        dress(tableView)
+    }
+
+    override func numberOfSections(in tableView: UITableView) -> Int { 2 }
+
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        section == 0 ? Say.season : Say.appearance
+    }
+
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { section == 0 ? 5 : 2 }
+
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let following = Theme.season == "FOLLOW"
+        let cell = row(tableView, id: indexPath.section == 0 && indexPath.row == 0 ? "follow" : "pick",
+                       style: indexPath.section == 0 && indexPath.row == 0 ? .subtitle : .default)
+        cell.accessoryView = nil
+        cell.accessoryType = .none
+        cell.selectionStyle = .default
+        cell.detailTextLabel?.text = nil
+        if indexPath.section == 1 {
+            let isLight = indexPath.row == 0
+            cell.textLabel?.text = isLight ? Say.light : Say.dark
+            cell.accessoryType = isLight == Theme.light ? .checkmark : .none
+        } else if indexPath.row == 0 {
+            cell.textLabel?.text = Say.followSeasons
+            cell.detailTextLabel?.text = Say.seasonNow(Theme.calendar())
+            cell.detailTextLabel?.textColor = Theme.secondary
+            let toggle = UISwitch()
+            toggle.isOn = following
+            toggle.onTintColor = Theme.switchOn
+            toggle.addTarget(self, action: #selector(followed(_:)), for: .valueChanged)
+            cell.accessoryView = toggle
+            cell.selectionStyle = .none
+        } else {
+            let (name, kanji) = Say.seasons[indexPath.row - 1]
+            cell.textLabel?.text = kanji + "  " + name
+            cell.accessoryType = !following && Theme.season == Say.seasonValues[indexPath.row - 1] ? .checkmark : .none
         }
-        sheet.show(from: self)
+        return cell
+    }
+
+    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        if indexPath.section == 1 {
+            change(light: indexPath.row == 0, season: Theme.season)
+        } else if indexPath.row > 0 {
+            change(light: Theme.light, season: Say.seasonValues[indexPath.row - 1])
+        }
+    }
+
+    /// Off keeps the season the calendar has now.
+    @objc private func followed(_ s: UISwitch) {
+        change(light: Theme.light, season: s.isOn ? "FOLLOW" : Say.seasonValues[Int(Theme.calendar().season)])
+    }
+
+    private func change(light: Bool, season: String) {
+        _ = "theme".withCString { n in (light ? "LIGHT" : "DARK").withCString { v in nori_ios_set(n, v) } }
+        _ = "season".withCString { n in season.withCString { v in nori_ios_set(n, v) } }
+        guard Theme.keep(light: light, season: season) else { return tableView.reloadData() }
+        (UIApplication.shared.delegate as? AppDelegate)?.restyle()
     }
 }
 

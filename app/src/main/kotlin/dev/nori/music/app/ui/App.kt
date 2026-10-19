@@ -33,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,6 +49,7 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.onSizeChanged
@@ -71,7 +73,31 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 
 /** Plain screens sit below the status bar; album, artist and playlist pages draw under it. */
 @Composable
-private fun Inset(content: @Composable () -> Unit) = androidx.compose.foundation.layout.Box(Modifier.windowInsetsPadding(statusBarRoom)) { content() }
+private fun Inset(content: @Composable () -> Unit) {
+    val room = statusBarRoom
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val top = with(density) { room.getTop(this).toDp() }
+    val page = MaterialTheme.colorScheme.background
+    val outStart = LocalPageStart.current
+    val outEnd = LocalPageEnd.current
+    // What scrolls up under the status bar ([underStatusBar]) fades out into the page's colour across the bar's
+    // room, as a sideways row fades out under the strip beside it; below the room nothing is touched.
+    androidx.compose.foundation.layout.Box(
+        Modifier.drawWithCache {
+            val h = top.toPx()
+            val l = outStart.toPx()
+            val fade = androidx.compose.ui.graphics.Brush.verticalGradient(
+                0f to page, 0.4f to page.copy(alpha = 0.85f), 0.75f to page.copy(alpha = 0.35f), 1f to page.copy(alpha = 0f),
+                startY = 0f, endY = h,
+            )
+            val area = androidx.compose.ui.geometry.Size(size.width + l + outEnd.toPx(), h)
+            onDrawWithContent {
+                drawContent()
+                if (h > 0f) drawRect(fade, topLeft = androidx.compose.ui.geometry.Offset(-l, 0f), size = area)
+            }
+        }.windowInsetsPadding(room),
+    ) { CompositionLocalProvider(LocalStatusRoom provides top) { content() } }
+}
 
 /**
  * Navigation as the screens see it; they never touch the NavController. Going anywhere puts the player
@@ -157,6 +183,9 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
 }
 
 /** Counts taps on the search tab; the search field takes focus again on each one. */
+/** How long the chrome's glyphs take to stand upright after a turn of the phone: about as long as the system's dissolve. */
+private const val TURN_MS = 400
+
 private val searchTaps = androidx.compose.runtime.mutableIntStateOf(0)
 
 @Composable
@@ -191,9 +220,9 @@ val LocalLyricsKeepOn = staticCompositionLocalOf<androidx.compose.runtime.Mutabl
 
 private val tabs = listOf(
     Tab("home", say.home, Icons.Filled.Home),
-    Tab("search", say.search, Icons.Filled.Search),
     Tab("library", say.library, Icons.Filled.LibraryMusic),
     Tab("settings", say.settings, Icons.Filled.Settings),
+    Tab("search", say.search, Icons.Filled.Search),
 )
 
 /**
@@ -334,7 +363,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         val config = androidx.compose.ui.platform.LocalConfiguration.current
         val wide = isWide(config.screenWidthDp, config.screenHeightDp)
         // The bars the app has put away, set below where they are decided, read by its dialogs' windows.
-        val hiddenBars = remember { mutableStateOf(HiddenBars(status = false, gesture = false)) }
+        val hiddenBars = remember { mutableStateOf(HiddenBars(status = false)) }
         CompositionLocalProvider(
             LocalNav provides nav,
             LocalLyricsKeepOn provides lyricsKeepOn,
@@ -368,9 +397,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             // reaches the bottom edge, and the list scrolls under the mini player the way Apple's does.
             // Screens keep the last row reachable by adding LocalChromeInset to their content padding.
             var chromeHeight by remember { mutableStateOf(0.dp) }
-            var tabsHeight by remember { mutableStateOf(0.dp) }
-            // On its side the tabs stand on a rail at the right edge (TabRail), and the page gives it that edge;
-            // the left edge is kept clear of the camera's punch hole.
+            // On its side the page is kept clear of the camera's punch hole.
             // The status bar put away where the setting says (the core's `status_bar_hidden`) - on its side out of
             // the box, where the screen is short and the page runs to the top edge. A swipe from the edge brings it
             // back for a moment, as in any full screen app.
@@ -386,15 +413,11 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
             }
             // Burn-in protection while nori keeps the screen on: everything drifts a few dp once a minute (the
-            // core's `burn_in_drift`) and after a while untouched the screen dims. Either bar can be put away
+            // core's `burn_in_drift`) and after a while untouched the screen dims. The status bar can be put away
             // while it is at work (the core's `bar_hidden`).
             val protecting = prefs.burnInProtection && (awake || lyricsKeepOn.value)
             val hideBar = remember(prefs.hideStatusBar, wide, protecting) { dev.nori.music.ffi.settings.barHidden(prefs.hideStatusBar, wide, protecting) }
-            // From Android 11, where the bar's room reads the same while it is away (gestureBarRoom).
-            val hideGestureBar = remember(prefs.hideGestureBar, wide, protecting) {
-                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && dev.nori.music.ffi.settings.barHidden(prefs.hideGestureBar, wide, protecting)
-            }
-            val bars = remember(hideBar, hideGestureBar) { HiddenBars(hideBar, hideGestureBar) }
+            val bars = remember(hideBar) { HiddenBars(hideBar) }
             androidx.compose.runtime.SideEffect { hiddenBars.value = bars }
             LaunchedEffect(bars) {
                 val window = (barsView.context as? android.app.Activity)?.window ?: return@LaunchedEffect
@@ -425,25 +448,24 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     touches.onStart { emit(Unit) }.collectLatest { dim = 0f; kotlinx.coroutines.delay(after); dim = amount }
                 }
             }
-            // Which way round: the edge the bar stood on is on the right turned one way, on the left the other
-            // (TabRail), and the camera on the opposite side.
-            val view = androidx.compose.ui.platform.LocalView.current
-            val rotation = remember(config) { view.display?.rotation ?: android.view.Surface.ROTATION_0 }
             // On a car's own screen the controls and the tabs go beside the driver (DriverSide), or on the side
             // chosen in Settings (the core's `controls_on_left`). A phone keeps its layout.
             val car = remember(context) { DriverSide.isCar(context) }
             val driverLeft = remember(context) { DriverSide.onLeft(context) }
             val coverAtEnd = wide && car && dev.nori.music.ffi.settings.controlsOnLeft(prefs.controlsSide, driverLeft)
-            val railLeft = wide && (rotation == android.view.Surface.ROTATION_270 || coverAtEnd)
-            val railInset = if (wide) tabRailWidth() else 0.dp
+            // On its side the chrome stands on the edge the phone's bottom turned to (SideChrome): the right one
+            // way round, the left the other, or beside a car's driver. The camera is on the opposite side.
+            val rotation = remember(config) { barsView.display?.rotation ?: android.view.Surface.ROTATION_0 }
+            val chromeLeft = wide && (rotation == android.view.Surface.ROTATION_270 || coverAtEnd)
+            androidx.compose.runtime.SideEffect {
+                sheet.edge = if (!wide) SheetEdge.BOTTOM else if (chromeLeft) SheetEdge.LEFT else SheetEdge.RIGHT
+            }
+            var sideRoom by remember { mutableStateOf(0.dp) }
             val cutout = androidx.compose.foundation.layout.WindowInsets.displayCutout.asPaddingValues()
-            val cutoutStart = if (wide && !railLeft) cutout.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else 0.dp
-            val cutoutEnd = if (wide && railLeft) cutout.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else 0.dp
-            val pageStart = if (railLeft) railInset else cutoutStart
-            val pageEnd = if (railLeft) cutoutEnd else railInset
-            // A turn of the phone: the system dissolves the old layout into the new (MainActivity), the bar is laid
-            // out again where it already lay, and its glyphs turn upright from where they were. Nothing here fades
-            // the page itself: a page brought up from nothing under the dissolve was a flash of black.
+            val pageStart = if (!wide) 0.dp else if (chromeLeft) sideRoom else cutout.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
+            val pageEnd = if (!wide) 0.dp else if (chromeLeft) cutout.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) else sideRoom
+            // A turn of the phone: the system dissolves the old layout into the new (MainActivity), the chrome is
+            // laid out again where it already lay, and its glyphs turn upright from where they were.
             val turn = remember { androidx.compose.animation.core.Animatable(0f) }
             val lastRotation = remember { intArrayOf(rotation) }
             LaunchedEffect(rotation) {
@@ -451,24 +473,25 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 lastRotation[0] = rotation
                 if (steps == 0) return@LaunchedEffect
                 turn.snapTo(when (steps) { 1 -> -90f; 3 -> 90f; else -> 180f })
-                if (AppMotion.reduce) turn.snapTo(0f) else turn.animateTo(0f, androidx.compose.animation.core.tween(360, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+                if (AppMotion.reduce) turn.snapTo(0f) else turn.animateTo(0f, androidx.compose.animation.core.tween(TURN_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
             }
             val density = androidx.compose.ui.platform.LocalDensity.current
-            // One look for both halves of the chrome, cross-fading once when the page under it changes.
+            // One look for the chrome, cross-fading once when the page under it changes.
             val chromeLook = rememberChromeLook()
+            val backdrop = rememberBackdrop()
             // This replaced a Scaffold when the chrome started floating, and with it went the two things
             // Scaffold quietly provided: something that paints the app's background (every screen was
             // showing the window's default grey, lighter than our own cards) and a content colour for
             // text that does not name one (which left titles rendering almost black).
             Surface(color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
-            Box(Modifier.fillMaxSize().onGloballyPositioned { sheet.rootHeight = it.size.height.toFloat() }.then(if (protecting) Modifier.burnInProtection(touches, { drift }, { dim }) else Modifier)) {
+            Box(Modifier.fillMaxSize().onGloballyPositioned { sheet.rootSize = it.size }.then(if (protecting) Modifier.burnInProtection(touches, { drift }, { dim }) else Modifier)) {
               // Everything under the player. Once the player covers it completely it is not drawn at all (a
               // layer at zero alpha is skipped), and what ticks on the page stops (LocalPageCovered).
               val covered by remember(sheet) { androidx.compose.runtime.derivedStateOf { sheet.progress.value >= 1f } }
-              CompositionLocalProvider(LocalWide provides wide, LocalCoverAtEnd provides coverAtEnd, LocalTabTurn provides { turn.value }, LocalPageStart provides pageStart, LocalPageEnd provides pageEnd) {
+              CompositionLocalProvider(LocalWide provides wide, LocalCoverAtEnd provides coverAtEnd, LocalPageStart provides pageStart, LocalPageEnd provides pageEnd) {
               CompositionLocalProvider(LocalPageCovered provides covered) {
               Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (covered) 0f else 1f }) {
-              // The strips the rail and the camera stand on are the app's own page; a tinted page paints them over
+              // The strips the camera and the chrome stand in are the app's own page; a tinted page paints them over
               // itself (HeroPage), so its colour comes and goes with the page. Painted here in the chrome's
               // colour, which follows a page on a slower fade of its own, they held the album's colour at the
               // screen's edges while the page slid away.
@@ -480,8 +503,12 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
               }
               CompositionLocalProvider(LocalStarMarks provides marks, LocalChromeInset provides chromeHeight) {
               val pageBackground = MaterialTheme.colorScheme.background
+              // The pages span the whole width and keep their content off the strips themselves (Page): the stack
+              // clips to its own bounds while some of its changes run, and a page's colour and rows run on under the strips.
               Box(
-                  Modifier.fillMaxSize().padding(start = pageStart, end = pageEnd)
+                  Modifier.fillMaxSize()
+                      // What the chrome blurs behind itself (Pill).
+                      .drawsBackdrop(backdrop)
                       .onSizeChanged { swipe.width = it.width.toFloat() }
                       // The page a swipe back brings, under the one it takes away (PageSwipe).
                       .drawBehind { drawUnder(swipe, pageBackground) },
@@ -528,28 +555,41 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                 }
                 // A newer release, and its download and install once asked for; under the player, so the
                 // player covers it. See UpdateBanner.
-                UpdateBanner(settings, Modifier.align(Alignment.TopCenter))
+                UpdateBanner(settings, Modifier.align(Alignment.TopCenter).padding(start = pageStart, end = pageEnd))
                 ChangelogDialog(settings)
               }
               }
+              // Upright, what runs on under the bar fades into the page's colour across the bar's room, as a row on its
+              // side does under the strip the chrome stands in (bleedsToEdges); the page's colour is the chrome's look's.
+              if (!wide) Box(
+                  Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(chromeHeight + EDGE_REACH).drawBehind {
+                      val reach = EDGE_REACH.toPx()
+                      val fade = edgeFade(chromeLook.color(CoverLook.CHROME_PAGE), size.height - reach, reach)
+                      drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(*fade, startY = 0f, endY = size.height))
+                  },
+              )
               Box(
                   Modifier.align(Alignment.BottomCenter).padding(start = pageStart, end = pageEnd)
-                      .onGloballyPositioned { chromeHeight = with(density) { it.size.height.toDp() } },
+                      .onGloballyPositioned { chromeHeight = with(density) { it.size.height.toDp() } }
+                      .then(if (wide) Modifier else Modifier.keepsTouches()),
               ) {
                   // The now playing bar has a heart now, and it reads the stars the user has just
                   // changed from here like every other one. Outside this, it saw only the server's
                   // answer, so a tap on it changed nothing until the song came round again.
-                  CompositionLocalProvider(LocalStarMarks provides marks) { BottomChrome(player, actions, nav::player, if (wide) 0.dp else tabsHeight, chromeLook) }
+                  CompositionLocalProvider(LocalStarMarks provides marks, LocalBackdrop provides backdrop, LocalGlyphTurn provides { turn.value }) {
+                      BottomChrome(player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook)
+                  }
+              }
+              if (wide) CompositionLocalProvider(LocalStarMarks provides marks, LocalGlyphTurn provides { turn.value }) {
+                  SideChrome(
+                      player, actions, nav::player, tabRoute, tabs, nav::tab, chromeLook, chromeLeft,
+                      Modifier.align(if (chromeLeft) Alignment.CenterStart else Alignment.CenterEnd)
+                          .onGloballyPositioned { sideRoom = with(density) { it.size.width.toDp() } }.keepsTouches(),
+                  )
               }
               }
               }
               PlayerLayer(sheet) { CompositionLocalProvider(LocalStarMarks provides marks) { PlayerScreen(player, actions) } }
-              // The tab bar is over the player, not under it: as the player rises it slides down off the
-              // screen instead of vanishing under the sheet in one frame. See BottomChrome.
-              if (wide) Box(Modifier.align(if (railLeft) Alignment.CenterStart else Alignment.CenterEnd).fillMaxHeight()) {
-                  TabRail(tabRoute, tabs, nav::tab, chromeLook, player, railLeft)
-              }
-              else Box(Modifier.align(Alignment.BottomCenter)) { TabBar(tabRoute, tabs, nav::tab, chromeLook, player) { tabsHeight = it } }
               }
               // Top: less in the way of the now-playing bar; swipe or the X dismisses.
               SnackbarHost(
@@ -571,11 +611,9 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                       enableDismissFromEndToStart = true,
                   ) {
                       val v = data.visuals
-                      // The bottom bars' colours, and the accent their lit tab wears.
-                      val accent = rememberTabAccent(player, chromeLook.color(CoverLook.CHROME_SLAB), chromeLook.color(CoverLook.CHROME_CONTENT))
                       Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                           MessagePill(
-                              v.message, chromeLook, Modifier.widthIn(max = 560.dp), accent = { accent }, maxLines = 3,
+                              v.message, chromeLook, Modifier.widthIn(max = 560.dp), maxLines = 3,
                               action = v.actionLabel, onAction = data::performAction,
                               onDismiss = if (v.withDismissAction) data::dismiss else null,
                           )
@@ -747,8 +785,9 @@ internal object PageMotion {
     fun dimSpec(plain: Boolean): androidx.compose.animation.core.FiniteAnimationSpec<Float> =
         if (plain) androidx.compose.animation.core.tween(90) else androidx.compose.animation.core.tween(MS, easing = Settle)
 
-    /** The shadow the page on top casts on the one under it while it moves. */
+    /** The shadow the page on top casts on the one under it while it moves: how far it reaches, and how dark at the edge. */
     val EDGE_SHADOW = 16.dp
+    const val EDGE_SHADE = 0.28f
 }
 
 /**
@@ -777,20 +816,51 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
         null -> false
     }
     val top = entry.destination.route !in PageSwipe.ROOTS && transition.targetState == androidx.compose.animation.EnterExitState.Visible
+    // On its side a page spans the strips beside it (the camera's, the chrome's) and keeps its content off them; its
+    // background and rows run on under them (HeroPage, bleedsToEdges), and its edges are the screen's.
+    val outStart = LocalPageStart.current
+    val outEnd = LocalPageEnd.current
+    // Where the page stands in the window, the motion's slide included: its shadow goes as its edge reaches the
+    // edge of the pages (the strip's), rather than showing past the chrome after the edge that casts it has gone under it.
+    var at by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
     Box(
         Modifier.fillMaxSize()
-            .graphicsLayer {
-                translationX = if (swiped) swipe.offset else 0f
-                shadowElevation = if (onTop) PageMotion.EDGE_SHADOW.toPx() else 0f
+            .onGloballyPositioned { at = it.positionInRoot().x }
+            .graphicsLayer { translationX = if (swiped) swipe.offset else 0f }
+            .drawBehind {
+                if (!moving && !swiped) return@drawBehind
+                drawRect(background)
+                if (!onTop) return@drawBehind
+                // Drawn beside the page rather than cast by an elevation: a layer with one is drawn in front of the
+                // chrome over the page, and the page passing under the side pill showed over it for a moment.
+                val x = at + if (swiped) swipe.offset else 0f
+                val room = minOf(size.width - outEnd.toPx() - x, x + size.width - outStart.toPx())
+                val w = PageMotion.EDGE_SHADOW.toPx()
+                val shade = androidx.compose.ui.graphics.Color.Black.copy(alpha = PageMotion.EDGE_SHADE * (room / (w * 2f)).coerceIn(0f, 1f))
+                val clear = androidx.compose.ui.graphics.Color.Transparent
+                val soft = shade.copy(alpha = shade.alpha * 0.3f)
+                drawRect(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(0f to clear, 0.6f to soft, 1f to shade, startX = -w, endX = 0f),
+                    topLeft = androidx.compose.ui.geometry.Offset(-w, 0f), size = androidx.compose.ui.geometry.Size(w, size.height),
+                )
+                drawRect(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(0f to shade, 0.4f to soft, 1f to clear, startX = size.width, endX = size.width + w),
+                    topLeft = androidx.compose.ui.geometry.Offset(size.width, 0f), size = androidx.compose.ui.geometry.Size(w, size.height),
+                )
             }
-            .drawBehind { if (moving || swiped) drawRect(background) }
             .drawWithContent {
                 layer.record { this@drawWithContent.drawContent() }
                 drawLayer(layer)
                 if (dim > 0.002f) drawRect(androidx.compose.ui.graphics.Color.Black.copy(alpha = dim))
             }
             .swipeBack(swipe, enabled = top),
-    ) { content() }
+    ) {
+        val leaving = swiped ||
+            PageMotion.pop == true && transition.targetState == androidx.compose.animation.EnterExitState.PostExit
+        androidx.compose.runtime.CompositionLocalProvider(LocalPageLeaving provides leaving, LocalPageEntry provides entry.id) {
+            Box(Modifier.fillMaxSize().padding(start = outStart, end = outEnd)) { content() }
+        }
+    }
 }
 
 /**
@@ -835,7 +905,7 @@ private fun EdgeBack(swipe: PageSwipe, sheet: PlayerSheet, controller: androidx.
 
 /**
  * The player sheet over everything else, present only while it is open or moving. The page behind
- * darkens as it rises; the sheet's top corners round off while it is in flight and square up once it
+ * darkens as it comes in; the sheet's leading corners round off while it is in flight and square up once it
  * fills the screen. All of it is read in the draw phase, so a drag redraws two layers and recomposes
  * nothing.
  */
@@ -864,14 +934,21 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
             // Put away, it is parked a whole screen below the bottom edge: nothing drawn, and nothing to
             // catch a touch meant for the mini player (a transparent layer would still be hit).
             val parked = sheet.progress.value == 0f && sheet.progress.targetValue == 0f
-            translationY = if (parked) sheet.rootHeight * 2f + 1f else sheet.offset()
+            val at = sheet.offset()
+            translationX = if (parked) 0f else at.x
+            translationY = if (parked) sheet.rootSize.height * 2f + 1f else at.y
             // It comes up *through* the now playing bar rather than on top of it: for the first tenth of
             // the rise the player is still part transparent, so the bar shows through its own place in
             // it. At full strength on the first frame of a drag, a whole dark page would appear out of
             // nothing before it had moved anywhere.
             alpha = if (parked) 0f else (sheet.progress.value / 0.1f).coerceIn(0f, 1f)
-            val r = radius * (1f - sheet.progress.value).coerceIn(0f, 1f) * 4f
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = r.coerceAtMost(radius), topEnd = r.coerceAtMost(radius))
+            // Its leading corners: the top ones, or on its side the two facing the page.
+            val r = (radius * (1f - sheet.progress.value).coerceIn(0f, 1f) * 4f).coerceAtMost(radius)
+            shape = if (sheet.sinking) androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, topEnd = r) else when (sheet.edge) {
+                SheetEdge.BOTTOM -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, topEnd = r)
+                SheetEdge.RIGHT -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, bottomStart = r)
+                SheetEdge.LEFT -> androidx.compose.foundation.shape.RoundedCornerShape(topEnd = r, bottomEnd = r)
+            }
             clip = true
         }
             // The player is a page, not a pane of glass. Only its buttons and gestures listened, so a
@@ -914,8 +991,8 @@ private fun rememberCharging(watch: Boolean): Boolean {
 }
 
 /**
- * Burn-in protection over the whole app: what is drawn moves by [drift] and is enlarged by its reach on each
- * side, so no edge comes into view; [dim] darkens it, and every touch or lift is told to [touches] without
+ * Burn-in protection over the whole app: what is drawn moves by [drift], a few dp, the app's own background
+ * showing at the edge it leaves; [dim] darkens it, and every touch or lift is told to [touches] without
  * being taken from what it lands on.
  */
 private fun Modifier.burnInProtection(
@@ -938,9 +1015,6 @@ private fun Modifier.burnInProtection(
     }
     .graphicsLayer {
         val d = drift() ?: return@graphicsLayer
-        val reach = d.reachDp.dp.toPx()
-        scaleX = 1f + 2f * reach / size.width
-        scaleY = 1f + 2f * reach / size.height
         translationX = d.xDp.dp.toPx()
         translationY = d.yDp.dp.toPx()
     }

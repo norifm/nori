@@ -78,7 +78,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -410,10 +409,12 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         if (LocalPlayerShown.current) SystemBarIcons(live)
         Box(
             // Pull down from anywhere on the artwork page and the whole player follows the finger down;
-            // the lyrics and queue need a vertical drag to scroll, so there only the handle does.
+            // the lyrics and queue need a vertical drag to scroll, so there only the handle does. On its side
+            // a pull down anywhere does it too (what scrolls takes its own drags first), and the controls' half
+            // also takes a sideways one (PlayerHalves): across the cover a sideways drag changes the song.
             Modifier.fillMaxSize().onGloballyPositioned { player[0] = it }
                 .then(if (motion != null) Modifier.watchTouches(motion) else Modifier)
-                .dragsSheet(sheet, enabled = panel == Panel.ART),
+                .dragsSheet(sheet, enabled = panel == Panel.ART || LocalWide.current, down = LocalWide.current),
         ) {
             // The page is the cover itself, enlarged and smoothed, lined up with the sleeve. No seam
             // gradient over it: the sleeve carries its own dissolve at its bottom edge, and a gradient
@@ -491,10 +492,10 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
             @Composable fun kept(key: String) = Modifier.sharedElement(rememberSharedContentState(key), this@AnimatedContent)
             // The page's text colour, read while the transport draws.
             val ink = androidx.compose.ui.graphics.ColorProducer { live.color(CoverLook.ON) }
-            // On its side the controls' half has nothing of its own to scroll, so a pull down anywhere on it puts
-            // the player away whatever the panel - as the artwork does - while the lyrics and the queue beside it
-            // keep their vertical drag for scrolling.
-            PlayerHalves(LocalWide.current, Modifier.dragsSheet(sheet, enabled = panel != Panel.ART), panel = {
+            // On its side the controls' half has nothing of its own to drag across but its sliders, so a drag
+            // towards the mini player's edge anywhere on it puts the player away whatever the panel, while the
+            // cover beside it keeps its sideways drag for the songs either side.
+            PlayerHalves(LocalWide.current, Modifier.dragsSheet(sheet, enabled = LocalWide.current), panel = {
                 // The artwork bleeds to all three edges like the sleeve it is - up under the status bar
                 // as well, which is the whole point: Apple's has no top edge, and giving it one drew a
                 // line across the screen. The handle and the close button float over it instead.
@@ -674,16 +675,16 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     }
                     state.current?.let { s ->
                         val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
-                        Row(Modifier, Arrangement.spacedBy(16.dp), Alignment.CenterVertically) {
-                            // A heart, as on an album, an artist and a playlist. The star here was the
-                            // odd one out, and a song being "starred" while everything else is
-                            // "favourited" is a distinction the server makes and nobody else does.
-                            // A jam guest's hearts would be the host's; a provider may have them signed in.
-                            if (LocalRules.current.stars) TitleCircle(
-                                if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                                say.favourite, starred,
+                        // Out by the glyph's inset in its hit box, so the last glyph ends where the seek bar does.
+                        Row(Modifier.offset(x = 8.dp), Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
+                            // The seal, as on an album, an artist and a playlist. A song being "starred" while
+                            // everything else is "favourited" is a distinction the server makes and nobody else does.
+                            // A jam guest's seals would be the host's; a provider may have them signed in.
+                            if (LocalRules.current.stars) TitleButton(
+                                if (starred) Kanji.Sealed else Kanji.Seal,
+                                say.favourite, starred, rememberStamp(),
                             ) { actions.star(s, !starred) }
-                            TitleCircle(Icons.Filled.MoreHoriz, say.more, false) { playerMenu(s) }
+                            TitleButton(Icons.Filled.MoreHoriz, say.more, false) { playerMenu(s) }
                         }
                     }
                 }
@@ -743,7 +744,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 // move the lyrics and queue buttons; each keeps the line under its glyph whether it has words or not.
                 Row(kept("icons").fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 4.dp), verticalAlignment = Alignment.Top) {
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, nudge = (-1.5).dp, enabled = !radio) { choose(Panel.LYRICS) }
+                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, nudge = (-1.5).dp, drop = 2.7.dp, enabled = !radio) { choose(Panel.LYRICS) }
                         Spacer(Modifier.height(OUTPUT_LINE))
                     }
                     // Apple's middle glyph is AirPlay, not a sleep timer: on this screen the thing worth
@@ -832,7 +833,7 @@ private fun PlayerHalves(wide: Boolean, controlsDrag: Modifier, panel: @Composab
             }
             Column(
                 // Clear of the camera's punch hole too, which is on this side when the phone is turned the other way.
-                // The whole half, edge to edge, takes the pull down ([controlsDrag]) before the insets are kept off.
+                // The whole half, edge to edge, takes the drag that puts the player away ([controlsDrag]) before the insets are kept off.
                 // The same room kept above as below (the gesture bar's, or the status bar's if it is shown), so the
                 // controls stand in the middle of the screen's height rather than of what is above the gesture bar.
                 Modifier.padding(start = if (atEnd) 0.dp else controlsAt, end = if (atEnd) controlsAt else 0.dp).fillMaxSize().then(controlsDrag).padding(vertical = barRoom())
@@ -1052,7 +1053,7 @@ private fun FlyingThumb(sheet: PlayerSheet, url: String?) {
             Modifier.requiredSize(side).align(Alignment.TopStart)
                 .graphicsLayer {
                     val t = sheet.progress.value.coerceIn(0f, 1f)
-                    val from = sheet.miniCover.translate(0f, -sheet.travel)
+                    val from = sheet.miniCover.translate(-sheet.closed())
                     fun mix(a: Float, b: Float) = a + (b - a) * t
                     val k = (mix(from.height, to.height) / to.height).coerceAtLeast(0.01f)
                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
@@ -1278,7 +1279,7 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                 Modifier.requiredSize(side).align(Alignment.TopStart)
                     .graphicsLayer {
                         val t = sheet.progress.value.coerceIn(0f, 1f)
-                        val from = sheet.miniCover.translate(0f, -sheet.travel)
+                        val from = sheet.miniCover.translate(-sheet.closed())
                         fun mix(a: Float, b: Float) = a + (b - a) * t
                         val k = (mix(from.height, h) / h).coerceAtLeast(0.01f)
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
@@ -2214,42 +2215,20 @@ private fun rememberPictureFade(cover: CoverImage): Animatable<Float, androidx.c
     return a
 }
 
-/** A title-row circle: translucent fill, light glyph, 48 dp across with a 44 dp hit region or better. */
+/** A title-row button: the bare glyph in the page's ink (the accent when [selected]), 28 dp, with a 48 dp hit region. */
 @Composable
-internal fun TitleCircle(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
-    // These two sit on the sleeve's own melting bottom, not on the page: whatever the page colour is,
-    // what is behind them is a piece of the record, and it can be any brightness at all. A disc tinted
-    // from the page came out lighter than the page on a bright record and carried a white glyph on top
-    // of it - on The Bends, a pale orange disc with a white heart. The disc brings its own contrast.
-    //
-    // Disc strength tracks page lightness continuously (same as Play): a boolean onSurface cut flipped
-    // black↔white midway through a swipe onto paper, and a white disc on a white wash had no contrast.
-    // Both are the look's (nori_look::dress), read while drawing: a page changing colour redraws them.
+internal fun TitleButton(icon: ImageVector, label: String, selected: Boolean, stamp: Stamp? = null, onClick: () -> Unit) {
+    // The page's ink, as the title beside it: read while drawing, so a page changing colour redraws it.
     val look = LocalLook.current
-    val plain = reduceMotion()
-    val scale = remember { androidx.compose.animation.core.Animatable(1f) }
-    var ready by remember { mutableStateOf(false) }
-    // Jump only for the heart, when its selected state flips.
-    val isHeart = icon == Icons.Filled.Favorite || icon == Icons.Filled.FavoriteBorder
-    LaunchedEffect(selected, isHeart) {
-        if (!isHeart) return@LaunchedEffect
-        if (!ready) { ready = true; return@LaunchedEffect }
-        if (plain) return@LaunchedEffect
-        scale.snapTo(1f)
-        scale.animateTo(1.22f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 900f))
-        scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 600f))
-    }
-    // Material's Surface, laid out the same way, with its plate drawn rather than composed.
-    androidx.compose.runtime.CompositionLocalProvider(LocalContentColor provides Color.White) {
-        Box(
-            Modifier.size(42.dp).graphicsLayer { scaleX = scale.value; scaleY = scale.value }
-                .minimumInteractiveComponentSize()
-                .drawBehind { drawCircle(look.color(CoverLook.DISC)) }
-                .clip(CircleShape)
-                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick),
-            Alignment.Center,
-        ) {
-            LookIcon(icon, label, Modifier.size(25.dp)) { if (selected) look.color(CoverLook.DISC_INK_SELECTED) else Color.White }
+    Box(
+        Modifier.size(44.dp)
+            .minimumInteractiveComponentSize()
+            .clip(CircleShape)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button) { if (!selected) stamp?.down(); onClick() },
+        Alignment.Center,
+    ) {
+        LookIcon(icon, label, Modifier.size(28.dp).then(if (stamp != null) Modifier.graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value } else Modifier)) {
+            look.color(if (selected) CoverLook.ACCENT else CoverLook.ON)
         }
     }
 }
@@ -2402,17 +2381,19 @@ private fun PanelButton(
      * Optical alignment. The three boxes are spaced evenly and the glyphs are centred in them, but the
      * ink inside a Material glyph is not centred in its own square and no two of these three fill it
      * the same way: measured on screen, the queue's marks came out a sixth narrower than the other two
-     * and the row read as leaning. [size] evens out how much of the box each one covers and [nudge]
-     * moves its ink, not its touch target, so the three sit symmetrically about the middle one.
+     * and the row read as leaning, and the lyrics' bubble, its weight in its top, stood 2.7 dp above the
+     * others' middles. [size] evens out how much of the box each one covers and [nudge] and [drop] move its
+     * ink, not its touch target, so the three sit symmetrically about the middle one and on one line.
      */
     size: androidx.compose.ui.unit.Dp = 27.dp,
     nudge: androidx.compose.ui.unit.Dp = 0.dp,
+    drop: androidx.compose.ui.unit.Dp = 0.dp,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val look = LocalLook.current
     IconButton(onClick, enabled = enabled) {
-        LookIcon(icon, label, Modifier.size(size).offset(x = nudge)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+        LookIcon(icon, label, Modifier.size(size).offset(x = nudge, y = drop)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
     }
 }
 

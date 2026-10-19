@@ -31,18 +31,23 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             let failed = dir.withCString { d in taken(nori_ios_open(d, nil)) }
             guard failed == nil else { return }
             let light = SettingsPage.value("theme").map(Theme.isLight) ?? Theme.light
+            let season = SettingsPage.value("season") ?? Theme.season
             DispatchQueue.main.async {
-                if light != Theme.light { self.restyle(light: light) }
+                if Theme.keep(light: light, season: season) { self.restyle() }
                 Core.shared.opened()
             }
         }
         return true
     }
 
-    /// Builds the interface again in `light` or dark, on the tab it was on.
-    func restyle(light: Bool) {
+    /// The date may have moved the season (nothing else ticks): the colours are read again.
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        if Theme.keep(light: Theme.light, season: Theme.season) { restyle() }
+    }
+
+    /// Builds the interface again in the colours `Theme` now has, on the tab it was on.
+    func restyle() {
         guard let window else { return }
-        Theme.keep(light: light)
         let tab = (window.rootViewController as? UITabBarController)?.selectedIndex ?? 0
         let shell = ShellController()
         shell.loadViewIfNeeded()

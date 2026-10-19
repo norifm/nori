@@ -161,8 +161,6 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     private fun factsOf(d: DacState, s: SyncUi, st: StorageUi, analysed: Int, folders: List<MusicFolder>) = SettingsFacts(
         dac = d,
-        // Wallpaper colours need Android 12.
-        wallpaperColours = android.os.Build.VERSION.SDK_INT >= 31,
         analysed = analysed,
         sync = s,
         storage = st,

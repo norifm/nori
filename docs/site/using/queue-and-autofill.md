@@ -30,6 +30,10 @@ Autofill is on by default. When the last song starts, nori adds more music:
 | Chosen by | Similar music | similar music, the same artist, the same genre, the same era |
 | Include remote songs | off | songs from octo-fiesta's providers; each one played is downloaded into your library |
 
+With albums chosen, nori adds whole albums of at least three songs (from nori 0.6.3). When nothing related has
+one, for example after a remote song by an artist not in your library, it adds a random album from your library
+rather than singles.
+
 In 0.6.0-beta.3 and later, autofill on the iPod, desktop, and terminal also continues when its songs arrive after the queue has ended. An explicit pause stays paused, and selecting another album discards the previous queue's pending refill.
 
 ## Mixes

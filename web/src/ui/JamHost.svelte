@@ -49,7 +49,7 @@
     <button class="pill small" onclick={() => (inviting = false)}><Icon name="back" />{W.back}</button>
     <h3>{W.jamInviteTitle}</h3>
     {#if qr}
-      <svg class="qr" viewBox="-2 -2 {qr.size + 4} {qr.size + 4}" role="img" aria-label={W.jamInviteTitle}><rect x="-2" y="-2" width={qr.size + 4} height={qr.size + 4} fill="#fff" /><path d={path(qr)} fill="#000" /></svg>
+      <svg class="qr" viewBox="-2 -2 {qr.size + 4} {qr.size + 4}" role="img" aria-label={W.jamInviteTitle}><rect x="-2" y="-2" width={qr.size + 4} height={qr.size + 4} fill="white" /><path d={path(qr)} fill="black" /></svg>
     {/if}
     <p class="sub">{W.jamInviteHint}</p>
     <div class="invite">
@@ -116,7 +116,8 @@
   }
   .line .name {
     flex: 1;
-    font: 700 16px/1.2 var(--display);
+    font-size: 16px;
+    font-weight: 700;
   }
   h3 {
     font-size: 19px;

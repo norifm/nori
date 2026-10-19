@@ -3,3 +3,4 @@ src/pkg/
 node_modules/
 check/node_modules/
 check/package-lock.json
+src/fonts/

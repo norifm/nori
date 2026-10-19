@@ -80,7 +80,6 @@ pub enum SectionId {
     Volume,
     Output,
     Theme,
-    Cover,
     Home,
     Screen,
     Motion,
@@ -189,8 +188,6 @@ pub struct SettingsSection {
 pub struct PageFacts {
     /// The parts of the settings the open profile offers.
     pub parts: Vec<SettingsPart>,
-    /// The wallpaper's colors can be the theme's (Android 12).
-    pub wallpaper_colors: bool,
     /// Drawn on a car's own screen.
     pub car: bool,
     /// The active server's music folders, by id.
@@ -213,7 +210,7 @@ pub fn pages(client: SettingsClient, parts: &[SettingsPart]) -> Vec<SettingsPage
     let offered = |p: SettingsPage| match client {
         SettingsClient::Phone => true,
         SettingsClient::Desktop | SettingsClient::Terminal => p != SettingsPage::LyricsSources,
-        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Lyrics | SettingsPage::Library),
+        SettingsClient::Web => matches!(p, SettingsPage::Playing | SettingsPage::Sound | SettingsPage::Look | SettingsPage::Lyrics | SettingsPage::Library),
     };
     SettingsPage::ALL.into_iter().filter(|p| !page_parts(*p).iter().all(|part| !parts.contains(part)) && offered(*p)).collect()
 }
@@ -386,25 +383,23 @@ impl Page<'_> {
 
     fn look(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let p = self.p;
-        let mut theme = Vec::new();
-        if self.phone() {
-            theme.extend([self.chips("theme"), self.setting("amoled")]);
-            if self.f.wallpaper_colors {
-                theme.push(self.setting("dynamicColor"));
-            }
+        let mut theme = vec![self.chips("season")];
+        if self.phone() || self.web() || self.client == SettingsClient::Terminal {
+            theme.extend([self.chips("theme"), self.setting("amoled").under().shown(p.theme != crate::settings::ThemeMode::Light)]);
         }
-        theme.push(self.setting("accent").shown(!(self.phone() && self.f.wallpaper_colors && p.dynamic_color)));
-        let mut cover = vec![self.setting("coverColors")];
-        if self.phone() {
-            cover.push(self.setting("movingCovers"));
+        if self.web() {
+            return vec![(SectionId::Theme, theme)];
         }
-        let mut out = vec![(SectionId::Theme, theme), (SectionId::Cover, cover)];
+        theme.push(self.setting("coverColors"));
+        if self.phone() {
+            theme.push(self.setting("movingCovers"));
+        }
+        let mut out = vec![(SectionId::Theme, theme)];
         if self.phone() {
             use crate::settings::DimIdle;
             let home = vec![row(RowItem::Link { to: SettingsLink::HomeRows }), row(RowItem::Link { to: SettingsLink::LibrarySections })];
             let mut screen = vec![
                 self.setting("hideStatusBar"),
-                self.setting("hideGestureBar"),
                 self.setting("keepAwake"),
                 self.setting("burnInProtection"),
                 self.chips("dimWhenIdle").under().shown(p.burn_in_protection),
@@ -563,7 +558,7 @@ mod tests {
     };
 
     fn facts() -> PageFacts {
-        PageFacts { parts: ALL_PARTS.to_vec(), folders: vec!["1".into(), "2".into()], wallpaper_colors: true, car: true, ..PageFacts::default() }
+        PageFacts { parts: ALL_PARTS.to_vec(), folders: vec!["1".into(), "2".into()], car: true, ..PageFacts::default() }
     }
 
     fn model() -> nori_automix::beat_model::ModelFile {
@@ -618,8 +613,8 @@ mod tests {
         // A setting's row that is not on the page keeps its place, so the search finds it.
         let all = names(&every_row(SettingsClient::Phone, &StoredPrefs { compressor: false, ..d.clone() }, &facts()), false);
         assert!(all.iter().any(|n| n == "compressorPreset"));
-        // The accent gives way to the wallpaper's colors where there are some.
-        assert!(!shown(&d, "accent") && shown(&StoredPrefs { dynamic_color: false, ..d.clone() }, "accent"));
+        // Black is a dark theme's.
+        assert!(shown(&d, "amoled") && !shown(&StoredPrefs { theme: crate::settings::ThemeMode::Light, ..d.clone() }, "amoled"));
     }
 
     #[test]
@@ -629,7 +624,7 @@ mod tests {
         for client in [SettingsClient::Desktop, SettingsClient::Terminal] {
             let rows = every_row(client, &d, &facts());
             let has = names(&rows, false);
-            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "dynamicColor", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
+            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");
@@ -637,6 +632,9 @@ mod tests {
         }
         let terminal = names(&every_row(SettingsClient::Terminal, &d, &facts()), false);
         assert!(!terminal.iter().any(|n| n == "soundBypass" || n == "autoEqAuto"));
+        // The terminal paints its page in the season's colors, light, dark or black.
+        assert!(["season", "theme", "amoled"].iter().all(|n| terminal.iter().any(|t| t == n)));
+        assert!(!names(&every_row(SettingsClient::Desktop, &d, &facts()), false).iter().any(|n| n == "amoled"));
         assert!(names(&every_row(SettingsClient::Desktop, &d, &facts()), false).iter().any(|n| n == "soundBypass"));
         // Not on a car's screen: no side for the controls.
         let parked = PageFacts { car: false, ..facts() };
@@ -646,13 +644,13 @@ mod tests {
     #[test]
     fn a_browser_offers_what_applies_there() {
         let d = StoredPrefs::default();
-        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Lyrics, SettingsPage::Library]);
+        assert_eq!(pages(SettingsClient::Web, &ALL_PARTS), [SettingsPage::Playing, SettingsPage::Sound, SettingsPage::Look, SettingsPage::Lyrics, SettingsPage::Library]);
         let rows = every_row(SettingsClient::Web, &d, &facts());
         let has = names(&rows, false);
-        for kept in ["autoMix", "crossfadeSec", "speed", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl"] {
+        for kept in ["autoMix", "crossfadeSec", "speed", "pitch", "replayGain", "loudnessLevel", "compressor", "lyricsSweep", "remoteControl", "season", "theme", "amoled"] {
             assert!(has.iter().any(|n| n == kept), "{kept} is on the web's pages");
         }
-        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize"] {
+        for left in ["bridgeOffline", "hiRes", "maxRate", "soundBypass", "autoEqAuto", "headphoneSound", "cacheMb", "download", "wifi", "songsAheadWifi", "accent", "lyricsSize", "coverColors", "movingCovers"] {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::Link { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");

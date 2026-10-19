@@ -36,40 +36,40 @@ object CoverLook {
     const val TINT_INK = 16
     const val CIRCLE_SELECTED = 17
     const val CIRCLE_PLATE = 18
-    const val DISC = 19
-    const val DISC_INK_SELECTED = 20
-    const val FIELD = 21
-    const val FORM = 22
-    const val SWITCH_OFF = 23
-    const val VEIL_13 = 24
-    const val VEIL_6 = 25
-    const val VEIL_10 = 26
-    const val ON_60 = 27
-    const val ON_45 = 28
-    const val ON_55 = 29
-    const val ON_22 = 30
-    const val ON_85 = 31
-    const val ON_35 = 32
-    const val ON_80 = 33
-    const val ON_VARIANT_70 = 34
-    const val CHROME_SLAB = 35
-    const val CHROME_CONTENT = 36
-    const val CHROME_PAGE = 37
-    const val CHROME_EDGE = 38
-    const val CHROME_CONTENT_65 = 39
-    const val CHROME_CONTENT_75 = 40
-    const val CHROME_FADE = 41
-    const val STATUS_LIGHT = 42
-    const val BAND_TINT = 43
-    const val BAND_KR = 44
-    const val BAND_KG = 45
-    const val BAND_KB = 46
-    const val HERO_EDGE = 47
-    const val HERO_MID = 48
-    const val FLOOR_0 = 49
-    const val FLOOR_22 = 50
-    const val FLOOR_75 = 51
-    const val LEN = 52
+    const val FIELD = 19
+    const val FORM = 20
+    const val SWITCH_OFF = 21
+    const val VEIL_13 = 22
+    const val VEIL_6 = 23
+    const val VEIL_10 = 24
+    const val ON_60 = 25
+    const val ON_45 = 26
+    const val ON_55 = 27
+    const val ON_22 = 28
+    const val ON_85 = 29
+    const val ON_35 = 30
+    const val ON_80 = 31
+    const val ON_VARIANT_70 = 32
+    const val CHROME_SLAB = 33
+    const val CHROME_CONTENT = 34
+    const val CHROME_PAGE = 35
+    const val CHROME_EDGE = 36
+    const val CHROME_CONTENT_65 = 37
+    const val CHROME_CONTENT_75 = 38
+    const val CHROME_FILL = 39
+    const val STATUS_LIGHT = 40
+    const val BAND_TINT = 41
+    const val BAND_KR = 42
+    const val BAND_KG = 43
+    const val BAND_KB = 44
+    const val HERO_EDGE = 45
+    const val HERO_MID = 46
+    const val FLOOR_0 = 47
+    const val FLOOR_22 = 48
+    const val FLOOR_75 = 49
+    /** The see-through chrome's outline. */
+    const val CHROME_OUTLINE = 50
+    const val LEN = 51
 
     /**
      * Looks [from] and [to] mixed at [t] into [out], all [LEN] entries (`nori_look::dress::mix`): one frame
@@ -90,13 +90,11 @@ object CoverLook {
      */
     fun plain(roles: IntArray): IntArray = IntArray(LEN).also { plain(roles, it) }
 
-    /** Primary, on primary, primary container, on primary container, secondary, secondary container,
-     *  on secondary container, surface, background, surface variant, on surface variant. */
-    fun tones(seed: Int, dark: Boolean): IntArray = IntArray(11).also { tones(seed, dark, it) }
-
-    /** What AMOLED black puts in a dark scheme: background, surface, surface dim, container lowest,
-     *  low, container, high, highest. */
-    fun amoled(): IntArray = IntArray(8).also { amoled(it) }
+    /**
+     * [look] wearing the theme's accent in place of its cover's: [light] on a pale page, [dark] on a dark
+     * one, moved until it reads there (`nori_look::dress::accented`).
+     */
+    fun accented(look: IntArray, light: Int, dark: Int): IntArray = IntArray(LEN).also { accented(look, light, dark, it) }
 
     /**
      * One step of the seek bar towards where the song is (`nori_look::motion::seek_step`): the new place,
@@ -119,12 +117,6 @@ object CoverLook {
     @JvmStatic @CriticalNative external fun seekPaceHold(h: Long, bar: Float, positionMs: Long, durationMs: Long)
     @JvmStatic @CriticalNative external fun seekPaceStep(h: Long, positionMs: Long, durationMs: Long, dtS: Float, widthPx: Float, rate: Float): Int
 
-    /**
-     * [color] moved lighter or darker in its own hue until it reads on [background], trying the other way
-     * when the first runs out (`nori_look::cover::readable_either_way`), else [fallback]. ARGB ints.
-     */
-    @JvmStatic @CriticalNative external fun readable(color: Int, background: Int, fallback: Int): Int
-
     /** Which glyph the play button shows (`nori-core stage::transport_glyph`): 0 play, 1 pause, 2 spinner. */
     @JvmStatic @CriticalNative external fun transportGlyph(playing: Boolean, buffering: Boolean, waited: Boolean): Int
 
@@ -136,6 +128,5 @@ object CoverLook {
     @JvmStatic @CriticalNative external fun heroButtons(here: Boolean, shuffle: Boolean, playing: Boolean, buffering: Boolean, canPlay: Boolean, canShuffle: Boolean): Int
 
     @JvmStatic @FastNative private external fun plain(roles: IntArray, out: IntArray)
-    @JvmStatic @FastNative private external fun tones(seed: Int, dark: Boolean, out: IntArray)
-    @JvmStatic @FastNative private external fun amoled(out: IntArray)
+    @JvmStatic @FastNative private external fun accented(look: IntArray, light: Int, dark: Int, out: IntArray)
 }

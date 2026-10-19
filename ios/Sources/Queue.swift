@@ -171,8 +171,8 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         // A jam's play order is its host's.
         shuffle.isHidden = n.jam
         repeatButton.isHidden = n.jam
-        shuffle.tintColor = n.shuffle ? Theme.Card.label : Theme.Card.dim
-        repeatButton.tintColor = n.repeatMode == 0 ? Theme.Card.dim : Theme.Card.label
+        shuffle.tintColor = n.shuffle ? Theme.Card.accent : Theme.Card.dim
+        repeatButton.tintColor = n.repeatMode == 0 ? Theme.Card.dim : Theme.Card.accent
         repeatButton.setImage(n.repeatMode == 1 ? Glyph.repeatOne : Glyph.repeatAll, for: .normal)
         shuffle.accessibilityTraits = n.shuffle ? [.button, .selected] : .button
         repeatButton.accessibilityTraits = n.repeatMode == 0 ? .button : [.button, .selected]

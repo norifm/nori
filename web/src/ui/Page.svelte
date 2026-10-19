@@ -22,12 +22,13 @@
 </div>
 
 <style>
+  /* The page scrolls under the pills; this keeps its content clear of both at rest. */
   .page {
-    padding: 28px var(--page-pad) 48px;
+    padding: var(--top-h) var(--page-pad) calc(var(--bar-h) + 24px);
   }
   .back {
-    margin: -8px 0 6px -8px;
-    color: var(--accent);
+    margin: 0 0 6px -8px;
+    color: var(--ink2);
   }
   .back :global(.icon) {
     width: 26px;
@@ -38,24 +39,23 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    margin-bottom: 22px;
+    margin: 6px 0 18px;
     flex-wrap: wrap;
   }
   h1 {
-    font-size: 30px;
+    font-size: 34px;
     font-weight: 700;
+    letter-spacing: -0.3px;
   }
-  @media (max-width: 899px) {
+  @media (max-width: 719px) {
     .page {
-      padding-top: calc(16px + env(safe-area-inset-top));
-    }
-    h1 {
-      font-size: 32px;
+      padding-bottom: calc(var(--bar-h) + 24px + env(safe-area-inset-bottom));
     }
   }
   .page :global(h2.section) {
-    font-size: 21px;
+    font-size: 20px;
     font-weight: 700;
+    letter-spacing: -0.2px;
     margin: 30px 0 14px;
   }
 </style>

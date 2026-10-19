@@ -24,14 +24,14 @@
 <style>
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-    gap: 24px 20px;
+    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+    gap: 22px 16px;
   }
   .row {
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: 176px;
-    gap: 20px;
+    gap: 16px;
     overflow-x: auto;
     scroll-snap-type: x mandatory;
     margin: 0 calc(-1 * var(--page-pad));
@@ -47,7 +47,7 @@
       grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
     }
   }
-  @media (max-width: 899px) {
+  @media (max-width: 719px) {
     .grid {
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
       gap: 18px 14px;

@@ -19,7 +19,7 @@
       [W.albums, href("albums", "alphabeticalByName"), "album"],
       [W.songs, href("songs"), "note"],
       [W.genres, href("genres"), "genre"],
-      [W.favorites, href("favorites"), "heart"],
+      [W.favorites, href("favorites"), "seal-line"],
     ].filter(([, h]) => !remote.jam?.guest || !(h === href("playlists") || h === href("favorites"))),
   );
 </script>
@@ -39,25 +39,35 @@
     list-style: none;
     margin: 0;
     padding: 0;
+    background: var(--surface);
+    border: 1px solid var(--hair);
+    border-radius: 18px;
+    overflow: hidden;
+  }
+  .sections li + li {
+    border-top: 1px solid var(--hair);
   }
   .sections a {
     display: flex;
     align-items: center;
     gap: 14px;
-    height: 48px;
-    border-bottom: 1px solid var(--hair);
-    font-size: 19px;
+    height: 52px;
+    padding: 0 16px;
+    font-size: 17px;
+  }
+  .sections a:hover {
+    background: var(--hover);
   }
   .sections a span {
     flex: 1;
   }
   .sections :global(.icon) {
-    color: var(--accent);
+    color: var(--ink);
     width: 24px;
     height: 24px;
   }
   .sections :global(.icon:last-child) {
-    color: var(--faint);
+    color: var(--outline);
     width: 20px;
   }
 </style>

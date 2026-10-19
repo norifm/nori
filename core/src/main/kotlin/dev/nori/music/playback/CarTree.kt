@@ -135,14 +135,14 @@ internal class CarTree(private val context: Context) {
     fun itemButtons(): List<CommandButton> = listOf(
         button(CommandButton.ICON_QUEUE_NEXT, R.drawable.car_play_next, R.string.car_play_next, CMD_ITEM_NEXT),
         button(CommandButton.ICON_QUEUE_ADD, R.drawable.car_add_to_queue, R.string.car_add_to_queue, CMD_ITEM_QUEUE),
-        button(CommandButton.ICON_HEART_UNFILLED, R.drawable.car_favourite, R.string.car_favourite, CMD_ITEM_FAVOURITE),
+        button(CommandButton.ICON_UNDEFINED, R.drawable.seal_outline, R.string.car_favourite, CMD_ITEM_FAVOURITE),
         button(CommandButton.ICON_UNDEFINED, R.drawable.car_download, R.string.car_download, CMD_ITEM_DOWNLOAD),
     )
 
     private fun button(icon: Int, glyph: Int, name: Int, command: String): CommandButton =
         CommandButton.Builder(icon).setIconUri(CarArt.glyph(context, glyph)).setDisplayName(context.getString(name))
             .setSessionCommand(SessionCommand(command, Bundle.EMPTY))
-            .apply { if (icon == CommandButton.ICON_UNDEFINED) setCustomIconResId(R.drawable.car_download) }.build()
+            .setCustomIconResId(glyph).build()
 
     private fun glyphOf(f: BrowseFolder): Int? = when (f.kind) {
         // The tabs each have theirs, which the car draws over the tab's name.
@@ -156,7 +156,7 @@ internal class CarTree(private val context: Context) {
         CarFolder.PLAYLISTS -> R.drawable.car_playlists
         CarFolder.GENRES -> R.drawable.car_genres
         CarFolder.RANDOM -> R.drawable.car_random
-        CarFolder.FAVOURITES -> R.drawable.car_favourite
+        CarFolder.FAVOURITES -> R.drawable.seal_outline
         CarFolder.DOWNLOADS -> R.drawable.car_download
         null -> when (f.media) {
             CarMedia.GENRE -> R.drawable.car_genres

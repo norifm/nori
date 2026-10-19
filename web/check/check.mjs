@@ -145,8 +145,8 @@ if (!only || only.includes("play")) {
 
 /** Opens pane `name` (lyrics, queue, devices, jam) beside the page, from the player bar. */
 async function pane(name, p = page) {
-  if (!(await p.$(`#panel #${name}`))) await p.click(`#bar [data-pane=${name}]`);
-  await p.waitForSelector(`#panel #${name}`);
+  if (!(await p.$(`#full #${name}`))) await p.click(`#bar [data-pane=${name}]`);
+  await p.waitForSelector(`#full #${name}`);
 }
 
 if (!only || only.includes("lyrics")) {
@@ -184,7 +184,7 @@ if (!only || only.includes("lyrics")) {
   report.lyrics.tap = { line: later, litMs, heardMs: Math.round((tapHeard - tapped.t) * 1000), soughtMs: sought, placeMs: Math.round(landed - (sought + (at - tapHeard) * 1000)), enterLit: (await facts()).lyricLine === enter };
   const tap = report.lyrics.tap;
   expect(tap.litMs < 100 && tap.heardMs >= 0 && tap.heardMs < 100 && Math.abs(tap.placeMs) < 100 && tap.enterLit, "a lyric line clicked or entered lights at once and is heard from where it is sung");
-  await page.click("#panel [aria-label=Close]");
+  await page.click("#full [aria-label=Close]");
 }
 
 if (!only || only.includes("skip")) {
@@ -228,7 +228,7 @@ if (!only || only.includes("instant")) {
     const n = JSON.parse(await window.ask("now"));
     const run = document.querySelector("#bar .run");
     const bar = Math.round((1 + new DOMMatrix(getComputedStyle(run).transform).m41 / run.getBoundingClientRect().width) * n.song.duration * 1000);
-    return { bar, core: n.positionMs, at: document.querySelector("#bar .times .at").textContent, left: document.querySelector("#bar .times span:last-child").textContent, durationMs: n.song.duration * 1000 };
+    return { bar, core: n.positionMs, at: document.querySelector("#bar .seek .time:first-child").textContent, left: document.querySelector("#bar .seek .time:last-child").textContent, durationMs: n.song.duration * 1000 };
   });
   const clock = (x) => `${Math.floor(x / 60000)}:${String(Math.floor(x / 1000) % 60).padStart(2, "0")}`;
   const s0 = await shown();
@@ -431,7 +431,7 @@ if (!only || only.includes("edit")) {
   await hash(`#/album/${blue}`, "album");
   for (let i = 0; i < 3; i++) {
     await (await page.$$(".songs li button[aria-label='More']"))[i].click();
-    await menu("Add to Playlist");
+    await menu("Add to playlist");
     await menu(name);
     await page.waitForFunction(async ([id, n]) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs.length === n, { timeout: 30000, polling: 250 }, [made.id, i + 1]);
   }
@@ -446,30 +446,30 @@ if (!only || only.includes("edit")) {
   await page.waitForFunction((n) => document.querySelector(".hero h1")?.textContent === n, { timeout: 30000, polling: 100 }, `${name} renamed`);
   await page.waitForSelector(".songs li");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
-  await menu("Move Down");
+  await menu("Move down");
   await page.waitForFunction(async ([id, t]) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs[1]?.title === t, { timeout: 30000, polling: 250 }, [made.id, added[0]]);
   const reordered = await songsOf();
   await page.waitForSelector(".songs li");
   await (await page.$$(".songs li button[aria-label='More']"))[2].click();
-  await menu("Remove from Playlist");
+  await menu("Remove from playlist");
   await page.waitForFunction(async (id) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs.length === 2, { timeout: 30000, polling: 250 }, made.id);
   const removed = await songsOf();
   // A heart on a song, seen on the Favorites page, and taken off again.
   const first = (await read({ kind: "album", id: blue })).songs[0];
   await hash(`#/album/${blue}`, "album");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
-  await menu(first.starred ? "Undo Favorite" : "Favorite");
+  await menu(first.starred ? "Undo favorite" : "Favorite");
   await hash("#/favorites", "favorites");
   await page.waitForFunction(async (t) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "starred" }))).songs.some((s) => s.title === t), { timeout: 30000, polling: 250 }, first.title);
   const favorited = await page.$$eval(".songs li .title", (e, t) => e.some((x) => x.textContent === t), first.title);
   await hash(`#/album/${blue}`, "album");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
-  await menu("Undo Favorite");
+  await menu("Undo favorite");
   await page.waitForFunction(async (t) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "starred" }))).songs.some((s) => s.title === t), { timeout: 30000, polling: 250 }, first.title);
   // The playlist deleted.
   await hash(`#/playlist/${made.id}`, "playlist");
   await page.click(".hero-actions button[aria-label='More']");
-  await menu("Delete Playlist");
+  await menu("Delete playlist");
   await page.waitForFunction(async (id) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.id === id), { timeout: 30000, polling: 250 }, made.id);
   report.edit = { added, reordered, removed, favorited, deleted: true };
   expect(added.length === 3 && reordered[1] === added[0] && reordered[0] === added[1] && removed.length === 2 && favorited, "playlists are made, filled, renamed, reordered, emptied and deleted, and hearts show on Favorites");

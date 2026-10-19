@@ -20,14 +20,17 @@
   }
   .card :global(.cover) {
     margin-bottom: 7px;
-    transition: filter 0.15s;
+    transition: transform 0.15s;
   }
   .card:hover :global(.cover) {
-    filter: brightness(0.92);
+    transform: scale(1.02);
   }
   .title {
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .sub {
+    font-size: 12.5px;
   }
   .circle {
     text-align: center;

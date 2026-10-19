@@ -64,6 +64,10 @@ if ! $shell_only; then
   module player-codecs --features rust-codecs
 fi
 
+# Inter and Literata are the Android app's files, copied in for the shell to bundle (not kept in git here).
+mkdir -p "$here/src/fonts"
+cp "$root/app/src/main/res/font/inter.ttf" "$root/app/src/main/res/font/literata.ttf" "$here/src/fonts/"
+
 (
   cd "$here"
   [ -d node_modules ] || npm ci --no-audit --no-fund

@@ -6,7 +6,7 @@ use nori_core::{LyricLine, LyricWord};
 use nori_look::lyrics::{GLOW_FADE_MS, HELD_MS, RISE_MIN_MS, SETTLE_MS};
 use skia_safe::font_arguments::variation_position::Coordinate;
 use skia_safe::font_arguments::VariationPosition;
-use skia_safe::{Font, FontArguments, FontMgr, FontStyle, FourByteTag, Typeface};
+use skia_safe::{Font, FontArguments, FontMgr, FourByteTag, Typeface};
 
 use crate::LyricPiece;
 
@@ -29,20 +29,19 @@ pub struct Laid {
     row_h: f32,
 }
 
-/// The bold system font the window draws lyrics in (Slint's "System Font"), Inter or sans-serif elsewhere.
+/// Inter, which app.slint bundles and draws every text in: the pieces are measured in the face they are drawn in.
+const INTER: &[u8] = include_bytes!("../../../app/src/main/res/font/inter.ttf");
+
+/// The window's typeface, Inter, read from the same file the window draws with.
 pub fn bold_face() -> Option<Typeface> {
-    let m = FontMgr::new();
-    ["System Font", ".AppleSystemUIFont", "Inter", "sans-serif"]
-        .iter()
-        .find_map(|name| m.match_family_style(name, FontStyle::bold()))
-        .or_else(|| m.legacy_make_typeface(None, FontStyle::bold()))
+    FontMgr::new().new_from_data(skia_safe::Data::new_copy(INTER), None)
 }
 
-/// `face` at `size`. SF is variable: its optical size follows the text size, so it is measured at that
-/// optical size too.
+/// `face` at `size` and weight 700, at the optical size Slint draws it in: the variable font's default
+/// (Inter's text cut, wider than its display cut).
 fn font(face: &Typeface, size: f32) -> Font {
     let face = face.clone();
-    let coords = [Coordinate { axis: FourByteTag::from_chars('o', 'p', 's', 'z'), value: size }, Coordinate { axis: FourByteTag::from_chars('w', 'g', 'h', 't'), value: 700.0 }];
+    let coords = [Coordinate { axis: FourByteTag::from_chars('w', 'g', 'h', 't'), value: 700.0 }];
     let args = FontArguments::new().set_variation_design_position(VariationPosition { coordinates: &coords });
     let face = if face.variation_design_parameters().is_some_and(|a| !a.is_empty()) { face.clone_with_arguments(&args).unwrap_or(face) } else { face };
     Font::from_typeface(face, size)
@@ -231,6 +230,11 @@ mod tests {
 
     fn face() -> Typeface {
         bold_face().expect("a font")
+    }
+
+    #[test]
+    fn words_are_measured_in_the_face_the_window_draws() {
+        assert_eq!(face().family_name(), "Inter Variable");
     }
 
     #[test]

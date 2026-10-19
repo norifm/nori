@@ -433,10 +433,10 @@ fun SongRow(
             // the time beside it, "3:44" against "12:05" - and a mark arriving or leaving moves nothing
             // else. The time is last before the menu and in a box of one fixed width, its digits held to
             // the right edge, so it sits against the ⋯ rather than with an empty download slot between.
-            // A jam guest's hearts would be the host's: none are shown.
+            // A jam guest's seals would be the host's: none are shown.
             val rules = LocalRules.current
             Box(Modifier.padding(start = 4.dp).width(15.dp), Alignment.Center) {
-                if (rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)) Icon(Icons.Filled.Favorite, say.favourite, Modifier.size(15.dp), tint)
+                if (rules.stars && LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.SONG, song.id, song.starred)) Icon(Kanji.Sealed, say.favourite, Modifier.size(15.dp), LocalLook.current.color(CoverLook.ACCENT))
             }
             Box(Modifier.width(MARK_SLOT), Alignment.Center) { DownloadSlot(song.id, downloaded, tint) }
             // A song a jam guest asked for says so in its time's place until the host decides.
@@ -596,6 +596,7 @@ internal fun rowSwipe(action: SwipeAction, song: Song, actions: ActionsViewModel
     // What it says is one of Say's words, read once per locale: a row allocates no text.
     val rules = LocalRules.current
     val act = SwipeActs.of(action, starred, rules.stars, rules.downloads) ?: return null
+    val (sealed, seal) = Kanji.Sealed to Kanji.Seal
     // Made once per row and answer: a new one on every pass would make the row compose again with it.
     return remember(act, song, actions) {
         val label = say.rowSwipe(act)
@@ -603,7 +604,7 @@ internal fun rowSwipe(action: SwipeAction, song: Song, actions: ActionsViewModel
             dev.nori.music.ffi.library.RowSwipeAct.Queue -> RowSwipe(Icons.AutoMirrored.Filled.QueueMusic, label) { actions.enqueue(listOf(song)) }
             dev.nori.music.ffi.library.RowSwipeAct.PlayNext -> RowSwipe(Icons.AutoMirrored.Filled.PlaylistPlay, label) { actions.playNext(listOf(song)) }
             dev.nori.music.ffi.library.RowSwipeAct.Download -> RowSwipe(Icons.Filled.Download, label) { actions.download(listOf(song)) }
-            is dev.nori.music.ffi.library.RowSwipeAct.Favourite -> RowSwipe(if (act.on) Icons.Filled.Favorite else Icons.Filled.HeartBroken, label) { actions.star(song, act.on) }
+            is dev.nori.music.ffi.library.RowSwipeAct.Favourite -> RowSwipe(if (act.on) sealed else seal, label) { actions.star(song, act.on) }
         }
     }
 }

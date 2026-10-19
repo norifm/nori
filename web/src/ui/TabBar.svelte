@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A phone's tab bar, as the Android app and Apple Music have it.
+  // A phone's tabs: the bottom row of the bottom bar, as the Android app has them.
   import { href, route } from "../state/route.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
@@ -20,16 +20,8 @@
 
 <style>
   .tabs {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 30;
-    height: calc(var(--tabs-h) + env(safe-area-inset-bottom));
-    padding-bottom: env(safe-area-inset-bottom);
+    height: 56px;
     display: flex;
-    background: var(--bar);
-    border-top: 1px solid var(--hair);
   }
   a {
     flex: 1;
@@ -37,10 +29,10 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 3px;
-    font-size: 10px;
+    gap: 2px;
+    font-size: 10.5px;
     font-weight: 500;
-    color: var(--faint);
+    color: var(--ink2);
   }
   a :global(.icon) {
     width: 24px;
@@ -48,5 +40,6 @@
   }
   a.on {
     color: var(--accent);
+    font-weight: 700;
   }
 </style>

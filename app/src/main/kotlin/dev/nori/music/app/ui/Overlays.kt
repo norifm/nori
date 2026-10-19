@@ -73,17 +73,16 @@ import kotlinx.coroutines.withContext
  */
 
 /** The system bars the app has put away (App, the core's `bar_hidden`). */
-data class HiddenBars(val status: Boolean, val gesture: Boolean) {
+data class HiddenBars(val status: Boolean) {
     /** Puts the bars of [window] (drawing [view]) away or back as this says; a swipe brings them back for a moment. */
     fun applyTo(window: android.view.Window, view: android.view.View) {
         val bars = WindowCompat.getInsetsController(window, view)
         bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         if (status) bars.hide(WindowInsetsCompat.Type.statusBars()) else bars.show(WindowInsetsCompat.Type.statusBars())
-        if (gesture) bars.hide(WindowInsetsCompat.Type.navigationBars()) else bars.show(WindowInsetsCompat.Type.navigationBars())
     }
 }
 
-val LocalHiddenBars = staticCompositionLocalOf<State<HiddenBars>> { mutableStateOf(HiddenBars(status = false, gesture = false)) }
+val LocalHiddenBars = staticCompositionLocalOf<State<HiddenBars>> { mutableStateOf(HiddenBars(status = false)) }
 
 /**
  * Asks for the system bars the app asked for, from the window this is composed in. Each window asks for its

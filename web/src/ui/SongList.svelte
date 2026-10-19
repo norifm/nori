@@ -22,12 +22,11 @@
         {:else}
           <span class="art"><Cover src={s.cover} /></span>
         {/if}
-        <span class="text">
-          <span class="title clip">{s.title}</span>
-          <span class="sub clip">{numbered ? s.artist : `${s.artist} · ${s.album}`}</span>
-        </span>
+        <span class="title clip">{s.title}</span>
+        <span class="artist clip">{s.artist}</span>
+        {#if !numbered}<span class="album clip">{s.album}</span>{/if}
       </button>
-      {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="heart" /></span>{/if}
+      {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="seal" /></span>{/if}
       <span class="len">{W.time(s.duration * 1000)}</span>
       <button class="round more" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, extra(s, i))}><Icon name="more" /></button>
     </li>
@@ -39,40 +38,42 @@
     list-style: none;
     margin: 0;
     padding: 0;
+    background: var(--surface);
+    border: 1px solid var(--hair);
+    border-radius: 18px;
+    overflow: hidden;
   }
   li {
     display: flex;
     align-items: center;
     gap: 8px;
-    border-radius: 8px;
-    padding-right: 4px;
+    padding-right: 8px;
+    border-bottom: 1px solid var(--hair);
   }
-  li:nth-child(odd) {
-    background: var(--hover);
+  li:last-child {
+    border-bottom: 0;
   }
   li:hover {
-    background: var(--chosen);
+    background: var(--hover);
   }
   .play {
     flex: 1;
     min-width: 0;
-    display: flex;
+    display: grid;
+    grid-template-columns: 44px 2fr 1.4fr 1.4fr;
     align-items: center;
-    gap: 12px;
-    padding: 6px 10px;
+    column-gap: 14px;
+    padding: 8px 8px 8px 16px;
     text-align: left;
   }
   .numbered .play {
-    padding: 10px 10px;
+    grid-template-columns: 30px 2fr 1.4fr;
   }
   .n {
-    width: 22px;
-    text-align: right;
-    color: var(--dim);
-    font-size: 14px;
+    color: var(--ink2);
     font-variant-numeric: tabular-nums;
     display: flex;
-    justify-content: flex-end;
+    justify-content: center;
   }
   .n :global(.icon) {
     color: var(--accent);
@@ -80,26 +81,18 @@
     height: 16px;
   }
   .art {
-    width: 40px;
-    flex: none;
+    width: 44px;
   }
   .art :global(.cover) {
-    border-radius: 4px;
-  }
-  .text {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .title {
-    font-size: 14px;
+    border-radius: 7px;
   }
   .now .title {
     color: var(--accent);
+    font-weight: 600;
   }
-  .numbered .sub {
-    display: none;
+  .artist,
+  .album {
+    color: var(--ink2);
   }
   .starred {
     color: var(--accent);
@@ -109,14 +102,13 @@
     height: 14px;
   }
   .len {
-    color: var(--dim);
-    font-size: 13px;
+    color: var(--ink2);
     font-variant-numeric: tabular-nums;
-    min-width: 40px;
+    min-width: 44px;
     text-align: right;
   }
   .more {
-    color: var(--accent);
+    color: var(--ink2);
   }
   @media (hover: hover) {
     .more {
@@ -125,6 +117,32 @@
     li:hover .more,
     .more:focus-visible {
       opacity: 1;
+    }
+  }
+  @media (max-width: 719px) {
+    .play {
+      grid-template-columns: 44px 1fr;
+      row-gap: 1px;
+      padding-left: 12px;
+    }
+    .numbered .play {
+      grid-template-columns: 30px 1fr;
+    }
+    .art {
+      grid-row: span 2;
+    }
+    .n {
+      grid-row: span 2;
+    }
+    .title,
+    .artist {
+      grid-column: 2;
+    }
+    .artist {
+      font-size: 13px;
+    }
+    .album {
+      display: none;
     }
   }
 </style>

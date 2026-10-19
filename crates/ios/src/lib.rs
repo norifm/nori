@@ -8,7 +8,7 @@
 //! `mod pages` reads pages, covers, lyrics and settings for the screens. `mod sound` is each output's
 //! sound and AutoEQ. `mod menu` is the song menu, playlists and the sleep timer. `mod remote` is remote
 //! control: Bonjour and the devices the music can move to. `mod jam` is a jam this iPod is a guest
-//! in. `mod account` saves servers.
+//! in. `mod account` saves servers. `mod theme` is the season palette.
 
 mod account;
 mod jam;
@@ -19,6 +19,7 @@ mod pages;
 mod remote;
 mod session;
 mod sound;
+mod theme;
 
 pub use output::{
     take_interruption, take_route_lost, Interrupt, IosOutput, Sink, PORT_BLUETOOTH, PORT_SPEAKER,

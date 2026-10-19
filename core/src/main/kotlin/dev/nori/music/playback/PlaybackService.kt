@@ -55,8 +55,13 @@ class PlaybackService : MediaLibraryService() {
     companion object {
         const val CMD_SLEEP = "nori.sleep"
         const val CMD_IN_SIGHT = "nori.inSight"
-        /** The notification's and lock screen's heart: favourite or unfavourite the current song. */
+        /**
+         * The notification's and lock screen's heart: favourite the current song, or unfavourite it. Two commands,
+         * not one toggle: a tap does what the button it was on showed, and the system's media controls, which
+         * kept the icon of an action they already had, take each state as a new action and draw it.
+         */
         const val CMD_FAVOURITE = "nori.favourite"
+        const val CMD_UNFAVOURITE = "nori.unfavourite"
         /** The notification's and lock screen's shuffle toggle. */
         const val CMD_SHUFFLE = "nori.shuffle"
         /**
@@ -452,8 +457,9 @@ class PlaybackService : MediaLibraryService() {
     private var buttonsShown: dev.nori.music.ffi.SessionButtons? = null
     private var repeatShown = -1
 
+    /** As the app's heart has it: this session's mark, else the song as the queue playing it holds it - another device's while it plays. */
     private fun currentStarred(item: MediaItem): Boolean =
-        nori.library.isStarred(StarKind.SONG, item.mediaId, nori.session.queueStarred(item.mediaId))
+        nori.library.isStarred(StarKind.SONG, item.mediaId, if (shown !== controls) elsewhere.currentStarred else nori.session.queueStarred(item.mediaId))
 
     /**
      * Heart and shuffle beside previous / play / next, in the secondary slots the way other players put
@@ -469,9 +475,11 @@ class PlaybackService : MediaLibraryService() {
         repeatShown = shown.repeatMode
         val buttons = ArrayList<CommandButton>(4)
         if (b.heart) {
-            buttons += CommandButton.Builder(if (b.starred) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
+            // Nori's seal, not the system's heart: no icon a controller would draw its own glyph for.
+            buttons += CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+                .setCustomIconResId(if (b.starred) R.drawable.seal else R.drawable.seal_outline)
                 .setDisplayName(getString(if (b.starred) R.string.session_remove_favourite else R.string.session_add_favourite))
-                .setSessionCommand(SessionCommand(CMD_FAVOURITE, Bundle.EMPTY))
+                .setSessionCommand(SessionCommand(if (b.starred) CMD_UNFAVOURITE else CMD_FAVOURITE, Bundle.EMPTY))
                 .setSlots(CommandButton.SLOT_BACK_SECONDARY, CommandButton.SLOT_OVERFLOW).build()
         }
         buttons += CommandButton.Builder(if (b.shuffling) CommandButton.ICON_SHUFFLE_ON else CommandButton.ICON_SHUFFLE_OFF)
@@ -848,7 +856,7 @@ class PlaybackService : MediaLibraryService() {
     private inner class Callback : MediaLibrarySession.Callback {
         override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult {
             val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(SessionCommand(CMD_SLEEP, Bundle.EMPTY)).add(SessionCommand(CMD_IN_SIGHT, Bundle.EMPTY))
-                .add(SessionCommand(CMD_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
+                .add(SessionCommand(CMD_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_UNFAVOURITE, Bundle.EMPTY)).add(SessionCommand(CMD_SHUFFLE, Bundle.EMPTY))
                 .add(SessionCommand(CMD_FILL_NEXT, Bundle.EMPTY)).add(SessionCommand(CMD_REPEAT, Bundle.EMPTY)).add(SessionCommand(CMD_RADIO, Bundle.EMPTY))
                 .add(SessionCommand(CarTree.CMD_ITEM_NEXT, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_QUEUE, Bundle.EMPTY))
                 .add(SessionCommand(CarTree.CMD_ITEM_FAVOURITE, Bundle.EMPTY)).add(SessionCommand(CarTree.CMD_ITEM_DOWNLOAD, Bundle.EMPTY)).build()
@@ -867,11 +875,11 @@ class PlaybackService : MediaLibraryService() {
                     alarms.setWindow(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + delay, slack, "nori.sleep", sleepAlarm, main)
                 }
             }
-            if (command.customAction == CMD_FAVOURITE) {
+            if (command.customAction == CMD_FAVOURITE || command.customAction == CMD_UNFAVOURITE) {
                 // Only while the heart shows (a song of the library is playing; the core's call).
                 val item = shown.currentMediaItem?.takeIf { buttonsShown?.heart == true }
                 if (item != null) {
-                    val on = !currentStarred(item)
+                    val on = command.customAction == CMD_FAVOURITE
                     // The same path as the app's heart: the mark goes up at once (and redraws both hearts),
                     // the request runs on an IO thread inside Library, and a failure puts the mark back.
                     scope.launch {

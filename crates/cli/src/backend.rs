@@ -105,6 +105,7 @@ pub enum Req {
     DownloadedAlbum(String),
     Artist(String),
     Playlist(String),
+    Favorites,
     Downloads,
     Facts,
 }
@@ -116,6 +117,8 @@ pub enum Data {
     Artists(Vec<nori_core::Artist>),
     Playlists(Vec<nori_core::Playlist>),
     Songs(Vec<Song>, bool),
+    /// The starred songs.
+    Favorites(Vec<Song>),
     Album(Box<AlbumDetail>),
     Artist(Box<ArtistDetail>),
     Playlist(Box<PlaylistDetail>),
@@ -150,6 +153,7 @@ pub mod own {
     pub const MOUSE: &str = "tui.mouse";
     pub const IMAGES: &str = "tui.images";
     pub const CARD_COVERS: &str = "tui.cardCovers";
+    pub const PAINT: &str = "tui.paint";
     pub const VOLUME: &str = "tui.volume";
     /// Output device name opened at start; empty for the system default.
     pub const DEVICE: &str = "tui.device";
@@ -220,6 +224,7 @@ impl Session {
             Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
             Req::Artist(id) => Some(PageAsk::Artist(id)),
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
+            Req::Favorites => Some(PageAsk::Favorites),
             Req::Home | Req::Downloads | Req::Facts => None,
         };
         if let Some(ask) = ask {
@@ -343,6 +348,7 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Albums(v) => Data::Albums(v),
         PageGot::Artists(v) => Data::Artists(v),
         PageGot::Playlists(v) => Data::Playlists(v),
+        PageGot::Favorites(s) => Data::Favorites(s.songs),
         PageGot::Songs { songs, exhausted } => Data::Songs(songs, exhausted),
         PageGot::Album(d) => Data::Album(d),
         PageGot::Artist(d) => Data::Artist(d),

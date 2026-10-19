@@ -5,6 +5,7 @@
   import { reading } from "../state/library.svelte";
   import type { SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
+  import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
 
   let rev = $state(0);
@@ -35,16 +36,20 @@
 <Page title={W.settings} ready={!!page.data} error={page.error}>
   {#each page.data?.pages ?? [] as [name, sections] (name)}
     <h2 class="section">{W.settingsPages[name] ?? name}</h2>
-    {#each sections as sec (sec.id)}
-      {#if shownRows(sec).length}
-        <h3>{W.sections[sec.id] ?? sec.id}</h3>
-        <div class="group">
-          {#each shownRows(sec) as r, i (i)}
-            {@render row(r)}
-          {/each}
-        </div>
-      {/if}
-    {/each}
+    {#if name === "Look"}
+      <Look />
+    {:else}
+      {#each sections as sec (sec.id)}
+        {#if shownRows(sec).length}
+          <h3>{W.sections[sec.id] ?? sec.id}</h3>
+          <div class="group">
+            {#each shownRows(sec) as r, i (i)}
+              {@render row(r)}
+            {/each}
+          </div>
+        {/if}
+      {/each}
+    {/if}
   {/each}
   <h2 class="section">{W.account}</h2>
   <div class="group">
@@ -92,12 +97,14 @@
   h3 {
     font-size: 13px;
     font-weight: 600;
-    color: var(--dim);
+    color: var(--ink2);
     margin: 18px 4px 8px;
   }
   .group {
-    background: var(--fill);
-    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--hair);
+    border-radius: 18px;
+    overflow: hidden;
     max-width: 760px;
   }
   .setting {
@@ -109,7 +116,7 @@
     min-height: 52px;
     border-top: 1px solid var(--hair);
   }
-  .setting:first-child {
+  .group > :first-child {
     border-top: 0;
   }
   .under {
@@ -130,26 +137,26 @@
     margin: 0;
     padding: 0 16px 12px;
     font-size: 12px;
-    color: var(--dim);
+    color: var(--ink2);
   }
   .chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    background: var(--fill);
-    padding: 2px;
-    border-radius: 9px;
+    justify-content: flex-end;
+    gap: 6px;
     flex: none;
   }
   .chips button {
-    padding: 4px 10px;
-    border-radius: 7px;
+    border: 1px solid var(--outline);
+    border-radius: 999px;
+    padding: 4px 12px;
     font-size: 13px;
-    font-weight: 500;
+    color: var(--ink2);
   }
   .chips button.on {
-    background: var(--raised);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--page);
   }
   .pick {
     width: auto;
@@ -164,15 +171,15 @@
     flex: none;
   }
   .level input {
-    accent-color: var(--accent);
+    accent-color: var(--ink);
     width: 160px;
   }
   .about {
-    color: var(--faint);
+    color: var(--outline);
     font-size: 13px;
     margin-top: 32px;
   }
-  @media (max-width: 899px) {
+  @media (max-width: 719px) {
     .setting {
       flex-wrap: wrap;
     }

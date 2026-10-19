@@ -6,9 +6,9 @@
   import type { Album, Artist, Song } from "../state/types";
   import { W } from "../words";
   import Cards from "../ui/Cards.svelte";
-  import Heart from "../ui/Heart.svelte";
   import Hero from "../ui/Hero.svelte";
   import Page from "../ui/Page.svelte";
+  import Seal from "../ui/Seal.svelte";
 
   let { id }: { id: string } = $props();
   const page = reading("artist", () => read<{ artist: Artist; albums: Album[] }>({ kind: "artist", id }));
@@ -25,7 +25,7 @@
 <Page back ready={!!a} error={page.error}>
   {#if a}
     <Hero cover={a.cover} title={a.name} round fallback="artist" facts={W.albumCount(albums.length)} onplay={(s) => void playAll(s)}>
-      {#snippet actions()}<Heart what="artist" id={a.id} on={!!a.starred} />{/snippet}
+      {#snippet actions()}<Seal what="artist" id={a.id} on={!!a.starred} />{/snippet}
     </Hero>
     <h2 class="section">{W.albums}</h2>
     <Cards {albums} sub={(al) => String(al.year || "")} />

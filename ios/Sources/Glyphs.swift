@@ -45,15 +45,11 @@ enum Glyph {
     /// The empty cover's mark.
     static let disc = material(Material.musicNote, CGSize(width: 22, height: 22))
 
-    /// The cloud on a provider's item (not in the library yet), in the secondary grey: a text attachment
+    /// The cloud on a provider's item (not in the library yet), in the secondary ink: a text attachment
     /// takes no tint.
-    static var cloud: UIImage { Theme.light ? cloudOnLight : cloudOnDark }
-    private static let cloudOnDark = cloud(UIColor(rgb: 0xA8A8A8))
-    private static let cloudOnLight = cloud(UIColor(rgb: 0x6E6E6E))
-
-    private static func cloud(_ colour: UIColor) -> UIImage {
+    static var cloud: UIImage {
         UIGraphicsBeginImageContextWithOptions(CGSize(width: 15, height: 12), false, 0)
-        colour.set()
+        Theme.secondary.set()
         let p = UIBezierPath()
         p.append(UIBezierPath(ovalIn: CGRect(x: 0.5, y: 5, width: 6.5, height: 6.5)))
         p.append(UIBezierPath(ovalIn: CGRect(x: 3.5, y: 1, width: 8, height: 8)))

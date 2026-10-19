@@ -14,12 +14,12 @@
     position: relative;
     aspect-ratio: 1;
     width: 100%;
-    border-radius: 6px;
+    border-radius: 12px;
     overflow: hidden;
-    background: var(--cover-ground);
+    background: var(--fill);
     display: grid;
     place-items: center;
-    color: var(--faint);
+    color: var(--outline);
     box-shadow: inset 0 0 0 0.5px var(--hair);
   }
   .circle {

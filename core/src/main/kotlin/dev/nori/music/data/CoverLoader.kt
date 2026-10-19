@@ -30,7 +30,8 @@ import java.io.File
  * again, and a view that needs more than is kept is shown what is kept while the larger one comes.
  *
  * Covers are hardware Bitmaps from Android 9 (decoded in software on a loader thread and copied to the
- * GPU there, so no frame pays the upload), and a JPEG is RGB_565: half the memory, twice the covers.
+ * GPU there, so no frame pays the upload), except over a PowerVR GPU (`nori_covers::hardware_bitmaps`),
+ * and a JPEG is RGB_565: half the memory, twice the covers.
  */
 class CoverLoader private constructor(context: Context) {
     /** A picture kept for an address; [whole] when it is the file's own size, so no view can want it bigger. */

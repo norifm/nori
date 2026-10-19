@@ -1,27 +1,24 @@
-// What the shell shows over the pages: a line of news, an action sheet, a question, the side panel and
-// the full player.
+// What the shell shows over the pages: a line of news, an action sheet, a question and the full player.
 
 export type Item = { label: string; icon?: string; run: () => unknown; danger?: boolean; disabled?: boolean };
-/** What the side panel (or the full player's) shows. */
+/** What the full player shows beside the cover (on a phone: in its place). */
 export type Pane = "lyrics" | "queue" | "devices";
 
 class Ui {
   toast = $state("");
   sheet = $state.raw<{ title: string; items: Item[] } | null>(null);
   prompt = $state.raw<{ title: string; value: string; done: (v: string | null) => void } | null>(null);
-  /** The panel beside the page on a wide screen. */
-  panel = $state<Pane | null>(null);
   /** The full player, and what it shows beside the cover (on a phone: in its place). */
   full = $state(false);
   pane = $state<Pane | null>(null);
   /** The lyrics' source and timing, over the player. */
   lyricsInfo = $state(false);
-  /** The browser is wide enough for the sidebar and the panel. */
-  wide = $state(matchMedia("(min-width: 900px)").matches);
+  /** The browser is wide enough for the top bar and the player bar (below it: the phone's layout). */
+  wide = $state(matchMedia("(min-width: 720px)").matches);
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
-    matchMedia("(min-width: 900px)").addEventListener("change", (e) => (this.wide = e.matches));
+    matchMedia("(min-width: 720px)").addEventListener("change", (e) => (this.wide = e.matches));
   }
 
   /** A line of news for a few seconds. */
@@ -49,13 +46,10 @@ class Ui {
     });
   }
 
-  /** Shows `pane`: in the panel on a wide screen, else in the full player; again, hides it. */
+  /** Opens the full player showing `pane`; on a phone, again, it goes back to the cover. */
   show(pane: Pane) {
-    if (this.wide && !this.full) this.panel = this.panel === pane ? null : pane;
-    else {
-      this.full = true;
-      this.pane = this.pane === pane ? null : pane;
-    }
+    this.full = true;
+    this.pane = this.wide ? pane : this.pane === pane ? null : pane;
   }
 }
 

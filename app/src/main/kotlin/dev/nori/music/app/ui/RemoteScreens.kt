@@ -27,8 +27,8 @@ import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.outlined.Speaker
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -131,8 +131,9 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                // The phone's own speaker, headphones or Bluetooth: Android's picker, a row like the devices'.
-                SheetRow(words(R.string.devices_output), Icons.Filled.Speaker, onOutput)
+                // The phone's own speaker, headphones or Bluetooth: Android's picker, a row like the devices'. The
+                // speaker's outline, as the player's button has it idle: a filled glyph is one lit in the accent.
+                SheetRow(words(R.string.devices_output), Icons.Outlined.Speaker, onOutput)
                 if (pairing != null) SheetRow(words(R.string.pair_devices), Icons.Filled.PhoneAndroid, { page = RoomPage.PAIR })
                 val start by vm.jamStarting.collectAsStateWithLifecycle()
                 when {
