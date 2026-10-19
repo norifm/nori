@@ -5,8 +5,8 @@ sidebar:
   order: 4
 ---
 
-Applies to nori 0.6.3 and later on every client. Before 0.6.3 every part of a mix had its own switch;
-from 0.6.3 they are all on, and a crossfade's curve and fade lengths are gone (a crossfade set before
+Applies to nori 0.7.0 and later on every client. Before 0.7.0 every part of a mix had its own switch;
+from 0.7.0 they are all on, and a crossfade's curve and fade lengths are gone (a crossfade set before
 becomes the longer of its two fades). **Keep albums gapless** stays a switch and keeps the choice made
 before.
 

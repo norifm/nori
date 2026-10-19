@@ -447,7 +447,7 @@ native heaps before and after.
   what the core's rules make of them - whether the output is played untouched, whether the sound chain is
   on, whether the battery saver stands down, the lyrics services in the order they are asked, how the beat
   model's download stands (`settings_state`); `setting_set` applies a change and says what it asks of the
-  player. It also holds the pages (`nori-settings::settings_pages`, from 0.6.3): for a client
+  player. It also holds the pages (`nori-settings::settings_pages`, from 0.7.0): for a client
   (`SettingsClient`: phone, desktop or terminal) and the profile's parts, which pages there are
   (`settings_pages`), and each page's sections and rows in order (`settings_page`): a setting with its
   spec and value, or a link, an action, a note, a server, a music folder, a lyrics service, each with
