@@ -211,7 +211,7 @@ export const W = {
     ["AUTUMN", "秋", "Autumn"],
     ["WINTER", "冬", "Winter"],
   ] as [string, string, string][],
-  appearance: "Light or dark",
+  appearance: "Appearance",
   appearances: [
     ["SYSTEM", "Same as the system"],
     ["LIGHT", "Light"],

@@ -80,7 +80,6 @@ pub enum SectionId {
     Volume,
     Output,
     Theme,
-    Cover,
     Home,
     Screen,
     Motion,
@@ -391,11 +390,11 @@ impl Page<'_> {
         if self.web() {
             return vec![(SectionId::Theme, theme)];
         }
-        let mut cover = vec![self.setting("coverColors")];
+        theme.push(self.setting("coverColors"));
         if self.phone() {
-            cover.push(self.setting("movingCovers"));
+            theme.push(self.setting("movingCovers"));
         }
-        let mut out = vec![(SectionId::Theme, theme), (SectionId::Cover, cover)];
+        let mut out = vec![(SectionId::Theme, theme)];
         if self.phone() {
             use crate::settings::DimIdle;
             let home = vec![row(RowItem::Link { to: SettingsLink::HomeRows }), row(RowItem::Link { to: SettingsLink::LibrarySections })];

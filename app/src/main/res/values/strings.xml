@@ -56,13 +56,11 @@
     <string name="settings_held_by_dac">Off while the USB DAC is in bit perfect mode.</string>
     <string name="settings_crossfade">Crossfade</string>
     <string name="settings_automix">AutoMix</string>
-    <string name="settings_automix_detail">Blends songs like a DJ, matching the beat.</string>
     <string name="settings_better_beats">Better beat detection</string>
-    <string name="settings_better_beats_off">Listens to the start and end of each song so mixes land on the beat, downloaded songs too. Uses more battery. A one-time download of about %1$d MB over Wi-Fi, from the model\'s authors.</string>
+    <string name="settings_better_beats_off">A download of about %1$d MB</string>
     <string name="settings_better_beats_absent">Downloaded over Wi-Fi (about %1$d MB) the next time AutoMix measures a song.</string>
     <string name="settings_better_beats_waiting">Waiting for Wi-Fi to download it (about %1$d MB).</string>
     <string name="settings_better_beats_downloading">Downloading (about %1$d MB)…</string>
-    <string name="settings_better_beats_ready">On. Each song is listened to once, just before it plays, which uses more battery.</string>
     <string name="settings_better_beats_network">the network failed</string>
     <string name="settings_better_beats_wrong_file">the file that arrived was not the right one</string>
     <string name="settings_better_beats_storage">it could not be saved</string>
@@ -75,18 +73,13 @@
     <string name="settings_measure_again">Measure again</string>
     <string name="settings_fade">Fade on play and pause</string>
     <string name="settings_keep_albums">Keep albums gapless</string>
-    <string name="settings_keep_albums_detail">Songs of one album that follow each other in order play without mixing.</string>
     <string name="settings_previous">Previous goes back a song</string>
-    <string name="settings_previous_detail">Instead of restarting the current one.</string>
     <string name="settings_speed">Speed</string>
     <string name="settings_pitch">Pitch</string>
     <string name="settings_skip_silence">Skip silence</string>
-    <string name="settings_skip_silence_detail">Cuts quiet gaps in and between songs.</string>
     <string name="settings_skip_silence_held">Off while the audio is played untouched.</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>
-    <string name="settings_skip_explicit_detail">Songs your server marks explicit.</string>
     <string name="settings_auto_fill">Keep playing when the queue ends</string>
-    <string name="settings_auto_fill_detail">Adds more music automatically.</string>
     <string name="settings_auto_fill_kind">Carry on with</string>
     <string name="settings_auto_fill_kind_songs">Songs</string>
     <string name="settings_auto_fill_kind_albums">Albums</string>
@@ -96,9 +89,7 @@
     <string name="settings_auto_fill_basis_genre">The same genre</string>
     <string name="settings_auto_fill_basis_era">The same era</string>
     <string name="settings_auto_fill_remote">Include remote songs</string>
-    <string name="settings_auto_fill_remote_detail">Songs not in your library yet, from the server\'s streaming providers. Each one played is downloaded into the library.</string>
     <string name="settings_bridge_offline">Play downloads when offline</string>
-    <string name="settings_bridge_offline_detail">If the server drops, keep playing from downloads.</string>
 
     <!-- Sound. -->
     <string name="settings_section_equalizer">Equalizer</string>
@@ -107,11 +98,8 @@
     <string name="settings_equalizer">Equalizer and crossfeed</string>
     <string name="settings_equalizer_off_now">Off now</string>
     <string name="settings_autoeq_auto">AutoEQ for headphones</string>
-    <string name="settings_autoeq_auto_detail">Applies a known correction curve when headphones connect.</string>
     <string name="settings_autoeq_list">Keep the AutoEQ list</string>
-    <string name="settings_autoeq_list_detail">Downloads the headphone list (850 kB, from github.com) on Wi-Fi, and again once a month, so headphones find their curve.</string>
     <string name="settings_per_device">Remember sound per device</string>
-    <string name="settings_per_device_detail">Each device keeps its own equalizer settings.</string>
     <string name="settings_sound_bypass">No processing on this output</string>
     <string name="settings_sound_bypass_detail">No equalizer, crossfeed or effects reach this output, and it can use audio offload. Saved with the device\'s sound.</string>
     <string name="settings_system_effects">System audio effects</string>
@@ -122,12 +110,10 @@
     <string name="settings_compressor">Compressor</string>
     <string name="settings_compressor_detail">Evens out quiet and loud parts</string>
     <string name="settings_compressor_preset">Tuned for</string>
-    <string name="settings_compressor_preset_detail">The car lifts quiet parts, the night tames loud ones</string>
     <string name="settings_compressor_light">Light</string>
     <string name="settings_compressor_car">The car</string>
     <string name="settings_compressor_night">The night</string>
     <string name="settings_hi_res">High quality output</string>
-    <string name="settings_hi_res_detail">Plays 24-bit files in full, and runs the equalizer and effects in floating point. Best on a USB DAC or hi-res output. Starts with the next song.</string>
     <string name="settings_max_rate">Highest sample rate</string>
     <string name="settings_max_rate_auto">Each song\'s own</string>
     <string name="settings_max_rate_48">48 kHz</string>
@@ -139,7 +125,6 @@
     <string name="settings_bit_perfect_usb_dac">USB DAC</string>
     <string name="settings_bit_perfect_connected">%1$s connected. Starts with the music.</string>
     <string name="settings_bit_perfect_unsupported">%1$s connected, but this device can\'t do bit perfect with it.</string>
-    <string name="settings_bit_perfect_detail">Sends the file to a USB DAC unchanged. Skips the equalizer and volume levelling. Android 14 and later.</string>
     <!-- What is actually going out, under the bit-perfect switch. -->
     <string name="settings_dac_offers">Offers %1$s</string>
     <string name="settings_dac_playing">playing %1$s</string>
@@ -158,42 +143,34 @@
     <string name="settings_offload">Save battery while playing</string>
     <string name="settings_offload_usb">Not available while a USB DAC is connected.</string>
     <string name="settings_offload_paused">Paused now: the equalizer or another effect is on.</string>
-    <string name="settings_offload_detail">The audio chip decodes instead of the processor. Pauses while effects are on.</string>
 
     <!-- Appearance. -->
     <string name="settings_section_theme">Theme</string>
-    <string name="settings_section_cover">Cover art</string>
     <string name="settings_section_screen">Screen</string>
     <string name="settings_section_home">Layout</string>
     <string name="settings_home_rows">Home rows</string>
     <string name="settings_library_sections">Library sections</string>
     <string name="settings_hide_status_bar">Hide the status bar</string>
-    <string name="settings_hide_status_bar_detail">Swipe down from the top to see it</string>
     <string name="settings_hide_bar_sideways">Sideways</string>
     <string name="settings_hide_bar_upright">Upright</string>
     <string name="settings_hide_bar_protected">Burn-in protection</string>
     <string name="settings_when_charging">Charging</string>
     <string name="settings_keep_awake">Keep the screen on</string>
-    <string name="settings_keep_awake_detail">While nori is open</string>
     <string name="settings_burn_in">Burn-in protection</string>
-    <string name="settings_burn_in_detail">Moves everything a little while the screen stays on</string>
     <string name="settings_dim_idle">Dim when untouched</string>
-    <string name="settings_dim_idle_detail">Until the next touch</string>
     <string name="settings_dim_idle_never">Never</string>
     <string name="settings_dim_idle_half_minute">30 s</string>
     <string name="settings_dim_idle_minute">1 min</string>
     <string name="settings_dim_idle_five_minutes">5 min</string>
     <string name="settings_dim_level">Dimming</string>
-    <string name="settings_dim_level_detail">Darker wears the screen less</string>
     <string name="settings_dim_level_light">Light</string>
     <string name="settings_dim_level_medium">Medium</string>
     <string name="settings_dim_level_strong">Strong</string>
     <string name="settings_controls_side">Car screen controls side</string>
-    <string name="settings_controls_side_detail">On a car’s own screen</string>
     <string name="settings_controls_side_driver">Driver’s side</string>
     <string name="settings_controls_side_left">Left</string>
     <string name="settings_controls_side_right">Right</string>
-    <string name="settings_mode">Light or dark</string>
+    <string name="settings_mode">Appearance</string>
     <string name="settings_theme_system">Same as the system</string>
     <string name="settings_theme_light">Light</string>
     <string name="settings_theme_dark">Dark</string>
@@ -208,11 +185,9 @@
     <string name="settings_season_now">%1$s now · %2$s from %3$s</string>
     <string name="settings_season_fixed">Changes with the calendar</string>
     <string name="settings_cover_colours">Colors from the cover</string>
-    <string name="settings_cover_colours_detail">Where the artwork’s colors show</string>
     <string name="settings_cover_colours_pages">Pages</string>
     <string name="settings_cover_colours_player">Player</string>
     <string name="settings_moving_covers">Moving covers</string>
-    <string name="settings_moving_covers_detail">Animated album art in the player, when Apple Music has it. Sends the artist and album name. Each one is a few megabytes.</string>
     <string name="settings_moving_covers_still">Still while motion is reduced.</string>
     <string name="settings_moving_covers_wifi">On Wi-Fi</string>
     <string name="settings_moving_covers_always">Always</string>
@@ -221,19 +196,14 @@
     <string name="settings_section_display">Display</string>
     <string name="settings_section_sources">Sources</string>
     <string name="settings_lyrics_sweep">Fill in words as they\'re sung</string>
-    <string name="settings_lyrics_sweep_detail">For lyrics timed word by word.</string>
     <string name="settings_lyrics_size">Text size</string>
     <string name="settings_lyrics_size_small">Small</string>
     <string name="settings_lyrics_size_medium">Medium</string>
     <string name="settings_lyrics_size_large">Large</string>
     <string name="settings_lyrics_translation">Show translations</string>
-    <string name="settings_lyrics_translation_detail">When your server has them.</string>
     <string name="settings_lyrics_screen_on">Keep the screen on</string>
-    <string name="settings_lyrics_screen_on_detail">While lyrics are shown and music plays.</string>
     <string name="settings_lyrics_online">Find missing lyrics online</string>
-    <string name="settings_lyrics_online_detail">When your server has no timed lyrics. Sends the artist, song and album name to the lyrics sources.</string>
     <string name="settings_lyrics_words">Prefer word-by-word lyrics</string>
-    <string name="settings_lyrics_words_detail">Keeps looking past lyrics timed line by line.</string>
     <string name="settings_lyrics_sources">Lyrics sources</string>
     <string name="settings_lyrics_sources_none">None on</string>
     <plurals name="settings_lyrics_sources_on">
@@ -251,7 +221,6 @@
     <string name="settings_lyrics_key_set">%1$s Key set.</string>
     <string name="settings_change_key">Change key</string>
     <string name="settings_betterlyrics_key">BetterLyrics key</string>
-    <string name="settings_betterlyrics_key_detail">Without one it answers only for songs it has already stored.</string>
     <!-- Each lyrics service: its name, and what it is good at. -->
     <string name="lyrics_service_binilyrics" translatable="false">BiniLyrics</string>
     <string name="lyrics_service_binilyrics_about">Apple Music\'s lyrics, syllable by syllable, from a volunteer\'s copy. Unofficial.</string>
@@ -319,13 +288,9 @@
     <string name="settings_update_beta_detail">Also offers test versions of the next release. They may have bugs; turned off, you move to the next stable release when it comes</string>
     <string name="settings_updating">Updating…</string>
     <string name="settings_taste_model">Keep listening history</string>
-    <string name="settings_taste_model_detail">Stored on this device. Powers mixes and stats.</string>
     <string name="settings_scrobble">Tell the server what you play</string>
-    <string name="settings_scrobble_detail">Sends your plays to your server (scrobbling), once you have heard half a song or four minutes of it.</string>
     <string name="settings_queue_offer">Continue from other devices</string>
-    <string name="settings_queue_offer_detail">When nothing plays, Home offers the queue another device or app left on your server.</string>
     <string name="settings_lookups">Look things up online</string>
-    <string name="settings_lookups_detail">Missing lyrics (sends the artist, song and album name), the AutoEQ headphone list and moving covers, each with its own switch. Off, nothing is asked.</string>
 
     <!-- Downloads and storage. -->
     <string name="settings_section_streaming">Streaming</string>
@@ -335,7 +300,6 @@
     <string name="settings_quality_mobile">Quality on mobile data</string>
     <string name="settings_ahead_wifi">Prepare songs ahead on Wi-Fi</string>
     <string name="settings_ahead_mobile">On mobile data</string>
-    <string name="settings_ahead_detail">Upcoming songs and their lyrics are fetched before you get to them.</string>
     <string name="settings_ahead_next">Next song</string>
     <plurals name="settings_ahead_songs">
         <item quantity="one">%1$d song</item>
@@ -451,35 +415,28 @@
     <!-- Remote control and jams (Settings > Library > Other devices). -->
     <string name="settings_section_devices">Other devices</string>
     <string name="settings_remote_control">Remote control and jams</string>
-    <string name="settings_remote_control_detail">Control playback on your other devices, or invite guests to a Jam. Uses your network directly or the octo-fiesta relay.</string>
     <string name="settings_hint_remote_control">Remote control, play on another device, Jam, group session, listen together</string>
-    <string name="settings_crossfade_detail">Songs fade into each other</string>
     <string name="settings_headphone_sound">Headphone sound</string>
-    <string name="settings_headphone_sound_detail">Natural sounds like speakers, Wide sounds bigger</string>
     <string name="settings_headphone_natural">Natural</string>
     <string name="settings_headphone_wide">Wide</string>
     <string name="settings_hint_headphone_sound">Crossfeed, bs2b, virtualizer, spatial, surround, out of your head</string>
     <string name="settings_volume_leveling">Volume leveling</string>
-    <string name="settings_volume_leveling_detail">Every song plays equally loud</string>
     <string name="settings_hint_volume_leveling">ReplayGain, normalization, loudness. Quiet and loud songs play at the same level</string>
     <string name="settings_leveling_song">Per song</string>
     <string name="settings_leveling_album">Per album</string>
     <string name="settings_leveling_auto">Automatic</string>
     <string name="settings_level">Level</string>
-    <string name="settings_level_detail">How loud leveled songs play</string>
     <string name="settings_hint_level">LUFS, loudness target, −23, −18, −14</string>
     <string name="settings_level_quiet">Quiet</string>
     <string name="settings_level_normal">Normal</string>
     <string name="settings_level_loud">Loud</string>
     <string name="settings_section_motion">Motion</string>
     <string name="settings_motion">Motion</string>
-    <string name="settings_motion_detail">How much the app animates</string>
     <string name="settings_hint_motion">Animations, less movement, reduce motion, e-ink screen, still player</string>
     <string name="settings_motion_full">Full</string>
     <string name="settings_motion_reduced">Reduced</string>
     <string name="settings_motion_eink">E-ink</string>
     <string name="settings_playlist_notes">Playlist notes</string>
-    <string name="settings_playlist_notes_detail">Show a playlist\'s note under its name. The note the server leaves on imported playlists stays hidden.</string>
     <string name="settings_hint_playlist_notes">Playlist descriptions. The text under a playlist\'s name</string>
     <string name="jam_remote_songs">Allow remote songs</string>
     <string name="jam_remote_songs_line">Guests can request songs from external providers.</string>

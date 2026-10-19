@@ -448,7 +448,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         SectionId.VOLUME -> R.string.settings_section_volume
         SectionId.OUTPUT -> R.string.settings_section_output
         SectionId.THEME -> R.string.settings_section_theme
-        SectionId.COVER -> R.string.settings_section_cover
         SectionId.HOME -> R.string.settings_section_home
         SectionId.SCREEN -> R.string.settings_section_screen
         SectionId.MOTION -> R.string.settings_section_motion
@@ -511,10 +510,8 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         }
     }
 
-    /** The line under a setting, where it has one. */
+    /** The line under a setting: only where it says how things stand now, never what the setting does. */
     fun detail(name: String): String = when (name) {
-        "crossfadeSec" -> str(R.string.settings_crossfade_detail)
-        "autoMix" -> str(R.string.settings_automix_detail)
         "autoMixBetterBeats" -> {
             val mb = s.beatModelMb.toInt()
             if (!p.autoMixBetterBeats) str(R.string.settings_better_beats_off, mb) else when (val model = s.beatModel) {
@@ -525,55 +522,14 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 }))
                 BeatModel.WaitingForWifi -> str(R.string.settings_better_beats_waiting, mb)
                 BeatModel.Downloading -> str(R.string.settings_better_beats_downloading, mb)
-                BeatModel.Ready -> str(R.string.settings_better_beats_ready)
+                BeatModel.Ready -> ""
                 else -> str(R.string.settings_better_beats_absent, mb)
             }
         }
-        "crossfadeKeepAlbums" -> str(R.string.settings_keep_albums_detail)
-        "previousAlwaysSkips" -> str(R.string.settings_previous_detail)
-        "skipSilence" -> str(if (s.untouched) R.string.settings_skip_silence_held else R.string.settings_skip_silence_detail)
-        "skipExplicit" -> str(R.string.settings_skip_explicit_detail)
-        "autoFill" -> str(R.string.settings_auto_fill_detail)
-        "autoFillKind" -> str(R.string.settings_hint_auto_fill_kind)
-        "autoFillRemote" -> str(R.string.settings_auto_fill_remote_detail)
-        "bridgeOffline" -> str(R.string.settings_bridge_offline_detail)
-        "autoEqAuto" -> str(R.string.settings_autoeq_auto_detail)
-        "autoEqDownload" -> str(R.string.settings_autoeq_list_detail)
-        "profilePerOutput" -> str(R.string.settings_per_device_detail)
-        "soundBypass" -> str(R.string.settings_sound_bypass_detail)
-        "headphoneSound" -> str(R.string.settings_headphone_sound_detail)
-        "compressor" -> str(R.string.settings_compressor_detail)
-        "compressorPreset" -> str(R.string.settings_compressor_preset_detail)
-        "replayGain" -> str(R.string.settings_volume_leveling_detail)
-        "loudnessLevel" -> str(R.string.settings_level_detail)
-        "hiRes" -> str(R.string.settings_hi_res_detail)
+        "skipSilence" -> if (s.untouched) str(R.string.settings_skip_silence_held) else ""
         "bitPerfect" -> bitPerfectWords(f.dac)
-        "offload" -> str(if (f.dac.device != null) R.string.settings_offload_usb else if (s.offloadPaused) R.string.settings_offload_paused else R.string.settings_offload_detail)
-        "coverColors" -> str(R.string.settings_cover_colours_detail)
-        "movingCovers" -> str(if (s.values["movingCovers"] != "off" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) R.string.settings_moving_covers_still else R.string.settings_moving_covers_detail)
-        "hideStatusBar" -> str(R.string.settings_hide_status_bar_detail)
-        "keepAwake" -> str(R.string.settings_keep_awake_detail)
-        "burnInProtection" -> str(R.string.settings_burn_in_detail)
-        "dimWhenIdle" -> str(R.string.settings_dim_idle_detail)
-        "dimLevel" -> str(R.string.settings_dim_level_detail)
-        "controlsSide" -> str(R.string.settings_controls_side_detail)
-        "motion" -> str(R.string.settings_motion_detail)
-        "lyricsSweep" -> str(R.string.settings_lyrics_sweep_detail)
-        "lyricsTranslation" -> str(R.string.settings_lyrics_translation_detail)
-        "lyricsKeepScreenOn" -> str(R.string.settings_lyrics_screen_on_detail)
-        "lyricsOnline" -> str(R.string.settings_lyrics_online_detail)
-        "lyricsPreferWords" -> str(R.string.settings_lyrics_words_detail)
-        "betterLyricsKey" -> str(R.string.settings_betterlyrics_key_detail)
-        "tapAction" -> str(R.string.settings_hint_tap_action)
-        "playlistNotes" -> str(R.string.settings_playlist_notes_detail)
-        "tasteModel" -> str(R.string.settings_taste_model_detail)
-        "scrobble" -> str(R.string.settings_scrobble_detail)
-        "queueOffer" -> str(R.string.settings_queue_offer_detail)
-        "thirdPartyLookups" -> str(R.string.settings_lookups_detail)
-        "remoteControl" -> str(R.string.settings_remote_control_detail)
-        "songsAheadWifi" -> str(R.string.settings_ahead_detail)
-        "updateCheck" -> str(R.string.settings_update_auto_detail)
-        "updateBeta" -> str(R.string.settings_update_beta_detail)
+        "offload" -> if (f.dac.device != null) str(R.string.settings_offload_usb) else if (s.offloadPaused) str(R.string.settings_offload_paused) else ""
+        "movingCovers" -> if (s.values["movingCovers"] != "off" && p.motion != dev.nori.music.ffi.settings.Motion.FULL) str(R.string.settings_moving_covers_still) else ""
         else -> ""
     }
 
@@ -735,7 +691,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         d.blockedBy != null -> str(R.string.settings_bit_perfect_blocked, d.device ?: str(R.string.settings_bit_perfect_usb_dac), dacBlockWords(res, d.blockedBy!!))
         d.device != null && d.supported -> str(R.string.settings_bit_perfect_connected, d.device!!)
         d.device != null -> str(R.string.settings_bit_perfect_unsupported, d.device!!)
-        else -> str(R.string.settings_bit_perfect_detail)
+        else -> ""
     }
 
     /** "Offers … · playing … · output …"; null when there is nothing to say. */
