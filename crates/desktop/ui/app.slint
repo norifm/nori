@@ -538,11 +538,19 @@ component TabButton inherits Rectangle {
             width: 20px;
             height: 20px;
         }
-        if root.named || root.current: Text {
-            text: root.text;
-            color: root.current ? Theme.accent : Theme.dim;
-            font-weight: root.current ? 700 : 400;
-            vertical-alignment: center;
+        // As wide as the bold name, so lighting a tab moves none of the others.
+        if root.named || root.current: Rectangle {
+            width: bold.preferred-width;
+            bold := Text {
+                visible: false;
+                text: root.text;
+                font-weight: 700;
+            }
+            Text {
+                text: root.text;
+                color: root.current ? Theme.accent : Theme.dim;
+                font-weight: root.current ? 700 : 400;
+            }
         }
     }
     touch := TouchArea {
@@ -620,13 +628,12 @@ component PlayPause inherits Rectangle {
     }
 }
 
-// A favorite is the seal. Not liked: its outline, upright, in the quiet ink. Liked: filled with the accent,
+// A favorite is the seal. Not liked: its outline, upright, in the ink of the icons beside it. Liked: filled with the accent,
 // tilted 4 degrees, and stamped on when it is pressed to like (it lands from half as big again on a
 // firm spring); a seal that changes by itself is drawn, not stamped. Taking a like off is immediate.
 component Seal inherits Rectangle {
     in property <bool> liked;
     in property <length> size: 26px;
-    in property <color> quiet: Theme.dim;
     callback clicked;
     property <float> scale: 1;
     property <duration> landing: 0ms;
@@ -640,7 +647,7 @@ component Seal inherits Rectangle {
     }
     Icon {
         path: root.liked ? Icons.seal : Icons.seal-outline;
-        colour: root.liked ? Theme.accent : root.quiet;
+        colour: root.liked ? Theme.accent : Theme.text;
         width: root.size;
         height: root.size;
         transform-rotation: root.liked ? -4deg : 0deg;
@@ -1665,10 +1672,10 @@ component PlayerControls inherits Rectangle {
             width: root.side-w;
             alignment: end;
             spacing: 2px;
-            // As big as the icons beside it look: a seal fills its square, their glyphs do not.
+            // Its outline as tall as the speaker beside it: the seal's frame fills 18 of 24, the speaker 20.
             if root.has-song && !root.guest: Seal {
                 y: (parent.height - self.height) / 2;
-                size: 18px;
+                size: 22px;
                 width: 34px;
                 height: 34px;
                 liked: root.now-starred;
@@ -2449,13 +2456,20 @@ component JamHeader inherits VerticalLayout {
 
 // What plays next: "Playing next" with where the songs come from and Clear, Autoplay and AutoMix as lit
 // glyphs, the songs with their artwork, and Autoplay's promise at the end.
-// The panels beside the song: lyrics, the queue and, with remote control on, the other devices; the one
-// showing is lit.
+// The panels beside the song: with remote control on, the other devices; lyrics; the queue. The one showing
+// is lit. In the order of the player pill's buttons for them.
 component PanelTabs inherits HorizontalLayout {
     in property <int> current;
     in property <bool> devices;
     callback picked(int);
     spacing: 2px;
+    if root.devices: TabButton {
+        text: "Devices";
+        icon: Icons.speaker;
+        named: true;
+        current: root.current == 3;
+        clicked => { root.picked(3); }
+    }
     TabButton {
         text: "Lyrics";
         icon: Icons.lyrics;
@@ -2469,13 +2483,6 @@ component PanelTabs inherits HorizontalLayout {
         named: true;
         current: root.current == 1;
         clicked => { root.picked(1); }
-    }
-    if root.devices: TabButton {
-        text: "Devices";
-        icon: Icons.speaker;
-        named: true;
-        current: root.current == 3;
-        clicked => { root.picked(3); }
     }
 }
 
@@ -5608,7 +5615,7 @@ export component AppWindow inherits Window {
                 undo => { root.undo-removed(); }
             }
 
-            // The panel's tabs, heading the right half: lyrics, the queue, the devices. Pressing the lit one shows the
+            // The panel's tabs, heading the right half: the devices, lyrics, the queue. Pressing the lit one shows the
             // artwork alone.
             PanelTabs {
                 x: root.width / 2 + 10px;
