@@ -58,8 +58,6 @@
     <string name="settings_automix">AutoMix</string>
     <string name="settings_better_beats">Better beat detection</string>
     <string name="settings_better_beats_off">A download of about %1$d MB</string>
-    <string name="settings_better_beats_absent">Downloaded over Wi-Fi (about %1$d MB) the next time AutoMix measures a song.</string>
-    <string name="settings_better_beats_waiting">Waiting for Wi-Fi to download it (about %1$d MB).</string>
     <string name="settings_better_beats_downloading">Downloading (about %1$d MB)…</string>
     <string name="settings_better_beats_network">the network failed</string>
     <string name="settings_better_beats_wrong_file">the file that arrived was not the right one</string>

@@ -520,10 +520,9 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                     dev.nori.music.ffi.automix.BeatFailure.WRONG_FILE -> R.string.settings_better_beats_wrong_file
                     dev.nori.music.ffi.automix.BeatFailure.STORAGE -> R.string.settings_better_beats_storage
                 }))
-                BeatModel.WaitingForWifi -> str(R.string.settings_better_beats_waiting, mb)
                 BeatModel.Downloading -> str(R.string.settings_better_beats_downloading, mb)
                 BeatModel.Ready -> ""
-                else -> str(R.string.settings_better_beats_absent, mb)
+                else -> str(R.string.settings_better_beats_off, mb)
             }
         }
         "skipSilence" -> if (s.untouched) str(R.string.settings_skip_silence_held) else ""

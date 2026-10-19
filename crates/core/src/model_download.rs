@@ -12,7 +12,7 @@ const PIECE: u64 = 8 << 20;
 const PIECE_TIMEOUT_MS: u32 = 90_000;
 
 /// Beat This!'s weights file, downloading and converting it first through `client` if needed. None when disabled or
-/// unavailable now (metered network not allowed, failure).
+/// unavailable now (a failure).
 pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
     let settings = &client.session().settings;
     let model = &settings.model;
@@ -24,9 +24,6 @@ pub fn ensure(client: &crate::client::Client) -> Option<PathBuf> {
         return Some(f);
     }
     let file = model.file()?;
-    if !model.may_fetch(client.metered()) {
-        return None;
-    }
     if !model.begin_download() {
         return None;
     }
@@ -125,6 +122,20 @@ mod tests {
     fn make_rejects_unpinned_checkpoint() {
         assert_eq!(make(b"<html>not found</html>").unwrap_err().0, BeatFailure::WrongFile);
         assert_eq!(make(&vec![0u8; CHECKPOINT_BYTES as usize]).unwrap_err().0, BeatFailure::WrongFile);
+    }
+
+    #[test]
+    fn mobile_data_fetches_the_model() {
+        let dir = nori_testdir::TempDir::new("model-metered");
+        let (c, fake) = crate::client::tests::client(Default::default());
+        let settings = &c.session().settings;
+        let mut p = settings.open(&dir.join("app.db").to_string_lossy()).unwrap();
+        (p.auto_mix, p.auto_mix_better_beats) = (true, true);
+        settings.put(p);
+        settings.model.set_home(&dir.join("nori.db").to_string_lossy());
+        *fake.metered.lock() = true;
+        assert_eq!(ensure(&c), None, "nothing is served");
+        assert_eq!(fake.asked().first().map(String::as_str), Some(CHECKPOINT_URL), "asked for on mobile data too");
     }
 
     #[test]

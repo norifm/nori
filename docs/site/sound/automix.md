@@ -23,8 +23,8 @@ measurement checks the lyrics' timing against the singing. It costs a little CPU
 
 **Better beat detection** (off by default) runs a small neural beat tracker (Beat This!) over the start
 and end of each song, for mixes that land on the beat more often, and over downloaded songs as they
-arrive. It uses more battery, on any network. Only its one-time download of about 8 MB from the
-model's authors waits for Wi-Fi.
+arrive. It uses more battery. Its one-time download of about 8 MB from the model's authors comes over any
+network.
 
 ### When AutoMix does not mix
 

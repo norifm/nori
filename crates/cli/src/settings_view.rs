@@ -468,7 +468,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
             let state = match &s.beat_model {
                 BeatModel::Ready => String::new(),
                 BeatModel::Downloading => "downloading".to_string(),
-                BeatModel::WaitingForWifi => "waiting for Wi-Fi".to_string(),
                 BeatModel::Failed { why } => format!("download failed: {}", text::beat_failure(*why)),
                 _ => format!("{} MB download", s.beat_model_mb),
             };
