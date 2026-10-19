@@ -1751,7 +1751,7 @@ impl App {
         ui.set_lyric_sweeping(now.sweeping);
         let width = ui.window().size().to_logical(ui.window().scale_factor()).width;
         let mut pieces = |view, on: bool, size, w, lit, dim| if on && now.sweeping { l.pieces(view, &now, size, w, lit, dim) } else { Vec::new() };
-        renew(&self.pieces[0], pieces(0, side, 22.0, 280.0 - 44.0, 0.92, 0.26));
+        renew(&self.pieces[0], pieces(0, side, 22.0, 280.0 - 44.0, 1.0, 0.36));
         renew(&self.pieces[1], pieces(1, full, 44.0, width / 2.0 - 140.0, 1.0, 0.36));
         ui.set_lyric_sung(now.sung.into());
         ui.set_lyric_now(now.now.into());

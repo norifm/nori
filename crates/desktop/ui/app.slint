@@ -2527,10 +2527,6 @@ component QueueView inherits Rectangle {
                 horizontal-stretch: 1;
             }
         }
-        Rectangle {
-            height: 1px;
-            background: Theme.hairline;
-        }
         queue-scroll := Flickable {
             width: root.width - 24px;
             content-width: self.width;
@@ -2548,7 +2544,7 @@ component QueueView inherits Rectangle {
                 property <bool> opened: !s.fresh;
                 // Its buttons show while the pointer is over the row.
                 property <bool> hot: qt.has-hover || up.hovered || dn.hovered || rm.hovered;
-                height: s.leaving || !self.opened ? 0 : 50px;
+                height: s.leaving || !self.opened ? 0 : 54px;
                 opacity: s.leaving || !self.opened ? 0 : 1;
                 animate height, opacity { duration: Motion.reduced ? 0ms : 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
                 clip: true;
@@ -2557,20 +2553,21 @@ component QueueView inherits Rectangle {
                     running: !parent.opened;
                     triggered => { parent.opened = true; }
                 }
-                border-radius: 6px;
+                // Concentric with the cover: its 8 px corner and the 7 px around it.
+                border-radius: 15px;
                 background: qt.has-hover ? Theme.hover : transparent;
                 // The row's content inside it, so the row stays hovered over its links and buttons.
                 qt := TouchArea {
                     double-clicked => { root.jump(s.index); }
                 HorizontalLayout {
-                    padding-left: 4px;
+                    padding-left: 7px;
                     padding-right: 4px;
-                    spacing: 10px;
+                    spacing: 12px;
                     Art {
                         y: (parent.height - self.height) / 2;
-                        width: 34px;
-                        height: 34px;
-                        border-radius: 4px;
+                        width: 40px;
+                        height: 40px;
+                        border-radius: 8px;
                         source: qrow.on-screen ? root.art(s.art, 0, root.covers-rev) : root.art("", 0, 0);
                     }
                     VerticalLayout {
@@ -2579,7 +2576,7 @@ component QueueView inherits Rectangle {
                         Text {
                             text: s.title;
                             color: Theme.text;
-                            font-size: 13px;
+                            font-size: 14px;
                             overflow: elide;
                         }
                         HorizontalLayout {
@@ -2592,19 +2589,19 @@ component QueueView inherits Rectangle {
                                 artist: s.artist-id;
                                 credits: s.credits;
                                 color: Theme.dim;
-                                font-size: 11px;
+                                font-size: 12px;
                             }
                             if s.album != "": Text {
                                 text: " — ";
                                 color: Theme.dim;
-                                font-size: 11px;
+                                font-size: 12px;
                             }
                             if s.album != "": Link {
                                 horizontal-stretch: 1;
                                 text: s.album;
                                 album: s.album-id;
                                 color: Theme.dim;
-                                font-size: 11px;
+                                font-size: 12px;
                                 overflow: elide;
                             }
                         }
@@ -2668,13 +2665,6 @@ component QueueView inherits Rectangle {
                         }
                     }
                 }
-                }
-                Rectangle {
-                    x: 48px;
-                    y: parent.height - 1px;
-                    width: parent.width - 52px;
-                    height: 1px;
-                    background: Theme.hairline;
                 }
             }
                 if root.autoplay && !Jam.guest: VerticalLayout {
@@ -4815,6 +4805,27 @@ export component AppWindow inherits Window {
                 height: parent.height;
                 background: Theme.panel;
                 clip: true;
+                // The song playing's colours, as Android's player panels wear them: its wash under the page's
+                // ground (30 % dark, 60 % light), so the page's ink reads on it in either appearance.
+                Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.wash-a;
+                    image-fit: cover;
+                    opacity: root.wash-on-b ? 0 : 1;
+                    animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
+                }
+                Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.wash-b;
+                    image-fit: cover;
+                    opacity: root.wash-on-b ? 1 : 0;
+                    animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
+                }
+                Rectangle {
+                    background: Theme.ground.with-alpha(Theme.dark ? 0.3 : 0.6);
+                }
                 Rectangle {
                     x: 0;
                     width: 1px;
@@ -4871,7 +4882,10 @@ export component AppWindow inherits Window {
                             wrap: word-wrap;
                             font-size: 22px;
                             font-weight: 700;
-                            color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.faint;
+                            // As Now Playing's: gone over the last 48 px before either edge, unsung lines the ink at 36 %.
+                            property <length> shown-at: self.y + lyric-flick.content-y;
+                            opacity: clamp(self.shown-at / 48px, 0, 1) * clamp((lyric-flick.height - self.shown-at - self.height) / 48px, 0, 1);
+                            color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36);
                             animate color { duration: Motion.reduced ? 0ms : 420ms; easing: ease-out; }
                             if root.lyric-sweeping: StyledText {
                                 // Kept while the pieces draw the line lit, only hidden: its colour comes up to white with them, so
@@ -4880,8 +4894,8 @@ export component AppWindow inherits Window {
                                 width: 100%;
                                 height: 100%;
                                 default-font-size: 22px;
-                                default-color: Theme.text.with-alpha(0.26 + (0.92 - 0.26) * parent.level);
-                                text: parent.lit ? @markdown("**\{root.lyric-sung}<font color=\"\{Theme.text.with-alpha(0.26 + 0.66 * root.lyric-mix)}\">\{root.lyric-now}</font><font color=\"\{Theme.faint}\">\{root.lyric-rest}</font>**") : @markdown("**\{line}**");
+                                default-color: Theme.text.with-alpha(0.36 + (1 - 0.36) * parent.level);
+                                text: parent.lit ? @markdown("**\{root.lyric-sung}<font color=\"\{Theme.text.with-alpha(0.36 + 0.64 * root.lyric-mix)}\">\{root.lyric-now}</font><font color=\"\{Theme.text.with-alpha(0.36)}\">\{root.lyric-rest}</font>**") : @markdown("**\{line}**");
                             }
                             if self.lit && root.lyric-sweeping && root.lyric-pieces-side.length > 0: Rectangle {
                                 width: 100%;
