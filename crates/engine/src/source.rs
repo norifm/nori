@@ -453,6 +453,13 @@ pub trait ByteSource: Send + Sync {
         self.open(url, from)
     }
 
+    /// [`ByteSource::open_cancellable`] of bytes `from` up to `end` (exclusive) alone, a `Range` with an
+    /// end: for a server that sends a longer range no faster than it plays (YouTube's). By default the
+    /// rest is asked for, and the reader stops at `end`.
+    fn open_part(&self, url: &str, key: Option<&str>, from: u64, _end: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+        self.open_cancellable(url, key, from, cancel)
+    }
+
     /// A live stream with `Icy-MetaData: 1`: the body and the answer's `icy-metaint`, if any.
     fn open_live(&self, url: &str) -> Result<(Body, Option<usize>), String> {
         self.open(url, 0).map(|b| (b, None)).map_err(|e| e.to_string())

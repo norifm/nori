@@ -89,7 +89,7 @@ final class ItemCell: UITableViewCell {
         case "artist":
             line = item.count > 0 ? Say.albums(item.count) : ""
         case "playlist":
-            line = Say.songs(item.count)
+            line = item.count > 0 ? Say.songs(item.count) : item.subtitle
         case "genre":
             line = Say.albums(item.count)
         case "smart":
@@ -201,7 +201,7 @@ final class CardCell: UICollectionViewCell {
         let line: String
         switch item.kind {
         case "artist": line = Say.albums(item.count)
-        case "playlist": line = Say.songs(item.count)
+        case "playlist": line = item.count > 0 ? Say.songs(item.count) : item.subtitle
         default: line = item.subtitle
         }
         detail.attributedText = remoteText(line, remote: item.external, font: detail.font, colour: Theme.secondary)
@@ -561,7 +561,11 @@ final class PageHeader: UIView {
         var bits: [String] = []
         if let g = head["g"] as? String, !g.isEmpty { bits.append(g) }
         if let y = head["y"] as? Int, y > 0 { bits.append("\(y)") }
-        if kind == "artist", let n = head["n"] as? Int { bits.append(Say.albums(n)) }
+        // A profile without albums is counted by its songs.
+        if kind == "artist", let n = head["n"] as? Int {
+            let songs = head["ns"] as? Int ?? 0
+            bits.append(n == 0 && songs > 0 ? Say.songs(songs) : Say.albums(n))
+        }
         if kind != "artist", let n = head[kind == "mix" || kind == "smart" ? "count" : "n"] as? Int { bits.append(Say.songs(n)) }
         if let sec = head["sec"] as? Int, sec > 0 { bits.append(Fmt.length(seconds: sec)) }
         meta.text = bits.joined(separator: " · ")

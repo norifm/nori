@@ -264,7 +264,7 @@ pub fn search(c: &Connection, query: &str, limit: u32) -> rusqlite::Result<Searc
         }
     }
     let [artists, albums, songs] = kept;
-    Ok(SearchResult { artists: load(c, &artists)?, albums: load(c, &albums)?, songs: load(c, &songs)? })
+    Ok(SearchResult { artists: load(c, &artists)?, albums: load(c, &albums)?, songs: load(c, &songs)?, playlists: Vec::new() })
 }
 
 /// The items at `rowids`, in that order.

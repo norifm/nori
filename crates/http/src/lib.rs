@@ -46,11 +46,13 @@ impl Http {
         r.headers().get("content-range")?.to_str().ok().and_then(content_range)?.1
     }
 
-    /// GETs `url` from byte `from` on.
-    fn open_now(&self, url: &str, from: u64) -> Result<Body, OpenError> {
+    /// GETs `url` from byte `from` on, up to `end` (exclusive) when given.
+    fn open_now(&self, url: &str, from: u64, end: Option<u64>) -> Result<Body, OpenError> {
         let mut req = self.agent.get(url);
-        if from > 0 {
-            req = req.header("Range", format!("bytes={from}-"));
+        match end {
+            Some(end) => req = req.header("Range", format!("bytes={from}-{}", end.saturating_sub(1))),
+            None if from > 0 => req = req.header("Range", format!("bytes={from}-")),
+            None => {}
         }
         let r = req.call().map_err(|e| e.to_string())?;
         let status = r.status().as_u16();
@@ -394,6 +396,16 @@ impl ureq::unversioned::transport::Transport for Socket {
     }
 }
 
+impl Http {
+    /// [`Http::open_now`] that `cancel` calls off, its body's reads too.
+    fn open_under(&self, cancel: &Cancel, url: &str, from: u64, end: Option<u64>) -> Result<Body, OpenError> {
+        let request = Arc::new(Request { cancel: cancel.clone() });
+        let mut b = request.during(|| self.open_now(url, from, end))?;
+        b.reader = Box::new(CancellableBody { inner: b.reader, request });
+        Ok(b)
+    }
+}
+
 /// A response body whose reads run under its request; once that is cancelled, its end is an error.
 struct CancellableBody {
     inner: Box<dyn Read + Send>,
@@ -412,14 +424,15 @@ impl Read for CancellableBody {
 
 impl ByteSource for Http {
     fn open(&self, url: &str, from: u64) -> Result<Body, OpenError> {
-        self.open_now(url, from)
+        self.open_now(url, from, None)
     }
 
     fn open_cancellable(&self, url: &str, _key: Option<&str>, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
-        let request = Arc::new(Request { cancel: cancel.clone() });
-        let mut b = request.during(|| self.open_now(url, from))?;
-        b.reader = Box::new(CancellableBody { inner: b.reader, request });
-        Ok(b)
+        self.open_under(cancel, url, from, None)
+    }
+
+    fn open_part(&self, url: &str, _key: Option<&str>, from: u64, end: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+        self.open_under(cancel, url, from, Some(end))
     }
 
     /// Radio stream with ICY metadata requested; also returns `icy-metaint` (audio bytes between metadata blocks).
@@ -459,6 +472,31 @@ mod tests {
             let TransportError::Failed { kind, .. } = failure(ureq::Error::Io(io));
             assert_eq!(kind, want);
         }
+    }
+
+    /// A part asks a range with its end, and its body says where it starts in the whole and how long the
+    /// whole is.
+    #[test]
+    fn a_part_asks_a_range_with_an_end() {
+        use std::io::{BufRead, BufReader, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/audio", server.local_addr().unwrap());
+        let answering = std::thread::spawn(move || {
+            let (mut socket, _) = server.accept().unwrap();
+            let mut range = String::new();
+            for line in BufReader::new(socket.try_clone().unwrap()).lines().map(Result::unwrap).take_while(|l| !l.is_empty()) {
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("range: ") {
+                    range = v.to_string();
+                }
+            }
+            socket.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 1000-1009/5000\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789").unwrap();
+            range
+        });
+        let mut body = Http::new().open_part(&url, None, 1000, 1010, &Cancel::new()).unwrap();
+        let mut got = String::new();
+        body.reader.read_to_string(&mut got).unwrap();
+        assert_eq!((body.start, body.len, got.as_str()), (1000, Some(5000), "0123456789"));
+        assert_eq!(answering.join().unwrap(), "bytes=1000-1009");
     }
 
     #[test]

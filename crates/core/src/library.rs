@@ -57,10 +57,10 @@ impl Client {
         })
     }
 
-    /// All songs of the artist's albums ([`Client::artist_songs`]), from the cached artist page if any.
+    /// What playing the artist plays ([`Client::artist_page_songs`]), from the cached artist page if any.
     pub async fn artist_songs_of(&self, artist_id: String) -> NetResult<Vec<Song>> {
         let Some(Page::ArtistPage { v }) = self.cached_or_fetched(Read::ArtistById { id: artist_id }).await? else { return Ok(Vec::new()) };
-        Ok(self.artist_songs(v.albums).await)
+        Ok(self.artist_page_songs(v).await)
     }
 
     /// Draws mix `id` unless this period's draw exists (`again`: redraw), falling back to random server

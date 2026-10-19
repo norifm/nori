@@ -111,8 +111,8 @@ impl Provider for Fake {
 struct Opens;
 
 impl ResolveStream for Opens {
-    fn resolve(&self, address: &str, from: u64) -> Option<NetResult<String>> {
-        address.strip_prefix("fake:").map(|id| Ok(format!("https://fake.example/{id}?from={from}")))
+    fn resolve(&self, address: &str) -> Option<NetResult<String>> {
+        address.strip_prefix("fake:").map(|id| Ok(format!("https://fake.example/{id}")))
     }
 
     fn refused(&self, _: &str) {}
@@ -172,7 +172,7 @@ mod tests {
         let t = c.resolve("f-1".into(), false, false);
         assert_eq!((t.url.as_str(), t.key.as_str()), ("fake:f-1", "f-1:0"));
         let opens = c.stream_resolver().unwrap();
-        assert_eq!(opens.resolve(&t.url, 7).unwrap().unwrap(), "https://fake.example/f-1?from=7");
+        assert_eq!(opens.resolve(&t.url).unwrap().unwrap(), "https://fake.example/f-1");
         c.session().register(album().songs);
         c.session().set(vec!["f-1".into(), "f-2".into()], Some(0), false, None);
         assert!(c.precache_targets(false).is_empty(), "nothing past the next song");

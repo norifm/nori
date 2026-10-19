@@ -74,6 +74,16 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                     items(r.albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.album(a.id, a) }) }
                 }
             }
+            if (r.playlists.isNotEmpty()) item(key = "playlists") {
+                SectionTitle(say.playlists)
+                LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(r.playlists, key = { it.id }) { p ->
+                        // A provider's playlist is not counted until opened: its own line (who made it) instead.
+                        val line = remember(p.songCount, p.comment) { if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty() }
+                        CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 120.dp, { vm.remember(); nav.playlist(p.id, p) })
+                    }
+                }
+            }
             if (r.songs.isNotEmpty()) item(key = "songs") { SectionTitle(say.songs) }
             itemsIndexed(r.songs, key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { _, s ->
                 // One tap plays one song: a search result list is not an album, and with octo-fiesta

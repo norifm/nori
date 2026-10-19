@@ -295,7 +295,7 @@ impl From<Response> for ServerInfo {
 
 impl From<Found> for SearchResult {
     fn from(f: Found) -> Self {
-        SearchResult { artists: f.artist, albums: f.album, songs: f.song }
+        SearchResult { artists: f.artist, albums: f.album, songs: f.song, playlists: Vec::new() }
     }
 }
 
@@ -313,7 +313,7 @@ impl From<AlbumWire> for AlbumDetail {
 
 impl From<ArtistWire> for ArtistDetail {
     fn from(a: ArtistWire) -> Self {
-        ArtistDetail::new(a.artist, a.album)
+        ArtistDetail::new(a.artist, a.album, Vec::new())
     }
 }
 

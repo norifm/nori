@@ -568,6 +568,7 @@ mod tests {
                 Album { id: "al2".into(), name: "Future".into(), artist: "Future".into(), ..Default::default() },
             ],
             songs: vec![song("s1", "After That"), song("s2", "Monster")],
+            playlists: Vec::new(),
         }
     }
 

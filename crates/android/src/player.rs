@@ -169,7 +169,7 @@ fn look_up(env: &mut JNIEnv) -> jni::errors::Result<Java> {
     Ok(Java {
         vm: env.get_java_vm()?,
         open_track: env.get_method_id(&bridge, "openTrack", "(IIII)Landroid/media/AudioTrack;")?,
-        open: env.get_method_id(&bridge, "open", "(Ljava/lang/String;Ljava/lang/String;JJ)Ldev/nori/music/playback/RustBody;")?,
+        open: env.get_method_id(&bridge, "open", "(Ljava/lang/String;Ljava/lang/String;JJJ)Ldev/nori/music/playback/RustBody;")?,
         cancel: env.get_method_id(&bridge, "cancel", "(J)V")?,
         open_live: env.get_method_id(&bridge, "openLive", "(Ljava/lang/String;)Ldev/nori/music/playback/RustBody;")?,
         downloaded: env.get_method_id(&bridge, "downloaded", "(Ljava/lang/String;)[Ljava/lang/String;")?,
@@ -891,7 +891,14 @@ impl ByteSource for JavaBytes {
         if !self.key.is_empty() {
             self.ahead.take_over(&self.key);
         }
-        open_java(&self.bridge, url, &self.key, from, cancel)
+        open_java(&self.bridge, url, &self.key, from, None, cancel)
+    }
+
+    fn open_part(&self, url: &str, _key: Option<&str>, from: u64, end: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+        if !self.key.is_empty() {
+            self.ahead.take_over(&self.key);
+        }
+        open_java(&self.bridge, url, &self.key, from, Some(end), cancel)
     }
 
     /// A radio stream through `RustBridge.openLive` (uncached, ICY metadata on); also returns `icy-metaint`.
@@ -930,7 +937,8 @@ impl ByteSource for JavaBytes {
 
 /// `RustBridge.open` from byte `from` (download, then stream cache, then network; what is read is cached
 /// under `key`). `cancel` calls `RustBridge.cancel`, which fails a pending open or read at once.
-fn open_java(bridge: &Bridge, url: &str, key: &str, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+/// `url`'s bytes `from` on, up to `end` (exclusive) when given, through `RustBridge.open`.
+fn open_java(bridge: &Bridge, url: &str, key: &str, from: u64, end: Option<u64>, cancel: &Cancel) -> Result<Body, OpenError> {
     let ticket = bridge.tickets.fetch_add(1, Ordering::Relaxed);
     let cancelling = bridge.clone();
     cancel.on_cancel(move || {
@@ -941,8 +949,9 @@ fn open_java(bridge: &Bridge, url: &str, key: &str, from: u64, cancel: &Cancel) 
     let (java, mut env) = env().ok_or("no JVM")?;
     let body = env.with_local_frame(6, |env| -> jni::errors::Result<Option<Result<(JavaBody, i64), OpenError>>> {
         let (url, key) = (env.new_string(url)?, env.new_string(key)?);
-        let args = [JValue::Object(&url).as_jni(), JValue::Object(&key).as_jni(), JValue::Long(from as i64).as_jni(), JValue::Long(ticket).as_jni()];
-        // SAFETY: RustBridge.open(String, String, long, long), looked up with this signature.
+        let end = end.map_or(-1, |e| e as i64);
+        let args = [JValue::Object(&url).as_jni(), JValue::Object(&key).as_jni(), JValue::Long(from as i64).as_jni(), JValue::Long(end).as_jni(), JValue::Long(ticket).as_jni()];
+        // SAFETY: RustBridge.open(String, String, long, long, long), looked up with this signature.
         let body = unsafe { env.call_method_unchecked(bridge.obj(), java.open, ReturnType::Object, &args) }?.l()?;
         if body.is_null() {
             return Ok(None);
@@ -984,7 +993,14 @@ impl ByteSource for AheadBytes {
 
     fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &Cancel) -> Result<Body, OpenError> {
         match key {
-            Some(key) => open_java(&self.0, url, key, from, cancel),
+            Some(key) => open_java(&self.0, url, key, from, None, cancel),
+            None => Err("asked without its cache key".into()),
+        }
+    }
+
+    fn open_part(&self, url: &str, key: Option<&str>, from: u64, end: u64, cancel: &Cancel) -> Result<Body, OpenError> {
+        match key {
+            Some(key) => open_java(&self.0, url, key, from, Some(end), cancel),
             None => Err("asked without its cache key".into()),
         }
     }

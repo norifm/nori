@@ -181,7 +181,7 @@ impl Fetch {
                 _ => Vec::new(),
             },
             Fetch::Artist(id) => match client.read_now(Read::ArtistById { id }).await? {
-                Page::ArtistPage { v } => client.artist_songs(v.albums).await,
+                Page::ArtistPage { v } => client.artist_page_songs(v).await,
                 _ => Vec::new(),
             },
             Fetch::Mix(id) => client.mix_songs(id).await?,

@@ -17,7 +17,7 @@ use nori_player::playlist::Playlist;
 use nori_player::queue::{OnError, PlaybackError};
 use nori_player::transitions::WindowSong;
 use nori_core::client::Client;
-use nori_core::providers::ResolveStream;
+use nori_core::providers::{ResolveStream, StreamParts};
 use nori_core::queue::Session;
 use nori_core::settings::StoredPrefs;
 
@@ -298,8 +298,12 @@ impl ByteSource for Resolving {
     }
 
     fn open_cancellable(&self, url: &str, key: Option<&str>, from: u64, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
-        let Some(served) = self.resolver.resolve(url, from) else { return self.bytes.open_cancellable(url, key, from, cancel) };
-        let opened = self.bytes.open_cancellable(&served.map_err(|e| OpenError::Failed(e.to_string()))?, key, from, cancel);
+        let Some(served) = self.resolver.resolve(url) else { return self.bytes.open_cancellable(url, key, from, cancel) };
+        let served = served.map_err(|e| OpenError::Failed(e.to_string()))?;
+        let opened = match self.resolver.parts(url).filter(|p| from < p.len) {
+            Some(parts) => self.open_parts(url, &served, key, from, parts, cancel),
+            None => self.bytes.open_cancellable(&served, key, from, cancel),
+        };
         if matches!(opened, Err(OpenError::Status(403))) {
             self.resolver.refused(url);
         }
@@ -315,6 +319,76 @@ impl ByteSource for Resolving {
 
     fn forget(&self, url: &str) -> bool {
         self.bytes.forget(url)
+    }
+}
+
+impl Resolving {
+    /// `address` (served at `served`) from byte `from` as one body read a part at a time.
+    fn open_parts(&self, address: &str, served: &str, key: Option<&str>, from: u64, parts: StreamParts, cancel: &crate::source::Cancel) -> Result<crate::source::Body, OpenError> {
+        let end = parts.len.min(from + parts.most);
+        let first = self.bytes.open_part(served, key, from, end, cancel)?;
+        // A server that ignored the range sends the whole stream: read as it comes.
+        if first.start != from {
+            return Ok(first);
+        }
+        let reader = Parts {
+            bytes: self.bytes.clone(),
+            resolver: self.resolver.clone(),
+            address: address.to_string(),
+            key: key.map(str::to_string),
+            cancel: cancel.clone(),
+            parts,
+            at: from,
+            end,
+            body: first.reader,
+        };
+        Ok(crate::source::Body { start: from, len: Some(parts.len), reader: Box::new(reader) })
+    }
+}
+
+/// A stream asked for a part at a time ([`ResolveStream::parts`]), read as one body: at each part's end
+/// the next is asked for, at the URL the address resolves to then.
+struct Parts {
+    bytes: Arc<dyn ByteSource>,
+    resolver: Arc<dyn ResolveStream>,
+    address: String,
+    key: Option<String>,
+    cancel: crate::source::Cancel,
+    parts: StreamParts,
+    /// The next byte read.
+    at: u64,
+    /// Where the open part ends.
+    end: u64,
+    body: Box<dyn std::io::Read + Send>,
+}
+
+impl std::io::Read for Parts {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.at == self.end {
+            if self.at >= self.parts.len {
+                return Ok(0);
+            }
+            let served = self.resolver.resolve(&self.address).unwrap_or_else(|| Ok(self.address.clone())).map_err(|e| std::io::Error::other(e.to_string()))?;
+            let end = self.parts.len.min(self.at + self.parts.most);
+            let next = self.bytes.open_part(&served, self.key.as_deref(), self.at, end, &self.cancel).map_err(|e| {
+                if matches!(e, OpenError::Status(403)) {
+                    self.resolver.refused(&self.address);
+                }
+                std::io::Error::other(e.to_string())
+            })?;
+            if next.start != self.at {
+                return Err(std::io::Error::other(format!("a part asked from byte {} came from {}", self.at, next.start)));
+            }
+            (self.body, self.end) = (next.reader, end);
+        }
+        let want = buf.len().min((self.end - self.at) as usize);
+        let n = self.body.read(&mut buf[..want])?;
+        // A part that ends early is asked again from there by the loader.
+        if n == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("a part ended at byte {} of {}", self.at, self.end)));
+        }
+        self.at += n as u64;
+        Ok(n)
     }
 }
 

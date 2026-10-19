@@ -27,7 +27,7 @@ page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 asked getAlbum&id=al1
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 asked getArtist&id=ar1
 read_each ArtistAbout { id: "ar1" }
@@ -81,7 +81,7 @@ stored AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }: albums [al1/2
 stored FavouriteAlbums { size: 20 }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
 stored ArtistIndex: artists [ar1] #e4328b60ef4d3dea digest=true fresh=true
 stored AlbumById { id: "al1" }: album al1/2 [s1/200,s2*/180] #048f055c9190ce17 digest=true fresh=true
-stored ArtistById { id: "ar1" }: artist ar1 [al1/2] #c9c86854de016ea9 digest=true fresh=true
+stored ArtistById { id: "ar1" }: artist ar1 [al1/2] [] #5f7eb56ef1fbbb45 digest=true fresh=true
 stored ArtistAbout { id: "ar1" }: about Some("http://m") [ar1] #875a0b766ae914c0 digest=true fresh=true
 stored TopSongs { artist: "A" }: songs [s1/200] #16a140f7cf8f4e2c digest=true fresh=true
 stored PlaylistList: playlists [p1/1] #97710a49413c558f digest=true fresh=true
@@ -116,7 +116,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -174,7 +174,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -253,7 +253,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -332,18 +332,18 @@ ended: ok
 asked ping
 asked ping
 read_now Search { query: "a", songs: 5, albums: 5, artists: 5 }
-page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] #8bfb1ded44a1f1db
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #5a081a62d8be0844
 stored Search { query: "a", songs: 5, albums: 5, artists: 5 }: none digest=false fresh=false
 read_each Search { query: "a", songs: 5, albums: 5, artists: 5 }
-page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] #8bfb1ded44a1f1db
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #5a081a62d8be0844
 ended: ok
 asked search3&query=a&songCount=5&albumCount=5&artistCount=5&musicFolderId=7
 asked search3&query=a&songCount=5&albumCount=5&artistCount=5&musicFolderId=7
 read_now SongPage { offset: 0, count: 10 }
-page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] #8bfb1ded44a1f1db
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #5a081a62d8be0844
 stored SongPage { offset: 0, count: 10 }: none digest=false fresh=false
 read_each SongPage { offset: 0, count: 10 }
-page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] #8bfb1ded44a1f1db
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #5a081a62d8be0844
 ended: ok
 asked search3&query=&songCount=10&songOffset=0&albumCount=0&artistCount=0&musicFolderId=7
 asked search3&query=&songCount=10&songOffset=0&albumCount=0&artistCount=0&musicFolderId=7
@@ -435,7 +435,7 @@ page artists [ar1] #e4328b60ef4d3dea
 read_now AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 read_now ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 read_now ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
 read_now TopSongs { artist: "A" }
@@ -503,7 +503,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -621,7 +621,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -681,7 +681,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -741,7 +741,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -801,7 +801,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -861,7 +861,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -921,7 +921,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -981,7 +981,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -1041,7 +1041,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -1101,7 +1101,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -1161,7 +1161,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -1221,7 +1221,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0
@@ -1281,7 +1281,7 @@ read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] #c9c86854de016ea9
+page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
 ended: ok
 read_each ArtistAbout { id: "ar1" }
 page about Some("http://m") [ar1] #875a0b766ae914c0

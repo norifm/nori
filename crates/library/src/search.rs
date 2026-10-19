@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use nori_model::SearchResult;
+use nori_model::{is_provider_id, SearchResult};
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSplit {
@@ -15,7 +15,7 @@ pub struct SearchSplit {
 }
 
 pub fn split(r: SearchResult) -> SearchSplit {
-    let has_providers = r.songs.iter().any(|s| s.is_external) || r.albums.iter().any(|a| a.is_external) || r.artists.iter().any(|a| a.is_external);
+    let has_providers = r.songs.iter().any(|s| s.is_external) || r.albums.iter().any(|a| a.is_external) || r.artists.iter().any(|a| a.is_external) || r.playlists.iter().any(|p| is_provider_id(&p.id));
     if !has_providers {
         return SearchSplit { everything: r, library: None, providers: None };
     }
@@ -23,6 +23,7 @@ pub fn split(r: SearchResult) -> SearchSplit {
         artists: r.artists.iter().filter(|a| a.is_external == external).cloned().collect(),
         albums: r.albums.iter().filter(|a| a.is_external == external).cloned().collect(),
         songs: r.songs.iter().filter(|s| s.is_external == external).cloned().collect(),
+        playlists: r.playlists.iter().filter(|p| is_provider_id(&p.id) == external).cloned().collect(),
     };
     let (library, providers) = (part(false), part(true));
     SearchSplit { everything: r, library: Some(library), providers: Some(providers) }
@@ -40,6 +41,7 @@ pub fn search_split(result: SearchResult) -> SearchSplit {
         artists: distinct(result.artists, |a| &a.id),
         albums: distinct(result.albums, |a| &a.id),
         songs: distinct(result.songs, |s| &s.id),
+        playlists: distinct(result.playlists, |p| &p.id),
     })
 }
 
@@ -123,7 +125,7 @@ impl Session {
     pub fn view(&self) -> SearchView {
         let shown = self.split.as_ref().map(|s| s.shown(self.scope));
         let has_providers = self.split.as_ref().is_some_and(|s| s.providers.is_some());
-        let empty = shown.as_ref().is_some_and(|r| r.songs.is_empty() && r.albums.is_empty() && r.artists.is_empty());
+        let empty = shown.as_ref().is_some_and(|r| r.songs.is_empty() && r.albums.is_empty() && r.artists.is_empty() && r.playlists.is_empty());
         SearchView {
             text: self.text.clone(),
             query: self.query().to_string(),
@@ -167,15 +169,17 @@ pub fn kotlin_whitespace(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nori_model::{Album, Artist, Song};
+    use nori_model::{Album, Artist, Playlist, Song};
 
     fn result() -> SearchResult {
         let s = |id: &str, ext: bool| Song { id: id.into(), is_external: ext, ..Default::default() };
         let a = |id: &str, ext: bool| Album { id: id.into(), is_external: ext, ..Default::default() };
+        let p = |id: &str| Playlist { id: id.into(), ..Default::default() };
         SearchResult {
             artists: vec![Artist { id: "ar".into(), ..Default::default() }],
             albums: vec![a("al", false), a("ext-al", true), a("ext-al", true)],
             songs: vec![s("1", false), s("ext-2", true), s("1", false), s("3", false)],
+            playlists: vec![p("yt-VLa"), p("pl-b"), p("yt-VLa")],
         }
     }
 
@@ -189,17 +193,20 @@ mod tests {
         assert!(r.providers.is_some());
         assert_eq!(ids(&r.everything.songs, |s| &s.id), ["1", "ext-2", "3"]);
         assert_eq!(ids(&r.everything.albums, |a| &a.id), ["al", "ext-al"]);
+        assert_eq!(ids(&r.everything.playlists, |p| &p.id), ["yt-VLa", "pl-b"]);
         let (lib, prov) = (r.library.unwrap(), r.providers.unwrap());
         assert_eq!(ids(&lib.songs, |s| &s.id), ["1", "3"]);
         assert_eq!(lib.artists.len(), 1);
         assert_eq!(ids(&prov.songs, |s| &s.id), ["ext-2"]);
         assert_eq!(ids(&prov.albums, |a| &a.id), ["ext-al"]);
         assert!(prov.artists.is_empty());
+        assert_eq!((ids(&lib.playlists, |p| &p.id), ids(&prov.playlists, |p| &p.id)), (vec!["yt-VLa"], vec!["pl-b"]));
 
         // A library only answer is not copied.
         let mut r = result();
         r.songs.retain(|s| !s.is_external);
         r.albums.retain(|a| !a.is_external);
+        r.playlists.retain(|p| !is_provider_id(&p.id));
         let s = search_split(r);
         assert!(s.library.is_none() && s.providers.is_none());
     }

@@ -124,8 +124,8 @@ pub enum Answer {
 /// Turns a provider's stream addresses into the URLs they open at, on the opening thread (a loader's,
 /// never the engine's).
 pub trait ResolveStream: Send + Sync {
-    /// The URL to open `address` at from byte `from`; None when `address` is a URL already.
-    fn resolve(&self, address: &str, from: u64) -> Option<NetResult<String>>;
+    /// The URL to open `address` at; None when `address` is a URL already.
+    fn resolve(&self, address: &str) -> Option<NetResult<String>>;
 
     /// The URL `address` resolved to was refused: the next open resolves it anew.
     fn refused(&self, address: &str);
@@ -135,6 +135,28 @@ pub trait ResolveStream: Send + Sync {
     fn live(&self, _address: &str) -> Option<Box<dyn std::io::Read + Send>> {
         None
     }
+
+    /// The URL to fetch `address` at from byte `from` to its end in one request, for a platform's download
+    /// worker; None when `address` is a URL already.
+    fn resolve_rest(&self, address: &str, _from: u64) -> Option<NetResult<String>> {
+        self.resolve(address)
+    }
+
+    /// How `address` is asked for when its server sends a long range no faster than it plays: in parts,
+    /// each a request of its own. None when one request may ask for the rest. Asked after
+    /// [`ResolveStream::resolve`], on the same thread.
+    fn parts(&self, _address: &str) -> Option<StreamParts> {
+        None
+    }
+}
+
+/// A stream asked for in parts ([`ResolveStream::parts`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamParts {
+    /// The stream's length in bytes.
+    pub len: u64,
+    /// The most bytes one request asks for.
+    pub most: u64,
 }
 
 /// What adding a profile of a kind asks for, and how its account signs in.
@@ -387,7 +409,7 @@ impl Client {
 impl Client {
     /// Resolves a provider address for a platform's download worker. May block on the provider.
     pub fn resolve_stream_url(self: Arc<Self>, address: String, from: u64) -> NetResult<String> {
-        match self.stream_resolver().and_then(|r| r.resolve(&address, from)) {
+        match self.stream_resolver().and_then(|r| r.resolve_rest(&address, from)) {
             Some(url) => url,
             None => Ok(address),
         }

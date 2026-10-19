@@ -200,7 +200,7 @@ fn empty(read: &Read) -> NetResult<Page> {
         Read::AlbumList { .. } | Read::AlbumsByYear { .. } | Read::FavouriteAlbums { .. } => Page::Albums { v: Vec::new() },
         Read::ArtistIndex | Read::FolderIndex => Page::Artists { v: Vec::new() },
         Read::AlbumById { .. } => Page::AlbumPage { v: AlbumDetail::new(Album::default(), Vec::new(), Vec::new()) },
-        Read::ArtistById { .. } => Page::ArtistPage { v: ArtistDetail::new(Artist::default(), Vec::new()) },
+        Read::ArtistById { .. } => Page::ArtistPage { v: ArtistDetail::new(Artist::default(), Vec::new(), Vec::new()) },
         Read::ArtistAbout { .. } => Page::About { v: ArtistInfo::default() },
         Read::TopSongs { .. } | Read::RandomSongs { .. } | Read::SongsByGenre { .. } | Read::SimilarSongs { .. } | Read::AlbumSongs { .. } | Read::PlaylistSongs { .. } => {
             Page::Songs { v: Vec::new() }
@@ -275,6 +275,7 @@ fn records(page: &mut Page) -> (Vec<&mut Song>, Vec<&mut Album>, Vec<&mut Artist
         Page::ArtistPage { v } => {
             artists.push(&mut v.artist);
             albums.extend(&mut v.albums);
+            songs.extend(&mut v.songs);
         }
         Page::About { v } => artists.extend(&mut v.similar),
         Page::Songs { v } => songs.extend(v),

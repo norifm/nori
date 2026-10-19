@@ -228,16 +228,23 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
      * player opens its songs so): a download, then the stream cache, then the network. The source and how
      * many bytes are left (C.LENGTH_UNSET unknown).
      */
-    fun openResolved(url: String, key: String, from: Long): Pair<DataSource, Long> = openResolved(url, key, from, null)
+    fun openResolved(url: String, key: String, from: Long): Pair<DataSource, Long> = openResolved(url, key, from, -1, null)
 
-    /** [openResolved] as a request the Rust side may call off by its ticket [t] ([Tickets]). */
-    internal fun openResolved(url: String, key: String, from: Long, t: Ticket?): Pair<DataSource, Long> {
+    /**
+     * [openResolved] up to byte [end] (exclusive; -1 for the rest), as a request the Rust side may call off
+     * by its ticket [t] ([Tickets]).
+     */
+    internal fun openResolved(url: String, key: String, from: Long, end: Long, t: Ticket?): Pair<DataSource, Long> {
         applyStreamLimit()
         val source = (if (t == null) cached else cancellable(t)).createDataSource()
         try {
             t?.opening()
             if (t?.cancelled == true) throw java.io.InterruptedIOException("called off")
-            return source.open(DataSpec.Builder().setUri(Uri.parse(url)).setKey(key).setPosition(from).build()).let { source to it }
+            val spec = DataSpec.Builder().setUri(Uri.parse(url)).setKey(key).setPosition(from)
+            if (end > from) spec.setLength(end - from)
+            val left = source.open(spec.build())
+            if (end > from) rememberLength(key, source.responseHeaders)
+            return source to left
         } catch (e: IOException) {
             // Let go at once: the stream cache's lock on the song goes with it.
             runCatching { source.close() }
@@ -259,12 +266,28 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
         val source = network.createDataSource()
         try {
             source.open(DataSpec.Builder().setUri(Uri.parse(url)).setPosition(0).setLength(1).build())
-            val range = source.responseHeaders.entries.firstOrNull { it.key.equals("Content-Range", ignoreCase = true) }?.value?.firstOrNull()
-            range?.substringAfterLast('/')?.trim()?.toLongOrNull() ?: -1L
+            saidLength(source.responseHeaders)
         } finally {
             source.close()
         }
     }.getOrDefault(-1L)
+
+    /** The whole length a ranged answer's Content-Range says ("bytes 0-9/5000"); -1 when it says none. */
+    private fun saidLength(headers: Map<String, List<String>>): Long {
+        val range = headers.entries.firstOrNull { it.key.equals("Content-Range", ignoreCase = true) }?.value?.firstOrNull()
+        return range?.substringAfterLast('/')?.trim()?.toLongOrNull() ?: -1L
+    }
+
+    /**
+     * Keeps the length a part's answer ([headers]) says as [key]'s, when the stream cache has none: media3
+     * learns a song's length only from a request without an end, and a song asked for in parts (YouTube's)
+     * would never count as whole ([isWhole]), so AutoMix and the lyrics' timing would never measure it.
+     */
+    private fun rememberLength(key: String, headers: Map<String, List<String>>) = runCatching {
+        if (ContentMetadata.getContentLength(streamCache.getContentMetadata(key)) != C.LENGTH_UNSET.toLong()) return@runCatching
+        val whole = saidLength(headers).takeIf { it > 0 } ?: return@runCatching
+        streamCache.applyContentMetadataMutations(key, ContentMetadataMutations().also { ContentMetadataMutations.setContentLength(it, whole) })
+    }
 
     /**
      * The stream cache's length for [key] made the real one, [whole] (-1 not known), once a range from

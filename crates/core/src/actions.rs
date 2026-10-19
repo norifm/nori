@@ -101,6 +101,15 @@ impl Client {
         songs
     }
 
+    /// What playing artist page `page` plays: its albums' songs ([`Client::artist_songs`]), or the page's
+    /// own songs when it lists no albums (a YouTube Music profile's videos).
+    pub async fn artist_page_songs(&self, page: crate::ArtistDetail) -> Vec<Song> {
+        if page.albums.is_empty() {
+            return page.songs;
+        }
+        self.artist_songs(page.albums).await
+    }
+
     /// Random library songs.
     pub async fn shuffle_all(&self) -> NetResult<Vec<Song>> {
         let mut songs = self.songs(Read::RandomSongs { size: SHUFFLE_ALL, genre: None }).await?;
@@ -179,6 +188,18 @@ pub(crate) mod tests {
         c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
         fake.fail(crate::transport::FailureKind::Connect);
         assert_eq!(play(), 2);
+    }
+
+    /// An artist without albums plays the songs its page shows; one with albums plays those.
+    #[test]
+    fn an_artist_without_albums_plays_its_songs() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        let song = |id: &str| Song { id: id.into(), ..Default::default() };
+        let bare = crate::ArtistDetail::new(Default::default(), Vec::new(), vec![song("v1"), song("v2")]);
+        assert_eq!(block(c.artist_page_songs(bare)).iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["v1", "v2"]);
+        fake.answer(r#"{"subsonic-response":{"status":"ok","album":{"id":"a","name":"a","song":[{"id":"1","title":"1","isDir":false}]}}}"#);
+        let with_album = crate::ArtistDetail::new(Default::default(), vec![Album { id: "a".into(), ..Default::default() }], vec![song("v1")]);
+        assert_eq!(block(c.artist_page_songs(with_album)).iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["1"]);
     }
 
     #[test]

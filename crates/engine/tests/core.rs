@@ -11,7 +11,7 @@ use nori_core::client::{Client, NetProfile};
 use nori_core::transport::{Exchange, Transport, TransportError, TransportResponse};
 use nori_core::{Core, ServerConfig, Song};
 use parking_lot::Mutex;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 
 use common::NoApi;
@@ -571,7 +571,7 @@ struct Resolver {
 }
 
 impl nori_core::providers::ResolveStream for Resolver {
-    fn resolve(&self, address: &str, _: u64) -> Option<nori_core::client::NetResult<String>> {
+    fn resolve(&self, address: &str) -> Option<nori_core::client::NetResult<String>> {
         let name = address.strip_prefix("addr:")?;
         let mut n = self.resolved.lock();
         *n += 1;
@@ -622,4 +622,87 @@ fn a_servers_profile_resolves_nothing() {
     let client = Client::new(core, Arc::new(NoApi::default()), Default::default());
     let bytes: Arc<dyn ByteSource> = Arc::new(Served::default());
     assert!(Arc::ptr_eq(&nori_engine::core::resolving(&client, bytes.clone()), &bytes));
+}
+
+/// Addresses `parts:<name>` resolve to `https://served/<name>` and are asked for 1000 bytes at a time
+/// of 2500; refusals kept.
+#[derive(Default)]
+struct InParts {
+    refused: Mutex<Vec<String>>,
+}
+
+impl nori_core::providers::ResolveStream for InParts {
+    fn resolve(&self, address: &str) -> Option<nori_core::client::NetResult<String>> {
+        address.strip_prefix("parts:").map(|name| Ok(format!("https://served/{name}")))
+    }
+
+    fn refused(&self, address: &str) {
+        self.refused.lock().push(address.to_string());
+    }
+
+    fn parts(&self, address: &str) -> Option<nori_core::providers::StreamParts> {
+        address.starts_with("parts:").then_some(nori_core::providers::StreamParts { len: 2500, most: 1000 })
+    }
+}
+
+/// A 2500-byte stream, byte `i` being `i % 251`; each request kept as (from, end asked, if any). A part
+/// asked from `refuse` is refused as an expired URL is.
+#[derive(Default)]
+struct Ranged {
+    ends: bool,
+    refuse: Option<u64>,
+    asked: Mutex<Vec<(u64, Option<u64>)>>,
+}
+
+impl Ranged {
+    fn body(from: u64, end: u64) -> Body {
+        Body { start: from, len: Some(2500), reader: Box::new(Cursor::new((from..end).map(|i| (i % 251) as u8).collect::<Vec<_>>())) }
+    }
+}
+
+impl ByteSource for Ranged {
+    fn open(&self, _: &str, from: u64) -> Result<Body, nori_engine::OpenError> {
+        self.asked.lock().push((from, None));
+        Ok(Ranged::body(from, 2500))
+    }
+
+    fn open_part(&self, url: &str, key: Option<&str>, from: u64, end: u64, cancel: &nori_engine::Cancel) -> Result<Body, nori_engine::OpenError> {
+        if self.refuse == Some(from) {
+            return Err(nori_engine::OpenError::Status(403));
+        }
+        if !self.ends {
+            return self.open_cancellable(url, key, from, cancel);
+        }
+        self.asked.lock().push((from, Some(end)));
+        Ok(Ranged::body(from, end))
+    }
+}
+
+/// A stream asked for in parts reads as one body from where it was opened: each part a request from
+/// where the last ended, with its end where the source takes one, and cut there where it does not.
+#[test]
+fn a_stream_in_parts_reads_as_one_body() {
+    for ends in [true, false] {
+        let bytes = Arc::new(Ranged { ends, ..Default::default() });
+        let resolving = nori_engine::core::Resolving { bytes: bytes.clone(), resolver: Arc::new(InParts::default()) };
+        let mut body = resolving.open("parts:song", 700).unwrap();
+        assert_eq!((body.start, body.len), (700, Some(2500)));
+        let mut got = Vec::new();
+        body.reader.read_to_end(&mut got).unwrap();
+        assert_eq!(got, (700..2500u64).map(|i| (i % 251) as u8).collect::<Vec<_>>(), "ends: {ends}");
+        let want: Vec<(u64, Option<u64>)> = [(700, 1700), (1700, 2500)].iter().map(|&(f, e)| (f, ends.then_some(e))).collect();
+        assert_eq!(*bytes.asked.lock(), want);
+    }
+}
+
+/// A part refused on the way is an error of the body, and the address is reported refused, so the
+/// loader's next open resolves it anew.
+#[test]
+fn a_part_refused_on_the_way_is_reported() {
+    let bytes = Arc::new(Ranged { ends: true, refuse: Some(1700), ..Default::default() });
+    let resolver = Arc::new(InParts::default());
+    let resolving = nori_engine::core::Resolving { bytes, resolver: resolver.clone() };
+    let mut body = resolving.open("parts:song", 700).unwrap();
+    assert!(body.reader.read_to_end(&mut Vec::new()).is_err());
+    assert_eq!(*resolver.refused.lock(), ["parts:song"]);
 }

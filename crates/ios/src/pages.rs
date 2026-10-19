@@ -165,6 +165,20 @@ fn album_json(a: &Album) -> Value {
     })
 }
 
+/// An artist's page: its albums, then the songs its provider lists, kept for `token` to play from a tap.
+fn artist_page(token: u64, v: &nori_core::ArtistDetail) -> Value {
+    let a = &v.artist;
+    keep_list(token, v.songs.clone(), Some(Fetch::Artist(a.id.clone()).origin()));
+    let mut sections = vec![section("albums", true, v.albums.iter().map(album_json).collect())];
+    if !v.songs.is_empty() {
+        sections.push(songs_section("songs", &v.songs, 0));
+    }
+    json!({
+        "head": { "k": "artist", "id": a.id, "t": a.name, "c": cover(&a.cover_art), "n": v.albums.len(), "ns": v.songs.len(), "st": a.starred },
+        "sections": sections,
+    })
+}
+
 fn album_page(v: &nori_core::AlbumDetail) -> Value {
     let a = &v.album;
     json!({
@@ -182,8 +196,13 @@ fn artist_json(a: &Artist) -> Value {
     json!({ "k": "artist", "id": a.id, "t": a.name, "n": a.album_count, "c": cover(&a.cover_art), "x": a.is_external })
 }
 
+/// A playlist row; `s` is its own line (a provider's, who made it), for one not counted until opened.
 fn playlist_json(p: &Playlist) -> Value {
-    json!({ "k": "playlist", "id": p.id, "t": p.name, "n": p.song_count, "d": p.duration, "c": cover(&p.cover_art) })
+    let mut v = json!({ "k": "playlist", "id": p.id, "t": p.name, "n": p.song_count, "d": p.duration, "c": cover(&p.cover_art) });
+    if let Some(line) = &p.comment {
+        v["s"] = json!(line);
+    }
+    v
 }
 
 /// A smart playlist row: `n` is the built-in's [`SmartBuiltin`] for the client to word, or absent when named.
@@ -259,7 +278,7 @@ fn songs_section(key: &str, songs: &[Song], from: usize) -> Value {
     )
 }
 
-/// A search answer as three sections, its songs kept for `token`.
+/// A search answer as four sections, its songs kept for `token`.
 fn found(token: u64, r: &SearchResult, server: bool) -> Value {
     keep_list(token, r.songs.clone(), None);
     json!({
@@ -267,6 +286,7 @@ fn found(token: u64, r: &SearchResult, server: bool) -> Value {
         "sections": [
             section("artists", false, r.artists.iter().map(artist_json).collect()),
             section("albums", false, r.albums.iter().map(album_json).collect()),
+            section("playlists", false, r.playlists.iter().map(playlist_json).collect()),
             songs_section("songs", &r.songs, 0),
         ],
     })
@@ -631,13 +651,7 @@ fn read(token: u64, kind: i32, arg: String) {
             _ => None,
         }),
         PAGE_ARTIST => pages(&client, token, Read::ArtistById { id: arg.clone() }, &|p| match p {
-            Page::ArtistPage { v } => {
-                let a = &v.artist;
-                Some(json!({
-                    "head": { "k": "artist", "id": a.id, "t": a.name, "c": cover(&a.cover_art), "n": v.albums.len(), "st": a.starred },
-                    "sections": [section("albums", true, v.albums.iter().map(album_json).collect())],
-                }))
-            }
+            Page::ArtistPage { v } => Some(artist_page(token, &v)),
             _ => None,
         }),
         PAGE_PLAYLIST => pages(&client, token, Read::PlaylistById { id: arg.clone() }, &|p| match p {
@@ -1496,9 +1510,24 @@ mod tests {
             ..SearchResult::default()
         };
         let v = found(77, &r, true);
-        assert_eq!(v["sections"][2]["items"][1]["i"], 1);
+        assert_eq!(v["sections"][3]["items"][1]["i"], 1);
         let kept: Vec<String> = list(77).unwrap().0.into_iter().map(|s| s.id).collect();
         assert_eq!(kept, ["a", "b"]);
+    }
+
+    #[test]
+    fn an_artists_songs_follow_its_albums_and_play_as_the_artist() {
+        let _turn = lock(&ABI_IN_USE);
+        forget_lists();
+        let artist = Artist { id: "yt-UC1".into(), ..Artist::default() };
+        let v = artist_page(78, &nori_core::ArtistDetail::new(artist.clone(), vec![], vec![song("v1"), song("v2")]));
+        assert_eq!((v["head"]["n"].as_u64(), v["head"]["ns"].as_u64()), (Some(0), Some(2)));
+        assert_eq!(v["sections"][1]["key"], "songs");
+        assert_eq!(v["sections"][1]["items"][1]["i"], 1);
+        let (kept, origin) = list(78).unwrap();
+        assert_eq!((kept.len(), origin), (2, Some(PageOrigin::new(OriginKind::Artist, "yt-UC1"))));
+        let server = artist_page(79, &nori_core::ArtistDetail::new(artist, vec![], vec![]));
+        assert_eq!(server["sections"].as_array().map(Vec::len), Some(1), "no songs, no section");
     }
 
     #[test]
