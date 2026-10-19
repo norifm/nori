@@ -22,6 +22,45 @@ const SERVER: i32 = 8;
 const NOTE: i32 = 9;
 const LINK: i32 = 11;
 const BUTTON: i32 = 12;
+/// The season tiles, and light / dark / AMOLED.
+const SEASONS: i32 = 13;
+const APPEARANCE_ROW: i32 = 14;
+
+/// The appearance row's name: it is not one setting but two (the theme and AMOLED).
+pub const APPEARANCE: &str = "appearance";
+
+/// The appearance a pick stands for: the system's, light, dark, or AMOLED (dark on black).
+pub fn appearance_settings(pick: usize) -> [(&'static str, &'static str); 2] {
+    match pick {
+        1 => [("theme", "LIGHT"), ("amoled", "false")],
+        2 => [("theme", "DARK"), ("amoled", "false")],
+        3 => [("theme", "DARK"), ("amoled", "true")],
+        _ => [("theme", "SYSTEM"), ("amoled", "false")],
+    }
+}
+
+/// Which season tile is chosen: Follow, then Spring to Winter.
+pub fn season_pick(p: &StoredPrefs) -> i32 {
+    use nori_core::settings::ThemeSeason::*;
+    match p.season {
+        Follow => 0,
+        Spring => 1,
+        Summer => 2,
+        Autumn => 3,
+        Winter => 4,
+    }
+}
+
+/// Which appearance the settings stand for ([`appearance_settings`]'s pick).
+pub fn appearance_pick(p: &StoredPrefs) -> i32 {
+    use nori_core::settings::ThemeMode;
+    match p.theme {
+        ThemeMode::System => 0,
+        ThemeMode::Light => 1,
+        ThemeMode::Dark if p.amoled => 3,
+        ThemeMode::Dark => 2,
+    }
+}
 
 /// Non-setting facts the pages show (sizes, counts, devices).
 #[derive(Default, Clone)]
@@ -129,13 +168,6 @@ fn options(name: &str) -> Vec<String> {
 
 fn minus(v: &str) -> String {
     v.replace('-', "−")
-}
-
-/// The theme's accents now, for a pale page and a dark one: by the UTC date, north of the equator.
-pub fn accents(p: &StoredPrefs) -> (u32, u32) {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let (month, day) = nori_look::theme::utc_date(now);
-    nori_look::theme::accents(nori_core::settings::season_of(p.season), month, day, false)
 }
 
 /// The settings page a tab shows.
@@ -350,7 +382,8 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                 SettingKind::Switch => Row { kind: TOGGLE, name: spec.name, title, detail, on: value == "true", enabled, ..Default::default() },
                 SettingKind::Choice => {
                     let options = spec.options.iter().map(|v| (option_words(&spec.name, v), v.clone())).collect();
-                    Row { kind: CHOICE, name: spec.name, title, options, enabled, ..Default::default() }
+                    let kind = if spec.name == "season" { SEASONS } else { CHOICE };
+                    Row { kind, name: spec.name, title, options, enabled, ..Default::default() }
                 }
                 SettingKind::Level => {
                     let v: f32 = value.parse().unwrap_or(spec.min);
@@ -466,7 +499,12 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32) -> Vec<(&'static str, Vec<Row>)>
     };
     let mut groups: Vec<(&'static str, Vec<Row>)> = Vec::new();
     for sec in settings_pages::page(tab_page(tab), SettingsClient::Desktop, p, &s, &facts) {
-        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f).into_iter().collect())).collect();
+        let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f).into_iter().collect())).flat_map(|r| {
+            // The theme and AMOLED have no rows on the desktop's page of the core; the appearance stands for both.
+            let season = r.kind == SEASONS;
+            let appearance = Row { kind: APPEARANCE_ROW, name: APPEARANCE.into(), options: ["System", "Light", "Dark", "AMOLED"].map(|o| (o.to_string(), o.to_string())).to_vec(), enabled: true, ..Default::default() };
+            std::iter::once(r).chain(season.then_some(appearance))
+        }).collect();
         let title = section_title(sec.id);
         // Sections that share a title are one group here.
         match groups.last_mut() {
@@ -499,7 +537,7 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32) -> ModelRc<SettingRow> {
                 Target::Device => f.device.clone(),
                 Target::Setting(name) => settings_model::value_of(p, name).unwrap_or_default(),
             };
-            let chosen = r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32);
+            let chosen = if r.kind == APPEARANCE_ROW { appearance_pick(p) } else { r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32) };
             let labels: Vec<SharedString> = r.options.iter().map(|o| o.0.as_str().into()).collect();
             out.push(SettingRow {
                 kind: r.kind,
@@ -551,6 +589,27 @@ pub fn level_of(name: &str) -> Option<EqLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_appearance_sets_the_theme_and_amoled_and_reads_back() {
+        for pick in 0..4 {
+            let mut p = StoredPrefs::default();
+            for (name, value) in appearance_settings(pick) {
+                p = nori_core::settings::set_by_name(&p, name, value).expect("a setting").prefs;
+            }
+            assert_eq!(appearance_pick(&p), pick as i32, "pick {pick}");
+        }
+    }
+
+    #[test]
+    fn the_look_page_has_season_tiles_then_the_appearance() {
+        use slint::Model;
+        let rows = rows(&StoredPrefs::default(), &Facts::default(), 0);
+        let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
+        let at = kinds.iter().position(|k| *k == SEASONS).expect("a season row");
+        assert_eq!(kinds[at + 1], APPEARANCE_ROW);
+        assert_eq!(rows.row_data(at).unwrap().options.row_count(), 5, "follow and the four seasons");
+    }
 
     #[test]
     fn a_toggle_stores_its_state_or_the_value_its_name_carries() {
