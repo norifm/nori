@@ -170,13 +170,6 @@ fn minus(v: &str) -> String {
     v.replace('-', "−")
 }
 
-/// The theme's accents now, for a pale page and a dark one: by the UTC date, north of the equator.
-pub fn accents(p: &StoredPrefs) -> (u32, u32) {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let (month, day) = nori_look::theme::utc_date(now);
-    nori_look::theme::accents(nori_core::settings::season_of(p.season), month, day, false)
-}
-
 /// The settings page a tab shows.
 fn tab_page(tab: i32) -> SettingsPage {
     match tab {
@@ -610,6 +603,7 @@ mod tests {
 
     #[test]
     fn the_look_page_has_season_tiles_then_the_appearance() {
+        use slint::Model;
         let rows = rows(&StoredPrefs::default(), &Facts::default(), 0);
         let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
         let at = kinds.iter().position(|k| *k == SEASONS).expect("a season row");

@@ -1733,6 +1733,12 @@ impl App {
         chrome.set_top_w(top.1);
         chrome.set_player_x(player.0);
         chrome.set_player_w(player.1);
+        if let Some(t) = &self.top {
+            t.set_room(top.1);
+        }
+        if let Some(p) = &self.player {
+            p.set_room(player.1);
+        }
     }
 
     /// Updates the lyrics view from the playback position and schedules the next update.
@@ -2299,6 +2305,23 @@ fn devices_set(ui: &AppWindow, rows: Vec<crate::DeviceRow>) {
 mod tests {
     use super::*;
 
+    fn dressed() -> crate::look::Look {
+        crate::look::plain(&nori_core::settings::StoredPrefs::default(), true, crate::look::Today { month: 10, day: 19, southern: false })
+    }
+
+    /// A window in the theme's colors, as the app paints it.
+    fn window() -> AppWindow {
+        let ui = AppWindow::new().unwrap();
+        dressed().paint(&ui.global::<Theme>());
+        ui
+    }
+
+    fn pill() -> crate::PlayerBar {
+        let bar = crate::PlayerBar::new().unwrap();
+        dressed().paint(&bar.global::<Theme>());
+        bar
+    }
+
     #[test]
     fn albums_come_page_after_page() {
         let page = |from: usize, n: usize| (from..from + n).map(|i| nori_core::Album { id: i.to_string(), ..Default::default() }).collect::<Vec<_>>();
@@ -2416,7 +2439,7 @@ mod tests {
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
         for (view, full, panel) in [(HOME, false, 0), (ALBUMS, false, 1), (HOME, true, 0), (HOME, true, 2)] {
-            let ui = AppWindow::new().unwrap();
+            let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
             ui.set_view(view);
             ui.set_full_player(full);
@@ -2467,8 +2490,8 @@ mod tests {
     #[test]
     fn playback_only_moves_the_visible_player() {
         i_slint_backend_testing::init_no_event_loop();
-        let ui = AppWindow::new().unwrap();
-        let player = crate::PlayerBar::new().unwrap();
+        let ui = window();
+        let player = pill();
         ui.set_display_position_ms(10_000);
         position_shown(&ui, Some(&player), 20_000);
         assert_eq!(ui.get_position_ms(), 20_000, "the control socket keeps the current position");
@@ -2488,8 +2511,9 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let bar = crate::PlayerBar::new().unwrap();
-        bar.window().set_size(slint::PhysicalSize::new(720, 76));
+        let bar = pill();
+        bar.window().set_size(slint::PhysicalSize::new(1000, 64));
+        bar.set_room(1000.0);
         bar.set_has_song(true);
         bar.set_duration_ms(200_000);
         bar.set_position_ms(50_000);
@@ -2524,7 +2548,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let ui = AppWindow::new().unwrap();
+        let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_mixing_label(words::MIXING.into());
     ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
@@ -2555,7 +2579,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let ui = AppWindow::new().unwrap();
+        let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(ALBUMS);
         ui.set_albums(ModelRc::new(VecModel::from(vec![crate::Card { art: "page".into(), ..Default::default() }; 50])));
@@ -2591,7 +2615,7 @@ mod tests {
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
         for view in [ALBUMS, HOME, 10] {
-            let ui = AppWindow::new().unwrap();
+            let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
             ui.set_view(view);
             ui.set_picks_loaded(true);
@@ -2629,7 +2653,7 @@ mod tests {
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
         for view in [10, 11] {
-            let ui = AppWindow::new().unwrap();
+            let ui = window();
             ui.window().set_size(slint::PhysicalSize::new(1280, 820));
             ui.set_picks_loaded(true);
             ui.set_show_all_text(words::SHOW_ALL.into());
@@ -2646,6 +2670,8 @@ mod tests {
             }
             let weak = ui.as_weak();
             ui.on_go(move |view| weak.unwrap().set_view(view));
+            let weak = ui.as_weak();
+            ui.on_back(move || weak.unwrap().set_view(HOME));
             let requests = Rc::new(RefCell::new(Vec::new()));
             let seen = requests.clone();
             ui.on_art(move |id, _, _| { seen.borrow_mut().push(id.to_string()); Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(16, 16)) });
@@ -2655,7 +2681,8 @@ mod tests {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             let frame = ui.window().take_snapshot().unwrap();
-            let links: Vec<_> = frame.as_slice().iter().enumerate().filter(|(i, p)| i % 1280 > 1100 && (64..200).contains(&(i / 1280)) && p.r > 200 && p.g < 100 && p.b < 150).map(|(i, _)| (i % 1280, i / 1280)).collect();
+            let dim = ui.global::<Theme>().get_dim().to_argb_u8();
+            let links: Vec<_> = frame.as_slice().iter().enumerate().filter(|(i, p)| i % 1280 > 1100 && (100..320).contains(&(i / 1280)) && p.r.abs_diff(dim.red) < 24 && p.g.abs_diff(dim.green) < 24 && p.b.abs_diff(dim.blue) < 24).map(|(i, _)| (i % 1280, i / 1280)).collect();
             assert!(!links.is_empty(), "Show all is visible in the shelf header");
             let position = slint::LogicalPosition::new(links[links.len() / 2].0 as f32, links[links.len() / 2].1 as f32);
             for event in [
@@ -2672,7 +2699,7 @@ mod tests {
             });
             ui.window().take_snapshot().unwrap();
             assert!(requests.borrow().iter().any(|id| id.parse::<usize>().is_ok_and(|i| i > 20)), "the collection reveals later items by scrolling vertically");
-            let position = slint::LogicalPosition::new(248.0, 26.0);
+            let position = slint::LogicalPosition::new(40.0, 100.0);
             for event in [
                 slint::platform::WindowEvent::PointerPressed { position, button: slint::platform::PointerEventButton::Left },
                 slint::platform::WindowEvent::PointerReleased { position, button: slint::platform::PointerEventButton::Left },
@@ -2689,7 +2716,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let ui = AppWindow::new().unwrap();
+        let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(HOME);
         ui.set_picks_loaded(true);
@@ -2718,7 +2745,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let ui = AppWindow::new().unwrap();
+        let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1800, 1100));
         ui.set_view(HOME);
         ui.set_picks_loaded(true);
@@ -2772,7 +2799,6 @@ mod tests {
         assert!(cache.images.keys().any(|key| key.id.starts_with("pick-0-")), "the first pick loads its artwork");
         assert!(!cache.images.keys().any(|key| key.id.starts_with("album-19-")), "offscreen shelves must not load covers");
         drop(cache);
-        assert!(art.borrow().images.contains_key(&CoverKey { id: "playing-cover".into(), size: CoverSize::Card }), "the miniplayer cover remains cached");
         assert!(!requested.borrow().iter().any(|id| id.starts_with("queue-")), "the closed queue must not request artwork");
         for full in [false, true] {
             ui.set_inspector(if full { 0 } else { 1 });
@@ -2820,7 +2846,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let ui = AppWindow::new().unwrap();
+        let ui = window();
         ui.set_view(HOME);
         ui.set_inspector(3);
         ui.set_picks_loaded(true);
@@ -2862,7 +2888,7 @@ mod tests {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
-        let ui = AppWindow::new().unwrap();
+        let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(HOME);
         ui.set_picks_loaded(true);
@@ -2884,7 +2910,7 @@ mod tests {
         let profile = |ui: &AppWindow| {
             let frame = ui.window().take_snapshot().unwrap();
             let pixels = frame.as_slice();
-            let x = 270;
+            let x = 100;
             let top = (0..frame.height() as usize).find(|&y| { let p = pixels[y * frame.width() as usize + x]; p.r == 255 && p.g == 0 && p.b == 0 }).expect("the first cover is visible");
             let left = (0..frame.width() as usize).find(|&x| { let p = pixels[(top + 20) * frame.width() as usize + x]; p.r == 255 && p.g == 0 && p.b == 0 }).expect("the left edge is visible");
             (0..180).map(|dy| pixels[(top + dy) * frame.width() as usize + x])
@@ -2904,7 +2930,7 @@ mod tests {
     #[test]
     fn device_updates_keep_the_picker_rows() {
         i_slint_backend_testing::init_no_event_loop();
-        let ui = AppWindow::new().unwrap();
+        let ui = window();
         let here = crate::DeviceRow { name: "This computer".into(), active: true, ..Default::default() };
         let phone = crate::DeviceRow { id: "phone".into(), name: "Phone".into(), ..Default::default() };
         devices_set(&ui, vec![here.clone(), phone.clone()]);

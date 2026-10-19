@@ -533,7 +533,7 @@ component PlayPause inherits Rectangle {
         stroke-width: 2.4px;
         stroke-line-cap: round;
         transform-rotation: root.spinning ? 360deg : 0deg;
-        animate transform-rotation { duration: 900ms; iteration-count: -1; easing: linear; }
+        animate transform-rotation { duration: Motion.reduced ? 0ms : 900ms; iteration-count: -1; easing: linear; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -591,13 +591,17 @@ component Seal inherits Rectangle {
     }
 }
 
-// A page as it comes on screen: it fades in and rises the last few points into place.
+// A page as it comes on screen: a tab's root fades in; a page pushed over another (an album, a collection)
+// slides in from the right, opaque. Reduced motion shows it at once.
 component Fade inherits Rectangle {
+    in property <bool> push;
     property <bool> shown;
-    opacity: self.shown ? 1 : 0;
-    y: self.shown ? 0 : 10px;
-    animate opacity { duration: 240ms; easing: ease-out; }
-    animate y { duration: 320ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+    property <duration> span: Motion.reduced ? 0ms : 300ms;
+    opacity: self.shown || Motion.reduced ? 1 : 0;
+    x: self.shown || !self.push ? 0 : self.width * 0.3;
+    background: self.push ? Theme.ground : transparent;
+    animate opacity { duration: root.span * 0.8; easing: ease-out; }
+    animate x { duration: root.span; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
     init => { self.shown = true; }
 }
 
@@ -663,7 +667,7 @@ component Bar inherits Rectangle {
     Rectangle {
         y: (parent.height - self.height) / 2;
         height: root.hot ? root.thick : root.thin;
-        animate height { duration: 120ms; easing: ease-out; }
+        animate height { duration: Motion.reduced ? 0ms : 120ms; easing: ease-out; }
         border-radius: self.height / 2;
         background: root.track;
         clip: true;
@@ -748,7 +752,7 @@ component CardView inherits Rectangle {
         Rectangle {
             border-radius: parent.border-radius;
             background: touch.has-hover ? Theme.ground.with-alpha(0.25) : transparent;
-            animate background { duration: 180ms; easing: ease-out; }
+            animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
         }
     }
     Text {
@@ -792,7 +796,7 @@ component CardView inherits Rectangle {
         y: root.side - self.height - 10px;
         opacity: touch.has-hover || play-touch.has-hover ? 1 : 0;
         transform-scale: touch.has-hover || play-touch.has-hover ? 1 : 0.8;
-        animate opacity, transform-scale { duration: 180ms; easing: ease-out; }
+        animate opacity, transform-scale { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
         width: 34px;
         height: 34px;
         border-radius: 17px;
@@ -928,7 +932,7 @@ component ShelfView inherits VerticalLayout {
         Rectangle { horizontal-stretch: 1; }
         if !root.loading && root.count > 0: Text {
             text: root.show-all-text;
-            color: Theme.accent;
+            color: Theme.dim;
             font-size: 14px;
             vertical-alignment: center;
             TouchArea {
@@ -989,7 +993,7 @@ component ShelfView inherits VerticalLayout {
             border-width: 1px;
             border-color: Theme.outline;
             opacity: self.shown ? 1 : 0;
-            animate opacity { duration: 160ms; easing: ease-out; }
+            animate opacity { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
             Icon {
                 path: b.path;
                 colour: Theme.text;
@@ -1063,7 +1067,7 @@ component PickCard inherits Rectangle {
     }
     Rectangle {
         background: touch.has-hover ? Theme.ground.with-alpha(0.2) : transparent;
-        animate background { duration: 180ms; easing: ease-out; }
+        animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -1094,7 +1098,7 @@ component SongLine inherits Rectangle {
     height: root.thumb ? 56px : 44px;
     border-radius: 7px;
     background: touch.has-hover ? Theme.hover : transparent;
-    animate background { duration: 140ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
     Rectangle {
         x: root.thumb ? 64px : 44px;
         y: parent.height - 1px;
@@ -1208,10 +1212,10 @@ component SongLine inherits Rectangle {
                 height: 18px;
                 width: bt.preferred-width + 14px;
                 border-radius: 9px;
-                background: Theme.accent.with-alpha(0.2);
+                background: Theme.chosen;
                 bt := Text {
                     text: root.song.by;
-                    color: Theme.accent;
+                    color: Theme.dim;
                     font-size: 10px;
                     font-weight: 600;
                 }
@@ -1392,8 +1396,10 @@ component PlayerControls inherits Rectangle {
     callback set-inspector(int);
     callback open-full();
 
-    property <bool> wide: root.width >= 900px;
-    property <bool> roomy: root.width >= 720px;
+    // The pill's width, which decides what it can show.
+    in property <length> room;
+    property <bool> wide: root.room >= 900px;
+    property <bool> roomy: root.room >= 720px;
     property <int> dragged: -1;
     property <int> shown-ms: root.dragged >= 0 ? root.dragged : root.position-ms;
 
@@ -1488,7 +1494,7 @@ component PlayerControls inherits Rectangle {
         }
         // The transport, and the seek bar with its times under it.
         VerticalLayout {
-            width: clamp(root.width * 0.34, 260px, 420px);
+            width: clamp(root.room * 0.34, 260px, 420px);
             alignment: center;
             spacing: 0;
             HorizontalLayout {
@@ -1677,7 +1683,7 @@ component DevicesView inherits Rectangle {
                     height: 52px;
                     border-radius: 10px;
                     background: dt.has-hover ? Theme.hover : transparent;
-                    animate background { duration: 140ms; easing: ease-out; }
+                    animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
                     dt := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.pick(d.id); }
@@ -1692,7 +1698,7 @@ component DevicesView inherits Rectangle {
                             height: 34px;
                             border-radius: 17px;
                             background: d.active ? Theme.chosen : Theme.fill;
-                            animate background { duration: 180ms; easing: ease-out; }
+                            animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
                             Icon {
                                 path: d.kind == 1 ? Icons.phone : d.kind == 2 ? Icons.terminal : Icons.computer;
                                 colour: d.active ? Theme.accent : Theme.text;
@@ -1765,7 +1771,7 @@ component DevicesView inherits Rectangle {
                 height: 52px;
                 border-radius: 10px;
                 background: jt.has-hover ? Theme.hover : transparent;
-                animate background { duration: 140ms; easing: ease-out; }
+                animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
                 jt := TouchArea {
                     clicked => {
                         if Jam.hosting {
@@ -1827,7 +1833,7 @@ component DevicesView inherits Rectangle {
                 height: 52px;
                 border-radius: 10px;
                 background: jj.has-hover ? Theme.hover : transparent;
-                animate background { duration: 140ms; easing: ease-out; }
+                animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
                 jj := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { root.join-jam(); }
@@ -1881,14 +1887,14 @@ component RoundButton inherits Rectangle {
     height: 26px;
     border-radius: 13px;
     background: root.lit ? Theme.pill : (rt.has-hover ? Theme.chosen : Theme.fill);
-    animate background { duration: 140ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
     Icon {
         path: root.path;
         colour: root.lit ? Theme.pill-ink : Theme.text;
         width: 13px;
         height: 13px;
         transform-scale: rt.pressed ? 0.85 : 1;
-        animate transform-scale { duration: 220ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+        animate transform-scale { duration: Motion.reduced ? 0ms : 220ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
     }
     rt := TouchArea {
         clicked => { root.clicked(); }
@@ -1905,10 +1911,10 @@ component Toggle inherits Rectangle {
     border-radius: 11px;
     background: root.on ? Theme.on : Theme.chosen;
     opacity: root.enabled ? 1 : 0.4;
-    animate background { duration: 160ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
     Rectangle {
         x: root.on ? parent.width - self.width - 2px : 2px;
-        animate x { duration: 180ms; easing: cubic-bezier(0.3, 1.2, 0.6, 1); }
+        animate x { duration: Motion.reduced ? 0ms : 180ms; easing: cubic-bezier(0.3, 1.2, 0.6, 1); }
         y: 2px;
         width: 18px;
         height: 18px;
@@ -1963,7 +1969,7 @@ component JamHeader inherits VerticalLayout {
         Icon {
             y: (parent.height - self.height) / 2;
             path: Icons.people;
-            colour: Theme.accent;
+            colour: Theme.dim;
             width: 20px;
             height: 20px;
         }
@@ -1983,7 +1989,7 @@ component JamHeader inherits VerticalLayout {
             width: hl.preferred-width + 34px;
             border-radius: 13px;
             background: ha.has-hover ? Theme.chosen : Theme.fill;
-            animate background { duration: 140ms; easing: ease-out; }
+            animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
             HorizontalLayout {
                 alignment: center;
                 spacing: 5px;
@@ -2398,7 +2404,7 @@ component QueueView inherits Rectangle {
             for pill[i] in [{ on: root.autoplay, label: "AutoPlay" }, { on: root.automix, label: "AutoMix" }]: Rectangle {
                 border-radius: self.height / 2;
                 background: pill.on ? Theme.chosen : Theme.fill;
-                animate background { duration: 180ms; easing: ease-out; }
+                animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
                 HorizontalLayout {
                     alignment: center;
                     spacing: 6px;
@@ -2481,7 +2487,7 @@ component QueueView inherits Rectangle {
                 property <bool> hot: qt.has-hover || up.hovered || dn.hovered || rm.hovered;
                 height: s.leaving || !self.opened ? 0 : 50px;
                 opacity: s.leaving || !self.opened ? 0 : 1;
-                animate height, opacity { duration: 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                animate height, opacity { duration: Motion.reduced ? 0ms : 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
                 clip: true;
                 Timer {
                     interval: 16ms;
@@ -2545,11 +2551,11 @@ component QueueView inherits Rectangle {
                         height: 18px;
                         width: min(bt.preferred-width, 72px) + 14px;
                         border-radius: 9px;
-                        background: Theme.accent.with-alpha(0.2);
+                        background: Theme.chosen;
                         bt := Text {
                             width: min(self.preferred-width, 72px);
                             text: s.by;
-                            color: Theme.accent;
+                            color: Theme.dim;
                             font-size: 10px;
                             font-weight: 600;
                             overflow: elide;
@@ -2559,7 +2565,7 @@ component QueueView inherits Rectangle {
                     Rectangle {
                         width: root.editable && qrow.hot ? (root.movable ? 78px : 26px) : 0;
                         clip: true;
-                        animate width { duration: 160ms; easing: ease-out; }
+                        animate width { duration: Motion.reduced ? 0ms : 160ms; easing: ease-out; }
                         HorizontalLayout {
                             alignment: end;
                             up := IconButton {
@@ -2982,7 +2988,7 @@ component SettingLine inherits VerticalLayout {
             if root.item.kind == 5: Bar {
                 thin: 4px;
                 thick: 6px;
-                fill: Theme.accent;
+                fill: Theme.text;
                 value: (root.item.value - root.item.min) / max(0.0001, root.item.max - root.item.min);
                 moved(v) => { root.slid(root.item.name, root.item.min + v * (root.item.max - root.item.min), false); }
                 done(v) => { root.slid(root.item.name, root.item.min + v * (root.item.max - root.item.min), true); }
@@ -3032,7 +3038,7 @@ component BandSlider inherits Rectangle {
         y: min(root.knob, root.zero) + 7px;
         width: 4px;
         height: abs(root.knob - root.zero);
-        background: Theme.accent;
+        background: Theme.text;
     }
     Rectangle {
         y: root.knob;
@@ -3084,7 +3090,7 @@ component LevelRow inherits HorizontalLayout {
         horizontal-stretch: 1;
         thin: 4px;
         thick: 6px;
-        fill: Theme.accent;
+        fill: Theme.text;
         opacity: root.enabled ? 1 : 0.45;
         value: (root.value - root.lo) / max(0.0001, root.hi - root.lo);
         moved(v) => { root.moved(root.lo + v * (root.hi - root.lo), false); }
@@ -3108,7 +3114,7 @@ component Chip inherits Rectangle {
     width: cl.preferred-width + 24px;
     border-radius: 14px;
     background: root.lit || ch.has-hover ? Theme.chosen : Theme.fill;
-    animate background { duration: 150ms; easing: ease-out; }
+    animate background { duration: Motion.reduced ? 0ms : 150ms; easing: ease-out; }
     cl := Text {
         text: root.text;
         color: root.lit ? Theme.accent : Theme.text;
@@ -3446,6 +3452,7 @@ component TabButton inherits Rectangle {
         Icon {
             y: (parent.height - self.height) / 2;
             path: root.icon;
+            evenodd: root.icon == Icons.seal-outline;
             colour: root.current ? Theme.accent : Theme.dim;
             width: 20px;
             height: 20px;
@@ -3472,7 +3479,9 @@ component TopContent inherits Rectangle {
     callback go(int);
     callback open-playlists();
     callback open-menu();
-    property <bool> named: root.width >= 880px;
+    // The pill's width (the window's), which decides whether the tabs are named.
+    in property <length> room;
+    property <bool> named: root.room >= 880px;
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
@@ -3721,7 +3730,7 @@ export component AppWindow inherits Window {
     // the last one while it slides away.
     in-out property <int> inspector;
     property <length> panel-width: self.inspector != 0 ? Theme.panel-w : 0px;
-    animate panel-width { duration: 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+    animate panel-width { duration: Motion.reduced ? 0ms : 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
     // Remote control is on: the devices button, and the places the music can play.
     in property <bool> devices-on;
     in property <[DeviceRow]> devices;
@@ -3943,8 +3952,8 @@ export component AppWindow inherits Window {
                             alignment: center;
                             for k[i] in root.login-kinds: Capsule {
                                 text: k.name;
-                                ink: i == root.login-kind ? Theme.accent : Theme.fill;
-                                label: i == root.login-kind ? white : Theme.text;
+                                ink: i == root.login-kind ? Theme.pill : Theme.plate;
+                                label: i == root.login-kind ? Theme.pill-ink : Theme.plate-ink;
                                 clicked => { root.login-kind = i; }
                             }
                         }
@@ -4179,6 +4188,7 @@ export component AppWindow inherits Window {
                 }
 
                 if root.view == 2 || root.view == 4 || root.view == 10: Fade {
+                    push: root.view == 10;
                     Grid {
                         title: root.list-name;
                         cards: root.view == 10 ? root.shelves[root.shown-shelf].cards : root.view == 2 ? root.albums : root.playlists;
@@ -4203,6 +4213,7 @@ export component AppWindow inherits Window {
                 }
 
                 if root.view == 11: Fade {
+                    push: true;
                     picks-grid := Flickable {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 252px));
                         property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
@@ -4315,8 +4326,8 @@ export component AppWindow inherits Window {
                                 IconButton {
                                     y: (parent.height - self.height) / 2;
                                     path: Icons.play;
-                                    ink: Theme.accent;
-                                    base: Theme.fill;
+                                    ink: Theme.plate-ink;
+                                    base: Theme.plate;
                                     size: 32px;
                                     icon: 15px;
                                     clicked => { root.play-page(false); }
@@ -4324,8 +4335,8 @@ export component AppWindow inherits Window {
                                 IconButton {
                                     y: (parent.height - self.height) / 2;
                                     path: Icons.shuffle;
-                                    ink: Theme.accent;
-                                    base: Theme.fill;
+                                    ink: Theme.plate-ink;
+                                    base: Theme.plate;
                                     size: 32px;
                                     icon: 15px;
                                     clicked => { root.play-page(true); }
@@ -4405,6 +4416,7 @@ export component AppWindow inherits Window {
                 // An album, an artist or a playlist, as iOS 27 draws its artist pages: the picture dissolves
                 // into the page, and the page takes its colour.
                 if root.view == 6: Fade {
+                    push: true;
                     Rectangle {
                         // An artist: the picture across the page's whole width, drifting up slower than the page
                         // as it scrolls, and dissolving into the page's colour.
@@ -4420,7 +4432,7 @@ export component AppWindow inherits Window {
                                 source: root.art(root.page-art, 2, root.covers-rev);
                                 image-fit: cover;
                                 opacity: self.source.width > 0 ? 1 : 0;
-                                animate opacity { duration: 400ms; easing: ease-out; }
+                                animate opacity { duration: Motion.reduced ? 0ms : 400ms; easing: ease-out; }
                             }
                             Rectangle {
                                 background: @linear-gradient(180deg, Theme.ground.with-alpha(0) 0%, Theme.ground.with-alpha(0) 45%, Theme.ground.with-alpha(0.7) 78%, Theme.ground 100%);
@@ -4444,9 +4456,11 @@ export component AppWindow inherits Window {
                                     }
                                     Text {
                                         text: root.page-title;
-                                        color: white;
+                                        color: Theme.text;
+                                        font-family: Type.title;
                                         font-size: 44px;
                                         font-weight: 800;
+                                        letter-spacing: -1px;
                                         horizontal-alignment: center;
                                     }
                                     HorizontalLayout {
@@ -4457,23 +4471,19 @@ export component AppWindow inherits Window {
                                             path: Icons.shuffle;
                                             size: 42px;
                                             icon: 18px;
-                                            ink: white;
-                                            base: Theme.chosen;
+                                            ink: Theme.plate-ink;
+                                            base: Theme.plate;
                                             clicked => { root.play-page(true); }
                                         }
                                         Rectangle {
                                             width: 64px;
                                             height: 64px;
                                             border-radius: 32px;
-                                            background: white;
-                                            drop-shadow-blur: 18px;
-                                            drop-shadow-color: #00000055;
-                                            transform-scale: pt.pressed ? 0.92 : (pt.has-hover ? 1.04 : 1);
-                                            animate transform-scale { duration: 260ms; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+                                            background: Theme.pill;
                                             Icon {
                                                 x: (parent.width - self.width) / 2 + 2px;
                                                 path: Icons.play;
-                                                colour: #111111;
+                                                colour: Theme.pill-ink;
                                                 width: 26px;
                                                 height: 26px;
                                             }
@@ -4511,7 +4521,7 @@ export component AppWindow inherits Window {
                                         if root.page-sub != "": Link {
                                             text: root.page-sub;
                                             artist: root.page-sub-artist;
-                                            color: Theme.accent;
+                                            color: Theme.dim;
                                             font-size: 26px;
                                             wrap: word-wrap;
                                         }
@@ -4533,15 +4543,13 @@ export component AppWindow inherits Window {
                                                 path: Icons.shuffle;
                                                 size: 34px;
                                                 icon: 18px;
-                                                ink: Theme.accent;
-                                                base: Theme.fill;
+                                                ink: Theme.plate-ink;
+                                                base: Theme.plate;
                                                 clicked => { root.play-page(true); }
                                             }
                                             Capsule {
                                                 text: "Play";
                                                 icon: Icons.play;
-                                                ink: Theme.fill;
-                                                label: Theme.accent;
                                                 clicked => { root.play-page(false); }
                                             }
                                             IconButton {
@@ -4549,8 +4557,8 @@ export component AppWindow inherits Window {
                                                 path: Icons.plus;
                                                 size: 34px;
                                                 icon: 18px;
-                                                ink: Theme.accent;
-                                                base: Theme.fill;
+                                                ink: Theme.plate-ink;
+                                                base: Theme.plate;
                                                 clicked => { root.page-later(); }
                                             }
                                             if root.downloads && (root.page-kind == 0 || root.page-kind == 2): SmallButton {
@@ -4748,7 +4756,7 @@ export component AppWindow inherits Window {
                 Glass {
                     x: (parent.width - self.width) / 2;
                     y: root.note != "" ? Chrome.top-room : -50px;
-                    animate y { duration: 260ms; easing: ease-out; }
+                    animate y { duration: Motion.reduced ? 0ms : 260ms; easing: ease-out; }
                     width: min(parent.width - 40px, toast.preferred-width + 32px);
                     height: 32px;
                     radius: 16px;
@@ -4787,7 +4795,7 @@ export component AppWindow inherits Window {
                 Rectangle {
                     x: 0;
                     width: 1px;
-                    background: #0000004d;
+                    background: Theme.hairline;
                 }
                 TitleStrip {
                     y: 0;
@@ -4807,7 +4815,7 @@ export component AppWindow inherits Window {
                     y: 16px;
                     height: parent.height - 16px;
                     content-height: sung.preferred-height;
-                    animate content-y { duration: 560ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
+                    animate content-y { duration: Motion.reduced ? 0ms : 560ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
                     sung := VerticalLayout {
                         width: parent.width;
                         padding-left: 22px;
@@ -4820,7 +4828,7 @@ export component AppWindow inherits Window {
                             // How lit the line is, fading as it changes: set when it changes (a change handler
                             // runs whether or not the line is drawn just then), so a line sung fades from white.
                             property <float> level;
-                            animate level { duration: 420ms; easing: ease-out; }
+                            animate level { duration: Motion.reduced ? 0ms : 420ms; easing: ease-out; }
                             // Scrolled to when lit, and when the lyrics come in with this line already sung.
                             changed lit => {
                                 self.level = self.lit ? 1 : 0;
@@ -4841,7 +4849,7 @@ export component AppWindow inherits Window {
                             font-size: 22px;
                             font-weight: 700;
                             color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.faint;
-                            animate color { duration: 420ms; easing: ease-out; }
+                            animate color { duration: Motion.reduced ? 0ms : 420ms; easing: ease-out; }
                             if root.lyric-sweeping: StyledText {
                                 // Kept while the pieces draw the line lit, only hidden: its colour comes up to white with them, so
                                 // the line fades back from white when the next one takes over.
@@ -5084,7 +5092,7 @@ export component AppWindow inherits Window {
         full-screen := Rectangle {
             opacity: root.full-player ? 1 : 0;
             visible: self.opacity > 0.01;
-            animate opacity { duration: 300ms; easing: ease-out; }
+            animate opacity { duration: Motion.reduced ? 0ms : 300ms; easing: ease-out; }
             background: Theme.ground;
             Image {
                 width: 100%;
@@ -5092,7 +5100,7 @@ export component AppWindow inherits Window {
                 source: root.wash-a;
                 image-fit: cover;
                 opacity: root.wash-on-b ? 0 : 1;
-                animate opacity { duration: 800ms; easing: ease-in-out; }
+                animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
             }
             Image {
                 width: 100%;
@@ -5100,10 +5108,7 @@ export component AppWindow inherits Window {
                 source: root.wash-b;
                 image-fit: cover;
                 opacity: root.wash-on-b ? 1 : 0;
-                animate opacity { duration: 800ms; easing: ease-in-out; }
-            }
-            Rectangle {
-                background: @linear-gradient(180deg, #0000002e 0%, #00000014 50%, #0000003d 100%);
+                animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
             }
             // Swallows the clicks meant for the page underneath.
             TouchArea { }
@@ -5112,59 +5117,20 @@ export component AppWindow inherits Window {
                 drag => { root.drag-window(); }
                 zoom => { root.zoom-window(); }
             }
-            // Back to the window: a dark glass capsule level with the traffic lights, as Music's.
+            // Back to the window: a disc level with the traffic lights.
             Rectangle {
                 x: 84px;
-                y: 11px;
-                width: 46px;
-                height: 30px;
-                border-radius: 15px;
-                background: xa.pressed ? #00000052 : xa.has-hover ? #0000003d : #0000002e;
+                y: 8px;
+                width: 36px;
+                height: 36px;
+                border-radius: 18px;
+                background: Theme.ground.with-alpha(0.6);
                 border-width: 1px;
-                border-color: Theme.chosen;
-                animate background { duration: 120ms; }
-                Icon {
-                    path: Icons.close;
-                    colour: Theme.text;
-                    width: 13px;
-                    height: 13px;
-                }
-                xa := TouchArea {
+                border-color: Theme.outline;
+                IconButton {
+                    path: Icons.down;
+                    size: 36px;
                     clicked => { root.full-player = false; }
-                }
-            }
-            // The volume, in a glass pill at the top right.
-            Rectangle {
-                x: parent.width - self.width - 12px;
-                y: 10px;
-                width: 176px;
-                height: 32px;
-                border-radius: 16px;
-                background: Theme.fill;
-                border-width: 1px;
-                border-color: Theme.chosen;
-                HorizontalLayout {
-                    padding-left: 14px;
-                    padding-right: 10px;
-                    spacing: 10px;
-                    Bar {
-                        y: (parent.height - self.height) / 2;
-                        horizontal-stretch: 1;
-                        thin: 5px;
-                        thick: 7px;
-                        fill: white;
-                        track: Theme.faint;
-                        value: root.volume;
-                        moved(v) => { root.set-volume(v); }
-                        done(v) => { root.set-volume(v); }
-                    }
-                    Icon {
-                        y: (parent.height - self.height) / 2;
-                        path: Icons.speaker;
-                        colour: white;
-                        width: 16px;
-                        height: 16px;
-                    }
                 }
             }
 
@@ -5172,9 +5138,9 @@ export component AppWindow inherits Window {
             // with the lyrics or the queue.
             property <length> side: min(460px, root.height - 330px, (root.full-panel != 0 ? root.width / 2 : root.width) - 120px);
             property <float> art-centre: root.full-panel != 0 ? 0.25 : 0.5;
-            animate art-centre { duration: 380ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+            animate art-centre { duration: Motion.reduced ? 0ms : 380ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
             property <length> art-rise: root.full-player ? 0px : 30px;
-            animate art-rise { duration: 420ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+            animate art-rise { duration: Motion.reduced ? 0ms : 420ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
             full-art := VerticalLayout {
                 x: root.width * parent.art-centre - parent.side / 2;
                 y: (root.height - self.preferred-height) / 2 + parent.art-rise;
@@ -5189,7 +5155,7 @@ export component AppWindow inherits Window {
                     drop-shadow-offset-y: 18px;
                     source: root.art(root.now-art, 1, root.covers-rev);
                     transform-scale: root.playing ? 1 : 0.9;
-                    animate transform-scale { duration: 500ms; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
+                    animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
                 }
                 Rectangle {
                     height: 26px;
@@ -5203,7 +5169,7 @@ export component AppWindow inherits Window {
                             Text {
                                 horizontal-stretch: 1;
                                 text: root.now-title;
-                                color: white;
+                                color: Theme.text;
                                 font-size: 16px;
                                 font-weight: 600;
                                 overflow: elide;
@@ -5241,13 +5207,13 @@ export component AppWindow inherits Window {
                             Icon {
                                 y: (parent.height - self.height) / 2;
                                 path: Icons.speaker;
-                                colour: white;
+                                colour: Theme.text;
                                 width: 15px;
                                 height: 15px;
                             }
                             Text {
                                 text: root.playing-on;
-                                color: white;
+                                color: Theme.text;
                                 font-size: 12px;
                                 font-weight: 600;
                                 vertical-alignment: center;
@@ -5261,12 +5227,10 @@ export component AppWindow inherits Window {
                             }
                         }
                     }
-                    IconButton {
-                        y: 2px;
-                        path: Icons.heart;
-                        ink: Theme.text;
-                        size: 34px;
-                        icon: 20px;
+                    if !Jam.guest: Seal {
+                        y: 0px;
+                        liked: root.now-starred;
+                        size: 28px;
                         clicked => { root.star(); }
                     }
                 }
@@ -5307,7 +5271,7 @@ export component AppWindow inherits Window {
                         letter-spacing: 1.4px;
                         horizontal-alignment: center;
                         opacity: root.mixing ? 1 : 0;
-                        animate opacity { duration: 360ms; }
+                        animate opacity { duration: Motion.reduced ? 0ms : 360ms; }
                     }
                     Text {
                         text: "-" + root.clock(root.duration-ms - root.display-position-ms);
@@ -5333,7 +5297,7 @@ export component AppWindow inherits Window {
                     IconButton {
                         y: (parent.height - self.height) / 2;
                         path: Icons.previous;
-                        ink: white;
+                        ink: Theme.text;
                         size: 50px;
                         icon: 34px;
                         clicked => { root.previous(); }
@@ -5341,15 +5305,15 @@ export component AppWindow inherits Window {
                     PlayPause {
                         y: (parent.height - self.height) / 2;
                         playing: root.playing;
-                        ink: white;
-                        size: 56px;
-                        icon: 40px;
+                        waiting: root.buffering;
+                        size: 76px;
+                        icon: 52px;
                         clicked => { root.toggle(); }
                     }
                     IconButton {
                         y: (parent.height - self.height) / 2;
                         path: Icons.next;
-                        ink: white;
+                        ink: Theme.text;
                         size: 50px;
                         icon: 34px;
                         clicked => { root.next(); }
@@ -5362,6 +5326,38 @@ export component AppWindow inherits Window {
                         icon: 19px;
                         size: 36px;
                         clicked => { root.cycle-repeat(); }
+                    }
+                }
+                Rectangle {
+                    height: 14px;
+                }
+                if !Jam.guest: HorizontalLayout {
+                    spacing: 10px;
+                    height: 24px;
+                    Icon {
+                        y: (parent.height - self.height) / 2;
+                        path: Icons.volume-down;
+                        colour: Theme.dim;
+                        width: 20px;
+                        height: 20px;
+                    }
+                    Bar {
+                        y: (parent.height - self.height) / 2;
+                        horizontal-stretch: 1;
+                        thin: 5px;
+                        thick: 7px;
+                        fill: Theme.text;
+                        track: Theme.chosen;
+                        value: root.volume;
+                        moved(v) => { root.set-volume(v); }
+                        done(v) => { root.set-volume(v); }
+                    }
+                    Icon {
+                        y: (parent.height - self.height) / 2;
+                        path: Icons.volume-up;
+                        colour: Theme.dim;
+                        width: 20px;
+                        height: 20px;
                     }
                 }
             }
@@ -5386,7 +5382,7 @@ export component AppWindow inherits Window {
                 y: 48px;
                 height: root.height - 48px - 56px;
                 content-height: full-sung.preferred-height;
-                animate content-y { duration: 640ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
+                animate content-y { duration: Motion.reduced ? 0ms : 640ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
                 full-sung := VerticalLayout {
                     width: parent.width;
                     padding-top: root.height * 0.36 - 48px;
@@ -5398,7 +5394,7 @@ export component AppWindow inherits Window {
                         property <bool> aimed: i == min(root.lyrics-active, root.lyrics-lines.length - 1);
                         // As the panel's: how lit, fading as it changes, whether or not the line is drawn just then.
                         property <float> level;
-                        animate level { duration: 500ms; easing: ease-out; }
+                        animate level { duration: Motion.reduced ? 0ms : 500ms; easing: ease-out; }
                         changed lit => {
                             self.level = self.lit ? 1 : 0;
                         }
@@ -5422,8 +5418,8 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                         font-size: 44px;
                         font-weight: 700;
-                        color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? white : Theme.dim;
-                        animate color { duration: 500ms; easing: ease-out; }
+                        color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.dim;
+                        animate color { duration: Motion.reduced ? 0ms : 500ms; easing: ease-out; }
                         if root.lyric-sweeping: StyledText {
                             // Kept while the pieces draw the line lit, only hidden: its colour comes up to white with them, so
                             // the line fades back from white when the next one takes over.
@@ -5480,41 +5476,44 @@ export component AppWindow inherits Window {
                 set-automix(on) => { root.setting-toggled("autoMix", on); }
             }
 
-            // Lyrics and the queue, in a glass pill at the bottom right.
+            // The panel's tabs, at the top right: lyrics, the queue, the devices. Pressing the lit one shows the artwork alone.
             Rectangle {
-                x: parent.width - self.width - 14px;
-                y: parent.height - self.height - 14px;
-                width: 80px;
-                height: 36px;
-                border-radius: 18px;
-                background: Theme.fill;
+                x: parent.width - self.width - 20px;
+                y: 8px;
+                width: (root.devices-on ? 3 : 2) * 38px + 8px;
+                height: 40px;
+                border-radius: 20px;
+                background: Theme.ground.with-alpha(0.6);
                 border-width: 1px;
-                border-color: Theme.chosen;
+                border-color: Theme.outline;
                 HorizontalLayout {
                     padding: 3px;
-                    spacing: 4px;
-                    for b[i] in [2, 1]: Rectangle {
-                        width: 34px;
-                        border-radius: 15px;
-                        background: root.full-panel == b ? white : transparent;
-                        animate background { duration: 160ms; easing: ease-out; }
-                        Icon {
-                            path: b == 2 ? Icons.lyrics : Icons.queue;
-                            colour: root.full-panel == b ? #1c1c1e : white;
-                            width: 19px;
-                            height: 19px;
-                        }
-                        TouchArea {
-                            clicked => { root.full-panel = root.full-panel == b ? 0 : b; }
-                        }
+                    spacing: 0px;
+                    for b[i] in root.devices-on ? [2, 1, 3] : [2, 1]: IconButton {
+                        path: b == 2 ? Icons.lyrics : b == 1 ? Icons.queue : Icons.speaker;
+                        lit: root.full-panel == b;
+                        size: 34px;
+                        clicked => { root.full-panel = root.full-panel == b ? 0 : b; }
                     }
                 }
+            }
+            if full-screen.visible && root.full-panel == 3: DevicesView {
+                x: root.width / 2 + 10px;
+                width: root.width / 2 - 70px;
+                y: 64px;
+                height: root.height - 64px - 40px;
+                devices: root.devices;
+                pairing-link: root.pairing-link;
+                forget-devices => { root.forget-devices(); }
+                pick(id) => { root.pick-device(id); }
+                open-jam => { root.full-panel = 1; }
+                join-jam => { root.join-open = true; }
             }
         }
 
         // Join a Jam: a sheet over the window, as the Mac's sheets come down from its top.
         if root.join-open: Rectangle {
-            background: #00000066;
+            background: Theme.ground.with-alpha(0.6);
             TouchArea {
                 clicked => { root.join-open = false; }
             }
@@ -5531,7 +5530,7 @@ export component AppWindow inherits Window {
                         alignment: center;
                         Icon {
                             path: Icons.people;
-                            colour: Theme.accent;
+                            colour: Theme.text;
                             width: 30px;
                             height: 30px;
                         }
@@ -5593,6 +5592,8 @@ export component AppWindow inherits Window {
 export component PlayerBar inherits Window {
     title: "nori player";
     no-frame: true;
+    preferred-width: 900px;
+    preferred-height: 64px;
     background: transparent;
     default-font-size: 13px;
     default-font-family: Type.body;
@@ -5621,6 +5622,7 @@ export component PlayerBar inherits Window {
     in property <bool> can-play: true;
     in property <bool> can-skip: true;
     in property <bool> can-seek: true;
+    in property <length> room;
     pure callback art(string, int, int) -> image;
     callback toggle();
     callback star();
@@ -5640,6 +5642,9 @@ export component PlayerBar inherits Window {
         border-color: Theme.outline;
     }
     PlayerControls {
+        width: parent.width;
+        height: parent.height;
+        room: root.room;
         has-song: root.has-song;
         now-title: root.now-title;
         now-artist: root.now-artist;
@@ -5683,9 +5688,13 @@ export component PlayerBar inherits Window {
 export component TopBar inherits Window {
     title: "nori";
     no-frame: true;
+    preferred-width: 900px;
+    preferred-height: 48px;
     background: transparent;
     default-font-size: 13px;
     default-font-family: Type.body;
+    // The pill's width (app.rs keeps it from the compositor's), which the tabs' names depend on.
+    in property <length> room;
     in property <int> view;
     in property <int> page-kind;
     in property <bool> guest;
@@ -5699,6 +5708,9 @@ export component TopBar inherits Window {
         border-color: Theme.outline;
     }
     TopContent {
+        width: parent.width;
+        height: parent.height;
+        room: root.room;
         view: root.view;
         page-kind: root.page-kind;
         guest: root.guest;

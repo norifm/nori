@@ -38,7 +38,7 @@ fn zone_of(link: &str) -> Option<&str> {
 }
 
 /// What the app wears: the colors of a page, plus the few the theme keeps whatever the page.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Look {
     table: [u32; LEN],
     on: u32,
@@ -103,17 +103,14 @@ impl Look {
         self.table[dress::BACKGROUND]
     }
 
+    #[cfg(test)]
     pub fn ink(&self) -> u32 {
         self.table[dress::ON]
     }
 
+    #[cfg(test)]
     pub fn accent(&self) -> u32 {
         self.table[dress::ACCENT]
-    }
-
-    /// The color a cover page's wash melts into at its bottom.
-    pub fn edge(&self) -> u32 {
-        self.table[dress::EDGE]
     }
 
     /// Sets the roles on a window's `Theme`.
@@ -193,7 +190,10 @@ mod tests {
 
     #[test]
     fn a_cover_page_keeps_the_themes_accent_readable_on_the_cover() {
-        use nori_look::color::calculate_contrast;
+        let calculate_contrast = |a: u32, b: u32| {
+            let (a, b) = (nori_look::color::luminance(a) as f64 + 0.05, nori_look::color::luminance(b) as f64 + 0.05);
+            a.max(b) / a.min(b)
+        };
         let prefs = prefs(ThemeSeason::Autumn, ThemeMode::Dark, false);
         let cover_colours = nori_look::cover::derive(&[0xFF20_5030], 1, 1, false);
         let look = cover(&prefs, false, OCTOBER, &cover_colours);
