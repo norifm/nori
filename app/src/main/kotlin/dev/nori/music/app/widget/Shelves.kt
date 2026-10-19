@@ -122,7 +122,7 @@ class MixesWidget : NoriWidget() {
                 MIX_SLOTS.forEachIndexed { i, slot -> v.setViewVisibility(slot, if (i < shown.size) View.VISIBLE else View.GONE) }
                 shown.forEachIndexed { i, t ->
                     v.setTextViewText(MIX_NAME[i], t.name)
-                    v.setImageViewResource(MIX_MARK[i], if (t.favourites) R.drawable.widget_heart else R.drawable.widget_sparkle)
+                    v.setImageViewResource(MIX_MARK[i], if (t.favourites) dev.nori.music.core.R.drawable.seal else R.drawable.widget_sparkle)
                     v.setOnClickPendingIntent(MIX_SLOTS[i], Widgets.playOrOpen(context, MixesWidget::class.java, t.origin))
                 }
                 AppWidgetManager.getInstance(context).updateAppWidget(id, v)

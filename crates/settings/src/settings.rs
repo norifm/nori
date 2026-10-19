@@ -7,7 +7,7 @@ use nori_model::{EqBand, EqKind, EqPreset, NamedPreset, TransitionPrefs};
 pub use nori_model::CompressorPreset;
 use serde_json::{Map, Value};
 
-use crate::codec::{clamped, on, within, Choice, Custom, Flags, Picks, Preamp, Quality, Raw, Row, FLAG, FLOAT, K, LONG, PICK, PICK_NEAREST, TEXT};
+use crate::codec::{clamped, on, within, Choice, Custom, Flags, Picks, Preamp, Quality, Raw, Row, FLAG, FLOAT, K, PICK, PICK_NEAREST, TEXT};
 use crate::lyrics_sources::{self, LyricsService};
 use crate::settings_store::{APPLY_AUDIO, APPLY_GAIN, CACHE_LIMIT, PLAYER, REPLAN, SOUND};
 
@@ -175,6 +175,56 @@ pub enum ThemeMode {
     System,
     Light,
     Dark,
+}
+
+/// Which season's theme the app wears ([`nori_look::theme::palette`]); `Follow` turns with the calendar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum ThemeSeason {
+    Follow,
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+/// The season a pick names, none for the calendar's.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn season_of(pick: ThemeSeason) -> Option<nori_look::theme::Season> {
+    use nori_look::theme::Season;
+    match pick {
+        ThemeSeason::Follow => None,
+        ThemeSeason::Spring => Some(Season::Spring),
+        ThemeSeason::Summer => Some(Season::Summer),
+        ThemeSeason::Autumn => Some(Season::Autumn),
+        ThemeSeason::Winter => Some(Season::Winter),
+    }
+}
+
+/// The `season` value the "follow the seasons" switch sets: following, or, turned off, the season the
+/// calendar is in on that date, so the colors stay as they are.
+pub fn season_follow_value(follow: bool, month: u32, day: u32, southern: bool) -> &'static str {
+    use crate::codec::Choice;
+    use nori_look::theme::Season;
+    let pick = match (follow, nori_look::theme::season_now(month, day, southern).season) {
+        (true, _) => ThemeSeason::Follow,
+        (false, Season::Spring) => ThemeSeason::Spring,
+        (false, Season::Summer) => ThemeSeason::Summer,
+        (false, Season::Autumn) => ThemeSeason::Autumn,
+        (false, Season::Winter) => ThemeSeason::Winter,
+    };
+    ThemeSeason::NAMES[pick.ordinal() as usize]
+}
+
+/// The palette these settings wear on a date, and whether it is a dark one: `system_dark` is the
+/// system's scheme, followed while the theme is System.
+pub fn theme_palette(p: &StoredPrefs, system_dark: bool, month: u32, day: u32, southern: bool) -> (nori_look::theme::Palette, bool) {
+    let dark = match p.theme {
+        ThemeMode::System => system_dark,
+        ThemeMode::Light => false,
+        ThemeMode::Dark => true,
+    };
+    (nori_look::theme::palette(season_of(p.season), month, day, southern, dark, p.amoled), dark)
 }
 
 /// A condition that hides a system bar (status or gesture); the bar is hidden while any chosen one holds.
@@ -509,12 +559,12 @@ pub struct StoredPrefs {
     #[setting("offload", FLAG, default = true, show = K::Switch, effect = APPLY_AUDIO)]
     pub offload: bool,
     // Appearance.
+    #[setting("season", PICK, default = ThemeSeason::Follow, show = K::Choice(ThemeSeason::NAMES))]
+    pub season: ThemeSeason,
     #[setting("theme", PICK, default = ThemeMode::System, show = K::Choice(ThemeMode::NAMES))]
     pub theme: ThemeMode,
     #[setting("hideStatusBarWhen", Flags, default = vec![HideBarWhen::Sideways], name = "hideStatusBar", show = K::Flags(HideBarWhen::NAMES))]
     pub hide_status_bar: Vec<HideBarWhen>,
-    #[setting("hideGestureBarWhen", Flags, default = vec![HideBarWhen::Protected], name = "hideGestureBar", show = K::Flags(HideBarWhen::NAMES))]
-    pub hide_gesture_bar: Vec<HideBarWhen>,
     #[setting("keepAwakeWhen", Flags, default = Vec::new(), name = "keepAwake", show = K::Flags(AwakeWhen::NAMES))]
     pub keep_awake: Vec<AwakeWhen>,
     /// While nori keeps the screen on, everything drawn drifts a few dp ([`nori_look::burn_in`]).
@@ -528,10 +578,6 @@ pub struct StoredPrefs {
     pub controls_side: ControlsSide,
     #[setting("amoled", FLAG, default = false, show = K::Switch)]
     pub amoled: bool,
-    #[setting("dynamicColor", FLAG, default = true, show = K::Switch)]
-    pub dynamic_color: bool,
-    #[setting("accent", LONG, default = 0xFF6750A4, show = K::Colour)]
-    pub accent: i64,
     /// Where covers' colors are worn ([`CoverPlace`]).
     #[setting("coverColorsOn", Flags, default = vec![CoverPlace::Pages, CoverPlace::Player], name = "coverColors", show = K::Flags(CoverPlace::NAMES))]
     pub cover_colors: Vec<CoverPlace>,
@@ -1241,9 +1287,6 @@ fn migrate_picks(raw: &HashMap<String, PrefValue>, p: &mut StoredPrefs) {
     };
     if let Some(v) = old("hideStatusBar") {
         p.hide_status_bar = bar(v, p.hide_status_bar.clone());
-    }
-    if let Some(v) = old("hideGestureBar") {
-        p.hide_gesture_bar = bar(v, p.hide_gesture_bar.clone());
     }
     if let Some(v) = old("coverColorsWhere") {
         p.cover_colors = match v {
@@ -2087,7 +2130,7 @@ mod tests {
         assert_eq!(set("wifi", "320:mp3").wifi, SavedQuality { bit_rate: 320, format: "mp3".into() });
         assert_eq!(set("mobile", "0:").mobile, SavedQuality::default());
         assert_eq!(set_by_name(&p, "download", "flac"), None);
-        assert_eq!(set("accent", "4280191205").accent, 0xFF1E88E5);
+        assert_eq!(set("season", "WINTER").season, ThemeSeason::Winter);
         assert_eq!(set("speed", "0.75").speed, 0.75);
         assert_eq!(set("lyricsSize", "7").lyrics_size, 2);
         assert_eq!(set("loudnessLevel", "loud").level, Level::Loud);
@@ -2461,6 +2504,28 @@ mod tests {
         assert!(natural.sound_chain_on() && natural.headphone.crossfeed_db() > 0.0 && natural.effects().player().virtualizer == 0.0, "crossfeed alone");
         let wide = StoredPrefs { headphone: HeadphoneSound::Wide, ..p };
         assert!(wide.sound_chain_on() && wide.headphone.crossfeed_db() == 0.0 && wide.effects().player().virtualizer > 0.0, "the virtualizer alone");
+    }
+
+    #[test]
+    fn the_theme_follows_the_settings() {
+        use nori_look::theme::{palette, Season};
+        // (settings, system dark) -> the palette and whether it is dark; 10 July is Summer's.
+        let p = StoredPrefs::default();
+        let wear = |p: &StoredPrefs, system_dark| theme_palette(p, system_dark, 7, 10, false);
+        assert_eq!(wear(&p, false), (palette(None, 7, 10, false, false, false), false), "Follow and System: the calendar's, the system's scheme");
+        assert!(wear(&p, true).1);
+        let fixed = StoredPrefs { season: ThemeSeason::Winter, theme: ThemeMode::Dark, amoled: true, ..p.clone() };
+        assert_eq!(wear(&fixed, false), (palette(Some(Season::Winter), 7, 10, false, true, true), true), "a fixed season and theme ignore the system");
+        assert!(!wear(&StoredPrefs { theme: ThemeMode::Light, ..p }, true).1);
+    }
+
+    #[test]
+    fn following_off_keeps_the_calendars_season() {
+        for (follow, month, day, southern, value) in [(true, 10, 19, false, "FOLLOW"), (false, 10, 19, false, "AUTUMN"), (false, 10, 19, true, "SPRING"), (false, 1, 5, false, "WINTER")] {
+            let v = season_follow_value(follow, month, day, southern);
+            assert_eq!(v, value, "{follow} {day}/{month} south {southern}");
+            assert_eq!(set_by_name(&StoredPrefs::default(), "season", v).map(|c| season_of(c.prefs.season)), Some(if follow { None } else { Some(nori_look::theme::season_now(month, day, southern).season) }));
+        }
     }
 
     #[test]

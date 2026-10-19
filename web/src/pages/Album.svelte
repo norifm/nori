@@ -7,10 +7,10 @@
   import { href } from "../state/route.svelte";
   import type { Album, Song } from "../state/types";
   import { W } from "../words";
-  import Heart from "../ui/Heart.svelte";
   import Hero from "../ui/Hero.svelte";
   import Icon from "../ui/Icon.svelte";
   import Page from "../ui/Page.svelte";
+  import Seal from "../ui/Seal.svelte";
   import SongList from "../ui/SongList.svelte";
 
   let { id }: { id: string } = $props();
@@ -24,7 +24,7 @@
     <Hero cover={a.cover} title={a.name} facts={[a.genre, a.year || "", W.songCount(songs.length), W.minutes(page.data?.seconds ?? 0)].filter(Boolean).join(" · ")} onplay={(shuffle) => void player.play(songs, 0, shuffle, "Album", a.id)}>
       {#snippet by()}{#if a.artistId}<a href={href("artist", a.artistId)}>{a.artist}</a>{:else}{a.artist}{/if}{/snippet}
       {#snippet actions()}
-        <Heart what="album" id={a.id} on={!!a.starred} />
+        <Seal what="album" id={a.id} on={!!a.starred} />
         <button class="round" aria-label={W.more} title={W.more} onclick={() => void addToPlaylist(songs)}><Icon name="more" /></button>
       {/snippet}
     </Hero>

@@ -17,13 +17,13 @@ default = ["engine"]
 # core alone, which reads the library (core.wasm).
 # The player with Vorbis, ALAC and Opus decoded here: for a browser whose WebCodecs lacks them.
 rust-codecs = ["engine", "nori-engine/rust-codecs"]
-engine = ["dep:nori-engine", "dep:nori-host", "dep:nori-look", "dep:nori-player", "dep:parking_lot"]
+engine = ["dep:nori-engine", "dep:nori-host", "dep:nori-player", "dep:parking_lot"]
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 nori-core = { path = "../core", default-features = false }
 nori-engine = { path = "../engine", default-features = false, features = ["core"], optional = true }
 nori-host = { path = "../host", default-features = false, optional = true }
-nori-look = { path = "../look", optional = true }
+nori-look = { path = "../look" }
 nori-player = { path = "../player", optional = true }
 nori-tasks = { path = "../tasks" }
 parking_lot = { version = "0.12", optional = true }

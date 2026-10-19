@@ -73,6 +73,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
@@ -135,6 +136,21 @@ private fun inter(weight: FontWeight) = Font(
 val Inter = FontFamily(inter(FontWeight.Normal), inter(FontWeight.Medium), inter(FontWeight.SemiBold), inter(FontWeight.Bold))
 
 /**
+ * The second and last typeface, for what a page is called and nothing else: Literata at its display size,
+ * a book face whose sharp serifs sit with the mincho of the seal and the seasons. Cut to that one optical
+ * size and to weights 500-800 (440 kB), with the whole of Latin, Greek, Cyrillic and Vietnamese.
+ */
+private fun literata(weight: FontWeight) = Font(
+    R.font.literata, weight,
+    variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)),
+)
+
+private val Literata = FontFamily(literata(FontWeight.SemiBold), literata(FontWeight.Bold))
+
+/** [style] as a page's name: in Literata, tracked a little tighter. */
+fun titled(style: TextStyle): TextStyle = style.copy(fontFamily = Literata, letterSpacing = (-0.3).sp)
+
+/**
  * Tighter and heavier than stock Material, which is what makes a music app read as a music app:
  * screen and album titles are display-weight with negative tracking, list rows are plain text, and
  * captions are small grey capitals.
@@ -178,6 +194,15 @@ class PagePalette(val look: IntArray, val wash: androidx.compose.ui.graphics.Ima
     val edge: Color get() = Color(look[CoverLook.EDGE])
     /** The page under it. */
     val background: Color get() = Color(look[CoverLook.BACKGROUND])
+    // The last accents asked for and the page wearing them, so each composition gets the same one back.
+    private var accentedFor: Accents? = null
+    private var accentedPage: PagePalette? = null
+
+    /** This page wearing the theme's [accents] instead of its cover's (nori_look::dress::accented). */
+    fun accented(accents: Accents): PagePalette {
+        accentedPage?.let { if (accentedFor == accents) return it }
+        return PagePalette(dev.nori.music.look.CoverLook.accented(look, accents.light, accents.dark), wash).also { accentedFor = accents; accentedPage = it }
+    }
     override fun equals(other: Any?): Boolean = other is PagePalette && other.wash == wash && other.look.contentEquals(look)
     override fun hashCode(): Int = look.contentHashCode() * 31 + (wash?.hashCode() ?: 0)
 }
@@ -327,23 +352,12 @@ fun Modifier.bleedsToEdges(): Modifier {
         layout(constraints.maxWidth, placeable.height) { placeable.place(-start.roundToPx(), 0) }
     }.drawWithCache {
         val reach = EDGE_REACH.toPx()
-        // [strip] wide at the screen's edge, faded over it and [reach] of the page beside it: how visible a cover
-        // is (1 - the cover of page colour) from the page to the screen's edge. The same on both sides, camera or
-        // rail: half gone where the strip begins, thinning out across it, nothing left at the screen's edge.
-        fun ramp(strip: Float): Array<Pair<Float, Color>> {
-            val at = (reach / (strip + reach)).coerceIn(0f, 1f)
-            fun c(visible: Float) = page.copy(alpha = 1f - visible)
-            val across = listOf(0.2f to 0.35f, 0.55f to 0.14f, 0.8f to 0.04f)
-            val into = 0.5f
-            return (listOf(0f to c(1f), at * 0.5f to c(1f - (1f - into) * 0.35f), at to c(into)) +
-                across.map { (x, v) -> at + (1f - at) * x to c(v) } + listOf(1f to c(0f))).toTypedArray()
-        }
         val l = start.toPx()
         val r = end.toPx()
         val inStart = if (l > 0f) l + reach else 0f
-        val inFade = Brush.horizontalGradient(*ramp(l), startX = inStart, endX = 0f)
+        val inFade = Brush.horizontalGradient(*edgeFade(page, l, reach), startX = inStart, endX = 0f)
         val outStart = if (r > 0f) size.width - r - reach else size.width
-        val outFade = Brush.horizontalGradient(*ramp(r), startX = outStart, endX = size.width)
+        val outFade = Brush.horizontalGradient(*edgeFade(page, r, reach), startX = outStart, endX = size.width)
         onDrawWithContent {
             drawContent()
             if (l > 0f) drawRect(inFade, size = Size(inStart, size.height))
@@ -370,12 +384,47 @@ fun Modifier.pageToEdges(): Modifier {
     }
 }
 
+/**
+ * A page's scroller that starts at the page's top, run on up under the status bar the page is kept below
+ * ([LocalStatusRoom]), where what scrolls up fades out into the page's colour instead of stopping on a line.
+ * Its content still starts where the page does: the scroller's top padding takes the room back. Nothing
+ * where a page drawn under the status bar (an album's) is.
+ */
+@Composable
+fun Modifier.underStatusBar(): Modifier {
+    val room = LocalStatusRoom.current
+    if (room == 0.dp) return this
+    return layout { measurable, constraints ->
+        val top = room.roundToPx()
+        val tall = if (constraints.hasBoundedHeight) constraints.maxHeight + top else constraints.maxHeight
+        val placeable = measurable.measure(constraints.copy(minHeight = (constraints.minHeight + top).coerceAtMost(tall), maxHeight = tall))
+        layout(placeable.width, placeable.height - top) { placeable.place(0, -top) }
+    }
+}
+
+/** The room a page is kept below the status bar by, which an [underStatusBar] scroller pads its content by. */
+val LocalStatusRoom = androidx.compose.runtime.compositionLocalOf { 0.dp }
+
 /** A [pageToEdges] list's padding: the strips it runs over at its sides (the camera's, the rail's), and [bottom]. */
 @Composable
-fun pagePadding(bottom: Dp): PaddingValues = PaddingValues(start = LocalPageStart.current, end = LocalPageEnd.current, bottom = bottom)
+fun pagePadding(bottom: Dp, top: Dp = 0.dp): PaddingValues = PaddingValues(start = LocalPageStart.current, end = LocalPageEnd.current, top = top, bottom = bottom)
 
-/** How far into the page a sideways row's edge fade reaches past the strip beside it ([bleedsToEdges]). */
-private val EDGE_REACH = 56.dp
+/** How far into the page an edge fade reaches past the strip beside it ([bleedsToEdges], the bar's upright). */
+val EDGE_REACH = 24.dp
+
+/**
+ * The fade of what runs out under a strip at the screen's edge (the camera's, the chrome's) into [page]'s colour:
+ * colour stops from [reach] px before the strip (0) to the screen's edge (1), across a strip [strip] px wide.
+ * Untouched before the strip, still mostly there where it begins and thinning out across it, a trace left at
+ * the edge: the chrome's glass over it has something to show. Gone by the strip's start, the pill was a pane
+ * over plain colour.
+ */
+fun edgeFade(page: Color, strip: Float, reach: Float): Array<Pair<Float, Color>> {
+    val at = (reach / (strip + reach)).coerceIn(0f, 1f)
+    fun c(visible: Float) = page.copy(alpha = 1f - visible)
+    val across = listOf(0.3f to 0.62f, 0.6f to 0.36f, 0.85f to 0.16f)
+    return (listOf(0f to c(1f), at to c(0.86f)) + across.map { (x, v) -> at + (1f - at) * x to c(v) } + listOf(1f to c(0.06f))).toTypedArray()
+}
 
 /** A sideways row's padding: [horizontal] and [vertical], and at each end the strip it runs out under ([bleedsToEdges]). */
 @Composable
@@ -451,7 +500,7 @@ fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composabl
     ) {
         Text(
             text, Modifier.weight(1f),
-            style = MaterialTheme.typography.headlineMedium.copy(fontSize = 30.sp),
+            style = titled(MaterialTheme.typography.headlineMedium.copy(fontSize = 31.sp)),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         trailing?.invoke(this)
@@ -464,7 +513,7 @@ fun BackTitle(text: String) {
     val nav = LocalNav.current
     Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
         androidx.compose.material3.IconButton(nav::back) { Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -479,6 +528,9 @@ fun Caption(text: String, modifier: Modifier = Modifier, align: TextAlign = Text
         style = MaterialTheme.typography.labelSmall, textAlign = align, maxLines = 2, overflow = TextOverflow.Ellipsis,
     )
 }
+
+/** How tall a page's action buttons stand, round ([CircleButton]) or a pill ([PillButton]), so a row of them lines up. */
+private val ACTION_SIDE = 46.dp
 
 /**
  * The button the page is built around: a full pill, tinted with the page's accent. [prominent] is the
@@ -498,7 +550,7 @@ fun PillButton(
     val content = look.color(if (prominent) CoverLook.PILL_INK else CoverLook.TINT_INK)
     Surface(
         onClick = onClick, enabled = enabled, shape = PillShape, color = container, contentColor = content,
-        modifier = modifier.heightIn(min = 42.dp),
+        modifier = modifier.heightIn(min = ACTION_SIDE),
     ) {
         Row(Modifier.padding(horizontal = 16.dp), Arrangement.Center, Alignment.CenterVertically) {
             if (icon != null) Icon(icon, null, Modifier.size(18.dp))
@@ -511,17 +563,18 @@ fun PillButton(
 }
 
 /**
- * A short message on a pill dressed as the tab bar and the mini player are (the chrome's slab, edge and
- * shadow), its action and its optional × in [accent]: the app's messages at the top and the queue's undo
- * at its foot. Colours are read while drawing, so a look cross-fading under it redraws it without
- * recomposing. [behind] sits under the words.
+ * A short message on a pill lifted off the page (the chrome's slab, edge and shadow: it floats over
+ * whatever is under it), its action and its optional × in the accent: the app's messages at the top and
+ * the queue's undo at its foot. Colors are read while drawing, so a look cross-fading under it redraws it
+ * without recomposing. [behind] sits under the words.
  */
 @Composable
 fun MessagePill(
-    text: String, look: Look, modifier: Modifier = Modifier, accent: ColorProducer = ColorProducer { look.color(CoverLook.ACCENT) },
+    text: String, look: Look, modifier: Modifier = Modifier,
     maxLines: Int = 1, action: String? = null, actionEnabled: Boolean = true, onAction: () -> Unit = {},
     onDismiss: (() -> Unit)? = null, behind: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
 ) {
+    val accent = ColorProducer { look.color(CoverLook.ACCENT) }
     Box(
         modifier.shadow(12.dp, PillShape).drawBehind {
             val round = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
@@ -854,7 +907,7 @@ fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Bo
 fun CircleButton(
     icon: ImageVector, description: String, modifier: Modifier = Modifier,
     enabled: Boolean = true, selected: Boolean = false, lit: Boolean = false,
-    iconModifier: Modifier = Modifier, onClick: () -> Unit,
+    iconModifier: Modifier = Modifier, iconTint: Color = Color.Unspecified, onClick: () -> Unit,
 ) {
     // Keep the plate and icon at full strength while disabled: washing them out made Shuffle look
     // absent on a dark page, so the row still "popped" when Play became tappable. The plates are the
@@ -866,65 +919,74 @@ fun CircleButton(
         onClick = onClick, enabled = enabled, shape = androidx.compose.foundation.shape.CircleShape,
         color = plate,
         contentColor = look.color(if (lit) CoverLook.ON_PRIMARY else CoverLook.TINT_INK),
-        modifier = modifier.size(46.dp),
-    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, description, Modifier.size(20.dp).then(iconModifier)) } }
+        modifier = modifier.size(ACTION_SIDE),
+    ) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            Icon(icon, description, Modifier.size(20.dp).then(iconModifier), tint = if (iconTint.isSpecified) iconTint else LocalContentColor.current)
+        }
+    }
 }
 
 /**
- * Heart that fills and gives a short jump when favourited. [starred] is what is shown; the jump runs
- * on a change, not on every recomposition of an already-hearted song.
+ * A favorite's seal being stamped down by a tap ([down]): it lands from half as big again and settles,
+ * with a firm tap under the finger. Taken off, it goes at once, and a seal that comes or goes by itself
+ * (another song, another device) is simply drawn.
  */
+@androidx.compose.runtime.Stable
+class Stamp(private val scope: kotlinx.coroutines.CoroutineScope, private val haptics: androidx.compose.ui.hapticfeedback.HapticFeedback, private val plain: Boolean) {
+    val scale = androidx.compose.animation.core.Animatable(1f)
+
+    fun down() {
+        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.Confirm)
+        if (plain) return
+        scope.launch {
+            scale.snapTo(1.5f)
+            scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.5f, stiffness = 700f))
+        }
+    }
+}
+
 @Composable
-fun FavoriteHeart(
+fun rememberStamp(): Stamp {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val plain = reduceMotion()
+    return remember(scope, haptics, plain) { Stamp(scope, haptics, plain) }
+}
+
+/** A favorite's seal ([Kanji.Sealed]), a tap away from being stamped or taken off; [tint] when it is one, [muted] its outline when not. */
+@Composable
+fun FavoriteSeal(
     starred: Boolean,
     modifier: Modifier = Modifier,
     size: Dp = 22.dp,
     tint: Color = MaterialTheme.colorScheme.primary,
-    muted: Color = tint.copy(alpha = 0.75f),
+    muted: Color = LocalContentColor.current.copy(alpha = 0.75f),
     onClick: () -> Unit,
 ) {
-    val plain = reduceMotion()
-    val scale = remember { androidx.compose.animation.core.Animatable(1f) }
-    var ready by remember { mutableStateOf(false) }
-    LaunchedEffect(starred) {
-        if (!ready) { ready = true; return@LaunchedEffect }
-        if (plain) return@LaunchedEffect
-        scale.snapTo(1f)
-        // Stiff springs: a quick jump that does not hang at the top.
-        scale.animateTo(1.28f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 1350f))
-        scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 900f))
-    }
-    IconButton(onClick, modifier) {
+    val stamp = rememberStamp()
+    IconButton({ if (!starred) stamp.down(); onClick() }, modifier) {
         Icon(
-            if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+            if (starred) Kanji.Sealed else Kanji.Seal,
             if (starred) say.removeFromFavourites else say.addToFavourites,
-            Modifier.size(size).graphicsLayer { scaleX = scale.value; scaleY = scale.value },
+            Modifier.size(size).graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value },
             tint = if (starred) tint else muted,
         )
     }
 }
 
-/** Favourite as a [CircleButton] with the same fill/jump as [FavoriteHeart]. */
+/** Favorite as a [CircleButton], the seal in the page's accent when it is one, stamped as [FavoriteSeal] is. */
 @Composable
 fun FavoriteCircle(starred: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val plain = reduceMotion()
-    val scale = remember { androidx.compose.animation.core.Animatable(1f) }
-    var ready by remember { mutableStateOf(false) }
-    LaunchedEffect(starred) {
-        if (!ready) { ready = true; return@LaunchedEffect }
-        if (plain) return@LaunchedEffect
-        scale.snapTo(1f)
-        // Stiff springs: a quick jump that does not hang at the top.
-        scale.animateTo(1.22f, androidx.compose.animation.core.spring(dampingRatio = 0.42f, stiffness = 1350f))
-        scale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 900f))
-    }
-    // The jump is the heart's alone: only the glyph moves, and the plate holds its place.
+    val stamp = rememberStamp()
+    // Only the seal moves; the plate holds its place.
     CircleButton(
-        if (starred) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+        if (starred) Kanji.Sealed else Kanji.Seal,
         if (starred) say.removeFromFavourites else say.favourite,
-        modifier, selected = starred,
-        iconModifier = Modifier.graphicsLayer { scaleX = scale.value; scaleY = scale.value },
-        onClick = onClick,
+        modifier,
+        iconModifier = Modifier.graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value },
+        iconTint = if (starred) LocalLook.current.color(CoverLook.ACCENT) else Color.Unspecified,
+        onClick = { if (!starred) stamp.down(); onClick() },
     )
 }
 
@@ -992,13 +1054,14 @@ fun NoriSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier
     val t by androidx.compose.animation.core.animateFloatAsState(
         if (checked) 1f else 0f, androidx.compose.animation.core.tween(if (reduceMotion()) 0 else 180), label = "switch",
     )
-    val on = scheme.primary
+    // The season's color for what is on, not its accent: the accent is kept for the one current thing.
+    val on = scheme.secondary
     val off = LocalLook.current.color(CoverLook.SWITCH_OFF)
     val track = androidx.compose.ui.graphics.lerp(off, on, t).let { if (enabled) it else it.copy(alpha = 0.4f) }
     // The thumb is white, except over a near-white track (the monochrome theme's), where it would vanish.
     val thumb = when {
         !enabled -> Color(0xFFE0E0E0)
-        on.luminance() > 0.8f -> androidx.compose.ui.graphics.lerp(Color.White, scheme.onPrimary, t)
+        on.luminance() > 0.8f -> androidx.compose.ui.graphics.lerp(Color.White, scheme.onSecondary, t)
         else -> Color.White
     }
     Box(

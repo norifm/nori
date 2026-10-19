@@ -72,7 +72,8 @@
   }
   .line .name {
     flex: 1;
-    font: 700 16px/1.2 var(--display);
+    font-size: 16px;
+    font-weight: 700;
   }
   h4 {
     font-size: 13px;
@@ -92,6 +93,9 @@
     height: 40px;
     flex: none;
   }
+  .art :global(.cover) {
+    border-radius: 7px;
+  }
   .text {
     flex: 1;
     min-width: 0;
@@ -99,7 +103,7 @@
     flex-direction: column;
   }
   .round.solid {
-    background: var(--accent);
-    color: var(--accent-text);
+    background: var(--ink);
+    color: var(--page);
   }
 </style>

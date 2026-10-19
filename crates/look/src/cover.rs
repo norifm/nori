@@ -673,11 +673,23 @@ fn readable(color: u32, background: u32, fallback: u32, ok: &Oklab) -> u32 {
 /// Like [`readable`] for a glyph, also trying the opposite direction before `fallback`, for mid-tone
 /// surfaces.
 pub fn readable_either_way(color: u32, background: u32, fallback: u32) -> u32 {
+    either_way(color, background, fallback, GLYPH_CONTRAST)
+}
+
+/// [`readable_either_way`] for text: until it reads at 4.5:1.
+pub fn text_either_way(color: u32, background: u32, fallback: u32) -> u32 {
+    either_way(color, background, fallback, TEXT_CONTRAST)
+}
+
+fn either_way(color: u32, background: u32, fallback: u32, contrast: f64) -> u32 {
     let ok = Oklab::new();
-    let light = luminance(background) < 0.4;
-    let step = |towards_light| stepped(color, background, towards_light, GLYPH_CONTRAST, &ok);
+    let light = luminance(background) < DARK_PAGE;
+    let step = |towards_light| stepped(color, background, towards_light, contrast, &ok);
     step(light).or_else(|| step(!light)).unwrap_or(fallback)
 }
+
+/// Below this luminance a page is dark: what is drawn on it is stepped lighter first.
+pub(crate) const DARK_PAGE: f32 = 0.4;
 
 /// Each step also raises saturation, but never the chroma above `color`'s: HSL calls a near-black
 /// 020305 43 % saturated, and lightening it made a vivid blue.

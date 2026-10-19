@@ -41,10 +41,10 @@ request=urllib.request.Request('http://127.0.0.1:'+port+target+'&sig='+sig,data=
 with urllib.request.urlopen(request,timeout=10) as response:
     assert response.status==200
 PY
-  check "incoming library mark updates the Android heart ($state)" wait_for starred "$state" 10
+  check "incoming library mark updates the Android seal ($state)" wait_for starred "$state" 10
   notification_marked() {
     local buttons; buttons=$(field notification)
-    [[ "$buttons" == *heart* ]] && { [[ "$state" = True && "$buttons" == *heart_filled* ]] || [[ "$state" = False && "$buttons" != *heart_filled* ]]; }
+    [[ "$buttons" == *seal* ]] && { [[ "$state" = True && "$buttons" == *sealed* ]] || [[ "$state" = False && "$buttons" != *sealed* ]]; }
   }
   check "the media notification follows the received mark ($state)" wait_until 10 notification_marked
 done

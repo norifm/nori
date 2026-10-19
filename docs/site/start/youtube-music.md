@@ -30,7 +30,7 @@ your servers the same way. Adding it again opens the same profile.
 ## Signing in (optional)
 
 Signed in, Home is your own YouTube Music Home, Library has your saved albums, your liked songs (as
-Favorites) and your playlists, and the heart on a song likes it on YouTube Music.
+Favorites) and your playlists, and the favorite seal on a song likes it on YouTube Music.
 
 nori signs in with the cookies of a browser session, since YouTube no longer lets other apps sign in
 with an account's password or a code.
@@ -87,7 +87,7 @@ matters to you, use YouTube Music signed out.
   mixes, say) shows all its videos as its songs, and its Play plays them.
 - Seeking in a long song or mix, or starting it partway, takes about a second: nori fetches songs in
   parts of 10 MB, which YouTube sends at full speed (it sends longer requests only as fast as they play).
-- Signed in: your saved albums, liked songs and playlists in Library, and hearts that like songs.
+- Signed in: your saved albums, liked songs and playlists in Library, and favorite seals that like songs.
 - Playing, the queue, AutoMix, the equalizer and the rest of the sound settings.
 - Lyrics from the lyrics services (there is no server to ask).
 - Songs played once are kept in the stream cache like any other, and play again from there.

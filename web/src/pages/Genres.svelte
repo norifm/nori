@@ -35,13 +35,16 @@
     justify-content: flex-end;
     height: 96px;
     padding: 14px;
-    border-radius: 10px;
-    background: var(--fill);
+    border-radius: 18px;
+    background: var(--surface);
+    border: 1px solid var(--hair);
   }
   a:hover {
-    background: var(--chosen);
+    background: var(--hover);
   }
   .name {
-    font: 700 18px/1.2 var(--display);
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.2px;
   }
 </style>

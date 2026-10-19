@@ -43,11 +43,15 @@
     margin-bottom: 12px;
   }
   h2 {
-    font-size: 21px;
+    font-size: 20px;
     font-weight: 700;
+    letter-spacing: -0.2px;
   }
   .shelf-head a {
-    color: var(--accent);
+    color: var(--ink2);
     font-size: 14px;
+  }
+  .shelf-head a:hover {
+    color: var(--ink);
   }
 </style>
