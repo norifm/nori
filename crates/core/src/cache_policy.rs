@@ -637,6 +637,27 @@ mod tests {
         assert!(s.page.is_none() && s.digest.is_some() && !s.fresh);
     }
 
+    /// A profile pointed at another server or user keeps nothing of the old one's: its pages, Home, mixes
+    /// and this session's hearts go with its library.
+    #[test]
+    fn another_server_keeps_nothing_of_the_last() {
+        use crate::mixes::board::{MixLookup, FAVOURITES_MIX};
+        let (c, fake) = setup();
+        let config = |url: &str| crate::ServerConfig { url: url.into(), user: "u".into(), password: "p".into(), ..Default::default() };
+        fake.answer(GENRES);
+        block(c.cached_or_fetched(Read::GenreList)).unwrap();
+        block(c.cached_or_fetched(Read::HomeFeed)).unwrap();
+        c.core.mix_favourites(vec![Song { id: "s1".into(), ..Default::default() }]);
+        c.core.stars.lock().mark(Starrable::Song, "s1".into(), true);
+        c.core.configure(config("h")).unwrap();
+        assert!(!c.core.kept.lock().is_empty() && c.core.home.lock().is_some(), "the same server keeps it all");
+        c.core.configure(config("http://other")).unwrap();
+        assert!(c.read_stored(Read::GenreList).unwrap().page.is_none());
+        assert!(c.core.kept.lock().is_empty() && c.core.home.lock().is_none());
+        assert_eq!(c.core.mix_page(FAVOURITES_MIX.into()), MixLookup::NotDrawn);
+        assert!(!c.core.stars.lock().starred(Starrable::Song, "s1", false));
+    }
+
     #[test]
     fn uncached_reads() {
         let (c, fake) = setup();

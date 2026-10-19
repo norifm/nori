@@ -58,7 +58,7 @@ open_invite() {
   invite_opened() {
     local tree; tree=$(ui)
     if [[ "$tree" == *"package=\"$pkg\""* ]]; then return 0; fi
-    for button in "Use without an account" "No thanks" "Got it" "Open in nori"; do
+    for button in "Use without an account" "Stay signed out" "No thanks" "Got it" "Open in nori"; do
       if [[ "$tree" == *"text=\"$button\""* ]]; then tapnode text "$button"; break; fi
     done
     return 1
