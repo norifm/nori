@@ -804,12 +804,14 @@ PY
     check "reopening follows the peer without the device picker" wait_for playingOn "$name" 15 || return 1
     check "the remote media session returns after reopening" wait_until 10 remote_session
     check "reopening does not play the saved queue on this phone" silent 10
-    peer_volume() { screen | grep -oE '[0-9]+%' | tail -1 | tr -d '%'; }
+    # The cells lit in the terminal's volume bar, after its speaker.
+    peer_volume() { screen | perl -CS -Mutf8 -ne 'if (/[\x{1F507}-\x{1F50A}] (━*)/) { $n = length $1 } END { print $n // "" }'; }
     before=$(peer_volume)
+    check "the peer shows its volume" test -n "$before"
     adb shell dumpsys media_router > "$here/../build/e2e/$ANDROID_SERIAL/native-routes.txt"
     adb shell input keyevent KEYCODE_VOLUME_UP; adb shell input keyevent KEYCODE_VOLUME_UP
     louder() { [ "$(peer_volume)" -gt "$before" ]; }
-    check "the volume keys turn the peer up ($before%)" wait_until 10 louder
+    check "the volume keys turn the peer up ($before of 12)" wait_until 10 louder
     for track in 02 03 04; do
       "$app" do next >/dev/null
       check "the remote queue reaches song $track" wait_for title "Long Track $track" 10
