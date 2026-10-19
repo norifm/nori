@@ -128,7 +128,7 @@ export const W = {
   about: "About",
   aboutLead: "nori for the web: your own music server, in a browser.",
   // Settings, by the core's pages, sections and setting names.
-  settingsPages: { Playing: "Playback", Sound: "Sound", Lyrics: "Lyrics", Library: "Library" } as Record<string, string>,
+  settingsPages: { Playing: "Playback", Sound: "Sound", Look: "Appearance", Lyrics: "Lyrics", Library: "Library" } as Record<string, string>,
   sections: {
     Between: "Between Songs",
     Controls: "Controls",
@@ -199,6 +199,30 @@ export const W = {
     Boost: "A boost brings the limiter with it, so nothing clips.",
     HeldByDac: "Bit-perfect output takes transitions, silence skipping and effects out of the path.",
   } as Record<string, string>,
+  // The look: season and appearance.
+  season: "Season",
+  seasonFollow: "Follow the seasons",
+  seasonFollowLead: "Changes with the calendar",
+  seasons: [
+    ["SPRING", "春", "Spring"],
+    ["SUMMER", "夏", "Summer"],
+    ["AUTUMN", "秋", "Autumn"],
+    ["WINTER", "冬", "Winter"],
+  ] as [string, string, string][],
+  appearance: "Light or dark",
+  appearances: [
+    ["SYSTEM", "Same as the system"],
+    ["LIGHT", "Light"],
+    ["DARK", "Dark"],
+  ] as [string, string][],
+  amoled: "Pure black",
+  // The top bar and the player bar.
+  libraryMenu: "Library",
+  noPlaylists: "No playlists yet.",
+  devices: "Devices",
+  volume: "Volume",
+  mute: "Mute",
+  moreResults: "All results",
   // Jams.
   jam: "Jam",
   jamStart: "Start a Jam",

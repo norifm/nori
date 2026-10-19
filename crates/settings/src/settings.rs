@@ -201,6 +201,17 @@ pub fn season_of(pick: ThemeSeason) -> Option<nori_look::theme::Season> {
     }
 }
 
+/// The palette these settings wear on a date, and whether it is a dark one: `system_dark` is the
+/// system's scheme, followed while the theme is System.
+pub fn theme_palette(p: &StoredPrefs, system_dark: bool, month: u32, day: u32, southern: bool) -> (nori_look::theme::Palette, bool) {
+    let dark = match p.theme {
+        ThemeMode::System => system_dark,
+        ThemeMode::Light => false,
+        ThemeMode::Dark => true,
+    };
+    (nori_look::theme::palette(season_of(p.season), month, day, southern, dark, p.amoled), dark)
+}
+
 /// A condition that hides a system bar (status or gesture); the bar is hidden while any chosen one holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, nori_settings_derive::Choice)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
@@ -2478,6 +2489,19 @@ mod tests {
         assert!(natural.sound_chain_on() && natural.headphone.crossfeed_db() > 0.0 && natural.effects().player().virtualizer == 0.0, "crossfeed alone");
         let wide = StoredPrefs { headphone: HeadphoneSound::Wide, ..p };
         assert!(wide.sound_chain_on() && wide.headphone.crossfeed_db() == 0.0 && wide.effects().player().virtualizer > 0.0, "the virtualizer alone");
+    }
+
+    #[test]
+    fn the_theme_follows_the_settings() {
+        use nori_look::theme::{palette, Season};
+        // (settings, system dark) -> the palette and whether it is dark; 10 July is Summer's.
+        let p = StoredPrefs::default();
+        let wear = |p: &StoredPrefs, system_dark| theme_palette(p, system_dark, 7, 10, false);
+        assert_eq!(wear(&p, false), (palette(None, 7, 10, false, false, false), false), "Follow and System: the calendar's, the system's scheme");
+        assert!(wear(&p, true).1);
+        let fixed = StoredPrefs { season: ThemeSeason::Winter, theme: ThemeMode::Dark, amoled: true, ..p.clone() };
+        assert_eq!(wear(&fixed, false), (palette(Some(Season::Winter), 7, 10, false, true, true), true), "a fixed season and theme ignore the system");
+        assert!(!wear(&StoredPrefs { theme: ThemeMode::Light, ..p }, true).1);
     }
 
     #[test]

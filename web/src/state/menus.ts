@@ -40,7 +40,7 @@ export async function newPlaylist() {
 function item(a: MenuAction, s: Song): Item | null {
   switch (a.action) {
     case "Favourite":
-      return { label: a.on ? W.favorite : W.unfavorite, icon: a.on ? "heart-line" : "heart", run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
+      return { label: a.on ? W.favorite : W.unfavorite, icon: a.on ? "seal-line" : "seal", run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
     case "PlayNext":
       return { label: W.playNext, icon: "next-up", run: () => player.enqueue([s], true) };
     case "AddToQueue":

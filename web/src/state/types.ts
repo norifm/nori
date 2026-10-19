@@ -39,6 +39,8 @@ export type Now = {
   reorderable: boolean;
   shuffle: boolean;
   repeat: number;
+  /** The volume of the device playing, 0 to 1. */
+  volume: number;
   /** The device playing elsewhere, while it is another one. */
   device: string | null;
   jam: boolean;

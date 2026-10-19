@@ -337,6 +337,11 @@ impl Nori {
         self.with(|h| h.shuffle(on));
     }
 
+    /// Sets the volume of the device playing, 0 to 1.
+    pub fn volume(&self, level: f32) {
+        self.with(|h| h.set_volume(level));
+    }
+
     /// The next repeat mode after the one shown: off, all, one.
     pub fn cycle_repeat(&self) {
         self.with(|h| h.cycle_repeat());
@@ -436,6 +441,7 @@ impl Nori {
                 "reorderable": shown.rows.reorderable && here,
                 "shuffle": n.shuffle,
                 "repeat": n.repeat,
+                "volume": h.volume(),
                 "device": n.device,
                 "jam": n.jam,
                 "asks": h.rules.asks,

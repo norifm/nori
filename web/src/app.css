@@ -1,59 +1,133 @@
-/* nori for the web: the desktop app's and Apple Music's look, light and dark as the system is. The
-   components keep their own styles; this is the ground they share. */
+/* nori for the web: the app's season themes (colors from the core, see state/theme.ts), Inter and Literata,
+   the outlined top and player pills over a page that fades out before them. The components keep their own
+   styles; this is the ground they share. */
+
+@font-face {
+  font-family: "Inter";
+  src: url("./fonts/inter.ttf") format("truetype");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Literata";
+  src: url("./fonts/literata.ttf") format("truetype");
+  font-weight: 200 900;
+  font-display: swap;
+}
+
+/* Registered so a new season, or light to dark, cross-fades every color made from these in one go. */
+@property --page {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --surface {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --ink {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --ink2 {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --hair {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --outline {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --on {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+@property --on-accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
 
 :root {
+  /* The system's until the core's palette arrives (theme.ts sets these on the element itself). */
+  --page: Canvas;
+  --surface: Canvas;
+  --ink: CanvasText;
+  --ink2: GrayText;
+  --hair: GrayText;
+  --outline: GrayText;
+  --accent: LinkText;
+  --on: LinkText;
+  --on-accent: Canvas;
   color-scheme: light dark;
-  --accent: #fa2d48;
-  --accent-text: #fff;
-  --bg: #ffffff;
-  --side: #f6f5f4;
-  --panel: #f9f8f7;
-  --bar: rgba(252, 251, 250, 0.97);
-  --raised: #ffffff;
-  --text: #1d1d1f;
-  --dim: rgba(0, 0, 0, 0.56);
-  --faint: rgba(0, 0, 0, 0.32);
-  --hair: rgba(0, 0, 0, 0.09);
-  --fill: rgba(0, 0, 0, 0.055);
-  --hover: rgba(0, 0, 0, 0.04);
-  --chosen: rgba(0, 0, 0, 0.075);
-  --shadow: 0 10px 40px rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.08);
-  --scrim: rgba(0, 0, 0, 0.32);
-  --cover-ground: #e9e8e6;
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", Roboto, Inter, Arial, sans-serif;
-  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Segoe UI", Roboto, Inter, Arial, sans-serif;
-  --side-w: 232px;
+  /* Made from the palette. */
+  --glass: color-mix(in srgb, var(--page) 55%, transparent);
+  --chrome: color-mix(in srgb, var(--ink) 21%, transparent);
+  --hover: color-mix(in srgb, var(--ink) 5%, transparent);
+  --chosen: color-mix(in srgb, var(--ink) 9%, transparent);
+  --fill: color-mix(in srgb, var(--ink) 8%, transparent);
+  --scrim: rgb(0 0 0 / 0.4);
+  --shadow: 0 12px 40px rgb(0 0 0 / 0.22);
+  /* The names the components were written with. */
+  --text: var(--ink);
+  --dim: var(--ink2);
+  --faint: var(--outline);
+  --raised: var(--surface);
+  --panel: var(--surface);
+  --cover-ground: var(--fill);
+  --font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --display: Literata, Georgia, "Iowan Old Style", serif;
   --panel-w: 320px;
-  --bar-h: 72px;
-  --tabs-h: 56px;
-  --mini-h: 60px;
   --gutter: 16px;
   --page-pad: 40px;
+  /* What the pills cover: the page starts under the top pill and ends above the player. */
+  --top-h: 84px;
+  --bar-h: 112px;
+  /* The fades: clear to here under the pill, then a ramp to the page's own; the same at the foot. */
+  --fade-top-a: 20px;
+  --fade-top-b: 76px;
+  --fade-bottom-a: 52px;
+  --fade-bottom-b: 130px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1f1d1c;
-    --side: #191817;
-    --panel: #242221;
-    --bar: rgba(34, 32, 31, 0.97);
-    --raised: #2c2a29;
-    --text: rgba(255, 255, 255, 0.9);
-    --dim: rgba(255, 255, 255, 0.58);
-    --faint: rgba(255, 255, 255, 0.36);
-    --hair: rgba(255, 255, 255, 0.08);
-    --fill: rgba(255, 255, 255, 0.08);
-    --hover: rgba(255, 255, 255, 0.05);
-    --chosen: rgba(255, 255, 255, 0.1);
-    --shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
-    --scrim: rgba(0, 0, 0, 0.55);
-    --cover-ground: #2f2d2b;
-  }
+:root.themed,
+:root.themed body {
+  transition:
+    --page 340ms,
+    --surface 340ms,
+    --ink 340ms,
+    --ink2 340ms,
+    --hair 340ms,
+    --outline 340ms,
+    --accent 340ms,
+    --on 340ms,
+    --on-accent 340ms;
 }
 
-@media (max-width: 899px) {
+@media (max-width: 719px) {
   :root {
     --page-pad: var(--gutter);
+    --top-h: calc(8px + env(safe-area-inset-top));
+    --bar-h: 156px;
+    --fade-top-a: 0px;
+    --fade-top-b: 0px;
+    --fade-bottom-a: 40px;
+    --fade-bottom-b: 150px;
   }
 }
 
@@ -64,15 +138,16 @@
 html,
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--page);
+  color: var(--ink);
   font: 15px/1.35 var(--font);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
 
 body {
-  overflow-x: hidden;
+  overflow: hidden;
+  height: 100dvh;
 }
 
 a {
@@ -110,8 +185,13 @@ h2,
 h3,
 h4 {
   margin: 0;
-  font-family: var(--display);
   letter-spacing: -0.015em;
+}
+
+/* Page titles are Literata; the rest of a page's headings are Inter. */
+h1 {
+  font-family: var(--display);
+  letter-spacing: -0.3px;
 }
 
 .icon {
@@ -132,15 +212,15 @@ h4 {
   padding: 0 18px;
   border-radius: 999px;
   background: var(--fill);
-  color: var(--accent);
+  color: var(--ink);
   font-weight: 600;
   font-size: 14px;
   white-space: nowrap;
 }
 
 .pill.solid {
-  background: var(--accent);
-  color: var(--accent-text);
+  background: var(--ink);
+  color: var(--page);
 }
 
 .pill.small {
@@ -158,19 +238,39 @@ h4 {
   height: 18px;
 }
 
-/* A round icon button without a ground until hovered. */
+/* A round icon button: no ground; a round ripple in the ink grows from half size while it is pressed. */
 .round {
+  position: relative;
   display: inline-grid;
   place-items: center;
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  color: var(--text);
+  color: var(--ink);
   flex: none;
 }
 
+.round::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--ink);
+  opacity: 0;
+  transform: scale(0.5);
+  transition:
+    opacity 380ms ease-out,
+    transform 380ms ease-out;
+}
+
+.round:active:not(:disabled)::before {
+  opacity: 0.16;
+  transform: scale(1);
+  transition-duration: 90ms;
+}
+
 .round:hover:not(:disabled) {
-  background: var(--hover);
+  color: var(--ink);
 }
 
 .round.on {
@@ -178,17 +278,18 @@ h4 {
 }
 
 .round .icon {
-  width: 20px;
-  height: 20px;
+  position: relative;
+  width: 24px;
+  height: 24px;
 }
 
 .field {
   width: 100%;
-  height: 38px;
-  padding: 0 12px;
-  border-radius: 10px;
-  border: 1px solid var(--hair);
-  background: var(--fill);
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid var(--outline);
+  background: transparent;
   outline: none;
 }
 
@@ -222,7 +323,7 @@ select.field {
 }
 
 .error {
-  color: var(--accent);
+  color: var(--ink2);
   font-size: 13px;
 }
 
@@ -232,7 +333,7 @@ select.field {
   width: 42px;
   height: 26px;
   border-radius: 13px;
-  background: var(--chosen);
+  background: var(--outline);
   position: relative;
   cursor: pointer;
   flex: none;
@@ -248,13 +349,12 @@ select.field {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  background: var(--page);
   transition: transform 0.2s;
 }
 
 .switch:checked {
-  background: #34c759;
+  background: var(--on);
 }
 
 .switch:checked::after {
@@ -280,9 +380,66 @@ select.field {
   background-clip: padding-box;
 }
 
+/* The one outline: the page blurred inside it, a hairline round it, no shadow. Without a blur the page
+   is thicker, not absent. */
+.chrome {
+  background: var(--glass);
+  border: 1px solid var(--chrome);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .chrome {
+    background: color-mix(in srgb, var(--page) 88%, transparent);
+  }
+}
+
+/* The page scrolls under both pills and fades into the page before each. */
+.fade {
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--fade-top-a), #000 var(--fade-top-b), #000 calc(100% - var(--fade-bottom-b)), transparent calc(100% - var(--fade-bottom-a)));
+  mask-image: linear-gradient(to bottom, transparent var(--fade-top-a), #000 var(--fade-top-b), #000 calc(100% - var(--fade-bottom-b)), transparent calc(100% - var(--fade-bottom-a)));
+}
+
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* A slider drawn as the seek bar is: a thin track filled with the ink up to --v. */
+input[type="range"].range {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--ink) var(--v, 0%), var(--hair) var(--v, 0%));
+  cursor: pointer;
+  margin: 0;
+}
+
+input[type="range"].range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink);
+  opacity: 0;
+}
+
+input[type="range"].range:hover::-webkit-slider-thumb,
+input[type="range"].range:focus-visible::-webkit-slider-thumb {
+  opacity: 1;
+}
+
+input[type="range"].range::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--ink);
 }

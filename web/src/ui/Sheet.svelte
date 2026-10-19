@@ -29,11 +29,11 @@
 
 <style>
   .menu {
-    border: 0;
-    padding: 6px;
-    border-radius: 14px;
-    background: var(--raised);
-    color: var(--text);
+    padding: 8px;
+    border-radius: 22px;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--hair);
     box-shadow: var(--shadow);
     width: min(320px, calc(100vw - 32px));
     max-height: 80vh;
@@ -44,7 +44,7 @@
   .menu-title {
     margin: 6px 12px 8px;
     font-size: 13px;
-    color: var(--dim);
+    color: var(--ink2);
     font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -56,7 +56,7 @@
     gap: 12px;
     width: 100%;
     padding: 10px 12px;
-    border-radius: 8px;
+    border-radius: 12px;
     text-align: left;
     font-size: 15px;
   }
@@ -68,21 +68,21 @@
     cursor: default;
   }
   .menu-item :global(.icon) {
-    color: var(--dim);
+    color: var(--ink2);
     width: 20px;
     height: 20px;
   }
   .danger {
-    color: var(--accent);
+    font-weight: 600;
   }
   .cancel {
     justify-content: center;
-    color: var(--dim);
+    color: var(--ink2);
     border-top: 1px solid var(--hair);
-    border-radius: 0 0 8px 8px;
+    border-radius: 0 0 12px 12px;
     margin-top: 4px;
   }
-  @media (max-width: 899px) {
+  @media (max-width: 719px) {
     .menu {
       margin: auto auto 12px;
       width: calc(100vw - 16px);

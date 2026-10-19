@@ -145,8 +145,8 @@ if (!only || only.includes("play")) {
 
 /** Opens pane `name` (lyrics, queue, devices, jam) beside the page, from the player bar. */
 async function pane(name, p = page) {
-  if (!(await p.$(`#panel #${name}`))) await p.click(`#bar [data-pane=${name}]`);
-  await p.waitForSelector(`#panel #${name}`);
+  if (!(await p.$(`#full #${name}`))) await p.click(`#bar [data-pane=${name}]`);
+  await p.waitForSelector(`#full #${name}`);
 }
 
 if (!only || only.includes("lyrics")) {
@@ -184,7 +184,7 @@ if (!only || only.includes("lyrics")) {
   report.lyrics.tap = { line: later, litMs, heardMs: Math.round((tapHeard - tapped.t) * 1000), soughtMs: sought, placeMs: Math.round(landed - (sought + (at - tapHeard) * 1000)), enterLit: (await facts()).lyricLine === enter };
   const tap = report.lyrics.tap;
   expect(tap.litMs < 100 && tap.heardMs >= 0 && tap.heardMs < 100 && Math.abs(tap.placeMs) < 100 && tap.enterLit, "a lyric line clicked or entered lights at once and is heard from where it is sung");
-  await page.click("#panel [aria-label=Close]");
+  await page.click("#full [aria-label=Close]");
 }
 
 if (!only || only.includes("skip")) {
@@ -228,7 +228,7 @@ if (!only || only.includes("instant")) {
     const n = JSON.parse(await window.ask("now"));
     const run = document.querySelector("#bar .run");
     const bar = Math.round((1 + new DOMMatrix(getComputedStyle(run).transform).m41 / run.getBoundingClientRect().width) * n.song.duration * 1000);
-    return { bar, core: n.positionMs, at: document.querySelector("#bar .times .at").textContent, left: document.querySelector("#bar .times span:last-child").textContent, durationMs: n.song.duration * 1000 };
+    return { bar, core: n.positionMs, at: document.querySelector("#bar .seek .time:first-child").textContent, left: document.querySelector("#bar .seek .time:last-child").textContent, durationMs: n.song.duration * 1000 };
   });
   const clock = (x) => `${Math.floor(x / 60000)}:${String(Math.floor(x / 1000) % 60).padStart(2, "0")}`;
   const s0 = await shown();

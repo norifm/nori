@@ -4,6 +4,7 @@
   import { ask, boot, facts, onMovedAway, playerSoon, takeOver } from "../rpc";
   import { drawn } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
+  import { refreshTheme } from "../state/theme";
   import { remote } from "../state/remote.svelte";
   import { W } from "../words";
   import Shell from "./Shell.svelte";
@@ -64,6 +65,7 @@
       phase = "elsewhere";
       return;
     }
+    void refreshTheme();
     if (await ask<boolean>("resume")) enter();
     else phase = "login";
   }
@@ -105,8 +107,7 @@
   }
   h1 {
     font-size: 40px;
-    font-weight: 800;
-    letter-spacing: -0.03em;
+    font-weight: 700;
   }
   .sub {
     margin: 0 0 12px;
