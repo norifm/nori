@@ -218,3 +218,12 @@ your tool asks for one. One commit per piece of work. Fixing your own unpushed w
 commit it fixes; never stack "fix the fix" commits. Small finished work (a fix, docs) goes
 straight to master as one commit; bigger development goes through a PR,
 squash-merged only after the owner approves the merge.
+
+A branch of many small commits (fixes, tests, follow-ups to one piece of work) lands on master as one
+squashed commit, through its PR when it has one: never fast-forward or rebase the pile onto master.
+
+Squash-merging a PR: the subject is the PR's title with its number, `feat: <what> (#81)`. The PR's
+description names every issue it settles, one per line (`Closes #12`, `Fixes #34`; `Refs #56` for one it
+only helps), and the squash commit's body is those lines alone, so GitHub links and closes them. A commit
+straight to master that settles an issue ends its subject with `(fixes #34)`. Remove the branch once
+merged.
