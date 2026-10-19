@@ -12,7 +12,7 @@ use std::sync::atomic::{
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use nori_engine::{AudioOutput, Device, DeviceWatch, Feed, OutputFormat, OutputKind};
+use nori_engine::{AudioOutput, Device, DeviceWatch, Feed, Heard, OutputFormat, OutputKind};
 
 /// Deep I/O buffer: the longest iOS grants in practice, about 11 wakes a second.
 pub const DEEP_IO_MS: u32 = 93;
@@ -62,32 +62,6 @@ fn port_of(kind: OutputKind) -> i32 {
     }
 }
 
-/// When the last music rendered will have been heard.
-struct Heard {
-    until_us: AtomicU64,
-}
-
-impl Heard {
-    const fn new() -> Heard {
-        Heard {
-            until_us: AtomicU64::new(0),
-        }
-    }
-
-    /// `frames` of music at `rate` leave the unit at `out_us` and reach the ear `delay_us` later.
-    fn pulled(&self, out_us: u64, delay_us: u64, frames: usize, rate: u32) {
-        let play = frames as u64 * 1_000_000 / rate.max(1) as u64;
-        self.until_us.store(
-            out_us.saturating_add(delay_us).saturating_add(play),
-            Ordering::Relaxed,
-        );
-    }
-
-    fn left_us(&self, now_us: u64) -> u64 {
-        self.until_us.load(Ordering::Relaxed).saturating_sub(now_us)
-    }
-}
-
 /// What the render callback reads: the playing feed, its format, the route and when the music rendered
 /// will have been heard. The device's is [`device_render`], as the audio unit's C callback carries no
 /// pointer of ours; a test's output has its own.
@@ -100,18 +74,19 @@ pub(crate) struct Render {
     latency_us: AtomicU64,
     /// A `PORT_` code.
     port: AtomicI32,
+    /// On [`HostClock`] (a test's own clock for its output).
     heard: Heard,
 }
 
 impl Render {
-    const fn new() -> Render {
+    fn new() -> Render {
         Render {
             feed: AtomicPtr::new(std::ptr::null_mut()),
             rate: AtomicU32::new(44_100),
             channels: AtomicU32::new(2),
             latency_us: AtomicU64::new(0),
             port: AtomicI32::new(0),
-            heard: Heard::new(),
+            heard: Heard::default(),
         }
     }
 
@@ -128,14 +103,8 @@ impl Render {
             // SAFETY: published while the unit is stopped, and the unit is stopped before it is cleared.
             unsafe { (*feed).pull(out) }
         };
-        if music > 0 {
-            self.heard.pulled(
-                now_us.saturating_add(ahead_us),
-                self.latency_us.load(Ordering::Relaxed),
-                music,
-                self.rate.load(Ordering::Relaxed),
-            );
-        }
+        let heard_us = now_us.saturating_add(ahead_us).saturating_add(self.latency_us.load(Ordering::Relaxed));
+        self.heard.pulled(heard_us, music, self.rate.load(Ordering::Relaxed));
         music
     }
 
@@ -433,6 +402,7 @@ impl<C: Clock> AudioOutput for IosOutput<C> {
         // Starts paused: the engine resumes when it wants sound.
         self.sink.stop();
         self.clear_feed();
+        self.render.heard.follow(feed.pulled());
         let mut feed = Box::new(feed);
         self.render
             .feed
@@ -867,15 +837,6 @@ mod tests {
         assert!(out.takes_float());
         assert!(!out.bursts());
         assert!(!out.ramp(None, 0.0, 20));
-    }
-
-    #[test]
-    fn latency_is_the_route_plus_the_music_pulled() {
-        let heard = Heard::new();
-        // Music that leaves the unit at 1.093 s: 128 frames at 44.1 kHz is 2902 µs, heard 12 ms after.
-        heard.pulled(1_093_000, 12_000, 128, 44_100);
-        assert_eq!(heard.left_us(1_000_000), 93_000 + 12_000 + 128 * 1_000_000 / 44_100);
-        assert_eq!(heard.left_us(1_093_000 + 12_000 + 2_902), 0, "heard");
     }
 
     #[test]

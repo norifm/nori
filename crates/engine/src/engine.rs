@@ -2369,7 +2369,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             if other {
                 self.told.heard = Some((i, id));
             }
-            self.write_status(i, ms, |s| {
+            self.write_status(i, ms, Instant::now(), |s| {
                 s.switching = false;
                 s.on_cpu = false;
             });
@@ -2417,7 +2417,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let (speed, underruns, switching) = (self.p.speed().0, self.p.sink.track.underruns(), self.dip.is_some());
         let (chain, meter, compression) = (self.p.sink.chain_in(), self.p.sink.meter_db(), self.p.sink.compression_db());
         let on_cpu = self.state == State::Playing && !stalled && !switching;
-        let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), |s| {
+        let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), self.p.placed_at(), |s| {
             s.speed = speed;
             s.pace = speed * tempo as f32;
             s.mixing = mixing;
@@ -2460,7 +2460,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             self.p.app.playing();
         }
         let switching = self.dip.is_some();
-        let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), |s| {
+        let mixing_was = self.write_status(i, self.sought().unwrap_or(ms), Instant::now(), |s| {
             s.speed = 1.0;
             s.pace = 1.0;
             s.mixing = false;
@@ -2484,9 +2484,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         }
     }
 
-    /// Writes the song, place, state and releases into the status, then `more`; returns whether a mix
-    /// was audible before.
-    fn write_status(&mut self, i: usize, ms: i64, more: impl FnOnce(&mut Status)) -> bool {
+    /// Writes the song, place (as of `at`), state and releases into the status, then `more`; returns
+    /// whether a mix was audible before.
+    fn write_status(&mut self, i: usize, ms: i64, at: Instant, more: impl FnOnce(&mut Status)) -> bool {
         let id = self.told.heard.as_ref().map(|h| h.1.as_str());
         let mut s = self.status.lock();
         let was = s.mixing;
@@ -2496,7 +2496,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             s.id = id.map(str::to_owned);
         }
         s.position_ms = ms;
-        s.at = Instant::now();
+        s.at = at;
         s.releases = self.releases;
         more(&mut s);
         was

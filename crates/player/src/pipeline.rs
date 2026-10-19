@@ -9,6 +9,7 @@ use crate::pcm::Format;
 use crate::playlist::Playlist;
 use crate::queue::{measure_ahead, ErrorRun, OnError, PlaybackError};
 use crate::transitions::WindowSong;
+use nori_time::Instant;
 
 pub use crate::sink::{blended, ChainSettings, Remake, Sink, Sound, Track, BLEND_US};
 
@@ -257,6 +258,8 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     playing: bool,
     /// Renderer position: from a seek or start, then from the engine once the output has a clock.
     position_us: Option<i64>,
+    /// When `position_us` was read or set: a turn reads it before it renders, which takes a while.
+    placed_at: Instant,
     current: Option<usize>,
     source_ended: bool,
     /// Song changes with their time; the platform drains them.
@@ -312,6 +315,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             periods: Vec::new(),
             playing: false,
             position_us: None,
+            placed_at: Instant::now(),
             current: None,
             source_ended: false,
             changes: Vec::new(),
@@ -420,7 +424,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         let serial = self.serial_for(i);
         self.periods = vec![Period { index: i, offset_us, duration_us: 0, gain: 1.0, serial }];
         self.on_serial = Some(serial);
-        self.position_us = Some(offset_us + from_ms * 1000);
+        self.place(offset_us + from_ms * 1000);
         self.source_ended = false;
         self.heard_period = None;
         if r.ready() {
@@ -527,7 +531,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         let gain = self.song_gain(i);
         let serial = self.serial_for(i);
         self.periods = vec![Period { index: i, offset_us, duration_us, gain, serial }];
-        self.position_us = Some(offset_us + from_ms * 1000);
+        self.place(offset_us + from_ms * 1000);
         self.heard_from = self.position_us;
         self.source_ended = false;
         self.configure(i, serial, format);
@@ -657,7 +661,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     pub fn release(&mut self) -> Option<(usize, i64)> {
         let ended = self.source_ended;
         if let Some(now) = self.call(|e, d, a| e.position_us(d, a, ended)) {
-            self.position_us = Some(now);
+            self.place(now);
         }
         let at = self.current.map(|i| (i, self.position_ms()));
         self.call(|e, _, a| e.reset(a));
@@ -948,6 +952,16 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         (pos - offset) / 1000
     }
 
+    /// When the position was read from the output's clock (or set by a start or seek).
+    pub fn placed_at(&self) -> Instant {
+        self.placed_at
+    }
+
+    fn place(&mut self, us: i64) {
+        self.position_us = Some(us);
+        self.placed_at = Instant::now();
+    }
+
     /// Position in the current song, µs.
     pub fn position_us(&self) -> i64 {
         let Some(pos) = self.position_us else { return 0 };
@@ -1152,7 +1166,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     fn follow_clock(&mut self) {
         let ended = self.source_ended;
         if let Some(at) = self.call(|e, d, a| e.position_us(d, a, ended)) {
-            self.position_us = Some(at);
+            self.place(at);
             if let Some(p) = self.periods.iter().rev().find(|p| at >= p.offset_us).copied() {
                 // A new stream of the same song: repeat one looped.
                 if self.heard_period.is_some_and(|o| o != p.offset_us) && self.current == Some(p.index) {
