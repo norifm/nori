@@ -944,7 +944,7 @@ private fun PlayerLayer(sheet: PlayerSheet, content: @Composable () -> Unit) {
             alpha = if (parked) 0f else (sheet.progress.value / 0.1f).coerceIn(0f, 1f)
             // Its leading corners: the top ones, or on its side the two facing the page.
             val r = (radius * (1f - sheet.progress.value).coerceIn(0f, 1f) * 4f).coerceAtMost(radius)
-            shape = when (sheet.edge) {
+            shape = if (sheet.sinking) androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, topEnd = r) else when (sheet.edge) {
                 SheetEdge.BOTTOM -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, topEnd = r)
                 SheetEdge.RIGHT -> androidx.compose.foundation.shape.RoundedCornerShape(topStart = r, bottomStart = r)
                 SheetEdge.LEFT -> androidx.compose.foundation.shape.RoundedCornerShape(topEnd = r, bottomEnd = r)

@@ -410,10 +410,11 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         Box(
             // Pull down from anywhere on the artwork page and the whole player follows the finger down;
             // the lyrics and queue need a vertical drag to scroll, so there only the handle does. On its side
-            // only the controls' half does (PlayerHalves): across the cover a sideways drag changes the song.
+            // a pull down anywhere does it too (what scrolls takes its own drags first), and the controls' half
+            // also takes a sideways one (PlayerHalves): across the cover a sideways drag changes the song.
             Modifier.fillMaxSize().onGloballyPositioned { player[0] = it }
                 .then(if (motion != null) Modifier.watchTouches(motion) else Modifier)
-                .dragsSheet(sheet, enabled = panel == Panel.ART && !LocalWide.current),
+                .dragsSheet(sheet, enabled = panel == Panel.ART || LocalWide.current, down = LocalWide.current),
         ) {
             // The page is the cover itself, enlarged and smoothed, lined up with the sleeve. No seam
             // gradient over it: the sleeve carries its own dissolve at its bottom edge, and a gradient
