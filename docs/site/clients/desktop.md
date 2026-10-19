@@ -24,7 +24,10 @@ queue and the volume. Pages scroll under both and fade out before them. A narrow
 then the volume slider and the panel buttons.
 
 A favorite is a seal: an outline until you like a song, then filled and slightly tilted. Lyrics, the queue and
-your devices open in a panel beside the page, or beside the cover in the full player.
+your devices open in a sheet that floats on the right between the two outlines, over the page, which stays
+where it is; tabs at its top switch between them. In the full player the same tabs head the panel beside the
+cover. The queue shows the songs already played, dimmed above the one playing, then what plays next. With
+nothing typed, the search page lists your recent searches.
 
 ## Look
 
@@ -32,7 +35,7 @@ nori wears one of four seasons, Spring (春), Summer (夏), Autumn (秋) and Win
 AMOLED black. By default it follows the calendar and blends from one season to the next over two weeks
 (southern-hemisphere zones turn half a year later). Choose a season and the appearance in Settings, General, or
 in the settings menu. The accent color marks only what is current: the open tab, the song playing, a lit
-shuffle or repeat, a liked seal. Album and artist pages, the sidebar and Now Playing wear their cover's colors.
+shuffle or repeat, a liked seal. Album and artist pages, the side sheet and Now Playing wear their cover's colors.
 With Motion set to Reduced in nori's settings, nothing slides, stamps or fades.
 
 ## Install

@@ -188,8 +188,6 @@ struct Shared {
     page_colour: Cell<[f32; 3]>,
     /// The window is not on screen (minimised, covered, locked): nothing is drawn until it shows again.
     occluded: Cell<bool>,
-    /// Width of the right panel (0 when closed); the pills centre in the remaining page.
-    right: Cell<f32>,
     /// Queried each frame for the lyrics focus blur.
     focus: RefCell<Option<FocusSource>>,
     menu: MenuBar,
@@ -345,7 +343,6 @@ pub fn install() -> Result<Compositor, String> {
         player_shown: Cell::new(false),
         page_colour: Cell::new([0.0; 3]),
         occluded: Cell::new(false),
-        right: Cell::new(0.0),
         focus: RefCell::new(None),
         menu: MenuBar::default(),
         on_exit: RefCell::new(None),
@@ -413,21 +410,13 @@ impl Compositor {
         *self.0.focus.borrow_mut() = Some(Box::new(f));
     }
 
-    pub fn set_right_panel(&self, w: f32) {
-        if self.0.right.get() != w {
-            self.0.right.set(w);
-            relayout(&self.0);
-        }
-    }
-
     /// The pills' x and width (logical pixels), top then player, for the page's popovers.
     pub fn pills(&self) -> ((f32, f32), (f32, f32)) {
         let size = self.0.window.borrow().as_ref().map_or(LogicalSize::new(1280.0, 820.0), |w| {
             let l = w.inner_size().to_logical::<f32>(w.scale_factor());
             LogicalSize::new(l.width, l.height)
         });
-        let right = self.0.right.get();
-        let (top, player) = (pill_rect(Role::Top, size, right), pill_rect(Role::Player, size, right));
+        let (top, player) = (pill_rect(Role::Top, size), pill_rect(Role::Player, size));
         ((top.x, top.w), (player.x, player.w))
     }
 
@@ -516,8 +505,8 @@ impl Rect {
 
 /// A pill's rect: as wide as the page beside the panel allows up to [`PILL_MAX_W`], centred on that page.
 /// The top pill keeps clear of the traffic lights on both sides.
-fn pill_rect(role: Role, window: LogicalSize, right: f32) -> Rect {
-    let page = (window.width - right).max(0.0);
+fn pill_rect(role: Role, window: LogicalSize) -> Rect {
+    let page = window.width;
     let (side, h, y) = match role {
         Role::Top => (TRAFFIC, TOP_H, TOP_Y),
         _ => (SIDE, PLAYER_H, window.height - PLAYER_H - PLAYER_BOTTOM),
@@ -538,8 +527,8 @@ struct Fade {
     top: bool,
 }
 
-fn fade_of(role: Role, window: LogicalSize, right: f32) -> Fade {
-    let pill = pill_rect(role, window, right);
+fn fade_of(role: Role, window: LogicalSize) -> Fade {
+    let pill = pill_rect(role, window);
     let top = role == Role::Top;
     let strip = if top { pill.y + pill.h + FADE_PAD } else { window.height - pill.y + FADE_PAD };
     let h = strip + EDGE_REACH;
@@ -552,11 +541,11 @@ fn blur_level(scale: f32) -> f32 {
 }
 
 /// A layer's rect in the window, logical pixels.
-fn place(s: &Shared, role: Role, window: LogicalSize) -> (LogicalPosition, LogicalSize) {
+fn place(role: Role, window: LogicalSize) -> (LogicalPosition, LogicalSize) {
     if role == Role::Page {
         return (LogicalPosition::new(0.0, 0.0), window);
     }
-    let r = pill_rect(role, window, s.right.get());
+    let r = pill_rect(role, window);
     (LogicalPosition::new(r.x, r.y), LogicalSize::new(r.w, r.h))
 }
 
@@ -573,7 +562,7 @@ fn layout_layers(s: &Shared) {
     let logical = LogicalSize::new(phys.width as f32 / scale, phys.height as f32 / scale);
     for (layer, role) in s.layers.borrow().iter() {
         let Some(role) = role.get() else { continue };
-        let (_, size) = place(s, role, logical);
+        let (_, size) = place(role, logical);
         let px = PhysicalSize::new((size.width * scale).round().max(1.0) as u32, (size.height * scale).round().max(1.0) as u32);
         if layer.window.scale_factor() != scale {
             layer.window.dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: scale });
@@ -615,7 +604,7 @@ impl Runner {
             if !self.shared.shown(role) || self.layer(role).is_none() {
                 continue;
             }
-            let r = pill_rect(role, win, self.shared.right.get());
+            let r = pill_rect(role, win);
             let (top, bottom) = if role == Role::Top { (0.0, r.y + r.h + KEEP) } else { (r.y - KEEP, win.height) };
             if at.x >= r.x - KEEP && at.x < r.x + r.w + KEEP && at.y >= top && at.y < bottom {
                 return role;
@@ -626,7 +615,7 @@ impl Runner {
 
     fn local(&self, role: Role, at: LogicalPosition) -> LogicalPosition {
         let Some(win) = self.logical_window() else { return at };
-        let (o, _) = place(&self.shared, role, win);
+        let (o, _) = place(role, win);
         LogicalPosition::new(at.x - o.x, at.y - o.y)
     }
 
@@ -1120,14 +1109,13 @@ impl Draw {
             pass(&mut enc, &target, &self.focus, &g, false);
         }
         let [red, green, blue] = s.page_colour.get();
-        let right = s.right.get();
         for role in [Role::Top, Role::Player] {
             let (Some(view), Some(py), true) = (find(role), &pyramid, s.shown(role)) else { continue };
-            let f = fade_of(role, win, right);
+            let f = fade_of(role, win);
             let u = uniforms(f.strip.scaled(scale), [w, h, w, h], [0.0; 4], [red, green, blue, 0.0], [f.at, f.top as u8 as f32, 0.0, 0.0], [0.0; 4]);
             let g = self.group(d, &gpu.queue, &u, &page, py);
             pass(&mut enc, &target, &self.fade, &g, false);
-            let rect = pill_rect(role, win, right).scaled(scale);
+            let rect = pill_rect(role, win).scaled(scale);
             let u = uniforms(rect, [w, h, w, h], [pill_radius(role) * scale, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, blur_level(scale)], [0.0; 4], [0.0; 4]);
             let g = self.group(d, &gpu.queue, &u, &page, py);
             pass(&mut enc, &target, &self.pill, &g, false);
@@ -1302,31 +1290,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pills_centre_on_the_page_beside_the_panel_and_stop_at_their_width() {
-        let wide = pill_rect(Role::Player, LogicalSize::new(1600.0, 900.0), 0.0);
+    fn pills_centre_in_the_window_and_stop_at_their_width() {
+        let wide = pill_rect(Role::Player, LogicalSize::new(1600.0, 900.0));
         assert_eq!((wide.x, wide.w, wide.h), ((1600.0 - PILL_MAX_W) / 2.0, PILL_MAX_W, PLAYER_H));
         assert_eq!(wide.y + wide.h + PLAYER_BOTTOM, 900.0);
-        let narrow = pill_rect(Role::Player, LogicalSize::new(900.0, 600.0), 280.0);
-        assert_eq!((narrow.x, narrow.w), (SIDE, 620.0 - 2.0 * SIDE));
-        let top = pill_rect(Role::Top, LogicalSize::new(1280.0, 800.0), 0.0);
+        let narrow = pill_rect(Role::Player, LogicalSize::new(900.0, 600.0));
+        assert_eq!((narrow.x, narrow.w), (SIDE, 900.0 - 2.0 * SIDE));
+        let top = pill_rect(Role::Top, LogicalSize::new(1280.0, 800.0));
         assert_eq!((top.x + top.w / 2.0, top.y, top.h), (640.0, TOP_Y, TOP_H));
         assert!(top.x >= TRAFFIC, "clear of the traffic lights");
-        let tight = pill_rect(Role::Top, LogicalSize::new(860.0, 600.0), 0.0);
+        let tight = pill_rect(Role::Top, LogicalSize::new(860.0, 600.0));
         assert!(tight.x >= TRAFFIC && tight.x + tight.w <= 860.0 - TRAFFIC);
     }
 
     #[test]
     fn a_fade_runs_from_the_windows_edge_to_a_reach_past_the_pill() {
         let window = LogicalSize::new(1280.0, 800.0);
-        let bottom = fade_of(Role::Player, window, 0.0);
-        let pill = pill_rect(Role::Player, window, 0.0);
+        let bottom = fade_of(Role::Player, window);
+        let pill = pill_rect(Role::Player, window);
         assert_eq!(bottom.strip.y + bottom.strip.h, 800.0);
         assert!(!bottom.top);
         // The pill's outer side is `at` of the way up the strip's height from where the ramp begins.
         let from_top_of_strip = pill.y - bottom.strip.y;
         assert!((from_top_of_strip - (EDGE_REACH + FADE_PAD)).abs() < 1e-3, "{from_top_of_strip}");
         assert!((bottom.at - EDGE_REACH / bottom.strip.h).abs() < 1e-6);
-        let top = fade_of(Role::Top, window, 0.0);
+        let top = fade_of(Role::Top, window);
         assert!(top.top && top.strip.y == 0.0);
     }
 

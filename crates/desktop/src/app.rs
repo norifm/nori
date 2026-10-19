@@ -1765,7 +1765,6 @@ impl App {
     fn place_player(&self) {
         let ui = self.ui();
         let shown = !ui.get_full_player() && ui.get_view() != LOGIN;
-        self.compositor.set_right_panel(if ui.get_inspector() != 0 { 280.0 } else { 0.0 });
         self.compositor.show_pills(shown && self.top.is_some(), shown && self.player.is_some());
         let chrome = ui.global::<crate::Chrome>();
         let (top, player) = self.compositor.pills();
@@ -1794,7 +1793,7 @@ impl App {
         ui.set_lyric_sweeping(now.sweeping);
         let width = ui.window().size().to_logical(ui.window().scale_factor()).width;
         let mut pieces = |view, on: bool, size, w, lit, dim| if on && now.sweeping { l.pieces(view, &now, size, w, lit, dim) } else { Vec::new() };
-        renew(&self.pieces[0], pieces(0, side, 22.0, 280.0 - 44.0, 1.0, 0.36));
+        renew(&self.pieces[0], pieces(0, side, 22.0, 320.0 - 44.0, 1.0, 0.36));
         renew(&self.pieces[1], pieces(1, full, 44.0, width / 2.0 - 140.0, 1.0, 0.36));
         ui.set_lyric_sung(now.sung.into());
         ui.set_lyric_now(now.now.into());
@@ -1939,8 +1938,6 @@ impl App {
         ui.set_season_switch(seasons.switch.into());
         ui.set_season_detail(seasons.detail.into());
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
-        ui.set_autoplay(prefs.auto_fill);
-        ui.set_automix(prefs.auto_mix);
         let view = ui.get_view();
         if view == SETTINGS {
             ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab(), today));
@@ -2179,7 +2176,14 @@ impl App {
         if let Some(q) = queue {
             ui.set_shuffle(q.view.shuffle);
             ui.set_repeat(q.view.repeat as i32);
-            let rows = q.upcoming().map(|(i, s)| SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), ..row(s, i as usize, false, self.heart(s), self.session.as_ref().is_some_and(|x| x.rules.downloads), self.session.as_ref().is_some_and(|x| x.rules.radio)) }).collect();
+            // Every song in play order, as Android's queue: those played (dimmed, above), the one playing, the rest.
+            let (downloads, radio) = (self.session.as_ref().is_some_and(|x| x.rules.downloads), self.session.as_ref().is_some_and(|x| x.rules.radio));
+            let now = q.rows.now;
+            let rows = q.rows.order.iter().enumerate().filter_map(|(at, &i)| {
+                let s = q.view.songs.get(i as usize)?;
+                let at = at as i32;
+                Some(SongRow { by: q.by.get(&s.id).cloned().unwrap_or_default().into(), played: at < now, ..row(s, i as usize, at == now, self.heart(s), downloads, radio) })
+            }).collect();
             self.queue_shown(rows);
             ui.set_queue_from(queue_from(q.upcoming().map(|(_, s)| s)).into());
             self.queue = Some(q);
@@ -2241,6 +2245,7 @@ fn row(s: &Song, index: usize, playing: bool, starred: Option<bool>, downloads: 
         art: s.cover_art.clone().unwrap_or_default().into(),
         index: index as i32,
         playing,
+        played: false,
         leaving: false,
         fresh: false,
         by: SharedString::default(),
