@@ -267,6 +267,17 @@ enum Say {
     static let theme = "Theme"
     static let light = "Light"
     static let dark = "Dark"
+    static let appearance = "Appearance"
+    static let season = "Season"
+    static let followSeasons = "Follow the seasons"
+    /// A season by the core's number (0 spring to 3 winter), with its kanji as Android's picker has them.
+    static let seasons = [("Spring", "春"), ("Summer", "夏"), ("Autumn", "秋"), ("Winter", "冬")]
+    /// The `season` setting's values, in the same order.
+    static let seasonValues = ["SPRING", "SUMMER", "AUTUMN", "WINTER"]
+    private static let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    static func seasonNow(_ now: NoriSeasonNow) -> String {
+        "\(seasons[Int(now.season)].0) now · \(seasons[Int(now.next)].0) from \(now.next_day) \(months[Int(now.next_month) - 1])"
+    }
 
     // What controls drawn as glyphs say to VoiceOver, from Android's strings.xml.
     static let pause = "Pause"
