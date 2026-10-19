@@ -978,6 +978,11 @@ macOS and Linux desktop/CLI packages locally by default. Building does not dispa
 require GitHub authentication. Publishing uses GitHub CLI authentication and a clean source tree.
 Windows packages are outside this release pipeline.
 
+A run again for the same commit keeps what an earlier run built and tested in
+`build/release-<version>/` and does only the rest. Each desktop platform builds on its own: one that
+fails is left out of the release, and running the same command again uploads it to the release
+already published.
+
 The complete local build runs on macOS or Linux with Rust, Docker, and the Android build tools
 described above. On Apple Silicon Macs, macOS packages use the installed Apple SDK and Intel
 binaries are tested under Rosetta. Linux hosts build both Mac architectures in a Docker image with

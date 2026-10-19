@@ -8,7 +8,7 @@
 #   tools/release.sh --from DIR         publish verified artifacts built by release workers
 #   tools/release.sh --abi arm64-v8a    phones only: about half the size
 #   tools/release.sh --no-test          skip cargo test first
-#   tools/release.sh --no-hosts        omit desktop and CLI packages
+#   tools/release.sh --no-hosts        build no desktop and CLI packages (those built already still go)
 #   tools/release.sh --allow-untested-macos  acknowledge skipped Mac execution checks on Linux
 #   tools/release.sh --docker-macos     build Mac packages in Docker even on a Mac
 #   tools/release.sh --no-ipod          the APK alone, without the iPod app (built in Docker)
@@ -23,7 +23,9 @@
 # "build: release <version>", builds, tags, pushes and creates the GitHub release - a draft or live,
 # as you answer. Saying no to any question puts every file back as it was. If the build fails after
 # the commit, run it again: a version that is in the code but not yet on GitHub is offered first, and
-# its changelog section is kept. A release already on GitHub without the iPod app is offered it first,
+# its changelog section is kept; what it built and tested for the same commit is not done again. A
+# desktop platform whose packages fail is left out, and running the same command again adds it to the
+# release. A release already on GitHub without the iPod app is offered it first,
 # when only build, docs, test or chore commits came since.
 #
 # By default the APK carries the Rust core for both 64-bit ABIs, so nobody has to choose: Android
@@ -214,6 +216,7 @@ if [ "$GUIDED" = 1 ]; then
 fi
 
 version=$(code_version)
+existing=0
 commit=$(git rev-parse --short=10 HEAD 2>/dev/null || echo unknown)
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then dirty=" (dirty)"; else dirty=""; fi
 
@@ -227,8 +230,12 @@ if [ "$PUBLISH" = 1 ]; then
   is_beta "$version" || ./tools/changelog.py --notes "$version" >/dev/null ||
     die "CHANGELOG.md has no section for $version.
 write one, or generate it:  tools/changelog.py --update && tools/changelog.py --release $version"
-  ! gh release view "v$version" >/dev/null 2>&1 ||
-    die "a release v$version already exists. move to a new version first: tools/bump-version.sh <x.y.z>"
+  # A release of this very commit only gets the files a failed build left out.
+  if gh release view "v$version" >/dev/null 2>&1; then
+    [ "$(git rev-parse -q --verify "v$version^{commit}")" = "$(git rev-parse HEAD)" ] ||
+      die "a release v$version already exists. move to a new version first: tools/bump-version.sh <x.y.z>"
+    existing=1
+  fi
 fi
 
 out="${FROM:-build/release-$version}"
@@ -238,6 +245,7 @@ case "$ABI" in
 esac
 ipa=""
 if [ "$IPOD" = 1 ]; then ipa="nori-ipod-$version.ipa"; fi
+HOST_PLATFORMS="macos-aarch64 macos-x86_64 linux-aarch64 linux-x86_64"
 if [ -z "$FROM" ]; then
 if [ "$HOSTS" = 1 ]; then
   "$tooling/tools/host-release.sh" --preflight ${HOST_FLAGS[@]+"${HOST_FLAGS[@]}"}
@@ -276,37 +284,62 @@ PROPS
   echo "keystore.properties + nori-release.jks are gitignored. BACK THEM UP: without them no phone can update to a later release."
 fi
 
-if [ "$RUN_TESTS" = 1 ]; then
-  echo "==> cargo test"
-  cargo test -q -j4 --workspace
+# What a run built and tested for this commit stays: the next run does only what is missing.
+built_for="$(git rev-parse HEAD 2>/dev/null || echo unknown)$dirty"
+if [ -n "$dirty" ] || [ "$(cat "$out/.commit" 2>/dev/null)" != "$built_for" ]; then
+  rm -rf "$out"
+  mkdir -p "$out"
+  echo "$built_for" > "$out/.commit"
 fi
 
-rm -rf "$out"
-mkdir -p "$out"
+if [ "$RUN_TESTS" = 1 ] && [ ! -f "$out/.tested" ]; then
+  echo "==> cargo test"
+  cargo test -q -j4 --workspace
+  touch "$out/.tested"
+fi
 
-echo "==> building $version for $ABI"
-./gradlew :app:assembleRelease -PrustTargets="$ABI" -q
-cp app/build/outputs/apk/release/app-release.apk "$out/$name"
+if [ -f "$out/$name" ]; then
+  echo "==> $name already built"
+else
+  echo "==> building $version for $ABI"
+  ./gradlew :app:assembleRelease -PrustTargets="$ABI" -q
+  cp app/build/outputs/apk/release/app-release.apk "$out/$name"
+fi
 
-ipa=""
-if [ "$IPOD" = 1 ]; then
+if [ "$IPOD" = 1 ] && [ -f "$out/$ipa" ]; then
+  echo "==> $ipa already built"
+elif [ "$IPOD" = 1 ]; then
   echo "==> building the iPod app"
   ./tools/ipod.sh build || die "the iPod build failed (tools/ipod.sh build, needs Docker); --no-ipod releases the APK alone"
-  ipa="nori-ipod-$version.ipa"
   cp "build/ios/$ipa" "$out/$ipa"
 fi
 
+# Each desktop platform on its own: one that fails is left out of this release, and a run again adds it.
 if [ "$HOSTS" = 1 ]; then
-  "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts" ${HOST_FLAGS[@]+"${HOST_FLAGS[@]}"}
+  for target in $HOST_PLATFORMS; do
+    if [ -f "$out/hosts/$target/.built" ]; then
+      echo "==> $target packages already built"
+      continue
+    fi
+    rm -rf "$out/hosts/$target"
+    if "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts" --platform "$target" ${HOST_FLAGS[@]+"${HOST_FLAGS[@]}"}; then
+      touch "$out/hosts/$target/.built"
+    else
+      rm -rf "$out/hosts/$target"
+      echo "==> the $target packages failed: this release goes without them; run again to add them" >&2
+    fi
+  done
 fi
 fi
 
 [ -f "$out/$name" ] || die "missing release APK: $out/$name"
 [ -z "$ipa" ] || [ -f "$out/$ipa" ] || die "missing iPod IPA: $out/$ipa"
+hosts_missing=""
 if [ "$HOSTS" = 1 ]; then
-  for target in macos-aarch64 macos-x86_64 linux-aarch64 linux-x86_64; do
-    [ -n "$(find "$out" -type f -name "SHA256SUMS-$target" -print -quit)" ] || die "missing desktop/CLI packages for $target"
+  for target in $HOST_PLATFORMS; do
+    [ -n "$(find "$out" -type f -name "SHA256SUMS-$target" -print -quit)" ] || hosts_missing="$hosts_missing $target"
   done
+  [ -z "$hosts_missing" ] || echo "missing desktop/CLI packages for:$hosts_missing" >&2
 fi
 python3 "$tooling/tools/host-release/check.py" "$out" --checksums-only
 
@@ -380,20 +413,23 @@ branch=$(git branch --show-current)
 if [ -n "$branch" ]; then git push origin "$branch"; fi
 git push origin "v$version"
 
-echo "==> creating the release${DRAFT:+ (draft)}"
 host_assets=()
-if [ "$HOSTS" = 1 ]; then
-  while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out" -type f \( -name 'nori-desktop-*' -o -name 'nori-desktop_*' -o -name 'nori-cli-*' -o -name 'nori-cli_*' -o -name 'SHA256SUMS-macos-*' -o -name 'SHA256SUMS-linux-*' \))
-  [ "${#host_assets[@]}" -gt 0 ] || die "no desktop/CLI release packages in $out"
+while IFS= read -r asset; do host_assets+=("$asset"); done < <(find "$out" -type f \( -name 'nori-desktop-*' -o -name 'nori-desktop_*' -o -name 'nori-cli-*' -o -name 'nori-cli_*' -o -name 'SHA256SUMS-macos-*' -o -name 'SHA256SUMS-linux-*' \))
+if [ "$existing" = 1 ]; then
+  echo "==> adding the files to the release"
+  gh release upload "v$version" "$out/$name" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} --clobber
+else
+  echo "==> creating the release${DRAFT:+ (draft)}"
+  flags=()
+  if [ -n "$DRAFT" ]; then flags+=("$DRAFT"); fi
+  if is_beta "$version"; then flags+=(--prerelease); fi
+  gh release create "v$version" "$out/$name" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} \
+    --title "nori $version" --notes-file "$notes" ${flags[@]+"${flags[@]}"}
 fi
-flags=()
-if [ -n "$DRAFT" ]; then flags+=("$DRAFT"); fi
-if is_beta "$version"; then flags+=(--prerelease); fi
-gh release create "v$version" "$out/$name" ${ipa:+"$out/$ipa"} "$out/SHA256SUMS" ${host_assets[@]+"${host_assets[@]}"} \
-  --title "nori $version" --notes-file "$notes" ${flags[@]+"${flags[@]}"}
 
 echo
 echo "done: $(gh release view "v$version" --json url --jq .url 2>/dev/null || echo "v$version")"
-if [ -n "$DRAFT" ]; then
+if [ -n "$DRAFT" ] && [ "$existing" = 0 ]; then
   echo "it is a draft - nothing is public until you press publish."
 fi
+[ -z "$hosts_missing" ] || echo "left out:$hosts_missing. run the same command again to add them."
