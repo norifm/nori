@@ -201,6 +201,21 @@ pub fn season_of(pick: ThemeSeason) -> Option<nori_look::theme::Season> {
     }
 }
 
+/// The `season` value the "follow the seasons" switch sets: following, or, turned off, the season the
+/// calendar is in on that date, so the colors stay as they are.
+pub fn season_follow_value(follow: bool, month: u32, day: u32, southern: bool) -> &'static str {
+    use crate::codec::Choice;
+    use nori_look::theme::Season;
+    let pick = match (follow, nori_look::theme::season_now(month, day, southern).season) {
+        (true, _) => ThemeSeason::Follow,
+        (false, Season::Spring) => ThemeSeason::Spring,
+        (false, Season::Summer) => ThemeSeason::Summer,
+        (false, Season::Autumn) => ThemeSeason::Autumn,
+        (false, Season::Winter) => ThemeSeason::Winter,
+    };
+    ThemeSeason::NAMES[pick.ordinal() as usize]
+}
+
 /// The palette these settings wear on a date, and whether it is a dark one: `system_dark` is the
 /// system's scheme, followed while the theme is System.
 pub fn theme_palette(p: &StoredPrefs, system_dark: bool, month: u32, day: u32, southern: bool) -> (nori_look::theme::Palette, bool) {
@@ -2502,6 +2517,15 @@ mod tests {
         let fixed = StoredPrefs { season: ThemeSeason::Winter, theme: ThemeMode::Dark, amoled: true, ..p.clone() };
         assert_eq!(wear(&fixed, false), (palette(Some(Season::Winter), 7, 10, false, true, true), true), "a fixed season and theme ignore the system");
         assert!(!wear(&StoredPrefs { theme: ThemeMode::Light, ..p }, true).1);
+    }
+
+    #[test]
+    fn following_off_keeps_the_calendars_season() {
+        for (follow, month, day, southern, value) in [(true, 10, 19, false, "FOLLOW"), (false, 10, 19, false, "AUTUMN"), (false, 10, 19, true, "SPRING"), (false, 1, 5, false, "WINTER")] {
+            let v = season_follow_value(follow, month, day, southern);
+            assert_eq!(v, value, "{follow} {day}/{month} south {southern}");
+            assert_eq!(set_by_name(&StoredPrefs::default(), "season", v).map(|c| season_of(c.prefs.season)), Some(if follow { None } else { Some(nori_look::theme::season_now(month, day, southern).season) }));
+        }
     }
 
     #[test]

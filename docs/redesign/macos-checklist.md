@@ -47,7 +47,7 @@ pill, season palettes, the seal, bare play glyph with ripple, Material icons, In
 - [x] Top pill (new component `TopPill`): Home | Albums, Artists, Songs, Playlists, Favorites; current tab named and
       in the accent; guest mode hides Playlists/Favorites as the sidebar did. Left: traffic-light room (inset 44 → new
       top margin). Right: search field (widens on focus, results popover) and a settings button (account, server,
-      season, equalizer, other devices, jam entry points). Playlists tab opens a popover list of playlists.
+      season with the follow switch, equalizer, other devices, jam entry points). Playlists tab opens the Playlists page.
 - [x] Player pill: song left (cover, title, artist · album links), transport middle with seek bar and times under it,
       right cluster in this order: seal, speaker/devices, lyrics, queue, volume. Max width ~1040, centred. Jam
       guest/host rules as in `PlayerControls` today (hide shuffle/repeat/volume for a guest; jam button replaces the speaker).
@@ -68,7 +68,7 @@ pill, season palettes, the seal, bare play glyph with ripple, Material icons, In
       items at rest unchanged. Pill margins swallow clicks (`keepsTouches` equivalent).
 
 ## 5. The seal and the press (C7, C8)
-- [x] `FavoriteSeal` component: outline upright (quiet ink) vs filled accent tilted -5°, stamp animation
+- [x] `FavoriteSeal` component: outline upright (quiet ink) vs filled accent tilted -4°, stamp animation
       (scale 1.5→1 spring), no animation when reduced motion; used in the player pill, the full player, song rows,
       the Favorites page. Replace every heart.
 - [x] Press ripple on every icon button (ink 16 %, half size → full, ~400 ms fade, pressed state starts it);
@@ -110,7 +110,7 @@ pill, season palettes, the seal, bare play glyph with ripple, Material icons, In
 | Queue, lyrics, devices panel | yes | docked right, palette colors |
 | Full player | yes | cover page colors, seal, bare large play, volume on the left, Lyrics / Queue / Devices tabs top right |
 | Top pill, player pill | yes | own windows laid over the blurred page |
-| Settings menu, playlists popover | yes | popups under the top pill |
+| Settings menu | yes | a popup under the top pill |
 | Jam sheet, popovers, menus | yes | surface, chrome outline, no shadow |
 
 ## 10. Design notes
@@ -120,7 +120,7 @@ pill, season palettes, the seal, bare play glyph with ripple, Material icons, In
 - C4: roles come from `roles()` and the dress table (quiet ink, outline, hairline, chrome outline); hover is the ink at 6 %, selection 10 %.
 - C5: accent only on the current tab, the playing song, lit shuffle / repeat / panel buttons, the liked seal, a focused field, active device marks and message actions. Fills behind selection, hover and sliders are ink.
 - C6: the page layer is blurred once (the existing mip pyramid, 24 logical px) inside each pill's rounded rect; the pill's own layer lays the page color at 55 % and a hairline over it; the fade (Android's `edgeFade` stops) is drawn under the pills from the unfaded page; the margins around a pill take the pointer. The pyramid is rebuilt only when the page layer was drawn. No blur path exists to fall back from (wgpu and GL both blur), so the thicker tint (`Chrome.tint`) is available but unused.
-- C7: `Seal` component; stamp = scale 1.5 to 1 on an overshoot curve (Slint has no spring), only when pressed to like; tilt -5 degrees; reduced motion skips it.
+- C7: `Seal` component; stamp = scale 1.5 to 1 on an overshoot curve (Slint has no spring), only when pressed to like; tilt -4 degrees; reduced motion skips it. The seal paths wind their holes against their fills: Slint's renderer ignores even-odd.
 - C8: bare glyph, 26 px on the pill, 52 px in the player; `Ripple` (16 % ink, half size to full, about 400 ms) on every icon button; cross-fade 180 ms from scale .8; spinner after 300 ms.
 - C9: no idle animation; the ripple and the look cross-fade run on timers only while they last; the look fades over 340 ms (`dress::mix`); `Motion.reduced` (macOS reduce-motion) turns animations to direct changes.
 - C10: Inter Variable everywhere, Literata for titles (-0.5 on large, -0.3 on section titles), from Android's own font files.

@@ -409,7 +409,6 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
 fn top(ui: &AppWindow) -> Option<TopBar> {
     let bar = TopBar::new().map_err(|e| eprintln!("nori: no top pill: {e}")).ok()?;
     bar.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
-    bar.on_open_playlists(to_main(ui, |m| m.invoke_show_playlists()));
     bar.on_open_menu(to_main(ui, |m| m.invoke_show_menu()));
     Some(bar)
 }
@@ -819,6 +818,8 @@ impl App {
             }
             return;
         }
+        // The season tiles are the seasons alone; the core's options put Follow before them.
+        let i = if name == "season" { i + 1 } else { i };
         let target = Target::of(name);
         let Some(v) = crate::settings::option_value(target, i, &self.facts) else { return };
         match target {
@@ -889,12 +890,8 @@ impl App {
                 self.follow();
                 self.jam_shown();
                 self.go(HOME);
-                if self.account() {
-                    // The sidebar lists playlists on every page.
-                    self.on_session(|s| s.load(Req::Page(PageAsk::Playlists)));
-                } else {
+                if !self.account() {
                     // A jam guest's: the host's library, and the jam in the queue panel.
-                    ui.set_side_playlists(ModelRc::default());
                     ui.set_inspector(1);
                 }
             }
@@ -1217,7 +1214,6 @@ impl App {
                         sub_artist: SharedString::default(),
                     })
                     .collect();
-                ui.set_side_playlists(cards(self.lists.playlists.iter().cloned()));
                 self.narrowed();
             }
             Data::Page(PageGot::Favorites(v)) => {
@@ -1892,13 +1888,18 @@ impl App {
         let ui = self.ui();
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         self.devices_shown();
-        ui.set_season_pick(crate::settings::season_pick(&prefs));
+        let today = crate::look::Today::now();
+        let seasons = crate::settings::seasons(&prefs, today);
+        ui.set_season_worn(seasons.worn);
+        ui.set_season_following(seasons.following);
+        ui.set_season_switch(seasons.switch.into());
+        ui.set_season_detail(seasons.detail.into());
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         ui.set_autoplay(prefs.auto_fill);
         ui.set_automix(prefs.auto_mix);
         let view = ui.get_view();
         if view == SETTINGS {
-            ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab()));
+            ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab(), today));
         }
         if view == EQUALIZER {
             crate::eq::fill(&ui, &prefs);
@@ -2868,7 +2869,7 @@ mod tests {
             let frame = ui.window().take_snapshot().unwrap();
             let pixels = frame.as_slice();
             let white = |p: &Rgba8Pixel| p.r == 255 && p.g == 255 && p.b == 255;
-            let top = (0..frame.height() as usize).find(|&y| white(&pixels[y * width as usize + (270.0 * scale) as usize])).expect("the pick is visible");
+            let top = (0..frame.height() as usize).find(|&y| white(&pixels[y * width as usize + (150.0 * scale) as usize])).expect("the pick is visible");
             let line = &pixels[(top + 20) * width as usize..(top + 21) * width as usize];
             let left = line.iter().position(white).unwrap();
             let right = line.iter().rposition(white).unwrap();

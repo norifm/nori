@@ -28,7 +28,7 @@ C6. **One outline for the chrome** (tabs + player): the page blurred inside it w
     Where it cannot blur (terminal, old iPod) the page colour is thicker, never absent. Content scrolls under
     the chrome and fades into the page before it (24 dp ramp, starting late enough that the glass shows).
 C7. **The seal**: a favorite is the seal 好. Not liked: outline, upright, quiet ink. Liked: filled with the
-    accent, tilted about -5 degrees, stamped on (scale 1.5 to 1, spring damping .5, stiffness 700). Taking
+    accent, tilted -4 degrees (Android's seal drawable), stamped on (scale 1.5 to 1, spring damping .5, stiffness 700). Taking
     a like off is immediate; a seal that changes by itself is drawn, not stamped. Reduced motion: no stamp.
 C8. **Play / pause is the bare glyph.** No filled plate. A round ripple (ink at ~16 %, grows from half size,
     ~400 ms) is the only circle, on press. The glyph changes by a 180 ms cross-fade with scale from .8; a

@@ -1,5 +1,5 @@
-// nori's desktop window, laid out like Apple Music on macOS: sidebar, page, glass player capsule, a right
-// inspector (queue, lyrics) and a full-window Now Playing. Draws and forwards input only.
+// nori's desktop window, laid out as Android's look has it on a wide screen: the page under a top pill and a
+// player pill, a panel on the right (queue, lyrics) and a full-window Now Playing. Draws and forwards input only.
 
 import { ListView, Switch, ComboBox, Button } from "std-widgets.slint";
 import { Icons } from "icons.slint";
@@ -152,7 +152,7 @@ export struct EqBandRow {
     uses-gain: bool,
 }
 
-// A mix on Home's "Top Picks": its id, name and caption, up to four cover ids, its colour and a deeper one.
+// A mix on Home's "For you": its id, name and caption, up to four cover ids, its colour and a deeper one.
 export struct Pick {
     id: string,
     title: string,
@@ -223,6 +223,9 @@ export global Theme {
     in property <color> danger;
     in property <color> edge;
     in property <bool> dark;
+    // Each season's page and accent (spring to winter), for the season tiles.
+    in property <[color]> season-pages;
+    in property <[color]> season-accents;
     // The panel on the right (lyrics, the queue).
     out property <length> panel-w: 280px;
 }
@@ -388,15 +391,12 @@ component ArtistLine inherits HorizontalLayout {
 component Icon inherits Path {
     in property <string> path;
     in property <brush> colour: Theme.text;
-    // The seals are cut out of a square with the even-odd rule.
-    in property <bool> evenodd;
     width: 18px;
     height: 18px;
     viewbox-width: 24;
     viewbox-height: 24;
     commands: root.path;
     fill: root.colour;
-    fill-rule: root.evenodd ? FillRule.evenodd : FillRule.nonzero;
 }
 
 // A pane in the chrome's outline: the surface, a hairline round it, no shadow.
@@ -408,12 +408,18 @@ component Glass inherits Rectangle {
     border-color: Theme.outline;
 }
 
-// The press feedback: a round ripple in the ink at 16 %, growing from half size and gone in about 400 ms.
-// It runs on a timer only while it lasts; reduced motion draws none.
+// The press feedback: the ink at 16 % spreading from the middle over the whole of what was pressed, kept
+// inside its shape (`radius`, its corner), growing from half size and gone in about 400 ms. It runs on a
+// timer only while it lasts; reduced motion draws none.
 component Ripple inherits Rectangle {
     in property <bool> pressed;
+    in property <length> radius;
+    border-radius: root.radius;
+    clip: true;
     // 0 as it starts, 1 once it is gone.
     property <float> t: 1;
+    // Wide enough to reach the corners.
+    property <length> reach: Math.sqrt(root.width / 1px * root.width / 1px + root.height / 1px * root.height / 1px) * 1px;
     changed pressed => {
         if self.pressed && !Motion.reduced {
             self.t = 0;
@@ -432,7 +438,7 @@ component Ripple inherits Rectangle {
     }
     Rectangle {
         visible: root.t < 1;
-        width: root.width * (0.5 + 0.5 * root.t);
+        width: root.reach * (0.5 + 0.5 * root.t);
         height: self.width;
         border-radius: self.width / 2;
         background: Theme.text.with-alpha(0.16 * (1 - root.t));
@@ -459,6 +465,7 @@ component IconButton inherits Rectangle {
     background: touch.has-hover ? Theme.hover : root.base;
     Ripple {
         pressed: touch.pressed;
+        radius: parent.border-radius;
     }
     Icon {
         path: root.path;
@@ -468,6 +475,79 @@ component IconButton inherits Rectangle {
     }
     touch := TouchArea {
         enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Small capitals over a list, in the quiet ink: the page's captions. Give it the words in capitals.
+component Caption inherits Text {
+    color: Theme.dim;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+// A word that does something (Clear, Undo): the ink, a faint plate under the pointer, and the press ripple.
+component TextButton inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+    height: 28px;
+    width: label.preferred-width + 20px;
+    border-radius: self.height / 2;
+    background: touch.has-hover ? Theme.hover : transparent;
+    Ripple {
+        pressed: touch.pressed;
+        radius: parent.border-radius;
+    }
+    label := Text {
+        text: root.text;
+        color: Theme.text;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A tab of the top pill: its glyph and, when named, its name; the current one lit in the accent and bold.
+component TabButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> current;
+    in property <bool> named;
+    callback clicked;
+    height: 36px;
+    width: row.preferred-width;
+    border-radius: 18px;
+    background: touch.has-hover ? Theme.hover : transparent;
+    Ripple {
+        pressed: touch.pressed;
+        radius: parent.border-radius;
+    }
+    row := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 7px;
+        // Favorites' seal is stamped while it is the current tab, as a liked one is.
+        Icon {
+            y: (parent.height - self.height) / 2;
+            path: root.current && root.icon == Icons.seal-outline ? Icons.seal : root.icon;
+            transform-rotation: root.current && root.icon == Icons.seal-outline ? -4deg : 0deg;
+            colour: root.current ? Theme.accent : Theme.dim;
+            width: 20px;
+            height: 20px;
+        }
+        if root.named || root.current: Text {
+            text: root.text;
+            color: root.current ? Theme.accent : Theme.dim;
+            font-weight: root.current ? 700 : 400;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
@@ -504,6 +584,7 @@ component PlayPause inherits Rectangle {
     background: touch.has-hover ? Theme.hover : transparent;
     Ripple {
         pressed: touch.pressed;
+        radius: parent.border-radius;
     }
     Icon {
         path: Icons.play;
@@ -542,7 +623,7 @@ component PlayPause inherits Rectangle {
 }
 
 // A favorite is the seal. Not liked: its outline, upright, in the quiet ink. Liked: filled with the accent,
-// tilted about 5 degrees, and stamped on when it is pressed to like (it lands from half as big again on a
+// tilted 4 degrees, and stamped on when it is pressed to like (it lands from half as big again on a
 // firm spring); a seal that changes by itself is drawn, not stamped. Taking a like off is immediate.
 component Seal inherits Rectangle {
     in property <bool> liked;
@@ -557,14 +638,14 @@ component Seal inherits Rectangle {
     background: touch.has-hover ? Theme.hover : transparent;
     Ripple {
         pressed: touch.pressed;
+        radius: parent.border-radius;
     }
     Icon {
         path: root.liked ? Icons.seal : Icons.seal-outline;
-        evenodd: true;
         colour: root.liked ? Theme.accent : root.quiet;
         width: root.size;
         height: root.size;
-        transform-rotation: root.liked ? -5deg : 0deg;
+        transform-rotation: root.liked ? -4deg : 0deg;
         transform-scale: root.scale;
         animate transform-scale { duration: root.landing; easing: cubic-bezier(0.3, 1.9, 0.5, 1); }
     }
@@ -605,7 +686,7 @@ component Fade inherits Rectangle {
     init => { self.shown = true; }
 }
 
-// Apple's filled capsule buttons ("Play", "Shuffle").
+// The button a page is built around (Play): a full pill in the page's colour.
 component Capsule inherits Rectangle {
     in property <string> text;
     in property <string> icon;
@@ -1016,7 +1097,7 @@ component ShelfView inherits VerticalLayout {
     }
 }
 
-// A mix on "Top Picks", as Music draws them: four of its covers over its colour, melting into a band of the
+// A mix on "For you": four of its covers over its colour, melting into a band of the
 // deeper colour that carries its name.
 component PickCard inherits Rectangle {
     in property <Pick> pick;
@@ -1117,11 +1198,11 @@ component SongLine inherits Rectangle {
                 activated => { root.play(); }
             }
             MenuItem {
-                title: "Play Next";
+                title: "Play next";
                 activated => { root.next(); }
             }
             MenuItem {
-                title: Jam.guest ? "Add to Queue" : "Play Last";
+                title: "Add to queue";
                 activated => { root.later(); }
             }
             if Jam.on && !Jam.hosting: MenuItem {
@@ -1437,7 +1518,7 @@ component PlayerControls inherits Rectangle {
                 horizontal-stretch: 1;
                 alignment: center;
                 Text {
-                    text: root.has-song ? root.now-title : "Not Playing";
+                    text: root.has-song ? root.now-title : "Not playing";
                     color: Theme.text;
                     font-weight: 600;
                     overflow: elide;
@@ -2001,7 +2082,7 @@ component JamHeader inherits VerticalLayout {
                     height: 13px;
                 }
                 hl := Text {
-                    text: Jam.here ? "Playing Here" : "Listen Here";
+                    text: Jam.here ? "Playing here" : "Listen here";
                     color: Jam.here ? Theme.accent : Theme.text;
                     font-size: 12px;
                     font-weight: 600;
@@ -2084,7 +2165,7 @@ component JamHeader inherits VerticalLayout {
             }
         }
         Text {
-            text: Jam.guest ? "Leave" : "End Jam";
+            text: Jam.guest ? "Leave" : "End";
             color: ea.has-hover ? Theme.danger : Theme.danger;
             font-size: 12px;
             font-weight: 600;
@@ -2102,7 +2183,7 @@ component JamHeader inherits VerticalLayout {
         }
     }
     if Jam.asks.length > 0: Text {
-        text: Jam.guest ? "You Asked For" : "Asked For";
+        text: Jam.guest ? "You asked for" : "Asked for";
         color: Theme.dim;
         font-size: 12px;
         font-weight: 600;
@@ -2191,7 +2272,7 @@ component JamHeader inherits VerticalLayout {
                 padding: 18px;
                 spacing: 12px;
                 Text {
-                    text: "Invite to Your Jam";
+                    text: "Invite to your Jam";
                     color: Theme.text;
                     font-size: 15px;
                     font-weight: 700;
@@ -2244,7 +2325,7 @@ component JamHeader inherits VerticalLayout {
                 HorizontalLayout {
                     alignment: center;
                     Capsule {
-                        text: "Copy Link";
+                        text: "Copy link";
                         icon: Icons.copy;
                         clicked => {
                             Jam.copy-link();
@@ -2274,7 +2355,7 @@ component JamHeader inherits VerticalLayout {
                         alignment: center;
                         horizontal-stretch: 1;
                         Text {
-                            text: "Let Guests Listen Along";
+                            text: "Let guests listen along";
                             color: Theme.text;
                             font-size: 13px;
                         }
@@ -2296,7 +2377,7 @@ component JamHeader inherits VerticalLayout {
                     spacing: 10px;
                     VerticalLayout {
                         horizontal-stretch: 1;
-                        Text { text: "Allow Remote Songs"; color: Theme.text; font-size: 13px; }
+                        Text { text: "Allow remote songs"; color: Theme.text; font-size: 13px; }
                         Text { text: "Guests can request songs from external providers."; color: Theme.dim; font-size: 11px; wrap: word-wrap; }
                     }
                     Toggle { on: Jam.remote-songs; toggled(v) => { Jam.set-remote-songs(v); } }
@@ -2348,7 +2429,7 @@ component JamHeader inherits VerticalLayout {
                         }
                         if !Jam.guest: SmallButton {
                             y: (parent.height - self.height) / 2;
-                            text: p.admin ? "Make Guest" : "Make Admin";
+                            text: p.admin ? "Make guest" : "Make admin";
                             clicked => { Jam.promote(p.id, !p.admin); }
                         }
                         if !Jam.guest: RoundButton {
@@ -2363,8 +2444,8 @@ component JamHeader inherits VerticalLayout {
     }
 }
 
-// What plays next, as Music's panel lists it: AutoPlay and AutoMix as two wide pills, "Continue Playing"
-// with where the songs come from and Clear, the songs with their artwork, and AutoPlay's promise at the end.
+// What plays next: "Playing next" with where the songs come from and Clear, Autoplay and AutoMix as lit
+// glyphs, the songs with their artwork, and Autoplay's promise at the end.
 component QueueView inherits Rectangle {
     in property <[SongRow]> queue;
     in property <string> from;
@@ -2396,72 +2477,52 @@ component QueueView inherits Rectangle {
             covers-rev: root.covers-rev;
             art(a, s, r) => { return root.art(a, s, r); }
         }
-        // The jam's host keeps AutoPlay and AutoMix; a guest has none.
-        if !Jam.guest: HorizontalLayout {
-            spacing: 8px;
-            height: 34px;
-            vertical-stretch: 0;
-            for pill[i] in [{ on: root.autoplay, label: "AutoPlay" }, { on: root.automix, label: "AutoMix" }]: Rectangle {
-                border-radius: self.height / 2;
-                background: pill.on ? Theme.chosen : Theme.fill;
-                animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 6px;
-                    Icon {
-                        y: (parent.height - self.height) / 2;
-                        path: i == 0 ? Icons.infinity : Icons.rings;
-                        colour: pill.on ? Theme.accent : Theme.text;
-                        width: 20px;
-                        height: 20px;
-                    }
-                    Text {
-                        text: pill.label;
-                        color: pill.on ? Theme.accent : Theme.text;
-                        font-size: 13px;
-                        vertical-alignment: center;
-                    }
-                }
-                TouchArea {
-                    clicked => {
-                        if i == 0 {
-                            root.set-autoplay(!root.autoplay);
-                        } else {
-                            root.set-automix(!root.automix);
-                        }
-                    }
-                }
-            }
-        }
-        // The heading keeps its height; the list below takes the rest, however long it is.
+        // "Playing next" as a caption with where the songs come from, and Clear; then Autoplay and AutoMix
+        // as glyphs with their names, lit in the accent while on. The jam's host keeps them; a guest has none.
         HorizontalLayout {
             vertical-stretch: 0;
             padding-left: 4px;
-            padding-top: 14px;
-            padding-bottom: 8px;
+            padding-top: 4px;
+            padding-bottom: 6px;
             VerticalLayout {
                 horizontal-stretch: 1;
-                Text {
-                    text: "Continue Playing";
-                    color: Theme.text;
-                    font-size: 15px;
-                    font-weight: 700;
+                alignment: center;
+                Caption {
+                    text: "PLAYING NEXT";
                 }
                 if root.from != "": Text {
                     text: "From " + root.from;
                     color: Theme.dim;
-                    font-size: 13px;
+                    font-size: 12px;
                     overflow: elide;
                 }
             }
-            if root.editable && root.queue.length > 0: Text {
+            if root.editable && root.queue.length > 0: TextButton {
+                y: (parent.height - self.height) / 2;
                 text: "Clear";
-                color: Theme.accent;
-                font-size: 13px;
-                vertical-alignment: top;
-                TouchArea {
-                    clicked => { root.clear(); }
-                }
+                clicked => { root.clear(); }
+            }
+        }
+        if !Jam.guest: HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 4px;
+            padding-bottom: 6px;
+            TabButton {
+                text: "Autoplay";
+                icon: Icons.infinity;
+                named: true;
+                current: root.autoplay;
+                clicked => { root.set-autoplay(!root.autoplay); }
+            }
+            TabButton {
+                text: "AutoMix";
+                icon: Icons.rings;
+                named: true;
+                current: root.automix;
+                clicked => { root.set-automix(!root.automix); }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
             }
         }
         Rectangle {
@@ -2613,34 +2674,21 @@ component QueueView inherits Rectangle {
                     background: Theme.hairline;
                 }
             }
-                if root.autoplay && !Jam.guest: HorizontalLayout {
-                padding-left: 4px;
-                padding-top: 16px;
-                padding-bottom: 8px;
-                spacing: 6px;
-                Icon {
-                    path: Icons.infinity;
-                    colour: Theme.text;
-                    width: 20px;
-                    height: 20px;
-                }
-                VerticalLayout {
-                    Text {
-                        text: "AutoPlay";
-                        color: Theme.text;
-                        font-size: 15px;
-                        font-weight: 700;
+                if root.autoplay && !Jam.guest: VerticalLayout {
+                    padding-left: 4px;
+                    padding-top: 16px;
+                    padding-bottom: 8px;
+                    Caption {
+                        text: "AUTOPLAY";
                     }
                     Text {
                         text: "Similar songs will play";
                         color: Theme.dim;
-                        font-size: 13px;
+                        font-size: 12px;
                     }
                 }
             }
-            }
         }
-
     }
     // The undo of a song taken out, as a pill over the foot of the list.
     if root.undo-text != "": Rectangle {
@@ -2747,43 +2795,49 @@ component Chooser inherits Rectangle {
     }
 }
 
-// The season picker: Follow, then Spring, Summer, Autumn and Winter, each marked with its kanji.
+// The four seasons as tiles, each its season's page with its kanji in its accent, the one worn ringed in that
+// accent and its name under it. `picked` reports the tile's index, spring first.
 component SeasonTiles inherits Rectangle {
     in property <[string]> options;
     in property <int> chosen;
+    in property <length> tile-height: 72px;
     callback picked(int);
-    property <[string]> marks: ["", "春", "夏", "秋", "冬"];
-    height: 88px;
+    property <[string]> marks: ["春", "夏", "秋", "冬"];
+    height: root.tile-height + 22px;
     HorizontalLayout {
-        spacing: 8px;
-        for o[i] in root.options: Rectangle {
-            border-radius: 16px;
-            border-width: 1px;
-            border-color: i == root.chosen ? Theme.accent : Theme.hairline;
-            background: ta.has-hover ? Theme.hover : transparent;
-            Ripple {
-                pressed: ta.pressed;
-            }
-            VerticalLayout {
-                alignment: center;
-                spacing: 4px;
-                Text {
-                    text: root.marks[i] == "" ? "·" : root.marks[i];
-                    color: i == root.chosen ? Theme.accent : Theme.text;
-                    font-size: 26px;
-                    horizontal-alignment: center;
+        spacing: 10px;
+        for o[i] in root.options: VerticalLayout {
+            spacing: 6px;
+            Rectangle {
+                height: root.tile-height;
+                border-radius: 14px;
+                background: Theme.season-pages[i];
+                border-width: i == root.chosen ? 2px : 1px;
+                border-color: i == root.chosen ? Theme.season-accents[i] : Theme.hairline;
+                clip: true;
+                Ripple {
+                    pressed: ta.pressed;
+                    radius: parent.border-radius;
                 }
                 Text {
-                    text: i == 0 ? "Follow" : o;
-                    color: i == root.chosen ? Theme.accent : Theme.dim;
-                    font-size: 12px;
-                    font-weight: i == root.chosen ? 700 : 400;
+                    text: root.marks[i];
+                    color: Theme.season-accents[i];
+                    font-size: 28px;
                     horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.picked(i); }
                 }
             }
-            ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.picked(i); }
+            Text {
+                text: o;
+                color: i == root.chosen ? Theme.text : Theme.dim;
+                font-size: 12px;
+                font-weight: 500;
+                horizontal-alignment: center;
+                overflow: elide;
             }
         }
     }
@@ -2806,6 +2860,7 @@ component Segments inherits Rectangle {
             background: i == root.chosen ? Theme.chosen : (ta.has-hover ? Theme.hover : transparent);
             Ripple {
                 pressed: ta.pressed;
+                radius: parent.border-radius;
             }
             Text {
                 text: o;
@@ -2864,6 +2919,7 @@ component SettingLine inherits VerticalLayout {
         }
     }
     if root.item.kind == 14: VerticalLayout {
+        padding-top: 8px;
         padding-bottom: 12px;
         Segments {
             options: root.item.options;
@@ -3431,45 +3487,6 @@ component TitleStrip inherits TouchArea {
     double-clicked => { root.zoom(); }
 }
 
-// A tab of the top pill: its glyph and, when named, its name; the current one lit in the accent and bold.
-component TabButton inherits Rectangle {
-    in property <string> text;
-    in property <string> icon;
-    in property <bool> current;
-    in property <bool> named;
-    callback clicked;
-    height: 36px;
-    width: row.preferred-width;
-    border-radius: 18px;
-    background: touch.has-hover ? Theme.hover : transparent;
-    Ripple {
-        pressed: touch.pressed;
-    }
-    row := HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 7px;
-        Icon {
-            y: (parent.height - self.height) / 2;
-            path: root.icon;
-            evenodd: root.icon == Icons.seal-outline;
-            colour: root.current ? Theme.accent : Theme.dim;
-            width: 20px;
-            height: 20px;
-        }
-        if root.named || root.current: Text {
-            text: root.text;
-            color: root.current ? Theme.accent : Theme.dim;
-            font-weight: root.current ? 700 : 400;
-            vertical-alignment: center;
-        }
-    }
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
-
 // The top pill's content: Home, then the library's sections; the search on the right, then the settings.
 component TopContent inherits Rectangle {
     in property <int> view;
@@ -3477,7 +3494,6 @@ component TopContent inherits Rectangle {
     // A jam guest's: the host's library, without the account's playlists and favorites.
     in property <bool> guest;
     callback go(int);
-    callback open-playlists();
     callback open-menu();
     // The pill's width (the window's), which decides whether the tabs are named.
     in property <length> room;
@@ -3532,7 +3548,7 @@ component TopContent inherits Rectangle {
             icon: Icons.playlists;
             named: root.named;
             current: root.view == 4 || (root.view == 6 && root.page-kind == 2);
-            clicked => { root.open-playlists(); }
+            clicked => { root.go(4); }
         }
         if !root.guest: TabButton {
             y: (parent.height - self.height) / 2;
@@ -3556,6 +3572,7 @@ component TopContent inherits Rectangle {
             background: touch-search.has-hover ? Theme.hover : transparent;
             Ripple {
                 pressed: touch-search.pressed;
+                radius: parent.border-radius;
             }
             HorizontalLayout {
                 padding-left: 10px;
@@ -3601,6 +3618,7 @@ component MenuRow inherits Rectangle {
     background: ta.has-hover ? Theme.hover : transparent;
     Ripple {
         pressed: ta.pressed;
+        radius: parent.border-radius;
     }
     HorizontalLayout {
         padding-left: 12px;
@@ -3635,10 +3653,13 @@ component MenuRow inherits Rectangle {
 export component AppWindow inherits Window {
     in property <bool> downloads;
     // The season tile and the appearance chosen (the settings', for the settings menu).
-    in property <int> season-pick;
+    in property <int> season-worn;
+    in property <bool> season-following;
+    // The follow switch's setting name and value ([`settings::seasons`]), and its line under it.
+    in property <string> season-switch;
+    in property <string> season-detail;
     in property <int> appearance-pick;
     public function show-menu() { gear.show(); }
-    public function show-playlists() { lists.show(); }
     title: "nori";
     icon: @image-url("assets/logo.png");
     preferred-width: 1280px;
@@ -3786,9 +3807,7 @@ export component AppWindow inherits Window {
     in property <string> account-initial;
     callback open-accounts();
     in-out property <string> find-text;
-    // Every playlist, for the sidebar (the Playlists page's list may be narrowed).
-    in property <[Card]> side-playlists;
-    property <string> list-name: root.view == 10 ? root.shelves[root.shown-shelf].title : root.view == 11 ? "Top Picks for You" : root.view == 2 ? "Albums" : root.view == 3 ? "Artists" : root.view == 4 ? "Playlists" : root.view == 5 ? "Songs" : root.view == 12 ? "Favorites" : root.view == 6 && root.page-kind == 0 ? "Album" : root.view == 6 && root.page-kind == 2 ? (root.page-mix ? "Mix" : "Playlist") : "";
+    property <string> list-name: root.view == 10 ? root.shelves[root.shown-shelf].title : root.view == 11 ? "For you" : root.view == 2 ? "Albums" : root.view == 3 ? "Artists" : root.view == 4 ? "Playlists" : root.view == 5 ? "Songs" : root.view == 12 ? "Favorites" : root.view == 6 && root.page-kind == 0 ? "Album" : root.view == 6 && root.page-kind == 2 ? (root.page-mix ? "Mix" : "Playlist") : "";
     callback find-edited(string);
     // The artist chosen on the Artists page.
     in property <string> artist-chosen;
@@ -4011,7 +4030,7 @@ export component AppWindow inherits Window {
                                 clicked => { root.cancel-login(); }
                             }
                             Capsule {
-                                text: root.login-busy ? "Signing In…" : root.login-kinds[root.login-kind].add;
+                                text: root.login-busy ? "Signing in…" : root.login-kinds[root.login-kind].add;
                                 clicked => {
                                     if !root.login-busy {
                                         root.login();
@@ -4043,8 +4062,9 @@ export component AppWindow inherits Window {
                     background: @linear-gradient(180deg, Theme.ground.with-alpha(0.15) 0%, Theme.ground.with-alpha(0.55) 55%, Theme.ground 100%);
                 }
             }
-            // The page; it runs up under the top pill and under the player pill.
+            // The page; it runs up under the top pill and under the player pill, and gives the panel its room.
             Rectangle {
+                x: 0;
                 width: parent.width - root.panel-width;
                 clip: true;
 
@@ -4059,7 +4079,7 @@ export component AppWindow inherits Window {
                                 title: root.greeting;
                             }
                             if !root.picks-loaded || root.picks.length > 0: picks-shelf := ShelfView {
-                                title: "Top Picks for You";
+                                title: "For you";
                                 show-all-text: root.show-all-text;
                                 show-all => { root.go(11); }
                                 count: root.picks.length;
@@ -5019,12 +5039,18 @@ export component AppWindow inherits Window {
                         }
                     }
                     SeasonTiles {
-                        options: ["Follow the seasons", "Spring", "Summer", "Autumn", "Winter"];
-                        chosen: root.season-pick;
+                        options: ["Spring", "Summer", "Autumn", "Winter"];
+                        chosen: root.season-worn;
+                        tile-height: 56px;
                         picked(i) => { root.setting-chosen("season", i); }
                     }
-                    Rectangle {
-                        height: 6px;
+                    ToggleLine {
+                        padding-top: 6px;
+                        padding-bottom: 10px;
+                        title: "Follow the seasons";
+                        detail: root.season-detail;
+                        on: root.season-following;
+                        toggled(on) => { root.setting-toggled(root.season-switch, on); }
                     }
                     Segments {
                         options: ["System", "Light", "Dark", "AMOLED"];
@@ -5034,57 +5060,6 @@ export component AppWindow inherits Window {
                 }
             }
         }
-        lists := PopupWindow {
-            x: Chrome.top-x + 8px;
-            y: Chrome.top-room - 12px;
-            width: 320px;
-            height: min(440px, (root.side-playlists.length + 1) * 46px + 16px);
-            close-policy: close-on-click-outside;
-            Popover {
-                VerticalLayout {
-                    padding: 8px;
-                    MenuRow {
-                        icon: Icons.playlists;
-                        text: "All Playlists";
-                        clicked => {
-                            lists.close();
-                            root.go(4);
-                        }
-                    }
-                    ListView {
-                    for p in root.side-playlists: Rectangle {
-                        height: 46px;
-                        border-radius: 12px;
-                        background: pa.has-hover ? Theme.hover : transparent;
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 12px;
-                            spacing: 12px;
-                            Art {
-                                y: (parent.height - self.height) / 2;
-                                width: 34px;
-                                height: 34px;
-                                border-radius: 8px;
-                                source: root.art(p.art, 0, root.covers-rev);
-                            }
-                            Text {
-                                text: p.title;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
-                        }
-                        pa := TouchArea {
-                            clicked => {
-                                lists.close();
-                                root.open-playlist(p.id);
-                            }
-                        }
-                    }
-                }
-                }
-            }
-        }
-
         // ---- Now Playing, over the whole window, as Music has it ----
         // The song's own colours behind everything; the artwork and the controls on the left; on the right the
         // lyrics (the line sung sharp, the rest soft: the compositor blurs them, glass.wgsl) or what plays next.
@@ -5699,7 +5674,6 @@ export component TopBar inherits Window {
     in property <int> page-kind;
     in property <bool> guest;
     callback go(int);
-    callback open-playlists();
     callback open-menu();
     Rectangle {
         border-radius: Chrome.top-radius;
@@ -5715,7 +5689,6 @@ export component TopBar inherits Window {
         page-kind: root.page-kind;
         guest: root.guest;
         go(v) => { root.go(v); }
-        open-playlists => { root.open-playlists(); }
         open-menu => { root.open-menu(); }
     }
 }

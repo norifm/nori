@@ -105,7 +105,7 @@ them rather than re-deriving anything.
 
 ### The seal
 - A favorite is a seal: a square chop with 好 cut out. **Not liked: its outline, upright, in the chrome's
-  quiet ink. Liked: filled with the accent, stamped at a slight tilt (about -5 degrees)**, landing from half
+  quiet ink. Liked: filled with the accent, stamped at a slight tilt (-4 degrees, as Android draws it)**, landing from half
   as big again and settling on a firm spring (`Stamp`: scale 1.5 to 1, damping 0.5, stiffness 700). Taking
   a like off is immediate. A seal that changes by itself (another song, another device) is drawn, not
   stamped.
@@ -135,8 +135,7 @@ them rather than re-deriving anything.
 ### Top pill
 Home, Albums, Artists, Songs, Playlists and Favorites, centered, one outline, icons plus labels; the current
 tab is named and lit in the accent, the others are in the quiet ink. A hairline separates Home from the
-library's sections. Playlists opens the user's playlists in a popover under it (this replaces the sidebar's
-playlist list). On the left: the traffic lights and, later, back and forward. On the right: the **search**
+library's sections. Playlists opens the Playlists page, as every other tab opens its own. On the left: the traffic lights and, later, back and forward. On the right: the **search**
 field (it widens on focus and shows results in a popover under it) and the gear. The gear's menu holds the
 account (name, server), the season and appearance, the equalizer, other devices and settings. A jam
 guest's top pill drops what a guest cannot use (Playlists), as the sidebar does today.
