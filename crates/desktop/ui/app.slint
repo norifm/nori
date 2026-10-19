@@ -5396,7 +5396,11 @@ export component AppWindow inherits Window {
                         wrap: word-wrap;
                         font-size: 44px;
                         font-weight: 700;
-                        color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.dim;
+                        // A line fades out over the last 72 px before either edge, gone before the edge would cut it.
+                        property <length> shown-at: self.y + full-lyrics.content-y;
+                        opacity: clamp(self.shown-at / 72px, 0, 1) * clamp((full-lyrics.height - self.shown-at - self.height) / 72px, 0, 1);
+                        // Unsung lines are the ink at 36 %, as the swept line's are, so the cover's colours show through.
+                        color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36);
                         animate color { duration: Motion.reduced ? 0ms : 500ms; easing: ease-out; }
                         if root.lyric-sweeping: StyledText {
                             // Kept while the pieces draw the line lit, only hidden: its colour comes up to white with them, so
