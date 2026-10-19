@@ -268,3 +268,4 @@
     scrollbar-width: none;
   }
 </style>
+  /* A column, so the lyrics scroll in themselves (keeping the sung line in view) under their soft edges. */
