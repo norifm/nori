@@ -19,7 +19,7 @@ pub enum Action {
     VolumeUp,
     VolumeDown,
     Search,
-    /// Focus cycles sidebar, page, panel.
+    /// The full player's next panel.
     NextPane,
     PreviousPane,
     Mouse,
@@ -30,7 +30,7 @@ pub enum Action {
     Repeat,
     /// Index into `app::GO`.
     Go(u8),
-    /// Show that right panel; the same again hides it.
+    /// The full player on that panel; the same again closes it.
     Panel(Panel),
     /// Full-window player.
     Full,
@@ -137,22 +137,23 @@ pub const BINDINGS: &[Binding] = &[
     b!(Global, "s", Action::Shuffle, "Shuffle the queue on or off", [(Char('s'), N)]),
     b!(Global, "r", Action::Repeat, "Repeat: off, all, one", [(Char('r'), N)]),
     b!(Global, "/", Action::Search, "Search", [(Char('/'), N)]),
-    b!(Global, "1 … 7", Action::Go(0), "Home, Albums, Artists, Songs, Downloads, Equalizer, Settings", [(Char('1'), N)]),
+    b!(Global, "1 … 9", Action::Go(0), "Home, Albums, Artists, Songs, Playlists, Favorites, Downloads, Equalizer, Settings", [(Char('1'), N)]),
     b!(Global, "", Action::Go(1), "", [(Char('2'), N)]),
     b!(Global, "", Action::Go(2), "", [(Char('3'), N)]),
     b!(Global, "", Action::Go(3), "", [(Char('4'), N)]),
     b!(Global, "", Action::Go(4), "", [(Char('5'), N)]),
     b!(Global, "", Action::Go(5), "", [(Char('6'), N)]),
     b!(Global, "", Action::Go(6), "", [(Char('7'), N)]),
-    b!(Global, "tab / shift tab", Action::NextPane, "Sidebar, page, panel", [(Tab, N)]),
+    b!(Global, "", Action::Go(7), "", [(Char('8'), N)]),
+    b!(Global, "", Action::Go(8), "", [(Char('9'), N)]),
+    b!(Global, "tab / shift tab", Action::NextPane, "In the full player: the next panel, lyrics, queue, devices", [(Tab, N)]),
     b!(Global, "", Action::PreviousPane, "", [(BackTab, S), (BackTab, N)]),
-    b!(Global, "N / Q / L", Action::Panel(Panel::Playing), "The panel on the right: now playing, queue, lyrics (again: hide it)", [(Char('N'), S), (Char('N'), N)]),
+    b!(Global, "L / Q", Action::Panel(Panel::Lyrics), "The full player on its lyrics or queue (again: back)", [(Char('L'), S), (Char('L'), N)]),
     b!(Global, "", Action::Panel(Panel::Queue), "", [(Char('Q'), S), (Char('Q'), N)]),
-    b!(Global, "", Action::Panel(Panel::Lyrics), "", [(Char('L'), S), (Char('L'), N)]),
     b!(Global, "C", Action::Panel(Panel::Devices), "Devices: play on another one, or start a jam (remote control or jams on)", [(Char('C'), S), (Char('C'), N)]),
     b!(Global, "o", Action::Join, "Join a jam: paste the invite link (pasting it anywhere does too)", [(Char('o'), N)]),
-    b!(Global, "F", Action::Full, "The player over the whole window", [(Char('F'), S), (Char('F'), N)]),
-    b!(Global, "esc / h / ⌫", Action::Back, "Back: out of a page, to the sidebar", [(Esc, N), (Char('h'), N), (Backspace, N)]),
+    b!(Global, "F / N", Action::Full, "The player over the whole window", [(Char('F'), S), (Char('F'), N), (Char('N'), S), (Char('N'), N)]),
+    b!(Global, "esc / h / ⌫", Action::Back, "Back: out of the full player, out of a page", [(Esc, N), (Char('h'), N), (Backspace, N)]),
     b!(Global, "R", Action::Refresh, "Ask the server again", [(Char('R'), S), (Char('R'), N)]),
     b!(Global, "E", Action::Curve, "AutoEQ for the headphones just connected: apply it, or undo it", [(Char('E'), S), (Char('E'), N)]),
     b!(Global, "m", Action::Mouse, "Mouse on or off (off: the terminal selects text)", [(Char('m'), N)]),

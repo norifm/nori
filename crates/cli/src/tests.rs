@@ -11,7 +11,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, Mo
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::{App, Cmd, Focus, Hit, ListRef, Nav, Overlay, Panel, Target, View};
+use crate::app::{App, Cmd, Focus, Hit, ListRef, Overlay, Panel, Target, View};
 use crate::backend::{Data, Msg, Req};
 use crate::settings_view::{Facts, Line, Row, SettingsView, Switch, GROUPS};
 
@@ -41,22 +41,65 @@ fn draw_with(a: &mut App, w: u16, h: u16, art: Option<&mut crate::art::Art>) -> 
     let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
     t.draw(|f| crate::ui::draw(f, a, art)).unwrap();
     let buf = t.backend().buffer();
+    LAST.with(|l| *l.borrow_mut() = Some(buf.clone()));
     let mut out = String::new();
     for y in 0..buf.area.height {
-        for x in 0..buf.area.width {
-            out.push_str(buf[(x, y)].symbol());
+        let mut x = 0;
+        while x < buf.area.width {
+            let symbol = buf[(x, y)].symbol();
+            out.push_str(symbol);
+            // A wide character covers the next cell as well.
+            x += if unicode_width::UnicodeWidthStr::width(symbol) == 2 { 2 } else { 1 };
         }
         out.push('\n');
     }
     out
 }
 
-/// Writes a drawn screen to $NORI_TUI_DUMP, if set.
+thread_local! {
+    /// The last screen drawn, with its colors, for the HTML dump.
+    static LAST: std::cell::RefCell<Option<ratatui::buffer::Buffer>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Writes a drawn screen to $NORI_TUI_DUMP, if set: as text, and as an HTML page with its colors.
 fn dump(name: &str, text: &str) {
     if let Some(dir) = std::env::var_os("NORI_TUI_DUMP") {
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), text);
+        if let Some(buf) = LAST.with(|l| l.borrow().clone()) {
+            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.html")), html(&buf));
+        }
     }
+}
+
+/// A screen as a page of colored cells, to look at in a browser.
+fn html(buf: &ratatui::buffer::Buffer) -> String {
+    use ratatui::style::{Color, Modifier};
+    let hex = |c: Color, default: &str| match c {
+        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
+        Color::Indexed(i) => format!("var(--c{i})"),
+        _ => default.to_string(),
+    };
+    let mut out = String::from("<!doctype html><meta charset=utf-8><body style='margin:0;background:#000'><pre style='margin:0;font:14px/17px Menlo,monospace'>");
+    for y in 0..buf.area.height {
+        let mut x = 0;
+        while x < buf.area.width {
+            let c = &buf[(x, y)];
+            let wide = unicode_width::UnicodeWidthStr::width(c.symbol()) == 2;
+            let (mut fg, mut bg) = (hex(c.fg, "#ccc"), hex(c.bg, "#000"));
+            if c.modifier.contains(Modifier::REVERSED) {
+                std::mem::swap(&mut fg, &mut bg);
+            }
+            let style = format!("color:{fg};background:{bg}{}{}{}", if c.modifier.contains(Modifier::BOLD) { ";font-weight:700" } else { "" }, if c.modifier.contains(Modifier::UNDERLINED) { ";text-decoration:underline" } else { "" }, if c.modifier.contains(Modifier::DIM) { ";opacity:.6" } else { "" });
+            let sym = c.symbol().replace('&', "&amp;").replace('<', "&lt;");
+            let sym = if sym.starts_with('\x1b') { " ".to_string() } else { sym };
+            out.push_str(&format!("<span style='{style}'>{sym}</span>"));
+            x += if wide { 2 } else { 1 };
+        }
+        out.push('\n');
+    }
+    out.push_str("</pre>");
+    out
 }
 
 fn key(a: &mut App, code: KeyCode) {
@@ -128,12 +171,16 @@ fn window_layout() {
     let mut a = app();
     a.go(View::Home);
     playlists(&mut a, &["Morning", "Late night"]);
-    let s = draw(&mut a, 160, 40);
-    for word in ["nori", "Search", "Home", "LIBRARY", "Albums", "Artists", "Songs", "Downloads", "PLAYLISTS", "Morning", "Late night", "Equalizer", "Settings", "music.example", "? keys", "Playing", "Queue", "Lyrics", "Nothing playing", "⏮", "⏭"] {
+    let s = draw(&mut a, 120, 36);
+    for word in ["Search", "Home", "Albums", "Artists", "Songs", "Playlists", "Favorites", "✱", "Downloads", "Equalizer", "music.example", "space play", "Nothing playing", "⏮", "⏭", "╭", "╰"] {
         assert!(s.contains(word), "{word} missing:\n{s}");
     }
-    assert!(!s.contains("1 Home"), "no numbered tabs:\n{s}");
+    for gone in ["LIBRARY", "PLAYLISTS", "nori", "Morning"] {
+        assert!(!s.contains(gone), "{gone} is the sidebar's:\n{s}");
+    }
+    assert!(s.lines().next().unwrap().contains('╭'), "the outline starts on the first row:\n{s}");
     dump("empty", &s);
+    dump("empty-80x24", &draw(&mut a, 80, 24));
 }
 
 #[test]
@@ -149,41 +196,33 @@ fn small_terminals() {
     a.song = Some(song("1", "One", 200));
     a.queue = Some(queue_of(5, 1));
     for (w, h) in [(20, 6), (40, 10), (1, 1), (80, 4), (60, 20), (200, 3)] {
-        for n in 0..7 {
+        for n in 0..9 {
             a.do_action(crate::keys::Action::Go(n));
             draw(&mut a, w, h);
         }
         a.devices.on = true;
         a.devices.jam = Some(jam());
-        for p in [Panel::Playing, Panel::Queue, Panel::Lyrics, Panel::Devices] {
+        for p in [Panel::Queue, Panel::Lyrics, Panel::Devices] {
             a.set_panel(p);
             draw(&mut a, w, h);
-            a.focus = Focus::Side;
-            draw(&mut a, w, h);
-            a.focus = Focus::Main;
+            a.set_panel(p);
         }
         a.full = true;
         draw(&mut a, w, h);
         a.full = false;
     }
 
-    // Narrow shows focused part.
+    // Narrow: the tabs are icons, the player keeps its song, transport and seek bar.
     let mut a = app();
     a.go(View::Home);
-    a.queue = Some(queue_of(5, 1));
+    a.song = Some(song("1", "One", 200));
     let s = draw(&mut a, 70, 24);
-    assert!(!a.shown.side && !a.shown.panel, "no room beside the page");
-    assert!(!s.contains("LIBRARY"), "{s}");
-    key(&mut a, KeyCode::Esc);
-    assert_eq!(a.focus, Focus::Side);
-    let s = draw(&mut a, 70, 24);
-    assert!(s.contains("LIBRARY") && s.contains("Albums"), "the sidebar in the page's place:\n{s}");
-    key(&mut a, KeyCode::Char('Q'));
-    let s = draw(&mut a, 70, 24);
-    assert!(s.contains("▶ Song 1"), "the queue in the page's place:\n{s}");
-    key(&mut a, KeyCode::Esc);
-    assert_eq!(a.focus, Focus::Main);
-    dump("narrow", &draw(&mut a, 70, 24));
+    assert!(s.contains('⌂') && s.contains('◫') && !s.contains("Albums") && (s.contains('⏸') || s.contains('▶')) && s.contains("0:00"), "{s}");
+    assert!(!s.contains('☰') && !s.contains("◁)"), "no panel buttons or volume this narrow:\n{s}");
+    dump("narrow", &s);
+    // Below 60 columns the player is the song and play.
+    let s = draw(&mut a, 50, 20);
+    assert!(s.contains("One") && !s.contains('⏮') && !s.contains("0:00"), "{s}");
 }
 
 #[test]
@@ -192,7 +231,6 @@ fn keys_and_focus() {
     key(&mut a, KeyCode::Char('2'));
     assert_eq!(a.view, View::Albums);
     assert!(a.cmds.contains(&Cmd::Load(Req::Albums { offset: 0 })));
-    assert!(a.cmds.contains(&Cmd::Load(Req::Playlists)), "the sidebar's playlists are asked for");
     key(&mut a, KeyCode::Char('3'));
     assert_eq!(a.view, View::Artists);
     assert!(a.cmds.contains(&Cmd::Load(Req::Artists)));
@@ -218,45 +256,53 @@ fn keys_and_focus() {
     key(&mut a, KeyCode::Char('?'));
     assert!(matches!(a.overlay, Some(Overlay::Help { .. })));
     let s = draw(&mut a, 100, 70);
-    assert!(s.contains("Play or pause") && s.contains("Take it out") && s.contains("now playing, queue, lyrics"), "{s}");
+    assert!(s.contains("Play or pause") && s.contains("Take it out") && s.contains("lyrics or queue"), "{s}");
     dump("help", &s);
     key(&mut a, KeyCode::Char('x'));
     assert!(a.overlay.is_none());
     key(&mut a, KeyCode::Char('q'));
     assert!(a.quit);
 
-    // Tab cycles focus.
+    // Tab moves between the full player's panels, and has nothing to move on a page.
     let mut a = app();
     a.go(View::Home);
-    playlists(&mut a, &["Morning"]);
-    assert_eq!(a.focus, Focus::Main);
     key(&mut a, KeyCode::Tab);
-    assert_eq!(a.focus, Focus::Panel);
+    assert!(!a.full && a.focus == Focus::Main);
+    key(&mut a, KeyCode::Char('F'));
+    assert_eq!((a.full, a.panel, a.focus), (true, Panel::Lyrics, Focus::Panel));
     key(&mut a, KeyCode::Tab);
-    assert_eq!(a.focus, Focus::Side);
-    // Down the sidebar to the albums, and enter opens them with the keys on the page.
-    let albums = a.nav().iter().position(|n| *n == Nav::Albums).unwrap();
-    while a.side.at < albums {
-        key(&mut a, KeyCode::Down);
-    }
-    key(&mut a, KeyCode::Enter);
-    assert_eq!((a.view, a.focus, a.root), (View::Albums, Focus::Main, Nav::Albums));
-    // Esc on the page goes back to the sidebar; a playlist there is opened as a page, and a queued.
+    assert_eq!(a.panel, Panel::Queue);
+    key(&mut a, KeyCode::Tab);
+    assert_eq!(a.panel, Panel::Lyrics, "the devices come only with remote control on");
     key(&mut a, KeyCode::Esc);
-    assert_eq!(a.focus, Focus::Side);
-    let pl = a.nav().iter().position(|n| *n == Nav::Playlist(0)).unwrap();
-    while a.side.at < pl {
-        key(&mut a, KeyCode::Down);
-    }
+    assert_eq!((a.full, a.focus), (false, Focus::Main));
+
+    // The Playlists tab lists them: a queues one, enter opens it as a page.
+    key(&mut a, KeyCode::Char('5'));
+    assert_eq!(a.view, View::Playlists);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Playlists)));
+    playlists(&mut a, &["Morning"]);
+    let s = draw(&mut a, 120, 36);
+    assert!(s.contains("Morning"), "{s}");
     a.cmds.clear();
     key(&mut a, KeyCode::Char('a'));
     assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Playlist(id), false)) if id == "pl-0"), "{:?}", a.cmds);
     key(&mut a, KeyCode::Enter);
     assert!(a.cmds.contains(&Cmd::Load(Req::Playlist("pl-0".into()))));
-    assert_eq!((a.focus, a.root), (Focus::Main, Nav::Playlist(0)));
-    assert!(a.page().is_some());
-    let s = draw(&mut a, 160, 40);
-    assert!(s.contains("▌") , "the open playlist is marked in the sidebar:\n{s}");
+    assert!(a.page().is_some() && a.view == View::Playlists);
+    key(&mut a, KeyCode::Esc);
+    assert!(a.page().is_none());
+    // Favorites asks for the starred songs.
+    key(&mut a, KeyCode::Char('6'));
+    assert!(a.cmds.contains(&Cmd::Load(Req::Favorites)));
+    a.handle(Msg::Data(Req::Favorites, Ok(Data::Favorites(vec![Song { starred: true, ..song("f1", "Kept", 100) }]))));
+    let s = draw(&mut a, 120, 36);
+    assert!(s.contains("Favorites") && s.contains("Kept"), "{s}");
+    // 7 to 9: downloads, the equalizer, settings.
+    for (k, v) in [('7', View::Downloads), ('8', View::Equalizer), ('9', View::Settings)] {
+        key(&mut a, KeyCode::Char(k));
+        assert_eq!(a.view, v);
+    }
 
     // Focus redraw.
     let mut a = app();
@@ -303,9 +349,8 @@ fn album_grid_keys_and_clicks() {
     let wheel = MouseEvent { kind: MouseEventKind::ScrollDown, column: list.x + 1, row: list.y + 1, modifiers: KeyModifiers::NONE };
     a.handle(Msg::Mouse(wheel));
     assert_eq!(a.library.albums_sel.at, at + cols);
-    // The sidebar is clicked too.
-    let songs = a.nav().iter().position(|n| *n == Nav::Songs).unwrap();
-    let r = hit_rect(&a, Hit::Nav(songs));
+    // The tabs are clicked too.
+    let r = hit_rect(&a, Hit::Tab(View::Songs));
     click(&mut a, r.x + 3, r.y);
     assert_eq!(a.view, View::Songs);
 }
@@ -319,7 +364,7 @@ fn home_shelves() {
     a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(2, "Most played".into(), shelf(3, "Top")))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Recently added") && s.contains("Most played") && s.contains("New 0") && s.contains("Top 2"), "{s}");
-    assert!(s.contains("Good "), "a greeting:\n{s}");
+    assert!(s.contains("Listen now"), "{s}");
     dump("home", &s);
     key(&mut a, KeyCode::Right);
     key(&mut a, KeyCode::Right);
@@ -370,14 +415,14 @@ fn mouse() {
     // The panel's switches.
     let lyrics = hit_rect(&a, Hit::Button(crate::app::Button::Panel(Panel::Lyrics)));
     click(&mut a, lyrics.x + 1, lyrics.y);
-    assert_eq!(a.panel, Some(Panel::Lyrics));
+    assert_eq!((a.full, a.panel), (true, Panel::Lyrics));
 
     // Mouse off ignores clicks.
     let mut a = app();
     draw(&mut a, 160, 30);
     key(&mut a, KeyCode::Char('m'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Mouse(false)));
-    let r = hit_rect(&a, Hit::Nav(a.nav().iter().position(|n| *n == Nav::Settings).unwrap()));
+    let r = hit_rect(&a, Hit::Tab(View::Settings));
     click(&mut a, r.x + 1, r.y);
     assert_eq!(a.view, View::Home);
 
@@ -389,7 +434,8 @@ fn mouse() {
     a.heard(Some(song("s1", "Song 1", 200)));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Title") && s.contains("Artist") && s.contains("Album") && s.contains("Time"), "{s}");
-    assert!(s.contains("▶") && s.contains("♥"), "the song heard and the favourite are marked:\n{s}");
+    let line = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(line("Song 1").contains('▶') && line("Song 2").contains('好') && !line("Song 3").contains('好'), "the song heard and the favorite are marked:\n{s}");
     dump("songs", &s);
     let row = hit_rect(&a, Hit::Row(ListRef::Songs, 4));
     a.cmds.clear();
@@ -475,7 +521,7 @@ fn queue_panel_editing() {
     let mut a = app();
     a.queue = Some(queue_of(5, 1));
     key(&mut a, KeyCode::Char('Q'));
-    assert_eq!((a.panel, a.focus), (Some(Panel::Queue), Focus::Panel));
+    assert_eq!((a.full, a.panel, a.focus), (true, Panel::Queue, Focus::Panel));
     let s = draw(&mut a, 160, 30);
     assert!(s.contains("▶ Song 1") && s.contains("+ Song 3"), "{s}");
     dump("queue", &s);
@@ -496,13 +542,13 @@ fn queue_panel_editing() {
     assert_eq!(a.cmds.last(), Some(&Cmd::Shuffle(true)));
     key(&mut a, KeyCode::Char('r'));
     assert_eq!(a.cmds.last(), Some(&Cmd::CycleRepeat));
-    // Q again puts the panel away; the page has the keys.
+    // Q again goes back to the page, which has the keys.
     key(&mut a, KeyCode::Char('Q'));
-    assert_eq!((a.panel, a.focus), (None, Focus::Main));
+    assert_eq!((a.full, a.focus), (false, Focus::Main));
 }
 
 #[test]
-fn now_playing_panel() {
+fn full_player_shows_the_song_and_the_mix() {
     let mut a = app();
     let next = song("s2", "Second", 180);
     crate::backend::app().register(vec![next.clone()]);
@@ -518,16 +564,15 @@ fn now_playing_panel() {
         tempo_ratio: 1.02,
         reason: "bars aligned".into(),
     });
-    assert!(a.transition_shown(), "the panel opens on what plays");
-    let s = draw(&mut a, 170, 40);
-    assert!(s.contains("First") && s.contains("Mixing into the next") && s.contains("beat-matched") && s.contains("Next: “Second”") && s.contains("FLAC"), "{s}");
-    dump("playing", &s);
+    assert!(!a.transition_shown(), "nothing to say about it on a page");
     // F: the player over the whole window.
     key(&mut a, KeyCode::Char('F'));
-    assert!(a.full && a.lyrics_shown());
+    assert!(a.full && a.lyrics_shown() && a.transition_shown());
     let s = draw(&mut a, 170, 40);
-    assert!(s.contains("First") && !s.contains("LIBRARY"), "{s}");
+    assert!(s.contains("First") && s.contains("Mixing into the next") && s.contains("beat-matched") && s.contains("Next: “Second”") && s.contains("FLAC"), "{s}");
+    assert!(!s.contains("Listen now") && !s.contains("Albums"), "the player replaces the page and its tabs:\n{s}");
     dump("full", &s);
+    dump("full-80x24", &draw(&mut a, 80, 24));
     key(&mut a, KeyCode::Esc);
     assert!(!a.full);
 }
@@ -667,21 +712,23 @@ fn seeking() {
 }
 
 #[test]
-fn star_marks_from_the_core_redraw_the_hearts() {
+fn star_marks_from_the_core_redraw_the_seals() {
     let mut a = app();
     a.go(View::Songs);
     a.handle(Msg::Data(Req::Songs { offset: 0 }, Ok(Data::Songs(vec![song("1", "One", 200), Song { starred: true, ..song("2", "Two", 200) }], false))));
     a.heard(Some(song("1", "One", 200)));
     let s = draw(&mut a, 170, 40);
-    assert!(s.contains("♡ One") && s.matches('♥').count() == 1, "{s}");
+    let line = |s: &str, name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
+    assert!(!line(&s, "One").contains('好') && line(&s, "Two").contains('好'), "{s}");
+    assert!(s.contains("▕好▏") && !s.contains("▐好▌"), "the player's seal is an outline:\n{s}");
     // Another device stars the song playing and unstars the other.
     let mut marks = nori_core::stars::StarMarks::default();
     marks.mark(nori_core::client::Starrable::Song, "1".into(), true);
     marks.mark(nori_core::client::Starrable::Song, "2".into(), false);
     a.handle(Msg::Starred(marks));
     let s = draw(&mut a, 170, 40);
-    assert!(s.contains("♥ One") && s.matches('♥').count() == 2, "the player and its row:\n{s}");
-    assert!(!s.lines().any(|l| l.contains("Two") && l.contains('♥')), "{s}");
+    assert!(line(&s, "One").contains('好') && !line(&s, "Two").contains('好'), "the row:\n{s}");
+    assert!(s.contains("▐好▌") && !s.contains("▕好▏"), "and the player's seal, filled:\n{s}");
 }
 
 #[test]
@@ -693,20 +740,20 @@ fn buttons() {
     a.handle(Msg::Data(Req::Album("al-3".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-3", "Three"), songs, vec![]))))));
     a.heard(Some(song("1", "One", 200)));
     let s = draw(&mut a, 170, 40);
-    assert!(s.contains("♡ Favorite") && s.contains("↓ Download"), "{s}");
+    assert!(s.contains("▕好▏ Favorite") && s.contains("↓ Download"), "{s}");
     a.cmds.clear();
     let star = hit_rect(&a, Hit::Button(crate::app::Button::Star));
     click(&mut a, star.x + 1, star.y);
     assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, "al-3".into(), true)));
-    assert!(draw(&mut a, 170, 40).contains("♥ Favorite"), "shown at once");
+    assert!(draw(&mut a, 170, 40).contains("▐好▌ Favorite"), "shown at once");
     let down = hit_rect(&a, Hit::Button(crate::app::Button::Download));
     click(&mut a, down.x + 1, down.y);
     assert!(matches!(a.cmds.last(), Some(Cmd::DownloadFetch(crate::backend::Fetch::Album(id))) if id == "al-3"));
-    // The heart by the song in the player.
-    let heart = hit_rect(&a, Hit::Button(crate::app::Button::StarSong));
-    click(&mut a, heart.x, heart.y);
+    // The seal by the song in the player.
+    let seal = hit_rect(&a, Hit::Button(crate::app::Button::StarSong));
+    click(&mut a, seal.x, seal.y);
     assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Song, "1".into(), true)));
-    assert!(draw(&mut a, 170, 40).contains("♥ One"), "the player's heart fills at once");
+    assert_eq!(draw(&mut a, 170, 40).matches("▐好▌").count(), 2, "the album's and the player's seal fill at once");
 
     // Play button follows state.
     let mut t = Terminal::new(TestBackend::new(100, 20)).unwrap();
@@ -916,7 +963,7 @@ fn terminal_replies() {
         // The TestBackend is written through ratatui's diff, as a terminal is: whatever the diff skips is
         // missing from it.
         let s = draw_with(&mut a, 140, 40, Some(&mut art));
-        assert!(s.contains("Next up") && s.contains("3:20") && s.contains("q quit"), "{protocol:?} hid the frame:\n{s}");
+        assert!(s.contains("First") && s.contains("3:20") && s.contains("space play"), "{protocol:?} hid the frame:\n{s}");
     }
 }
 
@@ -967,15 +1014,17 @@ fn devices_panel() {
     use nori_core::remote::wire::DeviceKind;
     let mut a = app();
     key(&mut a, KeyCode::Char('C'));
-    assert_eq!(a.panel, Some(Panel::Playing), "nothing to show while remote control and jams are off");
+    assert!(!a.full, "nothing to show while remote control and jams are off");
     assert!(a.note.as_ref().is_some_and(|n| n.0 == crate::text::REMOTE_OFF));
-    assert!(!draw(&mut a, 160, 30).contains("Devices"), "no tab either");
+    key(&mut a, KeyCode::Char('F'));
+    assert!(!draw(&mut a, 160, 30).contains("⇄ Devices"), "no tab either");
+    key(&mut a, KeyCode::Esc);
 
     a.devices.on = true;
     a.devices.jams = true;
     a.devices.list = vec![device("desk", "Desk", DeviceKind::Desktop, Some("Wish")), device("pixel", "Pixel", DeviceKind::Phone, None)];
     key(&mut a, KeyCode::Char('C'));
-    assert_eq!((a.panel, a.focus), (Some(Panel::Devices), Focus::Panel));
+    assert_eq!((a.full, a.panel, a.focus), (true, Panel::Devices, Focus::Panel));
     let s = draw(&mut a, 160, 30);
     dump("devices", &s);
     let row = |name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
@@ -1031,19 +1080,21 @@ fn another_device_playing_shows_in_the_player_bar() {
     a.devices.hearts.insert("s1".into(), false);
     let s = draw(&mut a, 160, 30);
     dump("playing-on", &s);
-    assert!(s.contains("⇄ Playing on Desk") && s.contains("♡ First") && s.contains("1:01") && s.contains(" 40%"), "{s}");
+    assert!(s.contains("⇄ Playing on Desk") && s.contains("▕好▏") && s.contains("First") && s.contains("1:01"), "{s}");
+    let volume = s.lines().find_map(|l| l.split_once("◁)")).expect("the volume").1.to_string();
+    assert_eq!(volume.matches('━').count(), 5, "40 % of 12 cells:{volume}");
     // The heart goes to the device, and fills at once.
     let heart = hit_rect(&a, Hit::Button(crate::app::Button::StarSong));
     click(&mut a, heart.x, heart.y);
     assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Song, "s1".into(), true)));
-    assert!(draw(&mut a, 160, 30).contains("♥ First"));
+    assert!(draw(&mut a, 160, 30).contains("▐好▌"));
     // This computer's volume, set from afar, does not show over the device's.
     a.handle(Msg::Volume(0.9));
     assert_eq!(a.volume, 0.4);
     // The line opens the devices.
     let line = hit_rect(&a, Hit::Button(crate::app::Button::Panel(Panel::Devices)));
     click(&mut a, line.x + 3, line.y);
-    assert_eq!(a.panel, Some(Panel::Devices));
+    assert_eq!((a.full, a.panel), (true, Panel::Devices));
 }
 
 #[test]
@@ -1061,10 +1112,16 @@ fn jam_header_and_requests_in_the_queue() {
     assert!(row("Jam · 2 listening").contains("invite") && row("gus, Dee (admin)").contains("  gus"), "{s}");
     assert!(row("Wish · asked by Gus").contains("? Wish") && row("Blue · asked by Dee").contains("? Blue"), "{s}");
     assert!(!s.contains("⏎ add · d no"), "the keys only on the request chosen:\n{s}");
-    let panel: Vec<&str> = s.lines().map(|l| l.rsplit('│').next().unwrap_or("").trim()).collect();
+    // The note is whole under the provider's song and wraps in a narrower panel.
+    let note = |s: &str| -> Vec<String> { s.lines().map(|l| l.split('│').nth(1).unwrap_or("").trim().to_string()).collect() };
+    let panel = note(&s);
     let at = panel.iter().position(|l| l.starts_with('☁')).expect("the note");
-    assert_eq!(format!("{} {}", panel[at], panel[at + 1]), format!("☁ {}", crate::text::JAM_DOWNLOADS), "whole, wrapped:\n{s}");
+    assert_eq!(panel[at], format!("☁ {}", crate::text::JAM_DOWNLOADS), "{s}");
     assert!(panel[at - 1].contains("Wish") && s.matches('☁').count() == 1, "only under the provider's song:\n{s}");
+    let narrow = draw(&mut a, 50, 40);
+    let panel = note(&narrow);
+    let at = panel.iter().position(|l| l.starts_with('☁')).unwrap_or_else(|| panic!("the note:\n{narrow}"));
+    assert_eq!(format!("{} {}", panel[at], panel[at + 1]), format!("☁ {}", crate::text::JAM_DOWNLOADS), "wrapped:\n{narrow}");
     assert!(row("Song 2").contains("Song 2 · Gus  Artist") && !row("Song 3").contains("· Gus"), "who asked for it:\n{s}");
     assert!(s.contains("End the jam") && s.contains("◉ Jam · 2 listening"), "{s}");
 
@@ -1078,7 +1135,7 @@ fn jam_header_and_requests_in_the_queue() {
     assert!(s.lines().any(|l| l.contains("Wish · asked by Gus") && l.contains("⏎ add · d no")) && s.matches("⏎ add").count() == 1, "{s}");
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.last(), Some(&Cmd::JamDecide(7, true)));
-    at(&mut a, crate::app::QueueRow::Downloads(0, 1));
+    at(&mut a, crate::app::QueueRow::Downloads(0, 0));
     key(&mut a, KeyCode::Char('d'));
     assert_eq!(a.cmds.last(), Some(&Cmd::JamDecide(7, false)), "its note is the request's");
     at(&mut a, crate::app::QueueRow::Ask(1));
@@ -1094,6 +1151,7 @@ fn jam_header_and_requests_in_the_queue() {
 
     // The player bar says the jam is on.
     a.overlay = None;
+    key(&mut a, KeyCode::Esc);
     assert!(draw(&mut a, 160, 30).contains("◉ Jam · 2 listening ─"));
 }
 
@@ -1118,7 +1176,7 @@ fn a_jam_starts_around_the_song_picked() {
     // Opened, it shows its invite over the queue.
     a.devices.jam = Some(jam());
     a.handle(Msg::Jam(Ok(())));
-    assert!(matches!(a.overlay, Some(Overlay::Invite { .. })) && a.panel == Some(Panel::Queue));
+    assert!(matches!(a.overlay, Some(Overlay::Invite { .. })) && a.panel == Panel::Queue);
     // A jam on already: the invite again, nothing replayed.
     a.overlay = None;
     a.cmds.clear();
@@ -1253,11 +1311,11 @@ fn a_guest_browses_the_hosts_library_and_asks_for_songs() {
     dump("guest-songs", &s);
     let row = |text: &str| s.lines().find(|l| l.contains(text)).unwrap_or_else(|| panic!("{text} missing:\n{s}")).to_string();
     assert!(row("Two").contains("Asked"), "the song this guest asked for:\n{s}");
-    assert!(!row("One ").contains("Asked") && !row("Three").contains('♥'), "another's request, and no hearts:\n{s}");
-    for gone in ["Downloads", "PLAYLISTS"] {
+    assert!(!row("One ").contains("Asked") && !row("Three").contains('好'), "another's request, and no seals:\n{s}");
+    for gone in ["Downloads", "Playlists", "Favorites"] {
         assert!(!s.contains(gone), "{gone} is the account's:\n{s}");
     }
-    assert!(s.contains("Equalizer") && s.contains("Settings"), "this computer's own, a guest's too:\n{s}");
+    assert!(s.contains("Equalizer") && s.contains('✱'), "this computer's own, a guest's too:\n{s}");
     assert!(s.contains("◉ Jam · Desk · 2 listening") && !s.contains('⏮') && !s.contains('⤮'), "the jam, and no controls:\n{s}");
 
     // Picking a song plays it, which the session asks the host for; the account's keys do nothing.
@@ -1348,9 +1406,10 @@ fn a_guests_queue_shows_the_jam() {
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.last(), Some(&Cmd::LeaveJam));
     // The player bar's jam opens the queue.
-    a.panel = Some(Panel::Playing);
+    key(&mut a, KeyCode::Esc);
+    a.panel = Panel::Lyrics;
     draw(&mut a, 160, 30);
     let line = hit_rect(&a, Hit::Button(crate::app::Button::Panel(Panel::Queue)));
     click(&mut a, line.x + 3, line.y);
-    assert_eq!(a.panel, Some(Panel::Queue));
+    assert_eq!((a.full, a.panel), (true, Panel::Queue));
 }

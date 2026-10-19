@@ -105,6 +105,7 @@ pub enum Req {
     DownloadedAlbum(String),
     Artist(String),
     Playlist(String),
+    Favorites,
     Downloads,
     Facts,
 }
@@ -116,6 +117,8 @@ pub enum Data {
     Artists(Vec<nori_core::Artist>),
     Playlists(Vec<nori_core::Playlist>),
     Songs(Vec<Song>, bool),
+    /// The starred songs.
+    Favorites(Vec<Song>),
     Album(Box<AlbumDetail>),
     Artist(Box<ArtistDetail>),
     Playlist(Box<PlaylistDetail>),
@@ -150,6 +153,7 @@ pub mod own {
     pub const MOUSE: &str = "tui.mouse";
     pub const IMAGES: &str = "tui.images";
     pub const CARD_COVERS: &str = "tui.cardCovers";
+    pub const PAINT: &str = "tui.paint";
     pub const VOLUME: &str = "tui.volume";
     /// Output device name opened at start; empty for the system default.
     pub const DEVICE: &str = "tui.device";
@@ -220,7 +224,7 @@ impl Session {
             Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
             Req::Artist(id) => Some(PageAsk::Artist(id)),
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
-            Req::Home | Req::Downloads | Req::Facts => None,
+            Req::Home | Req::Favorites | Req::Downloads | Req::Facts => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
@@ -238,6 +242,21 @@ impl Session {
                     Ok(HomePart::Shelf { at, items: ShelfItems::Albums(albums) }) => send(Ok(Data::HomeRow(at, crate::text::home_row(rows[at]).into(), albums))),
                     Ok(_) => {}
                     Err(e) => send(Err(unreachable(&e))),
+                });
+            }
+            Req::Favorites => {
+                let client = self.client.clone();
+                nori_host::spawn("nori-read", move || {
+                    let mut got = false;
+                    let read = nori_host::session::read_pages(&client, Read::StarredItems, |p| {
+                        if let Page::StarredPage { v } = p {
+                            got = true;
+                            send(Ok(Data::Favorites(v.songs)));
+                        }
+                    });
+                    if let (Err(e), false) = (read, got) {
+                        send(Err(net_error(&e)));
+                    }
                 });
             }
             Req::Downloads => {

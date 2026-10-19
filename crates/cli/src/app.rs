@@ -1,6 +1,6 @@
 //! UI state and input handling, free of I/O: [`Msg`]s in, [`Cmd`]s out for the runner, so it runs in
-//! tests without a server, sound card or terminal. The window has a sidebar, a page, a right panel and
-//! a player bar; [`Focus`] says which of the first three takes the keys.
+//! tests without a server, sound card or terminal. The window has tabs along the top, a page and a player
+//! bar; the full player replaces the page with its song and a panel, and [`Focus`] says which has the keys.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -21,7 +21,7 @@ use nori_look::cover::CoverColours;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
 
-use crate::art::Theme;
+use crate::art::{Colors, Theme};
 use crate::backend::{Data, Downloads, Fetch, Msg, Req, ALBUM_PAGE};
 use crate::keys::{action, Action, Scope};
 use crate::lyrics::SongLyrics;
@@ -36,6 +36,8 @@ pub enum View {
     Albums,
     Artists,
     Songs,
+    Playlists,
+    Favorites,
     Downloads,
     Equalizer,
     Settings,
@@ -43,80 +45,61 @@ pub enum View {
     Login,
 }
 
-/// Number key targets, in order.
-pub const GO: [View; 7] = [View::Home, View::Albums, View::Artists, View::Songs, View::Downloads, View::Equalizer, View::Settings];
+/// Number key targets, in order: the tabs, then the rest.
+pub const GO: [View; 9] = [View::Home, View::Albums, View::Artists, View::Songs, View::Playlists, View::Favorites, View::Downloads, View::Equalizer, View::Settings];
 
-/// The part of the window that has the keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Focus {
-    Side,
-    #[default]
-    Main,
-    Panel,
-}
-
-/// Right panel content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Panel {
-    Playing,
-    Queue,
-    Lyrics,
-    /// Where the music plays: this computer or another device (remote control), and the jam.
-    Devices,
-}
-
-pub const PANELS: [(Panel, &str); 4] = [(Panel::Playing, "Playing"), (Panel::Queue, "Queue"), (Panel::Lyrics, "Lyrics"), (Panel::Devices, "Devices")];
-
-/// A sidebar entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Nav {
-    Search,
-    #[default]
-    Home,
-    Albums,
-    Artists,
-    Songs,
-    Downloads,
-    /// Index into the library's playlists.
-    Playlist(usize),
-    Equalizer,
-    Settings,
-}
-
-impl Nav {
+impl View {
     pub fn icon(self) -> &'static str {
         match self {
-            Nav::Search => "⌕",
-            Nav::Home => "⌂",
-            Nav::Albums => "◫",
-            Nav::Artists => "◉",
-            Nav::Songs => "♪",
-            Nav::Downloads => "↓",
-            Nav::Playlist(_) => "≡",
-            Nav::Equalizer => "≋",
-            Nav::Settings => "✱",
+            View::Search => "⌕",
+            View::Home | View::Login => "⌂",
+            View::Albums => "◫",
+            View::Artists => "◉",
+            View::Songs => "♪",
+            View::Playlists => "≡",
+            View::Favorites => "好",
+            View::Downloads => "↓",
+            View::Equalizer => "≋",
+            View::Settings => "✱",
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
-            Nav::Search => "Search",
-            Nav::Home => "Home",
-            Nav::Albums => "Albums",
-            Nav::Artists => "Artists",
-            Nav::Songs => "Songs",
-            Nav::Downloads => "Downloads",
-            Nav::Playlist(_) => "",
-            Nav::Equalizer => "Equalizer",
-            Nav::Settings => "Settings",
+            View::Search => "Search",
+            View::Home | View::Login => "Home",
+            View::Albums => "Albums",
+            View::Artists => "Artists",
+            View::Songs => "Songs",
+            View::Playlists => "Playlists",
+            View::Favorites => "Favorites",
+            View::Downloads => "Downloads",
+            View::Equalizer => "Equalizer",
+            View::Settings => "Settings",
         }
     }
 }
 
-/// Sidebar entries above and below the playlists.
-pub const NAV_TOP: [Nav; 2] = [Nav::Search, Nav::Home];
-pub const NAV_LIBRARY: [Nav; 4] = [Nav::Albums, Nav::Artists, Nav::Songs, Nav::Downloads];
-pub const NAV_BOTTOM: [Nav; 2] = [Nav::Equalizer, Nav::Settings];
+/// The part of the window that has the keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Focus {
+    #[default]
+    Main,
+    /// The full player's panel.
+    Panel,
+}
+
+/// The full player's panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Panel {
+    #[default]
+    Lyrics,
+    Queue,
+    /// Where the music plays: this computer or another device (remote control), and the jam.
+    Devices,
+}
+
+pub const PANELS: [(Panel, &str); 3] = [(Panel::Lyrics, "Lyrics"), (Panel::Queue, "Queue"), (Panel::Devices, "Devices")];
 
 /// Work for the runner.
 #[derive(Debug, Clone, PartialEq)]
@@ -155,6 +138,7 @@ pub enum Cmd {
     Curve,
     Mouse(bool),
     Images(bool),
+    Paint(bool),
     /// Output device for the next start; empty for the system default.
     Device(String),
     Tuning(bool),
@@ -256,6 +240,8 @@ impl SoundToolCmd {
 pub struct Sel {
     pub at: usize,
     pub top: usize,
+    /// Rows hidden above and below as last drawn, which the chrome's edges fade.
+    pub cut: (bool, bool),
 }
 
 impl Sel {
@@ -283,6 +269,7 @@ impl Sel {
             self.top = self.at + 1 - height;
         }
         self.top = self.top.min(len.saturating_sub(height.min(len)));
+        self.cut = (self.top > 0, self.top + height < len);
     }
 }
 
@@ -320,6 +307,12 @@ impl Page {
             Page::DownloadedAlbum { id, .. } => Req::DownloadedAlbum(id.clone()),
             Page::Artist { id, .. } => Req::Artist(id.clone()),
             Page::Playlist { id, .. } => Req::Playlist(id.clone()),
+        }
+    }
+
+    fn sel_ref(&self) -> &Sel {
+        match self {
+            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } => sel,
         }
     }
 
@@ -371,6 +364,8 @@ pub struct Home {
     pub left: Vec<usize>,
     /// First visible shelf.
     pub top: usize,
+    /// Shelves hidden below, as last drawn.
+    pub below: bool,
 }
 
 impl Home {
@@ -419,6 +414,10 @@ pub struct Library {
     pub songs: Load<Vec<Song>>,
     pub songs_more: bool,
     pub songs_sel: Sel,
+    pub playlists_sel: Sel,
+    /// The starred songs.
+    pub favorites: Load<Vec<Song>>,
+    pub favorites_sel: Sel,
 }
 
 #[derive(Default)]
@@ -679,8 +678,8 @@ impl Target {
 /// A clickable area's meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
-    /// Index into [`App::nav`].
-    Nav(usize),
+    /// A tab of the top outline (or a footer link).
+    Tab(View),
     /// A list row or card by index.
     Row(ListRef, usize),
     /// A list's whole area, for the wheel.
@@ -696,19 +695,19 @@ pub enum Hit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListRef {
-    Side,
     /// Home shelf, indexed like `Home::rows`.
     Shelf(usize),
     Albums,
     Artists,
     Songs,
+    Playlists,
+    Favorites,
     Search,
     Page,
     Downloads,
     Settings,
     Eq,
     Queue,
-    UpNext,
     Lyrics,
     Devices,
     Profiles,
@@ -720,15 +719,14 @@ impl ListRef {
     /// The window part the list is in.
     fn focus(self) -> Focus {
         match self {
-            ListRef::Side => Focus::Side,
-            ListRef::Queue | ListRef::UpNext | ListRef::Lyrics | ListRef::Devices => Focus::Panel,
+            ListRef::Queue | ListRef::Lyrics | ListRef::Devices => Focus::Panel,
             _ => Focus::Main,
         }
     }
 
     /// Whether a single click opens (cards).
     fn opens_on_click(self) -> bool {
-        matches!(self, ListRef::Shelf(_) | ListRef::Albums | ListRef::Artists)
+        matches!(self, ListRef::Shelf(_) | ListRef::Albums | ListRef::Artists | ListRef::Playlists)
     }
 }
 
@@ -755,19 +753,17 @@ pub enum Button {
     Connect,
 }
 
-/// Layout facts from the last frame: sidebar and panel shown, grid columns.
+/// Layout facts from the last frame: grid columns, the full player's panel width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shown {
-    pub side: bool,
-    pub panel: bool,
     pub cols: usize,
-    /// The right panel's width inside its margins.
+    /// The panel's width inside its margins.
     pub panel_w: u16,
 }
 
 impl Default for Shown {
     fn default() -> Self {
-        Shown { side: true, panel: true, cols: 4, panel_w: 37 }
+        Shown { cols: 4, panel_w: 37 }
     }
 }
 
@@ -790,14 +786,11 @@ pub struct App {
     /// Pages opened over the view, topmost last.
     pub pages: Vec<Page>,
     pub focus: Focus,
-    /// The open sidebar entry.
-    pub root: Nav,
-    pub side: Sel,
     pub home: Home,
     pub library: Library,
     pub search: Search,
-    /// None when the panel is hidden.
-    pub panel: Option<Panel>,
+    /// The full player's panel.
+    pub panel: Panel,
     /// Full-window player.
     pub full: bool,
     pub shown: Shown,
@@ -805,7 +798,6 @@ pub struct App {
     pub queue_sel: Sel,
     /// Id of the song last removed from the queue, for undo.
     pub taken: Option<String>,
-    pub up_next_sel: Sel,
     pub downloads: Load<Box<Downloads>>,
     pub downloads_sel: Sel,
     pub downloads_at: Option<Instant>,
@@ -832,12 +824,18 @@ pub struct App {
     /// Cover id of `song`.
     pub cover_art: Option<String>,
     pub colours: Option<Box<CoverColours>>,
-    /// Theme of the panel and full player (from the cover); the rest uses the terminal's colours.
+    /// The season's colors, for the chrome and the pages.
+    pub look: Theme,
+    /// The full player's colors: the cover's when it wears them, else the season's.
     pub theme: Theme,
-    /// The terminal's own colors with the theme's accent, for everything else.
-    pub plain: Theme,
-    /// The theme's accents ([`crate::art::accents`]), read when the settings change.
-    pub accents: (u32, u32),
+    /// Paint the page in the season's colors.
+    pub paint: bool,
+    /// How many colors the terminal shows.
+    pub colors: Colors,
+    /// No stamp on the seal ($NORI_REDUCE_MOTION).
+    pub reduced_motion: bool,
+    /// The transport button or the seal just pressed, until its flash ends.
+    pub flash: Option<(Button, Instant)>,
     pub prefs: StoredPrefs,
     pub volume: f32,
     pub mouse: bool,
@@ -873,11 +871,7 @@ pub struct App {
 impl App {
     pub fn new(prefs: StoredPrefs) -> App {
         App {
-            side: Sel { at: 1, top: 0 },
-            panel: Some(Panel::Playing),
-            theme: Theme::plain(crate::art::accents(&prefs).1),
-            plain: Theme::plain(crate::art::accents(&prefs).1),
-            accents: crate::art::accents(&prefs),
+            paint: true,
             prefs,
             volume: 1.0,
             mouse: true,
@@ -887,6 +881,13 @@ impl App {
             dirty: true,
             ..App::default()
         }
+        .themed()
+    }
+
+    /// Takes the color settings (what the terminal shows, whether to paint) and dresses the screens.
+    pub fn themed(mut self) -> App {
+        self.retheme();
+        self
     }
 
     pub fn say(&mut self, text: impl Into<String>, error: bool) {
@@ -904,52 +905,73 @@ impl App {
         self.dirty = true;
     }
 
-    fn retheme(&mut self) {
-        self.accents = crate::art::accents(&self.prefs);
-        self.plain = Theme::plain(self.accents.1);
+    pub fn retheme(&mut self) {
+        let day = crate::art::Day::today();
+        let dark = crate::art::terminal_dark(std::env::var("COLORFGBG").ok().as_deref());
+        self.look = Theme::season(&self.prefs, day, dark, self.paint, self.colors);
+        let accents = nori_look::theme::accents(nori_core::settings::season_of(self.prefs.season), day.month, day.day, day.southern);
         self.theme = match &self.colours {
-            Some(c) if self.prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player) && self.images => Theme::from_cover(c, self.accents),
-            _ => self.plain,
+            Some(c) if self.prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player) && self.images => Theme::from_cover(c, accents, &self.look),
+            _ => self.look,
         };
     }
 
-    /// Whether lyrics are visible (panel or full player).
+    /// Whether lyrics are visible (the full player's panel).
     pub fn lyrics_shown(&self) -> bool {
-        self.full || self.panel == Some(Panel::Lyrics)
+        self.full && self.panel == Panel::Lyrics
     }
 
-    /// Whether the transition note is visible (playing panel or full player).
+    /// Whether the transition note is visible.
     pub fn transition_shown(&self) -> bool {
-        self.full || self.panel == Some(Panel::Playing)
+        self.full
     }
 
     // ---- going places ----
 
-    /// The sidebar entries.
-    pub fn nav(&self) -> Vec<Nav> {
-        let playlists = self.library.playlists.ready().map_or(0, Vec::len);
-        let mut v = Vec::with_capacity(8 + playlists);
-        v.extend(NAV_TOP);
-        v.extend(self.nav_library());
-        v.extend((0..playlists).map(Nav::Playlist));
-        v.extend(NAV_BOTTOM);
-        v
+    /// Whether the page's list has rows hidden above and below, as last drawn: the edges the chrome fades.
+    pub fn page_cut(&self) -> (bool, bool) {
+        if let Some(p) = self.pages.last() {
+            return p.sel_ref().cut;
+        }
+        let l = &self.library;
+        match self.view {
+            View::Home => (self.home.top > 0, self.home.below),
+            View::Albums => l.albums_sel.cut,
+            View::Artists => l.artists_sel.cut,
+            View::Songs => l.songs_sel.cut,
+            View::Playlists => l.playlists_sel.cut,
+            View::Favorites => l.favorites_sel.cut,
+            View::Search => self.search.sel.cut,
+            View::Downloads => self.downloads_sel.cut,
+            View::Settings => self.settings.cut(),
+            View::Equalizer | View::Login => (false, false),
+        }
     }
 
-    /// The library's entries the profile has.
-    pub fn nav_library(&self) -> Vec<Nav> {
-        let has = |n: Nav| {
-            let section = match n {
-                Nav::Albums => LibrarySection::Albums,
-                Nav::Artists => LibrarySection::Artists,
-                Nav::Songs => LibrarySection::Songs,
-                _ => LibrarySection::Downloads,
-            };
-            self.rules.sections.contains(&section)
-        };
-        NAV_LIBRARY.into_iter().filter(|n| has(*n)).collect()
+    /// The top outline's tabs the profile has, in order.
+    pub fn tabs(&self) -> Vec<View> {
+        let has = |section| self.rules.sections.contains(&section);
+        [
+            (View::Home, true),
+            (View::Albums, has(LibrarySection::Albums)),
+            (View::Artists, has(LibrarySection::Artists)),
+            (View::Songs, has(LibrarySection::Songs)),
+            (View::Playlists, has(LibrarySection::Playlists)),
+            (View::Favorites, self.rules.stars),
+        ]
+        .into_iter()
+        .filter_map(|(v, shown)| shown.then_some(v))
+        .collect()
     }
 
+    /// Whether the profile has `view`.
+    pub fn reaches(&self, view: View) -> bool {
+        match view {
+            View::Downloads => self.rules.sections.contains(&LibrarySection::Downloads),
+            View::Equalizer | View::Settings => true,
+            v => self.tabs().contains(&v),
+        }
+    }
 
     /// A jam guest's: its picks are asked of the host, and the player shows the jam, which it controls by
     /// its role ([`App::offers`]).
@@ -971,13 +993,9 @@ impl App {
         self.view = view;
         self.pages.clear();
         self.full = false;
+        self.focus = Focus::Main;
         self.tune();
         self.dirty = true;
-        self.root = nav_of(view);
-        if let Some(i) = self.nav().iter().position(|n| *n == self.root) {
-            self.side.at = i;
-        }
-        self.want_playlists();
         let l = &mut self.library;
         match view {
             View::Home if !self.home.asked => {
@@ -999,6 +1017,14 @@ impl App {
                 l.songs = Load::Loading;
                 self.cmds.push(Cmd::Load(Req::Songs { offset: 0 }));
             }
+            View::Playlists if matches!(l.playlists, Load::Idle) => {
+                l.playlists = Load::Loading;
+                self.cmds.push(Cmd::Load(Req::Playlists));
+            }
+            View::Favorites if matches!(l.favorites, Load::Idle) => {
+                l.favorites = Load::Loading;
+                self.cmds.push(Cmd::Load(Req::Favorites));
+            }
             View::Downloads => self.cmds.push(Cmd::Load(Req::Downloads)),
             View::Settings if !self.settings.facts_asked => {
                 self.settings.facts_asked = true;
@@ -1006,42 +1032,6 @@ impl App {
             }
             View::Search if self.search.view.is_none() => self.search.editing = true,
             _ => {}
-        }
-    }
-
-    /// Requests the sidebar's playlists once, where the profile has them.
-    fn want_playlists(&mut self) {
-        if matches!(self.library.playlists, Load::Idle) && self.view != View::Login && self.rules.sections.contains(&LibrarySection::Playlists) {
-            self.library.playlists = Load::Loading;
-            self.cmds.push(Cmd::Load(Req::Playlists));
-        }
-    }
-
-    /// Opens a sidebar entry and focuses the page.
-    fn open_nav(&mut self, n: Nav) {
-        self.focus = Focus::Main;
-        match n {
-            Nav::Search => {
-                self.go(View::Search);
-                self.search.editing = true;
-            }
-            Nav::Home => self.go(View::Home),
-            Nav::Albums => self.go(View::Albums),
-            Nav::Artists => self.go(View::Artists),
-            Nav::Songs => self.go(View::Songs),
-            Nav::Downloads => self.go(View::Downloads),
-            Nav::Equalizer => self.go(View::Equalizer),
-            Nav::Settings => self.go(View::Settings),
-            Nav::Playlist(i) => {
-                let Some(id) = self.library.playlists.ready().and_then(|v| v.get(i)).map(|p| p.id.clone()) else { return };
-                self.pages.clear();
-                self.full = false;
-                self.open_playlist(id);
-                self.root = n;
-            }
-        }
-        if let Some(i) = self.nav().iter().position(|x| *x == n) {
-            self.side.at = i;
         }
     }
 
@@ -1074,23 +1064,17 @@ impl App {
         self.pages.last_mut()
     }
 
-    /// Shows panel `p`, or hides it if already shown; the queue and lyrics take focus.
+    /// Opens the full player on panel `p`; the same again closes it. The queue, lyrics and devices take
+    /// the keys.
     pub fn set_panel(&mut self, p: Panel) {
-        let there = self.panel == Some(p) && (self.shown.panel || self.focus == Focus::Panel);
-        self.full = false;
-        if there {
-            if self.shown.panel {
-                self.panel = None;
-            }
-            if self.focus == Focus::Panel {
-                self.focus = Focus::Main;
-            }
-            return;
+        if self.full && self.panel == p {
+            return self.close_full();
         }
         if p == Panel::Devices && !self.devices.on {
             return self.say(crate::text::REMOTE_OFF, false);
         }
-        self.panel = Some(p);
+        self.panel = p;
+        self.open_full();
         match p {
             // Select the playing song.
             Panel::Queue => {
@@ -1098,40 +1082,49 @@ impl App {
                 if let Some(row) = self.queue_rows().iter().position(|r| *r == QueueRow::Song(current as usize)) {
                     self.queue_sel.at = row;
                 }
-                self.focus = Focus::Panel;
             }
             // Select the device playing.
             Panel::Devices => {
                 let d = &mut self.devices;
                 let active = d.active.as_ref().and_then(|(id, _)| d.list.iter().position(|x| &x.id == id));
                 d.sel.at = active.map_or(0, |i| d.rows().iter().position(|r| *r == DeviceRow::Device(i)).unwrap_or(0));
-                self.focus = Focus::Panel;
             }
-            Panel::Lyrics => {
-                self.want_lyrics();
-                self.focus = Focus::Panel;
-            }
-            Panel::Playing if !self.shown.panel => self.focus = Focus::Panel,
-            Panel::Playing => {}
+            Panel::Lyrics => self.want_lyrics(),
         }
     }
 
-    fn toggle_full(&mut self) {
-        self.full = !self.full;
-        if self.full {
+    fn open_full(&mut self) {
+        self.full = true;
+        self.focus = Focus::Panel;
+        if self.panel == Panel::Lyrics {
             self.want_lyrics();
         }
     }
 
-    /// Cycles focus between sidebar, page and panel.
-    fn cycle(&mut self, forward: bool) {
-        let mut parts = vec![Focus::Side, Focus::Main];
-        if self.panel.is_some() {
-            parts.push(Focus::Panel);
+    fn close_full(&mut self) {
+        self.full = false;
+        self.focus = Focus::Main;
+    }
+
+    fn toggle_full(&mut self) {
+        if self.full {
+            self.close_full();
+        } else {
+            self.set_panel(self.panel);
         }
-        let at = parts.iter().position(|f| *f == self.focus).unwrap_or(1);
-        let n = parts.len();
-        self.focus = parts[if forward { (at + 1) % n } else { (at + n - 1) % n }];
+    }
+
+    /// The next (or previous) panel of the full player.
+    fn cycle(&mut self, forward: bool) {
+        if !self.full {
+            return self.dirty = false;
+        }
+        let shown: Vec<Panel> = PANELS.iter().map(|p| p.0).filter(|p| *p != Panel::Devices || self.devices.on).collect();
+        let at = shown.iter().position(|p| *p == self.panel).unwrap_or(0);
+        let n = shown.len();
+        let to = shown[if forward { (at + 1) % n } else { (at + n - 1) % n }];
+        self.panel = to;
+        self.open_full();
     }
 
     fn want_lyrics(&mut self) {
@@ -1200,7 +1193,7 @@ impl App {
             // The runner read the devices into `devices`.
             Msg::Remote => {}
             Msg::Jam(Ok(())) => {
-                self.panel = Some(Panel::Queue);
+                self.panel = Panel::Queue;
                 self.invite();
             }
             Msg::Jam(Err(e)) => self.say(format!("{} ({e})", crate::text::JAM_FAILED), true),
@@ -1298,15 +1291,10 @@ impl App {
             (Req::Albums { .. }, Err(e)) => self.library.albums = Load::Failed(e),
             (Req::Artists, Ok(Data::Artists(v))) => self.library.artists = Load::Ready(v),
             (Req::Artists, Err(e)) => self.library.artists = Load::Failed(e),
-            (Req::Playlists, Ok(Data::Playlists(v))) => {
-                // Keep the same sidebar entry selected as the playlist count changes.
-                let was = self.nav().get(self.side.at).copied();
-                self.library.playlists = Load::Ready(v);
-                if let Some(i) = was.and_then(|n| self.nav().iter().position(|x| *x == n)) {
-                    self.side.at = i;
-                }
-            }
+            (Req::Playlists, Ok(Data::Playlists(v))) => self.library.playlists = Load::Ready(v),
             (Req::Playlists, Err(e)) => self.library.playlists = Load::Failed(e),
+            (Req::Favorites, Ok(Data::Favorites(v))) => self.library.favorites = Load::Ready(v),
+            (Req::Favorites, Err(e)) => self.library.favorites = Load::Failed(e),
             (Req::Songs { offset }, Ok(Data::Songs(v, exhausted))) => {
                 self.library.songs_more = !exhausted;
                 match &mut self.library.songs {
@@ -1378,6 +1366,9 @@ impl App {
         if let Some(t) = self.downloads_at {
             sooner(t);
         }
+        if let Some((_, since)) = self.flash {
+            sooner(since + FLASH);
+        }
         at
     }
 
@@ -1391,6 +1382,9 @@ impl App {
         if self.note.as_ref().is_some_and(|(_, _, since)| *since + NOTE_FOR <= now) {
             self.note = None;
         }
+        if self.flash.is_some_and(|(_, since)| since + FLASH <= now) {
+            self.flash = None;
+        }
         if self.downloads_at.is_some_and(|t| t <= now) {
             self.downloads_at = None;
             if self.view == View::Downloads {
@@ -1403,7 +1397,7 @@ impl App {
 
     /// Whether lyrics take the list keys.
     fn lyrics_focused(&self) -> bool {
-        self.full || (self.focus == Focus::Panel && self.panel == Some(Panel::Lyrics))
+        self.full && self.panel == Panel::Lyrics
     }
 
     /// Whether the focused page is a card grid.
@@ -1420,8 +1414,7 @@ impl App {
             return &[Scope::Lyrics, Scope::List, Scope::Global];
         }
         match self.focus {
-            Focus::Side => &[Scope::List, Scope::Global],
-            Focus::Panel if self.panel == Some(Panel::Queue) => &[Scope::Edit, Scope::List, Scope::Global],
+            Focus::Panel if self.panel == Panel::Queue => &[Scope::Edit, Scope::List, Scope::Global],
             Focus::Panel => &[Scope::List, Scope::Global],
             Focus::Main if self.grid_focused() => &[Scope::Grid, Scope::List, Scope::Global],
             Focus::Main if self.page().is_some() => &[Scope::List, Scope::Global],
@@ -1669,16 +1662,28 @@ impl App {
             Action::Shuffle | Action::Repeat if self.guest() => self.dirty = false,
             Action::MoveUp | Action::MoveDown if self.queue_in_focus() && !self.offers(|c| c.reorder) => self.dirty = false,
             Action::Remove | Action::Undo if self.guest() && self.queue_in_focus() => self.dirty = false,
-            Action::TogglePlay => self.cmds.push(Cmd::Toggle),
-            Action::Next => self.cmds.push(Cmd::Next),
-            Action::Previous => self.cmds.push(Cmd::Previous),
+            Action::TogglePlay => {
+                self.pressed(Button::Toggle);
+                self.cmds.push(Cmd::Toggle);
+            }
+            Action::Next => {
+                self.pressed(Button::Next);
+                self.cmds.push(Cmd::Next);
+            }
+            Action::Previous => {
+                self.pressed(Button::Previous);
+                self.cmds.push(Cmd::Previous);
+            }
             Action::SeekBack => self.seek_by(-5_000, now),
             Action::SeekForward => self.seek_by(5_000, now),
             Action::SeekBackLong => self.seek_by(-30_000, now),
             Action::SeekForwardLong => self.seek_by(30_000, now),
             Action::VolumeUp => self.set_volume(self.volume + 0.05),
             Action::VolumeDown => self.set_volume(self.volume - 0.05),
-            Action::Search => self.open_nav(Nav::Search),
+            Action::Search => {
+                self.go(View::Search);
+                self.search.editing = true;
+            }
             Action::Curve => self.cmds.push(Cmd::Curve),
             Action::Mouse => {
                 self.mouse = !self.mouse;
@@ -1691,15 +1696,18 @@ impl App {
                 self.cmds.push(Cmd::Images(self.images));
             }
             Action::Shuffle => {
+                self.pressed(Button::Shuffle);
                 let on = !self.queue_shuffled();
                 self.cmds.push(Cmd::Shuffle(on));
                 self.say(if on { "Shuffle on" } else { "Shuffle off" }, false);
             }
-            Action::Repeat => self.cmds.push(Cmd::CycleRepeat),
+            Action::Repeat => {
+                self.pressed(Button::Repeat);
+                self.cmds.push(Cmd::CycleRepeat);
+            }
             Action::Go(n) => {
-                if let Some(v) = GO.get(n as usize).filter(|v| self.nav().contains(&nav_of(**v))) {
+                if let Some(v) = GO.get(n as usize).filter(|v| self.reaches(**v)) {
                     self.go(*v);
-                    self.focus = Focus::Main;
                 }
             }
             Action::Panel(p) => self.set_panel(p),
@@ -1771,6 +1779,13 @@ impl App {
         }
     }
 
+    /// Shows `b` reversed for [`FLASH`]: the press feedback of a click or a key (none with reduced motion).
+    fn pressed(&mut self, b: Button) {
+        if !self.reduced_motion {
+            self.flash = Some((b, Instant::now()));
+        }
+    }
+
     fn seek_by(&mut self, delta: i64, now: Instant) {
         let Some(song) = &self.song else { return };
         let len = song.duration as i64 * 1000;
@@ -1803,29 +1818,22 @@ impl App {
         self.queue.as_ref().map_or(0, |q| q.repeat)
     }
 
-    /// Back: out of the full player, out of a page, then from the page to the sidebar.
+    /// Back: out of the full player, then out of a page.
     fn back(&mut self) {
         if self.full {
-            self.full = false;
+            if self.lyrics_sel.is_some() && self.panel == Panel::Lyrics {
+                self.lyrics_sel = None;
+            } else {
+                self.close_full();
+            }
             return;
         }
-        match self.focus {
-            Focus::Panel if self.lyrics_sel.is_some() && self.panel == Some(Panel::Lyrics) => self.lyrics_sel = None,
-            Focus::Panel => self.focus = Focus::Main,
-            Focus::Main => {
-                if self.pages.pop().is_none() {
-                    self.focus = Focus::Side;
-                }
-            }
-            Focus::Side => self.dirty = false,
+        if self.pages.pop().is_none() {
+            self.dirty = false;
         }
     }
 
     fn refresh(&mut self) {
-        if self.focus == Focus::Side {
-            self.library.playlists = Load::Idle;
-            return self.want_playlists();
-        }
         if self.lyrics_focused() {
             self.lyrics_for = None;
             return self.want_lyrics();
@@ -1836,13 +1844,12 @@ impl App {
         }
         let l = &mut self.library;
         match self.view {
-            View::Home => {
-                self.home.asked = false;
-                self.library.playlists = Load::Idle;
-            }
+            View::Home => self.home.asked = false,
             View::Albums => l.albums = Load::Idle,
             View::Artists => l.artists = Load::Idle,
             View::Songs => l.songs = Load::Idle,
+            View::Playlists => l.playlists = Load::Idle,
+            View::Favorites => l.favorites = Load::Idle,
             View::Settings => self.settings.facts_asked = false,
             _ => {}
         }
@@ -1853,29 +1860,18 @@ impl App {
 
     /// The focused list's selection and length; None for home shelves and lyrics.
     fn list(&mut self) -> Option<(&mut Sel, usize)> {
-        match self.focus {
-            Focus::Side => {
-                let len = self.nav().len();
-                return Some((&mut self.side, len));
-            }
-            Focus::Panel => {
-                return match self.panel? {
-                    Panel::Queue => {
-                        let len = self.queue_rows().len();
-                        Some((&mut self.queue_sel, len))
-                    }
-                    Panel::Devices => {
-                        let len = self.devices.rows().len();
-                        Some((&mut self.devices.sel, len))
-                    }
-                    Panel::Playing => {
-                        let len = self.up_next().len();
-                        Some((&mut self.up_next_sel, len))
-                    }
-                    Panel::Lyrics => None,
-                };
-            }
-            Focus::Main => {}
+        if self.focus == Focus::Panel {
+            return match self.panel {
+                Panel::Queue => {
+                    let len = self.queue_rows().len();
+                    Some((&mut self.queue_sel, len))
+                }
+                Panel::Devices => {
+                    let len = self.devices.rows().len();
+                    Some((&mut self.devices.sel, len))
+                }
+                Panel::Lyrics => None,
+            };
         }
         if self.page().is_some() {
             let p = self.page_mut()?;
@@ -1884,10 +1880,13 @@ impl App {
         }
         let l = &self.library;
         let lens = (l.albums.ready().map_or(0, Vec::len), l.artists.ready().map_or(0, Vec::len), l.songs.ready().map_or(0, Vec::len));
+        let (playlists, favorites) = (l.playlists.ready().map_or(0, Vec::len), l.favorites.ready().map_or(0, Vec::len));
         Some(match self.view {
             View::Albums => (&mut self.library.albums_sel, lens.0),
             View::Artists => (&mut self.library.artists_sel, lens.1),
             View::Songs => (&mut self.library.songs_sel, lens.2),
+            View::Playlists => (&mut self.library.playlists_sel, playlists),
+            View::Favorites => (&mut self.library.favorites_sel, favorites),
             View::Search => {
                 let len = self.search.rows().len();
                 (&mut self.search.sel, len)
@@ -1928,7 +1927,7 @@ impl App {
             _ => return self.act_on_selected(a),
         }
         let down = !matches!(a, Action::Up | Action::PageUp | Action::Top | Action::Left);
-        if self.focus == Focus::Panel && self.panel == Some(Panel::Devices) {
+        if self.focus == Focus::Panel && self.panel == Panel::Devices {
             self.devices.settle(down);
         }
         if self.focus == Focus::Main && self.page().is_none() {
@@ -1981,23 +1980,13 @@ impl App {
 
     /// The selected item in the focused part.
     pub fn selected(&self) -> Option<Item> {
-        match self.focus {
-            Focus::Side => {
-                return match self.nav().get(self.side.at)? {
-                    Nav::Playlist(i) => self.library.playlists.ready()?.get(*i).cloned().map(Item::Playlist),
-                    _ => None,
-                };
-            }
-            Focus::Panel => {
-                let q = self.queue.as_ref()?;
-                let i = match self.panel? {
-                    Panel::Queue => self.queue_selected_index()?,
-                    Panel::Playing => *self.up_next().get(self.up_next_sel.at)?,
-                    Panel::Lyrics | Panel::Devices => return None,
-                };
-                return q.songs.get(i).cloned().map(|s| Item::Song(vec![s], 0));
-            }
-            Focus::Main => {}
+        if self.focus == Focus::Panel {
+            let q = self.queue.as_ref()?;
+            let i = match self.panel {
+                Panel::Queue => self.queue_selected_index()?,
+                Panel::Lyrics | Panel::Devices => return None,
+            };
+            return q.songs.get(i).cloned().map(|s| Item::Song(vec![s], 0));
         }
         if let Some(p) = self.page() {
             return match p {
@@ -2011,6 +2000,8 @@ impl App {
             View::Albums => l.albums.ready()?.get(l.albums_sel.at).cloned().map(Item::Album),
             View::Artists => l.artists.ready()?.get(l.artists_sel.at).cloned().map(Item::Artist),
             View::Songs => l.songs.ready().filter(|s| l.songs_sel.at < s.len()).map(|s| Item::Song(s.clone(), l.songs_sel.at)),
+            View::Playlists => l.playlists.ready()?.get(l.playlists_sel.at).cloned().map(Item::Playlist),
+            View::Favorites => l.favorites.ready().filter(|s| l.favorites_sel.at < s.len()).map(|s| Item::Song(s.clone(), l.favorites_sel.at)),
             View::Search => match self.search.rows().get(self.search.sel.at)? {
                 // Search songs play alone: the list is no page's queue and may hold provider songs.
                 SearchRow::Song(s) => Some(Item::Song(vec![(*s).clone()], 0)),
@@ -2032,15 +2023,9 @@ impl App {
 
     fn act_on_selected(&mut self, a: Action) {
         match self.focus {
-            Focus::Side if a == Action::Open => {
-                if let Some(n) = self.nav().get(self.side.at).copied() {
-                    self.open_nav(n);
-                }
-                return;
-            }
             Focus::Panel if a == Action::Open => {
                 let i = match self.panel {
-                    Some(Panel::Queue) => match self.queue_rows().get(self.queue_sel.at).copied() {
+                    Panel::Queue => match self.queue_rows().get(self.queue_sel.at).copied() {
                         Some(QueueRow::Song(_)) if self.guest() => None,
                         Some(QueueRow::Song(i)) => Some(i),
                         Some(QueueRow::Jam | QueueRow::Listeners) => return self.invite(),
@@ -2055,8 +2040,7 @@ impl App {
                         }
                         None => None,
                     },
-                    Some(Panel::Playing) => self.up_next().get(self.up_next_sel.at).copied(),
-                    Some(Panel::Devices) => return self.device_open(),
+                    Panel::Devices => return self.device_open(),
                     _ => None,
                 };
                 if let Some(i) = i {
@@ -2187,6 +2171,10 @@ impl App {
     /// ([`Msg::Starred`]).
     fn star(&mut self, kind: Starrable, id: String, listed: bool) {
         let on = !self.starred(kind, &id, listed);
+        // A like is stamped on the playing song's seal.
+        if on && self.song.as_ref().is_some_and(|s| s.id == id) {
+            self.pressed(Button::StarSong);
+        }
         match self.devices.hearts.get_mut(&id).filter(|_| kind == Starrable::Song) {
             Some(heart) => *heart = on,
             None => {
@@ -2223,7 +2211,7 @@ impl App {
     }
 
     fn queue_in_focus(&self) -> bool {
-        self.focus == Focus::Panel && self.panel == Some(Panel::Queue) && !self.full
+        self.focus == Focus::Panel && self.panel == Panel::Queue
     }
 
     fn queue_selected_index(&self) -> Option<usize> {
@@ -2298,16 +2286,6 @@ impl App {
         }
         self.cmds.push(Cmd::Move(from, to));
         self.queue_sel.at = if down { self.queue_sel.at + 1 } else { self.queue_sel.at - 1 };
-    }
-
-    /// List indexes after the current song, in play order.
-    pub fn up_next(&self) -> Vec<usize> {
-        let order = self.queue_order();
-        let current = self.queue.as_ref().map_or(-1, |q| q.index);
-        match order.iter().position(|&i| i as i32 == current) {
-            Some(p) => order[p + 1..].to_vec(),
-            None => order,
-        }
     }
 
     // ---- other devices and the jam ----
@@ -2444,6 +2422,7 @@ impl App {
                 self.card_covers = !self.card_covers;
                 self.cmds.push(Cmd::CardCovers(self.card_covers));
             }
+            Switch::Paint => self.cmds.push(Cmd::Paint(!self.paint)),
             Switch::Setting(_) | Switch::Stores(..) => {}
         }
         self.settings.invalidate();
@@ -2538,7 +2517,6 @@ impl App {
                         self.eq_step(d < 0);
                     }
                     Some(Hit::Row(l, _) | Hit::List(l)) => self.scroll(l, d),
-                    Some(Hit::Nav(_)) => self.scroll(ListRef::Side, d),
                     Some(Hit::Volume) => self.set_volume(self.volume - d as f32 * 0.05),
                     _ => self.dirty = false,
                 }
@@ -2596,11 +2574,7 @@ impl App {
 
     fn click(&mut self, h: Hit, col: u16, row: u16, again: bool) {
         match h {
-            Hit::Nav(i) => {
-                if let Some(n) = self.nav().get(i).copied() {
-                    self.open_nav(n);
-                }
-            }
+            Hit::Tab(view) => self.go(view),
             Hit::Seek => self.drag = Some(Drag::Seek(share(self.seek_rect, col))),
             Hit::Volume => {
                 self.drag = Some(Drag::Volume);
@@ -2752,20 +2726,6 @@ impl App {
     }
 }
 
-/// The sidebar entry of a root view.
-fn nav_of(view: View) -> Nav {
-    match view {
-        View::Home | View::Login => Nav::Home,
-        View::Search => Nav::Search,
-        View::Albums => Nav::Albums,
-        View::Artists => Nav::Artists,
-        View::Songs => Nav::Songs,
-        View::Downloads => Nav::Downloads,
-        View::Equalizer => Nav::Equalizer,
-        View::Settings => Nav::Settings,
-    }
-}
-
 /// `col`'s position across `r`, 0 to 1.
 fn share(r: Rect, col: u16) -> f32 {
     if r.width == 0 {
@@ -2783,4 +2743,7 @@ pub enum DownloadRow<'a> {
 
 /// How long a status note shows.
 pub const NOTE_FOR: Duration = Duration::from_secs(4);
+
+/// How long a pressed transport button or a stamped seal shows reversed.
+pub const FLASH: Duration = Duration::from_millis(230);
 
