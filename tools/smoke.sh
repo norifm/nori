@@ -39,6 +39,9 @@ if want controls; then section "controls: pause, play, seek, next"
   "$app" do "seek 60000" >/dev/null
   check "a seek lands where asked" wait_for positionMs ">59000" 10
   check "and stays near it (${WAITED} ms)" test "${WAITED:-0}" -lt 70000
+  # A next pressed before autofill's songs land is dropped after 2 s (nori_player::queue::NEXT_KEPT_MS),
+  # and the real server takes longer than that to answer.
+  check "autofill adds songs after it" wait_for queue ">1" 20
   was=$(field title)
   "$app" do next >/dev/null
   check "next moves to another song" wait_for title "!$was" 15

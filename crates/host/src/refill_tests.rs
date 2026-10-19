@@ -87,7 +87,7 @@ fn late_autofill_respects_playback_and_new_queues() {
             s.engine.resume_after_refill(previous_end);
         }
         let before = card.heard.lock().len();
-        s.filled(nori_core::autofill::Refill { songs: vec![songs[2].clone()], picked: None, album: None });
+        s.filled(nori_core::autofill::Refill { songs: vec![songs[2].clone()], after: Some(previous_end), ..Default::default() });
         time.run(Duration::from_secs(2));
         let heard = card.heard.lock().len() - before;
         let ids = s.core.session.playlist(|p| p.ids().to_vec());

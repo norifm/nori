@@ -21,12 +21,14 @@ pub struct Refill {
     pub picked: Option<Picked>,
     /// The album the rotation picked.
     pub album: Option<String>,
+    /// The queue entry the songs follow: the queue's end when the fetch began.
+    pub after: Option<u64>,
 }
 
 impl Refill {
     /// Random songs, which no rotation picked.
     fn random(songs: Vec<Song>) -> Refill {
-        Refill { songs, picked: None, album: None }
+        Refill { songs, ..Refill::default() }
     }
 
     /// The ids the rotation picked.
@@ -128,7 +130,7 @@ impl Client {
         for (pick, read) in picks.into_iter().zip(reads) {
             let songs: Vec<Song> = read.unwrap_or_default().into_iter().filter(|s| !queued.contains(s.id.as_str()) && allowed(s, remote)).collect();
             if songs.len() >= ALBUM_MIN {
-                return Refill { songs, picked: Some(Picked::Album), album: Some(pick) };
+                return Refill { songs, picked: Some(Picked::Album), album: Some(pick), ..Refill::default() };
             }
         }
         Refill::default()
@@ -203,7 +205,7 @@ impl Client {
     /// The fetch returned `fresh`: whether to append its songs. When so, what it picked counts as used
     /// for the rotation; a fetch whose songs are dropped leaves no trace.
     pub fn autofill_arrived(&self, fresh: Refill) -> bool {
-        let take = self.core.session.autofill_arrived(fresh.songs.len() as u32);
+        let take = self.core.session.autofill_arrived(fresh.songs.len() as u32, fresh.after);
         if let (true, Some(kind)) = (take, fresh.picked) {
             let _ = note(&self.core.db.lock(), kind, &fresh.picks(), crate::db::now_ms());
         }
@@ -214,7 +216,8 @@ impl Client {
 impl Client {
     async fn autofill_as(&self, kind: AutoFillKind, basis: AutoFillBasis, remote: bool) -> Refill {
         let began = nori_time::Instant::now();
-        let fresh = self.autofill_from(kind, basis, remote).await;
+        let after = self.core.session.end_entry();
+        let fresh = Refill { after, ..self.autofill_from(kind, basis, remote).await };
         crate::alog::info(&format!("autofill: {} songs in {} ms (kind {kind:?}, basis {basis:?})", fresh.songs.len(), began.elapsed().as_millis()));
         fresh
     }
@@ -266,7 +269,7 @@ impl Client {
             let order = self.turns(Picked::Songs, offered.iter().map(|s| s.id.clone()).collect());
             let mut by_id: HashMap<String, Song> = offered.into_iter().map(|s| (s.id.clone(), s)).collect();
             let fresh: Vec<Song> = order.into_iter().filter_map(|id| by_id.remove(&id)).take(SONGS).collect();
-            Refill { songs: fresh, picked: Some(Picked::Songs), album: None }
+            Refill { songs: fresh, picked: Some(Picked::Songs), ..Refill::default() }
         };
         self.core.session.register(fresh.songs.clone());
         fresh
