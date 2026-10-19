@@ -224,7 +224,8 @@ impl Session {
             Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
             Req::Artist(id) => Some(PageAsk::Artist(id)),
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
-            Req::Home | Req::Favorites | Req::Downloads | Req::Facts => None,
+            Req::Favorites => Some(PageAsk::Favorites),
+            Req::Home | Req::Downloads | Req::Facts => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
@@ -242,21 +243,6 @@ impl Session {
                     Ok(HomePart::Shelf { at, items: ShelfItems::Albums(albums) }) => send(Ok(Data::HomeRow(at, crate::text::home_row(rows[at]).into(), albums))),
                     Ok(_) => {}
                     Err(e) => send(Err(unreachable(&e))),
-                });
-            }
-            Req::Favorites => {
-                let client = self.client.clone();
-                nori_host::spawn("nori-read", move || {
-                    let mut got = false;
-                    let read = nori_host::session::read_pages(&client, Read::StarredItems, |p| {
-                        if let Page::StarredPage { v } = p {
-                            got = true;
-                            send(Ok(Data::Favorites(v.songs)));
-                        }
-                    });
-                    if let (Err(e), false) = (read, got) {
-                        send(Err(net_error(&e)));
-                    }
                 });
             }
             Req::Downloads => {
@@ -362,6 +348,7 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Albums(v) => Data::Albums(v),
         PageGot::Artists(v) => Data::Artists(v),
         PageGot::Playlists(v) => Data::Playlists(v),
+        PageGot::Favorites(s) => Data::Favorites(s.songs),
         PageGot::Songs { songs, exhausted } => Data::Songs(songs, exhausted),
         PageGot::Album(d) => Data::Album(d),
         PageGot::Artist(d) => Data::Artist(d),
