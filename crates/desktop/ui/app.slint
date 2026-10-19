@@ -449,9 +449,10 @@ component Ripple inherits Rectangle {
 }
 
 // A borderless button: a glyph that is quiet unless lit, a faint round plate under the pointer, and the
-// press ripple.
+// press ripple unless `still` (the top pill's).
 component IconButton inherits Rectangle {
     in property <string> path;
+    in property <bool> still;
     in property <bool> lit;
     in property <bool> quiet;
     in property <bool> enabled: true;
@@ -466,7 +467,7 @@ component IconButton inherits Rectangle {
     height: root.size;
     border-radius: root.size / 2;
     background: touch.has-hover ? Theme.hover : root.base;
-    Ripple {
+    if !root.still: Ripple {
         pressed: touch.pressed;
         radius: parent.border-radius;
     }
@@ -516,6 +517,7 @@ component TextButton inherits Rectangle {
 }
 
 // A tab of the top pill: its glyph and, when named, its name; the current one lit in the accent and bold.
+// No press ripple: the tab lighting up is the answer.
 component TabButton inherits Rectangle {
     in property <string> text;
     in property <string> icon;
@@ -526,10 +528,6 @@ component TabButton inherits Rectangle {
     width: row.preferred-width;
     border-radius: 18px;
     background: touch.has-hover ? Theme.hover : transparent;
-    Ripple {
-        pressed: touch.pressed;
-        radius: parent.border-radius;
-    }
     row := HorizontalLayout {
         padding-left: 12px;
         padding-right: 12px;
@@ -3662,6 +3660,7 @@ component TopContent inherits Rectangle {
             lit: root.view == 8 || root.view == 9;
             quiet: true;
             size: 36px;
+            still: true;
             clicked => { root.open-menu(); }
         }
     }
