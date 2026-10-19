@@ -3948,6 +3948,9 @@ export component AppWindow inherits Window {
     callback search-edited(string);
     // Nothing is typed in the search field: the page lists the searches made before.
     in property <bool> search-blank: true;
+    // The search found nothing for `search-query`.
+    in property <bool> search-nothing;
+    in property <string> search-query;
     in property <[string]> recent-searches;
     callback search-again(string);
     callback forget-searches();
@@ -4186,6 +4189,35 @@ export component AppWindow inherits Window {
 
                 // What the top pill's search field found; the field is the pill's.
                 if root.view == 1: Fade {
+                    // Nothing to list (no searches yet, or nothing found): a word in the middle of the page.
+                    if (root.search-blank && root.recent-searches.length == 0) || root.search-nothing: VerticalLayout {
+                        alignment: center;
+                        spacing: 10px;
+                        padding-top: Chrome.top-room;
+                        padding-bottom: Chrome.bottom-room;
+                        Icon {
+                            x: (parent.width - self.width) / 2;
+                            path: Icons.search;
+                            colour: Theme.dim;
+                            width: 44px;
+                            height: 44px;
+                        }
+                        Text {
+                            text: root.search-nothing ? "No results" : "Search";
+                            color: Theme.text;
+                            font-family: Type.title;
+                            font-size: 24px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: root.search-nothing ? "Nothing matches “" + root.search-query + "”. Check the spelling or try other words." : "Your library and your server, by artist, album or song";
+                            color: Theme.dim;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
                     VerticalLayout {
                         Flickable {
                             vertical-stretch: 1;
@@ -4236,14 +4268,6 @@ export component AppWindow inherits Window {
                                             mouse-cursor: pointer;
                                             clicked => { root.search-again(q); }
                                         }
-                                    }
-                                }
-                                if root.search-blank && root.recent-searches.length == 0: HorizontalLayout {
-                                    padding-left: 34px;
-                                    Text {
-                                        text: "Search your library and your server";
-                                        color: Theme.dim;
-                                        font-size: 15px;
                                     }
                                 }
                                 if root.search-note != "": HorizontalLayout {

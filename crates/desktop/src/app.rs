@@ -1390,6 +1390,8 @@ impl App {
         // Nothing typed: the searches made before, newest first.
         let blank = v.query.trim().is_empty();
         ui.set_search_blank(blank);
+        ui.set_search_nothing(v.nothing_found && !v.searching && v.error.is_none());
+        ui.set_search_query(v.query.trim().into());
         if blank {
             let recent = self.session.as_ref().and_then(|s| s.core.search_history().ok()).unwrap_or_default();
             ui.set_recent_searches(ModelRc::new(VecModel::from(recent.into_iter().map(SharedString::from).collect::<Vec<_>>())));
@@ -1403,8 +1405,6 @@ impl App {
             "Searching the server…".to_string()
         } else if let Some(e) = v.error {
             format!("The server could not be searched ({}); these are from the offline index", e.reason.unwrap_or_default())
-        } else if v.nothing_found {
-            "Nothing found".to_string()
         } else {
             String::new()
         };
