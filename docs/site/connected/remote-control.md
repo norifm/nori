@@ -19,7 +19,7 @@ with nori, signed in to the same server account, see each other. One plays at a 
   and the volume keys show it and control it. The seek bar and **Mixing** indicator follow the playing
   device. The device you hold stops its own playback.
 - **The terminal** lists your devices in the full player's devices panel (`C`, or the ⇄ button in the player).
-- **Several clients on one computer.** On 0.6.3 and later, the desktop app and the terminal client
+- **Several clients on one computer.** On 0.7.0 and later, the desktop app and the terminal client
   running on one computer are separate devices, as is a second copy of either. Devices that share a name
   are listed with their kind, as "MacBook (computer)" and "MacBook (terminal)". The first client to start
   after the update keeps the computer's existing device.

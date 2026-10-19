@@ -5,9 +5,9 @@ sidebar:
   order: 1
 ---
 
-Applies to nori 0.6.3 and later. Every client has the equalizer and the effects. Before 0.6.3 the effects
+Applies to nori 0.7.0 and later. Every client has the equalizer and the effects. Before 0.7.0 the effects
 had their own controls (bass boost, crossfeed presets, a virtualizer slider, the compressor's six knobs, a
-noise gate and loudness compensation); nori 0.6.3 moves them over once, the first time it starts, as
+noise gate and loudness compensation); nori 0.7.0 moves them over once, the first time it starts, as
 below.
 
 The equalizer runs in nori's own sound chain, so it sounds the same on every client and every output. A
@@ -22,7 +22,7 @@ change is heard at once, seamlessly, while the music plays: nothing stops and no
 
 The pre-amp is set automatically so a boost cannot clip, and a look-ahead limiter catches what is left.
 Built-in presets cover bass, treble, vocals and loudness, and your own setups can be saved as profiles.
-**Bass boost** is one of the presets: a gentle low shelf at 100 Hz. A bass boost set before 0.6.3 is moved
+**Bass boost** is one of the presets: a gentle low shelf at 100 Hz. A bass boost set before 0.7.0 is moved
 onto the equalizer as that shelf, at the same strength.
 
 ## Effects
@@ -34,7 +34,7 @@ onto the equalizer as that shelf, at the same strength.
 | Volume boost | up to 12 dB louder, kept clean by the limiter (with [volume leveling](replaygain-and-loudness.md)) |
 | Balance, mono | left and right, or both channels as one |
 
-From before 0.6.3: crossfeed on becomes Natural and the virtualizer Wide; the compressor's knobs become the
+From before 0.7.0: crossfeed on becomes Natural and the virtualizer Wide; the compressor's knobs become the
 nearest of its three settings.
 
 Any of these turns [offload](offload.md) off while it is on, since it needs the samples.

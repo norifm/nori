@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Applies to nori 0.6.3 on Android, the desktop and the terminal.
+Applies to nori 0.7.0 on Android, the desktop and the terminal.
 
 Two services take a key of your own, in Settings, Lyrics, Lyrics sources:
 

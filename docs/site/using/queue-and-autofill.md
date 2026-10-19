@@ -16,7 +16,7 @@ handle, swipe it away (with Undo), or clear what is coming.
 - **Shuffle** spreads artists and albums apart, so the same artist rarely plays twice in a row.
 - **Repeat** goes off, all, one.
 - **Skip explicit songs** leaves out songs the server marks explicit.
-- A song that won't play is skipped, up to three in a row (from nori 0.6.3 always; before, a switch).
+- A song that won't play is skipped, up to three in a row (from nori 0.7.0 always; before, a switch).
 
 To carry the queue to another of your devices, see [Remote control](../connected/remote-control.md).
 
@@ -30,7 +30,7 @@ Autofill is on by default. When the last song starts, nori adds more music:
 | Chosen by | Similar music | similar music, the same artist, the same genre, the same era |
 | Include remote songs | off | songs from octo-fiesta's providers; each one played is downloaded into your library |
 
-With albums chosen, nori adds whole albums of at least three songs (from nori 0.6.3). When nothing related has
+With albums chosen, nori adds whole albums of at least three songs (from nori 0.7.0). When nothing related has
 one, for example after a remote song by an artist not in your library, it adds a random album from your library
 rather than singles.
 

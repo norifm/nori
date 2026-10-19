@@ -5,19 +5,19 @@ sidebar:
   order: 3
 ---
 
-Applies to nori 0.6.3. The display settings are Android's; the terminal's keys are listed below.
+Applies to nori 0.7.0. The display settings are Android's; the terminal's keys are listed below.
 
 ## Lyrics that drift
 
 nori checks lyrics against the song's voice once the song is analyzed, and shifts them when they run
-late. Since 0.6.3 it follows the singer's pitch, so instruments and noise in the voice's range (a cymbal
+late. Since 0.7.0 it follows the singer's pitch, so instruments and noise in the voice's range (a cymbal
 swelling into each line) mislead it less and it puts more lyrics right; songs analyzed by an older
 version are analyzed again. A song playing for the first time is analyzed once all of it has arrived, whether AutoMix is on
 or not; lyrics already on screen are checked then, while it plays. Lyrics from your server are shown as they are. On Android, **Lyrics** in the player's ⋯ menu (there when the song has lyrics) says where they came
 from, whether they are timed by the line or the word, and how their timing was set: not checked yet,
 adjusted automatically, adjusted by you, or checked and found not to fit the singing (another song's
 or another version's timing, shown as the service sent them and asked about again later). The **−** and **+** buttons beside the offset move them
-later or sooner in 50 ms steps (250 ms before 0.6.3). Manual offsets round to the nearest 50 ms. Your timing replaces
+later or sooner in 50 ms steps (250 ms before 0.7.0). Manual offsets round to the nearest 50 ms. Your timing replaces
 the automatic one, is kept for that song and those lyrics, and comes back
 the next time they play; **Reset** returns to the automatic timing. Lyrics from another service, or
 the same service's lyrics timed again, start without your timing.

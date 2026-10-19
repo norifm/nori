@@ -5,8 +5,8 @@ sidebar:
   order: 5
 ---
 
-Applies to nori 0.6.3 and later on every client. Before 0.6.3 this was **Even out volume**, with a
-pre-amp, a loudness target, a boost cap and a level for songs without tags; nori 0.6.3 moves those
+Applies to nori 0.7.0 and later on every client. Before 0.7.0 this was **Even out volume**, with a
+pre-amp, a loudness target, a boost cap and a level for songs without tags; nori 0.7.0 moves those
 settings over once, the first time it starts (any leveling becomes Automatic, the target the nearest
 level).
 

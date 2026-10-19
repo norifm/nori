@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Applies to nori 0.6.3 and later on every client. The list of sources and its order are edited on Android, the
+Applies to nori 0.7.0 and later on every client. The list of sources and its order are edited on Android, the
 desktop and the terminal.
 
 ## Your server's lyrics
@@ -43,7 +43,7 @@ The sources, in their default order:
 | 10 | PaxSenix: Spotify | words where supplied, else lines | off until you give your PaxSenix key |
 | 11 | YouTube Music | untimed | off by default |
 
-nori 0.6.3 removed SimpMusic, YouTube captions, Megalobiz, BetterLyrics Portato and Genius: measured over
+nori 0.7.0 removed SimpMusic, YouTube captions, Megalobiz, BetterLyrics Portato and Genius: measured over
 some three hundred songs, they answered nothing, or nothing the others did not answer better. A list you
 reordered keeps its order without them; a list left as it came takes the new default.
 
