@@ -22,7 +22,7 @@ opens the progress and retry controls.
 |---|---|
 | Quality for downloads | Original (or MP3 320, or Opus 192, 128, 96 or 64, transcoded by the server) |
 
-Four songs download at once (from nori 0.6.3; before, it was a setting); the rest wait their turn.
+Four songs download at once (from nori 0.7.0; before, it was a setting); the rest wait their turn.
 
 On the iPod touch, downloads run while the app is open or playing. Downloaded album pages use
 the saved tracks, and cached covers decode without reaching the server. In 0.6.0-beta.3 and later,
@@ -35,7 +35,7 @@ again is not fetched again. The songs coming up next are fetched ahead, with the
 Wi-Fi and the next one on mobile data by default. Settings › Downloads and storage › Prepare songs ahead
 sets how many, 1 to 10 on Wi-Fi and 1 to 5 on mobile data (the desktop and terminal offer the Wi-Fi
 one); the next song is always fetched so playback goes on without a gap. The covers of the next five are
-fetched too. This is from nori 0.6.3; in 0.6.2 two songs were fetched ahead on Wi-Fi by default, and
+fetched too. This is from nori 0.7.0; in 0.6.2 two songs were fetched ahead on Wi-Fi by default, and
 only the next one's lyrics.
 
 ## Offline
