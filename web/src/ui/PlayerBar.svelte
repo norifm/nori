@@ -68,11 +68,13 @@
     height: 78px;
     z-index: 30;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 1.1fr) minmax(0, 1.15fr);
+    /* Equal sides, so the transport sits in the middle whatever the song is called. */
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 1.1fr) minmax(0, 1fr);
     align-items: center;
     gap: 14px;
-    padding: 0 16px;
-    border-radius: 26px;
+    /* The cover sits 13px in on three sides; the corner is its 12px corner plus that. */
+    padding: 0 16px 0 13px;
+    border-radius: 25px;
   }
   .song {
     display: flex;
