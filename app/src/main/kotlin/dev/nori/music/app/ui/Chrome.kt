@@ -2,7 +2,6 @@ package dev.nori.music.app.ui
 
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.layout.layout
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,7 +21,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -103,7 +101,7 @@ fun BottomChrome(
     Column {
         SelectionBar(actions)
         if (!LocalWide.current) Box(Modifier.fillMaxWidth().padding(horizontal = BAR_END)) {
-            ChromePill(player, actions, onOpenPlayer, route, tabs, onTab, look, named = true)
+            ChromePill(player, actions, onOpenPlayer, route, tabs, onTab, look)
         }
         // The gesture bar's room is gap enough above its handle; without one the pill keeps off the edge.
         val room = with(androidx.compose.ui.platform.LocalDensity.current) { gestureBarRoom.getBottom(this).toDp() }
@@ -139,7 +137,7 @@ fun SideChrome(
     ) {
         Box(Modifier.laidOnSide(left)) {
             CompositionLocalProvider(LocalGlyphTurn provides { stand + turn() }, LocalBackdrop provides null) {
-                ChromePill(player, actions, onOpenPlayer, route, tabs, onTab, look, named = false)
+                ChromePill(player, actions, onOpenPlayer, route, tabs, onTab, look)
             }
         }
     }
@@ -159,16 +157,16 @@ private fun Modifier.laidOnSide(left: Boolean): Modifier = layout { measurable, 
  */
 val LocalGlyphTurn = androidx.compose.runtime.staticCompositionLocalOf<() -> Float> { { 0f } }
 
-/** The mini player over the tabs, or the tabs alone while nothing plays; the current tab named when [named]. */
+/** The mini player over the tabs, or the tabs alone while nothing plays. */
 @Composable
 private fun ChromePill(
     player: PlayerViewModel, actions: ActionsViewModel, onOpenPlayer: () -> Unit,
-    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look, named: Boolean,
+    route: String?, tabs: List<Tab>, onTab: (String) -> Unit, look: Look,
 ) {
     val chrome = ChromeColours(look)
     val state by player.state.collectAsStateWithLifecycle()
     if ((state.current?.title ?: state.radio) == null) {
-        Pill(PillShape, chrome, Modifier.fillMaxWidth()) { TabRow(route, tabs, onTab, chrome, named, Modifier.fillMaxWidth()) }
+        Pill(PillShape, chrome, Modifier.fillMaxWidth()) { TabRow(route, tabs, onTab, chrome, Modifier.fillMaxWidth()) }
         return
     }
     val hairline = with(androidx.compose.ui.platform.LocalDensity.current) { 1f.toDp() }
@@ -176,7 +174,7 @@ private fun ChromePill(
         Column {
             MiniPlayer(player, actions, onOpenPlayer, look)
             Box(Modifier.fillMaxWidth().height(hairline).background(chrome.divider))
-            TabRow(route, tabs, onTab, chrome, named, Modifier.fillMaxWidth())
+            TabRow(route, tabs, onTab, chrome, Modifier.fillMaxWidth())
         }
     }
 }
@@ -239,11 +237,11 @@ fun Modifier.drawsBackdrop(backdrop: Backdrop?): Modifier = if (backdrop == null
         drawLayer(backdrop.layer)
     }
 
-/** The tabs, side by side: the current one named when [named]. */
+/** The tabs, side by side, each an equal share of the bar, so none moves when another is chosen. */
 @Composable
-private fun TabRow(route: String?, tabs: List<Tab>, onTab: (String) -> Unit, chrome: ChromeColours, named: Boolean, modifier: Modifier) {
-    Row(modifier.height(BAR_THICK).padding(horizontal = BAR_INSET), Arrangement.SpaceEvenly, Alignment.CenterVertically) {
-        tabs.forEach { t -> TabButton(t, route == t.route, named, chrome, Modifier.fillMaxHeight()) { onTab(t.route) } }
+private fun TabRow(route: String?, tabs: List<Tab>, onTab: (String) -> Unit, chrome: ChromeColours, modifier: Modifier) {
+    Row(modifier.height(BAR_THICK).padding(horizontal = BAR_INSET), verticalAlignment = Alignment.CenterVertically) {
+        tabs.forEach { t -> TabButton(t, route == t.route, chrome, Modifier.weight(1f).fillMaxHeight()) { onTab(t.route) } }
     }
 }
 
@@ -345,37 +343,21 @@ fun rememberChromeLook(): Look {
 
 data class Tab(val route: String, val label: String, val icon: ImageVector)
 
-/**
- * One tab: its glyph, quiet until it is the current one, which takes the accent and, when [named], its name
- * beside it. Only the current tab is named; the name opens out as the tab is chosen, the others closing up
- * to make room.
- */
+/** One tab: its glyph, quiet until it is the current one, which takes the accent. Its name is for TalkBack only. */
 @Composable
-private fun TabButton(tab: Tab, selected: Boolean, named: Boolean, chrome: ChromeColours, modifier: Modifier, onClick: () -> Unit) {
+private fun TabButton(tab: Tab, selected: Boolean, chrome: ChromeColours, modifier: Modifier, onClick: () -> Unit) {
     val turn = LocalGlyphTurn.current
     // Only the choosing fades; the accent itself is already the chrome's, drawn as it is.
     val chosen by androidx.compose.animation.core.animateFloatAsState(if (selected) 1f else 0f, TAB_FADE, label = "tab")
     val colour = androidx.compose.ui.graphics.lerp(chrome.quiet, chrome.accent, chosen)
     val press = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-    Row(
+    Box(
         modifier.clip(PillShape)
             .clickable(interactionSource = press, indication = null, onClick = onClick)
-            .semantics { contentDescription = tab.label }
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .semantics { contentDescription = tab.label },
+        Alignment.Center,
     ) {
         Icon(tab.icon, null, Modifier.size(23.dp).graphicsLayer { rotationZ = turn() }, tint = colour)
-        androidx.compose.animation.AnimatedVisibility(
-            selected && named,
-            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(220, 60)) + androidx.compose.animation.expandHorizontally(androidx.compose.animation.core.tween(220), Alignment.Start),
-            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) + androidx.compose.animation.shrinkHorizontally(androidx.compose.animation.core.tween(220), Alignment.Start),
-        ) {
-            Text(
-                tab.label, Modifier.padding(start = 7.dp).widthIn(max = 120.dp),
-                style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, letterSpacing = 0.sp),
-                color = colour, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 
