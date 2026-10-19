@@ -3486,11 +3486,21 @@ component TopContent inherits Rectangle {
     in property <int> page-kind;
     // A jam guest's: the host's library, without the account's playlists and favorites.
     in property <bool> guest;
+    in-out property <string> search-text;
     callback go(int);
     callback open-menu();
+    callback search-edited(string);
+    // The search field took or gave up the keys.
+    callback typing(bool);
     // The pill's width (the window's), which decides whether the tabs are named.
     in property <length> room;
     property <bool> named: root.room >= 880px;
+    public function focus-search() {
+        input.focus();
+    }
+    public function end-search() {
+        input.clear-focus();
+    }
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
@@ -3554,39 +3564,65 @@ component TopContent inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
         }
-        // The search: a field-shaped button, a filled capsule 6 px in from the pill (its corner the pill's
-        // less that); the search page has the field.
+        // The search field, a filled capsule 6 px in from the pill (its corner the pill's less that). It widens
+        // while typed in; typing shows what it finds on the search page.
         Rectangle {
             y: (parent.height - self.height) / 2;
-            width: root.named ? 180px : 36px;
+            width: input.has-focus ? (root.named ? 280px : 220px) : root.named ? 180px : 36px;
+            animate width { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
             height: 36px;
             border-radius: 18px;
-            background: touch-search.has-hover || root.view == 1 ? Theme.chosen : Theme.fill;
+            clip: true;
+            background: input.has-focus || touch-search.has-hover || root.view == 1 ? Theme.chosen : Theme.fill;
             animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
-            Ripple {
-                pressed: touch-search.pressed;
-                radius: parent.border-radius;
-            }
             HorizontalLayout {
                 padding-left: 10px;
-                padding-right: 10px;
+                padding-right: 12px;
                 spacing: 7px;
                 Icon {
                     y: (parent.height - self.height) / 2;
                     path: Icons.search;
-                    colour: root.view == 1 ? Theme.accent : Theme.dim;
+                    colour: input.has-focus || root.view == 1 ? Theme.accent : Theme.dim;
                     width: 18px;
                     height: 18px;
                 }
-                if root.named: Text {
-                    text: "Search";
-                    color: Theme.dim;
-                    vertical-alignment: center;
+                Rectangle {
+                    FocusScope {
+                        key-pressed(e) => {
+                            if e.text == Key.Escape {
+                                input.clear-focus();
+                                return accept;
+                            }
+                            reject
+                        }
+                        input := TextInput {
+                            width: 100%;
+                            height: 100%;
+                            text <=> root.search-text;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            single-line: true;
+                            selection-background-color: Theme.accent.with-alpha(0.4);
+                            edited => { root.search-edited(self.text); }
+                            changed has-focus => { root.typing(self.has-focus); }
+                        }
+                    }
+                    if root.search-text == "" && (root.named || input.has-focus): Text {
+                        x: 0;
+                        text: input.has-focus ? "Artists, albums and songs" : "Search";
+                        color: input.has-focus ? Theme.faint : Theme.dim;
+                        vertical-alignment: center;
+                    }
                 }
             }
+            // Until it has the keys, a click anywhere on the capsule gives them to it.
             touch-search := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.go(1); }
+                enabled: !input.has-focus;
+                mouse-cursor: text;
+                clicked => {
+                    input.focus();
+                    if root.search-text != "" && root.view != 1 { root.go(1); }
+                }
             }
         }
         IconButton {
@@ -3694,7 +3730,6 @@ export component AppWindow inherits Window {
     in property <[SongRow]> songs;
     in property <bool> more-songs;
 
-    in-out property <string> search-text;
     in property <[Card]> search-artists;
     in property <[Card]> search-albums;
     in property <[SongRow]> search-songs;
@@ -4115,35 +4150,26 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                // What the top pill's search field found; the field is the pill's.
                 if root.view == 1: Fade {
                     VerticalLayout {
-                        HorizontalLayout {
-                            padding-left: 32px;
-                            padding-right: 32px;
-                            padding-top: Chrome.top-room + 8px;
-                            padding-bottom: 8px;
-                            Field {
-                                icon: Icons.search;
-                                placeholder: "Artists, albums and songs";
-                                text <=> root.search-text;
-                                edited(t) => { root.search-edited(t); }
-                                init => { self.take-focus(); }
-                            }
-                        }
-                        if root.search-note != "": Text {
-                            x: 34px;
-                            text: root.search-note;
-                            color: Theme.dim;
-                            height: 24px;
-                            vertical-alignment: center;
-                        }
                         Flickable {
                             vertical-stretch: 1;
                             content-height: found.preferred-height;
                             found := VerticalLayout {
                                 width: parent.width;
-                                padding-top: 16px;
+                                padding-top: Chrome.top-room + 8px;
                                 padding-bottom: 100px;
+                                if root.search-note != "": HorizontalLayout {
+                                    padding-left: 34px;
+                                    padding-bottom: 8px;
+                                    Text {
+                                        text: root.search-note;
+                                        color: Theme.dim;
+                                        height: 24px;
+                                        vertical-alignment: center;
+                                    }
+                                }
                                 if root.search-artists.length > 0: artists-found := ShelfView {
                                     title: "Artists";
                                     count: root.search-artists.length;
@@ -5695,22 +5721,34 @@ export component TopBar inherits Window {
     in property <int> view;
     in property <int> page-kind;
     in property <bool> guest;
+    in-out property <string> search-text;
     callback go(int);
     callback open-menu();
+    callback search-edited(string);
+    callback typing(bool);
+    public function focus-search() {
+        content.focus-search();
+    }
+    public function end-search() {
+        content.end-search();
+    }
     Rectangle {
         border-radius: Chrome.top-radius;
         background: Theme.ground.with-alpha(Chrome.tint);
         border-width: 1px;
         border-color: Theme.outline;
     }
-    TopContent {
+    content := TopContent {
         width: parent.width;
         height: parent.height;
         room: root.room;
         view: root.view;
         page-kind: root.page-kind;
         guest: root.guest;
+        search-text <=> root.search-text;
         go(v) => { root.go(v); }
         open-menu => { root.open-menu(); }
+        search-edited(t) => { root.search-edited(t); }
+        typing(on) => { root.typing(on); }
     }
 }

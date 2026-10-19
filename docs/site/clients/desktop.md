@@ -15,7 +15,8 @@ and [jams](../connected/jams.md).
 ## Layout
 
 The window has no sidebar. A rounded outline runs across the top: Home, Albums, Artists, Songs, Playlists and
-Favorites (the current one named and lit), then search and the settings menu, which holds your account, the
+Favorites (the current one named and lit), then the search field, which widens as you type and fills the page
+with what it finds, and the settings menu, which holds your account, the
 equalizer, your other devices, joining a jam, and the season and appearance. Playlists opens your playlists
 under it. A second outline along the bottom is the player: the song on the left; shuffle, previous, play, next
 and repeat with the seek bar under them; and on the right the seal, the speaker (your devices), lyrics, the

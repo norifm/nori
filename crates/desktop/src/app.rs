@@ -405,11 +405,17 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
     Some(bar)
 }
 
-/// The top pill's window; its tabs forward to the main window.
+/// The top pill's window; its tabs and search field forward to the main window.
 fn top(ui: &AppWindow) -> Option<TopBar> {
     let bar = TopBar::new().map_err(|e| eprintln!("nori: no top pill: {e}")).ok()?;
     bar.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
     bar.on_open_menu(to_main(ui, |m| m.invoke_show_menu()));
+    bar.on_search_edited(to_main_with(ui, |m, text| {
+        if m.get_view() != SEARCH {
+            m.invoke_go(SEARCH);
+        }
+        m.invoke_search_edited(text);
+    }));
     Some(bar)
 }
 
@@ -523,6 +529,12 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         ui.set_lyric_pieces_full(ModelRc::from(a.pieces[1].clone()));
         if let (Some(top), Some(player)) = (&a.top, &a.player) {
             a.compositor.roles(ui.window(), top.window(), player.window());
+            let compositor = a.compositor.clone();
+            top.on_typing(move |on| compositor.set_typing(on));
+            let weak = top.as_weak();
+            a.compositor.on_press_away(move || {
+                if let Some(top) = weak.upgrade() { top.invoke_end_search(); }
+            });
         }
         #[cfg(target_os = "linux")]
         {
@@ -948,6 +960,10 @@ impl App {
             return;
         }
         ui.set_view(view);
+        // The search page's field is the top pill's.
+        if let Some(top) = &self.top {
+            if view == SEARCH { top.invoke_focus_search() } else { top.invoke_end_search() }
+        }
         let req = match view {
             HOME => self.home_req(),
             ALBUMS => {
@@ -2533,6 +2549,45 @@ mod tests {
         let with_album = middle("Paper Boats", "fakemink", "Some Album");
         assert!(with_album == middle("Paper Boats", "fakemink", ""), "a song without an album");
         assert!(with_album == middle("A Long Title (Official Music Video) [Remastered]", "One, Two & Three", "A Long Album Name"), "a long song");
+    }
+
+    #[test]
+    fn the_top_pills_search_is_typed_in_where_it_is() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let bar = TopBar::new().unwrap();
+        bar.window().set_size(slint::PhysicalSize::new(1000, 48));
+        bar.set_room(1000.0);
+        bar.show().unwrap();
+        let typed = Rc::new(RefCell::new(Vec::<String>::new()));
+        let typing = Rc::new(std::cell::Cell::new(false));
+        let t = typed.clone();
+        bar.on_search_edited(move |s| t.borrow_mut().push(s.into()));
+        let k = typing.clone();
+        bar.on_typing(move |on| k.set(on));
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(300));
+            slint::platform::update_timers_and_animations();
+        };
+        let key = |text: &str| {
+            bar.window().dispatch_event(slint::platform::WindowEvent::KeyPressed { text: text.into() });
+            bar.window().dispatch_event(slint::platform::WindowEvent::KeyReleased { text: text.into() });
+        };
+        // The capsule sits left of the settings button at the pill's right end.
+        let at = slint::LogicalPosition::new(900.0, 24.0);
+        let button = slint::platform::PointerEventButton::Left;
+        bar.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+        bar.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+        settle();
+        assert!(typing.get(), "a click gives the field the keys");
+        key("a");
+        key("b");
+        assert_eq!(bar.get_search_text(), "ab");
+        assert_eq!(typed.borrow().last().map(String::as_str), Some("ab"));
+        key(&SharedString::from(slint::platform::Key::Escape));
+        settle();
+        assert!(!typing.get(), "Escape gives the keys back to the page");
     }
 
     #[test]

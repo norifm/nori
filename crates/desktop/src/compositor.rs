@@ -199,6 +199,10 @@ struct Shared {
     /// Run when the window is focused or the system's appearance changes: the app looks at the date and the
     /// theme again.
     on_wake: RefCell<Option<Rc<dyn Fn()>>>,
+    /// The top pill's search field has the keys: they go to the pill instead of the page.
+    typing: Cell<bool>,
+    /// Run when a press lands off the top pill while it has the keys: the app takes them back.
+    on_press_away: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 type FocusSource = Box<dyn Fn() -> Option<Focus>>;
@@ -346,6 +350,8 @@ pub fn install() -> Result<Compositor, String> {
         menu: MenuBar::default(),
         on_exit: RefCell::new(None),
         on_wake: RefCell::new(None),
+        typing: Cell::new(false),
+        on_press_away: RefCell::new(None),
     });
     slint::platform::set_platform(Box::new(Platform { shared: shared.clone(), event_loop: RefCell::new(Some(event_loop)) })).map_err(|e| format!("the platform: {e}"))?;
     Ok(Compositor(shared))
@@ -464,6 +470,15 @@ impl Compositor {
 
     pub fn on_exit(&self, f: impl FnOnce() + 'static) {
         *self.0.on_exit.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Keys go to the top pill while `on` (its search field is typed in), else to the page.
+    pub fn set_typing(&self, on: bool) {
+        self.0.typing.set(on);
+    }
+
+    pub fn on_press_away(&self, f: impl Fn() + 'static) {
+        *self.0.on_press_away.borrow_mut() = Some(Rc::new(f));
     }
 }
 
@@ -628,15 +643,21 @@ impl Runner {
         }
     }
 
+    /// The layer keys go to: the top pill while its field is typed in, else the page.
+    fn keys(&self) -> Option<Rc<Layer>> {
+        let role = if self.shared.typing.get() && self.shared.shown(Role::Top) { Role::Top } else { Role::Page };
+        self.layer(role)
+    }
+
     fn key(&self, event: &winit::event::KeyEvent) {
-        let Some(page) = self.layer(Role::Page) else { return };
+        let Some(to) = self.keys() else { return };
         let Some(text) = key_text(event) else { return };
         let e = match (event.state, event.repeat) {
             (ElementState::Pressed, false) => WindowEvent::KeyPressed { text },
             (ElementState::Pressed, true) => WindowEvent::KeyPressRepeated { text },
             (ElementState::Released, _) => WindowEvent::KeyReleased { text },
         };
-        page.window.dispatch_event(e);
+        to.window.dispatch_event(e);
     }
 
     fn animating(&self) -> bool {
@@ -771,8 +792,10 @@ impl ApplicationHandler<Wake> for Runner {
             }
             E::ScaleFactorChanged { .. } => relayout(&self.shared),
             E::Focused(on) => {
-                if let Some(l) = self.layer(Role::Page) {
-                    l.window.dispatch_event(WindowEvent::WindowActiveChanged(on));
+                for role in [Role::Page, Role::Top] {
+                    if let Some(l) = self.layer(role) {
+                        l.window.dispatch_event(WindowEvent::WindowActiveChanged(on));
+                    }
                 }
                 if on {
                     wake(&self.shared);
@@ -799,7 +822,12 @@ impl ApplicationHandler<Wake> for Runner {
                 };
                 match state {
                     ElementState::Pressed => {
-                        self.held = Some(self.under(self.pointer));
+                        let on = self.under(self.pointer);
+                        if on != Role::Top && self.shared.typing.get() {
+                            let away = self.shared.on_press_away.borrow().clone();
+                            if let Some(f) = away { f(); }
+                        }
+                        self.held = Some(on);
                         self.pointer(|position| WindowEvent::PointerPressed { position, button });
                     }
                     ElementState::Released => {
@@ -819,9 +847,9 @@ impl ApplicationHandler<Wake> for Runner {
             E::ModifiersChanged(m) => self.modifiers = m.state(),
             E::KeyboardInput { event, .. } => self.key(&event),
             E::Ime(winit::event::Ime::Commit(text)) => {
-                if let Some(page) = self.layer(Role::Page) {
-                    page.window.dispatch_event(WindowEvent::KeyPressed { text: text.as_str().into() });
-                    page.window.dispatch_event(WindowEvent::KeyReleased { text: text.as_str().into() });
+                if let Some(to) = self.keys() {
+                    to.window.dispatch_event(WindowEvent::KeyPressed { text: text.as_str().into() });
+                    to.window.dispatch_event(WindowEvent::KeyReleased { text: text.as_str().into() });
                 }
             }
             E::RedrawRequested => {
