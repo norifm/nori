@@ -408,7 +408,8 @@ impl Drop for Draw {
                 &self.copy,
                 &self.opaque,
                 &self.down,
-                &self.glass,
+                &self.pill,
+                &self.fade,
                 &self.focus,
             ] {
                 gl.delete_program(program.0);
@@ -690,13 +691,12 @@ impl Draw {
             );
         }
         let [red, green, blue] = shared.page_colour.get();
-        let right = shared.right.get();
         let target = (None, [w as i32, h as i32]);
         for role in [Role::Top, Role::Player] {
             let (Some(texture), true) = (find(role), shared.shown(role)) else {
                 continue;
             };
-            let f = fade_of(role, win, right);
+            let f = fade_of(role, win);
             let u = uniforms(
                 f.strip.scaled(scale),
                 [w, h, w, h],
@@ -706,7 +706,7 @@ impl Draw {
                 [0.0; 4],
             );
             self.pass(target, &self.fade, &u, [page, pyramid], false, true);
-            let rect = pill_rect(role, win, right).scaled(scale);
+            let rect = pill_rect(role, win).scaled(scale);
             let u = uniforms(
                 rect,
                 [w, h, w, h],
@@ -1308,14 +1308,14 @@ mod tests {
                     let u = uniforms(
                         [0.0, 0.0, 72.0, 64.0],
                         [72.0, 64.0, 72.0, 64.0],
-                        [0.0, 1.0, 0.0, 0.0],
-                        [0.0, 1.0, 1.0, if checker { 4.5 } else { 2.0 }],
+                        [0.0; 4],
+                        [0.0, 0.0, 0.0, if checker { 4.5 } else { 2.0 }],
                         [0.0; 4],
                         [0.0; 4],
                     );
                     draw.pass(
                         (None, [72, 64]),
-                        &draw.glass,
+                        &draw.pill,
                         &u,
                         [texture.texture, draw.pyramid.as_ref().unwrap().texture],
                         true,
