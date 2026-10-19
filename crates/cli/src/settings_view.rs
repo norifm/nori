@@ -3,13 +3,14 @@
 //! draws them. Rows send back a setting name and value (`setting_set`) or a level edit (`edit_level`).
 
 use crate::text;
-use nori_core::settings::{EqLevel, EqMode, SoundBand, StoredPrefs, EQ_RANGES};
+use nori_core::settings::{season_follow_value, EqLevel, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
 use nori_core::settings_model::{self, BeatModel, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
 use nori_core::numbers::{self, POINT};
 use nori_core::MusicFolder;
 
 use crate::app::{Cmd, Overlay, Sel, SoundToolCmd, Target, View};
+use crate::art::Day;
 
 /// A group of the page: the terminal's own, one of the core's pages, or About.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +39,8 @@ pub enum Switch {
     Mouse,
     Images,
     CardCovers,
-    Paint,
+    /// The terminal's own background instead of the season's page.
+    Transparent,
 }
 
 /// A settings group: a headed part of the page.
@@ -182,7 +184,8 @@ impl SettingsView {
     pub fn pages(&mut self, prefs: &StoredPrefs) -> &[Page] {
         if self.pages.is_none() {
             let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
-            self.pages = Some(GROUPS.iter().map(|g| page(g.id, prefs, &state, &self.facts, &self.own)).collect());
+            let today = Day::today();
+            self.pages = Some(GROUPS.iter().map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect());
         }
         self.pages.as_deref().expect("made above")
     }
@@ -309,7 +312,7 @@ impl SettingsView {
                     Switch::Mouse => vec![Cmd::Mouse(up)],
                     Switch::Images => vec![Cmd::Images(up)],
                     Switch::CardCovers => vec![Cmd::CardCovers(up)],
-                    Switch::Paint => vec![Cmd::Paint(up)],
+                    Switch::Transparent => vec![Cmd::Paint(!up)],
                 }
             }
             Row::Slider { name, value, min, max, level, .. } => {
@@ -372,8 +375,8 @@ fn page_facts(f: &Facts) -> PageFacts {
     }
 }
 
-/// One group's page.
-pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own) -> Page {
+/// One group's page, the season's rows as on `today`.
+pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, today: Day) -> Page {
     let title = GROUPS.iter().find(|g| g.id == id).map_or("", |g| g.title).to_string();
     let sections = match id {
         Gid::Own if !f.rules.settings.contains(&SettingsPart::Look) => Vec::new(),
@@ -382,10 +385,14 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own) -
         Gid::About => about(own),
         Gid::Core(page) => {
             let facts = page_facts(f);
-            settings_pages::page(page, SettingsClient::Terminal, p, s, &facts)
+            let mut sections: Vec<Section> = settings_pages::page(page, SettingsClient::Terminal, p, s, &facts)
                 .into_iter()
-                .map(|sec| Section { title: section_title(sec.id).into(), rows: sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, s).unwrap_or_else(|| row_of(r, p, s, f).into_iter().collect())).collect() })
-                .collect()
+                .map(|sec| Section { title: section_title(sec.id).into(), rows: sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, s).or_else(|| season_rows(&r, p, s, today)).unwrap_or_else(|| row_of(r, p, s, f).into_iter().collect())).collect() })
+                .collect();
+            if let (SettingsPage::Look, Some(look)) = (page, sections.first_mut()) {
+                look.rows.push(Row::Toggle { switch: Switch::Transparent, title: "Transparent background".into(), detail: "The terminal's own background and text show instead of the season's page".into(), on: !own.paint, enabled: true });
+            }
+            sections
         }
     };
     Page { title, sections }
@@ -404,7 +411,6 @@ fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
         toggle(Switch::Mouse, "Mouse", "Clicks, the wheel and dragging the bars. Off, the terminal selects text (m)", o.mouse, true),
         toggle(Switch::Images, "Covers", "Album art in the player and on album pages (I)", o.images, true),
         toggle(Switch::CardCovers, "Covers on album cards", "Small pictures on Home and Albums; off keeps a slow link or terminal light", o.card_covers, o.images),
-        toggle(Switch::Paint, "Paint the page", "The season's colors across the whole window; off, the terminal's own background and text show", o.paint, true),
         Row::Choice { target: Target::Device, title: "Output device".into(), options: devices, shown, enabled: true },
         Row::Note { text: "The device is opened at start; --device overrides it for one run.".into() },
     ];
@@ -489,7 +495,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "volumeBoostDb" => ("Volume boost", ""),
         "hiRes" => ("High quality output", "Float samples to the device; 24-bit files kept whole, effects in float"),
         "maxRate" => ("Highest sample rate", ""),
-        "season" => ("Season", "The theme's colors; following the seasons, they change with the calendar"),
+        "season" => ("Season", "The theme's colors"),
         "theme" => ("Appearance", "Light, dark, or as the terminal's own background (system)"),
         "amoled" => ("Black page", "The dark theme on pure black"),
         "coverColors" => ("Colors from the cover", "Where the artwork's colors show (with covers on)"),
@@ -518,7 +524,6 @@ fn option_words(name: &str, v: &str) -> String {
         ("crossfadeSec", v) => off_or(v, &|v| format!("{v} s")),
         ("fadeMs", v) => off_or(v, &|v| format!("{v} ms")),
         ("speed" | "pitch", v) => format!("{v}×"),
-        ("season", "FOLLOW") => "following the seasons".into(),
         ("season", "SPRING") => "Spring 春".into(),
         ("season", "SUMMER") => "Summer 夏".into(),
         ("season", "AUTUMN") => "Autumn 秋".into(),
@@ -562,6 +567,34 @@ fn option_words(name: &str, v: &str) -> String {
 }
 
 /// A set of independent flags as its title, then a switch for each; None for any other row.
+const SEASON_NAMES: [&str; 4] = ["Spring", "Summer", "Autumn", "Winter"];
+const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/// The season: a choice of the four, the calendar's shown while following, and under it the switch to
+/// follow the calendar.
+fn season_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, today: Day) -> Option<Vec<Row>> {
+    let RowItem::Setting { spec, value, .. } = &r.item else { return None };
+    if spec.name != "season" {
+        return None;
+    }
+    let now = nori_look::theme::season_now(today.month, today.day, today.southern);
+    let following = p.season == ThemeSeason::Follow;
+    let worn = if following { season_follow_value(false, today.month, today.day, today.southern) } else { value.as_str() };
+    let follow = season_follow_value(true, today.month, today.day, today.southern);
+    let options: Vec<(String, String)> = spec.options.iter().filter(|v| *v != follow).map(|v| (option_words("season", v), v.clone())).collect();
+    let shown = option_words("season", worn);
+    let detail = if following {
+        format!("{} now · {} from {} {}", SEASON_NAMES[now.season as usize], SEASON_NAMES[now.next as usize], MONTHS[now.next_month as usize - 1], now.next_day)
+    } else {
+        "The colors change with the calendar".into()
+    };
+    let (title, _) = setting_words("season", s);
+    Some(vec![
+        Row::Choice { target: Target::Setting(spec.name.clone()), title, options, shown, enabled: r.enabled },
+        Row::Toggle { switch: Switch::Stores(spec.name.clone(), season_follow_value(!following, today.month, today.day, today.southern).into()), title: "Follow the seasons".into(), detail, on: following, enabled: r.enabled },
+    ])
+}
+
 fn flag_rows(r: &settings_pages::SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
     let RowItem::Setting { spec, value, .. } = &r.item else { return None };
     if spec.kind != SettingKind::Flags {
@@ -942,6 +975,33 @@ impl EqRow {
 mod tests {
     use super::*;
 
+    const DAY: Day = Day { month: 10, day: 19, southern: false };
+
+    #[test]
+    fn the_look_picks_a_season_and_follows_the_calendar_under_it() {
+        let look = |season| {
+            let prefs = StoredPrefs { season, ..StoredPrefs::default() };
+            let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
+            page(Gid::Core(SettingsPage::Look), &prefs, &state, &Facts::default(), &Own { paint: true, ..Own::default() }, DAY).sections.remove(0).rows
+        };
+        let pick = |rows: &[Row]| match &rows[0] {
+            Row::Choice { options, shown, .. } => (options.len(), shown.clone()),
+            other => panic!("{other:?}"),
+        };
+        let follow = |rows: &[Row]| match &rows[1] {
+            Row::Toggle { switch: Switch::Stores(name, value), title, on, detail, .. } if name == "season" && title == "Follow the seasons" => (value.clone(), *on, detail.clone()),
+            other => panic!("{other:?}"),
+        };
+        let following = look(ThemeSeason::Follow);
+        assert_eq!(pick(&following), (4, "Autumn 秋".into()), "the four seasons, the calendar's worn");
+        assert_eq!(follow(&following), ("AUTUMN".into(), true, "Autumn now · Winter from November 7".into()), "off keeps the calendar's");
+        let winter = look(ThemeSeason::Winter);
+        assert_eq!(pick(&winter).1, "Winter 冬");
+        let (value, on, _) = follow(&winter);
+        assert_eq!((value.as_str(), on), ("FOLLOW", false));
+        assert!(matches!(following.last(), Some(Row::Toggle { switch: Switch::Transparent, on: false, .. })), "painted, so not transparent: {following:?}");
+    }
+
     /// A jam guest's settings are this computer's: the profiles to switch back with, sound, look and
     /// caches, but nothing of the account's or the host's server.
     #[test]
@@ -950,7 +1010,7 @@ mod tests {
         let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
         let titles = |rules: nori_core::browse::ProfileRules| -> Vec<String> {
             let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], rules, ..Facts::default() };
-            let pages = GROUPS.iter().map(|g| page(g.id, &prefs, &state, &facts, &Own::default()));
+            let pages = GROUPS.iter().map(|g| page(g.id, &prefs, &state, &facts, &Own::default(), DAY));
             pages.flat_map(|p| p.sections.into_iter().flat_map(|s| std::iter::once(s.title.clone()).chain(s.rows.iter().map(|r| row_words(r).0)).collect::<Vec<_>>())).collect()
         };
         let account = titles(nori_core::browse::profile_rules(false));
@@ -973,7 +1033,7 @@ mod tests {
         let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
         GROUPS
             .iter()
-            .flat_map(|g| page(g.id, prefs, &state, facts, &Own::default()).sections.into_iter().flat_map(move |s| s.rows.into_iter().map(move |r| (g.title, r))))
+            .flat_map(|g| page(g.id, prefs, &state, facts, &Own::default(), DAY).sections.into_iter().flat_map(move |s| s.rows.into_iter().map(move |r| (g.title, r))))
             .collect()
     }
 
@@ -1061,7 +1121,7 @@ mod tests {
         let prefs = StoredPrefs { servers: vec![server], active_server_id: "a".into(), ..StoredPrefs::default() };
         let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
         let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], ..Facts::default() };
-        let page = page(Gid::Core(SettingsPage::Servers), &prefs, &state, &facts, &Own::default());
+        let page = page(Gid::Core(SettingsPage::Servers), &prefs, &state, &facts, &Own::default(), DAY);
         let folders = page.sections.iter().find(|s| s.title == "Music folders").unwrap();
         let switches: Vec<_> = folders.rows.iter().map(|r| match r {
             Row::Toggle { switch: Switch::Stores(name, value), title, on, .. } => (name.as_str(), value.as_str(), title.as_str(), *on),

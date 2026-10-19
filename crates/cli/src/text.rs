@@ -1,7 +1,5 @@
 //! The terminal client's English: formatted times, sizes, decibels, counts, captions and messages.
 
-pub(crate) const RADIO: &str = "Radio";
-
 use nori_core::beat_model::BeatFailure;
 use nori_core::lyrics_sources::LyricsOrigin;
 use nori_core::numbers::{self, POINT};

@@ -11,7 +11,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, Mo
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::{App, Cmd, Focus, Hit, ListRef, Overlay, Panel, Target, View};
+use crate::app::{App, Button, Cmd, Focus, Hit, ListRef, Overlay, Panel, Target, View};
 use crate::backend::{Data, Msg, Req};
 use crate::settings_view::{Facts, Line, Row, SettingsView, Switch, GROUPS};
 
@@ -27,9 +27,8 @@ fn youtube_radio_uses_the_playing_song() {
     a.rules = nori_core::providers::rules_of(nori_core::settings::SavedServer { kind: nori_core::settings::ServerKind::YouTubeMusic, ..Default::default() }, false);
     a.song = Some(Song { id: "yt-song".into(), title: "Song".into(), ..Default::default() });
     let screen = draw(&mut a, 120, 36);
-    assert!(screen.contains("Radio"));
-    let r = hit_rect(&a, Hit::Button(crate::app::Button::RadioSong));
-    click(&mut a, r.x, r.y);
+    assert!(!screen.contains("Radio"), "no words beside the player's buttons:\n{screen}");
+    key(&mut a, KeyCode::Char('t'));
     assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id), false)) if id == "yt-song"));
 }
 
@@ -144,6 +143,20 @@ fn click(a: &mut App, x: u16, y: u16) {
     a.handle(Msg::Mouse(m(MouseEventKind::Up(MouseButton::Left))));
 }
 
+/// Whether the seal of `button`, as last drawn, is filled: the symbol on the accent.
+fn seal_filled(a: &App, button: crate::app::Button) -> bool {
+    let r = hit_rect(a, Hit::Button(button));
+    LAST.with(|l| {
+        let buf = l.borrow();
+        let buf = buf.as_ref().expect("drawn");
+        let cells: Vec<_> = (r.x..r.x + r.width).map(|x| &buf[(x, r.y)]).collect();
+        assert!(cells.iter().any(|c| c.symbol() == "好"), "the seal at {r:?}");
+        cells.iter().any(|c| c.symbol() == "好" && c.bg == a.look.accent)
+    })
+}
+
+const SPEAKERS: [&str; 4] = ["🔇", "🔈", "🔉", "🔊"];
+
 fn hit_rect(a: &App, h: Hit) -> Rect {
     a.hits.iter().find(|(_, x)| *x == h).map(|(r, _)| *r).unwrap_or_else(|| panic!("{h:?} is not on screen"))
 }
@@ -218,7 +231,7 @@ fn small_terminals() {
     a.song = Some(song("1", "One", 200));
     let s = draw(&mut a, 70, 24);
     assert!(s.contains('⌂') && s.contains('◫') && !s.contains("Albums") && (s.contains('⏸') || s.contains('▶')) && s.contains("0:00"), "{s}");
-    assert!(!s.contains('☰') && !s.contains("◁)"), "no panel buttons or volume this narrow:\n{s}");
+    assert!(!s.contains('⤢') && !s.contains('❝') && !SPEAKERS.iter().any(|v| s.contains(v)), "no buttons after the seal or volume this narrow:\n{s}");
     dump("narrow", &s);
     // Below 60 columns the player is the song and play.
     let s = draw(&mut a, 50, 20);
@@ -256,7 +269,7 @@ fn keys_and_focus() {
     key(&mut a, KeyCode::Char('?'));
     assert!(matches!(a.overlay, Some(Overlay::Help { .. })));
     let s = draw(&mut a, 100, 70);
-    assert!(s.contains("Play or pause") && s.contains("Take it out") && s.contains("lyrics or queue"), "{s}");
+    assert!(s.contains("Play or pause") && s.contains("Take it out") && s.contains("queue or its lyrics"), "{s}");
     dump("help", &s);
     key(&mut a, KeyCode::Char('x'));
     assert!(a.overlay.is_none());
@@ -271,9 +284,11 @@ fn keys_and_focus() {
     key(&mut a, KeyCode::Char('F'));
     assert_eq!((a.full, a.panel, a.focus), (true, Panel::Lyrics, Focus::Panel));
     key(&mut a, KeyCode::Tab);
+    assert_eq!(a.panel, Panel::Playing, "the devices come only with remote control on");
+    key(&mut a, KeyCode::Tab);
     assert_eq!(a.panel, Panel::Queue);
     key(&mut a, KeyCode::Tab);
-    assert_eq!(a.panel, Panel::Lyrics, "the devices come only with remote control on");
+    assert_eq!(a.panel, Panel::Lyrics);
     key(&mut a, KeyCode::Esc);
     assert_eq!((a.full, a.focus), (false, Focus::Main));
 
@@ -498,6 +513,15 @@ fn settings_page() {
     a.cmds.clear();
     key(&mut a, KeyCode::Right);
     assert_eq!(a.cmds.last(), Some(&Cmd::Device("hw:0".into())));
+    // Transparent on stops painting the page.
+    let at = lines.iter().position(|l| matches!(l, Line::Row(Row::Toggle { switch: Switch::Transparent, .. }))).unwrap();
+    key(&mut a, KeyCode::Char('g'));
+    while a.settings.row.at < at {
+        key(&mut a, KeyCode::Down);
+    }
+    a.cmds.clear();
+    key(&mut a, KeyCode::Right);
+    assert_eq!(a.cmds.last(), Some(&Cmd::Paint(false)));
 }
 
 #[test]
@@ -575,6 +599,23 @@ fn full_player_shows_the_song_and_the_mix() {
     dump("full-80x24", &draw(&mut a, 80, 24));
     key(&mut a, KeyCode::Esc);
     assert!(!a.full);
+    // The bar's buttons after the seal: the song alone, the queue, the lyrics, then full screen as it was.
+    draw(&mut a, 170, 40);
+    let playing = hit_rect(&a, Hit::Button(Button::Panel(Panel::Playing)));
+    click(&mut a, playing.x + 1, playing.y);
+    assert_eq!((a.full, a.panel), (true, Panel::Playing));
+    let s = draw(&mut a, 170, 40);
+    assert!(s.contains("First") && s.contains("Mixing into the next") && s.contains("♫ Playing") && s.contains("≡ Queue") && !s.contains("Looking for lyrics"), "the song alone:\n{s}");
+    dump("full-playing", &s);
+    let queue = hit_rect(&a, Hit::Button(Button::Panel(Panel::Queue)));
+    click(&mut a, queue.x + 1, queue.y);
+    assert_eq!(a.panel, Panel::Queue);
+    key(&mut a, KeyCode::Esc);
+    draw(&mut a, 170, 40);
+    // The last: the song's title opens the full player too.
+    let full = a.hits.iter().rev().find(|h| h.1 == Hit::Button(Button::Full)).expect("full screen").0;
+    click(&mut a, full.x + 1, full.y);
+    assert_eq!((a.full, a.panel), (true, Panel::Queue), "full screen opens on the panel last shown");
 }
 
 #[test]
@@ -720,7 +761,7 @@ fn star_marks_from_the_core_redraw_the_seals() {
     let s = draw(&mut a, 170, 40);
     let line = |s: &str, name: &str| s.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name} missing:\n{s}")).to_string();
     assert!(!line(&s, "One").contains('好') && line(&s, "Two").contains('好'), "{s}");
-    assert!(s.contains("▕好▏") && !s.contains("▐好▌"), "the player's seal is an outline:\n{s}");
+    assert!(!seal_filled(&a, crate::app::Button::StarSong), "the player's seal is quiet:\n{s}");
     // Another device stars the song playing and unstars the other.
     let mut marks = nori_core::stars::StarMarks::default();
     marks.mark(nori_core::client::Starrable::Song, "1".into(), true);
@@ -728,7 +769,7 @@ fn star_marks_from_the_core_redraw_the_seals() {
     a.handle(Msg::Starred(marks));
     let s = draw(&mut a, 170, 40);
     assert!(line(&s, "One").contains('好') && !line(&s, "Two").contains('好'), "the row:\n{s}");
-    assert!(s.contains("▐好▌") && !s.contains("▕好▏"), "and the player's seal, filled:\n{s}");
+    assert!(seal_filled(&a, crate::app::Button::StarSong), "and the player's seal, filled:\n{s}");
 }
 
 #[test]
@@ -740,12 +781,13 @@ fn buttons() {
     a.handle(Msg::Data(Req::Album("al-3".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-3", "Three"), songs, vec![]))))));
     a.heard(Some(song("1", "One", 200)));
     let s = draw(&mut a, 170, 40);
-    assert!(s.contains("▕好▏ Favorite") && s.contains("↓ Download"), "{s}");
+    assert!(s.contains("好 Favorite") && s.contains("↓ Download"), "{s}");
     a.cmds.clear();
     let star = hit_rect(&a, Hit::Button(crate::app::Button::Star));
     click(&mut a, star.x + 1, star.y);
     assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Album, "al-3".into(), true)));
-    assert!(draw(&mut a, 170, 40).contains("▐好▌ Favorite"), "shown at once");
+    draw(&mut a, 170, 40);
+    assert!(seal_filled(&a, crate::app::Button::Star), "shown at once");
     let down = hit_rect(&a, Hit::Button(crate::app::Button::Download));
     click(&mut a, down.x + 1, down.y);
     assert!(matches!(a.cmds.last(), Some(Cmd::DownloadFetch(crate::backend::Fetch::Album(id))) if id == "al-3"));
@@ -753,7 +795,8 @@ fn buttons() {
     let seal = hit_rect(&a, Hit::Button(crate::app::Button::StarSong));
     click(&mut a, seal.x, seal.y);
     assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Song, "1".into(), true)));
-    assert_eq!(draw(&mut a, 170, 40).matches("▐好▌").count(), 2, "the album's and the player's seal fill at once");
+    draw(&mut a, 170, 40);
+    assert!(seal_filled(&a, crate::app::Button::Star) && seal_filled(&a, crate::app::Button::StarSong), "the album's and the player's seal fill at once");
 
     // Play button follows state.
     let mut t = Terminal::new(TestBackend::new(100, 20)).unwrap();
@@ -1080,14 +1123,15 @@ fn another_device_playing_shows_in_the_player_bar() {
     a.devices.hearts.insert("s1".into(), false);
     let s = draw(&mut a, 160, 30);
     dump("playing-on", &s);
-    assert!(s.contains("⇄ Playing on Desk") && s.contains("▕好▏") && s.contains("First") && s.contains("1:01"), "{s}");
-    let volume = s.lines().find_map(|l| l.split_once("◁)")).expect("the volume").1.to_string();
+    assert!(s.contains("⇄ Playing on Desk") && !seal_filled(&a, crate::app::Button::StarSong) && s.contains("First") && s.contains("1:01"), "{s}");
+    let volume = s.lines().find_map(|l| l.split_once("🔉")).expect("the volume").1.to_string();
     assert_eq!(volume.matches('━').count(), 5, "40 % of 12 cells:{volume}");
     // The heart goes to the device, and fills at once.
     let heart = hit_rect(&a, Hit::Button(crate::app::Button::StarSong));
     click(&mut a, heart.x, heart.y);
     assert_eq!(a.cmds.last(), Some(&Cmd::Star(nori_core::client::Starrable::Song, "s1".into(), true)));
-    assert!(draw(&mut a, 160, 30).contains("▐好▌"));
+    draw(&mut a, 160, 30);
+    assert!(seal_filled(&a, crate::app::Button::StarSong));
     // This computer's volume, set from afar, does not show over the device's.
     a.handle(Msg::Volume(0.9));
     assert_eq!(a.volume, 0.4);

@@ -34,6 +34,8 @@ pub enum Action {
     Panel(Panel),
     /// Full-window player.
     Full,
+    /// Radio from the playing song.
+    Radio,
     Back,
     Refresh,
     // Lists
@@ -146,14 +148,16 @@ pub const BINDINGS: &[Binding] = &[
     b!(Global, "", Action::Go(6), "", [(Char('7'), N)]),
     b!(Global, "", Action::Go(7), "", [(Char('8'), N)]),
     b!(Global, "", Action::Go(8), "", [(Char('9'), N)]),
-    b!(Global, "tab / shift tab", Action::NextPane, "In the full player: the next panel, lyrics, queue, devices", [(Tab, N)]),
+    b!(Global, "tab / shift tab", Action::NextPane, "In the full player: the next panel, playing, queue, lyrics, devices", [(Tab, N)]),
     b!(Global, "", Action::PreviousPane, "", [(BackTab, S), (BackTab, N)]),
-    b!(Global, "L / Q", Action::Panel(Panel::Lyrics), "The full player on its lyrics or queue (again: back)", [(Char('L'), S), (Char('L'), N)]),
+    b!(Global, "P / Q / L", Action::Panel(Panel::Playing), "The full player on the song alone, its queue or its lyrics (again: back)", [(Char('P'), S), (Char('P'), N)]),
+    b!(Global, "", Action::Panel(Panel::Lyrics), "", [(Char('L'), S), (Char('L'), N)]),
     b!(Global, "", Action::Panel(Panel::Queue), "", [(Char('Q'), S), (Char('Q'), N)]),
     b!(Global, "C", Action::Panel(Panel::Devices), "Devices: play on another one, or start a jam (remote control or jams on)", [(Char('C'), S), (Char('C'), N)]),
     b!(Global, "o", Action::Join, "Join a jam: paste the invite link (pasting it anywhere does too)", [(Char('o'), N)]),
     b!(Global, "F / N", Action::Full, "The player over the whole window", [(Char('F'), S), (Char('F'), N), (Char('N'), S), (Char('N'), N)]),
     b!(Global, "esc / h / ⌫", Action::Back, "Back: out of the full player, out of a page", [(Esc, N), (Char('h'), N), (Backspace, N)]),
+    b!(Global, "t", Action::Radio, "Radio from the playing song, where the server has it", [(Char('t'), N)]),
     b!(Global, "R", Action::Refresh, "Ask the server again", [(Char('R'), S), (Char('R'), N)]),
     b!(Global, "E", Action::Curve, "AutoEQ for the headphones just connected: apply it, or undo it", [(Char('E'), S), (Char('E'), N)]),
     b!(Global, "m", Action::Mouse, "Mouse on or off (off: the terminal selects text)", [(Char('m'), N)]),

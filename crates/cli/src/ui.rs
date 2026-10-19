@@ -906,7 +906,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         // Hearts and downloads are the account's.
         if let Some(on) = star.filter(|_| account) {
             let label = " Favorite";
-            let w = 4 + label.width() as u16;
+            let w = 2 + label.width() as u16;
             if x + w <= end {
                 let r = Rect { x, y, width: w, height: 1 };
                 put(f, Paragraph::new(Line::from(vec![seal(on, false, t), Span::styled(label, Style::default().fg(t.ink))])), r);
@@ -1496,7 +1496,7 @@ fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
 /// The full-window player: the cover, the title with its seal, the seek bar, the transport and the volume on
 /// the left, the lyrics, queue or devices in an outline beside it. A narrow window gives the panel the room
 /// under the song.
-fn full_player(f: &mut Frame, area: Rect, app: &mut App, mut art: Option<&mut Art>) {
+fn full_player(f: &mut Frame, area: Rect, app: &mut App, art: Option<&mut Art>) {
     let t = app.theme;
     put(f, Block::default().style(t.ground()), area);
     if area.width < 10 || area.height < 4 {
@@ -1507,6 +1507,16 @@ fn full_player(f: &mut Frame, area: Rect, app: &mut App, mut art: Option<&mut Ar
     app.hits.push((Rect { height: 2.min(area.height), ..area }, Hit::Button(Button::Full)));
     let m = crate::chrome::margin(area.width) + 2;
     let inner = Rect { x: area.x + m, y: area.y + 1, width: area.width.saturating_sub(2 * m), height: area.height.saturating_sub(2) };
+    if app.panel == Panel::Playing {
+        // The song alone, as wide as its cover, under the panels' names.
+        let tabs = panel_tabs(app);
+        let tabs_w = tabs.iter().map(|t| t.1.width() as u16).sum::<u16>() + 4 * tabs.len().saturating_sub(1) as u16;
+        draw_panel_tabs(f, app, &t, tabs, inner.x + inner.width.saturating_sub(tabs_w) / 2, inner.y, inner.x + inner.width);
+        let w = (inner.height.saturating_sub(2 + SONG_BELOW).min(22) * 2).max(40).min(inner.width);
+        let column = Rect { x: inner.x + (inner.width - w) / 2, y: inner.y + 2, width: w, height: inner.height.saturating_sub(2) };
+        song_column(f, column, app, &t, art);
+        return;
+    }
     let wide = inner.width >= 84;
     let left_w = if wide { (inner.width * 2 / 5).clamp(32, 46) } else { inner.width };
     let left = Rect { width: left_w, ..inner };
@@ -1521,15 +1531,16 @@ fn full_player(f: &mut Frame, area: Rect, app: &mut App, mut art: Option<&mut Ar
     }
 }
 
+/// Rows under the full player's cover: title, artist, a blank, seek, a blank, transport, a blank, volume.
+const SONG_BELOW: u16 = 8;
+
 /// The song in the full player's left column: returns the rows it took.
 fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<&mut Art>) -> u16 {
     let Some(song) = app.song.clone() else {
         text(f, Rect { y: area.y + 1, height: 1, ..area }, "Nothing playing · esc goes back", t.dim());
         return 2;
     };
-    // Below the cover: title, artist, a blank, seek, a blank, transport, a blank, volume.
-    const BELOW: u16 = 8;
-    let cover_rows = if app.images && art.is_some() { area.height.saturating_sub(BELOW).min(area.width / 2).min(22) } else { 0 };
+    let cover_rows = if app.images && art.is_some() { area.height.saturating_sub(SONG_BELOW).min(area.width / 2).min(22) } else { 0 };
     let mut y = area.y;
     if cover_rows >= 6 {
         let c = Rect { x: area.x, y, width: cover_rows * 2, height: cover_rows };
@@ -1540,14 +1551,14 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
     let row = |y: u16| Rect { y, height: 1, ..area };
     // The title with the seal at the right end.
     let sealed = app.rules.stars;
-    let title_w = w.saturating_sub(if sealed { 5 } else { 0 });
+    let title_w = w.saturating_sub(if sealed { 4 } else { 0 });
     text(f, Rect { width: title_w, ..row(y) }, &song.title, bold().fg(t.ink));
     if sealed {
         let liked = app.starred(Starrable::Song, &song.id, song.starred);
-        let r = Rect { x: area.x + w - 4, width: 4, ..row(y) };
+        let r = Rect { x: area.x + w - 2, width: 2, ..row(y) };
         let flash = liked && app.flash.is_some_and(|(b, _)| b == Button::StarSong);
         put(f, Paragraph::new(seal(liked, flash, t)), r);
-        app.hits.push((r, Hit::Button(Button::StarSong)));
+        app.hits.push((Rect { x: r.x - 1, width: 3, ..r }, Hit::Button(Button::StarSong)));
     }
     y += 1;
     let by = [song.artist.as_str(), song.album.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
@@ -1571,7 +1582,7 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
         transport_button(f, app, t, *b, Rect { x: x0 + i as u16 * step, width: 1, ..row(y) });
     }
     y += 2;
-    text(f, Rect { width: 2, ..row(y) }, "◁)", t.dim());
+    text(f, Rect { width: 2, ..row(y) }, speaker(app.volume), t.dim());
     let vol = Rect { x: area.x + 3, width: 16.min(w.saturating_sub(3)), ..row(y) };
     track_bar(f, vol, app.volume, t);
     app.volume_rect = vol;
@@ -1601,20 +1612,8 @@ fn side_panel(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     }
     let inner = Rect { x: area.x + 3, y: area.y + 1, width: area.width.saturating_sub(6), height: area.height.saturating_sub(2) };
     app.shown.panel_w = inner.width;
-    let mut x = inner.x;
-    let tabs: Vec<(Panel, &str, &str)> = PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.on).map(|(p, name)| (*p, panel_icon(*p), *name)).collect();
-    for (which, icon, name) in tabs {
-        let label = format!("{icon} {name}");
-        let w = label.width() as u16;
-        if x + w > inner.x + inner.width {
-            break;
-        }
-        let style = if which == app.panel { t.current().add_modifier(Modifier::UNDERLINED) } else { t.dim() };
-        let r = Rect { x, y: inner.y, width: w, height: 1 };
-        put(f, Paragraph::new(Span::styled(label, style)), r);
-        app.hits.push((Rect { x: x.saturating_sub(1), width: w + 2, ..r }, Hit::Button(Button::Panel(which))));
-        x += w + 4;
-    }
+    let tabs = panel_tabs(app);
+    draw_panel_tabs(f, app, t, tabs, inner.x, inner.y, inner.x + inner.width);
     put(f, Paragraph::new(Span::styled("─".repeat(area.width.saturating_sub(2) as usize), Style::default().fg(t.hair))), Rect { x: area.x + 1, y: inner.y + 1, width: area.width.saturating_sub(2), height: 1 });
     let body = Rect { y: inner.y + 3, height: inner.height.saturating_sub(3), ..inner };
     let focused = app.focus == Focus::Panel;
@@ -1622,30 +1621,63 @@ fn side_panel(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
         Panel::Lyrics => lyrics(f, body, app, &p),
         Panel::Queue => queue(f, body, app, focused, &p),
         Panel::Devices => devices(f, body, app, focused, &p),
+        Panel::Playing => {}
+    }
+}
+
+/// The full player's panels with their names: the devices only while other devices can play.
+fn panel_tabs(app: &App) -> Vec<(Panel, String)> {
+    PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.on).map(|(p, name)| (*p, format!("{} {name}", panel_icon(*p)))).collect()
+}
+
+/// `tabs` from `x` on row `y`, up to `end`; the open one underlined in the accent.
+fn draw_panel_tabs(f: &mut Frame, app: &mut App, t: &Theme, tabs: Vec<(Panel, String)>, mut x: u16, y: u16, end: u16) {
+    for (which, label) in tabs {
+        let w = label.width() as u16;
+        if x + w > end {
+            break;
+        }
+        let style = if which == app.panel { t.current().add_modifier(Modifier::UNDERLINED) } else { t.dim() };
+        let r = Rect { x, y, width: w, height: 1 };
+        put(f, Paragraph::new(Span::styled(label, style)), r);
+        app.hits.push((Rect { x: x.saturating_sub(1), width: w + 2, ..r }, Hit::Button(Button::Panel(which))));
+        x += w + 4;
     }
 }
 
 fn panel_icon(p: Panel) -> &'static str {
     match p {
-        Panel::Lyrics => "≣",
-        Panel::Queue => "☰",
+        Panel::Playing => "♫",
+        Panel::Queue => "≡",
+        Panel::Lyrics => "❝",
         Panel::Devices => "⇄",
+    }
+}
+
+/// The volume's speaker: struck through when muted, its waves by how loud.
+fn speaker(volume: f32) -> &'static str {
+    match volume {
+        v if v <= 0.0 => "🔇",
+        v if v < 0.34 => "🔈",
+        v if v < 0.67 => "🔉",
+        _ => "🔊",
     }
 }
 
 // ---- the player bar ----
 
-/// The seal: not liked its outline in quiet ink, liked reversed in the accent (`flash`: the one frame of
-/// the stamp, inverted). Four cells wide.
+/// The seal: not liked the symbol in quiet ink, liked the symbol on the accent (`flash`: the one frame of
+/// the stamp, inverted). Two cells wide.
 pub fn seal(liked: bool, flash: bool, t: &Theme) -> Span<'static> {
     let style = if liked { t.liked() } else { t.dim() };
     let style = if flash { style.add_modifier(Modifier::REVERSED) } else { style };
-    Span::styled(if liked { "▐好▌" } else { "▕好▏" }, style)
+    Span::styled("好", style)
 }
 
 /// The player: the song on the left, shuffle, previous, play, next and repeat with the seek bar under them in
-/// the middle, and on the right the seal, devices, lyrics and queue buttons and the volume.
-fn player_bar(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, mut art: Option<&mut Art>) {
+/// the middle, and on the right the seal, the playing, queue, lyrics, devices and full screen buttons, and
+/// the volume.
+fn player_bar(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<&mut Art>) {
     let m = crate::chrome::margin(area.width);
     let frame = Rect { x: area.x + m, width: area.width.saturating_sub(2 * m), ..area };
     if frame.width < 12 {
@@ -1701,29 +1733,20 @@ fn player_bar(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, mut art: Opti
     if let (Some(r), true) = (bar.seal, app.rules.stars) {
         if let Some(s) = &app.song {
             let liked = app.starred(Starrable::Song, &s.id, s.starred);
-            put(f, Paragraph::new(seal(liked, liked && flash == Some(Button::StarSong), t)), r);
+            put(f, Paragraph::new(seal(liked, liked && flash == Some(Button::StarSong), t)), Rect { x: r.x + 1, width: 2, ..r });
             app.hits.push((r, Hit::Button(Button::StarSong)));
         }
     }
-    for (p, r) in &bar.panels {
-        let (glyph, on) = match p {
-            Panel::Devices => ("⇄", app.devices.active.is_some()),
-            Panel::Lyrics => ("≣", false),
-            Panel::Queue => ("☰", false),
+    for (b, r) in &bar.views {
+        let (glyph, on) = match b {
+            Button::Panel(p) => (panel_icon(*p), *p == Panel::Devices && app.devices.active.is_some()),
+            _ => ("⤢", false),
         };
         put(f, Paragraph::new(Span::styled(glyph, if on { t.current() } else { t.dim() })), *r);
-        app.hits.push((Rect { x: r.x.saturating_sub(1), width: 3, ..*r }, Hit::Button(Button::Panel(*p))));
-    }
-    // Radio from the song, above the seal where the bar is tall enough.
-    if let (Some(seal), true) = (bar.seal, app.rules.radio && app.song.is_some()) {
-        if seal.y > frame.y + 1 {
-            let r = Rect { y: seal.y - 1, width: crate::text::RADIO.width() as u16, ..seal };
-            text(f, r, crate::text::RADIO, t.dim());
-            app.hits.push((r, Hit::Button(Button::RadioSong)));
-        }
+        app.hits.push((Rect { x: r.x.saturating_sub(1), width: 3, ..*r }, Hit::Button(*b)));
     }
     if let Some([icon, track]) = bar.volume {
-        text(f, icon, if app.volume <= 0.0 { "◁×" } else { "◁)" }, t.dim());
+        text(f, icon, speaker(app.volume), t.dim());
         track_bar(f, track, app.volume, t);
         app.volume_rect = track;
         app.hits.push((track, Hit::Volume));

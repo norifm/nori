@@ -16,14 +16,14 @@ pub struct Rows {
     pub foot: Rect,
 }
 
-/// Splits `area`. The top outline is three rows (one on a tiny window, without its box), the player's five
+/// Splits `area`. The top outline is three rows (one on a tiny window, without its box), the player's six
 /// (three when short, none when tiny), the hint line one row.
 pub fn rows(area: Rect) -> Rows {
     let h = area.height;
     let foot = if h >= 12 { 1 } else { 0 };
     let bar = match h {
-        16.. => 5,
-        10..=15 => 3,
+        18.. => 6,
+        10..=17 => 3,
         _ => 0,
     };
     let top = if h >= 10 { 3 } else { 1.min(h) };
@@ -132,36 +132,43 @@ pub struct Bar {
     /// The elapsed time, the seek bar, the time left.
     pub clock: Option<[Rect; 3]>,
     pub seal: Option<Rect>,
-    pub panels: Vec<(Panel, Rect)>,
+    /// After the seal: the full player on the song, the queue, the lyrics and the devices, then full screen.
+    pub views: Vec<(Button, Rect)>,
     /// The volume's icon and bar.
     pub volume: Option<[Rect; 2]>,
 }
 
 /// Lays the player out in `outline` (its border included) for the `buttons` the player offers, in order,
-/// with `devices` when other devices can play. Below 100 columns the volume goes, then the panel buttons;
-/// below 60 only the song and play stay.
+/// with `devices` when other devices can play. Tall, its lines are the middle two of four, beside a cover
+/// four rows high. Narrower, the volume goes, then the buttons after the seal; below 60 columns only the
+/// song and play stay.
 pub fn bar(outline: Rect, buttons: &[Button], covers: bool, devices: bool) -> Bar {
     let inner = Rect { x: outline.x + 1, y: outline.y + 1, width: outline.width.saturating_sub(2), height: outline.height.saturating_sub(2) };
     let w = inner.width;
-    let tall = inner.height >= 3;
-    let row = |r: u16, x: u16, width: u16| Rect { x, y: inner.y + r.min(inner.height.saturating_sub(1)), width, height: 1 };
+    let tall = inner.height >= 4;
+    let top = if tall { 1 } else { 0 };
+    let row = |r: u16, x: u16, width: u16| Rect { x, y: inner.y + (top + r).min(inner.height.saturating_sub(1)), width, height: 1 };
     let narrow = w < 58;
-    let panels_on = w >= 78;
-    let volume_on = w >= 98;
-    let right_w = match (volume_on, panels_on) {
-        (true, _) => 34,
-        (_, true) => 22,
-        _ if narrow => 0,
-        _ => 6,
+    let views_on = w >= 78;
+    // Tall, the volume is under the seal and its buttons.
+    let volume_on = views_on && (tall || w >= 98);
+    let right_w = if narrow {
+        0
+    } else if !views_on {
+        6
+    } else if volume_on && !tall {
+        37
+    } else {
+        21
     };
-    let cover = (covers && tall && w >= 58).then(|| Rect { x: inner.x + 1, y: inner.y, width: 6, height: 3 });
-    let song_x = inner.x + 1 + cover.map_or(0, |_| 8);
-    let left_w = if narrow { w.saturating_sub(10) } else { (w / 4).clamp(16, 30).max(if cover.is_some() { 20 } else { 0 }) };
+    let cover = (covers && tall && w >= 58).then(|| Rect { x: inner.x + 1, y: inner.y, width: 8, height: 4 });
+    let song_x = inner.x + 1 + cover.map_or(0, |_| 10);
+    let left_w = if narrow { w.saturating_sub(10) } else { (w / 4).clamp(16, 30).max(if cover.is_some() { 22 } else { 0 }) };
     let song_w = (inner.x + left_w).saturating_sub(song_x + 1);
     let artist = if tall { song_w } else { 0 };
     let song = [row(0, song_x, song_w), row(1, song_x, artist)];
     let mid = Rect { x: inner.x + left_w, width: w.saturating_sub(left_w + right_w + 1), ..inner };
-    let mut out = Bar { outline, cover, song, buttons: Vec::new(), clock: None, seal: None, panels: Vec::new(), volume: None };
+    let mut out = Bar { outline, cover, song, buttons: Vec::new(), clock: None, seal: None, views: Vec::new(), volume: None };
     let shown: Vec<Button> = if narrow { buttons.iter().copied().filter(|b| *b == Button::Toggle).collect() } else { buttons.to_vec() };
     if narrow {
         // Only play, at the right.
@@ -183,17 +190,16 @@ pub fn bar(outline: Rect, buttons: &[Button], covers: bool, devices: bool) -> Ba
     }
     if right_w > 0 {
         let rx = inner.x + w - right_w;
-        out.seal = Some(row(if tall { 1 } else { 0 }, rx, 4));
-        if panels_on {
-            let line = if tall { 1 } else { 0 };
-            let mut x = rx + 6;
-            let wanted = [Panel::Devices, Panel::Lyrics, Panel::Queue];
-            for p in wanted.into_iter().filter(|p| *p != Panel::Devices || devices) {
-                out.panels.push((p, row(line, x, 1)));
-                x += 4;
+        out.seal = Some(row(0, rx, 4));
+        if views_on {
+            let mut x = rx + 5;
+            let panels = [Panel::Playing, Panel::Queue, Panel::Lyrics, Panel::Devices];
+            for b in panels.into_iter().filter(|p| *p != Panel::Devices || devices).map(Button::Panel).chain([Button::Full]) {
+                out.views.push((b, row(0, x, 1)));
+                x += 3;
             }
             if volume_on {
-                let x = rx + 18;
+                let (line, x) = if tall { (1, rx + 1) } else { (0, x + 1) };
                 out.volume = Some([row(line, x, 2), row(line, x + 3, 12)]);
             }
         }
@@ -221,8 +227,8 @@ mod tests {
             assert_eq!(r.bar.y + r.bar.height, r.foot.y);
         }
         let r = rows(area(120, 36));
-        assert_eq!((r.top.height, r.bar.height, r.foot.height, r.page.height), (3, 5, 1, 27));
-        assert_eq!(rows(area(80, 24)).page.height, 15);
+        assert_eq!((r.top.height, r.bar.height, r.foot.height, r.page.height), (3, 6, 1, 26));
+        assert_eq!(rows(area(80, 24)).page.height, 14);
         assert_eq!((rows(area(80, 12)).bar.height, rows(area(80, 9)).bar.height), (3, 0));
     }
 
@@ -271,25 +277,42 @@ mod tests {
     fn the_player_drops_pieces_as_it_narrows() {
         use Button::*;
         let buttons = [Shuffle, Previous, Toggle, Next, Repeat];
-        let at = |w: u16| bar(Rect { x: 0, y: 0, width: w, height: 5 }, &buttons, true, true);
+        let at = |w: u16| bar(Rect { x: 0, y: 0, width: w, height: 6 }, &buttons, true, true);
         let wide = at(120);
         assert!(wide.cover.is_some() && wide.clock.is_some() && wide.seal.is_some() && wide.volume.is_some());
-        assert_eq!(wide.panels.len(), 3);
+        let views = [Panel(crate::app::Panel::Playing), Panel(crate::app::Panel::Queue), Panel(crate::app::Panel::Lyrics), Panel(crate::app::Panel::Devices), Full];
+        assert_eq!(wide.views.iter().map(|v| v.0).collect::<Vec<_>>(), views);
         assert_eq!(wide.buttons.iter().map(|b| b.0).collect::<Vec<_>>(), buttons);
         // The transport is centered in the middle: play is the third of five.
         let play = wide.buttons[2].1;
         let (a, b) = (wide.buttons[0].1, wide.buttons[4].1);
         assert_eq!(play.x - a.x, b.x - play.x);
         let mid = at(90);
-        assert!(mid.volume.is_none() && mid.panels.len() == 3 && mid.seal.is_some());
+        assert!(mid.volume.is_some() && mid.views.len() == 5 && mid.seal.is_some(), "the volume goes under the seal");
+        let short = bar(Rect { x: 0, y: 0, width: 90, height: 3 }, &buttons, true, true);
+        assert!(short.volume.is_none() && short.views.len() == 5);
         let small = at(70);
-        assert!(small.panels.is_empty() && small.seal.is_some() && small.clock.is_some());
+        assert!(small.views.is_empty() && small.seal.is_some() && small.clock.is_some());
         let tiny = at(50);
         assert_eq!(tiny.buttons.iter().map(|b| b.0).collect::<Vec<_>>(), [Toggle]);
         assert!(tiny.seal.is_none() && tiny.clock.is_none() && tiny.volume.is_none() && tiny.cover.is_none());
         // Without devices there is no devices button.
-        let no = bar(Rect { x: 0, y: 0, width: 120, height: 5 }, &buttons, true, false);
-        assert_eq!(no.panels.iter().map(|p| p.0).collect::<Vec<_>>(), [crate::app::Panel::Lyrics, crate::app::Panel::Queue]);
+        let no = bar(Rect { x: 0, y: 0, width: 120, height: 6 }, &buttons, true, false);
+        assert_eq!(no.views.iter().map(|v| v.0).collect::<Vec<_>>(), [views[0], views[1], views[2], Full]);
+    }
+
+    #[test]
+    fn the_players_lines_sit_in_the_middle_of_its_cover() {
+        use Button::*;
+        let outline = Rect { x: 0, y: 10, width: 140, height: 6 };
+        let b = bar(outline, &[Shuffle, Previous, Toggle, Next, Repeat], true, true);
+        let cover = b.cover.expect("a cover");
+        let lines: Vec<Rect> = b.buttons.iter().map(|x| x.1).chain(b.views.iter().map(|x| x.1)).chain(b.seal).chain(b.clock.into_iter().flatten()).chain(b.volume.into_iter().flatten()).chain(b.song).collect();
+        for r in lines {
+            let (above, below) = (r.y - cover.y, cover.y + cover.height - 1 - r.y);
+            assert!(above >= 1 && below >= 1, "{r:?} beside {cover:?}");
+        }
+        assert_eq!(b.song[0].y - cover.y, cover.y + cover.height - 1 - b.song[1].y);
     }
 
     #[test]
@@ -297,10 +320,10 @@ mod tests {
         use Button::*;
         let buttons = [Shuffle, Previous, Toggle, Next, Repeat];
         for w in 20..200u16 {
-            for h in [3u16, 5] {
+            for h in [3u16, 6] {
                 let outline = Rect { x: 3, y: 2, width: w, height: h };
                 let b = bar(outline, &buttons, true, true);
-                let mut all: Vec<Rect> = b.buttons.iter().map(|x| x.1).chain(b.panels.iter().map(|x| x.1)).chain(b.seal).chain(b.cover).chain(b.clock.into_iter().flatten()).chain(b.volume.into_iter().flatten()).collect();
+                let mut all: Vec<Rect> = b.buttons.iter().map(|x| x.1).chain(b.views.iter().map(|x| x.1)).chain(b.seal).chain(b.cover).chain(b.clock.into_iter().flatten()).chain(b.volume.into_iter().flatten()).collect();
                 all.extend(b.song);
                 for r in &all {
                     assert!(r.x > outline.x && r.x + r.width < outline.x + outline.width && r.y > outline.y && r.y < outline.y + outline.height - 1, "w {w} h {h}: {r:?} outside {outline:?}");

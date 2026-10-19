@@ -92,6 +92,8 @@ pub enum Focus {
 /// The full player's panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Panel {
+    /// The song alone, in the middle.
+    Playing,
     #[default]
     Lyrics,
     Queue,
@@ -99,7 +101,7 @@ pub enum Panel {
     Devices,
 }
 
-pub const PANELS: [(Panel, &str); 3] = [(Panel::Lyrics, "Lyrics"), (Panel::Queue, "Queue"), (Panel::Devices, "Devices")];
+pub const PANELS: [(Panel, &str); 4] = [(Panel::Playing, "Playing"), (Panel::Queue, "Queue"), (Panel::Lyrics, "Lyrics"), (Panel::Devices, "Devices")];
 
 /// Work for the runner.
 #[derive(Debug, Clone, PartialEq)]
@@ -747,7 +749,6 @@ pub enum Button {
     Download,
     /// Star the playing song.
     StarSong,
-    RadioSong,
     Back,
     Help,
     Connect,
@@ -1090,6 +1091,7 @@ impl App {
                 d.sel.at = active.map_or(0, |i| d.rows().iter().position(|r| *r == DeviceRow::Device(i)).unwrap_or(0));
             }
             Panel::Lyrics => self.want_lyrics(),
+            Panel::Playing => {}
         }
     }
 
@@ -1712,6 +1714,11 @@ impl App {
             }
             Action::Panel(p) => self.set_panel(p),
             Action::Full => self.toggle_full(),
+            Action::Radio => {
+                if let Some(s) = self.song.as_ref().filter(|_| self.rules.radio) {
+                    self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id.clone()), false));
+                }
+            }
             Action::NextPane | Action::PreviousPane => self.cycle(a == Action::NextPane),
             Action::Back => self.back(),
             Action::Refresh => self.refresh(),
@@ -1870,7 +1877,7 @@ impl App {
                     let len = self.devices.rows().len();
                     Some((&mut self.devices.sel, len))
                 }
-                Panel::Lyrics => None,
+                Panel::Lyrics | Panel::Playing => None,
             };
         }
         if self.page().is_some() {
@@ -1984,7 +1991,7 @@ impl App {
             let q = self.queue.as_ref()?;
             let i = match self.panel {
                 Panel::Queue => self.queue_selected_index()?,
-                Panel::Lyrics | Panel::Devices => return None,
+                Panel::Lyrics | Panel::Devices | Panel::Playing => return None,
             };
             return q.songs.get(i).cloned().map(|s| Item::Song(vec![s], 0));
         }
@@ -2422,7 +2429,7 @@ impl App {
                 self.card_covers = !self.card_covers;
                 self.cmds.push(Cmd::CardCovers(self.card_covers));
             }
-            Switch::Paint => self.cmds.push(Cmd::Paint(!self.paint)),
+            Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
             Switch::Setting(_) | Switch::Stores(..) => {}
         }
         self.settings.invalidate();
@@ -2662,11 +2669,6 @@ impl App {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.stars) {
                     let (id, listed) = (s.id.clone(), s.starred);
                     self.star(Starrable::Song, id, listed);
-                }
-            }
-            Button::RadioSong => {
-                if let Some(s) = self.song.as_ref().filter(|_| self.rules.radio) {
-                    self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id.clone()), false));
                 }
             }
             Button::Back => {
