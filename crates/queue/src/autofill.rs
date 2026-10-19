@@ -63,8 +63,9 @@ impl Session {
         self.playlist(|p| end_of(p).map(|i| p.ids()[i].clone()))
     }
 
-    /// The queue's last entry in play order, as [`nori_player::queue::Refill`] follows it.
-    fn end_entry(&self) -> Option<u64> {
+    /// The queue's last entry in play order, as [`nori_player::queue::Refill`] follows it: the entry a
+    /// fetch started now fills after.
+    pub fn end_entry(&self) -> Option<u64> {
         self.playlist(|p| end_of(p).map(|i| p.seqs()[i]))
     }
 
@@ -106,11 +107,11 @@ impl Session {
         }
     }
 
-    /// The fetch returned `count` songs: whether to append them (`Refill::arrived`). Clients ask through
-    /// `Client::autofill_arrived`, which also records the picks.
-    pub fn autofill_arrived(&self, count: u32) -> bool {
+    /// The fetch for the songs after entry `after` returned `count`: whether to append them
+    /// (`Refill::arrived`). Clients ask through `Client::autofill_arrived`, which also records the picks.
+    pub fn autofill_arrived(&self, count: u32, after: Option<u64>) -> bool {
         let end = self.end_entry();
-        self.refill.lock().arrived(count as usize, end)
+        self.refill.lock().arrived(count as usize, after, end)
     }
 
 
@@ -122,6 +123,12 @@ impl Session {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Session {
+    /// The device can reach the network again: whether to fetch songs for the queue's end now, as a new
+    /// song would (a fetch that failed while it could not is tried again).
+    pub fn network_back(&self) -> bool {
+        self.autofill_start()
+    }
+
     /// Next pressed near the queue's end.
     pub fn autofill_next(&self) -> FillNext {
         self.autofill_next_at(nori_time::monotonic().as_millis() as i64)
@@ -328,10 +335,11 @@ mod tests {
         s.moved_to(1);
         assert_eq!(s.autofill_seed().as_deref(), Some("rf4"), "seeded with the queue's end, wherever the user is");
         assert!(s.autofill_start(), "two left: the fetch starts ahead of a fast run of nexts");
+        let after = s.end_entry();
         assert!(!s.autofill_start(), "one fetch at a time");
         s.moved_to(3);
         assert_eq!(s.autofill_next_at(1_000), FillNext::Wait, "the last song: the press waits for the fetch out");
-        assert!(s.autofill_arrived(2), "the end is still rf4");
+        assert!(s.autofill_arrived(2, after), "the end is still rf4");
         s.take(4, vec!["rf5".into(), "rf6".into()], vec![nori_player::playlist::Hand::No; 2]);
         assert!(s.autofill_landed_at(1_500), "still on the song the press was made on, half a second later");
         s.repeat(2);
@@ -348,6 +356,7 @@ mod tests {
         let ids: Vec<String> = (0..3).map(|k| format!("{tag}{k}")).collect();
         let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
         let s = crate::playlist::tests::session(&refs, 2);
+        let after = s.end_entry();
         let mut fetches = 0;
         for &t in presses {
             match s.autofill_next_at(t) {
@@ -360,7 +369,7 @@ mod tests {
         if let Some(i) = on {
             s.moved_to(i as i32);
         }
-        assert!(s.autofill_arrived(15), "the songs go in either way");
+        assert!(s.autofill_arrived(15, after), "the songs go in either way");
         s.take(3, vec![format!("{tag}-a"), format!("{tag}-b")], vec![nori_player::playlist::Hand::No; 2]);
         s.autofill_landed_at(arrive)
     }
@@ -378,29 +387,54 @@ mod tests {
         // Waiting next follows its entry not its song.
         let s = crate::playlist::tests::session(&["se0", "se1", "se0"], 2);
         assert_eq!(s.autofill_next_at(10_000), FillNext::Fetch);
+        let after = s.end_entry();
         // The same song, another entry of it.
         s.moved_to(0);
-        assert!(s.autofill_arrived(15));
+        assert!(s.autofill_arrived(15, after));
         s.take(3, vec!["se2".into()], vec![nori_player::playlist::Hand::No]);
         assert!(!s.autofill_landed_at(10_300), "the press was made on the last entry, not here");
 
         // Fetch for moved end is dropped.
         let s = crate::playlist::tests::session(&["em0", "em1", "em2"], 1);
         assert!(s.autofill_start());
+        let after = s.end_entry();
         // Add to queue inserts after the current song, so the end is still em2.
         s.take(3, vec!["mine".into()], vec![nori_player::playlist::Hand::Last]);
         assert_eq!(s.autofill_seed().as_deref(), Some("em2"));
-        assert!(s.autofill_arrived(15));
+        assert!(s.autofill_arrived(15, after));
         s.take(4, vec!["em3".into()], vec![nori_player::playlist::Hand::No]);
         assert!(!s.autofill_landed_at(0), "no next was waiting");
         // Songs appended elsewhere move the end: the fill is dropped.
         s.moved_to(3);
         assert!(s.autofill_start());
+        let after = s.end_entry();
         s.take(5, vec!["em4".into()], vec![nori_player::playlist::Hand::No]);
-        assert!(!s.autofill_arrived(15));
+        assert!(!s.autofill_arrived(15, after));
         assert!(s.autofill_start());
+        let after = s.end_entry();
         s.set(vec!["n0".into(), "n1".into()], Some(0), false, None);
-        assert!(!s.autofill_arrived(15));
+        assert!(!s.autofill_arrived(15, after));
+
+        // A queue played while the restored one's fetch is out fills for itself.
+        let s = crate::playlist::tests::session(&["ro0"], 0);
+        assert!(s.autofill_start());
+        let restored = s.end_entry();
+        s.set(vec!["pa0".into()], Some(0), false, None);
+        assert!(s.autofill_start(), "its own fetch, though the restored queue's is out");
+        let played = s.end_entry();
+        assert!(!s.autofill_arrived(15, restored), "the restored queue's songs stay out");
+        assert!(s.autofill_arrived(15, played));
+    }
+
+    #[test]
+    fn a_fetch_failed_offline_is_asked_again_when_the_network_is_back() {
+        let s = crate::playlist::tests::session(&["nb0", "nb1", "nb2", "nb3"], 0);
+        assert!(!s.network_back(), "the end is not in sight");
+        s.moved_to(3);
+        assert!(s.autofill_start());
+        assert!(!s.network_back(), "a fetch is out");
+        assert!(!s.autofill_arrived(0, s.end_entry()), "it failed: no network");
+        assert!(s.network_back());
     }
 
 }

@@ -168,8 +168,9 @@ class PlaybackService : MediaLibraryService() {
     }
     private val sleepAlarm = AlarmManager.OnAlarmListener { player.pause() }
     /**
-     * The network turning unmetered, for the AutoEQ list, and coming back, for the remote's relay poll. One
-     * registration for the service's life; a change that leaves the answer as it was is not passed on.
+     * The network turning unmetered, for the AutoEQ list, and coming back, for the remote's relay poll and a
+     * refill that failed meanwhile. One registration for the service's life; a change that leaves the
+     * answer as it was is not passed on.
      */
     private val connectivity by lazy { getSystemService(android.net.ConnectivityManager::class.java) }
     private var metered: Boolean? = null
@@ -177,7 +178,17 @@ class PlaybackService : MediaLibraryService() {
         override fun onCapabilitiesChanged(network: android.net.Network, caps: android.net.NetworkCapabilities) =
             meteredNow(!caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_METERED))
 
-        override fun onAvailable(network: android.net.Network) = nori.remotes.networkBack()
+        override fun onAvailable(network: android.net.Network) = networkBack()
+
+        // A process started in the background (a fresh install, a headset's play) is kept off the network
+        // until Android lets it on: its requests fail meanwhile.
+        override fun onBlockedStatusChanged(network: android.net.Network, blocked: Boolean) {
+            if (!blocked) networkBack()
+        }
+    }
+    private fun networkBack() {
+        nori.remotes.networkBack()
+        if (nori.session.networkBack()) fetchFill()
     }
     private fun meteredNow(now: Boolean) {
         if (now == metered) return
@@ -757,7 +768,7 @@ class PlaybackService : MediaLibraryService() {
      * octo-fiesta download a provider track.
      */
     private fun fetchFill() = scope.launch {
-        val fresh = runCatching { nori.library.autofill() }.getOrNull() ?: dev.nori.music.ffi.Refill(emptyList(), null, null)
+        val fresh = runCatching { nori.library.autofill() }.getOrNull() ?: dev.nori.music.ffi.Refill(emptyList(), null, null, null)
         // Player work stays on this scope's main dispatcher.
         if (nori.library.autofillArrived(fresh)) {
             controls.addMediaItems(held(fresh.songs))

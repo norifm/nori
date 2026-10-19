@@ -335,11 +335,19 @@ impl Core {
 impl Core {
     /// The profile now plays from `ident` (a server and user); the library goes when that changed.
     pub(crate) fn serves(&self, ident: &str) -> Result<()> {
-        let db = self.db.lock();
-        if db::kv_get(&db, "server")?.as_deref() != Some(ident) {
+        {
+            let db = self.db.lock();
+            if db::kv_get(&db, "server")?.as_deref() == Some(ident) {
+                return Ok(());
+            }
             db::clear_library(&db)?;
             db::kv_put(&db, "server", ident)?;
         }
+        // What this session made of the old library goes with it.
+        self.kept.lock().clear();
+        *self.home.lock() = None;
+        *self.board.lock() = Default::default();
+        *self.stars.lock() = Default::default();
         Ok(())
     }
 

@@ -165,8 +165,9 @@ impl ErrorRun {
     }
 }
 
-/// Refilling past the end of the queue. One fetch at a time starts once at most [`FILL_AHEAD`] songs
-/// remain; the results go in only if the queue's end is unchanged.
+/// Refilling past the end of the queue. One fetch per end starts once at most [`FILL_AHEAD`] songs remain;
+/// its songs go in only if they follow the queue's end still. A new end (another queue) fetches anew, even
+/// while the old end's fetch is out.
 ///
 /// A next pressed with nothing after is taken when the songs land, unless the user moved on or the last
 /// press is older than [`NEXT_KEPT_MS`] (a late skip would surprise).
@@ -197,7 +198,7 @@ impl Refill {
 
     /// Whether to start a fetch now (`after` songs follow, `end` is last); true until [`Refill::arrived`].
     pub fn start(&mut self, refillable: bool, after: usize, end: Option<u64>) -> bool {
-        if !refillable || after > FILL_AHEAD || self.in_flight {
+        if !refillable || after > FILL_AHEAD || (self.in_flight && self.end == end) {
             return false;
         }
         self.in_flight = true;
@@ -218,10 +219,14 @@ impl Refill {
         false
     }
 
-    /// The fetch returned `count` songs: whether to insert them (the end is unchanged). Otherwise the
-    /// fetch and any waiting next are dropped.
-    pub fn arrived(&mut self, count: usize, end: Option<u64>) -> bool {
-        let keep = count > 0 && end.is_some() && self.end == end;
+    /// The fetch for the songs after entry `after` returned `count`: whether to insert them (they follow
+    /// the queue's end, `end`). An answer for an older end is dropped and the newer fetch still awaited;
+    /// any other drop ends the fetch and a waiting next.
+    pub fn arrived(&mut self, count: usize, after: Option<u64>, end: Option<u64>) -> bool {
+        if after.is_some() && after != self.end {
+            return false;
+        }
+        let keep = count > 0 && end.is_some() && after == end;
         if !keep {
             self.pending_from = None;
             self.in_flight = false;
@@ -384,15 +389,21 @@ mod tests {
         assert!(!f.start(false, 0, Some(1)), "not refillable");
         assert!(f.start(true, FILL_AHEAD, Some(1)), "the end in sight: fetch now");
         assert!(!f.start(true, 0, Some(1)), "already on the wire");
-        assert!(f.arrived(5, Some(1)), "the end is where it was, however far the user is from it");
+        assert!(f.arrived(5, Some(1), Some(1)), "the end is where it was, however far the user is from it");
         assert!(!f.landed(Some(2), true, 0), "no next was waiting");
         assert!(!f.in_flight());
         assert!(f.start(true, 0, Some(1)));
-        assert!(!f.arrived(0, Some(1)), "nothing came");
+        assert!(!f.arrived(0, Some(1), Some(1)), "nothing came");
         assert!(f.start(true, 0, Some(1)), "and the next move may try again");
-        assert!(!f.arrived(3, Some(3)), "the queue was given songs meanwhile");
+        assert!(!f.arrived(3, Some(1), Some(3)), "the queue was given songs meanwhile");
         assert!(f.start(true, 1, Some(1)));
-        assert!(!f.arrived(3, None), "the queue was emptied");
+        assert!(!f.arrived(3, Some(1), None), "the queue was emptied");
+        // Another queue while the old one's fetch is out (a restored queue, then a song played at once).
+        assert!(f.start(true, 0, Some(1)));
+        assert!(f.start(true, 0, Some(9)), "the new end fetches for itself");
+        assert!(!f.arrived(15, Some(1), Some(9)), "the old end's songs stay out");
+        assert!(f.in_flight(), "and the new end's fetch is still awaited");
+        assert!(f.arrived(15, Some(9), Some(9)));
     }
 
     #[test]
@@ -401,38 +412,38 @@ mod tests {
         assert!(!f.next(false, true, Some(4), 0));
         assert!(f.start(true, 0, Some(4)));
         assert!(f.skip_waiting(Some(4), 10), "a screen may show the skip on its way");
-        assert!(f.arrived(3, Some(4)));
+        assert!(f.arrived(3, Some(4), Some(4)));
         assert!(f.landed(Some(4), true, 800));
         // Moved on meanwhile (previous, a jump): the press is dropped.
         assert!(!f.next(false, true, Some(4), 1_000));
         assert!(f.start(true, 0, Some(4)));
         assert!(!f.skip_waiting(Some(5), 1_010));
-        assert!(f.arrived(3, Some(4)));
+        assert!(f.arrived(3, Some(4), Some(4)));
         assert!(!f.landed(Some(5), true, 1_200));
         // A press while a fetch is out waits for it; a press with a song after clears the waiting one.
         assert!(f.start(true, 1, Some(6)));
         assert!(!f.next(false, true, Some(7), 2_000));
         assert!(!f.start(true, 0, Some(6)), "one on the wire");
         assert!(f.next(true, true, Some(7), 2_100), "there is a next now");
-        assert!(f.arrived(2, Some(6)));
+        assert!(f.arrived(2, Some(6), Some(6)));
         assert!(!f.landed(Some(7), true, 2_200), "that press was already taken");
         // A queue that cannot be refilled remembers nothing.
         assert!(!f.next(false, false, Some(8), 3_000));
         assert!(!f.skip_waiting(Some(8), 3_000));
         assert!(f.start(true, 0, Some(8)));
-        assert!(f.arrived(1, Some(8)));
+        assert!(f.arrived(1, Some(8), Some(8)));
         assert!(!f.landed(Some(8), true, 3_100));
         // Nothing came: the waiting next goes with the fetch.
         assert!(!f.next(false, true, Some(6), 4_000));
         assert!(f.start(true, 0, Some(6)));
-        assert!(!f.arrived(0, Some(6)));
+        assert!(!f.arrived(0, Some(6), Some(6)));
         assert!(f.start(true, 0, Some(6)));
-        assert!(f.arrived(1, Some(6)));
+        assert!(f.arrived(1, Some(6), Some(6)));
         assert!(!f.landed(Some(6), true, 4_100));
         // Landed with nowhere to go (the songs went in but the player cannot step): no skip.
         assert!(!f.next(false, true, Some(9), 5_000));
         assert!(f.start(true, 0, Some(9)));
-        assert!(f.arrived(1, Some(9)));
+        assert!(f.arrived(1, Some(9), Some(9)));
         assert!(!f.landed(Some(9), false, 5_100));
 
         // Waiting next expires and counts once.
@@ -442,12 +453,12 @@ mod tests {
         assert!(f.start(true, 0, Some(10)));
         assert!(f.skip_waiting(Some(10), 10_000 + NEXT_KEPT_MS));
         assert!(!f.skip_waiting(Some(10), 10_001 + NEXT_KEPT_MS), "the wait shows no longer than it holds");
-        assert!(f.arrived(15, Some(10)), "the songs still go in");
+        assert!(f.arrived(15, Some(10), Some(10)), "the songs still go in");
         assert!(!f.landed(Some(10), true, 14_600), "a press 4.6 s old is not taken");
         // A fast answer: taken.
         assert!(!f.next(false, true, Some(2), 20_000));
         assert!(f.start(true, 0, Some(2)));
-        assert!(f.arrived(15, Some(2)));
+        assert!(f.arrived(15, Some(2), Some(2)));
         assert!(f.landed(Some(2), true, 20_000 + NEXT_KEPT_MS), "at the edge of the window still");
         // Mashed: six presses, one skip, the window counted from the last of them.
         assert!(!f.next(false, true, Some(11), 30_000));
@@ -456,14 +467,14 @@ mod tests {
             assert!(!f.next(false, true, Some(11), 30_000 + k * 150));
             assert!(!f.start(true, 0, Some(11)), "one fetch for all of them");
         }
-        assert!(f.arrived(15, Some(11)));
+        assert!(f.arrived(15, Some(11), Some(11)));
         assert!(f.landed(Some(11), true, 30_750 + NEXT_KEPT_MS - 1), "within the window of the last press");
         assert!(!f.landed(Some(11), true, 30_750 + NEXT_KEPT_MS - 1), "and only once");
         // Mashed and then the answer was slow: nothing.
         assert!(!f.next(false, true, Some(12), 40_000));
         assert!(f.start(true, 0, Some(12)));
         assert!(!f.next(false, true, Some(12), 40_300));
-        assert!(f.arrived(15, Some(12)));
+        assert!(f.arrived(15, Some(12), Some(12)));
         assert!(!f.landed(Some(12), true, 40_301 + NEXT_KEPT_MS));
     }
 

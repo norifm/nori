@@ -1313,8 +1313,9 @@ mod tests {
         for _ in 0..5 {
             let _ = news.recv_timeout(Duration::from_millis(300));
             let m = phone.active().expect("still mirrored");
-            let (shown, heard) = (m.position_now(), heard_ms());
-            assert!((shown - heard).abs() <= 20, "the phone shows {shown} ms, {heard} ms heard on the iPod");
+            // The place heard, read on either side of the phone's, bounds it whatever runs in between.
+            let (before, shown, after) = (heard_ms(), m.position_now(), heard_ms());
+            assert!(before - 20 <= shown && shown <= after + 20, "the phone shows {shown} ms, {before}..{after} ms heard on the iPod");
         }
 
         // The volume: set from the phone, the app is told to set the system's; moved by the iPod's own
