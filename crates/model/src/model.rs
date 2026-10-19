@@ -357,6 +357,8 @@ pub struct SearchResult {
     pub artists: Vec<Artist>,
     pub albums: Vec<Album>,
     pub songs: Vec<Song>,
+    /// A provider's playlists; a Subsonic server's search finds none.
+    pub playlists: Vec<Playlist>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

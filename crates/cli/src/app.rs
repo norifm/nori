@@ -327,17 +327,18 @@ impl Page {
     fn len(&self) -> usize {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
-            Page::Artist { detail, .. } => detail.ready().map_or(0, |d| d.albums.len()),
+            Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { d.albums.len() }),
             Page::Playlist { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
         }
     }
 
-    /// The page's songs, for album and playlist pages.
+    /// The page's songs: an album's, a playlist's, and an artist's that lists no albums (a YouTube Music
+    /// profile's videos); an artist with albums shows their cards.
     pub fn songs(&self) -> Option<&[Song]> {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Playlist { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
-            Page::Artist { .. } => None,
+            Page::Artist { detail, .. } => detail.ready().filter(|d| d.albums.is_empty()).map(|d| d.songs.as_slice()),
         }
     }
 }
@@ -439,10 +440,11 @@ pub enum SearchRow<'a> {
     Song(&'a Song),
     Album(&'a Album),
     Artist(&'a Artist),
+    Playlist(&'a Playlist),
 }
 
 impl Search {
-    /// The results as one list: songs, albums, artists, each under a title.
+    /// The results as one list: songs, albums, artists, playlists, each under a title.
     pub fn rows(&self) -> Vec<SearchRow<'_>> {
         let mut out = Vec::new();
         let Some(r) = self.view.as_ref().and_then(|v| v.shown.as_ref()) else { return out };
@@ -457,6 +459,10 @@ impl Search {
         if !r.artists.is_empty() {
             out.push(SearchRow::Title("Artists", r.artists.len()));
             out.extend(r.artists.iter().map(SearchRow::Artist));
+        }
+        if !r.playlists.is_empty() {
+            out.push(SearchRow::Title("Playlists", r.playlists.len()));
+            out.extend(r.playlists.iter().map(SearchRow::Playlist));
         }
         out
     }
@@ -1048,7 +1054,7 @@ impl App {
         self.open_page(Page::Album { id, detail: Load::Loading, sel: Sel::default() });
     }
 
-    fn open_artist(&mut self, id: String) {
+    pub fn open_artist(&mut self, id: String) {
         self.open_page(Page::Artist { id, detail: Load::Loading, sel: Sel::default() });
     }
 
@@ -1998,6 +2004,7 @@ impl App {
         if let Some(p) = self.page() {
             return match p {
                 Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
+                Page::Artist { sel, .. } if p.songs().is_some() => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { detail, sel, .. } => detail.ready().and_then(|d| d.albums.get(sel.at).cloned()).map(Item::Album),
             };
         }
@@ -2014,6 +2021,7 @@ impl App {
                 SearchRow::Song(s) => Some(Item::Song(vec![(*s).clone()], 0)),
                 SearchRow::Album(a) => Some(Item::Album((*a).clone())),
                 SearchRow::Artist(a) => Some(Item::Artist((*a).clone())),
+                SearchRow::Playlist(p) => Some(Item::Playlist((*p).clone())),
                 SearchRow::Title(..) => None,
             },
             View::Downloads => {
@@ -2720,7 +2728,7 @@ impl App {
             sel.to(i, len);
         }
         // Cards and switches act on one click; songs on a second.
-        let artist_cards = l == ListRef::Page && matches!(self.page(), Some(Page::Artist { .. }));
+        let artist_cards = l == ListRef::Page && matches!(self.page(), Some(p @ Page::Artist { .. }) if p.songs().is_none());
         let settings_now = l == ListRef::Settings && self.settings.clicks_open();
         if again || l.opens_on_click() || artist_cards || settings_now {
             self.act_on_selected(Action::Open);

@@ -338,7 +338,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         coverStandIns = listOf(vm.cover(artist.coverArt, CoverSize.CARD), vm.cover(artist.coverArt, CoverSize.ROW)),
         title = artist.name,
         caption = remember(ui?.detail, artist.albumCount) {
-            if (ui != null) say.releases(ui.detail.albums.size)
+            if (ui != null) ui.detail.albums.size.let { n -> if (n == 0 && ui.detail.songs.isNotEmpty()) say.songs(ui.detail.songs.size) else say.releases(n) }
             else artist.albumCount.takeIf { it > 0u }?.let { say.releases(it.toInt()) }.orEmpty()
         },
         onPlay = ui?.let { ready -> { actions.playArtist(ready.detail.artist.id) } },
@@ -379,6 +379,14 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                             }
                         }
                     }
+                }
+                // The songs the artist's provider lists on the page (YouTube Music's); a server lists none.
+                if (ui.detail.songs.isNotEmpty()) {
+                    item(key = "songs", contentType = "title") { SectionTitle(say.songs, late(arrival)) }
+                    songRows(
+                        ui.detail.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "songs", appear = true,
+                        arrival = arrival, from = topFrom,
+                    )
                 }
                 if (ui.top.isNotEmpty()) {
                     item(key = "top", contentType = "title") { SectionTitle(say.topSongs, late(arrival)) }

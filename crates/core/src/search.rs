@@ -114,6 +114,7 @@ pub(crate) mod tests {
             artists: vec![Artist { id: "ar".into(), ..Default::default() }],
             albums: vec![a("al", false), a("ext-al", true), a("ext-al", true)],
             songs: vec![s("1", false), s("ext-2", true), s("1", false), s("3", false)],
+            playlists: Vec::new(),
         }
     }
 
@@ -141,6 +142,8 @@ pub(crate) mod tests {
         assert!(!none.nothing_found);
         let v = s.server("x".into(), SearchResult::default()).unwrap();
         assert!(v.nothing_found);
+        let only_playlists = SearchResult { playlists: vec![crate::Playlist { id: "yt-VLa".into(), ..Default::default() }], ..Default::default() };
+        assert!(!s.server("x".into(), only_playlists).unwrap().nothing_found);
         assert_eq!(s.scope(SearchScope::Library).shown.unwrap().songs.len(), 0);
 
         // Short queries are not remembered.

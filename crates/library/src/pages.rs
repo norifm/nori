@@ -393,20 +393,23 @@ impl AlbumDetail {
 pub struct ArtistDetail {
     pub artist: Artist,
     pub albums: Vec<Album>,
+    /// The artist's songs as its provider shows them (YouTube Music's top songs); a Subsonic server
+    /// shows none.
+    pub songs: Vec<Song>,
     /// [`release_groups`].
     pub groups: Vec<ReleaseGroup>,
     pub queue: std::sync::Arc<PageQueue>,
 }
 
 impl ArtistDetail {
-    pub fn new(artist: Artist, mut albums: Vec<Album>) -> Self {
+    pub fn new(artist: Artist, mut albums: Vec<Album>, songs: Vec<Song>) -> Self {
         // On the artist's own page the cards show only the year.
         for a in &mut albums {
             a.subtitle = nori_model::lines::album_subtitle("", a.year);
         }
         let groups = release_groups(&albums);
         let queue = PageQueue::of(OriginKind::Artist, &artist.id);
-        ArtistDetail { artist, albums, groups, queue }
+        ArtistDetail { artist, albums, songs, groups, queue }
     }
 }
 
@@ -476,7 +479,7 @@ mod tests {
     fn artist_pages() {
         let artist = Artist { name: "Björk".into(), ..Default::default() };
         let album = |artist: &str, year: u32| Album { artist: artist.into(), year, ..Default::default() };
-        let d = ArtistDetail::new(artist, vec![album("björk", 1997), album("Björk & Thom Yorke", 2001), album("Björk", 0)]);
+        let d = ArtistDetail::new(artist, vec![album("björk", 1997), album("Björk & Thom Yorke", 2001), album("Björk", 0)], Vec::new());
         assert_eq!(d.albums.iter().map(|a| a.subtitle.as_str()).collect::<Vec<_>>(), ["1997", "2001", ""]);
 
         // Releases by kind newest first.
@@ -532,7 +535,7 @@ mod tests {
     fn page_queue() {
         let album = AlbumDetail::new(Album { id: "al".into(), ..Default::default() }, vec![], vec![]);
         assert_eq!(album.queue.origin(), PageOrigin::new(OriginKind::Album, "al"));
-        let artist = ArtistDetail::new(Artist { id: "ar".into(), ..Default::default() }, vec![Album { id: "al".into(), ..Default::default() }]);
+        let artist = ArtistDetail::new(Artist { id: "ar".into(), ..Default::default() }, vec![Album { id: "al".into(), ..Default::default() }], Vec::new());
         assert_eq!(artist.queue.origin(), PageOrigin::new(OriginKind::Artist, "ar"), "the artist, not its albums");
         let playlist = PlaylistDetail::new(Playlist { id: "pl".into(), ..Default::default() }, vec![]);
         assert_eq!(playlist.queue.origin_ref(), &PageOrigin::new(OriginKind::Playlist, "pl"));

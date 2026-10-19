@@ -9,7 +9,7 @@ use nori_core::settings::{BandMark, EqBypass, ServerKind};
 use nori_core::transport::{FailureKind, NetError};
 use nori_core::remote::wire::{DeviceKind, Refusal, Role};
 use nori_core::remote::{KindWords, Listening, RemoteDevice};
-use nori_core::{AlbumDetail, PlaylistDetail, PresetKind, Song};
+use nori_core::{AlbumDetail, Playlist, PlaylistDetail, PresetKind, Song};
 
 /// What the terminal says of a kind of profile (nori-core's providers): the only words a provider
 /// needs here.
@@ -137,6 +137,14 @@ pub fn album_caption(d: &AlbumDetail) -> String {
 /// A playlist page's caption: "12 songs · 48:10".
 pub fn playlist_caption(d: &PlaylistDetail) -> String {
     songs_caption(d.songs.len() as u32, d.seconds)
+}
+
+/// Beside a playlist's name: "12 songs", or its own line (a provider's, who made it) when not counted.
+pub fn playlist_line(p: &Playlist) -> String {
+    match &p.comment {
+        Some(line) if p.song_count == 0 => line.clone(),
+        _ => count(p.song_count as u64, "song", "songs"),
+    }
 }
 
 /// Under an artist's name: "12 albums".

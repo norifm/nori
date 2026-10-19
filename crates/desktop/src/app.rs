@@ -1226,16 +1226,7 @@ impl App {
                 }
             }
             Data::Page(PageGot::Playlists(v)) => {
-                self.lists.playlists = v
-                    .iter()
-                    .map(|p| Card {
-                        id: p.id.as_str().into(),
-                        title: p.name.as_str().into(),
-                        sub: words::songs(p.song_count as usize).into(),
-                        art: p.cover_art.clone().unwrap_or_default().into(),
-                        sub_artist: SharedString::default(),
-                    })
-                    .collect();
+                self.lists.playlists = v.iter().map(playlist_card).collect();
                 self.narrowed();
             }
             Data::Page(PageGot::Favorites(v)) => {
@@ -1269,9 +1260,12 @@ impl App {
             Data::Page(PageGot::Artist(d)) if shown => {
                 ui.set_page_title(d.artist.name.as_str().into());
                 ui.set_page_sub("".into());
-                ui.set_page_caption(words::albums(d.albums.len() as u32).into());
+                let caption = if d.albums.is_empty() && !d.songs.is_empty() { words::songs(d.songs.len()) } else { words::albums(d.albums.len() as u32) };
+                ui.set_page_caption(caption.into());
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
                 ui.set_page_albums(cards(d.albums.iter().map(|a| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) })));
+                self.page_songs = d.songs;
+                ui.set_page_songs(self.rows(&self.page_songs));
             }
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_title(d.playlist.name.as_str().into());
@@ -1399,6 +1393,7 @@ impl App {
         let found = v.shown.unwrap_or_default();
         ui.set_search_artists(cards(found.artists.iter().map(artist_card)));
         ui.set_search_albums(cards(found.albums.iter().map(album_card)));
+        ui.set_search_playlists(cards(found.playlists.iter().map(playlist_card)));
         self.search_songs = found.songs;
         ui.set_search_songs(self.rows(&self.search_songs));
         let note = if v.searching {
@@ -1449,7 +1444,8 @@ impl App {
 
     fn play_page(&self, shuffle: bool) {
         let Some(fetch) = self.page_fetch.clone() else { return };
-        if self.page_songs.is_empty() {
+        // An artist's Play is all its songs, not the few its page lists.
+        if self.page_songs.is_empty() || matches!(fetch, Fetch::Artist(_)) {
             self.on_session(|s| s.play_later(fetch, shuffle));
         } else {
             let origin = fetch.origin();
@@ -2229,6 +2225,15 @@ fn album_card(a: &nori_core::Album) -> Card {
 
 fn artist_card(a: &nori_core::Artist) -> Card {
     Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: words::albums(a.album_count).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default() }
+}
+
+/// A playlist's card: its song count, or its own line (a provider's, who made it) when not counted.
+fn playlist_card(p: &nori_core::Playlist) -> Card {
+    let sub = match &p.comment {
+        Some(line) if p.song_count == 0 => line.clone(),
+        _ => words::songs(p.song_count as usize),
+    };
+    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default() }
 }
 
 /// `starred`: its heart as shown; None where there is no heart (a jam guest's lists).

@@ -81,7 +81,12 @@ matters to you, use YouTube Music signed out.
   The desktop and the terminal show their albums; Android and the iPod show the songs and playlists too.
   Home stays as it is until the app starts again. Pulling to refresh (Android) keeps every shelf and
   pick where it was and adds only what YouTube has new, at the end of its shelf or as a new shelf below.
-- Searching songs, albums and artists, and opening albums, artists and playlists.
+- Searching as YouTube Music does: songs, videos, albums, artists, profiles and playlists, best match
+  first, and opening albums, artists and playlists. Podcasts are not offered.
+- An artist's page shows its albums and its top songs. A profile without albums (a channel that posts
+  mixes, say) shows all its videos as its songs, and its Play plays them.
+- Seeking in a long song or mix, or starting it partway, takes about a second: nori fetches songs in
+  parts of 10 MB, which YouTube sends at full speed (it sends longer requests only as fast as they play).
 - Signed in: your saved albums, liked songs and playlists in Library, and favorite seals that like songs.
 - Playing, the queue, AutoMix, the equalizer and the rest of the sound settings.
 - Lyrics from the lyrics services (there is no server to ask).

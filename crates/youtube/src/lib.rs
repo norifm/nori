@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 
 pub use auth::Cookies;
 pub use parse::{thumbnail_url, Album, AlbumLink, AlbumPage, Artist, ArtistLink, ArtistPage, Item, Playlist, PlaylistPage, SearchResults, Shelf, Song};
-pub use player::{pick, Format, Stream};
+pub use player::{pick, Format, Stream, PART};
 
 /// One HTTP request: a POST of `body` as `application/json` when it is set, a GET otherwise.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -118,10 +118,12 @@ fn retired(status: u16) -> bool {
     matches!(status, 400 | 404)
 }
 
-/// The search filters (`params`) of songs, albums and artists, as music.youtube.com sends them.
-const SONGS: &str = "EgWKAQIIAWoKEAkQBRAKEAMQBA==";
-const ALBUMS: &str = "EgWKAQIYAWoKEAkQBRAKEAMQBA==";
-const ARTISTS: &str = "EgWKAQIgAWoKEAkQBRAKEAMQBA==";
+/// The search filters (`params`) of songs, albums and artists, as music.youtube.com sends them; None
+/// asks the unfiltered search, every kind ranked together.
+const SONGS: Option<&str> = Some("EgWKAQIIAWoKEAkQBRAKEAMQBA==");
+const ALBUMS: Option<&str> = Some("EgWKAQIYAWoKEAkQBRAKEAMQBA==");
+const ARTISTS: Option<&str> = Some("EgWKAQIgAWoKEAkQBRAKEAMQBA==");
+const EVERY_KIND: Option<&str> = None;
 
 fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
@@ -170,33 +172,79 @@ impl Client {
     }
 }
 
-/// Polls three futures side by side until all are done.
-async fn join3<A: Future, B: Future, C: Future>(a: A, b: B, c: C) -> (A::Output, B::Output, C::Output) {
-    use std::task::Poll;
-    let (mut a, mut b, mut c) = (std::pin::pin!(a), std::pin::pin!(b), std::pin::pin!(c));
-    let (mut ra, mut rb, mut rc) = (None, None, None);
+/// Polls `futures` side by side until all are done; their answers in the same order.
+async fn join_all<F: Future>(futures: Vec<F>) -> Vec<F::Output> {
+    let mut futures: Vec<_> = futures.into_iter().map(Box::pin).collect();
+    let mut answers: Vec<Option<F::Output>> = futures.iter().map(|_| None).collect();
     std::future::poll_fn(move |cx| {
-        if ra.is_none() {
-            if let Poll::Ready(v) = a.as_mut().poll(cx) {
-                ra = Some(v);
+        for (f, answer) in futures.iter_mut().zip(answers.iter_mut()).filter(|(_, a)| a.is_none()) {
+            if let std::task::Poll::Ready(v) = f.as_mut().poll(cx) {
+                *answer = Some(v);
             }
         }
-        if rb.is_none() {
-            if let Poll::Ready(v) = b.as_mut().poll(cx) {
-                rb = Some(v);
-            }
-        }
-        if rc.is_none() {
-            if let Poll::Ready(v) = c.as_mut().poll(cx) {
-                rc = Some(v);
-            }
-        }
-        match (ra.is_some() && rb.is_some() && rc.is_some(), &mut ra, &mut rb, &mut rc) {
-            (true, a, b, c) => Poll::Ready((a.take().unwrap(), b.take().unwrap(), c.take().unwrap())),
-            _ => Poll::Pending,
+        if answers.iter().all(Option::is_some) {
+            std::task::Poll::Ready(answers.iter_mut().filter_map(Option::take).collect())
+        } else {
+            std::task::Poll::Pending
         }
     })
     .await
+}
+
+/// `ranked` in its order, each item as `detailed` has it where it does (a filtered search says more: a
+/// song's album and length), then the rest of `detailed`; each `key` once.
+fn merged<T>(ranked: Vec<T>, detailed: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
+    let mut detailed: Vec<Option<T>> = detailed.into_iter().map(Some).collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(ranked.len() + detailed.len());
+    for item in ranked {
+        let twin = detailed.iter_mut().find(|d| d.as_ref().is_some_and(|d| key(d) == key(&item))).and_then(Option::take);
+        out.push(twin.unwrap_or(item));
+    }
+    out.extend(detailed.into_iter().flatten());
+    out.retain(|x| seen.insert(key(x).to_string()));
+    out
+}
+
+/// The artists and profiles `songs` credit, each once, in the songs' order.
+fn credited(songs: &[Song]) -> Vec<Artist> {
+    let mut seen = std::collections::HashSet::new();
+    let links = songs.iter().flat_map(|s| &s.artists).filter(|a| !a.id.is_empty() && seen.insert(a.id.as_str()));
+    links.map(|a| Artist { id: a.id.clone(), name: a.name.clone(), thumbnail: None }).collect()
+}
+
+/// Whether `name` is `query` with at most one edit (two from eight letters on; none below four),
+/// ignoring case, spaces and punctuation.
+fn close(query: &str, name: &str) -> bool {
+    let plain = |s: &str| -> Vec<char> { s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect() };
+    let (q, n) = (plain(query), plain(name));
+    let allowed = match q.len() {
+        0..=3 => 0,
+        4..=7 => 1,
+        _ => 2,
+    };
+    !q.is_empty() && q.len().abs_diff(n.len()) <= allowed && edits(&q, &n) <= allowed
+}
+
+/// The fewest insertions, deletions, substitutions and swaps of neighbors that make `a` into `b`.
+fn edits(a: &[char], b: &[char]) -> usize {
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
 }
 
 /// The signed-in session: its cookies, and whether they changed since the caller last took them.
@@ -350,13 +398,33 @@ impl InnerTube {
         parse::account_name(&v).ok_or(Error::SignedOut)
     }
 
-    /// Songs, albums and artists matching `query`: three filtered searches, side by side, each kind from
-    /// its own answer (one page, about 20, of each).
+    /// What matches `query`, as music.youtube.com finds it: the unfiltered search (its top result and
+    /// every kind ranked together: videos, profiles and playlists too), then the songs, albums and
+    /// artists of a filtered search each (one page, about 20, of each) that it lacks. Asked side by side;
+    /// then the lengths the unfiltered rows do not show.
     pub async fn search<H: Http + Sync>(&self, http: &H, query: &str) -> Result<SearchResults, H::Error> {
-        let ask = |filter: &str| self.call(&WEB_REMIX, http, "search", json!({ "query": query, "params": filter }));
-        let (s, al, ar) = join3(ask(SONGS), ask(ALBUMS), ask(ARTISTS)).await;
-        let (s, al, ar) = (parse::search(&s?), parse::search(&al?), parse::search(&ar?));
-        Ok(SearchResults { songs: s.songs, albums: al.albums, artists: ar.artists })
+        let ask = |filter: Option<&str>| {
+            let mut body = json!({ "query": query });
+            if let Some(f) = filter {
+                body["params"] = f.into();
+            }
+            self.call(&WEB_REMIX, http, "search", body)
+        };
+        let Ok([all, s, al, ar]) = <[_; 4]>::try_from(join_all(vec![ask(EVERY_KIND), ask(SONGS), ask(ALBUMS), ask(ARTISTS)]).await) else { unreachable!("four asked, four answered") };
+        let (all, s, al, ar) = (parse::search(&all?), parse::search(&s?), parse::search(&al?), parse::search(&ar?));
+        let mut songs = merged(all.songs, s.songs, |s| &s.video_id);
+        // Every artist and profile a found song credits is found too: those named as the query, give or
+        // take a typo, lead; YouTube's own list misses them when the query is misspelled, and never lists
+        // a profile that only uploads videos.
+        let (named, others): (Vec<Artist>, Vec<Artist>) = credited(&songs).into_iter().partition(|a| close(query, &a.name));
+        let leading = named.len();
+        let mut artists = merged(named, merged(all.artists, ar.artists, |a| &a.id), |a| &a.id);
+        self.fill_lengths(http, songs.iter_mut()).await;
+        self.fill_pictures(http, &mut artists[..leading]).await;
+        artists.extend(others);
+        let mut seen = std::collections::HashSet::new();
+        artists.retain(|a| seen.insert(a.id.clone()));
+        Ok(SearchResults { songs, albums: merged(all.albums, al.albums, |a| &a.id), artists, playlists: all.playlists })
     }
 
     async fn browse<H: Http + Sync>(&self, http: &H, id: &str) -> Result<Value, H::Error> {
@@ -368,9 +436,22 @@ impl InnerTube {
         Ok(parse::album(&self.browse(http, id).await?, id))
     }
 
-    /// Artist `id` (`UC...`): albums, top songs, similar artists, description.
+    /// Artist `id` (`UC...`): albums, top songs with their lengths, similar artists, description. A
+    /// channel without top songs (a profile's) lists all its videos instead, asked for with one more
+    /// request; unanswered, the first few its page shows.
     pub async fn artist<H: Http + Sync>(&self, http: &H, id: &str) -> Result<ArtistPage, H::Error> {
-        Ok(parse::artist(&self.browse(http, id).await?, id))
+        let v = self.browse(http, id).await?;
+        let mut page = parse::artist(&v, id);
+        if let Some(more) = parse::all_videos(&v) {
+            if let Ok(all) = self.call(&WEB_REMIX, http, "browse", more).await {
+                let videos = parse::channel_videos(&all, &page.artist);
+                if !videos.is_empty() {
+                    page.top_songs = videos;
+                }
+            }
+        }
+        self.fill_lengths(http, &mut page.top_songs).await;
+        Ok(page)
     }
 
     /// Playlist `id` (`VL...`) and its first page of songs.
@@ -380,7 +461,20 @@ impl InnerTube {
         Ok(page)
     }
 
-    /// Gives `songs` whose rows show no length (Home's, a mix's) theirs, from one `music/get_queue`. Best
+    /// Gives `artists` without a picture the one their pages show, asked side by side. Best effort:
+    /// unanswered, they stay without.
+    async fn fill_pictures<H: Http + Sync>(&self, http: &H, artists: &mut [Artist]) {
+        let mut missing: Vec<&mut Artist> = artists.iter_mut().filter(|a| a.thumbnail.is_none()).collect();
+        let ids: Vec<String> = missing.iter().map(|a| a.id.clone()).collect();
+        let pages = join_all(ids.iter().map(|id| self.browse(http, id)).collect()).await;
+        for ((artist, id), page) in missing.iter_mut().zip(&ids).zip(pages) {
+            if let Ok(v) = page {
+                artist.thumbnail = parse::artist(&v, id).artist.thumbnail;
+            }
+        }
+    }
+
+    /// Gives `songs` whose rows show no length (Home's, a mix's, an unfiltered search's, an artist's) theirs, from one `music/get_queue`. Best
     /// effort: unanswered, they stay unknown. A live stream is marked so.
     async fn fill_lengths<'a, H: Http + Sync>(&self, http: &H, songs: impl IntoIterator<Item = &'a mut Song>) {
         let mut unknown: Vec<&mut Song> = songs.into_iter().filter(|s| s.duration == 0).collect();
@@ -560,24 +654,40 @@ pub(crate) mod tests {
         yt
     }
 
-    /// A search asks songs, albums and artists each with its own filter, and keeps each kind from its own answer.
+    /// A search asks the unfiltered search and the songs, albums and artists filters; the unfiltered
+    /// answer leads each kind with the filtered ones' copies, and they add what it lacks. The lengths
+    /// still unknown are asked after.
     #[test]
-    fn search_asks_each_kind_with_its_filter() {
-        let (s, al, ar) = (fixture("search_songs"), fixture("search_albums"), fixture("search_artists"));
-        let fake = Fake::answering(&[(200, &s), (200, &al), (200, &ar)]);
+    fn search_leads_with_the_unfiltered_answer() {
+        let (all, s, al, ar) = (fixture("search_all"), fixture("search_songs"), fixture("search_albums"), fixture("search_artists"));
+        let mut songs: Value = serde_json::from_str(&s).unwrap();
+        // The filtered answer's copy of a song the unfiltered one ranks, with its album and length.
+        let shelf = songs.pointer_mut("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/1/musicShelfRenderer/contents").unwrap();
+        shelf[2]["musicResponsiveListItemRenderer"]["playlistItemData"]["videoId"] = "4qlDWL1kMcQ".into();
+        let s = songs.to_string();
+        let fake = Fake::answering(&[(200, &all), (200, &s), (200, &al), (200, &ar), (200, &fixture("queue"))]);
         let found = ready(InnerTube::default().search(&fake, "daft punk")).unwrap();
-        assert_eq!(found.songs.iter().map(|s| s.title.as_str()).collect::<Vec<_>>(), ["Robot Rock (Edit)", "Da Funk", "Alive"]);
-        assert_eq!(found.albums.iter().map(|a| a.title.as_str()).collect::<Vec<_>>(), ["Random Access Memories", "Daft Punk Is Not Dead Yet", "The Answer is Daft Punk"]);
-        assert_eq!(found.artists.len(), 3);
+        let titles = |v: Vec<&str>| v.join(" / ");
+        assert_eq!(
+            titles(found.songs.iter().map(|s| s.title.as_str()).collect()),
+            "Fragments of Time (feat. Todd Edwards) / Aerodynamic / Alive / Daft Punk — Fresh (Extended) / Robot Rock (Edit) / Da Funk"
+        );
+        assert_eq!(found.songs[2].album.as_ref().map(|a| a.name.as_str()), Some("Homework"), "the filtered copy");
+        assert_eq!(titles(found.albums.iter().map(|a| a.title.as_str()).collect()), "Random Access Memories / Daft Punk Is Not Dead Yet / The Answer is Daft Punk");
+        assert_eq!(titles(found.artists.iter().map(|a| a.name.as_str()).collect()), "Daft Punk / The Weeknd / dafter / Pharrell / Endless Stream", "the uploader of a found video last");
+        assert_eq!(titles(found.playlists.iter().map(|p| p.title.as_str()).collect()), "Daft Punk Underrated Hit Songs");
         let asked = fake.asked();
-        let filters: Vec<Value> = asked.iter().map(|r| body(r)["params"].clone()).collect();
-        assert_eq!(filters, [SONGS, ALBUMS, ARTISTS].map(Value::from));
-        for r in &asked {
+        let (searches, lengths) = asked.split_at(4);
+        let filters: Vec<Value> = searches.iter().map(|r| body(r).get("params").cloned().unwrap_or(Value::Null)).collect();
+        assert_eq!(filters, [EVERY_KIND, SONGS, ALBUMS, ARTISTS].map(Value::from));
+        for r in searches {
             assert_eq!(r.url, "https://music.youtube.com/youtubei/v1/search?prettyPrint=false");
             assert_eq!(body(r)["context"]["client"]["clientName"], "WEB_REMIX");
             assert_eq!(body(r)["query"], "daft punk");
             assert!(r.header("Cookie").is_none() && r.header("Authorization").is_none(), "signed out");
         }
+        assert!(lengths[0].url.contains("/music/get_queue"));
+        assert_eq!(body(&lengths[0])["videoIds"], serde_json::json!(["PC_X11CGQu4"]), "only the video shows no length");
     }
 
     /// The player is asked as visionOS 1.02, with its device and user agent, on www.youtube.com.
@@ -671,7 +781,65 @@ pub(crate) mod tests {
         assert_eq!(body(&asked[0])["playlistId"], "RDAMVMdQw4w9WgXcQ");
     }
 
-    /// The three searches are in flight together: none waits for another's answer.
+    /// A channel without top songs is asked for all its videos through its page's More, then their
+    /// lengths; an artist with top songs is not.
+    #[test]
+    fn a_channel_page_asks_for_all_its_videos() {
+        let fake = Fake::answering(&[(200, &fixture("artist_channel")), (200, &fixture("artist_channel_videos")), (200, &fixture("queue"))]);
+        let page = ready(InnerTube::default().artist(&fake, "UCRv7T0DoP6Ndf469wcGiQNg")).unwrap();
+        assert_eq!(page.top_songs.len(), 4, "the whole list, not the page's first three");
+        let asked = fake.asked();
+        assert_eq!(asked.len(), 3);
+        assert_eq!(body(&asked[1])["browseId"], "UCRv7T0DoP6Ndf469wcGiQNg");
+        assert!(body(&asked[1])["params"].is_string());
+        assert!(asked[2].url.contains("music/get_queue"), "{}", asked[2].url);
+        assert_eq!(body(&asked[2])["videoIds"].as_array().map(Vec::len), Some(4));
+
+        let fake = Fake::answering(&[(200, &fixture("artist")), (200, &fixture("queue"))]);
+        ready(InnerTube::default().artist(&fake, "UCRr1xG_2WIDs18a6cIiCxeA")).unwrap();
+        assert!(fake.asked().iter().all(|r| body(r).get("params").is_none()));
+    }
+
+    #[test]
+    fn names_close_to_the_query() {
+        let cases = [
+            ("Mahpra", "Maphra", true),
+            ("Mahpra", "MAPHRA", true),
+            ("daft punk", "Daft Punk", true),
+            ("daftpunk", "Daft-Punk!", true),
+            ("radiohed", "Radiohead", true),
+            ("Mahpra", "Maphra Wilson", false),
+            ("Mahpra", "Faouzia", false),
+            ("abc", "abd", false),
+            ("", "", false),
+        ];
+        for (query, name, want) in cases {
+            assert_eq!(close(query, name), want, "{query} / {name}");
+        }
+    }
+
+    /// A misspelled query finds the artist and the profile its songs credit, with their pictures, ahead
+    /// of YouTube's own artists, and the rest of the songs' artists after them.
+    #[test]
+    fn a_search_finds_the_artists_its_songs_credit() {
+        let pages = [fixture("artist"), fixture("artist_channel")];
+        let fake = Fake::answering(&[(200, &fixture("search_typo_all")), (200, &fixture("search_typo_songs")), (200, "{}"), (200, &fixture("search_typo_artists")), (200, &fixture("queue")), (200, &pages[0]), (200, &pages[1])]);
+        let found = ready(InnerTube::default().search(&fake, "Mahpra")).unwrap();
+        let artists: Vec<(&str, &str)> = found.artists.iter().map(|a| (a.name.as_str(), a.id.as_str())).collect();
+        assert_eq!(&artists[..4], [("Maphra", "UCDRpiXyw9PHsm_YS0wOqRcQ"), ("MAPHRA", "UCaUbhZHASlYW9TlrKt1rLYg"), ("Bring Me The Horizon", "UCGNMi-3h6Tx72EfbW6f2BxQ"), ("Spiritbox", "UC8RF_zYqBLbVXilKjh6sk2g")]);
+        assert!(found.artists[2].thumbnail.is_some(), "YouTube's own artists keep their pictures");
+        let asked = fake.asked();
+        let looked_up: Vec<Value> = asked[5..].iter().map(|r| body(r)["browseId"].clone()).collect();
+        assert_eq!(looked_up, ["UCDRpiXyw9PHsm_YS0wOqRcQ", "UCaUbhZHASlYW9TlrKt1rLYg"], "only the leading artists without one");
+        assert!(found.artists[..2].iter().all(|a| a.thumbnail.is_some()), "their pages' pictures");
+        assert!(artists.iter().any(|&(name, _)| name == "Faouzia"), "a song's artist is found too");
+        let mut ids: Vec<&str> = artists.iter().map(|a| a.1).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), artists.len(), "each once");
+    }
+
+    /// The four searches are in flight together: none waits for another's answer.
     #[test]
     fn searches_go_out_side_by_side() {
         struct Held(Mutex<usize>);
@@ -687,7 +855,7 @@ pub(crate) mod tests {
         let mut f = std::pin::pin!(yt.search(&held, "q"));
         let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
         assert!(f.as_mut().poll(&mut cx).is_pending());
-        assert_eq!(*held.0.lock().unwrap(), 3);
+        assert_eq!(*held.0.lock().unwrap(), 4);
     }
 
     /// The home feed is its first page and the one its continuation names, shelf by shelf.

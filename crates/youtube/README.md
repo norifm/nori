@@ -30,7 +30,7 @@ async fn play(yt: &InnerTube) -> Result<String, innertube_music::Error<String>> 
     let found = yt.search(&MyHttp, "daft punk one more time").await?;
     let song = found.songs.first().ok_or(innertube_music::Error::Parse("nothing found".into()))?;
     let stream = yt.player(&MyHttp, &song.video_id).await?;
-    Ok(stream.url_from(0)) // a ranged URL: plain requests are throttled
+    Ok(stream.format.url) // asked for in ranges of at most `PART` bytes
 }
 ```
 
@@ -41,8 +41,10 @@ it back with `set_visitor` in the next session: a new visitor is served a differ
 `InnerTube::radio` returns the song's watch queue as metadata. It does not resolve or fetch audio;
 call `player` for a track only when the user asks to play or download it.
 
-Stream URLs are bound to the requesting IP address and expire after `Stream::expires_in`. Ask from byte
-0 with `url_from(0)` and send a `Range` header for later bytes.
+Stream URLs are bound to the requesting IP address and expire after `Stream::expires_in`. Ask for at
+most `PART` (10 MiB) per request, with a `Range` header that has an end: YouTube sends a longer range, or
+one without an end, at about the speed it plays. A requester that must ask for the whole file at once can
+put the range in the URL (`&range=0-{length - 1}`), which comes at full speed up to about 50 MB.
 
 ## Signing in
 

@@ -3762,6 +3762,7 @@ export component AppWindow inherits Window {
 
     in property <[Card]> search-artists;
     in property <[Card]> search-albums;
+    in property <[Card]> search-playlists;
     in property <[SongRow]> search-songs;
     in property <string> search-note;
 
@@ -4306,6 +4307,19 @@ export component AppWindow inherits Window {
                                         jam => { root.jam-play(0, c.id); }
                                     }
                                 }
+                                if root.search-playlists.length > 0: playlists-found := ShelfView {
+                                    title: "Playlists";
+                                    count: root.search-playlists.length;
+                                    for c[i] in root.search-playlists: CardView {
+                                        x: playlists-found.gap + i * playlists-found.step;
+                                        side: playlists-found.side;
+                                        card: c;
+                                        picture: root.art(c.art, 0, root.covers-rev);
+                                        open => { root.open-playlist(c.id); }
+                                        play => { root.play-playlist(c.id); }
+                                        jam => { root.jam-play(1, c.id); }
+                                    }
+                                }
                                 if root.search-songs.length > 0: HorizontalLayout {
                                     padding-left: 32px;
                                     padding-bottom: 6px;
@@ -4731,6 +4745,9 @@ export component AppWindow inherits Window {
                                     open(c) => { root.open-album(c.id); }
                                     play(c) => { root.play-album(c.id); }
                                     jam(c) => { root.jam-play(0, c.id); }
+                                }
+                                if root.page-kind == 1 && root.page-songs.length > 0: SectionTitle {
+                                    text: "Songs";
                                 }
                                 // Only the rows on screen (and a few either side) are made: a playlist of thousands
                                 // opens as fast as one of ten.
