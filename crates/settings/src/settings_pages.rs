@@ -385,7 +385,7 @@ impl Page<'_> {
     fn look(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let p = self.p;
         let mut theme = vec![self.chips("season")];
-        if self.phone() {
+        if self.phone() || self.client == SettingsClient::Terminal {
             theme.extend([self.chips("theme"), self.setting("amoled").under().shown(p.theme != crate::settings::ThemeMode::Light)]);
         }
         let mut cover = vec![self.setting("coverColors")];
@@ -622,7 +622,7 @@ mod tests {
         for client in [SettingsClient::Desktop, SettingsClient::Terminal] {
             let rows = every_row(client, &d, &facts());
             let has = names(&rows, false);
-            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "amoled", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
+            for phone_only in ["swipeLeft", "tapAction", "offload", "bitPerfect", "movingCovers", "lyricsKeepScreenOn", "motion", "hideStatusBar", "mobile", "songsAheadMobile", "altMaxBitRate"] {
                 assert!(phone.iter().any(|n| n == phone_only) && !has.iter().any(|n| n == phone_only), "{phone_only} offered by {client:?}");
             }
             assert!(rows.iter().any(|r| matches!(r.item, RowItem::LyricsSource { .. })), "the services are on the lyrics page");
@@ -630,6 +630,9 @@ mod tests {
         }
         let terminal = names(&every_row(SettingsClient::Terminal, &d, &facts()), false);
         assert!(!terminal.iter().any(|n| n == "soundBypass" || n == "autoEqAuto"));
+        // The terminal paints its page in the season's colors, light, dark or black.
+        assert!(["season", "theme", "amoled"].iter().all(|n| terminal.iter().any(|t| t == n)));
+        assert!(!names(&every_row(SettingsClient::Desktop, &d, &facts()), false).iter().any(|n| n == "amoled"));
         assert!(names(&every_row(SettingsClient::Desktop, &d, &facts()), false).iter().any(|n| n == "soundBypass"));
         // Not on a car's screen: no side for the controls.
         let parked = PageFacts { car: false, ..facts() };
