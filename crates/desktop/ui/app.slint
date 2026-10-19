@@ -5050,22 +5050,6 @@ export component AppWindow inherits Window {
                             root.go(9);
                         }
                     }
-                    if root.devices-on: MenuRow {
-                        icon: Icons.devices;
-                        text: "Other devices";
-                        clicked => {
-                            gear.close();
-                            root.inspector = 3;
-                        }
-                    }
-                    if Jam.on && !Jam.guest && !Jam.hosting: MenuRow {
-                        icon: Icons.people;
-                        text: "Join a Jam";
-                        clicked => {
-                            gear.close();
-                            root.join-open = true;
-                        }
-                    }
                     MenuRow {
                         icon: Icons.gear;
                         text: "Settings";
