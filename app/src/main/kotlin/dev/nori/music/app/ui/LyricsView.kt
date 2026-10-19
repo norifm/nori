@@ -571,8 +571,8 @@ private fun LyricsHeader(vm: PlayerViewModel, actions: ActionsViewModel, song: d
         song?.let { s ->
             val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
             // A jam guest's seal would be the host's.
-            if (LocalRules.current.stars) TitleCircle(if (starred) Kanji.Sealed else Kanji.Seal, say.favourite, starred, rememberStamp()) { actions.star(s, !starred) }
-            TitleCircle(Icons.Filled.MoreHoriz, say.more, false) { menu(s) }
+            if (LocalRules.current.stars) TitleButton(if (starred) Kanji.Sealed else Kanji.Seal, say.favourite, starred, rememberStamp()) { actions.star(s, !starred) }
+            TitleButton(Icons.Filled.MoreHoriz, say.more, false) { menu(s) }
         }
     }
 }

@@ -78,7 +78,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -675,15 +674,16 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     }
                     state.current?.let { s ->
                         val starred = marks.effectiveStar(dev.nori.music.data.StarKind.SONG, s.id, s.starred)
-                        Row(Modifier, Arrangement.spacedBy(16.dp), Alignment.CenterVertically) {
+                        // Out by the glyph's inset in its hit box, so the last glyph ends where the seek bar does.
+                        Row(Modifier.offset(x = 8.dp), Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
                             // The seal, as on an album, an artist and a playlist. A song being "starred" while
                             // everything else is "favourited" is a distinction the server makes and nobody else does.
                             // A jam guest's seals would be the host's; a provider may have them signed in.
-                            if (LocalRules.current.stars) TitleCircle(
+                            if (LocalRules.current.stars) TitleButton(
                                 if (starred) Kanji.Sealed else Kanji.Seal,
                                 say.favourite, starred, rememberStamp(),
                             ) { actions.star(s, !starred) }
-                            TitleCircle(Icons.Filled.MoreHoriz, say.more, false) { playerMenu(s) }
+                            TitleButton(Icons.Filled.MoreHoriz, say.more, false) { playerMenu(s) }
                         }
                     }
                 }
@@ -2214,29 +2214,20 @@ private fun rememberPictureFade(cover: CoverImage): Animatable<Float, androidx.c
     return a
 }
 
-/** A title-row circle: translucent fill, light glyph, 48 dp across with a 44 dp hit region or better. */
+/** A title-row button: the bare glyph in the page's ink (the accent when [selected]), 28 dp, with a 48 dp hit region. */
 @Composable
-internal fun TitleCircle(icon: ImageVector, label: String, selected: Boolean, stamp: Stamp? = null, onClick: () -> Unit) {
-    // These two sit on the sleeve's own melting bottom, not on the page: whatever the page colour is,
-    // what is behind them is a piece of the record, and it can be any brightness at all. A disc tinted
-    // from the page came out lighter than the page on a bright record and carried a white glyph on top
-    // of it - on The Bends, a pale orange disc with a white glyph. The disc brings its own contrast.
-    //
-    // Disc strength tracks page lightness continuously (same as Play): a boolean onSurface cut flipped
-    // black↔white midway through a swipe onto paper, and a white disc on a white wash had no contrast.
-    // Both are the look's (nori_look::dress), read while drawing: a page changing colour redraws them.
+internal fun TitleButton(icon: ImageVector, label: String, selected: Boolean, stamp: Stamp? = null, onClick: () -> Unit) {
+    // The page's ink, as the title beside it: read while drawing, so a page changing colour redraws it.
     val look = LocalLook.current
-    // Material's Surface, laid out the same way, with its plate drawn rather than composed.
-    androidx.compose.runtime.CompositionLocalProvider(LocalContentColor provides Color.White) {
-        Box(
-            Modifier.size(42.dp)
-                .minimumInteractiveComponentSize()
-                .drawBehind { drawCircle(look.color(CoverLook.DISC)) }
-                .clip(CircleShape)
-                .clickable(role = androidx.compose.ui.semantics.Role.Button) { if (!selected) stamp?.down(); onClick() },
-            Alignment.Center,
-        ) {
-            LookIcon(icon, label, Modifier.size(25.dp).then(if (stamp != null) Modifier.graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value } else Modifier)) { if (selected) look.color(CoverLook.DISC_INK_SELECTED) else Color.White }
+    Box(
+        Modifier.size(44.dp)
+            .minimumInteractiveComponentSize()
+            .clip(CircleShape)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button) { if (!selected) stamp?.down(); onClick() },
+        Alignment.Center,
+    ) {
+        LookIcon(icon, label, Modifier.size(28.dp).then(if (stamp != null) Modifier.graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value } else Modifier)) {
+            look.color(if (selected) CoverLook.ACCENT else CoverLook.ON)
         }
     }
 }
