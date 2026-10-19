@@ -529,6 +529,9 @@ fun Caption(text: String, modifier: Modifier = Modifier, align: TextAlign = Text
     )
 }
 
+/** How tall a page's action buttons stand, round ([CircleButton]) or a pill ([PillButton]), so a row of them lines up. */
+private val ACTION_SIDE = 46.dp
+
 /**
  * The button the page is built around: a full pill, tinted with the page's accent. [prominent] is the
  * one the eye should land on (Play); the others sit on a translucent version of the same colour.
@@ -547,7 +550,7 @@ fun PillButton(
     val content = look.color(if (prominent) CoverLook.PILL_INK else CoverLook.TINT_INK)
     Surface(
         onClick = onClick, enabled = enabled, shape = PillShape, color = container, contentColor = content,
-        modifier = modifier.heightIn(min = 42.dp),
+        modifier = modifier.heightIn(min = ACTION_SIDE),
     ) {
         Row(Modifier.padding(horizontal = 16.dp), Arrangement.Center, Alignment.CenterVertically) {
             if (icon != null) Icon(icon, null, Modifier.size(18.dp))
@@ -916,7 +919,7 @@ fun CircleButton(
         onClick = onClick, enabled = enabled, shape = androidx.compose.foundation.shape.CircleShape,
         color = plate,
         contentColor = look.color(if (lit) CoverLook.ON_PRIMARY else CoverLook.TINT_INK),
-        modifier = modifier.size(46.dp),
+        modifier = modifier.size(ACTION_SIDE),
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
             Icon(icon, description, Modifier.size(20.dp).then(iconModifier), tint = if (iconTint.isSpecified) iconTint else LocalContentColor.current)
