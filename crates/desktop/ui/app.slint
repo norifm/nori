@@ -3947,6 +3947,11 @@ export component AppWindow inherits Window {
     // The keys Music answers to without a menu: space plays and pauses, the arrows seek, escape leaves
     // Now Playing. A text field that has the keys keeps them.
     FocusScope {
+    // Nothing is typed in the search field: the page lists the searches made before.
+    in property <bool> search-blank: true;
+    in property <[string]> recent-searches;
+    callback search-again(string);
+    callback forget-searches();
         init => { self.focus(); }
         key-pressed(e) => {
             if e.text == " " {
@@ -4190,6 +4195,58 @@ export component AppWindow inherits Window {
                                         x: albums-found.gap + i * albums-found.step;
                                         side: albums-found.side;
                                         card: c;
+                                if root.search-blank && root.recent-searches.length > 0: HorizontalLayout {
+                                    padding-left: 32px;
+                                    padding-right: 32px;
+                                    padding-bottom: 6px;
+                                    SectionTitle {
+                                        horizontal-stretch: 1;
+                                        text: "Recent searches";
+                                    }
+                                    TextButton {
+                                        y: (parent.height - self.height) / 2;
+                                        text: "Clear";
+                                        clicked => { root.forget-searches(); }
+                                    }
+                                }
+                                if root.search-blank: VerticalLayout {
+                                    padding-left: 24px;
+                                    padding-right: 24px;
+                                    for q in root.recent-searches: Rectangle {
+                                        height: 40px;
+                                        border-radius: 12px;
+                                        background: recent-touch.has-hover ? Theme.hover : transparent;
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            spacing: 12px;
+                                            Icon {
+                                                y: (parent.height - self.height) / 2;
+                                                path: Icons.search;
+                                                colour: Theme.dim;
+                                                width: 16px;
+                                                height: 16px;
+                                            }
+                                            Text {
+                                                text: q;
+                                                font-size: 15px;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                        }
+                                        recent-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.search-again(q); }
+                                        }
+                                    }
+                                }
+                                if root.search-blank && root.recent-searches.length == 0: HorizontalLayout {
+                                    padding-left: 34px;
+                                    Text {
+                                        text: "Search your library and your server";
+                                        color: Theme.dim;
+                                        font-size: 15px;
+                                    }
+                                }
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-album(c.id); }
                                         play => { root.play-album(c.id); }

@@ -644,6 +644,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_more, h, |a| a.more_songs());
     on!(ui.on_search_edited, h, |a, t| a.search_edited(&t));
+    on!(ui.on_search_again, h, |a, t| a.search_again(&t));
+    on!(ui.on_forget_searches, h, |a| a.forget_searches());
     on!(ui.on_toggle, h, |a| a.on_session(|s| s.toggle()));
     on!(ui.on_star, h, |a| {
         if let Some(song) = a.song.clone() {
@@ -963,6 +965,9 @@ impl App {
         // The search page's field is the top pill's.
         if let Some(top) = &self.top {
             if view == SEARCH { top.invoke_focus_search() } else { top.invoke_end_search() }
+        }
+        if view == SEARCH && self.top.as_ref().is_none_or(|t| t.get_search_text().trim().is_empty()) {
+            self.search_edited("");
         }
         let req = match view {
             HOME => self.home_req(),
@@ -1365,8 +1370,30 @@ impl App {
         });
     }
 
+    /// A recent search clicked: it is typed in the top pill's field and searched again.
+    fn search_again(&mut self, text: &str) {
+        if let Some(top) = &self.top {
+            top.set_search_text(text.into());
+        }
+        self.search_edited(text);
+    }
+
+    fn forget_searches(&mut self) {
+        if let Some(s) = &self.session {
+            let _ = s.core.search_forget();
+        }
+        self.ui().set_recent_searches(ModelRc::default());
+    }
+
     fn show_search(&mut self, v: SearchView) {
         let ui = self.ui();
+        // Nothing typed: the searches made before, newest first.
+        let blank = v.query.trim().is_empty();
+        ui.set_search_blank(blank);
+        if blank {
+            let recent = self.session.as_ref().and_then(|s| s.core.search_history().ok()).unwrap_or_default();
+            ui.set_recent_searches(ModelRc::new(VecModel::from(recent.into_iter().map(SharedString::from).collect::<Vec<_>>())));
+        }
         let found = v.shown.unwrap_or_default();
         ui.set_search_artists(cards(found.artists.iter().map(artist_card)));
         ui.set_search_albums(cards(found.albums.iter().map(album_card)));
