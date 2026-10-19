@@ -120,12 +120,13 @@ impl SyncCheck {
 }
 
 /// The timing a check gives lyrics: its offset when it is sure of one, else as they are; not checked
-/// without a check, or with one that had too little to go on.
+/// without a check.
 pub(crate) fn timing(check: Option<SyncCheck>) -> nori_model::LyricsTiming {
     match check.map(|c| (c.kind, c)) {
         Some((SyncKind::Fits | SyncKind::Shifted, c)) => nori_model::LyricsTiming::Automatic { ms: c.applied_ms() },
         Some((SyncKind::Poor | SyncKind::Drifts, _)) => nori_model::LyricsTiming::DoesNotFit,
-        _ => nori_model::LyricsTiming::NotChecked,
+        Some((SyncKind::Unsure, _)) => nori_model::LyricsTiming::Unsure,
+        None => nori_model::LyricsTiming::NotChecked,
     }
 }
 
@@ -531,11 +532,12 @@ pub fn check(l: &Lyrics, curve: &VocalCurve) -> Option<SyncCheck> {
     if !l.synced {
         return None;
     }
-    let v = Voice::new(curve)?;
+    let unsure = SyncCheck { kind: SyncKind::Unsure, score: 0.0, best_score: 0.0, offset_ms: 0, confidence: 0.0, drift_ms: 0 };
+    let Some(v) = Voice::new(curve) else { return Some(unsure) };
     let spans = spans(l, &v);
     let starts = starts(l, &spans, &v);
     if starts.len() < MIN_LINES {
-        return Some(SyncCheck { kind: SyncKind::Unsure, score: 0.0, best_score: 0.0, offset_ms: 0, confidence: 0.0, drift_ms: 0 });
+        return Some(unsure);
     }
     let frames = |ms: i64| (ms as f64 / 1000.0 * v.fps).round() as i64;
     let fits = slide(&v, &spans, &starts, frames(WIDE_REACH_MS));
@@ -703,7 +705,9 @@ pub(crate) mod tests {
         let few = Lyrics { lines: plain.lines[..3].to_vec(), synced: true, ..plain.clone() };
         assert_eq!(check(&few, &curve).map(|c| c.kind), Some(SyncKind::Unsure), "three lines say too little");
         let flat = VocalCurve { fps: curve.fps, t0: curve.t0, level: vec![40; curve.level.len()] };
-        assert_eq!(check(&lyrics(&phrases, false, false, &|t| t), &flat), None, "a curve with no voice in it says nothing");
+        let unsure = check(&lyrics(&phrases, false, false, &|t| t), &flat);
+        assert_eq!(unsure.map(|c| c.kind), Some(SyncKind::Unsure), "a curve with no voice in it says nothing");
+        assert_eq!(timing(unsure), nori_model::LyricsTiming::Unsure, "checked, not left as not checked yet");
     }
 
     /// Every line of `l` moved by `by(line index)` ms.

@@ -76,6 +76,7 @@ export const W = {
     const ms = (v: number) => `${v > 0 ? "+" : ""}${(v / 1000).toFixed(2)} s`;
     if (t.kind === "Yours") return `${ms(t.ms)}, set by you${t.automatic != null ? ` (checked: ${ms(t.automatic)})` : ""}`;
     if (t.kind === "DoesNotFit") return "Checked against the song: does not fit";
+    if (t.kind === "Unsure") return "Checked against the song: can't tell";
     if (t.kind === "Automatic") return t.ms === 0 ? "On time, checked against the song" : `${ms(t.ms)}, checked against the song`;
     return "As the source has them";
   },

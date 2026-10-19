@@ -498,6 +498,7 @@ class Say(private val r: Resources) {
     fun lyricsTiming(t: dev.nori.music.ffi.model.LyricsTiming): String = when (t) {
         dev.nori.music.ffi.model.LyricsTiming.NotChecked -> r.getString(R.string.lyrics_timing_not_checked)
         dev.nori.music.ffi.model.LyricsTiming.DoesNotFit -> r.getString(R.string.lyrics_timing_does_not_fit)
+        dev.nori.music.ffi.model.LyricsTiming.Unsure -> r.getString(R.string.lyrics_timing_unsure)
         is dev.nori.music.ffi.model.LyricsTiming.Automatic ->
             if (t.ms == 0L) r.getString(R.string.lyrics_timing_on_time) else r.getString(R.string.lyrics_timing_automatic, t.ms)
         is dev.nori.music.ffi.model.LyricsTiming.Yours -> r.getString(R.string.lyrics_timing_yours, t.ms)
