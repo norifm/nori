@@ -177,7 +177,7 @@ export global Chrome {
     in property <length> player-x;
     in property <length> player-w;
     out property <length> top-radius: 24px;
-    // Concentric with the song's cover: its 10 px corner plus the 10 px it sits in from the edge.
+    // Concentric with the song's cover: its 14 px corner plus the 6 px it sits in from the edge.
     out property <length> player-radius: 20px;
     // How much of the page's colour lies over the blurred page inside a pill: 55 %, or 88 % where it is not blurred.
     in property <float> tint: 0.55;
@@ -1486,7 +1486,7 @@ component PlayerControls inherits Rectangle {
     property <int> shown-ms: root.dragged >= 0 ? root.dragged : root.position-ms;
     // The transport sits in the middle; the song and the buttons share what is left equally.
     property <length> transport-w: clamp(root.room * 0.34, 260px, 420px);
-    property <length> side-w: max(120px, (root.room - 22px - 24px - root.transport-w) / 2);
+    property <length> side-w: max(120px, (root.room - 18px - 24px - root.transport-w) / 2);
 
     function clock(ms: int) -> string {
         let s = floor(max(0, ms) / 1000);
@@ -1494,18 +1494,19 @@ component PlayerControls inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 10px;
+        padding-left: 6px;
         padding-right: 12px;
         spacing: 12px;
         // The song: its cover (the player on a click), the title, and the artist and album as links.
         HorizontalLayout {
             width: root.side-w;
             spacing: 10px;
+            // 6 px in from the pill on three sides, its corner the pill's less that rim.
             Art {
                 y: (parent.height - self.height) / 2;
-                width: 44px;
-                height: 44px;
-                border-radius: 10px;
+                width: 52px;
+                height: 52px;
+                border-radius: 14px;
                 source: root.art(root.now-art, 0, root.covers-rev);
                 TouchArea {
                     mouse-cursor: pointer;
@@ -3563,15 +3564,15 @@ component TopContent inherits Rectangle {
         Rectangle {
             horizontal-stretch: 1;
         }
-        // The search: a field-shaped button; the search page has the field.
+        // The search: a field-shaped button, a filled capsule 6 px in from the pill (its corner the pill's
+        // less that); the search page has the field.
         Rectangle {
             y: (parent.height - self.height) / 2;
-            width: root.named ? 170px : 38px;
+            width: root.named ? 180px : 36px;
             height: 36px;
             border-radius: 18px;
-            border-width: 1px;
-            border-color: root.view == 1 ? Theme.accent : Theme.hairline;
-            background: touch-search.has-hover ? Theme.hover : transparent;
+            background: touch-search.has-hover || root.view == 1 ? Theme.chosen : Theme.fill;
+            animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
             Ripple {
                 pressed: touch-search.pressed;
                 radius: parent.border-radius;
