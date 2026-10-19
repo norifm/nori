@@ -1,7 +1,7 @@
 //! The app's four themes, one per season, each a small palette of traditional Japanese colors in light
 //! and dark, and the rule that follows the calendar from one to the next.
 
-use crate::color::{luminance, BLACK, WHITE};
+use crate::color::{luminance, BLACK};
 use crate::compose::{blend, veil};
 use crate::dress::ink_on;
 
@@ -45,7 +45,7 @@ impl Season {
             (Season::Spring, true) => p(0xFF10_1015, 0xFF1B_1B20, 0xFFEC_EBEF, 0xFFE9_A0B1, 0xFF6F_C3D1),
             (Season::Summer, false) => p(0xFFEF_F1F7, 0xFFFD_FDFE, 0xFF20_2229, 0xFF4B_5BB0, 0xFF4F_7F3A),
             (Season::Summer, true) => p(0xFF0A_0C14, 0xFF15_171F, 0xFFE8_EAF0, 0xFF9A_A6EE, 0xFF8F_BF74),
-            (Season::Autumn, false) => p(0xFFF6_F0E6, 0xFFFF_FDF8, 0xFF24_1D16, 0xFFBE_5526, 0xFF36_563C),
+            (Season::Autumn, false) => p(0xFFF6_F0E6, 0xFFFF_FDF8, 0xFF24_1D16, 0xFFB6_4D1D, 0xFF36_563C),
             (Season::Autumn, true) => p(0xFF11_0E0A, 0xFF1C_1813, 0xFFF3_EDE3, 0xFFE8_743B, 0xFF7F_A27F),
             (Season::Winter, false) => p(0xFFF2_F4F6, 0xFFFD_FDFE, 0xFF21_2326, 0xFF2E_5C8A, 0xFF6B_7077),
             (Season::Winter, true) => p(0xFF0B_0D11, 0xFF16_181C, 0xFFEB_EDEF, 0xFF7F_B0E0, 0xFF9A_9FA6),
@@ -208,6 +208,9 @@ pub fn accent_on(page: u32, ink: u32, light: u32, dark: u32) -> u32 {
     crate::cover::text_either_way(accent, page, ink)
 }
 
+/// How much of the ink secondary text is over the page: the least that reads at 4.5:1 in every palette.
+pub const QUIET: f32 = 0.65;
+
 /// A palette as a Material scheme's roles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -239,7 +242,7 @@ pub fn roles(p: Palette) -> Roles {
     Roles {
         background: p.page,
         on_background: p.ink,
-        on_surface_variant: veil(p.ink, 0.62, p.page),
+        on_surface_variant: veil(p.ink, QUIET, p.page),
         primary: p.accent,
         on_primary: ink_on(p.accent),
         primary_container: veil(p.accent, 0.18, p.page),
@@ -261,21 +264,28 @@ pub fn roles(p: Palette) -> Roles {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::color::calculate_contrast;
+    use crate::color::{calculate_contrast, WHITE};
 
     #[test]
     fn every_palette_reads() {
-        for s in SEASONS {
-            for (dark, amoled) in [(false, false), (true, false), (true, true)] {
-                let p = palette(Some(s), 1, 1, false, dark, amoled);
-                let accent = calculate_contrast(p.accent, p.page);
-                assert!(accent >= 4.0, "{s:?} dark {dark} amoled {amoled}: accent reads at {accent:.2}");
-                assert!(calculate_contrast(p.ink, p.page) >= 12.0, "{s:?} dark {dark}: ink");
-                assert!(calculate_contrast(p.on, p.page) >= 3.0, "{s:?} dark {dark}: on");
-                let r = roles(p);
-                assert!(calculate_contrast(r.on_primary, r.primary) >= 3.0, "{s:?} dark {dark}: on primary");
-                assert!(calculate_contrast(r.on_secondary, r.secondary) >= 3.0, "{s:?} dark {dark}: on secondary");
-                assert_eq!(luminance(p.page) < 0.5, dark);
+        let fixed = SEASONS.map(Some);
+        for season in fixed.into_iter().chain([None]) {
+            for day in if season.is_some() { 0..1 } else { 0..365 } {
+                let (m, d) = date_of(day);
+                for (dark, amoled) in [(false, false), (true, false), (true, true)] {
+                    let p = palette(season, m, d, false, dark, amoled);
+                    let r = roles(p);
+                    let at = format!("{season:?} {d}/{m} dark {dark} amoled {amoled}");
+                    for (what, fg) in [("accent", p.accent), ("quiet ink", r.on_surface_variant)] {
+                        let c = calculate_contrast(fg, p.page);
+                        assert!(c >= 4.5, "{at}: {what} reads at {c:.2}");
+                    }
+                    assert!(calculate_contrast(p.ink, p.page) >= 12.0, "{at}: ink");
+                    assert!(calculate_contrast(p.on, p.page) >= 3.0, "{at}: on");
+                    assert!(calculate_contrast(r.on_primary, r.primary) >= 3.0, "{at}: on primary");
+                    assert!(calculate_contrast(r.on_secondary, r.secondary) >= 3.0, "{at}: on secondary");
+                    assert_eq!(luminance(p.page) < 0.5, dark);
+                }
             }
         }
     }
@@ -322,7 +332,7 @@ mod tests {
 
     #[test]
     fn the_accent_reads_as_text_on_any_page() {
-        let (light, dark) = (0xFFBE_5526, 0xFFE8_743B);
+        let (light, dark) = (0xFFB6_4D1D, 0xFFE8_743B);
         for page in [0xFF10_1010u32, 0xFF62_8040, 0xFF20_3A60, 0xFF80_8080, 0xFFE8_7040, WHITE] {
             let ink = if luminance(page) < 0.5 { WHITE } else { 0xFF11_1111 };
             let a = accent_on(page, ink, light, dark);

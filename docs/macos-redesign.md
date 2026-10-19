@@ -35,7 +35,7 @@ them rather than re-deriving anything.
   night. `Season::palette` has the five roles: page, surface, ink, accent, on.
 - Surfaces are one quiet step off the page (sheets, grouped rows, popovers); lifted states veil the ink
   over them (`roles()`: 5 %, 9 %, 12 %), they do not use new greys.
-- Text is the ink at fixed alphas of the page (`veil`): secondary 62 %, outline 36 %, hairline 14 %.
+- Text is the ink at fixed alphas of the page (`veil`): secondary 65 %, outline 36 %, hairline 14 %.
 - Headings are a serif (Georgia-like, the Android app's display face); body is the system sans. Titles are
   large and tight.
 - Corners are generous: 12 on covers, 18 to 22 on cards and sheets, a full pill on the chrome.

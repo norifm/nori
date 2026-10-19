@@ -223,8 +223,9 @@ float nori_ios_lyric_unsung(void);
 
 /// The season theme (crates/ios/src/theme.rs). Colors are ARGB. `season` is the `season` setting's value
 /// (FOLLOW, SPRING, SUMMER, AUTUMN, WINTER); the date is `unix_s` in the zone with `offset_min` from UTC.
+/// `quiet` is the secondary text color.
 typedef struct NoriPalette {
-    uint32_t page, surface, ink, accent, on;
+    uint32_t page, surface, ink, accent, on, quiet;
 } NoriPalette;
 void nori_ios_palette(const char *season, int32_t dark, int64_t unix_s, int32_t offset_min, const char *zone, NoriPalette *out);
 /// The calendar's season (0 spring to 3 winter), the next one and the date it starts.

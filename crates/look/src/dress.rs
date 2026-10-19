@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn the_theme_accent_reads_on_any_cover() {
-        let (light, dark) = (0xFFBE_5526, 0xFFE8_743B);
+        let (light, dark) = (0xFFB6_4D1D, 0xFFE8_743B);
         for bg in [0xFF10_1010u32, 0xFF20_3A60, 0xFF55_5555, 0xFFE8_7040, 0xFFB0_A080, WHITE] {
             let on = if luminance(bg) < 0.5 { WHITE } else { 0xFF11_1111 };
             let cover = page(bg, bg, on, 0xFF30_C0F0, bg);

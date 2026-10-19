@@ -17,7 +17,7 @@ C2. **Four seasons, one rule.** Spring (春), Summer (夏), Autumn (秋), Winter
 C3. **Follow = the calendar with a 14-day blend**: from 7 days before a season's start date to 7 days after,
     colour channels mixed linearly, nothing animated. Starts 4 Feb, 5 May, 7 Aug, 7 Nov; half a year round
     in the southern hemisphere. Implemented once in `crates/look/src/theme.rs` (`coming_in`, `BLEND_DAYS`).
-C4. **Roles.** page, surface, ink, accent, on. Secondary text = ink 62 % over page; outline 36 %;
+C4. **Roles.** page, surface, ink, accent, on. Secondary text = ink 65 % over page (the least that reads at 4.5:1 in every palette); outline 36 %;
     hairline 14 %; chrome outline 20-22 %. No other greys.
 C5. **Accent = "you, now" only**: the current tab, the song playing, a lit toggle (shuffle, repeat), a liked
     seal, a focused field. Never a decoration, never a fill behind a selected row. `on` is only for a switch

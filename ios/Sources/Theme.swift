@@ -28,7 +28,7 @@ enum Theme {
     }
 
     private struct Colors: Equatable {
-        var page, surface, ink, accent, on: UIColor
+        var page, surface, ink, accent, on, quiet: UIColor
     }
 
     /// The core's palette for the mode and season on today's date and time zone.
@@ -37,7 +37,7 @@ enum Theme {
         let zone = TimeZone.current
         nori_ios_palette(season, light ? 0 : 1, Int64(Date().timeIntervalSince1970), Int32(zone.secondsFromGMT() / 60), zone.identifier, &out)
         return Colors(page: UIColor(rgb: out.page), surface: UIColor(rgb: out.surface), ink: UIColor(rgb: out.ink),
-                      accent: UIColor(rgb: out.accent), on: UIColor(rgb: out.on))
+                      accent: UIColor(rgb: out.accent), on: UIColor(rgb: out.on), quiet: UIColor(rgb: out.quiet))
     }
 
     private static var colors = palette()
@@ -62,7 +62,7 @@ enum Theme {
     static var background: UIColor { colors.page }
     static var row: UIColor { colors.surface }
     static var label: UIColor { colors.ink }
-    static var secondary: UIColor { veil(0.62) }
+    static var secondary: UIColor { colors.quiet }
     /// What is "you, now": the current tab, the song playing, a lit toggle, a focused field.
     static var accent: UIColor { colors.accent }
     /// A control that is off (shuffle, repeat) beside one that is on.

@@ -24,7 +24,7 @@ season setting works exactly as on the other clients.
       and on setting change; never a timer.
 
 ## 2. Theme.swift (colours only)
-- [x] Replace the grey constants with the palette: `background` = page, `row` = surface, `label` = ink, `secondary` = ink 62 %
+- [x] Replace the grey constants with the palette: `background` = page, `row` = surface, `label` = ink, `secondary` = ink 65 % (from the core)
       over page, `hairline`/`track` from ink alpha, `accent` = season accent (used where the current code uses `accent`:
       tab tint, nav tint, the playing row, lit shuffle/repeat, switches' on-colour = `on`), `dim` = quiet ink.
       Keep `Theme.light` semantic (light vs dark appearance); AMOLED = black page.
@@ -60,7 +60,7 @@ season setting works exactly as on the other clients.
   from `nori_ios_season_now`. AMOLED is not offered, as before (an LCD), so the palette is asked with it off.
 - **C3.** Follow and the 14-day blend are `nori_look::theme::palette(None, ...)`; the southern hemisphere comes
   from `southern(zone)`. The date is read at launch, when the app becomes active, and on a setting change; no timer.
-- **C4.** secondary = ink 62 % over page, dim 36 %, track 20 %, hairline 14 %; `on` is the switch colour.
+- **C4.** secondary = ink 65 % over page, from the core, dim 36 %, track 20 %, hairline 14 %; `on` is the switch colour.
 - **C5.** Accent is the tab and nav tint, the playing row (title and bar), the active server's check, a focused
   field, the lit shuffle on a page and the lit shuffle/repeat in the queue. Buttons that were accent fills or
   tints without being "you, now" (Play and Shuffle pills at rest, round buttons, Connect, Add server, the mini

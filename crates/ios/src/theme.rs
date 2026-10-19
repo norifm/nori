@@ -2,9 +2,9 @@
 
 use std::ffi::{c_char, CStr};
 
-use nori_look::theme::{palette, season_now, southern, utc_date, Season};
+use nori_look::theme::{palette, roles, season_now, southern, utc_date, Season};
 
-/// `nori_look::theme::Palette` (ARGB), as `NoriPalette` in the header.
+/// `nori_look::theme::Palette` (ARGB) and its secondary text color, as `NoriPalette` in the header.
 #[repr(C)]
 pub struct NoriPalette {
     page: u32,
@@ -12,6 +12,7 @@ pub struct NoriPalette {
     ink: u32,
     accent: u32,
     on: u32,
+    quiet: u32,
 }
 
 /// `nori_look::theme::SeasonNow`, as `NoriSeasonNow` in the header: seasons are 0 spring to 3 winter.
@@ -58,8 +59,9 @@ pub unsafe extern "C" fn nori_ios_palette(
     let (season, zone) = unsafe { (CStr::from_ptr(season).to_string_lossy(), CStr::from_ptr(zone).to_string_lossy()) };
     let (month, day, south) = local_date(unix_s, offset_min, &zone);
     let p = palette(pick(&season), month, day, south, dark != 0, false);
+    let quiet = roles(p).on_surface_variant;
     // SAFETY: the caller's.
-    unsafe { out.write(NoriPalette { page: p.page, surface: p.surface, ink: p.ink, accent: p.accent, on: p.on }) };
+    unsafe { out.write(NoriPalette { page: p.page, surface: p.surface, ink: p.ink, accent: p.accent, on: p.on, quiet }) };
 }
 
 /// The season the calendar is in and the next one with its start date, for the same date.
@@ -87,7 +89,7 @@ mod tests {
 
     fn colors(season: &str, dark: i32, unix_s: i64, offset: i32, zone: &str) -> [u32; 5] {
         let (s, z) = (CString::new(season).unwrap(), CString::new(zone).unwrap());
-        let mut out = NoriPalette { page: 0, surface: 0, ink: 0, accent: 0, on: 0 };
+        let mut out = NoriPalette { page: 0, surface: 0, ink: 0, accent: 0, on: 0, quiet: 0 };
         unsafe { nori_ios_palette(s.as_ptr(), dark, unix_s, offset, z.as_ptr(), &mut out) };
         [out.page, out.surface, out.ink, out.accent, out.on]
     }

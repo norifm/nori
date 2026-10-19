@@ -111,7 +111,7 @@ impl Colors {
 }
 
 /// Interface colors: the roles of a palette (page, surface, ink, accent, on) and the steps of ink over the
-/// page that the contract fixes (quiet 62 %, chrome outline 22 %, hairline 14 %).
+/// page that the contract fixes (quiet 65 %, chrome outline 22 %, hairline 14 %).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Theme {
     pub page: Color,
@@ -241,7 +241,7 @@ impl Theme {
         let (page, ink) = (argb(c.background), argb(c.on));
         let accent = argb(nori_look::theme::accent_on(c.background, c.on, light, dark));
         let at = |t: f32| blend(page, ink, t);
-        Theme { page, surface: at(0.06), ink, quiet: at(0.62), line: at(0.22), hair: at(0.14), accent, on: base.on, lift: at(0.16), painted: true, mono: false }
+        Theme { page, surface: at(0.06), ink, quiet: at(nori_look::theme::QUIET), line: at(0.22), hair: at(0.14), accent, on: base.on, lift: at(0.16), painted: true, mono: false }
     }
 
     /// Text color at `strength` (1 = full) between the page and the ink; unpainted, only full or quiet.
@@ -349,7 +349,7 @@ mod tests {
         let image = Image { width: 32, height: 32, pixels: px.into_boxed_slice() };
         let c = nori_host::derive(&image);
         let base = Theme::of(nori_look::theme::Season::Autumn.palette(true), true, Colors::True);
-        let t = Theme::from_cover(&c, (0xFFBE_5526, 0xFFE8_743B), &base);
+        let t = Theme::from_cover(&c, (0xFFB6_4D1D, 0xFFE8_743B), &base);
         let Color::Rgb(r, g, b) = t.page else { panic!("a page color") };
         assert!(r > g && r > b, "the page is the record's red: {r} {g} {b}");
         // The theme's persimmon, not the cover's own accent, lifted to read on the red.
@@ -404,11 +404,11 @@ mod tests {
         let pal = Season::Autumn.palette(true);
         let t = Theme::of(pal, true, Colors::True);
         assert_eq!((t.page, t.surface, t.ink, t.accent, t.on), (argb(pal.page), argb(pal.surface), argb(pal.ink), argb(pal.accent), argb(pal.on)));
-        // Quiet 62 %, the chrome outline 22 % and the hairline 14 % of the ink over the page.
+        // Quiet 65 %, the chrome outline 22 % and the hairline 14 % of the ink over the page.
         let r = nori_look::theme::roles(pal);
         assert_eq!((t.quiet, t.hair), (argb(r.on_surface_variant), argb(r.outline_variant)));
         let veil = |a: f32| argb(nori_look::compose::over(nori_look::compose::with_alpha(pal.ink, a), pal.page));
-        assert_eq!((t.quiet, t.line, t.hair), (veil(0.62), veil(0.22), veil(0.14)));
+        assert_eq!((t.quiet, t.line, t.hair), (veil(nori_look::theme::QUIET), veil(0.22), veil(0.14)));
         let Color::Rgb(a, b, c) = t.line else { panic!() };
         assert!(a > 0x11 && b > 0x0E && c > 0x0A, "the outline lies above the page");
         // The selected row is raised, never the accent.

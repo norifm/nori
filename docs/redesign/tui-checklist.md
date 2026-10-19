@@ -76,7 +76,7 @@ season palettes in true colour, top outline with tabs, bottom player outline, se
 - C2 Four seasons: the `season` setting row (Follow, Spring 春 ... Winter 冬), `theme` (as the terminal / light / dark) and
   `amoled` rows are the core's, now offered to the terminal (`settings_pages::look`).
 - C3 Follow is `palette(None, ...)` with today's date by the local clock and the hemisphere from `TZ` or `/etc/localtime`.
-- C4 Roles: page, surface, ink, accent, on from the palette; quiet 62 %, hairline 14 % from `roles()`, chrome line 22 %
+- C4 Roles: page, surface, ink, accent, on from the palette; quiet 65 %, hairline 14 % from `roles()`, chrome line 22 %
   through the same `over(with_alpha(..))` veil; a test pins them.
 - C5 Accent only for the open tab, the song playing, lit shuffle/repeat, a liked seal, a focused field; selected rows are the
   surface (`Theme::select`), switches that are on use `on`. No `bg(accent)` remains except the liked seal's fill, which is the seal.
