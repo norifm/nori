@@ -205,9 +205,10 @@ pub fn unradio(id: &str) -> &str {
     id.strip_prefix(RADIO_PREFIX).unwrap_or(id)
 }
 
-/// Whether AutoMix can analyse `id`: not a provider song or radio stream.
+/// Whether AutoMix can analyse `id`: not a radio stream. A provider's song is analyzed from the bytes
+/// played or downloaded, never fetched for it.
 pub fn analysable(id: &str) -> bool {
-    !is_provider_id(id) && !is_radio(id)
+    !is_radio(id)
 }
 
 impl Song {

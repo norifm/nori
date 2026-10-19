@@ -405,7 +405,7 @@ fn chosen_before(cache: &dyn LyricsCache, song: &Song, services: &[LyricsService
 
 /// The last chosen service lyrics, without making requests. Timed server lyrics take precedence.
 pub fn cached_pick(cache: &dyn LyricsCache, song: &Song, server_has_lines: bool, server_synced: bool, lookup: &LyricsLookup) -> Option<LyricsPick> {
-    if lookup.services.is_empty() || song.is_provider() || (server_has_lines && server_synced) { return None; }
+    if lookup.services.is_empty() || (server_has_lines && server_synced) { return None; }
     let (rank, mut lyrics, _, _) = chosen_before(cache, song, &lookup.services)?;
     let server_timing = if server_has_lines { Timing::Untimed } else { Timing::Empty };
     if timing(&lyrics) <= server_timing { return None; }
@@ -474,7 +474,7 @@ pub async fn lookup(
             services.push(*s);
         }
     }
-    if services.is_empty() || song.is_provider() || (server_has_lines && server_synced) {
+    if services.is_empty() || (server_has_lines && server_synced) {
         if !server_has_lines {
             shown.show(none());
         }
@@ -989,10 +989,11 @@ mod tests {
         let (web, cache) = (Web::default(), Kept::default());
         let l = asked(&[LyricsService::Unison]);
         assert!(run(&web, &cache, &song(), (true, true), &l).is_empty());
-        let ext = Song { id: "ext-deezer-1".into(), ..song() };
-        assert_eq!(run(&web, &cache, &ext, (false, false), &l), [LyricsPick { lyrics: Lyrics::default(), origin: LyricsOrigin::Server }]);
         assert_eq!(run(&web, &cache, &song(), (false, false), &asked(&[])).len(), 1, "nothing asked: the empty answer, once");
         assert!(web.asked().is_empty());
+        let ext = Song { id: "ext-deezer-1".into(), ..song() };
+        run(&web, &cache, &ext, (false, false), &l);
+        assert!(!web.asked().is_empty(), "a provider's song played or downloaded is looked up too");
 
         // Second wave only after a weak first.
         let entries = vec![entry(0.95, true, W), entry(0.85, true, L), entry(0.75, false, W), entry(0.7, false, U)];

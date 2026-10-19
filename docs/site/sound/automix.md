@@ -34,7 +34,8 @@ network.
   follow each other in order join without a gap, as the album was made. Shuffled, they mix. Switched
   off, they mix like any others.
 - **The tempos are too far apart.** Beyond the biggest speed change, nori does not force a beat match.
-- **Provider songs** from octo-fiesta are never measured.
+- **Provider songs** from octo-fiesta are measured only as they play or once downloaded, never fetched
+  for it (from nori 0.7.0; before, never measured).
 
 ## Crossfade
 

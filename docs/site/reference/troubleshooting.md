@@ -27,7 +27,7 @@ developer settings: see [Install](../start/install.md#android).
 ## No lyrics
 
 - Check that **Look things up online** and **Find missing lyrics online** are on.
-- Provider songs from octo-fiesta are never looked up.
+- Provider songs from octo-fiesta are looked up only once you play or download them (from nori 0.7.0).
 - A song nobody had is asked again after a week. Settings, Storage, Lyrics clears what is kept.
 
 ## AutoMix does not mix
