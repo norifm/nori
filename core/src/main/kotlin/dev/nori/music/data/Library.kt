@@ -60,7 +60,7 @@ object Covers {
 
     /**
      * A cover of an octo-fiesta provider item (external song, album, artist or playlist), which is never
-     * kept: octo-fiesta draws a "not downloaded" badge on it and replaces the picture under the same id
+     * kept on disk: octo-fiesta draws a "not downloaded" badge on it and replaces the picture under the same id
      * once the item is in the library. The core's (`is_provider_cover`), through a `@FastNative` door:
      * 0.2 µs and nothing allocated, where the same test in Kotlin took 0.5 µs and 32 bytes.
      */
