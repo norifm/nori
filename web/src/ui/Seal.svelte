@@ -38,17 +38,17 @@
     color: var(--accent);
   }
   .seal.on :global(.icon) {
-    transform: rotate(-5deg);
+    transform: rotate(-4deg);
   }
   .seal.stamp :global(.icon) {
     animation: stamp 420ms cubic-bezier(0.3, 1.6, 0.5, 1);
   }
   @keyframes stamp {
     from {
-      transform: rotate(-5deg) scale(1.5);
+      transform: rotate(-4deg) scale(1.5);
     }
     to {
-      transform: rotate(-5deg) scale(1);
+      transform: rotate(-4deg) scale(1);
     }
   }
 </style>

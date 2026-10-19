@@ -1,27 +1,24 @@
 <script lang="ts">
   // The top bar on a wide screen: one outline with Home, the library's sections and Favorites; the search
-  // field and the settings button beside it. Playlists opens the list of them under the bar; settings
-  // opens the account, the season and the way to Settings.
+  // field and the settings button beside it. Settings opens the account, the season and the way to
+  // Settings.
   import { ask } from "../rpc";
-  import { library } from "../state/library.svelte";
-  import { newPlaylist } from "../state/menus";
   import { remote } from "../state/remote.svelte";
   import { go, href, route } from "../state/route.svelte";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
-  import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
   import Look from "./Look.svelte";
   import SearchBox from "./SearchBox.svelte";
 
   const guest = $derived(!!remote.jam?.guest);
-  let pop = $state<"playlists" | "settings" | null>(null);
+  let pop = $state<"settings" | null>(null);
   let bar = $state<HTMLElement>();
   let account = $state<{ url: string; user: string } | null>(null);
   const on = (...tops: string[]) => tops.includes(route.top);
-  const toggle = (p: "playlists" | "settings") => {
-    pop = pop === p ? null : p;
-    if (pop === "settings" && !account) void ask<string>("profile").then((j) => (account = JSON.parse(j)));
+  const toggle = () => {
+    pop = pop ? null : "settings";
+    if (pop && !account) void ask<string>("profile").then((j) => (account = JSON.parse(j)));
   };
 
   async function signOut() {
@@ -42,23 +39,14 @@
     <a class="tab" class:on={on("artists", "artist")} href={href("artists")} data-top="library"><Icon name="artist" /><span>{W.artists}</span></a>
     <a class="tab" class:on={on("songs")} href={href("songs")}><Icon name="note" /><span>{W.songs}</span></a>
     {#if !guest}
-      <button class="tab" class:on={on("playlists", "playlist")} aria-expanded={pop === "playlists"} onclick={() => toggle("playlists")}><Icon name="playlist" /><span>{W.playlists}</span></button>
-      <a class="tab" class:on={on("favorites")} href={href("favorites")}><Icon name="seal-line" /><span>{W.favorites}</span></a>
+      <a class="tab" class:on={on("playlists", "playlist")} href={href("playlists")}><Icon name="playlist" /><span>{W.playlists}</span></a>
+      <a class="tab" class:on={on("favorites")} href={href("favorites")}><Icon name={on("favorites") ? "seal" : "seal-line"} /><span>{W.favorites}</span></a>
     {/if}
   </nav>
   <div class="right">
     <SearchBox />
-    <button class="chrome gear" class:open={pop === "settings"} aria-label={W.settings} title={W.settings} aria-expanded={pop === "settings"} data-top="settings" onclick={() => toggle("settings")}><Icon name="settings" /></button>
+    <button class="chrome gear" class:open={pop === "settings"} aria-label={W.settings} title={W.settings} aria-expanded={pop === "settings"} data-top="settings" onclick={toggle}><Icon name="settings" /></button>
   </div>
-  {#if pop === "playlists"}
-    <div class="pop chrome lists" role="menu">
-      <a class="item" href={href("playlists")}><span class="art"><Icon name="playlist" /></span><span>{W.allPlaylists}</span></a>
-      <button class="item" onclick={() => (void newPlaylist(), (pop = null))}><span class="art"><Icon name="plus" /></span><span>{W.newPlaylist}</span></button>
-      {#each library.playlists as p (p.id)}
-        <a class="item" href={href("playlist", p.id)}><span class="art"><Cover src={p.cover} fallback="playlist" /></span><span class="clip">{p.name}</span></a>
-      {/each}
-    </div>
-  {/if}
   {#if pop === "settings"}
     <div class="pop chrome menu">
       <div class="acct">
@@ -158,13 +146,6 @@
     display: flex;
     flex-direction: column;
   }
-  .lists {
-    left: 50%;
-    transform: translateX(-50%);
-    width: 300px;
-    max-height: min(420px, calc(100vh - 220px));
-    overflow-y: auto;
-  }
   .menu {
     right: 0;
     width: 340px;
@@ -186,15 +167,6 @@
     width: 22px;
     height: 22px;
     color: var(--ink2);
-  }
-  .art {
-    width: 30px;
-    display: grid;
-    place-items: center;
-    flex: none;
-  }
-  .art :global(.cover) {
-    border-radius: 6px;
   }
   .acct {
     display: flex;

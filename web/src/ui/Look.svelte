@@ -1,6 +1,6 @@
 <script lang="ts">
-  // The look: the season (the four tiles marked 春 夏 秋 冬, or following the calendar), light or dark, and
-  // pure black. The core keeps the settings and hands out the colors (state/theme.ts).
+  // The look: the season (the four tiles marked 春 夏 秋 冬; following the calendar, its season's is
+  // marked), light or dark, and pure black. The core keeps the settings and hands out the colors (state/theme.ts).
   import { ask } from "../rpc";
   import { refreshTheme, worn } from "../state/theme";
   import { W } from "../words";
@@ -13,6 +13,11 @@
   };
   void read();
 
+  const following = $derived(look.season === "FOLLOW");
+  /** The tile worn: the calendar's while following. */
+  const shown = $derived(following ? worn.season : look.season);
+  const named = (id: string) => W.seasons.find((s) => s[0] === id)?.[2] ?? id;
+
   async function set(name: keyof Look, value: string) {
     look[name] = value;
     await ask("setting", name, value);
@@ -23,14 +28,16 @@
 <div class="look">
   <div class="tiles" role="radiogroup" aria-label={W.season}>
     {#each W.seasons as [id, kanji, name] (id)}
-      <button class="tile" role="radio" aria-checked={look.season === id} class:on={look.season === id} data-season={id} onclick={() => void set("season", id)}>
+      <button class="tile" role="radio" aria-checked={shown === id} class:on={shown === id} data-season={id} onclick={() => void set("season", id)}>
         <i>{kanji}</i><small>{name}</small>
       </button>
     {/each}
   </div>
   <label class="row">
-    <span class="words"><span>{W.seasonFollow}</span><span class="sub">{W.seasonFollowLead}</span></span>
-    <input type="checkbox" class="switch" checked={look.season === "FOLLOW"} onchange={(e) => void set("season", e.currentTarget.checked ? "FOLLOW" : worn.season)} />
+    <span class="words"
+      ><span>{W.seasonFollow}</span><span class="sub">{following ? W.seasonNow(named(worn.season), named(worn.next), worn.nextMonth, worn.nextDay) : W.seasonFollowLead}</span></span
+    >
+    <input type="checkbox" class="switch" checked={following} onchange={(e) => void set("season", e.currentTarget.checked ? "FOLLOW" : worn.season)} />
   </label>
   <div class="row stack">
     <span>{W.appearance}</span>

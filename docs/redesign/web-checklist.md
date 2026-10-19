@@ -37,8 +37,8 @@ season palettes, seal, bare play glyph with ripple, Material icons, Inter + Lite
 ## 3. Chrome and layout (C12, C6)
 - [x] Remove the sidebar (see `Shell.svelte`, `PaneView.svelte`); top pill component: Home | Albums, Artists,
       Songs, Playlists, Favorites (+ Genres if the web has it, under a library menu), search field right
-      (widens on focus, results popover), settings button (account, season, devices, jam). Playlists tab opens a
-      popover of playlists. Routes unchanged.
+      (widens on focus, results popover), settings button (account, season, devices, jam). Playlists tab opens the
+      Playlists page (it was a popover of them). Routes unchanged.
 - [x] Player pill (`PlayerBar.svelte`/`MiniPlayer.svelte`): song left; shuffle, previous, play, next, repeat + seek
       bar middle; seal, speaker (Play On / devices), lyrics, queue, volume right. Max ~1040 px centred, fixed to
       the bottom. Jam rules as today.
@@ -73,12 +73,12 @@ Not done / not verified: no page push/pop transition (none is the reduced-motion
 ## 7. Design notes (written last: for each contract rule C1-C14, how this client did it, or why not)
 
 - C1 Palettes from Rust: `Nori.theme` (crates/web) calls `nori_settings::settings::theme_palette` (tested in crates/settings) and `nori_look::theme::roles`; the shell holds no season hexes, only CSS variables set by `state/theme.ts`. Before the core answers the system colors (Canvas/CanvasText) or the last answer (localStorage) are worn.
-- C2 Four seasons: `ui/Look.svelte` (gear menu and Settings > Appearance): tiles 春 夏 秋 冬 with English names, "Follow the seasons" switch, light/dark/system chips, pure black. The core's `season`, `theme`, `amoled` settings; the Look settings page is now offered to the web client.
+- C2 Four seasons: `ui/Look.svelte` (gear menu and Settings > Appearance): tiles 春 夏 秋 冬 with English names (the calendar's marked while following), "Follow the seasons" switch under them saying "Autumn now · Winter from November 7" as Android does, light/dark/system chips, pure black. The core's `season`, `theme`, `amoled` settings; the Look settings page is now offered to the web client.
 - C3 Follow: `palette(None, ...)` blends over 14 days in the core; the page passes the browser's date and zone (`southern`), re-evaluated on load, visibility and scheme change, never on a timer.
 - C4 Roles: page, surface, ink, ink2 (65 %), outline (36 %), hair (14 %), accent, on, on-accent come from the core's `roles`; the chrome outline is the ink at 21 % in CSS, the glass the page at 55 %.
 - C5 Accent: only the current tab, the playing song's title, lit shuffle/repeat, the liked seal, a focused search field and the chosen season tile. Solid buttons are ink-filled, chips on = ink fill, no accent fills.
 - C6 One outline: `.chrome` (blur 24 px, page at 55 %, 21 % ink hairline, no shadow; `@supports not` raises the page to 88 %); `#main` scrolls under both bars with `mask-image` fades (`.fade`); the top bar's grid and the bars swallow clicks on their margins.
-- C7 Seal: `ui/Seal.svelte`, the core's seal paths; outline and upright, or filled accent tilted -5 degrees and stamped (scale 1.5 to 1, 420 ms overshoot curve standing for the spring) only when the click liked it; off is immediate; reduced motion removes the animation (global rule).
+- C7 Seal: `ui/Seal.svelte`, the core's seal paths; outline and upright, or filled accent tilted -4 degrees and stamped (scale 1.5 to 1, 420 ms overshoot curve standing for the spring) only when the click liked it; off is immediate; reduced motion removes the animation (global rule).
 - C8 Play/pause: the bare glyph, a CSS ripple (`.round::before`, ink at 16 %, grows from half size) on every round button, 180 ms glyph cross-fade with scale from .8, a spinner after 300 ms of buffering.
 - C9 Nothing animates unless touched: the color cross-fade is 340 ms through registered `@property` colors; no idle animation; the only timers are the existing seek ones and the 300 ms spinner delay; reduced motion turns every animation and transition off.
 - C10 Type: Inter and Literata variable fonts from the Android files, copied by `web/build.sh` into `web/src/fonts` (git-ignored); Literata only for page titles (h1, tracking -0.3 px) and the wordmark.
@@ -86,3 +86,4 @@ Not done / not verified: no page push/pop transition (none is the reduced-motion
 - C12 Layout: wide: top bar (Home | Albums Artists Songs Playlists Favorites, search with a results popover, settings menu with account, season, Genres, Play On), player bar (song | shuffle prev play next repeat + seek | seal, speaker, lyrics, queue, volume), full player (cover, title and seal, seek, transport, volume left; Lyrics/Queue/Play On panel right). Below 720 px: one bottom bar with the mini player over the tabs, the full player stacked. Deviations: Genres lives in the settings menu, not a tab; jam stays in the Play On pane; the player bar's speaker hides when remote control is off, as before.
 - C13 Rust first: the palette choice (`theme_palette`) and the Look page's rows are in nori-settings with tests; volume is the session's (`Nori.volume`, `now.volume`).
 - C14 Battery: no new loops; blur is the browser's `backdrop-filter` (recomputed when the page behind it paints); the mask fades are static gradients.
+- Words: sentence case as Android's strings ("Recently added", "Play next"), Jam kept as a name.

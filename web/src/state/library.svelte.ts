@@ -2,15 +2,12 @@
 // (a playlist edited, a heart, another profile opened); the changes themselves are the core's.
 
 import { tick } from "svelte";
-import { ask, facts, read } from "../rpc";
+import { ask, facts } from "../rpc";
 import { route } from "./route.svelte";
-import type { Playlist } from "./types";
 
 class Library {
   /** Bumped by every change: the pages read themselves again. */
   rev = $state(0);
-  /** The sidebar's playlists. */
-  playlists = $state.raw<Playlist[]>([]);
 
   /** Asks the server for a change (`{ kind, ... }`, crates/web pages.rs `Change`). */
   async change(c: Record<string, unknown>) {
@@ -21,10 +18,6 @@ class Library {
   /** The profile changed under the pages (a jam joined or left). */
   changed() {
     this.rev++;
-  }
-
-  async readPlaylists() {
-    this.playlists = (await read<{ playlists: Playlist[] }>({ kind: "playlists" })).playlists ?? [];
   }
 }
 

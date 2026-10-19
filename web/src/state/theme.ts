@@ -4,7 +4,7 @@
 import { ask } from "../rpc";
 
 /** What the core hands over (`Nori::theme`): `#rrggbb` colors. */
-type Colors = { season: string; dark: boolean; page: string; surface: string; ink: string; ink2: string; hair: string; outline: string; accent: string; on: string; onAccent: string };
+type Colors = { season: string; next: string; nextMonth: number; nextDay: number; dark: boolean; page: string; surface: string; ink: string; ink2: string; hair: string; outline: string; accent: string; on: string; onAccent: string };
 
 const KEY = "nori-theme";
 const VARS: [keyof Colors, string][] = [
@@ -19,11 +19,12 @@ const VARS: [keyof Colors, string][] = [
   ["onAccent", "--on-accent"],
 ];
 
-/** The calendar's season now (SPRING ... WINTER), as the core last said. */
-export const worn = { season: "AUTUMN" };
+/** The calendar's season now (SPRING ... WINTER) and the next one with its first day, as the core last said. */
+export const worn = { season: "AUTUMN", next: "WINTER", nextMonth: 11, nextDay: 7 };
 
 function apply(c: Colors) {
-  worn.season = c.season;
+  // Colors remembered by an older page have no next season.
+  Object.assign(worn, c.next ? { season: c.season, next: c.next, nextMonth: c.nextMonth, nextDay: c.nextDay } : { season: c.season });
   const root = document.documentElement;
   for (const [k, v] of VARS) root.style.setProperty(v, c[k] as string);
   root.style.colorScheme = c.dark ? "dark" : "light";

@@ -34,7 +34,6 @@
         run: async () => {
           const name = await ui.ask(W.playlistName, pl!.name);
           if (name) await library.change({ kind: "renamePlaylist", id, name });
-          void library.readPlaylists();
         },
       },
       {
@@ -43,7 +42,6 @@
         run: async () => {
           if (!confirm(W.deleteConfirm(pl!.name))) return;
           await library.change({ kind: "deletePlaylist", id });
-          void library.readPlaylists();
           go("playlists");
         },
       },

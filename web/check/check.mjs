@@ -431,7 +431,7 @@ if (!only || only.includes("edit")) {
   await hash(`#/album/${blue}`, "album");
   for (let i = 0; i < 3; i++) {
     await (await page.$$(".songs li button[aria-label='More']"))[i].click();
-    await menu("Add to Playlist");
+    await menu("Add to playlist");
     await menu(name);
     await page.waitForFunction(async ([id, n]) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs.length === n, { timeout: 30000, polling: 250 }, [made.id, i + 1]);
   }
@@ -446,30 +446,30 @@ if (!only || only.includes("edit")) {
   await page.waitForFunction((n) => document.querySelector(".hero h1")?.textContent === n, { timeout: 30000, polling: 100 }, `${name} renamed`);
   await page.waitForSelector(".songs li");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
-  await menu("Move Down");
+  await menu("Move down");
   await page.waitForFunction(async ([id, t]) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs[1]?.title === t, { timeout: 30000, polling: 250 }, [made.id, added[0]]);
   const reordered = await songsOf();
   await page.waitForSelector(".songs li");
   await (await page.$$(".songs li button[aria-label='More']"))[2].click();
-  await menu("Remove from Playlist");
+  await menu("Remove from playlist");
   await page.waitForFunction(async (id) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs.length === 2, { timeout: 30000, polling: 250 }, made.id);
   const removed = await songsOf();
   // A heart on a song, seen on the Favorites page, and taken off again.
   const first = (await read({ kind: "album", id: blue })).songs[0];
   await hash(`#/album/${blue}`, "album");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
-  await menu(first.starred ? "Undo Favorite" : "Favorite");
+  await menu(first.starred ? "Undo favorite" : "Favorite");
   await hash("#/favorites", "favorites");
   await page.waitForFunction(async (t) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "starred" }))).songs.some((s) => s.title === t), { timeout: 30000, polling: 250 }, first.title);
   const favorited = await page.$$eval(".songs li .title", (e, t) => e.some((x) => x.textContent === t), first.title);
   await hash(`#/album/${blue}`, "album");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
-  await menu("Undo Favorite");
+  await menu("Undo favorite");
   await page.waitForFunction(async (t) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "starred" }))).songs.some((s) => s.title === t), { timeout: 30000, polling: 250 }, first.title);
   // The playlist deleted.
   await hash(`#/playlist/${made.id}`, "playlist");
   await page.click(".hero-actions button[aria-label='More']");
-  await menu("Delete Playlist");
+  await menu("Delete playlist");
   await page.waitForFunction(async (id) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.id === id), { timeout: 30000, polling: 250 }, made.id);
   report.edit = { added, reordered, removed, favorited, deleted: true };
   expect(added.length === 3 && reordered[1] === added[0] && reordered[0] === added[1] && removed.length === 2 && favorited, "playlists are made, filled, renamed, reordered, emptied and deleted, and hearts show on Favorites");

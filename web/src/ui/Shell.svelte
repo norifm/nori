@@ -41,7 +41,6 @@
     else setTimeout(all, 300);
   });
 
-  void library.readPlaylists().catch(() => {});
   const playing = $derived(!!player.song);
   /** The page's props, by its address. */
   const props = $derived.by(() => {

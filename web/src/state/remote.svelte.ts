@@ -68,7 +68,6 @@ class Remote {
   private switched() {
     go("home");
     library.changed();
-    void library.readPlaylists().catch(() => {});
     void player.refresh();
     void this.read();
   }
