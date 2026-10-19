@@ -72,9 +72,9 @@
     grid-template-columns: minmax(0, 1fr) minmax(360px, 1.1fr) minmax(0, 1fr);
     align-items: center;
     gap: 14px;
-    /* The cover sits 13px in on three sides; the corner is its 12px corner plus that. */
-    padding: 0 16px 0 13px;
-    border-radius: 25px;
+    /* The cover sits 7px in on three sides; the corner is its 16px corner plus that. */
+    padding: 0 16px 0 7px;
+    border-radius: 23px;
   }
   .song {
     display: flex;
@@ -83,8 +83,11 @@
     min-width: 0;
   }
   .art {
-    width: 52px;
+    width: 64px;
     flex: none;
+  }
+  .art :global(.cover) {
+    border-radius: 16px;
   }
   .text {
     display: flex;
