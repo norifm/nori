@@ -161,6 +161,28 @@ impl Nori {
         .to_string()
     }
 
+    /// What Now Playing wears for a cover, from `rgba` (a `w` x `h` copy the page decoded): `[colors,
+    /// wash]`, the colors JSON `{ page, surface, ink, ink2, outline, hair, accent, onAccent }` (each a
+    /// `#rrggbbaa`) and the wash (the cover blurred, RGBA, `washSide` square) or null; as Android's player.
+    pub fn cover_look(&self, rgba: Vec<u8>, w: u32, h: u32) -> js_sys::Array {
+        use nori_look::dress;
+        let argb: Vec<u32> = rgba.chunks_exact(4).map(|p| u32::from_be_bytes([p[3], p[0], p[1], p[2]])).collect();
+        let c = nori_look::cover::derive(&argb, w.max(1) as usize, h.max(1) as usize, false);
+        let t = dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
+        let hex = |argb: u32| format!("#{:06x}{:02x}", argb & 0xFF_FFFF, argb >> 24);
+        let side = c.wash.as_ref().map_or(0, |w| (w.len() as f64).sqrt() as u32);
+        let colors = json!({
+            "page": hex(t[dress::BACKGROUND]), "surface": hex(t[dress::SURFACE_CONTAINER]), "ink": hex(t[dress::ON]),
+            "ink2": hex(t[dress::ON_60]), "outline": hex(t[dress::ON_35]), "hair": hex(t[dress::VEIL_13]),
+            "accent": hex(t[dress::ACCENT]), "onAccent": hex(t[dress::ON_PRIMARY]), "washSide": side,
+        });
+        let wash = c.wash.map_or(JsValue::NULL, |w| {
+            let bytes: Vec<u8> = w.iter().flat_map(|p| { let [a, r, g, b] = p.to_be_bytes(); [r, g, b, a] }).collect();
+            js_sys::Uint8ClampedArray::from(bytes.as_slice()).into()
+        });
+        js_sys::Array::of2(&JsValue::from_str(&colors.to_string()), &wash)
+    }
+
     /// The settings `names` (comma separated) as `{ name: value }`.
     pub fn settings(&self, names: String) -> String {
         let prefs = self.app.settings.current().unwrap_or_default();

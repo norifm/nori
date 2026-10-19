@@ -15,6 +15,7 @@
   import Seek from "./Seek.svelte";
   import PaneView from "./PaneView.svelte";
   import Volume from "./Volume.svelte";
+  import { coverLook, type CoverLook } from "../state/coverLook";
 
   const s = $derived(player.song!);
   const n = $derived(player.now);
@@ -29,9 +30,28 @@
     ui.full = false;
     ui.pane = null;
   };
+
+  // The cover's colors and wash, as Android's player wears them; the page's own until they come.
+  let look = $state<CoverLook | null>(null);
+  $effect(() => {
+    const src = s.cover;
+    let gone = false;
+    if (src) void coverLook(src).then((l) => !gone && (look = l));
+    else look = null;
+    return () => (gone = true);
+  });
+  let washed = $state<HTMLCanvasElement>();
+  $effect(() => {
+    const w = look?.wash;
+    if (!washed || !w) return;
+    washed.width = w.width;
+    washed.height = w.height;
+    washed.getContext("2d")?.putImageData(w, 0, 0);
+  });
 </script>
 
-<div class="full" class:wide={ui.wide} class:paned={!!pane} role="dialog" aria-modal="true" aria-label={s.title} id="full">
+<div class="full" class:wide={ui.wide} class:paned={!!pane} role="dialog" aria-modal="true" aria-label={s.title} id="full" style={look?.vars}>
+  {#if look?.wash}<canvas class="wash" bind:this={washed} aria-hidden="true"></canvas>{/if}
   <button class="round close" aria-label={W.close} title={W.close} onclick={close}><Icon name="down-wide" /></button>
   <section class="main">
     {#if !pane || ui.wide}
@@ -101,6 +121,18 @@
       transform: translateY(24px);
       opacity: 0;
     }
+  }
+  /* The cover blurred, behind everything; drawn small and stretched, as it is already soft. */
+  .wash {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .main,
+  .side {
+    position: relative;
   }
   .close {
     position: absolute;
@@ -223,7 +255,7 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    background: var(--surface);
+    background: var(--fill);
     border: 1px solid var(--hair);
     border-radius: 22px;
     overflow: hidden;
@@ -260,12 +292,14 @@
     color: var(--accent);
     font-weight: 700;
   }
+  /* A column, so the lyrics scroll in themselves (keeping the sung line in view) under their soft edges. */
   .body {
     flex: 1;
     min-height: 0;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
     padding: 14px 22px;
     scrollbar-width: none;
   }
 </style>
-  /* A column, so the lyrics scroll in themselves (keeping the sung line in view) under their soft edges. */
