@@ -79,6 +79,11 @@ song actions and restored requests from silently receiving an empty Subsonic-sha
 - The 251 URL without a `Range` header is throttled to about 32 KB/s (106 s for a 3.4 MB song; 2.3x
   real time). With `Range: bytes=0-`, any range, or the `&range=0-<len-1>` query parameter it comes at
   full speed (0.35 s). There is no 1 MiB wall for visionOS URLs.
+- That holds for small files only. A range of about 50 MB or more, or one without an end
+  (`Range: bytes=F-`, `&range=F-<len-1>`), comes at the throttled 32 KB/s too: starting a 2.4 h, 155 MB
+  mix at 1 h waited 6.2 s for its first 256 KB. Ranges of 10 MB or less come at full speed anywhere in
+  the file (10 MB in 0.95 s; `Range: bytes=F-(F+1MB)` answered in 0.14 s). With `&range=` in the URL,
+  a `Range` header counts from the slice's start.
 - An unknown video id answers `status` ERROR, `reason` "This video is unavailable".
 - Without a visitor id, music tracks (`MUSIC_VIDEO_TYPE_ATV` and `OMV`, e.g. `wU26xVT_vBU`) answer
   `LOGIN_REQUIRED` "Sign in to confirm you're not a bot" for every visionOS build (1.01, 1.02, 1.03),
@@ -86,9 +91,14 @@ song actions and restored requests from silently receiving an empty Subsonic-sha
   answer (the refusal's own, or a WEB_REMIX search's from an hour before) as `X-Goog-Visitor-Id` and
   `context.client.visitorData`, they all answer OK. yt-dlp sends it too (`generate_api_headers`).
 - WEB_REMIX `search` with the songs/albums/artists filter `params` (the ytmusicapi values) answers a
-  `musicShelfRenderer` of `musicResponsiveListItemRenderer`s (20 per page). The unfiltered search now
-  answers about 30 mixed `itemSectionRenderer`s, a shape that changed in 2026, so filtered searches are
-  used.
+  `musicShelfRenderer` of `musicResponsiveListItemRenderer`s (20 per page). The unfiltered search (no
+  `params`) answers a `musicCardShelfRenderer` top result (its title links the item; its `contents` are
+  the top artist's songs, with no artist of their own) and then about 30 `itemSectionRenderer`s of one
+  item each, every kind ranked together: songs, videos (UGC), albums, artists, profiles (user channels),
+  playlists, podcasts and episodes. Each item's second column opens with its kind ("Song • ...",
+  "Profile • @handle"), which for an album is its release type. nori asks the unfiltered search and the
+  three filtered ones side by side: the unfiltered answer leads each kind, the filtered ones add depth.
+  Podcasts and episodes are dropped. A channel handle (`@name`) matches its videos, not a profile.
 
 ## What a profile kind provides (the `Provider` seam)
 
@@ -149,8 +159,13 @@ WebM bytes feed playback analysis; no analysis-only network request is made.
    once more with the one it carried. The id is never logged; nori keeps it in the profile's
    `youtube_visitor` row and gives it back before the next start's first request, since a new
    visitor gets a different Home each time.
-3. From byte 0 the URL carries `&range=0-<clen-1>` (a plain GET is throttled, above); from later bytes
-   the `Range` header the byte source sends does the same.
+3. The engine asks for the plain URL in parts of at most 10 MB (`Range: bytes=F-E`), opening the next
+   at each part's end (`ResolveStream::parts`, nori-engine's `Resolving`); the same 1 h start plays in
+   about a second. media3's cache learns a song's length only from a request without an end, so on
+   Android the length a part's `Content-Range` says is kept as the entry's (`MediaSources.rememberLength`);
+   without it a song never counted as whole and was never analysed. Android's download worker asks the
+   whole file in one request, so its URL carries
+   `&range=0-<clen-1>` from byte 0 (`ResolveStream::resolve_rest`).
 4. A refused URL (403: the address changed, so the `ip=` binding no longer holds, or YouTube expired it
    early) drops the resolution, so the loader's own next try (its usual retries of a refused status)
    asks YouTube again; when those run out the song fails as any stream error does.
