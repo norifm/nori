@@ -1,0 +1,61 @@
+[package]
+name = "nori-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The desktop client: a native window (Slint) over the core, nori-engine and the cpal output, laid out as the terminal client is"
+
+[[bin]]
+name = "nori-desktop"
+path = "src/main.rs"
+
+[features]
+test-control = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+# The providers this client offers: a Subsonic server's and YouTube Music.
+nori-core = { path = "../core", default-features = false, features = ["youtube"] }
+nori-engine = { path = "../engine", features = ["core"] }
+nori-output-cpal = { path = "../output-cpal" }
+nori-http = { path = "../http" }
+nori-mpris = { path = "../mpris" }
+nori-host = { path = "../host" }
+nori-covers = { path = "../covers" }
+nori-look = { path = "../look" }
+parking_lot = "0.12"
+# Slint with Skia on wgpu; layers are composited by compositor.rs.
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "renderer-skia", "unstable-wgpu-30"] }
+# Phase-preserving wheel events use Slint's backend API.
+i-slint-core = { version = "=1.18.1", default-features = false }
+i-slint-renderer-skia = { version = "=1.18.1", default-features = false, features = ["unstable-wgpu-30"] }
+# compositor.rs: winit window and events, pollster for GPU setup, arboard for the clipboard.
+winit = "0.30"
+# Slint's wgpu, with WGSL for glass.wgsl.
+wgpu = { version = "30", default-features = false, features = ["wgsl"] }
+pollster = "0.4"
+# Slint's Skia version, for measuring lyric text in sung.rs.
+skia-safe = "0.153.3"
+arboard = { version = "3", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", default-features = false }
+glow = "0.18"
+glutin = { version = "0.32", default-features = false, features = ["egl", "glx", "x11", "wayland"] }
+
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2"
+
+# Menu bar (muda) and unified toolbar (objc2).
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.19", default-features = false }
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSToolbar"] }
+
+[build-dependencies]
+slint-build = "=1.18.1"
+naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
+
+[dev-dependencies]
+i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-skia"] }

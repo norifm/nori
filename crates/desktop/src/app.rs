@@ -26,7 +26,7 @@ use nori_host::pages::{HomePart, PageAsk, PageGot, ShelfItems};
 use nori_host::player::{Playback, QueueShown};
 use crate::settings::{Act, Target};
 use crate::words;
-use crate::{AppWindow, ArtistLink, Card, Credits, LoginKind, LyricPiece, Pick, PlayerBar, Shelf, SidebarWindow, SongGo, SongRow};
+use crate::{AppWindow, ArtistLink, Card, Credits, LoginKind, LyricPiece, Motion, Pick, PlayerBar, Shelf, SongGo, SongRow, Theme, TopBar};
 
 /// Cover fetch sizes, px square.
 const SMALL_PX: u32 = 256;
@@ -55,6 +55,7 @@ const PAGE: i32 = 6;
 const LOGIN: i32 = 7;
 const SETTINGS: i32 = 8;
 const EQUALIZER: i32 = 9;
+const FAVORITES: i32 = 12;
 
 /// Weak handle to the app for callbacks and timers.
 #[derive(Clone)]
@@ -257,6 +258,32 @@ fn colour(argb: u32) -> Color {
     Color::from_argb_encoded(argb)
 }
 
+/// The cross-fade of the look, 340 ms as Android's chrome has it: run by a timer only while it lasts.
+#[derive(Default)]
+struct Fade {
+    from: Option<crate::look::Look>,
+    /// What was painted last.
+    shown: Option<crate::look::Look>,
+    began: Option<Instant>,
+    timer: Timer,
+}
+
+const FADE: Duration = Duration::from_millis(340);
+
+impl Fade {
+    fn start(&mut self, from: crate::look::Look) {
+        self.from = Some(from);
+        self.began = Some(Instant::now());
+    }
+
+    /// The look on the way to `to` now, and whether it has arrived.
+    fn at(&self, to: &crate::look::Look) -> (crate::look::Look, bool) {
+        let (Some(from), Some(began)) = (&self.from, self.began) else { return (to.clone(), true) };
+        let t = (began.elapsed().as_secs_f32() / FADE.as_secs_f32()).min(1.0);
+        (from.towards(to, t * t * (3.0 - 2.0 * t)), t >= 1.0)
+    }
+}
+
 pub struct App {
     me: AppHandle,
     ui: slint::Weak<AppWindow>,
@@ -286,11 +313,19 @@ pub struct App {
     home_rows: Vec<nori_core::settings::HomeRow>,
     /// The album list's pages asked for, to this offset.
     albums_asked: u32,
-    /// Separate player and sidebar windows drawn as glass (macOS); None where the page draws them.
+    /// The player pill and the top pill: windows of their own, laid over the blurred page.
     player: Option<PlayerBar>,
-    sidebar: Option<SidebarWindow>,
+    top: Option<TopBar>,
     /// Cover id whose wash is the window backdrop.
     backdrop: Option<String>,
+    /// The covers whose colors the open page and Now Playing wear.
+    page_cover: Option<CoverColours>,
+    now_cover: Option<CoverColours>,
+    /// The view a page was opened from, which back returns to.
+    came_from: i32,
+    /// The look worn (or fading in), and the cross-fade to it.
+    look: Option<crate::look::Look>,
+    fade: Fade,
     tickets: VecDeque<(CoverKey, Ticket)>,
     tick: Timer,
     tick_ms: u64,
@@ -342,11 +377,9 @@ fn to_main_with<A>(ui: &AppWindow, f: impl Fn(&AppWindow, A) + 'static) -> impl 
     }
 }
 
-/// The macOS player window; its buttons forward to the main window.
+/// The player pill's window; its buttons forward to the main window.
 fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) -> Option<PlayerBar> {
     let bar = PlayerBar::new().map_err(|e| eprintln!("nori: no player window: {e}")).ok()?;
-    ui.set_native_player(true);
-    bar.set_font(ui.get_font());
     bar.on_art(move |id, size, _rev| art(id, size));
     bar.on_toggle(to_main(ui, |m| m.invoke_toggle()));
     bar.on_star(to_main(ui, |m| m.invoke_star()));
@@ -372,19 +405,13 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
     Some(bar)
 }
 
-/// The macOS glass sidebar window; its rows forward to the main window.
-fn sidebar(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) -> Option<SidebarWindow> {
-    let side = SidebarWindow::new().map_err(|e| eprintln!("nori: no glass sidebar: {e}")).ok()?;
-    side.set_font(ui.get_font());
-    side.set_inset_top(ui.get_inset_top());
-    side.on_art(move |id, size, _rev| art(id, size));
-    side.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
-    side.on_open_playlist(to_main_with(ui, |m, id| m.invoke_open_playlist(id)));
-    side.on_open_accounts(to_main(ui, |m| m.invoke_open_accounts()));
-    side.on_drag_window(to_main(ui, |m| m.invoke_drag_window()));
-    side.on_zoom_window(to_main(ui, |m| m.invoke_zoom_window()));
-    ui.set_native_sidebar(true);
-    Some(side)
+/// The top pill's window; its tabs forward to the main window.
+fn top(ui: &AppWindow) -> Option<TopBar> {
+    let bar = TopBar::new().map_err(|e| eprintln!("nori: no top pill: {e}")).ok()?;
+    bar.on_go(to_main_with(ui, |m, v| m.invoke_go(v)));
+    bar.on_open_playlists(to_main(ui, |m| m.invoke_show_playlists()));
+    bar.on_open_menu(to_main(ui, |m| m.invoke_show_menu()));
+    Some(bar)
 }
 
 /// The album list once its page from `offset` came (`page`), and the page to ask for next: while pages
@@ -428,7 +455,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         ui.on_pick_art(move |covers, _rev| pick_image(&pick_art, &pick_app, covers, |images| pick_compositor.mosaic(images)));
         RefCell::new(App {
             ui: ui.as_weak(),
-            sidebar: sidebar(ui, art_cb(&art)),
+            top: top(ui),
             player: player(ui, art_cb(&art)),
             me,
             compositor,
@@ -452,6 +479,11 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             home_rows: Vec::new(),
             albums_asked: 0,
             backdrop: None,
+            page_cover: None,
+            now_cover: None,
+            came_from: HOME,
+            look: None,
+            fade: Fade::default(),
             tickets: VecDeque::new(),
             tick: Timer::default(),
             tick_ms: 0,
@@ -490,7 +522,9 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         ui.set_queue(ModelRc::from(a.queue_rows.clone()));
         ui.set_lyric_pieces_side(ModelRc::from(a.pieces[0].clone()));
         ui.set_lyric_pieces_full(ModelRc::from(a.pieces[1].clone()));
-        a.compositor.roles(ui.window(), a.sidebar.as_ref().map(|s| s.window()), a.player.as_ref().map(|p| p.window()));
+        if let (Some(top), Some(player)) = (&a.top, &a.player) {
+            a.compositor.roles(ui.window(), top.window(), player.window());
+        }
         #[cfg(target_os = "linux")]
         {
             let weak = ui.as_weak();
@@ -516,6 +550,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             Some(Focus { region: [x, 48.0, size.width - x - 100.0, size.height - 48.0 - 56.0], band_top: ui.get_full_lyric_top() - 8.0, band_h: ui.get_full_lyric_h() + 16.0, pitch: 90.0 })
         });
         a.settings_shown();
+        let wake = a.me.clone();
+        a.compositor.on_wake(move || wake.with(|a| a.repaint()));
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         match prefs.active_server().cloned() {
             Some(p) => a.open(p),
@@ -576,6 +612,10 @@ fn login_kind(info: &nori_core::providers::ProviderInfo) -> LoginKind {
 fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_messages_arrived, h, |a| a.drain_inbox());
     on!(ui.on_go, h, |a, v| a.go(v));
+    on!(ui.on_back, h, |a| {
+        let to = if a.ui().get_view() == PAGE { a.came_from } else { HOME };
+        a.go(to);
+    });
     on!(ui.on_note_act, h, |a| a.note_act());
     on!(ui.on_open_album, h, |a, id| a.open_page(PageAsk::Album(id.into())));
     on!(ui.on_open_artist, h, |a, id| a.open_page(PageAsk::Artist(id.into())));
@@ -630,6 +670,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_zoom_window, h, |a| a.compositor.zoom_window());
     on!(ui.on_page_moved, h, |a| a.place_player());
     on!(ui.on_player_changed, h, |a| {
+        a.repaint();
         position_shown(&a.ui(), a.player.as_ref(), a.position_now() as i32);
         a.lyrics_step(true);
         a.mirror();
@@ -772,6 +813,12 @@ impl App {
     }
 
     fn setting_chosen(&mut self, name: &str, i: usize) {
+        if name == crate::settings::APPEARANCE {
+            for (name, value) in crate::settings::appearance_settings(i) {
+                self.setting(name, value);
+            }
+            return;
+        }
         let target = Target::of(name);
         let Some(v) = crate::settings::option_value(target, i, &self.facts) else { return };
         match target {
@@ -912,6 +959,10 @@ impl App {
             }
             ARTISTS => Some(Req::Page(PageAsk::Artists)),
             PLAYLISTS => Some(Req::Page(PageAsk::Playlists)),
+            FAVORITES => {
+                self.songs.clear();
+                Some(Req::Page(PageAsk::Favorites))
+            }
             SONGS => {
                 self.songs.clear();
                 Some(Req::Page(PageAsk::Songs { offset: 0 }))
@@ -982,6 +1033,9 @@ impl App {
         ui.set_page_songs(ModelRc::default());
         ui.set_page_albums(ModelRc::default());
         self.page_colours(None);
+        if ui.get_view() != PAGE {
+            self.came_from = if matches!(ui.get_view(), LOGIN | SEARCH) { HOME } else { ui.get_view() };
+        }
         ui.set_view(PAGE);
         ui.set_failed("".into());
         self.mirror();
@@ -994,38 +1048,27 @@ impl App {
         self.open_page(ask);
     }
 
-    /// Page colours from its cover, or the defaults. The desktop's pages are dark under white text.
-    fn page_colours(&self, c: Option<&CoverColours>) {
-        let ui = self.ui();
-        let (light, dark) = crate::settings::accents(&crate::session::app().settings.current().unwrap_or_default());
-        match c {
-            Some(c) => {
-                let c = &nori_look::cover::under_white(c);
-                ui.set_page_bg(colour(c.background));
-                ui.set_page_accent(colour(nori_look::theme::accent_on(c.background, c.on, light, dark)));
-                ui.set_page_wash(wash(c));
-            }
-            None => {
-                ui.set_page_bg(Color::from_rgb_u8(0x1c, 0x1c, 0x1e));
-                ui.set_page_accent(Color::from_argb_encoded(dark));
-                ui.set_page_wash(Image::default());
-            }
-        }
+    /// The page's cover (an album's or artist's), whose colors the page wears, or none.
+    fn page_colours(&mut self, c: Option<&CoverColours>) {
+        self.ui().set_page_wash(c.map_or_else(Image::default, wash));
+        self.page_cover = c.cloned();
+        self.repaint();
     }
 
-    /// Cross-fades the window backdrop to this cover's wash (into the hidden layer; app.slint animates).
+    /// Cross-fades the window backdrop to this cover's wash (into the hidden layer; app.slint animates), and
+    /// dresses Now Playing in its colors.
     fn now_colours(&mut self, art: &str, c: Option<&CoverColours>) {
         if self.backdrop.as_deref() == Some(art) && c.is_some() {
             return;
         }
-        let ui = self.ui();
         let Some(c) = c else {
             self.backdrop = None;
+            self.now_cover = None;
+            self.repaint();
             return;
         };
+        let ui = self.ui();
         self.backdrop = Some(art.to_string());
-        // Now Playing draws in white whatever the sleeve: a light page is taken dark.
-        let c = &nori_look::cover::under_white(c);
         let on_b = !ui.get_wash_on_b();
         if on_b {
             ui.set_wash_b(wash(c));
@@ -1033,7 +1076,69 @@ impl App {
             ui.set_wash_a(wash(c));
         }
         ui.set_wash_on_b(on_b);
-        ui.set_wash_tint(colour(c.background));
+        self.now_cover = Some(c.clone());
+        self.repaint();
+    }
+
+    /// The look of the page the app is on: the season's, or a cover's.
+    fn page_look(&self) -> crate::look::Look {
+        let ui = self.ui();
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
+        let cover = if ui.get_full_player() { self.now_cover.as_ref() } else if ui.get_view() == PAGE { self.page_cover.as_ref() } else { None };
+        match cover {
+            Some(c) => crate::look::cover(&prefs, dark, today, c),
+            None => crate::look::plain(&prefs, dark, today),
+        }
+    }
+
+    /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
+    fn repaint(&mut self) {
+        let want = self.page_look();
+        let reduced = self.compositor.reduce_motion();
+        self.ui().global::<Motion>().set_reduced(reduced);
+        if let Some(p) = &self.player {
+            p.global::<Motion>().set_reduced(reduced);
+        }
+        if let Some(t) = &self.top {
+            t.global::<Motion>().set_reduced(reduced);
+        }
+        match self.look.clone() {
+            Some(now) if now != want && !reduced => {
+                let from = self.fade.shown.clone().unwrap_or(now);
+                self.fade.start(from);
+                let me = self.me.clone();
+                self.fade.timer.start(TimerMode::Repeated, Duration::from_millis(16), move || me.with(|a| a.fade_step()));
+            }
+            Some(now) if now == want => return,
+            _ => {
+                self.fade.timer.stop();
+                self.paint(&want);
+                self.fade.shown = Some(want.clone());
+            }
+        }
+        self.look = Some(want);
+    }
+
+    fn fade_step(&mut self) {
+        let Some(want) = self.look.clone() else { return };
+        let (look, done) = self.fade.at(&want);
+        self.paint(&look);
+        self.fade.shown = Some(look);
+        if done {
+            self.fade.timer.stop();
+        }
+    }
+
+    fn paint(&self, look: &crate::look::Look) {
+        look.paint(&self.ui().global::<Theme>());
+        if let Some(p) = &self.player {
+            look.paint(&p.global::<Theme>());
+        }
+        if let Some(t) = &self.top {
+            look.paint(&t.global::<Theme>());
+        }
+        self.compositor.set_page_colour(look.page());
     }
 
     fn data(&mut self, req: Req, r: Result<Data, String>) {
@@ -1115,6 +1220,11 @@ impl App {
                 ui.set_side_playlists(cards(self.lists.playlists.iter().cloned()));
                 self.narrowed();
             }
+            Data::Page(PageGot::Favorites(v)) => {
+                self.songs = v.songs;
+                ui.set_more_songs(false);
+                ui.set_songs(self.rows(&self.songs));
+            }
             Data::Page(PageGot::Songs { songs: v, exhausted }) => {
                 self.songs.extend(v);
                 ui.set_more_songs(!exhausted);
@@ -1165,12 +1275,12 @@ impl App {
         }
     }
 
-    /// Sets the page picture. Only artist pages take cover colours; albums and playlists stay plain.
-    fn set_page_art(&self, art: Option<String>) {
+    /// Sets the page picture. An album's or artist's page wears its cover's colors; a playlist's stays plain.
+    fn set_page_art(&mut self, art: Option<String>) {
         let art = art.unwrap_or_default();
         let ui = self.ui();
         ui.set_page_art(art.as_str().into());
-        let c = self.art.borrow().colours.get(&art).cloned().filter(|_| ui.get_page_kind() == 1);
+        let c = self.art.borrow().colours.get(&art).cloned().filter(|_| ui.get_page_kind() != 2);
         self.page_colours(c.as_deref());
     }
 
@@ -1563,21 +1673,18 @@ impl App {
         if let Some(p) = &self.player {
             p.set_covers_rev(ui.get_covers_rev());
         }
-        if let Some(sd) = &self.sidebar {
-            sd.set_covers_rev(ui.get_covers_rev());
-        }
         if large {
             let c = self.art.borrow().colours.get(&id).cloned();
             if ui.get_now_art() == id.as_str() {
                 self.now_colours(&id, c.as_deref());
             }
-            if ui.get_view() == PAGE && ui.get_page_kind() == 1 && ui.get_page_art() == id.as_str() {
+            if ui.get_view() == PAGE && ui.get_page_kind() != 2 && ui.get_page_art() == id.as_str() {
                 self.page_colours(c.as_deref());
             }
         }
     }
 
-    /// Copies the main window's state to the player and sidebar windows.
+    /// Copies the main window's state to the pills' windows.
     fn mirror(&self) {
         let ui = self.ui();
         if let Some(p) = &self.player {
@@ -1591,6 +1698,7 @@ impl App {
             p.set_now_starred(ui.get_now_starred());
             p.set_now_art(ui.get_now_art());
             p.set_playing(ui.get_playing());
+            p.set_buffering(ui.get_buffering());
             p.set_position_ms(ui.get_position_ms());
             p.set_duration_ms(ui.get_duration_ms());
             p.set_shuffle(ui.get_shuffle());
@@ -1606,27 +1714,25 @@ impl App {
             p.set_can_seek(ui.global::<crate::Jam>().get_can_seek());
             p.set_playing_on(ui.get_playing_on());
         }
-        if let Some(sd) = &self.sidebar {
-            sd.set_view(ui.get_view());
-            sd.set_page_kind(ui.get_page_kind());
-            sd.set_page_id(ui.get_page_id());
-            sd.set_playlists(ui.get_playlists());
-            sd.set_side_playlists(ui.get_side_playlists());
-            sd.set_server(ui.get_server());
-            sd.set_account(ui.get_account());
-            sd.set_account_initial(ui.get_account_initial());
-            sd.set_covers_rev(ui.get_covers_rev());
-            sd.set_inset_top(ui.get_inset_top());
-            sd.set_guest(ui.global::<crate::Jam>().get_guest());
+        if let Some(t) = &self.top {
+            t.set_view(ui.get_view());
+            t.set_page_kind(ui.get_page_kind());
+            t.set_guest(ui.global::<crate::Jam>().get_guest());
         }
     }
 
-    /// Positions the glass layers; hidden over Now Playing and the login page.
+    /// Positions the pills; hidden over Now Playing and the login page.
     fn place_player(&self) {
         let ui = self.ui();
         let shown = !ui.get_full_player() && ui.get_view() != LOGIN;
         self.compositor.set_right_panel(if ui.get_inspector() != 0 { 280.0 } else { 0.0 });
-        self.compositor.show_glass(shown && self.sidebar.is_some(), shown && self.player.is_some());
+        self.compositor.show_pills(shown && self.top.is_some(), shown && self.player.is_some());
+        let chrome = ui.global::<crate::Chrome>();
+        let (top, player) = self.compositor.pills();
+        chrome.set_top_x(top.0);
+        chrome.set_top_w(top.1);
+        chrome.set_player_x(player.0);
+        chrome.set_player_w(player.1);
     }
 
     /// Updates the lyrics view from the playback position and schedules the next update.
@@ -1775,13 +1881,15 @@ impl App {
     }
 
     /// Redraws the settings or equalizer page from the current settings.
-    fn settings_shown(&self) {
+    fn settings_shown(&mut self) {
+        self.repaint();
         let ui = self.ui();
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         self.devices_shown();
+        ui.set_season_pick(crate::settings::season_pick(&prefs));
+        ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         ui.set_autoplay(prefs.auto_fill);
         ui.set_automix(prefs.auto_mix);
-        ui.global::<crate::Theme>().set_accent(slint::Color::from_argb_encoded(crate::settings::accents(&prefs).1));
         let view = ui.get_view();
         if view == SETTINGS {
             ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab()));
@@ -2191,54 +2299,6 @@ fn devices_set(ui: &AppWindow, rows: Vec<crate::DeviceRow>) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn sidebar_loads_visible_covers() {
-        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
-        ))).unwrap();
-        let ui = SidebarWindow::new().unwrap();
-        ui.window().set_size(slint::PhysicalSize::new(216, 820));
-        ui.set_side_playlists(ModelRc::new(VecModel::from((0..500).map(|i| Card {
-            id: i.to_string().into(), art: i.to_string().into(), title: format!("Playlist {i}").into(), ..Default::default()
-        }).collect::<Vec<_>>())));
-        let requested = Rc::new(RefCell::new(HashSet::new()));
-        let seen = requested.clone();
-        let art = Rc::new(RefCell::new(Art::default()));
-        let cache = art.clone();
-        ui.on_art(move |id, size, _| {
-            seen.borrow_mut().insert(id.to_string());
-            cover_image(&cache, &AppHandle(Weak::new()), id, size)
-        });
-        ui.show().unwrap();
-        ui.window().take_snapshot().unwrap();
-        ui.set_covers_rev(1);
-        ui.window().take_snapshot().unwrap();
-        assert!(requested.borrow().contains("0"), "the first playlist cover is visible");
-        assert!(!requested.borrow().contains("499"), "offscreen covers must not displace visible covers");
-        let pending: Vec<_> = art.borrow_mut().wanted.drain(..).collect();
-        let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(SMALL_PX, SMALL_PX);
-        pixels.make_mut_slice().fill(Rgba8Pixel { r: 27, g: 91, b: 173, a: 255 });
-        let image = Image::from_rgba8(pixels);
-        for key in pending {
-            art.borrow_mut().insert(key, image.clone(), None, Instant::now());
-        }
-        ui.set_covers_rev(2);
-        let ready = ui.window().take_snapshot().unwrap();
-        ui.set_covers_rev(3);
-        let still = ui.window().take_snapshot().unwrap();
-        assert!(art.borrow().wanted.is_empty(), "visible covers must remain cached across redraws");
-        assert_eq!(ready.as_slice(), still.as_slice(), "an unchanged sidebar keeps its cover pixels");
-        ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-            position: slint::LogicalPosition::new(100.0, 400.0), delta_x: 0.0, delta_y: -30_000.0,
-        });
-        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
-        slint::platform::update_timers_and_animations();
-        ui.window().take_snapshot().unwrap();
-        assert!(requested.borrow().contains("499"), "scrolling to the bottom loads its covers");
-    }
-
-    /// The album list is read page after page, each asked for once (the stored copy and the server's
-    /// both come), until one comes short.
     #[test]
     fn albums_come_page_after_page() {
         let page = |from: usize, n: usize| (from..from + n).map(|i| nori_core::Album { id: i.to_string(), ..Default::default() }).collect::<Vec<_>>();

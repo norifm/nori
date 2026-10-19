@@ -1,7 +1,8 @@
-//! A custom Slint platform on winit with OpenGL on Linux and wgpu elsewhere. Skia renders the page,
-//! sidebar and player into separate layers; glass.wgsl composites them, drawing the sidebar and player as blurred glass over
-//! the page. Pointer events go to the layer under the pointer (or the one pressed in), keys to the page.
-//! Frames are drawn only when a layer is dirty or animating.
+//! A custom Slint platform on winit with OpenGL on Linux and wgpu elsewhere. Skia renders the page, the top
+//! pill and the player pill into separate layers; glass.wgsl composites them: the page, the edge fades, and
+//! inside each pill the page blurred (the pill's own layer lays its tint and outline over that). Pointer events
+//! go to the layer under the pointer (or the one pressed in), keys to the page. Frames are drawn only when a
+//! layer is dirty or animating.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -32,10 +33,27 @@ use winit::window::{Window as WinitWindow, WindowAttributes, WindowId};
 use crate::menu::MenuBar;
 
 /// Layer geometry in logical pixels; must match app.slint.
-pub const SIDEBAR_W: f32 = 216.0;
-const PLAYER_H: f32 = 54.0;
-const PLAYER_MAX_W: f32 = 720.0;
+const TOP_H: f32 = 48.0;
+const TOP_Y: f32 = 12.0;
+const TOP_RADIUS: f32 = 24.0;
+const PLAYER_H: f32 = 64.0;
 const PLAYER_BOTTOM: f32 = 12.0;
+const PLAYER_RADIUS: f32 = 26.0;
+const PILL_MAX_W: f32 = 1040.0;
+/// The window's side margin, and at the top left what the traffic lights take.
+const SIDE: f32 = 16.0;
+#[cfg(target_os = "macos")]
+const TRAFFIC: f32 = 92.0;
+#[cfg(not(target_os = "macos"))]
+const TRAFFIC: f32 = SIDE;
+/// The pills blur the page by this much, and the content fades into the page over this much, as Android's
+/// chrome does (`BACKDROP_BLUR`, `EDGE_REACH`).
+const BLUR_SIGMA: f32 = 24.0;
+const EDGE_REACH: f32 = 24.0;
+/// How far a fade's strip runs on past the pill's outer edge.
+const FADE_PAD: f32 = 6.0;
+/// What the pointer in a pill's margin is kept from the page for.
+const KEEP: f32 = 8.0;
 
 /// Format of every layer and the surface; Skia renders it on Metal and Vulkan.
 #[cfg(not(target_os = "linux"))]
@@ -133,15 +151,15 @@ impl WindowAdapter for Layer {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Role {
     Page,
-    Sidebar,
+    Top,
     Player,
 }
 
 /// Layers in creation order, each with its role once assigned.
 type Layers = RefCell<Vec<(Rc<Layer>, Cell<Option<Role>>)>>;
 
-/// Halvings in the page's blur pyramid: its smallest level is 1/64 of the page.
-const PYRAMID_LEVELS: u32 = 6;
+/// Halvings in the page's blur pyramid: its smallest level is 1/128 of the page.
+const PYRAMID_LEVELS: u32 = 7;
 
 /// Format of the blur pyramid: half floats, so a long smooth blur does not band.
 #[cfg(not(target_os = "linux"))]
@@ -164,11 +182,13 @@ struct Shared {
     size: Cell<PhysicalSize>,
     frames: RefCell<FrameSchedule>,
     proxy: EventLoopProxy<Wake>,
-    sidebar_shown: Cell<bool>,
+    top_shown: Cell<bool>,
     player_shown: Cell<bool>,
+    /// The page's colour as painted (RGB, 0 to 1): what the content fades into.
+    page_colour: Cell<[f32; 3]>,
     /// The window is not on screen (minimised, covered, locked): nothing is drawn until it shows again.
     occluded: Cell<bool>,
-    /// Width of the right panel (0 when closed); the player centres in the remaining page.
+    /// Width of the right panel (0 when closed); the pills centre in the remaining page.
     right: Cell<f32>,
     /// Queried each frame for the lyrics focus blur.
     focus: RefCell<Option<FocusSource>>,
@@ -176,6 +196,9 @@ struct Shared {
     /// Run as the event loop ends, however it ends: on macOS the app menu's and the Dock's Quit, and logging
     /// out, end the process from inside the loop, which never returns to the caller of `run`.
     on_exit: RefCell<Option<Box<dyn FnOnce()>>>,
+    /// Run when the window is focused or the system's appearance changes: the app looks at the date and the
+    /// theme again.
+    on_wake: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 type FocusSource = Box<dyn Fn() -> Option<Focus>>;
@@ -216,7 +239,7 @@ impl Shared {
     fn shown(&self, role: Role) -> bool {
         match role {
             Role::Page => true,
-            Role::Sidebar => self.sidebar_shown.get(),
+            Role::Top => self.top_shown.get(),
             Role::Player => self.player_shown.get(),
         }
     }
@@ -314,13 +337,15 @@ pub fn install() -> Result<Compositor, String> {
         size: Cell::new(PhysicalSize::new(1280, 820)),
         frames: RefCell::new(FrameSchedule { next: Instant::now(), interval: Duration::ZERO, pending: false }),
         proxy: event_loop.create_proxy(),
-        sidebar_shown: Cell::new(false),
+        top_shown: Cell::new(false),
         player_shown: Cell::new(false),
+        page_colour: Cell::new([0.0; 3]),
         occluded: Cell::new(false),
         right: Cell::new(0.0),
         focus: RefCell::new(None),
         menu: MenuBar::default(),
         on_exit: RefCell::new(None),
+        on_wake: RefCell::new(None),
     });
     slint::platform::set_platform(Box::new(Platform { shared: shared.clone(), event_loop: RefCell::new(Some(event_loop)) })).map_err(|e| format!("the platform: {e}"))?;
     Ok(Compositor(shared))
@@ -352,21 +377,30 @@ impl Compositor {
     }
 
     /// Assigns each Slint window its layer role.
-    pub fn roles(&self, page: &slint::Window, sidebar: Option<&slint::Window>, player: Option<&slint::Window>) {
+    pub fn roles(&self, page: &slint::Window, top: &slint::Window, player: &slint::Window) {
         let s = &self.0;
         for (layer, role) in s.layers.borrow().iter() {
             let w = &layer.window as *const slint::Window;
             if std::ptr::eq(w, page) {
                 role.set(Some(Role::Page));
-            } else if sidebar.is_some_and(|x| std::ptr::eq(w, x)) {
-                role.set(Some(Role::Sidebar));
-            } else if player.is_some_and(|x| std::ptr::eq(w, x)) {
+            } else if std::ptr::eq(w, top) {
+                role.set(Some(Role::Top));
+            } else if std::ptr::eq(w, player) {
                 role.set(Some(Role::Player));
             }
         }
-        s.sidebar_shown.set(sidebar.is_some());
-        s.player_shown.set(player.is_some());
+        s.top_shown.set(true);
+        s.player_shown.set(true);
         relayout(s);
+    }
+
+    /// The page's colour as it is painted now (ARGB), which the content under the pills fades into.
+    pub fn set_page_colour(&self, argb: u32) {
+        let [_, r, g, b] = argb.to_be_bytes();
+        let colour = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
+        if self.0.page_colour.replace(colour) != colour {
+            redraw(&self.0);
+        }
     }
 
     pub fn set_focus_source(&self, f: impl Fn() -> Option<Focus> + 'static) {
@@ -380,13 +414,22 @@ impl Compositor {
         }
     }
 
-    /// Shows or hides the sidebar and player layers over the page.
-    pub fn show_glass(&self, sidebar: bool, player: bool) {
+    /// The pills' x and width (logical pixels), top then player, for the page's popovers.
+    pub fn pills(&self) -> ((f32, f32), (f32, f32)) {
+        let size = self.0.window.borrow().as_ref().map_or(LogicalSize::new(1280.0, 820.0), |w| {
+            let l = w.inner_size().to_logical::<f32>(w.scale_factor());
+            LogicalSize::new(l.width, l.height)
+        });
+        let right = self.0.right.get();
+        let (top, player) = (pill_rect(Role::Top, size, right), pill_rect(Role::Player, size, right));
+        ((top.x, top.w), (player.x, player.w))
+    }
+
+    /// Shows or hides the two pills over the page.
+    pub fn show_pills(&self, top: bool, player: bool) {
         let s = &self.0;
-        let has = |r| s.layers.borrow().iter().any(|(_, x)| x.get() == Some(r));
-        let (sidebar, player) = (sidebar && has(Role::Sidebar), player && has(Role::Player));
-        if s.sidebar_shown.get() != sidebar || s.player_shown.get() != player {
-            s.sidebar_shown.set(sidebar);
+        if s.top_shown.get() != top || s.player_shown.get() != player {
+            s.top_shown.set(top);
             s.player_shown.set(player);
             redraw(s);
         }
@@ -410,8 +453,29 @@ impl Compositor {
         &self.0.menu
     }
 
+    /// Whether the system is dark (dark where it cannot say).
+    pub fn system_dark(&self) -> bool {
+        self.0.window.borrow().as_ref().and_then(|w| w.theme()).is_none_or(|t| t == winit::window::Theme::Dark)
+    }
+
+    /// Whether the system asks for less motion.
+    pub fn reduce_motion(&self) -> bool {
+        reduce_motion()
+    }
+
+    pub fn on_wake(&self, f: impl Fn() + 'static) {
+        *self.0.on_wake.borrow_mut() = Some(Rc::new(f));
+    }
+
     pub fn on_exit(&self, f: impl FnOnce() + 'static) {
         *self.0.on_exit.borrow_mut() = Some(Box::new(f));
+    }
+}
+
+fn wake(s: &Shared) {
+    let f = s.on_wake.borrow().clone();
+    if let Some(f) = f {
+        f();
     }
 }
 
@@ -425,17 +489,65 @@ fn redraw(s: &Shared) {
     }
 }
 
+/// A rect in the window, logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Rect {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+impl Rect {
+    fn scaled(self, scale: f32) -> [f32; 4] {
+        [self.x * scale, self.y * scale, self.w * scale, self.h * scale]
+    }
+}
+
+/// A pill's rect: as wide as the page beside the panel allows up to [`PILL_MAX_W`], centred on that page.
+/// The top pill keeps clear of the traffic lights on both sides.
+fn pill_rect(role: Role, window: LogicalSize, right: f32) -> Rect {
+    let page = (window.width - right).max(0.0);
+    let (side, h, y) = match role {
+        Role::Top => (TRAFFIC, TOP_H, TOP_Y),
+        _ => (SIDE, PLAYER_H, window.height - PLAYER_H - PLAYER_BOTTOM),
+    };
+    let w = (page - 2.0 * side).clamp(200.0, PILL_MAX_W);
+    Rect { x: (page - w) / 2.0, y, w, h }
+}
+
+fn pill_radius(role: Role) -> f32 {
+    if role == Role::Top { TOP_RADIUS } else { PLAYER_RADIUS }
+}
+
+/// The fade under a pill: its strip across the window's width (from the window's edge to `reach` past the
+/// pill's outer side), where in the ramp the pill begins, and whether the ramp is opaque at the top.
+struct Fade {
+    strip: Rect,
+    at: f32,
+    top: bool,
+}
+
+fn fade_of(role: Role, window: LogicalSize, right: f32) -> Fade {
+    let pill = pill_rect(role, window, right);
+    let top = role == Role::Top;
+    let strip = if top { pill.y + pill.h + FADE_PAD } else { window.height - pill.y + FADE_PAD };
+    let h = strip + EDGE_REACH;
+    Fade { strip: Rect { x: 0.0, y: if top { 0.0 } else { window.height - h }, w: window.width, h }, at: EDGE_REACH / h, top }
+}
+
+/// The pyramid level that blurs by [`BLUR_SIGMA`] logical pixels: level k blurs about 0.6 * 2^k pixels.
+fn blur_level(scale: f32) -> f32 {
+    (BLUR_SIGMA * scale / 0.6).log2()
+}
+
 /// A layer's rect in the window, logical pixels.
 fn place(s: &Shared, role: Role, window: LogicalSize) -> (LogicalPosition, LogicalSize) {
-    match role {
-        Role::Page => (LogicalPosition::new(0.0, 0.0), window),
-        Role::Sidebar => (LogicalPosition::new(0.0, 0.0), LogicalSize::new(SIDEBAR_W, window.height)),
-        Role::Player => {
-            let page = (window.width - SIDEBAR_W - s.right.get()).max(0.0);
-            let w = (page - 32.0).clamp(200.0, PLAYER_MAX_W);
-            (LogicalPosition::new(SIDEBAR_W + (page - w) / 2.0, window.height - PLAYER_H - PLAYER_BOTTOM), LogicalSize::new(w, PLAYER_H))
-        }
+    if role == Role::Page {
+        return (LogicalPosition::new(0.0, 0.0), window);
     }
+    let r = pill_rect(role, window, s.right.get());
+    (LogicalPosition::new(r.x, r.y), LogicalSize::new(r.w, r.h))
 }
 
 /// Resizes every layer to the current window size.
@@ -488,12 +600,14 @@ impl Runner {
 
     fn under(&self, at: LogicalPosition) -> Role {
         let Some(win) = self.logical_window() else { return Role::Page };
-        for role in [Role::Player, Role::Sidebar] {
+        // A pill takes the pointer over its margin too, so a click beside it opens nothing under it.
+        for role in [Role::Player, Role::Top] {
             if !self.shared.shown(role) || self.layer(role).is_none() {
                 continue;
             }
-            let (o, sz) = place(&self.shared, role, win);
-            if at.x >= o.x && at.y >= o.y && at.x < o.x + sz.width && at.y < o.y + sz.height {
+            let r = pill_rect(role, win, self.shared.right.get());
+            let (top, bottom) = if role == Role::Top { (0.0, r.y + r.h + KEEP) } else { (r.y - KEEP, win.height) };
+            if at.x >= r.x - KEEP && at.x < r.x + r.w + KEEP && at.y >= top && at.y < bottom {
                 return role;
             }
         }
@@ -631,6 +745,7 @@ impl ApplicationHandler<Wake> for Runner {
         *self.shared.window.borrow_mut() = Some(window);
         relayout(&self.shared);
         self.shared.menu.install();
+        wake(&self.shared);
     }
 
     fn exiting(&mut self, _: &ActiveEventLoop) {
@@ -664,7 +779,11 @@ impl ApplicationHandler<Wake> for Runner {
                 if let Some(l) = self.layer(Role::Page) {
                     l.window.dispatch_event(WindowEvent::WindowActiveChanged(on));
                 }
+                if on {
+                    wake(&self.shared);
+                }
             }
+            E::ThemeChanged(_) => wake(&self.shared),
             E::CursorMoved { position, .. } => {
                 let scale = self.shared.window.borrow().as_ref().map_or(1.0, |w| w.scale_factor());
                 let p = position.to_logical::<f32>(scale);
@@ -760,7 +879,8 @@ struct Draw {
     copy: wgpu::RenderPipeline,
     over: wgpu::RenderPipeline,
     down: wgpu::RenderPipeline,
-    glass: wgpu::RenderPipeline,
+    pill: wgpu::RenderPipeline,
+    fade: wgpu::RenderPipeline,
     focus: wgpu::RenderPipeline,
     bind: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -869,7 +989,8 @@ impl Draw {
             copy: pipeline("fs_copy", None, FORMAT),
             over: pipeline("fs_copy", Some(premultiplied), FORMAT),
             down: pipeline("fs_down", None, PYRAMID_FORMAT),
-            glass: pipeline("fs_glass", Some(premultiplied), FORMAT),
+            pill: pipeline("fs_pill", Some(premultiplied), FORMAT),
+            fade: pipeline("fs_fade", Some(premultiplied), FORMAT),
             focus: pipeline("fs_focus", None, FORMAT),
             bind,
             sampler,
@@ -889,7 +1010,7 @@ impl Draw {
         self.stale = true;
     }
 
-    /// Renders dirty layers, then composites page, glass and the sidebar/player on top.
+    /// Renders dirty layers, then composites the page, the fades, and the pills on top.
     fn frame(&mut self, s: &Shared, mut win: LogicalSize) {
         self.next_group.set(0);
         let gpu = s.gpu.clone();
@@ -961,13 +1082,11 @@ impl Draw {
         let (w, h) = (self.config.width as f32, self.config.height as f32);
         let mut enc = d.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
         let focus = s.focus.borrow().as_ref().and_then(|f| f());
-        let glass_needed = s.sidebar_shown.get() || s.player_shown.get() || focus.is_some();
+        let glass_needed = s.top_shown.get() || s.player_shown.get() || focus.is_some();
         if glass_needed {
             self.blur_page(d, &gpu.queue, &mut enc, &page);
         }
         let pyramid = self.pyramid.as_ref().map(|p| p.all.clone());
-        // Levels as the window's pixels count them: a level's blur is in pixels, so a sharper screen needs one more.
-        let dense = scale.max(1.0).log2();
         let full = uniforms([0.0, 0.0, w, h], [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
         let g = self.group(d, &gpu.queue, &full, &page, pyramid.as_ref().unwrap_or(&page));
         pass(&mut enc, &target, &self.copy, &g, true);
@@ -977,37 +1096,21 @@ impl Draw {
             let g = self.group(d, &gpu.queue, &u, &page, py);
             pass(&mut enc, &target, &self.focus, &g, false);
         }
-        let mut glass = |role: Role, rect: [f32; 4], look: Glass| {
-            let (Some(view), Some(py)) = (find(role), &pyramid) else { return };
-            let u = uniforms(rect, [w, h, w, h], look.shape, look.face, look.light, look.gather);
+        let [red, green, blue] = s.page_colour.get();
+        let right = s.right.get();
+        for role in [Role::Top, Role::Player] {
+            let (Some(view), Some(py), true) = (find(role), &pyramid, s.shown(role)) else { continue };
+            let f = fade_of(role, win, right);
+            let u = uniforms(f.strip.scaled(scale), [w, h, w, h], [0.0; 4], [red, green, blue, 0.0], [f.at, f.top as u8 as f32, 0.0, 0.0], [0.0; 4]);
             let g = self.group(d, &gpu.queue, &u, &page, py);
-            pass(&mut enc, &target, &self.glass, &g, false);
-            let (o, sz) = place(s, role, win);
-            let r = [o.x * scale, o.y * scale, sz.width * scale, sz.height * scale];
-            let u = uniforms(r, [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
+            pass(&mut enc, &target, &self.fade, &g, false);
+            let rect = pill_rect(role, win, right).scaled(scale);
+            let u = uniforms(rect, [w, h, w, h], [pill_radius(role) * scale, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, blur_level(scale)], [0.0; 4], [0.0; 4]);
+            let g = self.group(d, &gpu.queue, &u, &page, py);
+            pass(&mut enc, &target, &self.pill, &g, false);
+            let u = uniforms(rect, [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
             let g = self.group(d, &gpu.queue, &u, &view, &view);
             pass(&mut enc, &target, &self.over, &g, false);
-        };
-        if s.sidebar_shown.get() {
-            // Extended far past the window so only the right edge acts as a rim.
-            let r = [-8000.0 * scale, -8000.0 * scale, (SIDEBAR_W + 8000.0) * scale, h + 16000.0 * scale];
-            glass(Role::Sidebar, r, Glass {
-                shape: [0.0, 28.0 * scale, 8.0 * scale, 0.04],
-                face: [0.06, 0.22, 1.2, 4.5 + dense],
-                light: [0.05, 0.34, 45.0 * scale, 6.0 + dense],
-                gather: [180.0 * scale, 1.0, 0.0, 0.0],
-            });
-        }
-        if s.player_shown.get() {
-            let (o, sz) = place(s, Role::Player, win);
-            let r = [o.x * scale, o.y * scale, sz.width * scale, sz.height * scale];
-            // The page shows through, blurred and vivid, dimmed only where too bright for the white controls.
-            glass(Role::Player, r, Glass {
-                shape: [PLAYER_H * 0.5 * scale, 14.0 * scale, 6.0 * scale, 0.05],
-                face: [0.05, 0.24, 1.5, 3.0 + dense],
-                light: [0.14, 0.0, 0.0, 0.0],
-                gather: [0.0; 4],
-            });
         }
         drop(layers);
         gpu.queue.submit([enc.finish()]);
@@ -1144,14 +1247,6 @@ fn pass(enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, pipeline: &w
     p.draw(0..4, 0..1);
 }
 
-/// How a pane of glass looks: glass.wgsl's `shape`, `face`, `light` and `gather`.
-struct Glass {
-    shape: [f32; 4],
-    face: [f32; 4],
-    light: [f32; 4],
-    gather: [f32; 4],
-}
-
 /// Uniforms as glass.wgsl lays them out (six vec4s).
 fn uniforms(rect: [f32; 4], view: [f32; 4], shape: [f32; 4], face: [f32; 4], light: [f32; 4], mut gather: [f32; 4]) -> [u8; 96] {
     gather[2] = PYRAMID_LEVELS as f32;
@@ -1160,6 +1255,16 @@ fn uniforms(rect: [f32; 4], view: [f32; 4], shape: [f32; 4], face: [f32; 4], lig
         out.copy_from_slice(&value.to_ne_bytes());
     }
     bytes
+}
+
+#[cfg(target_os = "macos")]
+fn reduce_motion() -> bool {
+    objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn reduce_motion() -> bool {
+    false
 }
 
 /// Adds an empty unified toolbar so the traffic lights sit lower, level with the page's toolbar.
@@ -1182,6 +1287,42 @@ fn unified_toolbar(window: &WinitWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pills_centre_on_the_page_beside_the_panel_and_stop_at_their_width() {
+        let wide = pill_rect(Role::Player, LogicalSize::new(1600.0, 900.0), 0.0);
+        assert_eq!((wide.x, wide.w, wide.h), ((1600.0 - PILL_MAX_W) / 2.0, PILL_MAX_W, PLAYER_H));
+        assert_eq!(wide.y + wide.h + PLAYER_BOTTOM, 900.0);
+        let narrow = pill_rect(Role::Player, LogicalSize::new(900.0, 600.0), 280.0);
+        assert_eq!((narrow.x, narrow.w), (SIDE, 620.0 - 2.0 * SIDE));
+        let top = pill_rect(Role::Top, LogicalSize::new(1280.0, 800.0), 0.0);
+        assert_eq!((top.x + top.w / 2.0, top.y, top.h), (640.0, TOP_Y, TOP_H));
+        assert!(top.x >= TRAFFIC, "clear of the traffic lights");
+        let tight = pill_rect(Role::Top, LogicalSize::new(860.0, 600.0), 0.0);
+        assert!(tight.x >= TRAFFIC && tight.x + tight.w <= 860.0 - TRAFFIC);
+    }
+
+    #[test]
+    fn a_fade_runs_from_the_windows_edge_to_a_reach_past_the_pill() {
+        let window = LogicalSize::new(1280.0, 800.0);
+        let bottom = fade_of(Role::Player, window, 0.0);
+        let pill = pill_rect(Role::Player, window, 0.0);
+        assert_eq!(bottom.strip.y + bottom.strip.h, 800.0);
+        assert!(!bottom.top);
+        // The pill's outer side is `at` of the way up the strip's height from where the ramp begins.
+        let from_top_of_strip = pill.y - bottom.strip.y;
+        assert!((from_top_of_strip - (EDGE_REACH + FADE_PAD)).abs() < 1e-3, "{from_top_of_strip}");
+        assert!((bottom.at - EDGE_REACH / bottom.strip.h).abs() < 1e-6);
+        let top = fade_of(Role::Top, window, 0.0);
+        assert!(top.top && top.strip.y == 0.0);
+    }
+
+    #[test]
+    fn the_blur_level_follows_the_screens_density() {
+        let (one, two) = (blur_level(1.0), blur_level(2.0));
+        assert!((two - one - 1.0).abs() < 1e-5, "twice the pixels, one level more");
+        assert!(two < PYRAMID_LEVELS as f32, "the pyramid is deep enough");
+    }
 
     #[test]
     fn redraw_bursts_wait_for_the_next_frame() {

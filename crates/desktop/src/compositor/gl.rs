@@ -324,7 +324,8 @@ pub(super) struct Draw {
     copy: Program,
     opaque: Program,
     down: Program,
-    glass: Program,
+    pill: Program,
+    fade: Program,
     focus: Program,
     buffer: glow::NativeBuffer,
     vertices: glow::NativeVertexArray,
@@ -498,14 +499,23 @@ impl Draw {
             ),
             include!(concat!(env!("OUT_DIR"), "/fs_down.bindings")),
         )?;
-        let glass = program(
+        let pill = program(
             gl,
             vertex,
             shader(
-                include_str!(concat!(env!("OUT_DIR"), "/fs_glass.glsl")),
-                include_str!(concat!(env!("OUT_DIR"), "/fs_glass_es.glsl")),
+                include_str!(concat!(env!("OUT_DIR"), "/fs_pill.glsl")),
+                include_str!(concat!(env!("OUT_DIR"), "/fs_pill_es.glsl")),
             ),
-            include!(concat!(env!("OUT_DIR"), "/fs_glass.bindings")),
+            include!(concat!(env!("OUT_DIR"), "/fs_pill.bindings")),
+        )?;
+        let fade = program(
+            gl,
+            vertex,
+            shader(
+                include_str!(concat!(env!("OUT_DIR"), "/fs_fade.glsl")),
+                include_str!(concat!(env!("OUT_DIR"), "/fs_fade_es.glsl")),
+            ),
+            include!(concat!(env!("OUT_DIR"), "/fs_fade.bindings")),
         )?;
         let focus = program(
             gl,
@@ -534,7 +544,8 @@ impl Draw {
             copy,
             opaque,
             down,
-            glass,
+            pill,
+            fade,
             focus,
             buffer,
             vertices,
@@ -634,11 +645,10 @@ impl Draw {
         };
         let (w, h) = (self.size.width as f32, self.size.height as f32);
         let focus = shared.focus.borrow().as_ref().and_then(|f| f());
-        if shared.sidebar_shown.get() || shared.player_shown.get() || focus.is_some() {
+        if shared.top_shown.get() || shared.player_shown.get() || focus.is_some() {
             self.blur_page(page)?;
         }
         let pyramid = self.pyramid.as_ref().map_or(page, |p| p.texture);
-        let dense = scale.max(1.0).log2();
         let full = uniforms(
             [0.0, 0.0, w, h],
             [w, h, w, h],
@@ -679,76 +689,35 @@ impl Draw {
                 false,
             );
         }
-        let glass = |role: Role, rect: [f32; 4], look: Glass| {
-            let Some(texture) = find(role) else { return };
+        let [red, green, blue] = shared.page_colour.get();
+        let right = shared.right.get();
+        let target = (None, [w as i32, h as i32]);
+        for role in [Role::Top, Role::Player] {
+            let (Some(texture), true) = (find(role), shared.shown(role)) else {
+                continue;
+            };
+            let f = fade_of(role, win, right);
+            let u = uniforms(
+                f.strip.scaled(scale),
+                [w, h, w, h],
+                [0.0; 4],
+                [red, green, blue, 0.0],
+                [f.at, f.top as u8 as f32, 0.0, 0.0],
+                [0.0; 4],
+            );
+            self.pass(target, &self.fade, &u, [page, pyramid], false, true);
+            let rect = pill_rect(role, win, right).scaled(scale);
             let u = uniforms(
                 rect,
                 [w, h, w, h],
-                look.shape,
-                look.face,
-                look.light,
-                look.gather,
+                [pill_radius(role) * scale, 0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0, blur_level(scale)],
+                [0.0; 4],
+                [0.0; 4],
             );
-            self.pass(
-                (None, [w as i32, h as i32]),
-                &self.glass,
-                &u,
-                [page, pyramid],
-                false,
-                true,
-            );
-            let (origin, size) = place(shared, role, win);
-            let rect = [
-                origin.x * scale,
-                origin.y * scale,
-                size.width * scale,
-                size.height * scale,
-            ];
+            self.pass(target, &self.pill, &u, [page, pyramid], false, true);
             let u = uniforms(rect, [w, h, w, h], [0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]);
-            self.pass(
-                (None, [w as i32, h as i32]),
-                &self.copy,
-                &u,
-                [texture, texture],
-                false,
-                true,
-            );
-        };
-        if shared.sidebar_shown.get() {
-            let rect = [
-                -8000.0 * scale,
-                -8000.0 * scale,
-                (SIDEBAR_W + 8000.0) * scale,
-                h + 16000.0 * scale,
-            ];
-            glass(
-                Role::Sidebar,
-                rect,
-                Glass {
-                    shape: [0.0, 28.0 * scale, 8.0 * scale, 0.04],
-                    face: [0.06, 0.22, 1.2, 4.5 + dense],
-                    light: [0.05, 0.34, 45.0 * scale, 6.0 + dense],
-                    gather: [180.0 * scale, 1.0, 0.0, 0.0],
-                },
-            );
-        }
-        if shared.player_shown.get() {
-            let (origin, size) = place(shared, Role::Player, win);
-            glass(
-                Role::Player,
-                [
-                    origin.x * scale,
-                    origin.y * scale,
-                    size.width * scale,
-                    size.height * scale,
-                ],
-                Glass {
-                    shape: [PLAYER_H * 0.5 * scale, 14.0 * scale, 6.0 * scale, 0.05],
-                    face: [0.05, 0.24, 1.5, 3.0 + dense],
-                    light: [0.14, 0.0, 0.0, 0.0],
-                    gather: [0.0; 4],
-                },
-            );
+            self.pass(target, &self.copy, &u, [texture, texture], false, true);
         }
         Ok(())
     }
