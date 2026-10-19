@@ -51,7 +51,7 @@ libc = "0.2"
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.19", default-features = false }
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSToolbar", "NSWorkspace", "NSAccessibility"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSView", "NSWindow", "NSToolbar"] }
 
 [build-dependencies]
 slint-build = "=1.18.1"

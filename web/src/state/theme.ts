@@ -4,7 +4,7 @@
 import { ask } from "../rpc";
 
 /** What the core hands over (`Nori::theme`): `#rrggbb` colors. */
-type Colors = { season: string; next: string; nextMonth: number; nextDay: number; dark: boolean; page: string; surface: string; ink: string; ink2: string; hair: string; outline: string; accent: string; on: string; onAccent: string };
+type Colors = { season: string; next: string; nextMonth: number; nextDay: number; dark: boolean; page: string; surface: string; ink: string; ink2: string; hair: string; outline: string; accent: string; on: string; onAccent: string; still?: boolean };
 
 const KEY = "nori-theme";
 const VARS: [keyof Colors, string][] = [
@@ -28,6 +28,8 @@ function apply(c: Colors) {
   const root = document.documentElement;
   for (const [k, v] of VARS) root.style.setProperty(v, c[k] as string);
   root.style.colorScheme = c.dark ? "dark" : "light";
+  // nori's Motion setting, as on every client: animations run unless it asks for less.
+  root.classList.toggle("still", !!c.still);
   let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   if (!meta) {
     meta = document.createElement("meta");

@@ -401,14 +401,13 @@ select.field {
   mask-image: linear-gradient(to bottom, transparent var(--fade-top-a), #000 var(--fade-top-b), #000 calc(100% - var(--fade-bottom-b)), transparent calc(100% - var(--fade-bottom-a)));
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition: none !important;
-    scroll-behavior: auto !important;
-  }
+/* The Motion setting asks for less (theme.ts sets the class). */
+html.still *,
+html.still *::before,
+html.still *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
 }
 
 /* A slider drawn as the seek bar is: a thin track filled with the ink up to --v. */

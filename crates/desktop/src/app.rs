@@ -1092,7 +1092,8 @@ impl App {
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
-        let reduced = self.compositor.reduce_motion();
+        // nori's Motion setting, as on Android: animations run unless it asks for less.
+        let reduced = crate::session::app().settings.current().unwrap_or_default().motion != nori_core::settings::Motion::Full;
         self.ui().global::<Motion>().set_reduced(reduced);
         if let Some(p) = &self.player {
             p.global::<Motion>().set_reduced(reduced);

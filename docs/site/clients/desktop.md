@@ -31,8 +31,8 @@ nori wears one of four seasons, Spring (春), Summer (夏), Autumn (秋) and Win
 AMOLED black. By default it follows the calendar and blends from one season to the next over two weeks
 (southern-hemisphere zones turn half a year later). Choose a season and the appearance in Settings, General, or
 in the settings menu. The accent color marks only what is current: the open tab, the song playing, a lit
-shuffle or repeat, a liked seal. Album and artist pages wear their cover's colors. With reduced motion on in the
-system, nothing slides, stamps or fades.
+shuffle or repeat, a liked seal. Album and artist pages, the sidebar and Now Playing wear their cover's colors.
+With Motion set to Reduced in nori's settings, nothing slides, stamps or fades.
 
 ## Install
 

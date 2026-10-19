@@ -458,11 +458,6 @@ impl Compositor {
         self.0.window.borrow().as_ref().and_then(|w| w.theme()).is_none_or(|t| t == winit::window::Theme::Dark)
     }
 
-    /// Whether the system asks for less motion.
-    pub fn reduce_motion(&self) -> bool {
-        reduce_motion()
-    }
-
     pub fn on_wake(&self, f: impl Fn() + 'static) {
         *self.0.on_wake.borrow_mut() = Some(Rc::new(f));
     }
@@ -1255,16 +1250,6 @@ fn uniforms(rect: [f32; 4], view: [f32; 4], shape: [f32; 4], face: [f32; 4], lig
         out.copy_from_slice(&value.to_ne_bytes());
     }
     bytes
-}
-
-#[cfg(target_os = "macos")]
-fn reduce_motion() -> bool {
-    objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn reduce_motion() -> bool {
-    false
 }
 
 /// Adds an empty unified toolbar so the traffic lights sit lower, level with the page's toolbar.

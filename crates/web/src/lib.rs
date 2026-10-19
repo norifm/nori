@@ -141,7 +141,8 @@ impl Nori {
 
     /// The colors the page wears on a date in the browser's zone, from the season and appearance
     /// settings: `{ season (the calendar's now), next, nextMonth, nextDay (the season after and its first day),
-    /// dark, page, surface, ink, ink2, hair, outline, accent, on, onAccent }`, the colors each a `#rrggbb`.
+    /// dark, page, surface, ink, ink2, hair, outline, accent, on, onAccent, still }`, the colors each a `#rrggbb`;
+    /// `still` when the Motion setting asks for less than full motion.
     /// `system_dark`: the browser's color scheme, followed while the appearance is System.
     pub fn theme(&self, month: u32, day: u32, zone: String, system_dark: bool) -> String {
         use nori_look::theme::{roles, season_now, southern};
@@ -155,6 +156,7 @@ impl Nori {
             "season": name(now.season), "next": name(now.next), "nextMonth": now.next_month, "nextDay": now.next_day, "dark": dark, "page": hex(palette.page), "surface": hex(palette.surface), "ink": hex(palette.ink),
             "ink2": hex(r.on_surface_variant), "hair": hex(r.outline_variant), "outline": hex(r.outline),
             "accent": hex(palette.accent), "on": hex(palette.on), "onAccent": hex(r.on_primary),
+            "still": prefs.motion != nori_core::settings::Motion::Full,
         })
         .to_string()
     }
