@@ -371,6 +371,8 @@ pub struct App {
     shelves: Rc<VecModel<Shelf>>,
     /// The rows of the shelves shown.
     home_rows: Vec<nori_core::settings::HomeRow>,
+    /// The saved profile the sign-in form edits; None while it adds one.
+    editing: Option<SavedServer>,
     /// The album list's pages asked for, to this offset, and its order.
     albums_asked: u32,
     album_sort: AlbumSort,
@@ -494,6 +496,24 @@ fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, offset: u32, 
     })
 }
 
+/// The profile the sign-in form saves from its fields (name, address, user, password) for provider `info`:
+/// a new one, or `editing` changed, which keeps its id, and its password when none is typed.
+fn login_draft(info: &nori_core::providers::ProviderInfo, editing: Option<SavedServer>, [name, url, user, password]: [String; 4]) -> SavedServer {
+    use nori_core::providers::FormField;
+    let asks = |what| info.fields.iter().any(|f| f.what == what && !f.advanced);
+    let base = editing.unwrap_or_else(|| SavedServer { id: nori_core::settings::new_server_id(), ..Default::default() });
+    // What the form does not ask stays as saved (nothing, for a new profile).
+    let text = |what, typed: String, saved: &str| if asks(what) { typed.trim().to_string() } else { saved.to_string() };
+    SavedServer {
+        kind: info.kind,
+        name: text(FormField::Name, name, &base.name),
+        url: text(FormField::Address, url, &base.url).trim_end_matches('/').to_string(),
+        user: text(FormField::User, user, &base.user),
+        password: if asks(FormField::Password) && !password.is_empty() { password } else { base.password.clone() },
+        ..base
+    }
+}
+
 /// The library's Home shelves of `rows`, empty until read.
 fn home_shelves(rows: &[nori_core::settings::HomeRow]) -> Vec<Shelf> {
     rows.iter().map(|&r| Shelf { title: words::home_row(r).into(), cards: ModelRc::default(), loaded: false }).collect()
@@ -553,6 +573,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             want: None,
             shelves,
             home_rows: Vec::new(),
+            editing: None,
             albums_asked: 0,
             album_sort: AlbumSort::ByName,
             backdrop: None,
@@ -845,7 +866,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(jam.on_promote, h, |a, member, admin| a.jam_act(Op::Promote { member: member.into(), admin }));
     on!(jam.on_send_out, h, |a, member| a.jam_act(Op::Kick { member: member.into() }));
     on!(ui.on_login, h, |a| a.login());
-    on!(ui.on_cancel_login, h, |a| a.go(HOME));
+    on!(ui.on_cancel_login, h, |a| {
+        a.editing = None;
+        a.go(HOME);
+    });
     on!(ui.on_find_edited, h, |a, t| {
         a.find = t.to_string();
         a.narrowed();
@@ -1035,18 +1059,8 @@ impl App {
     fn login(&mut self) {
         let ui = self.ui();
         let Some(info) = nori_core::providers::providers().into_iter().nth(ui.get_login_kind().max(0) as usize) else { return };
-        let asks = |what| info.fields.iter().any(|f| f.what == what && !f.advanced);
-        let text = |what, typed: slint::SharedString| if asks(what) { typed.trim().to_string() } else { String::new() };
-        use nori_core::providers::FormField;
-        let draft = SavedServer {
-            id: nori_core::settings::new_server_id(),
-            kind: info.kind,
-            name: text(FormField::Name, ui.get_login_name()),
-            url: text(FormField::Address, ui.get_login_url()).trim_end_matches('/').to_string(),
-            user: text(FormField::User, ui.get_login_user()),
-            password: if asks(FormField::Password) { ui.get_login_password().to_string() } else { String::new() },
-            ..Default::default()
-        };
+        let form = [ui.get_login_name(), ui.get_login_url(), ui.get_login_user(), ui.get_login_password()].map(|t| t.to_string());
+        let draft = login_draft(&info, self.editing.clone(), form);
         if !nori_core::providers::server_ready(draft.clone()) {
             ui.set_login_error("The server's address and a user name, please.".into());
             return;
@@ -1759,6 +1773,25 @@ impl App {
 
     /// The account sheet of the profile in use, as its server's Edit and a seal tapped while signed out open
     /// it: who is signed in, or Sign in (the provider's own page in a window) with pasting folded under it.
+    /// A server row's Edit: the profile in use's account sheet where its provider signs in to one, else
+    /// the profile in the sign-in form, saved over itself.
+    fn edit_profile(&mut self, id: String) {
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let Some(profile) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
+        let providers = nori_core::providers::providers();
+        if id == prefs.active_server_id && providers.iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
+            return self.offer_sign_in();
+        }
+        let ui = self.ui();
+        ui.set_login_kind(providers.iter().position(|i| i.kind == profile.kind).unwrap_or(0) as i32);
+        ui.set_login_name(profile.name.as_str().into());
+        ui.set_login_url(profile.url.as_str().into());
+        ui.set_login_user(profile.user.as_str().into());
+        ui.set_login_password("".into());
+        self.editing = Some(profile);
+        self.go(LOGIN);
+    }
+
     fn offer_sign_in(&mut self) {
         let user = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
         let ui = self.ui();
@@ -2035,6 +2068,7 @@ impl App {
                 ui.set_login_busy(false);
                 match r {
                     Ok(p) => {
+                        self.editing = None;
                         ui.set_login_password("".into());
                         self.open(p);
                     }
@@ -2588,7 +2622,15 @@ impl App {
     fn setting_action(&mut self, name: &str) {
         match Act::of(name) {
             Some(Act::Equalizer) => self.go(EQUALIZER),
-            Some(Act::AddServer) => self.go(LOGIN),
+            Some(Act::AddServer) => {
+                self.editing = None;
+                let ui = self.ui();
+                for set in [AppWindow::set_login_name, AppWindow::set_login_user, AppWindow::set_login_password] {
+                    set(&ui, "".into());
+                }
+                ui.set_login_url("https://".into());
+                self.go(LOGIN);
+            }
             Some(Act::Server(id)) => {
                 let mut prefs = crate::session::app().settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
@@ -2596,7 +2638,7 @@ impl App {
                 crate::session::app().settings.put(prefs);
                 self.open(p);
             }
-            Some(Act::Account) => self.offer_sign_in(),
+            Some(Act::Edit(id)) => self.edit_profile(id),
             Some(Act::Chore(c)) => {
                 self.on_session(|s| s.action(c));
                 self.on_session(|s| s.facts());
@@ -2905,6 +2947,19 @@ mod tests {
         let bar = crate::PlayerBar::new().unwrap();
         dressed().paint(&bar.global::<Theme>());
         bar
+    }
+
+    #[test]
+    fn an_edited_profile_keeps_its_id_and_password() {
+        let info = nori_core::providers::providers().into_iter().find(|i| i.kind == nori_core::settings::ServerKind::Subsonic).unwrap();
+        let saved = SavedServer { id: "p1".into(), url: "https://old".into(), user: "me".into(), password: "secret".into(), music_folder_ids: vec!["f".into()], ..Default::default() };
+        let saved = SavedServer { name: "Home".into(), ..saved };
+        let form = |pw: &str| ["Typed".to_string(), "https://new/".into(), " me ".into(), pw.into()];
+        let edited = login_draft(&info, Some(saved.clone()), form(""));
+        assert_eq!((edited.id.as_str(), edited.url.as_str(), edited.user.as_str(), edited.password.as_str(), edited.name.as_str()), ("p1", "https://new", "me", "secret", "Home"));
+        assert_eq!(edited.music_folder_ids, saved.music_folder_ids, "what the form does not ask stays, its name too");
+        assert_eq!(login_draft(&info, Some(saved), form("new")).password, "new");
+        assert_ne!(login_draft(&info, None, form("pw")).id, "p1", "a new profile");
     }
 
     #[test]

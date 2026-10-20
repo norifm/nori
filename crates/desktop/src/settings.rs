@@ -22,7 +22,6 @@ const SLIDER: i32 = 5;
 const RANKED: i32 = 6;
 const SERVER: i32 = 8;
 /// A server row's Edit: the account sheet of the profile in use.
-const ACCOUNT: &str = "account";
 const NOTE: i32 = 9;
 const LINK: i32 = 11;
 const BUTTON: i32 = 12;
@@ -132,8 +131,9 @@ pub fn toggled(name: &str, on: bool) -> (&str, String) {
 pub enum Act {
     Equalizer,
     AddServer,
-    /// The account sheet of the profile in use (its server row's Edit).
-    Account,
+    /// A server row's Edit: the account sheet of the profile in use where its provider has one to sign
+    /// in to, else the profile in the sign-in form.
+    Edit(String),
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
@@ -145,10 +145,12 @@ impl Act {
         if let Some(id) = name.strip_prefix("server:") {
             return Some(Act::Server(id.to_string()));
         }
+        if let Some(id) = name.strip_prefix("edit:") {
+            return Some(Act::Edit(id.to_string()));
+        }
         match name {
             EQUALIZER => Some(Act::Equalizer),
             ADD_SERVER => Some(Act::AddServer),
-            ACCOUNT => Some(Act::Account),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -482,9 +484,9 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                 detail.push_str(" · second address");
             }
             let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
-            // Edit opens the account of the profile in use, where its provider has one to sign in to.
-            let account = active && nori_core::providers::providers().into_iter().any(|i| i.kind == sv.kind && !i.sign_in.is_empty());
-            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if account { "Edit".into() } else { "".into() }, ..Default::default() }
+            // A jam guest switches between the profiles; changing them is not its to do.
+            let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
+            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() }, ..Default::default() }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             let (name, _) = f.folders.get(index as usize)?;
@@ -712,5 +714,6 @@ mod tests {
         assert_eq!(Act::of(EQUALIZER), Some(Act::Equalizer));
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
+        assert_eq!(Act::of("edit:7"), Some(Act::Edit("7".into())));
     }
 }

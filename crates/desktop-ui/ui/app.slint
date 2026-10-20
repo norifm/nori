@@ -3133,7 +3133,7 @@ component SettingLine inherits VerticalLayout {
                 if root.item.kind == 8 && root.item.button != "": SmallButton {
                     y: (parent.height - self.height) / 2;
                     text: root.item.button;
-                    clicked => { root.action("account"); }
+                    clicked => { root.action("edit:" + root.item.name); }
                 }
                 if root.item.kind == 8 && root.item.on: Text {
                     text: "✓";
