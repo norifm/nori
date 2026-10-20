@@ -1368,6 +1368,24 @@ fn a_picker_opened_asks_again_whether_the_server_relays() {
     relay.close();
 }
 
+/// A picker opened again while the last opening's answer is still on its way asks once more after it.
+#[test]
+fn a_picker_opened_during_an_answer_asks_again() {
+    let relay = Relay::absent();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    phone.until("the answer", |r| (r.relay() == RelaySupport::Unsupported).then_some(()));
+    let asked = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.")).count();
+
+    relay.first_answers_held.store(true, Ordering::Relaxed);
+    phone.remote.clone().watch(true);
+    eventually("asked again", || asked() == 2);
+    phone.remote.clone().watch(false);
+    phone.remote.clone().watch(true);
+    relay.release_first_answers();
+    eventually("asked for the second opening", || asked() == 3);
+    relay.close();
+}
+
 impl Relay {
     /// Time exchanges sent through the relay so far.
     fn clocks(&self) -> usize {

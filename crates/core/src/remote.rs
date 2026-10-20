@@ -819,8 +819,10 @@ struct Inner {
     /// Bumped to end the running relay poller (each runs while its generation is current).
     generation: u64,
     relay_polling: bool,
-    /// The relay is asked whether it relays: its poller runs until it answers.
-    probing: bool,
+    /// Times the relay was asked whether it relays, and those its answers covered: its poller runs until
+    /// it answered the last.
+    probes_asked: u64,
+    probes_answered: u64,
     /// The last relay poll failed: the devices it listed may have gone since, and are not shown.
     relay_down: bool,
     /// What the relay's last answer said of it, as logged.
@@ -891,8 +893,12 @@ impl Inner {
         self.watching || self.discovering || (self.serving && self.sight == Sight::Screen && !self.stopped)
     }
 
+    fn probing(&self) -> bool {
+        self.probes_asked != self.probes_answered
+    }
+
     fn wants_relay(&self) -> bool {
-        self.probing || self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.discovering || self.taking.is_some() || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
+        self.probing() || self.relay != RelaySupport::Unsupported && !self.jam_over && (self.serving || self.watching || self.discovering || self.taking.is_some() || self.follows_mirror() || self.hosted.is_some() || self.listen.is_some())
     }
 
     /// Whether the mirrored device is followed: while something here shows it, or it plays.
@@ -2512,7 +2518,7 @@ impl Remote {
         if self.client.core.kind() == crate::settings::ServerKind::YouTubeMusic && self.client.core.lan_jam.read().is_none() { return; }
         let generation = {
             let mut i = self.inner.lock();
-            i.probing = true;
+            i.probes_asked += 1;
             if std::mem::replace(&mut i.relay_polling, true) {
                 return;
             }
@@ -2573,7 +2579,7 @@ impl Remote {
         let mut first_poll = true;
         let mut said_serving = false;
         loop {
-            let url = {
+            let (url, probes) = {
                 let mut i = self.inner.lock();
                 if i.generation != generation {
                     return said_serving;
@@ -2586,7 +2592,7 @@ impl Remote {
                 let url = self.poll_url(i.since, !first_poll && !i.relay_down, i.serving);
                 first_poll = false;
                 said_serving = i.serving;
-                url
+                (url, i.probes_asked)
             };
             let poll = std::pin::pin!(transport::get(&*self.client.transport, url, POLL_TIMEOUT_MS));
             let got = match select(std::pin::pin!(self.given_up(|i| i.generation == generation)), poll).await {
@@ -2601,14 +2607,15 @@ impl Remote {
                 Either::Right((got, _)) => got,
             };
             let received = clock::now_us();
-            {
+            let asked_since = {
                 let mut i = self.inner.lock();
                 // Asked for before the rooms changed: its seq may pass events of a room it did not cover.
                 if i.generation != generation {
                     return said_serving;
                 }
-                i.probing = false;
-            }
+                i.probes_answered = probes;
+                i.probing()
+            };
             let found = support(&got);
             self.note_relay(found, &got);
             if self.jam_gone(&got) {
@@ -2620,6 +2627,8 @@ impl Remote {
                     self.inner.lock().relay = RelaySupport::Supported;
                     self.took(answer(&body).unwrap_or_default(), received);
                 }
+                // Asked again while this answer was on its way: the server may have gained the relay since.
+                (Some(_), _) if asked_since => first_poll = true,
                 (Some(_), _) => {
                     self.no_relay(generation);
                     return said_serving;
