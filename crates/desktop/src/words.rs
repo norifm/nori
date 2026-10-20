@@ -312,6 +312,11 @@ pub fn sign_in_failed(r: &nori_core::providers::SignInResult) -> String {
 
 pub const YOUTUBE_MUSIC_PAGE: &str = "https://music.youtube.com";
 
+/// A song's title as shown: "Untitled" for one that has none (some uploads have a blank one).
+pub fn title(t: &str) -> &str {
+    if t.trim().is_empty() { "Untitled" } else { t }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

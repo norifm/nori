@@ -852,7 +852,7 @@ private data class PlayerTitleMeta(
 )
 
 private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?) = song?.let {
-    PlayerTitleMeta(it.id, it.title, it.artist, it.album.orEmpty(), it.artistId, it.albumId)
+    PlayerTitleMeta(it.id, say.title(it.title), it.artist, it.album.orEmpty(), it.artistId, it.albumId)
 } ?: PlayerTitleMeta(null, say.playerIdle(radio), "", "", null, null)
 
 /**
@@ -2902,7 +2902,7 @@ private fun Queue(vm: PlayerViewModel) {
                     }
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         LookText(
-                            s.title, if (i == state.index) accent else ink,
+                            say.title(s.title), if (i == state.index) accent else ink,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge,
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {

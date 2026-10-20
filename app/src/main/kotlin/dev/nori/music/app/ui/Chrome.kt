@@ -442,7 +442,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
                         // showing: the neighbours wait off either edge at alpha zero, and a long title
                         // there walked after every change of song, a frame each time, on every page.
                         Text(
-                            s?.title ?: title, Modifier.readable(iterations = if (real && !covered) READ_OUT else 0),
+                            s?.title?.let(say::title) ?: title, Modifier.readable(iterations = if (real && !covered) READ_OUT else 0),
                             maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodyLarge,
                         )

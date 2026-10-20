@@ -429,7 +429,7 @@ fun SongRow(
             Column(Modifier.weight(1f).padding(start = if (number != null) 14.dp else 12.dp, end = 8.dp)) {
                 // With no second line (an album's own tracks) the cloud leads the title rather than standing alone under it.
                 RemoteLine(
-                    song.title, song.isExternal && line.isEmpty(), MaterialTheme.typography.bodyLarge,
+                    say.title(song.title), song.isExternal && line.isEmpty(), MaterialTheme.typography.bodyLarge,
                     color = if (playing) scheme.primary else scheme.onSurface,
                 )
                 // Worked out by the core when the song was read (`fmt::song_line`), not per row.

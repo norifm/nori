@@ -129,6 +129,9 @@ class Say(private val r: Resources) {
     val librarySectionsTitle: String = r.getString(R.string.settings_library_sections)
     val recentlyAdded: String = r.getString(R.string.library_recently_added)
     val showAll: String = r.getString(R.string.show_all)
+    private val untitled: String = r.getString(R.string.untitled)
+    /** A song's title as shown: Untitled for one that has none (some uploads have a blank one). */
+    fun title(t: String): String = t.ifBlank { untitled }
     val yourAlbums: String = r.getString(R.string.library_your_albums)
     val yourPlaylists: String = r.getString(R.string.library_your_playlists)
     val smartPlaylists: String = r.getString(R.string.smart_playlists)

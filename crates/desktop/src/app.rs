@@ -2224,7 +2224,7 @@ impl App {
         self.song = song;
         let song = self.song.clone().unwrap_or_default();
         ui.set_has_song(self.song.is_some());
-        ui.set_now_title(song.title.as_str().into());
+        ui.set_now_title(words::title(&song.title).into());
         ui.set_now_artist(song.artist.as_str().into());
         ui.set_now_album(song.album.as_str().into());
         ui.set_now_artist_id(song.artist_id.clone().unwrap_or_default().into());
@@ -2341,7 +2341,7 @@ fn playlist_card(p: &nori_core::Playlist) -> Card {
 /// `starred`: its heart as shown; None where there is no heart (a jam guest's lists).
 fn row(s: &Song, index: usize, playing: bool, starred: Option<bool>, downloads: bool, radio: bool) -> SongRow {
     SongRow {
-        title: s.title.as_str().into(),
+        title: words::title(&s.title).into(),
         artist: s.artist.as_str().into(),
         credits: credits(s),
         menu: song_menu(s, starred, downloads, radio),
