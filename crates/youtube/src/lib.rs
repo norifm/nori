@@ -412,7 +412,9 @@ impl InnerTube {
         };
         let Ok([all, s, al, ar]) = <[_; 4]>::try_from(join_all(vec![ask(EVERY_KIND), ask(SONGS), ask(ALBUMS), ask(ARTISTS)]).await) else { unreachable!("four asked, four answered") };
         let (all, s, al, ar) = (parse::search(&all?), parse::search(&s?), parse::search(&al?), parse::search(&ar?));
+        // YouTube Music's songs lead, in the whole search's order; music videos and uploads follow, still found.
         let mut songs = merged(all.songs, s.songs, |s| &s.video_id);
+        songs.sort_by_key(|x| x.video);
         // Every artist and profile a found song credits is found too: those named as the query, give or
         // take a typo, lead; YouTube's own list misses them when the query is misspelled, and never lists
         // a profile that only uploads videos.
@@ -691,8 +693,8 @@ pub(crate) mod tests {
     }
 
     /// A search asks the unfiltered search and the songs, albums and artists filters; the unfiltered
-    /// answer leads each kind with the filtered ones' copies, and they add what it lacks. The lengths
-    /// still unknown are asked after.
+    /// answer leads each kind with the filtered ones' copies, and they add what it lacks, songs before
+    /// videos and uploads. The lengths still unknown are asked after.
     #[test]
     fn search_leads_with_the_unfiltered_answer() {
         let (all, s, al, ar) = (fixture("search_all"), fixture("search_songs"), fixture("search_albums"), fixture("search_artists"));
@@ -706,7 +708,8 @@ pub(crate) mod tests {
         let titles = |v: Vec<&str>| v.join(" / ");
         assert_eq!(
             titles(found.songs.iter().map(|s| s.title.as_str()).collect()),
-            "Fragments of Time (feat. Todd Edwards) / Aerodynamic / Alive / Daft Punk — Fresh (Extended) / Robot Rock (Edit) / Da Funk"
+            "Fragments of Time (feat. Todd Edwards) / Aerodynamic / Alive / Robot Rock (Edit) / Da Funk / Daft Punk — Fresh (Extended)",
+            "the songs, then the upload"
         );
         assert_eq!(found.songs[2].album.as_ref().map(|a| a.name.as_str()), Some("Homework"), "the filtered copy");
         assert_eq!(titles(found.albums.iter().map(|a| a.title.as_str()).collect()), "Random Access Memories / Daft Punk Is Not Dead Yet / The Answer is Daft Punk");

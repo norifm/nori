@@ -38,6 +38,21 @@ pub struct Song {
     pub thumbnail: Option<String>,
     /// A live stream (YouTube's live badge): no length, and it never ends.
     pub live: bool,
+    /// A music video or an upload, not one of YouTube Music's songs (its `musicVideoType` says so).
+    pub video: bool,
+}
+
+/// Whether `item` plays a music video or an upload rather than a song: the first `musicVideoType` in it
+/// is another than `MUSIC_VIDEO_TYPE_ATV`.
+fn plays_video(item: &Value) -> bool {
+    fn kind(v: &Value) -> Option<&str> {
+        match v {
+            Value::Object(m) => m.get("musicVideoType").and_then(Value::as_str).or_else(|| m.values().find_map(kind)),
+            Value::Array(a) => a.iter().find_map(kind),
+            _ => None,
+        }
+    }
+    kind(item).is_some_and(|k| k != "MUSIC_VIDEO_TYPE_ATV")
 }
 
 /// An album, single or EP.
@@ -300,7 +315,7 @@ fn list_item(item: &Value, labelled: bool) -> Option<Item> {
     let video = str_at(item, "/playlistItemData/videoId").or_else(|| cols[0].iter().find_map(|r| r.video));
     if let Some(v) = video {
         let lines: Vec<&[Run]> = cols[1..].iter().enumerate().map(|(i, c)| if labelled && i == 0 { after_first(c) } else { c.as_slice() }).collect();
-        return Some(Item::Song(song_of(v, title, thumb, live(item), &lines)));
+        return Some(Item::Song(Song { video: plays_video(item), ..song_of(v, title, thumb, live(item), &lines) }));
     }
     let (b, kind) = browse(item)?;
     let subtitle = cols.get(1).map_or(&[][..], Vec::as_slice);
@@ -364,7 +379,7 @@ fn top_result(card: &Value) -> Vec<Item> {
     let subtitle = card.get("subtitle").map(runs).unwrap_or_default();
     let thumb = card.get("thumbnail").and_then(thumbnail);
     let top = title.first().and_then(|first| match (first.video, first.browse) {
-        (Some(v), _) => Some(Item::Song(song_of(v, joined(&title), thumb, live(card), &[after_first(&subtitle)]))),
+        (Some(v), _) => Some(Item::Song(Song { video: plays_video(card), ..song_of(v, joined(&title), thumb, live(card), &[after_first(&subtitle)]) })),
         (None, Some((b, kind))) => linked(kind, b, joined(&title), thumb, unlabelled(kind, &subtitle)),
         (None, None) => None,
     });
@@ -565,8 +580,18 @@ pub(crate) fn watch_queue(v: &Value) -> Vec<Song> {
     sections(v, "/contents/singleColumnMusicWatchNextResultsRenderer/tabbedRenderer/watchNextTabbedResultsRenderer/tabs")
         .filter_map(|tab| tab.pointer("/tabRenderer/content/musicQueueRenderer/content/playlistPanelRenderer/contents").and_then(Value::as_array))
         .flatten()
-        .filter_map(|item| panel_video(item.get("playlistPanelVideoRenderer")?))
+        .filter_map(|item| panel_video(item.get("playlistPanelVideoRenderer").or_else(|| song_of_pair(item))?))
         .collect()
+}
+
+/// A song that also has a music video comes as a pair, the two halves either way round: the half that is
+/// the song (`MUSIC_VIDEO_TYPE_ATV`, the audio YouTube Music plays), else the pair's first.
+fn song_of_pair(item: &Value) -> Option<&Value> {
+    let pair = item.get("playlistPanelVideoWrapperRenderer")?;
+    let first = pair.pointer("/primaryRenderer/playlistPanelVideoRenderer");
+    let other = pair.pointer("/counterpart/0/counterpartRenderer/playlistPanelVideoRenderer");
+    let song = |v: &&Value| v.pointer("/navigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType").and_then(Value::as_str) == Some("MUSIC_VIDEO_TYPE_ATV");
+    first.filter(song).or(other.filter(song)).or(first)
 }
 
 /// The songs a `music/get_queue` answer gives for the videos asked; a video with an audio-only twin
@@ -658,6 +683,29 @@ pub(crate) fn account_name(v: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A radio's songs that have a music video come paired with it: the song is queued, not the video, and
+    /// neither is dropped.
+    #[test]
+    fn a_radio_queues_the_song_of_a_pair() {
+        use serde_json::json;
+        let half = |id: &str, title: &str, kind: &str| json!({ "playlistPanelVideoRenderer": {
+            "title": { "runs": [{ "text": title }] }, "videoId": id, "lengthText": { "runs": [{ "text": "3:00" }] },
+            "navigationEndpoint": { "watchEndpoint": { "watchEndpointMusicSupportedConfigs": { "watchEndpointMusicConfig": { "musicVideoType": kind } } } },
+        } });
+        let pair = |first: Value, other: Value| json!({ "playlistPanelVideoWrapperRenderer": {
+            "primaryRenderer": first, "counterpart": [{ "counterpartRenderer": other }],
+        } });
+        let answer = json!({ "contents": { "singleColumnMusicWatchNextResultsRenderer": { "tabbedRenderer": { "watchNextTabbedResultsRenderer": { "tabs": [
+            { "tabRenderer": { "content": { "musicQueueRenderer": { "content": { "playlistPanelRenderer": { "contents": [
+                pair(half("vid1", "One (video)", "MUSIC_VIDEO_TYPE_OMV"), half("aud1", "One", "MUSIC_VIDEO_TYPE_ATV")),
+                pair(half("aud2", "Two", "MUSIC_VIDEO_TYPE_ATV"), half("vid2", "Two (video)", "MUSIC_VIDEO_TYPE_OMV")),
+                half("ugc3", "Three", "MUSIC_VIDEO_TYPE_UGC"),
+            ] } } } } } },
+        ] } } } } });
+        let ids: Vec<String> = watch_queue(&answer).into_iter().map(|s| s.video_id).collect();
+        assert_eq!(ids, ["aud1", "aud2", "ugc3"]);
+    }
     use crate::tests::fixture;
 
     fn json(name: &str) -> Value {
