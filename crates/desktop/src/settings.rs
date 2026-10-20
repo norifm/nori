@@ -243,7 +243,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
                 BeatModel::Ready => String::new(),
                 BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
                 BeatModel::Failed { .. } => "The download didn't work. It tries again at the next song.".into(),
-                BeatModel::WaitingForWifi => format!("Waits for Wi-Fi to download (about {mb} MB)."),
                 _ => format!("A download of about {mb} MB"),
             };
             return ("Better beat detection".into(), detail);

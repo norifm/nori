@@ -130,7 +130,7 @@ impl Phase {
 /// A song's state as its audio is saved, for [`needs`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Saved {
-    /// Not a provider's song or a stream.
+    /// Not a radio stream.
     pub analysable: bool,
     /// Being analysed as its bytes arrive, not finished yet.
     pub measuring: bool,
@@ -741,8 +741,8 @@ impl Tracker {
         }
         let phase = match state {
             DOWNLOADING => Some(Phase::Downloading),
-            // Provider songs get no lyrics lookup; other needs come later through `plan`.
-            COMPLETED => Some(Phase::processing([!nori_model::is_provider_id(id), self.analysing.contains(id), false])),
+            // Its lyrics are looked up; other needs come later through `plan`.
+            COMPLETED => Some(Phase::processing([true, self.analysing.contains(id), false])),
             FAILED => Some(Phase::Failed),
             _ => None,
         };
@@ -1059,11 +1059,8 @@ impl Tracker {
         let (mut remaining, mut known_sum, mut known_n, mut sizeless, mut unsized_had) = (0f64, self.batch.done_bytes as f64, self.batch.done_sized, 0i64, 0i64);
         let (mut lyrics_to_come, mut beats_to_come, mut analysing) = (0, 0, false);
         for id in &self.batch.open {
-            // Provider songs get no lyrics lookup or beat model.
-            if !nori_model::is_provider_id(id) {
-                lyrics_to_come += 1;
-                beats_to_come += self.beats_wanted.contains(id) as i32;
-            }
+            lyrics_to_come += 1;
+            beats_to_come += self.beats_wanted.contains(id) as i32;
             analysing |= self.analysing.contains(id);
             let (length, bytes) = self.slots.iter().find(|s| s.live && s.id == *id).map_or((0, 0), |s| (s.length, s.bytes));
             let size = if length > 0 { length as f64 } else { self.info.get(id).map_or(0, |i| i.estimate) as f64 * ratio };
@@ -1576,7 +1573,7 @@ mod tests {
         assert!(!t.work_done("a", Work::Lyrics), "done stays done");
 
         t.followed("ext-b", COMPLETED, 0);
-        assert_eq!(t.phase("ext-b"), Some(DownloadPhase::Done), "provider songs get no lyrics");
+        assert_eq!(t.phase("ext-b"), Some(DownloadPhase::FindingLyrics), "a provider's song downloaded gets its lyrics too");
 
         // A stored streaming analysis leaves nothing to analyse.
         t.analysing_began("c");
@@ -1692,7 +1689,7 @@ mod tests {
         assert_eq!(needs_of(Saved { analysed: true, beats_done: true, measuring: true, ..ml }), (true, true), "measured again: its ends too");
         assert_eq!(needs_of(Saved { beats_wanted: false, ..ml }), (true, false), "not wanted for this download");
         assert_eq!(needs_of(Saved { model_on: false, ..ml }), (true, false), "the model is off");
-        assert_eq!(needs_of(Saved { analysable: false, ..ml }), (false, false), "provider song or stream");
+        assert_eq!(needs_of(Saved { analysable: false, ..ml }), (false, false), "a radio stream");
 
         // A timed-out step is given up; an idle lane is released; a slow live step finishes and is timed.
         let mut t = Tracker::default();
@@ -1757,6 +1754,7 @@ mod tests {
         assert_eq!(t.forget("ext-a"), 0);
         for i in 0..RECENT as i64 + 2 {
             t.followed(&format!("ext-d{i}"), COMPLETED, i);
+            t.work_done(&format!("ext-d{i}"), Work::Lyrics);
         }
         assert_eq!(t.marks.len(), RECENT, "only the latest finished marks stay");
         assert!(!t.marks.contains_key("ext-d0") && t.marks.contains_key("ext-d2"));
@@ -1841,7 +1839,6 @@ mod tests {
     fn speed_and_eta() {
         // Two concurrent songs: the batch speed sums them and the time left follows.
         {
-            // Provider songs: no lyrics are looked up after them.
             let mut t = tracker(&["ext-sp-a", "ext-sp-b"], 1_000_000);
             for id in ["ext-sp-a", "ext-sp-b"] {
                 t.followed(id, DOWNLOADING, 0);
@@ -1854,8 +1851,8 @@ mod tests {
             t.notice(2, false, 2_000);
             let (speed, eta) = (t.speed_bps, t.eta_s);
             assert!((290_000..=310_000).contains(&speed), "200 kB/s and 100 kB/s together: {speed}");
-            // 600 kB and 800 kB still to come at 300 kB/s.
-            assert!((4..=5).contains(&eta), "{eta} s left");
+            // 600 kB and 800 kB still to come at 300 kB/s, then two lyrics lookups of about 3 s.
+            assert!((10..=11).contains(&eta), "{eta} s left");
         }
 
         // Six 2 MB songs, two at a time at 200 kB/s each: speed stays ~400 kB/s and the time left counts
@@ -1864,6 +1861,10 @@ mod tests {
             let ids: Vec<String> = (0..6).map(|i| format!("ext-st-{i}")).collect();
             let names: Vec<&str> = ids.iter().map(String::as_str).collect();
             let mut t = tracker(&names, 2_000_000);
+            // Lyrics and analyses done at once, as they have been many times: the bytes alone.
+            for w in [Work::Lyrics, Work::Analysis] {
+                t.paces[w as usize] = Pace { took_ms: 0, done: 1_000 };
+            }
             for id in &names {
                 t.followed(id, QUEUED, 0);
             }

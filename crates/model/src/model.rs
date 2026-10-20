@@ -205,9 +205,10 @@ pub fn unradio(id: &str) -> &str {
     id.strip_prefix(RADIO_PREFIX).unwrap_or(id)
 }
 
-/// Whether AutoMix can analyse `id`: not a provider song or radio stream.
+/// Whether AutoMix can analyse `id`: not a radio stream. A provider's song is analyzed from the bytes
+/// played or downloaded, never fetched for it.
 pub fn analysable(id: &str) -> bool {
-    !is_provider_id(id) && !is_radio(id)
+    !is_radio(id)
 }
 
 impl Song {
@@ -450,6 +451,8 @@ pub enum LyricsTiming {
     Automatic { ms: i64 },
     /// Heard against the voice and found not to fit it: another song's or another version's timing.
     DoesNotFit,
+    /// Heard against the voice, which could not tell: too few timed lines, or no voice the curve could find.
+    Unsure,
     /// Moved by the listener to `ms`; `automatic` is what the check gave, none if it has not run.
     Yours { ms: i64, automatic: Option<i64> },
 }
@@ -458,7 +461,7 @@ impl LyricsTiming {
     /// What the clock adds to the playhead to find the lyrics' time.
     pub fn offset_ms(self) -> i64 {
         match self {
-            LyricsTiming::NotChecked | LyricsTiming::DoesNotFit => 0,
+            LyricsTiming::NotChecked | LyricsTiming::DoesNotFit | LyricsTiming::Unsure => 0,
             LyricsTiming::Automatic { ms } | LyricsTiming::Yours { ms, .. } => ms,
         }
     }

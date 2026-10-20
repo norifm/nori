@@ -1,10 +1,12 @@
-//! Post-download work that reads a song back from disk: its analysis when it was not measured as it
-//! arrived (an MP4, a resumed download, an outdated analysis), and the beat model over its ends when
-//! wanted, so AutoMix never runs it during playback.
+//! Post-download work, so playing a downloaded song does none: its lyrics looked up, its analysis read
+//! back from disk when it was not measured as it arrived (an MP4, a resumed download, an outdated
+//! analysis), and the beat model over its ends when wanted.
 //!
 //! What a song needs is the core's (`nori_core::transfers::needs`). Songs queue in one line worked by one
 //! lowest-priority thread, one decode per song, living only while a song is ready. A song still being
-//! measured as it arrives waits until that ends ([`Analyses::kick`]). Progress phases are the core's (`transfers`).
+//! measured as it arrives waits until that ends ([`Analyses::kick`]). Lyrics have a line and a thread of
+//! their own, one lookup at a time, as the core times them in a lane of their own. Progress phases are
+//! the core's (`transfers`).
 
 use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
@@ -59,13 +61,16 @@ impl Line {
     }
 }
 
-/// The read-back: where downloads are read from (set once), the songs waiting, and the thread's end.
+/// The read-back: where downloads are read from (set once), the songs waiting for it and for their
+/// lyrics, and the threads' ends.
 #[derive(Default)]
 pub(crate) struct ReadBack {
     shelf: OnceLock<Box<dyn Shelf>>,
     line: Mutex<Line>,
-    /// Signalled when the thread ends, for [`Analyses::wait`].
+    lyrics: Mutex<Line>,
+    /// Signalled when a thread ends, for [`Analyses::wait`].
     ended: Condvar,
+    lyrics_ended: Condvar,
 }
 
 /// The build has the beat model and AutoMix with "Better beat detection" is on.
@@ -94,8 +99,15 @@ impl Analyses {
         let _ = self.read_back.shelf.set(shelf);
     }
 
-    /// `ids` just finished downloading: marks what each needs and queues those needing a read-back.
+    /// `ids` just finished downloading: looks up their lyrics, marks what else each needs and queues those
+    /// needing a read-back.
     pub fn saved(self: &Arc<Self>, ids: Vec<String>) {
+        if let Some(client) = self.client() {
+            let waiting: Vec<String> = ids.iter().filter(|id| client.core().transfers().with(|t| t.waits(id, Work::Lyrics))).cloned().collect();
+            if self.read_back.lyrics.lock().add(waiting) {
+                self.spawn_lyrics();
+            }
+        }
         self.plan(ids, true);
     }
 
@@ -136,12 +148,37 @@ impl Analyses {
         }
     }
 
-    /// Blocks until the line is empty (scripts and tests).
+    /// Blocks until both lines are empty (scripts and tests).
     pub fn wait(&self) {
         let mut line = self.read_back.line.lock();
         while !line.idle() {
             self.read_back.ended.wait(&mut line);
         }
+        drop(line);
+        let mut lyrics = self.read_back.lyrics.lock();
+        while !lyrics.idle() {
+            self.read_back.lyrics_ended.wait(&mut lyrics);
+        }
+    }
+
+    fn spawn_lyrics(self: &Arc<Self>) {
+        let me = self.clone();
+        if std::thread::Builder::new().name("nori-lyrics".into()).spawn(move || me.look_up_lyrics()).is_err() {
+            self.read_back.lyrics.lock().running = false;
+        }
+    }
+
+    /// Looks up the lyrics of the songs in line, one at a time, those that still wait for them.
+    fn look_up_lyrics(&self) {
+        loop {
+            let next = self.read_back.lyrics.lock().next(|_| false);
+            let Some(id) = next else { break };
+            let Some(client) = self.client() else { continue };
+            if client.core().transfers().with(|t| t.waits(&id, Work::Lyrics)) {
+                nori_core::transport::block_on(client.lyrics_for_download(id));
+            }
+        }
+        self.read_back.lyrics_ended.notify_all();
     }
 
     fn spawn(self: &Arc<Self>) {

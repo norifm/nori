@@ -69,22 +69,25 @@ pub fn ffmpeg() -> bool {
     there
 }
 
-/// A core transport that answers every API call with a 500: resolving songs needs none.
+/// A core transport that answers every API call with a 500, noting what it was asked: resolving songs
+/// needs none.
 #[cfg(feature = "core")]
 #[derive(Default)]
 pub struct NoApi {
     pub metered: std::sync::atomic::AtomicBool,
+    pub asked: Mutex<Vec<String>>,
 }
 
 #[cfg(feature = "core")]
 #[async_trait::async_trait]
 impl nori_core::transport::Transport for NoApi {
-    async fn get(&self, _url: String, _timeout_ms: u32) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
+    async fn get(&self, url: String, _timeout_ms: u32) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
+        self.asked.lock().push(url);
         Ok(nori_core::transport::TransportResponse { status: 500, body: Vec::new(), set_cookies: Vec::new() })
     }
 
-    async fn send(&self, _request: nori_core::transport::Exchange) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
-        Ok(nori_core::transport::TransportResponse { status: 500, body: Vec::new(), set_cookies: Vec::new() })
+    async fn send(&self, request: nori_core::transport::Exchange) -> Result<nori_core::transport::TransportResponse, nori_core::transport::TransportError> {
+        self.get(request.url, request.timeout_ms).await
     }
 
     fn address_changed(&self) {}

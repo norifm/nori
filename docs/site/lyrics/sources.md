@@ -19,7 +19,8 @@ hold back the words. Timed server lyrics take priority and stop the remaining se
 **Find missing lyrics online** asks the lyrics services below. It is
 on by default and sits under **Look things up online**; turning either off means nothing is asked. A lookup
 sends the artist, song and album name, and the song's length, and happens only when you open the lyrics.
-Provider songs from octo-fiesta are never looked up.
+Provider songs from octo-fiesta are looked up only when you play or download them, never ahead (from
+nori 0.7.0; before, never).
 
 :::caution[Unofficial sources]
 Only Unison and LRCLIB are open services with a documented API. The others are unofficial: they serve

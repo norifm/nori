@@ -295,19 +295,15 @@ impl LyricsShown for Unseen {
     fn show(&self, _: LyricsPick) {}
 }
 
-#[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
-    /// Looks up lyrics for downloaded songs one by one so they work offline, marking each song's lyrics
-    /// work done when its lookup ends. Provider songs are skipped.
-    pub async fn lyrics_for_downloads(&self, ids: Vec<String>) {
-        for id in ids.into_iter().filter(|id| !crate::is_provider_id(id)) {
-            let downloads = &self.core.downloads;
-            downloads.with(|t| t.working(&id, crate::transfers::Work::Lyrics));
-            let _ = self.lyrics_warm(id.clone()).await;
-            downloads.with(|t| t.work_done(&id, crate::transfers::Work::Lyrics));
-        }
+    /// Looks up a downloaded song's lyrics so they work offline, marking its lyrics work done when the
+    /// lookup ends.
+    pub async fn lyrics_for_download(&self, id: String) {
+        let downloads = &self.core.downloads;
+        downloads.with(|t| t.working(&id, crate::transfers::Work::Lyrics));
+        let _ = self.lyrics_warm(id.clone()).await;
+        downloads.with(|t| t.work_done(&id, crate::transfers::Work::Lyrics));
     }
-
 }
 
 #[cfg(test)]
@@ -815,15 +811,18 @@ pub(crate) mod tests {
     const DAY: i64 = 24 * 3_600_000;
 
     #[test]
-    fn download_lyrics_in_order() {
+    fn downloads_get_their_lyrics() {
         let (c, fake) = setup();
         fake.answer(SYNCED);
         fake.answer(SYNCED);
-        block(c.lyrics_for_downloads(vec!["ext-deezer-7".into(), "dla-1".into(), "dla-2".into()]));
+        fake.answer(SYNCED);
+        for id in ["ext-deezer-7", "dla-1", "dla-2"] {
+            block(c.lyrics_for_download(id.into()));
+        }
         let lyrics: Vec<String> = fake.asked().into_iter().filter(|u| u.contains("getLyricsBySongId")).collect();
-        assert_eq!(lyrics.len(), 2, "{lyrics:?}");
-        assert!(lyrics[0].contains("id=dla-1&") && lyrics[1].contains("id=dla-2&"));
-        assert!(fake.asked().iter().all(|u| !u.contains("ext-")));
+        assert_eq!(lyrics.len(), 3, "{lyrics:?}");
+        assert!(lyrics[0].contains("id=ext-deezer-7&"), "a provider's song downloaded gets its lyrics too");
+        assert!(lyrics[1].contains("id=dla-1&") && lyrics[2].contains("id=dla-2&"));
     }
 
 }

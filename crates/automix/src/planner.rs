@@ -373,15 +373,14 @@ mod tests {
     }
 
     #[test]
-    fn songs_never_analysed() {
+    fn songs_analysed_as_they_play() {
         let db = std::sync::Arc::new(Mutex::new(nori_db::open("", "t").unwrap()));
         let profile = Arc::new(nori_db::Profile::default());
         profile.set(&db);
         let planner = Planner::new(profile, Box::new(|| Some(TransitionPrefs { auto_mix: true, ..nori_player::sim::prefs_off() })));
         assert_eq!(planner.wants_analysis("s"), Some(0), "a library song, its length unknown");
-        for id in ["radio:1", "ext-2", "pl-deezer-3"] {
-            assert_eq!(planner.wants_analysis(id), None, "{id}: a station's or a provider's");
-        }
+        assert_eq!(planner.wants_analysis("ext-2"), Some(0), "a provider's song, from the bytes it plays");
+        assert_eq!(planner.wants_analysis("radio:1"), None, "a station's stream never ends");
     }
 
     fn song(id: &str, duration_ms: i64) -> WindowSong {

@@ -149,7 +149,7 @@ fn downloads_and_measuring_over_core() {
         _ => panic!("a song that is not downloaded streams"),
     }
     metered_and_ahead(&client, &net, &store, &analyses);
-    downloads_read_back(&core, &store, &analyses);
+    downloads_read_back(&core, &net, &store, &analyses);
 
     // AutoMix on: upcoming songs on disk are measured.
     let mut prefs = settings.current().unwrap();
@@ -163,14 +163,14 @@ fn downloads_and_measuring_over_core() {
     core.session.register(vec![on_disk, elsewhere]);
     core.session.set(vec!["m-1".into(), "m-2".into(), "ext-3".into()], Some(0), false, None);
     let ahead = core.session.measure();
-    assert!(!ahead.contains(&"ext-3".to_string()), "a provider's song is never measured: {ahead:?}");
+    assert!(ahead.contains(&"ext-3".to_string()), "a provider's song is measured once on the disk: {ahead:?}");
     let measurer = Measurer::new(analyses.clone(), store.clone());
     measurer.update(ahead, std::thread::current());
     measurer.wait();
     let a = core.analysis_get("m-1".into()).unwrap().expect("m-1 was measured");
     assert!((a.bpm - 120.0).abs() < 2.0 || (a.bpm - 60.0).abs() < 1.0 || (a.bpm - 240.0).abs() < 4.0, "the beat heard: {}", a.bpm);
     assert!(core.analysis_get("m-2".into()).unwrap().is_none(), "not on the disk: left for later");
-    assert!(audio.requests.lock().iter().all(|(u, _)| !u.contains("m-2")), "and never fetched for it");
+    assert!(audio.requests.lock().iter().all(|(u, _)| !u.contains("m-2") && !u.contains("ext-3")), "and never fetched for it");
     // Fetched by the player: measured once whole.
     let key = client.resolve("m-2".into(), false, client.metered()).key;
     let beat = beat_wav();
@@ -363,41 +363,44 @@ fn downloads_take_up_rightly(core: &Arc<Core>, client: &Arc<Client>, store: &Arc
     assert_eq!(net.requests.lock().len(), 3);
 }
 
-/// Unmeasured downloads are read back from disk once saved, one at a time; "Analyse downloaded songs"
-/// does the same for existing ones.
-fn downloads_read_back(core: &Arc<Core>, store: &Arc<Store>, analyses: &Arc<Analyses>) {
-    use nori_core::transfers::{Work, COMPLETED};
+/// Unmeasured downloads are read back from disk once saved, one at a time, and their lyrics looked up,
+/// a provider's song's too; "Analyse downloaded songs" does the same for existing ones.
+fn downloads_read_back(core: &Arc<Core>, net: &NoApi, store: &Arc<Store>, analyses: &Arc<Analyses>) {
+    use nori_core::transfers::COMPLETED;
     let download_phase = |id: String| core.transfers().with(|t| t.phase(&id));
     assert!(!core.session.settings.prefs(|p| p.auto_mix), "AutoMix is off");
-    let songs: Vec<Song> = ["rb-1", "rb-2"].iter().map(|id| Song { id: id.to_string(), title: id.to_string(), duration: 40, suffix: "wav".into(), ..Default::default() }).collect();
+    let ids = ["rb-1", "ext-rb-2"];
+    let songs: Vec<Song> = ids.iter().map(|id| Song { id: id.to_string(), title: id.to_string(), duration: 40, suffix: "wav".into(), ..Default::default() }).collect();
     core.download_queue(songs).unwrap();
-    for id in ["rb-1", "rb-2"] {
+    for id in ids {
         std::fs::write(store.download_path(id), beat_wav()).unwrap();
     }
-    core.download_settle(vec!["rb-1".into(), "rb-2".into()], vec![true, true]).unwrap();
-    for id in ["rb-1", "rb-2"] {
-        core.transfers().with(|t| {
-            t.followed(id, COMPLETED, 0);
-            t.work_done(id, Work::Lyrics);
-        });
+    core.download_settle(ids.map(String::from).into(), vec![true, true]).unwrap();
+    for id in ids {
+        core.transfers().with(|t| t.followed(id, COMPLETED, 0));
+        assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::FindingLyrics));
     }
-    analyses.saved(vec!["rb-1".into(), "rb-2".into()]);
+    analyses.saved(ids.map(String::from).into());
     analyses.wait();
-    for id in ["rb-1", "rb-2"] {
+    for id in ids {
         let a = core.analysis_get(id.into()).unwrap().expect("analysed from the disk");
         assert!((a.bpm - 120.0).abs() < 2.0 || (a.bpm - 60.0).abs() < 1.0 || (a.bpm - 240.0).abs() < 4.0, "the beat heard: {}", a.bpm);
+        assert!(nori_core::race::LyricsCache::voice(&**core, &Song { id: id.into(), ..Default::default() }).is_some(), "{id}: its vocal curve, for the lyrics' timing");
+        assert!(net.asked.lock().iter().any(|u| u.contains("getLyricsBySongId") && u.contains(&format!("id={id}&"))), "{id}: its lyrics looked up");
         assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::Done), "done with it");
     }
     // Already analysed: nothing to read back.
-    assert!(!core.download_unanalysed(false).unwrap().iter().any(|id| id.starts_with("rb-")));
+    assert!(!core.download_unanalysed(false).unwrap().iter().any(|id| ids.contains(&id.as_str())));
     // Analysis gone: read back again.
     core.measure_again().unwrap();
-    let again: Vec<String> = core.download_unanalysed(false).unwrap().into_iter().filter(|id| id.starts_with("rb-")).collect();
+    let again: Vec<String> = core.download_unanalysed(false).unwrap().into_iter().filter(|id| ids.contains(&id.as_str())).collect();
     assert_eq!(again.len(), 2);
     assert_eq!(analyses.analyse(again), 2);
     analyses.wait();
-    assert!(core.analysis_get("rb-1".into()).unwrap().is_some() && core.analysis_get("rb-2".into()).unwrap().is_some());
-    assert_eq!((download_phase("rb-1".into()), download_phase("rb-2".into())), (Some(nori_core::DownloadPhase::Done), Some(nori_core::DownloadPhase::Done)));
+    for id in ids {
+        assert!(core.analysis_get(id.into()).unwrap().is_some());
+        assert_eq!(download_phase(id.into()), Some(nori_core::DownloadPhase::Done));
+    }
     assert!(core.transfers().with(|t| t.processing_at(0)).is_none_or(|p| p.analysing == 0 && p.beats == 0), "nothing left waiting");
 }
 

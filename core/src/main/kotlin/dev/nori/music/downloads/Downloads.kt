@@ -34,8 +34,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import dev.nori.music.ffi.transfers.DownloadKnown
 import dev.nori.music.ffi.transfers.DownloadQueued
 import dev.nori.music.ffi.transfers.NoticeKind
@@ -100,9 +98,8 @@ class DownloadState internal constructor(
 @UnstableApi
 class Downloads(private val context: Context, private val coreOf: () -> Core, private val clientOf: () -> Client, private val analyses: () -> Long, lazySources: Lazy<MediaSources>, private val settings: Settings) {
     private val core get() = coreOf()
-    /** Songs just downloaded get their lyrics looked up, one batch after another (`Client::lyrics_for_downloads`). */
-    private val lyrics = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lyricsInTurn = Mutex()
+    /** Follows the core's processing marks ([watchMarks]). */
+    private val watcher = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sources by lazySources
     /** The index's bookkeeping. Downloads never run here: see [TrackedDownloaders]. */
     private val io = Executors.newFixedThreadPool(2)
@@ -233,21 +230,12 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         publish()
         val got = ids.filterIndexed { i, _ -> done[i] }
         if (got.isEmpty()) return
-        // What each needs besides its lyrics - its analysis read back from the disk, the beat model - is the
-        // core's, decided and started here, one song at a time on a thread of its own.
+        // What each needs - its lyrics, its analysis read back from the disk, the beat model - is the core's,
+        // decided and started here, one song at a time on threads of its own.
         runCatching { dev.nori.music.playback.MeasureJni.processSaved(analyses(), got.toTypedArray()) }.onFailure { Log.w(TAG, "could not read ${got.size} downloads back", it) }
         watchMarks()
         // Each shows as processing until its lyrics, analysis and beats are over, or a step runs past its time.
         main.post { main.removeCallbacks(expire); expire.run() }
-        lyrics.launch {
-            // One song at a time, each marked as its lookup ends: the rows and the notification count down.
-            lyricsInTurn.withLock {
-                for (id in got) {
-                    runCatching { clientOf().lyricsForDownloads(listOf(id)) }
-                    main.post(::refreshMarks)
-                }
-            }
-        }
     }
 
     /**
@@ -281,7 +269,7 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
      */
     private fun watchMarks() = synchronized(this) {
         if (watching?.isActive == true) return@synchronized
-        watching = lyrics.launch {
+        watching = watcher.launch {
             while (true) {
                 runCatching { core.downloadMarksMoved() }
                 // Applied before waiting again: the marks read are what the next wait starts from.

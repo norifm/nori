@@ -134,7 +134,7 @@ impl Session {
     /// The ids that may be prefetched: no radio, no provider songs (fetching one makes the server
     /// download it).
     pub fn fetchable(&self, ids: Vec<String>) -> Vec<String> {
-        self.store(|s| ids.into_iter().filter(|id| analysable(id) && !s.songs.get(id).is_some_and(|(song, _)| song.is_provider())).collect())
+        self.store(|s| ids.into_iter().filter(|id| !is_radio(id) && !nori_model::is_provider_id(id) && !s.songs.get(id).is_some_and(|(song, _)| song.is_provider())).collect())
     }
 }
 
@@ -171,8 +171,7 @@ mod tests {
     #[test]
     fn queued_songs_kept() {
         assert!(analysable("a1b2"));
-        assert!(!analysable("ext-deezer-1"));
-        assert!(!analysable("pl-7"));
+        assert!(analysable("ext-deezer-1"), "measured as it plays or once downloaded");
         assert!(!analysable("radio:3"));
 
         // Songs lookup keeps queued songs.
