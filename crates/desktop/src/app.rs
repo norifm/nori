@@ -1803,6 +1803,12 @@ impl App {
                 self.on_session(|s| s.mpris_changed());
                 self.follow();
                 self.mark_playing();
+                // The Favorites tab lists what is liked now: a like from the player or a row joins or leaves it.
+                if self.ui().get_view() == FAVORITES {
+                    self.load(Req::Page(PageAsk::Favorites));
+                    // Read again in place: the list stays while it comes.
+                    self.ui().set_loading(false);
+                }
                 if let Some(s) = &self.session {
                     let core = s.core.clone();
                     let taste = crate::session::app().settings.prefs(|p| p.taste_model);
