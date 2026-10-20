@@ -17,16 +17,19 @@ pub struct ProviderWords {
     pub add: &'static str,
     /// Under a profile that names no user.
     pub no_user: &'static str,
+    /// Under the account's Sign in, where the kind has accounts to sign in to.
+    pub sign_in_hint: &'static str,
 }
 
 pub fn provider(kind: ServerKind) -> ProviderWords {
     match kind {
-        ServerKind::Subsonic => ProviderWords { name: "Your server", note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In", no_user: "API key" },
+        ServerKind::Subsonic => ProviderWords { name: "Your server", note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In", no_user: "API key", sign_in_hint: "" },
         ServerKind::YouTubeMusic => ProviderWords {
             name: "YouTube Music",
             note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.",
             add: "Add YouTube Music",
             no_user: "best effort",
+            sign_in_hint: "Sign in to see your own Home, your library and your likes.",
         },
     }
 }
@@ -294,6 +297,21 @@ pub fn removed(title: &str) -> String {
 
 pub const LINK_COPIED: &str = "Link copied";
 
+pub const PAIR_FAILED: &str = "Pairing failed";
+
+/// Why pasted cookies did not sign the account in.
+pub fn sign_in_failed(r: &nori_core::providers::SignInResult) -> String {
+    use nori_core::providers::SignInResult as R;
+    match r {
+        R::SignedIn { name } => format!("Signed in as {name}"),
+        R::NoSession => "These aren’t a signed-in session’s cookies. Copy them from music.youtube.com while signed in.".into(),
+        R::Refused => "YouTube didn’t accept these cookies. Sign in again in a private window and copy them anew.".into(),
+        R::Unreachable { reason } => format!("YouTube could not be reached ({reason})."),
+    }
+}
+
+pub const YOUTUBE_MUSIC_PAGE: &str = "https://music.youtube.com";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +323,3 @@ mod tests {
         assert_eq!(quality(&s).as_deref(), Some("FLAC 24/96.0"));
     }
 }
-
-pub const PAIR_FAILED: &str = "Pairing failed";

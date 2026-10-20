@@ -115,6 +115,8 @@ impl<'a> Target<'a> {
 
 const EQUALIZER: &str = "equalizer";
 const ADD_SERVER: &str = "add-server";
+const SIGN_IN: &str = "sign-in";
+const SIGN_OUT: &str = "sign-out";
 /// A folder's toggle is named `musicFolders=<the value it stores>`.
 const MUSIC_FOLDERS: &str = "musicFolders";
 
@@ -128,6 +130,9 @@ pub fn toggled(name: &str, on: bool) -> (&str, String) {
 pub enum Act {
     Equalizer,
     AddServer,
+    /// The account of the profile in use: sign in with pasted cookies, or out.
+    SignIn,
+    SignOut,
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
@@ -142,6 +147,8 @@ impl Act {
         match name {
             EQUALIZER => Some(Act::Equalizer),
             ADD_SERVER => Some(Act::AddServer),
+            SIGN_IN => Some(Act::SignIn),
+            SIGN_OUT => Some(Act::SignOut),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -530,6 +537,9 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
             _ => groups.push((title, rows)),
         }
     }
+    if tab_page(tab) == SettingsPage::Servers {
+        groups.extend(account(p));
+    }
     if tab == 0 {
         let mut devices = vec![("The system's own".to_string(), String::new())];
         devices.extend(f.devices.iter().map(|d| (d.clone(), d.clone())));
@@ -541,6 +551,22 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
         groups.push(("About", vec![info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))]));
     }
     groups
+}
+
+/// The account group of the profile in use, where its provider signs in with pasted cookies.
+fn account(p: &StoredPrefs) -> Option<(&'static str, Vec<Row>)> {
+    let sv = p.active_server()?;
+    let info = nori_core::providers::providers().into_iter().find(|i| i.kind == sv.kind)?;
+    if !info.sign_in.contains(&nori_core::providers::SignIn::Paste) {
+        return None;
+    }
+    let words = crate::words::provider(sv.kind);
+    let row = if sv.user.is_empty() {
+        Row { kind: ACTION, name: SIGN_IN.into(), title: words.name.into(), detail: words.sign_in_hint.into(), button: "Sign in".into(), enabled: true, ..Default::default() }
+    } else {
+        Row { kind: ACTION, name: SIGN_OUT.into(), title: format!("Signed in as {}", sv.user), detail: words.name.into(), button: "Sign out".into(), enabled: true, ..Default::default() }
+    };
+    Some(("Account", vec![row]))
 }
 
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.

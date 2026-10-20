@@ -604,6 +604,12 @@ fn stop(app: &RefCell<App>) {
     }
 }
 
+/// Opens `url` in the system's browser.
+fn open_in_browser(url: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let _ = std::process::Command::new(opener).arg(url).spawn();
+}
+
 /// A kind of profile as the login page offers it.
 fn login_kind(info: &nori_core::providers::ProviderInfo) -> LoginKind {
     use nori_core::providers::FormField;
@@ -718,6 +724,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.jam_shown();
     });
     on!(ui.on_join_jam, h, |a, link| a.join_jam(link.trim().to_string()));
+    on!(ui.on_sign_in, h, |a, answer| a.sign_in(answer.to_string()));
+    ui.on_open_sign_in_page(|| open_in_browser(words::YOUTUBE_MUSIC_PAGE));
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
             r.listen(on);
@@ -1517,6 +1525,27 @@ impl App {
     }
 
     /// Joins the jam `link` invites to, as a guest profile of its own.
+    /// Signs the account of the profile in use in with cookies pasted from a browser.
+    fn sign_in(&mut self, answer: String) {
+        let Some(s) = &self.session else { return };
+        let ui = self.ui();
+        if answer.trim().is_empty() || ui.get_signin_busy() {
+            return;
+        }
+        ui.set_signin_busy(true);
+        ui.set_signin_error("".into());
+        let (h, tx) = ((***s).clone(), self.tx.clone());
+        nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(h.sign_in(answer))));
+    }
+
+    /// Opens the profile in use again, as the settings now keep it (its account signed in or out).
+    fn reopen(&mut self) {
+        if let Some(p) = crate::session::app().settings.current().and_then(|p| p.active_server().cloned()) {
+            self.open(p);
+            self.go(SETTINGS);
+        }
+    }
+
     fn join_jam(&mut self, link: String) {
         let ui = self.ui();
         if nori_core::remote::pairing_valid(link.clone()) {
@@ -1651,6 +1680,18 @@ impl App {
             }
             Msg::Volume(v) if self.there().is_none() => self.ui().set_volume(v),
             Msg::Volume(_) => {}
+            Msg::SignedIn(r) => {
+                let ui = self.ui();
+                ui.set_signin_busy(false);
+                match r {
+                    nori_core::providers::SignInResult::SignedIn { .. } => {
+                        ui.set_signin_open(false);
+                        ui.set_signin_text("".into());
+                        self.reopen();
+                    }
+                    failed => ui.set_signin_error(words::sign_in_failed(&failed).into()),
+                }
+            }
             Msg::LoggedIn(r) => {
                 let ui = self.ui();
                 ui.set_login_busy(false);
@@ -2117,6 +2158,15 @@ impl App {
                 prefs.active_server_id = id;
                 crate::session::app().settings.put(prefs);
                 self.open(p);
+            }
+            Some(Act::SignIn) => {
+                let ui = self.ui();
+                ui.set_signin_error("".into());
+                ui.set_signin_open(true);
+            }
+            Some(Act::SignOut) => {
+                self.on_session(|s| s.sign_out());
+                self.reopen();
             }
             Some(Act::Chore(c)) => {
                 self.on_session(|s| s.action(c));

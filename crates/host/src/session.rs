@@ -981,6 +981,32 @@ impl Handle {
         });
     }
 
+    /// Signs the profile's account in with `answer` (cookies pasted from a browser); signed in, the
+    /// profile keeps the account's name, which a session opened on it again reads as signed in.
+    pub fn sign_in(&self, answer: String) -> nori_core::providers::SignInResult {
+        let r = block_on(self.client.sign_in(answer));
+        if let nori_core::providers::SignInResult::SignedIn { name } = &r {
+            self.keep_account(name);
+        }
+        r
+    }
+
+    /// Signs the profile's account out here; the profile forgets the account's name.
+    pub fn sign_out(&self) {
+        self.client.sign_out();
+        self.keep_account("");
+    }
+
+    fn keep_account(&self, name: &str) {
+        let settings = &self.core.session.settings;
+        let Some(mut prefs) = settings.current() else { return };
+        let id = prefs.active_server_id.clone();
+        if let Some(s) = prefs.servers.iter_mut().find(|s| s.id == id) {
+            s.user = name.to_string();
+            settings.put(prefs);
+        }
+    }
+
     /// Stars or unstars on the server (queued when offline); says so when it fails.
     pub fn star(&self, kind: Starrable, id: String, on: bool) {
         if !self.rules.stars {
@@ -1490,6 +1516,24 @@ mod tests {
             let _ = sent.send(matches!(r, Ok(crate::pages::HomePart::Mixes(ref t)) if t.is_empty()));
         });
         assert!(parts.recv_timeout(Duration::from_secs(5)).unwrap(), "the first part is an empty \"For you\"");
+        s.close();
+    }
+
+    /// Signing out takes the account's name off the saved profile, so it opens signed out.
+    #[test]
+    fn signing_out_forgets_the_account() {
+        let dir = nori_testdir::TempDir::new("host-sign-out");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
+        prefs.servers.push(profile.clone());
+        prefs.active_server_id = "yt".into();
+        prefs.remote_control = false;
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings.clone()));
+        let s = Session::open(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        s.sign_out();
+        assert_eq!(settings.current().unwrap().active_server().map(|p| p.user.clone()), Some(String::new()));
         s.close();
     }
 
