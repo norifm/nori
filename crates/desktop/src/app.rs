@@ -2613,16 +2613,17 @@ mod tests {
         let backs = Rc::new(std::cell::Cell::new(0));
         let counted = backs.clone();
         ui.on_swiped_back(move || counted.set(counted.get() + 1));
-        let scroll = |dx: f32, dy: f32| {
-            ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position: slint::LogicalPosition::new(640.0, 500.0), delta_x: dx, delta_y: dy });
+        // As a touchpad gives it (compositor.rs): a gesture's start, its moves and its end.
+        let gesture = |dx: f32, dy: f32| {
+            use winit::event::TouchPhase::*;
+            for phase in [Started, Moved, Moved, Moved, Moved, Moved, Moved, Moved, Moved, Ended] {
+                let (x, y) = if phase == Ended { (0.0, 0.0) } else { (dx, dy) };
+                ui.window().dispatch_event(crate::compositor::wheel_event(slint::LogicalPosition::new(640.0, 500.0), x, y, phase));
+            }
         };
-        for _ in 0..10 {
-            scroll(0.0, -30.0);
-        }
+        gesture(0.0, -30.0);
         assert_eq!(backs.get(), 0, "scrolling the page");
-        for _ in 0..10 {
-            scroll(30.0, 2.0);
-        }
+        gesture(30.0, 2.0);
         assert_eq!(backs.get(), 1, "one swipe, one back");
     }
 

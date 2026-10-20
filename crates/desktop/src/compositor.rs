@@ -654,7 +654,7 @@ impl Runner {
     }
 }
 
-fn wheel_event(position: LogicalPosition, dx: f32, dy: f32, phase: winit::event::TouchPhase) -> WindowEvent {
+pub(crate) fn wheel_event(position: LogicalPosition, dx: f32, dy: f32, phase: winit::event::TouchPhase) -> WindowEvent {
     use i_slint_core::input::{BackendMouseEvent, TouchPhase};
     let phase = match phase {
         winit::event::TouchPhase::Started => TouchPhase::Started,
