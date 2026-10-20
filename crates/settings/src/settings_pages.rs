@@ -469,6 +469,7 @@ impl Page<'_> {
         if self.phone() {
             streaming.push(self.setting("songsAheadMobile").under());
         }
+        streaming.push(self.setting("cacheMb"));
         let mut downloads = vec![self.setting("download"), row(RowItem::Action { action: SettingsAction::DownloadLibrary }).enabled(f.indexed_songs > 0)];
         match self.client {
             SettingsClient::Phone => downloads.push(row(RowItem::Action { action: SettingsAction::AnalyseDownloads }).enabled(f.download_songs > 0)),
@@ -476,8 +477,8 @@ impl Page<'_> {
             SettingsClient::Desktop | SettingsClient::Web => {}
         }
         let clear = |action, bytes: i64| row(RowItem::Action { action }).enabled(!f.storage_busy && bytes > 0);
+        // What is kept and what clears it, no settings: the cache's size is streaming's.
         let mut storage = vec![
-            self.setting("cacheMb"),
             row(RowItem::Stored),
             clear(SettingsAction::ClearStream, f.stream_bytes),
             clear(SettingsAction::ClearCovers, f.cover_bytes),
@@ -676,6 +677,19 @@ mod tests {
         assert!(!servers[0].rows.iter().any(|r| matches!(r.item, RowItem::Action { action: SettingsAction::AddServer })));
         let data = page(SettingsPage::Data, SettingsClient::Phone, &d, &s, &guest);
         assert_eq!(data.iter().map(|s| s.id).collect::<Vec<_>>(), [SectionId::Streaming, SectionId::Storage]);
+    }
+
+    #[test]
+    fn storage_holds_no_settings() {
+        let d = StoredPrefs::default();
+        let s = state(&d, Output::default(), &model());
+        for client in [SettingsClient::Phone, SettingsClient::Desktop, SettingsClient::Terminal] {
+            let data = page(SettingsPage::Data, client, &d, &s, &facts());
+            let storage = data.iter().find(|s| s.id == SectionId::Storage).unwrap();
+            assert!(!storage.rows.iter().any(|r| matches!(r.item, RowItem::Setting { .. })), "{client:?}");
+            let streaming = data.iter().find(|s| s.id == SectionId::Streaming).unwrap();
+            assert!(streaming.rows.iter().any(|r| matches!(&r.item, RowItem::Setting { spec, .. } if spec.name == "cacheMb")), "{client:?}");
+        }
     }
 
     #[test]

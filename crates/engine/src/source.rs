@@ -593,6 +593,8 @@ struct State {
     error: Option<String>,
     /// The server's error status, if it answered.
     answered: Option<u16>,
+    /// The loader itself died (panicked): the song's failure, not the network's.
+    died: bool,
     /// Where the demuxer reads.
     reader_at: u64,
     /// The reader wants bytes from here, outside what is kept.
@@ -1261,10 +1263,11 @@ impl Loader {
         self.0.state.lock().error.clone()
     }
 
-    /// The server's error status when the loader gave up (the song's failure, not the network's).
-    pub fn answered(&self) -> Option<u16> {
+    /// Whether the loader gave up for the network: not for the server's error status, and not because
+    /// the loader itself died.
+    pub fn failed_on_network(&self) -> bool {
         let s = self.0.state.lock();
-        s.error.as_ref().and(s.answered)
+        s.error.is_some() && s.answered.is_none() && !s.died
     }
 
     /// Whether a read would not block; if not, `engine` is woken when it would not.
@@ -1696,6 +1699,7 @@ impl Loaded {
         let mut s = self.state.lock();
         if s.error.is_none() && !s.at_end() {
             s.error = Some(why.to_string());
+            s.died = true;
         }
         s.done = true;
         s.restart = None;
@@ -2467,7 +2471,7 @@ mod tests {
         let mut r = l.reader();
         assert!(r.read(&mut [0u8; 16]).is_err());
         assert_eq!(l.error(), Some(OpenError::TimedOut.to_string()));
-        assert_eq!(l.answered(), None, "the network's failure, not the server's");
+        assert!(l.failed_on_network(), "the network's failure, not the server's");
         assert_eq!(*s.0.lock(), 1, "asked once");
     }
 

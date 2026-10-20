@@ -35,8 +35,16 @@ nori wears one of four seasons, Spring (春), Summer (夏), Autumn (秋) and Win
 AMOLED black. By default it follows the calendar and blends from one season to the next over two weeks
 (southern-hemisphere zones turn half a year later). Choose a season and the appearance in Settings, General, or
 in the settings menu. The accent color marks only what is current: the open tab, the song playing, a lit
-shuffle or repeat, a liked seal. Album and artist pages, the side sheet and Now Playing wear their cover's colors.
+shuffle or repeat, a liked seal. Album and artist pages and Now Playing wear their cover's colors; the side sheet wears the page's own.
 With Motion set to Reduced in nori's settings, nothing slides, stamps or fades.
+
+## YouTube Music
+
+Sign in from Settings, Servers, the profile's Edit: Sign in with Google opens Google's own sign-in page in a
+small window (the system's web view: WebKit on macOS, WebKitGTK on Linux) and closes it once you are back on
+YouTube Music signed in. Nothing of that window is kept. On Linux nori uses the system's WebKitGTK 4.1 (see
+[Install](../start/install.md#desktop-and-terminal)); Paste cookies instead takes cookies copied from a
+browser. Tapping a song's seal while signed out opens the same sheet.
 
 ## Install
 

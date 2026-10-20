@@ -128,23 +128,34 @@ class Nori private constructor(private val context: Context) {
         val joined = lifted { dev.nori.music.ffi.jamJoin(transport, settings.core, remotes.peek(), link, dev.nori.music.remote.Remotes.deviceName(context)) }
         if (joined is dev.nori.music.ffi.JamJoin.Joined) {
             val guest = dev.nori.music.ffi.jamProfile(joined.pass, dev.nori.music.ffi.settings.newServerId(), context.getString(dev.nori.music.core.R.string.jam_profile))
+            dev.nori.music.ffi.jamJoining(settings.core)
             withContext(Dispatchers.Main) { activate(guest) }
         }
         joined
     }
 
     /**
-     * Leaves the jam this guest profile is in, at once: its music stops, the profile goes and the one in
-     * use before it opens again. The relay is told on the way (the core's `jam_leave`). Main thread.
+     * Leaves the jam, at once: its music stops, and a jam guest profile goes and the one in use before it
+     * opens again. The relay is told on the way (the core's `jam_leave`). A device of the host's own
+     * account following along has no guest profile: its own stays. Main thread.
      */
     fun leaveJam() {
-        remotes.leave()
-        logout()
+        if (remotes.isGuest()) leaveGuestProfile() else remotes.leave()
     }
 
     /** The jam this guest profile was in ended (the core's `jam_ended`): left as on Leave. Main thread. */
     fun jamEnded() {
-        if (remotes.isGuest()) logout()
+        if (remotes.isGuest()) leaveGuestProfile()
+    }
+
+    /**
+     * Opens the profile in use before the jam again, which drops the guest profile and tells the relay
+     * ([activate]); which one that is is the core's (`jam_return`). With none left, the guest profile just goes.
+     */
+    private fun leaveGuestProfile() {
+        val list = dev.nori.music.ffi.jamReturn(settings.core, settings.value.serverList())
+        val back = list.servers.firstOrNull { it.id == list.activeServerId }
+        if (back != null) activate(back) else { remotes.leave(); logout() }
     }
 
     /** The app's own updates from its GitHub releases; nothing is asked until the app starts it. */

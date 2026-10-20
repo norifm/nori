@@ -317,12 +317,12 @@
     <string name="settings_analyse">Analyze</string>
     <string name="settings_cache_size">Space for streamed music</string>
     <string name="settings_stored">Stored on this device</string>
-    <!-- Streamed, covers, lyrics, downloads ("5.0 MB in 3 downloads"), the library. -->
-    <string name="settings_stored_detail">%1$s streamed · %2$s covers · %3$s lyrics · %4$s · %5$s library</string>
     <plurals name="settings_stored_downloads">
-        <item quantity="one">%2$s in %1$d download</item>
-        <item quantity="other">%2$s in %1$d downloads</item>
+        <item quantity="one">%1$d download</item>
+        <item quantity="other">%1$d downloads</item>
     </plurals>
+    <!-- The offline index, as a part of what is stored. -->
+    <string name="settings_stored_library">Library index</string>
     <string name="settings_streamed">Streamed music</string>
     <string name="settings_streamed_detail">Oldest goes first. Downloads stay.</string>
     <string name="settings_covers">Covers</string>

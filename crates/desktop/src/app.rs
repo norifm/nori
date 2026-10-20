@@ -303,9 +303,16 @@ pub struct App {
     queue: Option<QueueShown>,
     /// Songs behind the clickable lists: the page's, the Songs view's, the search's.
     page_songs: Vec<Song>,
+    /// The artist page's Show all pressed: every song listed, not the first few.
+    page_songs_all: bool,
     page_fetch: Option<Fetch>,
     songs: Vec<Song>,
     search_songs: Vec<Song>,
+    /// Search's Show all pressed, for the query in `search_query`.
+    search_songs_all: bool,
+    search_query: String,
+    /// The sign-in window's process while it is open (nori-sign-in).
+    sign_in_window: Option<std::process::Child>,
     /// The read the shown page waits for.
     want: Option<Req>,
     shelves: Rc<VecModel<Shelf>>,
@@ -476,9 +483,13 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             song: None,
             queue: None,
             page_songs: Vec::new(),
+            page_songs_all: false,
             page_fetch: None,
             songs: Vec::new(),
             search_songs: Vec::new(),
+            search_songs_all: false,
+            search_query: String::new(),
+            sign_in_window: None,
             want: None,
             shelves,
             home_rows: Vec::new(),
@@ -604,6 +615,12 @@ fn stop(app: &RefCell<App>) {
     }
 }
 
+/// Opens `url` in the system's browser.
+fn open_in_browser(url: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let _ = std::process::Command::new(opener).arg(url).spawn();
+}
+
 /// A kind of profile as the login page offers it.
 fn login_kind(info: &nori_core::providers::ProviderInfo) -> LoginKind {
     use nori_core::providers::FormField;
@@ -627,6 +644,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         let to = if a.ui().get_view() == PAGE { a.came_from } else { HOME };
         a.go(to);
     });
+    on!(ui.on_swiped_back, h, |a| a.swiped_back());
     on!(ui.on_note_act, h, |a| a.note_act());
     on!(ui.on_open_album, h, |a, id| a.open_page(PageAsk::Album(id.into())));
     on!(ui.on_open_artist, h, |a, id| a.open_page(PageAsk::Artist(id.into())));
@@ -637,6 +655,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_song, h, |a, list, i, how| a.song(list, i as usize, how));
     on!(ui.on_play_page, h, |a, shuffle| a.play_page(shuffle));
     on!(ui.on_page_later, h, |a| a.enqueue_page());
+    on!(ui.on_page_star, h, |a| a.star_page());
     on!(ui.on_page_download, h, |a| {
         if let Some(fetch) = a.page_fetch.clone() {
             a.on_session(|s| { if s.rules.downloads { s.download_later(fetch); } });
@@ -680,6 +699,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         }
     });
     on!(ui.on_drag_window, h, |a| a.compositor.drag_window());
+    on!(ui.on_all_songs, h, |a, list| {
+        if list == 0 { a.page_songs_all = true; a.show_page_songs(); } else { a.search_songs_all = true; a.show_search_songs(); }
+    });
     on!(ui.on_zoom_window, h, |a| a.compositor.zoom_window());
     on!(ui.on_page_moved, h, |a| a.place_player());
     on!(ui.on_player_changed, h, |a| {
@@ -710,6 +732,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         }
     });
     on!(jam.on_copy_link, h, |a| a.jam_copy_link());
+    on!(ui.on_copy_pairing, h, |a| a.copy(a.ui().get_pairing_link().into()));
     on!(jam.on_leave, h, |a| a.leave_jam());
     on!(ui.on_forget_devices, h, |a| {
         if let Some(remote) = a.session.as_ref().and_then(|s| s.remote()) { remote.reset_pairing(); }
@@ -717,6 +740,10 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.jam_shown();
     });
     on!(ui.on_join_jam, h, |a, link| a.join_jam(link.trim().to_string()));
+    on!(ui.on_sign_in, h, |a, answer| a.sign_in(answer.to_string()));
+    on!(ui.on_sign_in_window, h, |a| a.sign_in_window());
+    on!(ui.on_sign_out, h, |a| a.sign_out());
+    ui.on_open_sign_in_page(|| open_in_browser(words::YOUTUBE_MUSIC_PAGE));
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
             r.listen(on);
@@ -747,7 +774,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_choose_artist, h, |a, id| a.choose_artist(id.to_string()));
     on!(ui.on_open_accounts, h, |a| {
-        a.ui().set_settings_tab(6);
+        let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers);
+        a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
         a.go(SETTINGS);
     });
     on!(ui.on_clear_queue, h, |a| {
@@ -892,6 +920,8 @@ impl App {
                 s.check();
                 ui.set_volume(s.volume());
                 ui.set_downloads(s.rules.downloads);
+                // Albums and artists carry the account's seals, as on Android.
+                ui.set_page_can_star(s.rules.account && s.rules.stars);
                 self.session = Some(s);
                 self.heard = None;
                 self.song = None;
@@ -1026,6 +1056,7 @@ impl App {
         }
         let ui = self.ui();
         self.page_songs.clear();
+        self.page_songs_all = false;
         self.page_fetch = Some(match &ask {
             PageAsk::Album(id) => Fetch::Album(id.clone()),
             PageAsk::Artist(id) => Fetch::Artist(id.clone()),
@@ -1103,9 +1134,16 @@ impl App {
         let ui = self.ui();
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
-        let cover = if ui.get_full_player() { self.now_cover.as_ref() } else if ui.get_view() == PAGE { self.page_cover.as_ref() } else { None };
+        use nori_core::settings::CoverPlace;
+        let cover = if ui.get_full_player() {
+            self.now_cover.as_ref().map(|c| (c, CoverPlace::Player))
+        } else if ui.get_view() == PAGE {
+            self.page_cover.as_ref().map(|c| (c, CoverPlace::Pages))
+        } else {
+            None
+        };
         match cover {
-            Some(c) => crate::look::cover(&prefs, dark, today, c),
+            Some((c, place)) => crate::look::cover(&prefs, dark, today, c, place),
             None => crate::look::plain(&prefs, dark, today),
         }
     }
@@ -1113,6 +1151,9 @@ impl App {
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
+        let places = crate::session::app().settings.current().unwrap_or_default().cover_colors;
+        self.ui().set_pages_wear_covers(places.contains(&nori_core::settings::CoverPlace::Pages));
+        self.ui().set_player_wears_covers(places.contains(&nori_core::settings::CoverPlace::Player));
         // nori's Motion setting, as on Android: animations run unless it asks for less.
         let reduced = crate::session::app().settings.current().unwrap_or_default().motion != nori_core::settings::Motion::Full;
         self.ui().global::<Motion>().set_reduced(reduced);
@@ -1241,6 +1282,7 @@ impl App {
             }
             // Page details apply only if that page is still shown.
             Data::Page(PageGot::Album(d)) if shown => {
+                ui.set_page_starred(self.session.as_ref().is_some_and(|s| s.core.starred(nori_core::client::Starrable::Album, &d.album.id, d.album.starred)));
                 ui.set_page_title(d.album.name.as_str().into());
                 ui.set_page_sub(d.album.artist.as_str().into());
                 ui.set_page_sub_artist(d.album.artist_id.clone().unwrap_or_default().into());
@@ -1255,9 +1297,10 @@ impl App {
                 ui.set_page_caption(caption.join(" · ").into());
                 self.set_page_art(d.album.cover_art.clone());
                 self.page_songs = d.songs;
-                ui.set_page_songs(self.rows(&self.page_songs));
+                self.show_page_songs();
             }
             Data::Page(PageGot::Artist(d)) if shown => {
+                ui.set_page_starred(self.session.as_ref().is_some_and(|s| s.core.starred(nori_core::client::Starrable::Artist, &d.artist.id, d.artist.starred)));
                 ui.set_page_title(d.artist.name.as_str().into());
                 ui.set_page_sub("".into());
                 let caption = if d.albums.is_empty() && !d.songs.is_empty() { words::songs(d.songs.len()) } else { words::albums(d.albums.len() as u32) };
@@ -1265,7 +1308,7 @@ impl App {
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
                 ui.set_page_albums(cards(d.albums.iter().map(|a| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) })));
                 self.page_songs = d.songs;
-                ui.set_page_songs(self.rows(&self.page_songs));
+                self.show_page_songs();
             }
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_title(d.playlist.name.as_str().into());
@@ -1273,7 +1316,7 @@ impl App {
                 ui.set_page_caption(words::songs_caption(d.songs.len(), d.seconds).into());
                 self.set_page_art(d.playlist.cover_art.clone());
                 self.page_songs = d.songs;
-                ui.set_page_songs(self.rows(&self.page_songs));
+                self.show_page_songs();
             }
             Data::Page(PageGot::Mix(m)) if shown => {
                 ui.set_page_title(words::mix_name(m.name).into());
@@ -1281,7 +1324,7 @@ impl App {
                 ui.set_page_caption(words::songs_caption(m.songs.len(), m.seconds).into());
                 self.set_page_art(m.covers.first().cloned());
                 self.page_songs = m.songs;
-                ui.set_page_songs(self.rows(&self.page_songs));
+                self.show_page_songs();
             }
             Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_)) => {}
         }
@@ -1297,6 +1340,23 @@ impl App {
     }
 
     /// Songs as rows filtered by the find text; each row keeps its index in `songs`.
+    /// The page's songs as listed: an artist's first few until Show all (`songs_shown`).
+    fn show_page_songs(&self) {
+        let ui = self.ui();
+        let all = self.page_songs_all || ui.get_page_kind() != 1;
+        let n = nori_core::browse::songs_shown(self.page_songs.len() as u32, all) as usize;
+        ui.set_page_songs(self.rows(&self.page_songs[..n]));
+        ui.set_page_songs_more(n < self.page_songs.len());
+    }
+
+    /// Search's songs as listed: the best few until Show all.
+    fn show_search_songs(&self) {
+        let ui = self.ui();
+        let n = nori_core::browse::songs_shown(self.search_songs.len() as u32, self.search_songs_all) as usize;
+        ui.set_search_songs(self.rows(&self.search_songs[..n]));
+        ui.set_search_songs_more(n < self.search_songs.len());
+    }
+
     fn rows(&self, songs: &[Song]) -> ModelRc<SongRow> {
         let heard = self.heard.as_deref();
         let find = self.find.to_lowercase();
@@ -1314,7 +1374,7 @@ impl App {
         ui.set_artists(pick(&self.lists.artists));
         ui.set_playlists(pick(&self.lists.playlists));
         ui.set_songs(self.rows(&self.songs));
-        ui.set_page_songs(self.rows(&self.page_songs));
+        self.show_page_songs();
     }
 
     /// Shows an artist beside the Artists list.
@@ -1327,6 +1387,7 @@ impl App {
         ui.set_page_caption("".into());
         ui.set_page_albums(ModelRc::default());
         self.page_songs.clear();
+        self.page_songs_all = false;
         self.page_fetch = Some(Fetch::Artist(id.clone()));
         self.load(Req::Page(PageAsk::Artist(id)));
         // Keep the list visible while the artist loads.
@@ -1336,8 +1397,8 @@ impl App {
     /// Refreshes the now-playing marks in the lists.
     fn mark_playing(&self) {
         let ui = self.ui();
-        ui.set_page_songs(self.rows(&self.page_songs));
-        ui.set_search_songs(self.rows(&self.search_songs));
+        self.show_page_songs();
+        self.show_search_songs();
         if !self.songs.is_empty() {
             ui.set_songs(self.rows(&self.songs));
         }
@@ -1395,10 +1456,13 @@ impl App {
         ui.set_search_albums(cards(found.albums.iter().map(album_card)));
         ui.set_search_playlists(cards(found.playlists.iter().map(playlist_card)));
         self.search_songs = found.songs;
-        ui.set_search_songs(self.rows(&self.search_songs));
-        let note = if v.searching {
-            "Searching the server…".to_string()
-        } else if let Some(e) = v.error {
+        if self.search_query != v.query.trim() {
+            self.search_query = v.query.trim().to_string();
+            self.search_songs_all = false;
+        }
+        self.show_search_songs();
+        ui.set_search_busy(v.searching);
+        let note = if let Some(e) = v.error {
             format!("The server could not be searched ({}); these are from the offline index", e.reason.unwrap_or_default())
         } else {
             String::new()
@@ -1410,7 +1474,7 @@ impl App {
         self.on_session(|s| s.play_later(what, false));
     }
 
-    fn song(&self, list: i32, i: usize, how: i32) {
+    fn song(&mut self, list: i32, i: usize, how: i32) {
         let (songs, origin) = match list {
             0 => (&self.page_songs, self.page_fetch.as_ref().map(Fetch::origin)),
             1 => (&self.songs, None),
@@ -1479,8 +1543,25 @@ impl App {
         self.session.as_ref().is_some_and(|x| x.starred(s, self.there()))
     }
 
+    /// Flips the album's or artist's seal on the page shown.
+    fn star_page(&self) {
+        let ui = self.ui();
+        let kind = match ui.get_page_kind() {
+            0 => nori_core::client::Starrable::Album,
+            1 => nori_core::client::Starrable::Artist,
+            _ => return,
+        };
+        let on = !ui.get_page_starred();
+        ui.set_page_starred(on);
+        let id = ui.get_page_id().to_string();
+        self.on_session(|s| s.star(kind, id, on));
+    }
+
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
-    fn star(&self, s: &Song) {
+    fn star(&mut self, s: &Song) {
+        if self.session.as_ref().is_some_and(|x| !x.rules.stars && x.rules.stars_after_sign_in) {
+            return self.offer_sign_in();
+        }
         let on = !self.starred(s);
         self.on_session(|x| x.star_song(s.id.clone(), on, self.there()));
     }
@@ -1511,12 +1592,93 @@ impl App {
         self.session.as_ref().is_some_and(|s| s.rules.account)
     }
 
-    /// `s`'s heart as the lists show it; none where songs carry no hearts (`ProfileRules::stars`).
+    /// `s`'s heart as the lists show it; none where songs carry no hearts (`ProfileRules::stars`), or one
+    /// that asks to sign in.
     fn heart(&self, s: &Song) -> Option<bool> {
-        self.session.as_ref().is_some_and(|x| x.rules.stars).then(|| self.starred(s))
+        self.session.as_ref().is_some_and(|x| x.rules.stars || x.rules.stars_after_sign_in).then(|| self.starred(s))
     }
 
     /// Joins the jam `link` invites to, as a guest profile of its own.
+    /// Signs the account of the profile in use in with cookies pasted from a browser.
+    fn sign_in(&mut self, answer: String) {
+        let Some(s) = &self.session else { return };
+        let ui = self.ui();
+        if answer.trim().is_empty() || ui.get_signin_busy() {
+            return;
+        }
+        ui.set_signin_busy(true);
+        ui.set_signin_error("".into());
+        let (h, tx) = ((***s).clone(), self.tx.clone());
+        nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(h.sign_in(answer))));
+    }
+
+    /// The account sheet of the profile in use, as its server's Edit and a seal tapped while signed out open
+    /// it: who is signed in, or Sign in (the provider's own page in a window) with pasting folded under it.
+    fn offer_sign_in(&mut self) {
+        let user = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
+        let ui = self.ui();
+        ui.set_signin_user(user.into());
+        ui.set_signin_pasting(false);
+        ui.set_signin_error("".into());
+        ui.set_signin_open(true);
+    }
+
+    /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
+    /// web view); where that cannot start, the sheet unfolds pasting with why.
+    fn sign_in_window(&mut self) {
+        use nori_core::providers::SignIn;
+        let Some(s) = &self.session else { return };
+        let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind)) else { return };
+        let start = nori_core::providers::providers().into_iter().find(|i| i.kind == kind).and_then(|i| {
+            i.sign_in.into_iter().find_map(|s| match s { SignIn::WebPage { start_url } => Some(start_url), SignIn::Paste => None })
+        });
+        let ui = self.ui();
+        let Some(start) = start else { return ui.set_signin_pasting(true) };
+        if self.sign_in_window.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) {
+            return;
+        }
+        let child = std::env::current_exe().ok().and_then(|me| {
+            std::process::Command::new(me).arg("--sign-in").arg(format!("Sign in to {}", words::provider(kind).name)).arg(start)
+                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).spawn().ok()
+        });
+        let Some(mut child) = child else {
+            ui.set_signin_pasting(true);
+            ui.set_signin_error(words::SIGN_IN_WINDOW_FAILED.into());
+            return;
+        };
+        let Some(out) = child.stdout.take() else { return };
+        let (h, tx) = ((***s).clone(), self.tx.clone());
+        let pid = child.id();
+        nori_host::spawn("nori-sign-in-window", move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                let Some((address, cookies)) = line.split_once('\t') else { continue };
+                if nori_core::providers::sign_in_done(kind, address.to_string(), cookies.to_string()) {
+                    tx.send(Msg::SignInWindowDone(pid, h.sign_in(cookies.to_string())));
+                    return;
+                }
+            }
+        });
+        ui.set_signin_busy(true);
+        self.sign_in_window = Some(child);
+    }
+
+    fn sign_out(&mut self) {
+        self.on_session(|s| s.sign_out());
+        self.ui().set_signin_open(false);
+        self.reopen();
+    }
+
+    /// Opens the profile in use again, as the settings now keep it (its account signed in or out), on the
+    /// page it was on.
+    fn reopen(&mut self) {
+        if let Some(p) = crate::session::app().settings.current().and_then(|p| p.active_server().cloned()) {
+            let view = self.ui().get_view();
+            self.open(p);
+            self.go(view);
+        }
+    }
+
     fn join_jam(&mut self, link: String) {
         let ui = self.ui();
         if nori_core::remote::pairing_valid(link.clone()) {
@@ -1579,7 +1741,10 @@ impl App {
                 match &e {
                     // A seek landed: the lyrics follow from the new place.
                     Event::Position { .. } => self.lyrics_step(true),
-                    Event::Buffering(b) if matches!(self.playback, Playback::Here) => self.ui().set_buffering(*b),
+                    Event::Buffering(b) if matches!(self.playback, Playback::Here) => {
+                        self.ui().set_buffering(*b);
+                        self.advancing();
+                    }
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     _ => {}
                 }
@@ -1651,6 +1816,33 @@ impl App {
             }
             Msg::Volume(v) if self.there().is_none() => self.ui().set_volume(v),
             Msg::Volume(_) => {}
+            Msg::SignInWindowDone(pid, r) => {
+                if let Some(mut c) = self.sign_in_window.take_if(|c| c.id() == pid) {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                let ui = self.ui();
+                ui.set_signin_busy(false);
+                match r {
+                    nori_core::providers::SignInResult::SignedIn { .. } => {
+                        ui.set_signin_open(false);
+                        self.reopen();
+                    }
+                    failed => ui.set_signin_error(words::sign_in_failed(&failed).into()),
+                }
+            }
+            Msg::SignedIn(r) => {
+                let ui = self.ui();
+                ui.set_signin_busy(false);
+                match r {
+                    nori_core::providers::SignInResult::SignedIn { .. } => {
+                        ui.set_signin_open(false);
+                        ui.set_signin_text("".into());
+                        self.reopen();
+                    }
+                    failed => ui.set_signin_error(words::sign_in_failed(&failed).into()),
+                }
+            }
             Msg::LoggedIn(r) => {
                 let ui = self.ui();
                 ui.set_login_busy(false);
@@ -1936,6 +2128,8 @@ impl App {
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         let view = ui.get_view();
         if view == SETTINGS {
+            let tabs = crate::settings::tabs(&self.facts.rules.settings);
+            ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs.iter().map(|p| SharedString::from(crate::settings::tab_name(*p))).collect::<Vec<_>>())));
             ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab(), today));
         }
         if view == EQUALIZER {
@@ -1962,7 +2156,14 @@ impl App {
         let unsupported = remote.as_ref().is_some_and(|r| r.relay() == nori_core::remote::RelaySupport::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());
         let lan = remote.as_ref().is_some_and(|r| r.pairing_link().is_some());
-        ui.set_pairing_link(remote.as_ref().and_then(|r| r.pairing_link()).unwrap_or_default().into());
+        let pairing = remote.as_ref().and_then(|r| r.pairing_link()).unwrap_or_default();
+        if ui.get_pairing_link() != pairing.as_str() {
+            ui.set_pairing_qr(if pairing.is_empty() { Image::default() } else { crate::jam::qr(&pairing) });
+            ui.set_pairing_link(pairing.as_str().into());
+        }
+        if pairing.is_empty() {
+            ui.set_pairing_open(false);
+        }
         g.set_on(remote.is_some() && (!unsupported || lan) && !guest);
         g.set_guest(guest);
         g.set_note(if unsupported && !lan && !guest { words::JAM_UNSUPPORTED.into() } else { "".into() });
@@ -2017,7 +2218,11 @@ impl App {
     }
 
     fn jam_copy_link(&self) {
-        let copied = arboard::Clipboard::new().and_then(|mut c| c.set_text(self.jam_link.clone()));
+        self.copy(self.jam_link.clone());
+    }
+
+    fn copy(&self, text: String) {
+        let copied = arboard::Clipboard::new().and_then(|mut c| c.set_text(text));
         match copied {
             Ok(()) => self.say(words::LINK_COPIED, false),
             Err(e) => self.say(&e.to_string(), true),
@@ -2107,6 +2312,7 @@ impl App {
                 crate::session::app().settings.put(prefs);
                 self.open(p);
             }
+            Some(Act::Account) => self.offer_sign_in(),
             Some(Act::Chore(c)) => {
                 self.on_session(|s| s.action(c));
                 self.on_session(|s| s.facts());
@@ -2122,7 +2328,7 @@ impl App {
         self.song = song;
         let song = self.song.clone().unwrap_or_default();
         ui.set_has_song(self.song.is_some());
-        ui.set_now_title(song.title.as_str().into());
+        ui.set_now_title(words::title(&song.title).into());
         ui.set_now_artist(song.artist.as_str().into());
         ui.set_now_album(song.album.as_str().into());
         ui.set_now_artist_id(song.artist_id.clone().unwrap_or_default().into());
@@ -2147,6 +2353,23 @@ impl App {
         }
     }
 
+    /// A touchpad's swipe back: what the back button showing does (a page's, the equalizer's), or nothing
+    /// where there is none.
+    fn swiped_back(&mut self) {
+        let ui = self.ui();
+        match ui.get_view() {
+            PAGE | 10 | 11 => ui.invoke_back(),
+            EQUALIZER => self.go(SETTINGS),
+            _ => {}
+        }
+    }
+
+    /// Whether the music moves now, for the playing bars: playing and not waiting for bytes.
+    fn advancing(&self) {
+        let ui = self.ui();
+        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering());
+    }
+
     /// Syncs the window with what the player shows: this computer's playback and queue, the device's
     /// playing elsewhere, or the jam's.
     fn follow(&mut self) {
@@ -2169,6 +2392,7 @@ impl App {
                 ui.set_volume(v);
             }
         }
+        self.advancing();
         if let Some(q) = queue {
             ui.set_shuffle(q.view.shuffle);
             ui.set_repeat(q.view.repeat as i32);
@@ -2224,7 +2448,7 @@ fn album_card(a: &nori_core::Album) -> Card {
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: words::albums(a.album_count).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default() }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default() }
 }
 
 /// A playlist's card: its song count, or its own line (a provider's, who made it) when not counted.
@@ -2239,7 +2463,7 @@ fn playlist_card(p: &nori_core::Playlist) -> Card {
 /// `starred`: its heart as shown; None where there is no heart (a jam guest's lists).
 fn row(s: &Song, index: usize, playing: bool, starred: Option<bool>, downloads: bool, radio: bool) -> SongRow {
     SongRow {
-        title: s.title.as_str().into(),
+        title: words::title(&s.title).into(),
         artist: s.artist.as_str().into(),
         credits: credits(s),
         menu: song_menu(s, starred, downloads, radio),
@@ -2369,6 +2593,31 @@ mod tests {
         let ui = AppWindow::new().unwrap();
         dressed().paint(&ui.global::<Theme>());
         ui
+    }
+
+    /// Two fingers swept to the right on a touchpad over a page go back once per swipe; scrolling up
+    /// and down does not.
+    #[test]
+    fn a_sideways_swipe_goes_back() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_view(PAGE);
+        ui.show().unwrap();
+        let backs = Rc::new(std::cell::Cell::new(0));
+        let counted = backs.clone();
+        ui.on_swiped_back(move || counted.set(counted.get() + 1));
+        let scroll = |dx: f32, dy: f32| {
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position: slint::LogicalPosition::new(640.0, 500.0), delta_x: dx, delta_y: dy });
+        };
+        for _ in 0..10 {
+            scroll(0.0, -30.0);
+        }
+        assert_eq!(backs.get(), 0, "scrolling the page");
+        for _ in 0..10 {
+            scroll(30.0, 2.0);
+        }
+        assert_eq!(backs.get(), 1, "one swipe, one back");
     }
 
     fn pill() -> crate::PlayerBar {

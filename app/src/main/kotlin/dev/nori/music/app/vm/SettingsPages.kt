@@ -49,6 +49,9 @@ data class SettingOption(val label: String, val value: String)
  * One row of a settings page. [key] is what search lands on; `name` is the setting it changes, sent to
  * the core with the value picked; `enabled = false` is a setting the app is going to ignore right now.
  */
+/** One kind of stored data in [SettingRow.Usage]. */
+data class UsagePart(val label: String, val size: String, val bytes: Long)
+
 sealed interface SettingRow {
     data class Toggle(val key: String, val name: String, val title: String, val detail: String, val on: Boolean, val enabled: Boolean) : SettingRow
     /** [shown] is the chosen option's label (or the value itself when no option is it). */
@@ -60,6 +63,8 @@ sealed interface SettingRow {
     /** A line of text and a button at its end; [error]: the line is a failure. */
     data class Action(val key: String, val title: String, val detail: String, val button: String, val enabled: Boolean, val error: Boolean, val action: String) : SettingRow
     data class Info(val key: String, val title: String, val detail: String) : SettingRow
+    /** What is stored, by kind, as one bar: [total] in words over it, each part's share and its line under it. */
+    data class Usage(val key: String, val title: String, val total: String, val parts: List<UsagePart>) : SettingRow
     /** [level]: dragged through the core's in-place level edit instead of by [name]. */
     data class Slider(val name: String, val label: String, val value: Float, val min: Float, val max: Float, val centred: Boolean, val level: EqLevel?) : SettingRow
     /**
@@ -541,13 +546,14 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             val st = f.storage
             val bytes = Fmt::bytes
             val t = str(R.string.settings_stored)
-            SettingRow.Info(
-                settingKey(t), t,
-                str(
-                    R.string.settings_stored_detail, bytes(st.streamBytes), bytes(st.coverBytes), bytes(st.lyricsBytes),
-                    res.getQuantityString(R.plurals.settings_stored_downloads, st.downloadSongs, st.downloadSongs, bytes(st.downloadBytes)), bytes(st.indexBytes),
-                ),
+            val parts = listOf(
+                UsagePart(str(R.string.settings_streamed), bytes(st.streamBytes), st.streamBytes),
+                UsagePart(res.getQuantityString(R.plurals.settings_stored_downloads, st.downloadSongs, st.downloadSongs), bytes(st.downloadBytes), st.downloadBytes),
+                UsagePart(str(R.string.settings_covers), bytes(st.coverBytes), st.coverBytes),
+                UsagePart(str(R.string.settings_lyrics_cache), bytes(st.lyricsBytes), st.lyricsBytes),
+                UsagePart(str(R.string.settings_stored_library), bytes(st.indexBytes), st.indexBytes),
             )
+            SettingRow.Usage(settingKey(t), t, bytes(parts.sumOf { it.bytes }), parts)
         }
         is RowItem.Server -> p.servers.getOrNull(item.index.toInt())?.let { sv ->
             val active = sv.id == p.activeServerId

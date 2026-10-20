@@ -299,6 +299,10 @@ pub struct ProfileRules {
     pub measures: bool,
     /// Songs carry hearts, and a heart is sent (an account's, or a provider account's likes).
     pub stars: bool,
+    /// Songs show a seal that asks to sign in: a provider's account, signed out, would carry them.
+    pub stars_after_sign_in: bool,
+    /// Songs heard are scrobbled: the account keeps plays (a server's, a provider's history).
+    pub scrobbles: bool,
     /// Home is the service's own feed (`Read::HomeFeed`), not the library's shelves.
     pub feed: bool,
 }
@@ -322,7 +326,7 @@ pub fn profile_rules(guest: bool) -> ProfileRules {
     let sections = if guest { vec![Albums, Artists, Songs, Genres] } else { vec![Albums, Favourites, Artists, Songs, Playlists, Smart, History, Genres, Decades, Folders, Radio, Downloads] };
     let account_only = [SettingsPart::ServerOptions, SettingsPart::Library, SettingsPart::Downloads];
     let settings = SETTINGS_PARTS.into_iter().filter(|p| !guest || !account_only.contains(p)).collect();
-    ProfileRules { asks: guest, account: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, feed: false }
+    ProfileRules { asks: guest, account: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, stars_after_sign_in: false, scrobbles: !guest, feed: false }
 }
 
 /// A decade's years, first and last, from its first year.
@@ -366,6 +370,14 @@ pub struct LibrarySizes {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn library_sizes() -> LibrarySizes {
     LibrarySizes { search_songs: 40, search_albums: 20, search_artists: 10, local_search: 30, smart_songs: 500, random_songs: 100, genre_songs: 200, sync_page: 500 }
+}
+
+/// How many of a page's `total` songs show (an artist's, search's): a few until Show all is pressed
+/// (`all`), as Spotify's Popular does; a list barely past that shows whole, with no Show all.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn songs_shown(total: u32, all: bool) -> u32 {
+    const FEW: u32 = 5;
+    if all || total <= FEW + 2 { total } else { FEW }
 }
 
 /// Page sizes of the long lists. A page shorter than its size is the last one.
@@ -494,6 +506,11 @@ pub struct Decade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_song_lists_show_a_few() {
+        assert_eq!([songs_shown(40, false), songs_shown(40, true), songs_shown(7, false), songs_shown(8, false), songs_shown(0, false)], [5, 40, 7, 5, 0]);
+    }
 
     #[test]
     fn a_guest_home_shows_the_hosts_album_shelves_only() {

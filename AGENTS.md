@@ -105,6 +105,10 @@ Internal notes, never published: `docs/features.md` (planned features, owner's d
   client would need it too, it belongs in Rust. A rule written in two languages is a bug. A feature
   only one platform can have (Android Auto, widgets, launcher shortcuts, the iPod's lock screen) may
   live wholly in that client; what it shows still comes from the core where the core already has it.
+- Clients keep parity: a screen, control or fix asked for on one client (Android, the desktop, the web,
+  the terminal, the iPod) is meant for every client that has that screen, even when the request names
+  only one. When the request does not say, ask after building it whether the other clients get it too,
+  and list the ones still missing it.
 - The core returns data and enums, never user-facing text. Words live in each client: Android string
   resources (`strings.xml`, `strings_ui.xml`, read via `app/ui/Say.kt`), `crates/cli/src/text.rs`,
   the desktop's `words.rs`. Logs, perf report and self test are English.

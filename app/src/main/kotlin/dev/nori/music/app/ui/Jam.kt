@@ -19,6 +19,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -198,6 +200,14 @@ private fun Listeners(names: List<String>, listening: Int, quiet: ColorProducer,
     }
 }
 
+/** Leave the jam: the sign-out glyph, its words read aloud. */
+@Composable
+private fun LeaveButton(tint: ColorProducer, onClick: () -> Unit) {
+    Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        LookIcon(Icons.AutoMirrored.Filled.Logout, words(R.string.jam_leave), Modifier.size(22.dp), tint)
+    }
+}
+
 /** A jam guest whose jam is not seen (not yet, or the relay cannot be reached): Leave is always there. */
 @Composable
 internal fun GuestLeaveHeader() {
@@ -210,11 +220,7 @@ internal fun GuestLeaveHeader() {
             words(R.string.jam_title), { look.color(CoverLook.ON) }, Modifier.weight(1f).padding(start = 8.dp),
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1,
         )
-        LookText(
-            words(R.string.jam_leave), accent,
-            Modifier.clip(RoundedCornerShape(50)).clickable(onClick = { vm.leave() }).padding(horizontal = 8.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1,
-        )
+        LeaveButton(accent, vm::leave)
     }
 }
 
@@ -252,11 +258,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Listeners(remember(j.members) { j.members.map { it.name } }, listeners.size, quiet, Modifier.weight(1f)) { look.color(CoverLook.BACKGROUND) }
             PeopleButton(listeners.size, prominent = false) { people = true }
-            LookText(
-                words(R.string.jam_leave), accent,
-                Modifier.clip(RoundedCornerShape(50)).clickable(onClick = { vm.leave() }).padding(horizontal = 8.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1,
-            )
+            LeaveButton(accent, vm::leave)
         }
         when (j.listening) {
             Listening.WATCHING -> if (j.along) R.string.jam_watching else null
@@ -395,7 +397,14 @@ internal fun JamControls(j: JamView, onInvite: () -> Unit = {}, onSettings: () -
                 val role = roleName(m.role)
                 Person(m, if (m.id == j.you) words(R.string.jam_you_role, role) else role) {
                     if (j.hosting) {
-                        Chip(words(if (m.role == Role.ADMIN) R.string.jam_make_guest else R.string.jam_make_admin), false) { vm.promote(m.id, m.role != Role.ADMIN) }
+                        // A key, lit while they are an admin: a tap makes them one, or a guest again.
+                        val admin = m.role == Role.ADMIN
+                        IconButton({ vm.promote(m.id, !admin) }) {
+                            Icon(
+                                Icons.Filled.Key, words(if (admin) R.string.jam_make_guest else R.string.jam_make_admin), Modifier.size(20.dp),
+                                tint = if (admin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         IconButton({ vm.remove(m.id) }) {
                             Icon(Icons.Filled.Close, words(R.string.jam_send_out), Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }

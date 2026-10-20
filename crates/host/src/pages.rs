@@ -60,7 +60,8 @@ pub const ALBUM_PAGE: u32 = 500;
 
 /// What Home shows, as it comes.
 pub enum HomePart {
-    /// "For you": the favourites' tile, then the mixes; empty for a jam guest. Sent first, and again
+    /// "For you": the favourites' tile, then the mixes; empty without an account and on a source's
+    /// own Home. Sent first, and again
     /// once the mixes are drawn, when they changed.
     Mixes(Vec<MixTile>),
     /// A source's own Home (`ProfileRules::feed`): its shelves.
@@ -150,6 +151,9 @@ impl Handle {
 
     fn home(&self, rows: Vec<HomeRow>, mixes: bool, each: &dyn Fn(Result<HomePart, NetError>)) {
         if self.rules.feed {
+            if mixes {
+                each(Ok(HomePart::Mixes(Vec::new())));
+            }
             let r = read_pages(&self.client, Read::HomeFeed, |p| {
                 if let Page::Feed { v } = p {
                     each(Ok(HomePart::Feed(v)));

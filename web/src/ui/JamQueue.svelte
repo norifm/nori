@@ -23,7 +23,7 @@
           <Icon name="devices" />{j.listening === "Playing" ? W.jamPlayingHere : W.jamListenHere}
         </button>
       {/if}
-      <button class="pill small" onclick={() => void remote.leave()}>{W.jamLeave}</button>
+      <button class="round" aria-label={W.jamLeave} title={W.jamLeave} onclick={() => void remote.leave()}><Icon name="sign-out" /></button>
     </div>
     <p class="sub">{W.jamListening(j.members.filter((m) => m.role !== "Host").length)}</p>
     {#if j.listening === "Watching" && j.along}<p class="sub">{W.jamWatching}</p>{/if}

@@ -54,6 +54,10 @@ pub enum Msg {
     /// A note with a button, answered with [`nori_host::session::Handle::curve_answer`].
     Ask { text: String, action: String },
     LoggedIn(Result<SavedServer, String>),
+    /// The account's sign-in answered.
+    SignedIn(nori_core::providers::SignInResult),
+    /// The sign-in window (its process id) came back on a signed-in page, and the core's answer.
+    SignInWindowDone(u32, nori_core::providers::SignInResult),
     Reachable(Result<(), String>),
     /// The other devices or the jam changed (remote control, jams).
     Remote,
