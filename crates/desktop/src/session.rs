@@ -58,6 +58,10 @@ pub enum Msg {
     SignedIn(nori_core::providers::SignInResult),
     /// The sign-in window (its process id) came back on a signed-in page, and the core's answer.
     SignInWindowDone(u32, nori_core::providers::SignInResult),
+    /// A headphone's AutoEQ curve as preset text (None: AutoEQ has none for it), by the headphone's name.
+    AutoEqCurve(String, Result<Option<String>, String>),
+    /// The AutoEQ list was fetched again, or could not be.
+    AutoEqList(Result<(), String>),
     Reachable(Result<(), String>),
     /// The other devices or the jam changed (remote control, jams).
     Remote,

@@ -311,6 +311,12 @@ pub struct App {
     /// Search's Show all pressed, for the query in `search_query`.
     search_songs_all: bool,
     search_query: String,
+    /// The equalizer page's AutoEQ search and what it found, and the saved sound profiles shown.
+    autoeq_query: String,
+    autoeq_hits: Vec<nori_core::AutoEqEntry>,
+    /// The output playing now, as the engine names it.
+    output: String,
+    profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<std::process::Child>,
     /// The read the shown page waits for.
@@ -489,6 +495,10 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             search_songs: Vec::new(),
             search_songs_all: false,
             search_query: String::new(),
+            autoeq_query: String::new(),
+            autoeq_hits: Vec::new(),
+            output: String::new(),
+            profiles: Vec::new(),
             sign_in_window: None,
             want: None,
             shelves,
@@ -814,6 +824,12 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_eq_gain, h, |a, i, v, last| a.eq_gain(i.max(0) as usize, v, last));
     on!(ui.on_eq_tool, h, |a, name, i| a.eq_tool(&name, i.max(0) as usize));
+    on!(ui.on_eq_autoeq_search, h, |a, q| a.autoeq_search(&q));
+    on!(ui.on_eq_autoeq_pick, h, |a, i| a.autoeq_pick(i.max(0) as usize));
+    on!(ui.on_eq_autoeq_download, h, |a| a.autoeq_download());
+    on!(ui.on_eq_profile_apply, h, |a, i| a.profile_apply(i.max(0) as usize));
+    on!(ui.on_eq_profile_delete, h, |a, i| a.profile_delete(i.max(0) as usize));
+    on!(ui.on_eq_profile_save, h, |a, name| a.profile_save(&name));
     on!(ui.on_eq_sized, h, |a, w, hh| {
         let ui = a.ui();
         ui.set_eq_curve_w(w);
@@ -1742,6 +1758,13 @@ impl App {
                 match &e {
                     // A seek landed: the lyrics follow from the new place.
                     Event::Position { .. } => self.lyrics_step(true),
+                    // The output playing: the equalizer page suggests its headphones' AutoEQ curves.
+                    Event::Output { name } => {
+                        self.output = name.clone();
+                        if self.ui().get_view() == EQUALIZER {
+                            self.eq_extras();
+                        }
+                    }
                     Event::Buffering(b) if matches!(self.playback, Playback::Here) => {
                         self.ui().set_buffering(*b);
                         self.advancing();
@@ -1823,6 +1846,34 @@ impl App {
             }
             Msg::Volume(v) if self.there().is_none() => self.ui().set_volume(v),
             Msg::Volume(_) => {}
+            Msg::AutoEqCurve(name, curve) => {
+                let ui = self.ui();
+                ui.set_eq_autoeq_busy(false);
+                let note = match curve {
+                    Ok(Some(text)) => match crate::session::app().settings.sound_tool(nori_core::settings_store::SoundTool::Import { text }) {
+                        Ok(change) => {
+                            if let Some(change) = change {
+                                self.on_session(|s| s.applied(change.effect));
+                                self.tune();
+                            }
+                            words::autoeq_applied(&name)
+                        }
+                        Err(e) => format!("{e:?}"),
+                    },
+                    Ok(None) => words::AUTOEQ_NO_CURVE.into(),
+                    Err(e) => e,
+                };
+                ui.set_eq_autoeq_note(note.into());
+                self.settings_shown();
+            }
+            Msg::AutoEqList(done) => {
+                let ui = self.ui();
+                ui.set_eq_autoeq_busy(false);
+                if let Err(e) = done {
+                    ui.set_eq_autoeq_note(e.into());
+                }
+                self.settings_shown();
+            }
             Msg::SignInWindowDone(pid, r) => {
                 if let Some(mut c) = self.sign_in_window.take_if(|c| c.id() == pid) {
                     let _ = c.kill();
@@ -2141,6 +2192,7 @@ impl App {
         }
         if view == EQUALIZER {
             crate::eq::fill(&ui, &prefs);
+            self.eq_extras();
         }
     }
 
@@ -2295,6 +2347,94 @@ impl App {
             Ok(None) => {}
             Err(e) => self.say(&format!("{e:?}"), true),
         }
+        self.settings_shown();
+    }
+
+    /// The equalizer page's headphones (the AutoEQ list, searched) and saved profiles.
+    fn eq_extras(&mut self) {
+        let Some(s) = &self.session else { return };
+        let ui = self.ui();
+        let count = s.core.autoeq_count().unwrap_or(0);
+        ui.set_eq_autoeq_count(count as i32);
+        ui.set_eq_autoeq_search_words(words::autoeq_search(count).into());
+        self.profiles = s.core.profiles().unwrap_or_default();
+        let lines = self.profiles.iter().map(|p| crate::EqLine { title: p.name.as_str().into(), detail: words::profile_use(&p.outputs).into() }).collect::<Vec<_>>();
+        ui.set_eq_profiles(ModelRc::new(VecModel::from(lines)));
+        // Nothing searched: the curves that may be the headphones playing now, best first.
+        if self.autoeq_query.trim().is_empty() {
+            self.autoeq_hits = s.core.autoeq_for_output(self.output.clone(), 3);
+            ui.set_eq_autoeq_for(words::autoeq_for(&self.output).into());
+            self.show_autoeq_hits();
+        }
+    }
+
+    fn show_autoeq_hits(&self) {
+        let lines = self.autoeq_hits.iter().map(|e| crate::EqLine { title: e.name.as_str().into(), detail: words::autoeq_caption(e).into() }).collect::<Vec<_>>();
+        self.ui().set_eq_autoeq_hits(ModelRc::new(VecModel::from(lines)));
+    }
+
+    /// Searches the AutoEQ list for `query` (the core's own limits and too-short rule).
+    fn autoeq_search(&mut self, query: &str) {
+        let Some(s) = &self.session else { return };
+        self.autoeq_query = query.to_string();
+        if query.trim().is_empty() {
+            return self.eq_extras();
+        }
+        self.autoeq_hits = s.core.autoeq_browse(query.to_string()).hits;
+        self.show_autoeq_hits();
+    }
+
+    /// Fetches hit `i`'s curve; it becomes the equalizer when it comes ([`Msg::AutoEqCurve`]).
+    fn autoeq_pick(&mut self, i: usize) {
+        let (Some(s), Some(entry)) = (&self.session, self.autoeq_hits.get(i).cloned()) else { return };
+        let ui = self.ui();
+        ui.set_eq_autoeq_busy(true);
+        ui.set_eq_autoeq_note("".into());
+        let (client, tx) = (s.client.clone(), self.tx.clone());
+        nori_host::spawn("nori-autoeq", move || {
+            let name = entry.name.clone();
+            let curve = nori_core::transport::block_on(client.autoeq_curve(entry)).map_err(|e| e.to_string());
+            tx.send(Msg::AutoEqCurve(name, curve));
+        });
+    }
+
+    /// Fetches the AutoEQ list (asked for: on any network).
+    fn autoeq_download(&mut self) {
+        let Some(s) = &self.session else { return };
+        self.ui().set_eq_autoeq_busy(true);
+        let (client, tx) = (s.client.clone(), self.tx.clone());
+        nori_host::spawn("nori-autoeq", move || {
+            let done = nori_core::transport::block_on(client.autoeq_update(true, false)).map(|_| ()).map_err(|e| e.to_string());
+            tx.send(Msg::AutoEqList(done));
+        });
+    }
+
+    /// Makes saved profile `i`'s sound the one in use.
+    fn profile_apply(&mut self, i: usize) {
+        let Some(sound) = self.profiles.get(i).and_then(|p| nori_core::settings::sound_from_json(p.json.clone())) else { return };
+        let store = &crate::session::app().settings;
+        let Some(prefs) = store.current() else { return };
+        let effect = store.put(prefs.with_sound(sound));
+        self.on_session(|s| s.applied(effect));
+        self.tune();
+        self.settings_shown();
+    }
+
+    fn profile_save(&mut self, name: &str) {
+        let name = name.trim();
+        let (Some(s), Some(prefs)) = (&self.session, crate::session::app().settings.current()) else { return };
+        if name.is_empty() {
+            return;
+        }
+        if let Err(e) = s.core.profile_save_sound(name.to_string(), prefs.sound()) {
+            self.say(&format!("{e:?}"), true);
+        }
+        self.settings_shown();
+    }
+
+    fn profile_delete(&mut self, i: usize) {
+        let (Some(s), Some(p)) = (&self.session, self.profiles.get(i)) else { return };
+        let _ = s.core.profile_delete(p.name.clone());
         self.settings_shown();
     }
 

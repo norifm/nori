@@ -329,6 +329,32 @@ pub fn profile_lines(p: &nori_core::settings::SavedServer) -> (String, String) {
     }
 }
 
+/// The AutoEQ search field's placeholder, with how many headphones the list has.
+pub fn autoeq_search(count: u32) -> String {
+    format!("Search {count} headphones")
+}
+
+/// An AutoEQ curve's line under its name: who measured it, the form and the target, whichever are known.
+pub fn autoeq_caption(e: &nori_core::AutoEqEntry) -> String {
+    [e.source.as_str(), e.form.as_str(), e.target.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+}
+
+pub fn autoeq_applied(name: &str) -> String {
+    format!("The equalizer is now {name}’s AutoEQ curve.")
+}
+
+/// Over the curves suggested for the output playing.
+pub fn autoeq_for(output: &str) -> String {
+    format!("For {output}")
+}
+
+pub const AUTOEQ_NO_CURVE: &str = "AutoEQ has no curve for these headphones.";
+
+/// A saved profile's line: the devices it is used on by itself.
+pub fn profile_use(outputs: &[String]) -> String {
+    if outputs.is_empty() { String::new() } else { format!("Used on {}", outputs.join(", ")) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

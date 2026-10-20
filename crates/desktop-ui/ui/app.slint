@@ -137,6 +137,12 @@ export struct SettingRow {
     shares: [float],
 }
 
+// A line with a quieter one under it: an AutoEQ curve, a saved sound profile.
+export struct EqLine {
+    title: string,
+    detail: string,
+}
+
 // A kind of profile the login page adds (the core's providers): its words, and the fields its form asks.
 export struct LoginKind {
     name: string,
@@ -3293,6 +3299,23 @@ component EqualizerPage inherits Flickable {
     callback gain(int, float, bool);
     callback tool(string, int);
     callback sized(length, length);
+    // Headphones: the AutoEQ list (none until fetched), searched; the last curve's word or a failure.
+    in property <int> autoeq-count;
+    in property <string> autoeq-search-words;
+    in property <[EqLine]> autoeq-hits;
+    // Over the hits while nothing is searched: whose curves they may be (the output playing).
+    in property <string> autoeq-for;
+    in property <string> autoeq-note;
+    in property <bool> autoeq-busy;
+    in property <[EqLine]> profiles;
+    callback autoeq-search(string);
+    callback autoeq-pick(int);
+    callback autoeq-download();
+    callback profile-apply(int);
+    callback profile-delete(int);
+    callback profile-save(string);
+    property <string> autoeq-query;
+    property <string> profile-name;
     content-height: page.preferred-height;
     // Settings' column, as wide as the top pill, and its title; each part on a plate as settings' groups are.
     page := VerticalLayout {
@@ -3500,6 +3523,134 @@ component EqualizerPage inherits Flickable {
             enabled: root.on;
             moved(v, last) => { root.level("eqPreamp", v, last); }
         }
+        }
+        EqSection {
+            text: "Headphones";
+        }
+        // AutoEQ's measured curves, as Android's headphone presets: search the list, pick one, and it is the curve.
+        EqPlate {
+            if root.autoeq-count == 0: Text {
+                text: "AutoEQ measures headphones and publishes a correction curve for each. The list is one download of about 850 kB; after that, searching happens on this computer.";
+                color: Theme.dim;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if root.autoeq-count == 0: HorizontalLayout {
+                alignment: start;
+                SmallButton {
+                    text: root.autoeq-busy ? "Downloading…" : "Download the list";
+                    enabled: !root.autoeq-busy;
+                    clicked => { root.autoeq-download(); }
+                }
+            }
+            if root.autoeq-count > 0: Field {
+                icon: Icons.search;
+                placeholder: root.autoeq-search-words;
+                text <=> root.autoeq-query;
+                edited(t) => { root.autoeq-search(t); }
+            }
+            if root.autoeq-note != "": Text {
+                text: root.autoeq-note;
+                color: Theme.accent;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if root.autoeq-query == "" && root.autoeq-hits.length > 0: Text {
+                text: root.autoeq-for;
+                color: Theme.dim;
+                font-size: 12px;
+            }
+            for hit[i] in root.autoeq-hits: Rectangle {
+                height: hit-lines.preferred-height + 12px;
+                border-radius: 8px;
+                background: hit-touch.has-hover ? Theme.hover : transparent;
+                hit-lines := VerticalLayout {
+                    padding-left: 8px;
+                    padding-top: 6px;
+                    padding-bottom: 6px;
+                    Text {
+                        text: hit.title;
+                        color: Theme.text;
+                    }
+                    Text {
+                        text: hit.detail;
+                        color: Theme.dim;
+                        font-size: 11px;
+                    }
+                }
+                hit-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.autoeq-pick(i); }
+                }
+            }
+            if root.autoeq-count > 0: Text {
+                text: "Curves from AutoEQ (autoeq.app), measured by the reviewers named under each.";
+                color: Theme.faint;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+        }
+        EqSection {
+            text: "Profiles";
+        }
+        // The sound saved under a name, to use again or give a device (Remember sound per device).
+        EqPlate {
+            for p[i] in root.profiles: HorizontalLayout {
+                spacing: 8px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: profile-lines.preferred-height + 12px;
+                    border-radius: 8px;
+                    background: profile-touch.has-hover ? Theme.hover : transparent;
+                    profile-lines := VerticalLayout {
+                        padding-left: 8px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        alignment: center;
+                        Text {
+                            text: p.title;
+                            color: Theme.text;
+                        }
+                        if p.detail != "": Text {
+                            text: p.detail;
+                            color: Theme.dim;
+                            font-size: 11px;
+                        }
+                    }
+                    profile-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.profile-apply(i); }
+                    }
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    path: Icons.close;
+                    quiet: true;
+                    size: 26px;
+                    icon: 12px;
+                    clicked => { root.profile-delete(i); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Field {
+                    placeholder: "Save the sound as…";
+                    text <=> root.profile-name;
+                    accepted => {
+                        root.profile-save(root.profile-name);
+                        root.profile-name = "";
+                    }
+                }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Save";
+                    enabled: root.profile-name != "";
+                    clicked => {
+                        root.profile-save(root.profile-name);
+                        root.profile-name = "";
+                    }
+                }
+            }
         }
         EqSection {
             text: "Output";
@@ -4041,6 +4192,19 @@ export component AppWindow inherits Window {
     in property <string> eq-ceiling-label;
     in property <string> eq-bypass;
     in property <[float]> eq-ranges;
+    in property <int> eq-autoeq-count;
+    in property <string> eq-autoeq-search-words;
+    in property <[EqLine]> eq-autoeq-hits;
+    in property <string> eq-autoeq-for;
+    in property <string> eq-autoeq-note;
+    in property <bool> eq-autoeq-busy;
+    in property <[EqLine]> eq-profiles;
+    callback eq-autoeq-search(string);
+    callback eq-autoeq-pick(int);
+    callback eq-autoeq-download();
+    callback eq-profile-apply(int);
+    callback eq-profile-delete(int);
+    callback eq-profile-save(string);
     callback setting-slid(string, float, bool);
     callback setting-typed(string, string);
     callback source-moved(string, bool);
@@ -5065,6 +5229,19 @@ export component AppWindow inherits Window {
                         ceiling-label: root.eq-ceiling-label;
                         bypass: root.eq-bypass;
                         ranges: root.eq-ranges;
+                        autoeq-count: root.eq-autoeq-count;
+                        autoeq-search-words: root.eq-autoeq-search-words;
+                        autoeq-hits: root.eq-autoeq-hits;
+                        autoeq-for: root.eq-autoeq-for;
+                        autoeq-note: root.eq-autoeq-note;
+                        autoeq-busy: root.eq-autoeq-busy;
+                        profiles: root.eq-profiles;
+                        autoeq-search(q) => { root.eq-autoeq-search(q); }
+                        autoeq-pick(i) => { root.eq-autoeq-pick(i); }
+                        autoeq-download => { root.eq-autoeq-download(); }
+                        profile-apply(i) => { root.eq-profile-apply(i); }
+                        profile-delete(i) => { root.eq-profile-delete(i); }
+                        profile-save(name) => { root.eq-profile-save(name); }
                         back => { root.go(8); }
                         set(name, value) => { root.eq-set(name, value); }
                         level(name, v, last) => { root.setting-slid(name, v, last); }
