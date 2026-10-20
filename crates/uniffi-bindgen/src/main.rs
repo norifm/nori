@@ -7,6 +7,22 @@ fn main() {
         if let Ok(kt) = std::fs::read_to_string(&path) {
             std::fs::write(&path, cancellable(&nullable_futures(&kt))).unwrap();
         }
+        pin_calls_in(std::path::Path::new(out));
+    }
+}
+
+fn pin_calls_in(dir: &std::path::Path) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            pin_calls_in(&path);
+        } else if path.extension().is_some_and(|e| e == "kt") {
+            let kt = std::fs::read_to_string(&path).unwrap();
+            let pinned = pinned_calls(&kt);
+            if pinned != kt {
+                std::fs::write(&path, pinned).unwrap();
+            }
+        }
     }
 }
 
@@ -78,8 +94,61 @@ internal object uniffiKotlinCalls {
 fun uniffiKotlinCallDropped(handle: kotlin.Long) = uniffiKotlinCalls.cancel(handle)
 ";
 
+/// NORI: upstream hands Rust `this` as a borrowed handle and nothing keeps the object alive for the call,
+/// so the Cleaner (or `destroy`) could free the Rust object while the call still used it. Each such call
+/// now runs under the object's call count, as upstream's JNA bindings do: the object stays reachable until
+/// Rust returns, and `destroy` frees it only once no call is running.
+fn pinned_calls(kt: &str) -> String {
+    let mut out = String::with_capacity(kt.len() + kt.len() / 16);
+    let (mut borrowed, mut call) = (false, false);
+    for line in kt.split_inclusive('\n') {
+        let lowered = line.trim().strip_prefix("val uniffiArgLowered0 = uniffi.lowerObject");
+        if line.trim_end() == "    private val callCounter = java.util.concurrent.atomic.AtomicLong(1)" {
+            out.push_str(line);
+            out.push_str(CALL_COUNT);
+        } else if lowered.is_some_and(|l| l.contains("Ref") && l.ends_with("(this)")) {
+            assert!(!borrowed && !call, "a borrowed receiver is passed to the call that follows it");
+            borrowed = true;
+            out.push_str(line);
+        } else if borrowed && line.starts_with("    val uniffiReturn = uniffi.Scaffolding.") {
+            (borrowed, call) = (false, true);
+            out.push_str(&line.replacen("= uniffi.Scaffolding.", "= uniffiCall { uniffi.Scaffolding.", 1));
+        } else if call && line == "    )\n" {
+            call = false;
+            out.push_str("    ) }\n");
+        } else {
+            out.push_str(line);
+        }
+    }
+    assert!(!borrowed && !call, "every borrowed receiver's call was wrapped");
+    out
+}
+
+const CALL_COUNT: &str = "    private inline fun <R> uniffiCall(call: () -> R): R {
+        while (true) {
+            val count = callCounter.get()
+            check(count > 0L) { \"${javaClass.simpleName} was destroyed\" }
+            if (callCounter.compareAndSet(count, count + 1L)) break
+        }
+        try {
+            return call()
+        } finally {
+            if (callCounter.decrementAndGet() == 0L) uniffiCleanable?.clean()
+        }
+    }
+";
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn calls_hold_their_object() {
+        let kt = "class A {\n    private val callCounter = java.util.concurrent.atomic.AtomicLong(1)\n\n    fun m(x: kotlin.Long): kotlin.Long {\n    val uniffiArgLowered0 = uniffi.lowerObjectRef7(this)\n    val uniffiArgLowered1 = x\n\n    val uniffiReturn = uniffi.Scaffolding.m(\n        uniffiArgLowered0,\n        uniffiArgLowered1,\n    )\n    return uniffiReturn\n    }\n}\nfun f() {\n    val uniffiReturn = uniffi.Scaffolding.f(\n    )\n}\n";
+        let fixed = super::pinned_calls(kt);
+        assert!(fixed.contains("AtomicLong(1)\n    private inline fun <R> uniffiCall("));
+        assert!(fixed.contains("    val uniffiReturn = uniffiCall { uniffi.Scaffolding.m(\n        uniffiArgLowered0,\n        uniffiArgLowered1,\n    ) }\n    return uniffiReturn\n"));
+        assert!(fixed.contains("fun f() {\n    val uniffiReturn = uniffi.Scaffolding.f(\n    )\n}\n"));
+    }
+
     #[test]
     fn nullable_future_drops_non_null_assertion() {
         let kt = "suspend fun a(\n    f: kotlin.Long,\n) : kotlin.String?\n{\n                return completion.value!!\n}\nsuspend fun b(\n    f: kotlin.Long,\n) : kotlin.String\n{\n                return completion.value!!\n}\n";
