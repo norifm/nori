@@ -51,6 +51,45 @@ cacheable outputs, keyed by sources, features, profiles, compiler and NDK
 versions and build flags. Binding source inputs list exported crates in
 `core/build.gradle.kts`; extend that list when adding an FFI crate.
 
+### Debug info, worktrees and disk
+
+Debug and test builds keep line tables only for the workspace and no debug info for dependencies
+(`[profile.dev]` in Cargo.toml): panics and backtraces keep file and line, and the target directory is
+about a third smaller. Set `CARGO_PROFILE_DEV_DEBUG=true` for a session that needs a debugger's
+variables. Release, perf and Android profiles are unchanged.
+
+Measured on October 20, 2026 (M4 Pro, 24 GB, other agents building at the same time, so single
+observations), `cargo test -j4 --workspace --no-run` into an empty target directory without sccache:
+
+| | full debug info | line tables only |
+| --- | ---: | ---: |
+| Clean build | 461 s | 380 s |
+| Target directory after the build | 8.9 GB | 5.5 GB |
+| Target directory after the tests ran | 11 GB | 7.1 GB |
+| Rebuild after one constant in nori-player | 12.5 s | 12.4 s |
+| Nextest, whole workspace, four threads | 64.6 s | 64.0 s |
+
+The edit's critical path is the desktop crate's test binary (6.4 s of the 12 s): iterate with
+`-p <crate>` when the desktop is not involved.
+
+Each worktree keeps its own `target/` and Gradle `build/` directories. A shared writable Cargo target
+directory is not used: `target/debug/nori-cli` (the e2e peer) and the Android library under
+`target/<abi>/android-dev` would be overwritten by whichever worktree built last, and Cargo's lock
+would serialize every build. What worktrees share instead:
+
+- sccache (`.cargo/config.toml`) holds compiled dependencies for every worktree; a fresh worktree's
+  full test build hit it for 68% of its crates (329 s under load). It cannot cache incremental
+  workspace crates or links. Its default limit is 10 GB, which it fills; a larger one
+  (`SCCACHE_CACHE_SIZE=30G` in the environment before the server starts) keeps more of it.
+- Gradle's build cache in `~/.gradle/caches` gives a fresh worktree its native library, bindings
+  and Kotlin classes when their inputs match; a changed Cargo.toml or Cargo.lock is a miss.
+- The Bazel disk cache (`~/.cache/nori/bazel`) for `tools/rust.py`.
+
+A worktree's directories go with it when it is removed. The main checkout's `target/` only grows: every
+feature set, profile and target keeps its own artifacts, and stale ones are never removed (131 GB on
+this machine, 49 GB of it incremental caches). `cargo clean` (or `cargo sweep --time 14` from
+`cargo install cargo-sweep`) gives it back; the next build takes about the clean-build time above.
+
 ### Devices
 
 Start existing arm64 AVDs with hardware graphics and four guest CPUs:

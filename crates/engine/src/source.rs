@@ -23,6 +23,7 @@ use symphonia::core::io::MediaSource;
 
 use crate::arriving::Listening;
 use crate::store::Writer;
+use crate::Clock;
 
 /// Makes the stream cache entry a loader writes into, on the loader's thread (it may wait for the
 /// fetching ahead to hand the song over, `Store::writer_for_player`). A partly written entry is continued.
@@ -234,7 +235,7 @@ impl Cancel {
 /// One owner's song fetches (an engine's loaders, a fetch-ahead): the watch that calls off stalled
 /// requests, on one sleeping thread alive only while a request has a deadline; the requests waiting for
 /// an answer, by source ([`MAX_ASKING`]); the loaders alive, for the memory report ([`Fetching::held`]);
-/// and the clock their arrival rates are measured on.
+/// and the clock their arrival rates are measured on, told when a loader's thread takes bytes in.
 #[derive(Default)]
 pub struct Fetching {
     watch: Mutex<Watch>,
@@ -242,8 +243,29 @@ pub struct Fetching {
     /// The requests waiting for an answer, oldest first, by the source they go to.
     asking: Mutex<Vec<(usize, Cancel)>>,
     alive: Mutex<Vec<Weak<Loaded>>>,
-    /// The engine's clock, µs, from `epoch` on ([`Fetching::timed`]); the machine's without one.
-    clock: Option<(Instant, Box<dyn Fn() -> i64 + Send + Sync>)>,
+    /// The engine's clock, from `epoch` on ([`Fetching::timed`]); the machine's without one.
+    clock: Option<(Instant, Box<dyn Told>)>,
+}
+
+/// What the loaders tell the engine's clock: [`Clock`] without its generic methods.
+trait Told: Send + Sync {
+    fn now_us(&self) -> i64;
+    fn loading(&self, working: bool);
+    fn let_loaders_run(&self);
+}
+
+impl<C: Clock + Sync> Told for C {
+    fn now_us(&self) -> i64 {
+        Clock::now_us(self)
+    }
+
+    fn loading(&self, working: bool) {
+        Clock::loading(self, working)
+    }
+
+    fn let_loaders_run(&self) {
+        Clock::let_loaders_run(self)
+    }
 }
 
 /// Requests with a stall deadline, and whether the thread that cancels stalled ones runs.
@@ -271,15 +293,29 @@ pub struct Held {
 }
 
 impl Fetching {
-    /// Fetches whose arrival rates are measured on `now_us` (the engine's clock, which a test moves).
-    pub fn timed(now_us: impl Fn() -> i64 + Send + Sync + 'static) -> Fetching {
-        let epoch = Instant::now() - Duration::from_micros(now_us().max(0) as u64);
-        Fetching { clock: Some((epoch, Box::new(now_us))), ..Fetching::default() }
+    /// Fetches on the engine's `clock` (which a test moves): their arrival rates are measured on it, and it
+    /// is told when their loaders take bytes in.
+    pub fn timed<C: Clock + Sync>(clock: C) -> Fetching {
+        let epoch = Instant::now() - Duration::from_micros(clock.now_us().max(0) as u64);
+        Fetching { clock: Some((epoch, Box::new(clock))), ..Fetching::default() }
+    }
+
+    fn loading(&self, working: bool) {
+        if let Some((_, c)) = &self.clock {
+            c.loading(working);
+        }
+    }
+
+    /// Before the engine looks at what a loader holds.
+    fn look(&self) {
+        if let Some((_, c)) = &self.clock {
+            c.let_loaders_run();
+        }
     }
 
     fn now(&self) -> Instant {
         match &self.clock {
-            Some((epoch, now_us)) => *epoch + Duration::from_micros(now_us().max(0) as u64),
+            Some((epoch, c)) => *epoch + Duration::from_micros(c.now_us().max(0) as u64),
             None => Instant::now(),
         }
     }
@@ -562,6 +598,8 @@ struct State {
     /// The reader wants bytes from here, outside what is kept.
     restart: Option<u64>,
     closed: bool,
+    /// The loader's thread waits for the reader ([`Next::Wait`]).
+    idle: bool,
     /// The engine thread to wake when ready, and when no more bytes come in ([`State::settled`]).
     waiter: Option<Thread>,
     settle_waiter: Option<Thread>,
@@ -970,6 +1008,7 @@ impl Loader {
         if let Some(fill) = source.push(fill) {
             loaded.state.lock().pushed = false;
             let (l, from) = (loaded.clone(), source.clone());
+            fetching.loading(true);
             std::thread::Builder::new()
                 .name("nori-load".into())
                 .spawn(move || {
@@ -977,6 +1016,7 @@ impl Loader {
                     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| l.run(fill, &*from))).is_err() {
                         l.gave_up("the song's loader failed");
                     }
+                    l.ended();
                 })
                 .expect("a thread for loading");
         }
@@ -985,6 +1025,7 @@ impl Loader {
 
     /// Bytes are still on their way: wanted, not failed, not complete.
     pub fn fetching(&self) -> bool {
+        self.0.fetching.look();
         let s = self.0.state.lock();
         !s.closed && s.error.is_none() && !s.at_end()
     }
@@ -994,7 +1035,14 @@ impl Loader {
         let loaded = Arc::new(Loaded::new(fetching, State { live: true, ..State::default() }, waits));
         fetching.alive(&loaded);
         let (l, from, at) = (loaded.clone(), source.clone(), url.clone());
-        std::thread::Builder::new().name("nori-live".into()).spawn(move || l.run_live(&*from, &at)).expect("a thread for loading");
+        fetching.loading(true);
+        std::thread::Builder::new()
+            .name("nori-live".into())
+            .spawn(move || {
+                l.run_live(&*from, &at);
+                l.ended();
+            })
+            .expect("a thread for loading");
         Arc::new(Loader(loaded, source, url))
     }
 
@@ -1072,6 +1120,7 @@ impl Loader {
     /// the reader nears the low.
     /// [`State::settled`]; if not, `engine` is woken once it is.
     pub(crate) fn settled_or_wake(&self, engine: &Thread) -> bool {
+        self.0.fetching.look();
         let mut s = self.0.state.lock();
         if s.settled() {
             return true;
@@ -1082,6 +1131,7 @@ impl Loader {
 
     /// The whole song is in memory.
     pub fn complete(&self) -> bool {
+        self.0.fetching.look();
         let s = self.0.state.lock();
         s.base == 0 && s.at_end() && s.error.is_none()
     }
@@ -1122,6 +1172,7 @@ impl Loader {
     /// [`Loader::wait_sized`] without waiting: None until the first answer, when `engine` is woken once
     /// the song is ready.
     pub(crate) fn sized_or_wake(&self, engine: &Thread) -> Option<bool> {
+        self.0.fetching.look();
         let mut s = self.0.state.lock();
         if s.first_sized.is_none() {
             s.waiter = Some(engine.clone());
@@ -1131,6 +1182,7 @@ impl Loader {
 
     /// [`Loader::wait_whole`] without waiting: None until known, when `engine` is woken.
     pub(crate) fn whole_or_wake(&self, engine: &Thread) -> Option<bool> {
+        self.0.fetching.look();
         let mut s = self.0.state.lock();
         let whole = s.whole();
         if whole.is_none() {
@@ -1141,6 +1193,7 @@ impl Loader {
 
     /// Whether a read from `at` would find its bytes; if not, `engine` is woken when the loader is ready.
     pub(crate) fn ready_from_or_wake(&self, at: u64, engine: &Thread) -> bool {
+        self.0.fetching.look();
         let mut s = self.0.state.lock();
         if s.ready_from(at, self.0.now()) {
             return true;
@@ -1216,6 +1269,7 @@ impl Loader {
 
     /// Whether a read would not block; if not, `engine` is woken when it would not.
     pub(crate) fn ready_or_wake(&self, engine: &Thread) -> bool {
+        self.0.fetching.look();
         let mut s = self.0.state.lock();
         if s.ready(self.0.now()) {
             return true;
@@ -1294,9 +1348,35 @@ impl Loaded {
 
     /// Something that moves the fetching changed: wakes the loader's thread, or the platform pushing.
     fn stir(&self, s: &mut State) {
+        self.working(s);
         self.cv.notify_all();
         if let Some(w) = s.pusher.take() {
             w.wake();
+        }
+    }
+
+    /// The loader's thread takes bytes in again (or looks whether it should): the clock is told before
+    /// the thread wakes.
+    fn working(&self, s: &mut State) {
+        if std::mem::take(&mut s.idle) {
+            self.fetching.loading(true);
+        }
+    }
+
+    /// The loader's thread waits for the reader.
+    fn wait_idle(&self, s: &mut parking_lot::MutexGuard<State>) {
+        if !s.idle {
+            s.idle = true;
+            self.fetching.loading(false);
+        }
+        self.cv.wait(s);
+    }
+
+    /// The loader's thread ends.
+    fn ended(&self) {
+        let mut s = self.state.lock();
+        if !std::mem::replace(&mut s.idle, true) {
+            self.fetching.loading(false);
         }
     }
 
@@ -1510,9 +1590,10 @@ impl Loaded {
                         body = None;
                     }
                     if next != Next::Wait {
+                        self.working(&mut s);
                         break next;
                     }
-                    self.cv.wait(&mut s);
+                    self.wait_idle(&mut s);
                 }
             };
             let rest = match next {
@@ -1555,8 +1636,9 @@ impl Loaded {
                         break;
                     }
                     // The reader stopped: the connection waits in the socket.
-                    self.cv.wait(&mut s);
+                    self.wait_idle(&mut s);
                 }
+                self.working(&mut s);
                 let keep_from = s.reader_at.saturating_sub(LIVE_BEHIND);
                 if keep_from > s.base {
                     let drop = ((keep_from - s.base) as usize).min(s.data.len());
