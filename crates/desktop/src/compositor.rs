@@ -704,7 +704,8 @@ impl ApplicationHandler<Wake> for Runner {
         if self.shared.window.borrow().is_some() {
             return;
         }
-        let attrs = WindowAttributes::default().with_title("nori").with_inner_size(winit::dpi::LogicalSize::new(1280.0, 820.0)).with_min_inner_size(winit::dpi::LogicalSize::new(860.0, 560.0));
+        let attrs = WindowAttributes::default().with_title("nori").with_inner_size(winit::dpi::LogicalSize::new(1280.0, 820.0)).with_min_inner_size(winit::dpi::LogicalSize::new(860.0, 560.0))
+            .with_window_icon(crate::icon::rgba().and_then(|px| winit::window::Icon::from_rgba(px, crate::icon::SIDE, crate::icon::SIDE).ok()));
         #[cfg(all(feature = "test-control", target_os = "linux"))]
         let attrs = if std::env::var_os("NORI_TEST_OFFSCREEN").is_some() {
             use winit::platform::x11::WindowAttributesExtX11;
