@@ -648,7 +648,9 @@ impl OffloadOutput for JavaOffload {
         if java.offload.is_none() {
             return Err("no offload before Android 10".into());
         }
-        self.staging = vec![0u8; OFFLOAD_CHUNK];
+        if self.staging.is_empty() {
+            self.staging = vec![0u8; OFFLOAD_CHUNK];
+        }
         let (staging, bridge) = (self.staging.as_mut_ptr(), &self.bridge);
         let opened = env.with_local_frame(4, |env| -> jni::errors::Result<Option<(GlobalRef, GlobalRef, usize)>> {
             let args = [
@@ -664,7 +666,7 @@ impl OffloadOutput for JavaOffload {
             }
             // A compressed track counts its buffer in bytes.
             let held = call_int(env, &track, java.track.buffer_frames, &[]).unwrap_or(0).max(0) as usize;
-            // SAFETY: `staging` is kept, never resized, for as long as the buffer lives.
+            // SAFETY: `staging` is made once and never resized, so it outlives every buffer over it.
             let buffer = unsafe { env.new_direct_byte_buffer(staging, OFFLOAD_CHUNK) }?;
             Ok(Some((env.new_global_ref(&track)?, env.new_global_ref(&buffer)?, held)))
         });
