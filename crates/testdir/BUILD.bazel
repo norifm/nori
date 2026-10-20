@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-testdir',
  'edition': '2021',
- 'version': '0.7.0-beta.2',
+ 'version': '0.7.0-beta.3',
  'targets': [{'name': 'nori_testdir', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
              {'name': 'registered', 'kind': 'test', 'root': 'tests/registered.rs', 'test': True}],
  'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
