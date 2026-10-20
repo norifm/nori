@@ -45,6 +45,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -256,6 +258,10 @@ private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel = viewModel())
             // Random albums, each whole and in its own order; the account's own library only.
             if (LocalRules.current.account) ShuffleLink(actions::shuffleAlbums)
         }
+        if (sort == dev.nori.music.ffi.library.AlbumSort.ARTIST_ROWS) {
+            ArtistRows(vm)
+            return@Column
+        }
         // Ask for the covers just past the fold while the ones on screen are still arriving. The first row
         // is read by a snapshot observer, not here: read in composition, it recomposed the whole grid on
         // every row scrolled.
@@ -279,6 +285,38 @@ private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel = viewModel())
             itemsIndexed(albums, key = { _, a -> a.id }, contentType = { _, _ -> "album" }) { i, a ->
                 if (i >= albums.size - 12) vm.loadMore()
                 AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
+            }
+        }
+    }
+}
+
+/** Thumbnails in an artist's row: about five across a phone, so a sixth shows the row scrolls. */
+private val ROW_COVER = 64.dp
+
+/** The albums a row per artist: the artist's name, then their covers alone. */
+@Composable
+private fun ArtistRows(vm: AlbumsViewModel) {
+    val rows by vm.rows.collectAsStateWithLifecycle()
+    val nav = LocalNav.current
+    LazyColumn(contentPadding = PaddingValues(top = 4.dp, bottom = Space.gutter + LocalChromeInset.current)) {
+        itemsIndexed(rows, key = { _, r -> r.first().id }, contentType = { _, _ -> "artist" }) { i, row ->
+            if (i >= rows.size - 8) vm.loadMore()
+            val first = row.first()
+            val artist = first.artistId
+            Column(Modifier.padding(bottom = 12.dp)) {
+                Text(
+                    first.artist,
+                    Modifier.fillMaxWidth().then(if (artist != null) Modifier.clickable { nav.artist(artist) } else Modifier).padding(horizontal = Space.gutter, vertical = 6.dp),
+                    style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(row, key = { it.id }, contentType = { "cover" }) { a ->
+                        Cover(
+                            vm.cover(a.coverArt, CoverSize.ROW), ROW_COVER,
+                            Modifier.clickable { nav.album(a.id, a) }.semantics { contentDescription = a.name },
+                        )
+                    }
+                }
             }
         }
     }

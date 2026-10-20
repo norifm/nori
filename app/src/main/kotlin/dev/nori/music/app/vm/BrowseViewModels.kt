@@ -6,6 +6,7 @@ import dev.nori.music.ffi.library.AlbumSort
 import dev.nori.music.ffi.library.albumSortKept
 import dev.nori.music.ffi.library.albumSortSaved
 import dev.nori.music.ffi.library.albumsExhausted
+import dev.nori.music.ffi.library.artistRows
 import dev.nori.music.ffi.library.songSortKept
 import dev.nori.music.ffi.library.songSortSaved
 import dev.nori.music.ffi.model.Album
@@ -190,7 +191,10 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
     }
 }
 
-/** The album grid: one sort order at a time, pages appended as the list nears its end. */
+/**
+ * The album grid: one sort order at a time, pages appended as the list nears its end. In artist rows,
+ * also those albums a row per artist ([rows]).
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     private val pageSize by lazy { browsePaging().albums.toInt() }
@@ -202,6 +206,10 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     private val _none = MutableStateFlow(false)
     /** The first page came back empty: there are no albums, rather than none read yet. */
     val none: StateFlow<Boolean> = _none
+    private val _rows = MutableStateFlow<List<List<Album>>>(emptyList())
+    val rows: StateFlow<List<List<Album>>> = _rows
+    // Where each of [rows] starts in [albums].
+    private var rowStarts: List<Int> = emptyList()
     private var loading = false
     private var exhausted = false
 
@@ -214,6 +222,8 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
         nori.settings.update { it.copy(listPrefs = it.listPrefs + (kept.key to kept.value)) }
         _albums.value = Grown.empty()
         _none.value = false
+        _rows.value = emptyList()
+        rowStarts = emptyList()
         exhausted = false
         loading = false
         loadMore()
@@ -227,12 +237,26 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
         viewModelScope.launch {
             nori.library.albums(sort, pageSize, offset).catch { }.collect { page ->
                 if (sort != _sort.value) return@collect
-                _albums.value = _albums.value.from(offset, page)
+                val all = _albums.value.from(offset, page)
+                if (sort == AlbumSort.ARTIST_ROWS) regroup(all, offset)
+                if (sort != _sort.value) return@collect
+                _albums.value = all
                 exhausted = albumsExhausted(page.size.toUInt())
                 _none.value = offset == 0 && page.isEmpty()
             }
             loading = false
         }
+    }
+
+    /** [rows] for [all], whose albums from [offset] on are new: the row they may continue is grouped again with them. */
+    private suspend fun regroup(all: List<Album>, offset: Int) {
+        val from = rowStarts.lastOrNull { it < offset } ?: 0
+        val kept = rowStarts.count { it < from }
+        val tail = all.subList(from, all.size).toList()
+        val added = withContext(Dispatchers.Default) { artistRows(tail) }.map { it.toInt() }
+        if (_sort.value != AlbumSort.ARTIST_ROWS) return
+        rowStarts = rowStarts.take(kept) + added.map { from + it }
+        _rows.value = _rows.value.take(kept) + added.mapIndexed { i, s -> tail.subList(s, added.getOrElse(i + 1) { tail.size }) }
     }
 }
 
