@@ -24,6 +24,11 @@ opens the progress and retry controls.
 
 Four songs download at once (from nori 0.7.0; before, it was a setting); the rest wait their turn.
 
+Each finished download is prepared once, so playing it offline costs nothing more: its lyrics are found
+and kept, and it is analyzed for AutoMix and the lyrics' timing (with **Better beat detection**, its
+beats too), one song at a time. From nori 0.7.0 every client does this, provider songs from octo-fiesta
+included; before, only Android looked up lyrics, and provider songs got neither.
+
 On the iPod touch, downloads run while the app is open or playing. Downloaded album pages use
 the saved tracks, and cached covers decode without reaching the server. In 0.6.0-beta.3 and later,
 unavailable artwork finishes loading with a placeholder.

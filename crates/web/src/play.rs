@@ -706,6 +706,7 @@ fn timing(t: LyricsTiming) -> Value {
     match t {
         LyricsTiming::NotChecked => json!({ "kind": "NotChecked", "ms": 0 }),
         LyricsTiming::DoesNotFit => json!({ "kind": "DoesNotFit", "ms": 0 }),
+        LyricsTiming::Unsure => json!({ "kind": "Unsure", "ms": 0 }),
         LyricsTiming::Automatic { ms } => json!({ "kind": "Automatic", "ms": ms }),
         LyricsTiming::Yours { ms, automatic } => json!({ "kind": "Yours", "ms": ms, "automatic": automatic }),
     }

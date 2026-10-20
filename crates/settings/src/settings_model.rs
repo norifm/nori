@@ -89,7 +89,6 @@ pub enum BeatModel {
     Unavailable,
     /// Not downloaded yet; fetched the next time AutoMix measures a song.
     Absent,
-    WaitingForWifi,
     Downloading,
     Ready,
     Failed { why: nori_automix::beat_model::BeatFailure },
@@ -128,7 +127,6 @@ fn beat_model_now(model: &beat_model::ModelFile) -> BeatModel {
     }
     match model.state() {
         beat_model::State::Absent => BeatModel::Absent,
-        beat_model::State::WaitingForWifi => BeatModel::WaitingForWifi,
         beat_model::State::Downloading => BeatModel::Downloading,
         // Ready only while the file is there.
         beat_model::State::Ready if model.ready().is_some() => BeatModel::Ready,

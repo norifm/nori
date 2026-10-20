@@ -513,11 +513,7 @@ impl Downloader {
             }
             drop(w);
             let core = self.core();
-            core.transfers().with(|t| {
-                t.followed(&id, transfers::COMPLETED, now);
-                // No lyrics lookup here (Android does it, `lyrics_for_downloads`).
-                t.work_done(&id, transfers::Work::Lyrics);
-            });
+            core.transfers().with(|t| t.followed(&id, transfers::COMPLETED, now));
             let _ = core.download_settle(vec![id.clone()], vec![true]);
             self.store.drop_copies(&id);
             self.analyses.saved(vec![id]);

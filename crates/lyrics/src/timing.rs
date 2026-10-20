@@ -26,7 +26,7 @@ pub fn with_yours(t: LyricsTiming, yours: Option<i64>) -> LyricsTiming {
 /// What the sync check gave, none if it has not run.
 fn automatic(t: LyricsTiming) -> Option<i64> {
     match t {
-        LyricsTiming::NotChecked | LyricsTiming::DoesNotFit => None,
+        LyricsTiming::NotChecked | LyricsTiming::DoesNotFit | LyricsTiming::Unsure => None,
         LyricsTiming::Automatic { ms } => Some(ms),
         LyricsTiming::Yours { automatic, .. } => automatic,
     }

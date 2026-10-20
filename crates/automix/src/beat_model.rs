@@ -25,8 +25,6 @@ const DIR: &str = "models";
 pub enum State {
     /// Not on the device; fetched the next time AutoMix measures a song.
     Absent,
-    /// Wanted, but on mobile data, which the user has not allowed for it.
-    WaitingForWifi,
     /// Downloading or converting.
     Downloading,
     Ready,
@@ -113,19 +111,6 @@ impl ModelFile {
         true
     }
 
-    /// Whether the model may be fetched over this network: not over a `metered` one; there it waits for
-    /// Wi-Fi, still saying why the last download failed if one did.
-    pub fn may_fetch(&self, metered: bool) -> bool {
-        let mut k = self.kept.lock();
-        if metered {
-            if !matches!(k.state, State::Failed(_)) {
-                k.state = State::WaitingForWifi;
-            }
-            return false;
-        }
-        true
-    }
-
     /// The switch changed. Turning it off deletes the model's directory.
     pub fn switched(&self, on: bool) {
         let mut k = self.kept.lock();
@@ -173,16 +158,5 @@ mod tests {
         m.switched(true);
         m.switched(false);
         assert!(m.begin_download());
-    }
-
-    #[test]
-    fn mobile_data_waits_for_wifi() {
-        let m = ModelFile::default();
-        assert!(m.may_fetch(false));
-        assert!(!m.may_fetch(true));
-        assert_eq!(m.state(), State::WaitingForWifi);
-        m.set_state(State::Failed(BeatFailure::Network));
-        assert!(!m.may_fetch(true));
-        assert_eq!(m.state(), State::Failed(BeatFailure::Network), "the failure still shows");
     }
 }
