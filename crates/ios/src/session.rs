@@ -1256,6 +1256,7 @@ mod tests {
         super::start(dir.path(), profile(), Box::new(out), false, Some(announced.clone())).unwrap();
         // The audio unit, calling back a buffer ahead of each one it plays.
         let stop = Arc::new(AtomicBool::new(false));
+        let (played_to, played) = std::sync::mpsc::channel();
         let unit = {
             let (sim, render, stop) = (sim.clone(), render.clone(), stop.clone());
             std::thread::spawn(move || {
@@ -1268,6 +1269,7 @@ mod tests {
                     }
                     sim.callback(&render, due);
                     due += sim.period_us(&render);
+                    let _ = played_to.send(());
                 }
             })
         };
@@ -1303,13 +1305,22 @@ mod tests {
                 assert!(news.recv_timeout(left).is_ok(), "waited for {what}");
             }
         };
+        // What the iPod's listener heard changes with each buffer the audio unit plays, not with news.
+        let heard_until = |what: &str, ready: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while !ready() {
+                let left = deadline.saturating_duration_since(Instant::now());
+                assert!(played.recv_timeout(left).is_ok(), "waited for {what}");
+            }
+        };
         until("the iPod listed", &|r| r.devices().iter().any(|d| d.id == ipod && d.name == "iPod touch"));
         phone.clone().pick(Some(ipod.clone()));
         until("the iPod mirrored", &|r| r.active().is_some());
         phone.clone().send(ipod.clone(), Op::Replace { songs, index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None });
 
         let heard_ms = || sim.heard(&render, HostClock.now_us()) as i64 * 1_000 / 44_100;
-        until("three seconds heard", &|r| r.active().is_some_and(|m| m.playing) && heard_ms() > 3_000);
+        until("the iPod playing", &|r| r.active().is_some_and(|m| m.playing));
+        heard_until("three seconds heard", &|| heard_ms() > 3_000);
         for _ in 0..5 {
             let _ = news.recv_timeout(Duration::from_millis(300));
             let m = phone.active().expect("still mirrored");
@@ -1347,7 +1358,7 @@ mod tests {
             songs: vec![next_album], index: 0, position_ms: 0, play: true, order: None, shuffle: false, repeat: 0, transfer: None, listen: None,
         });
         expect(at, REPORT_SONG, |r| r.id == "b");
-        until("the new remote album heard after the old one ended", &|_| heard_ms() >= heard_before + 500);
+        heard_until("the new remote album heard after the old one ended", &|| heard_ms() >= heard_before + 500);
 
         // The iPod first: its door closing answers the phone's held poll.
         super::close();

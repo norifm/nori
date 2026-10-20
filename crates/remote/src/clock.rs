@@ -7,30 +7,9 @@
 
 use std::collections::VecDeque;
 
-/// This device's clock for remote timing, µs: monotonic, and running on while the device sleeps
-/// (CLOCK_BOOTTIME on Android and Linux, which Android's `SystemClock.elapsedRealtimeNanos` reads).
-/// On Apple's systems CLOCK_MONOTONIC_RAW, `mach_continuous_time`: their CLOCK_MONOTONIC is the wall
-/// clock less the boot time, so NTP's corrections slew it, and `mach_absolute_time` (CLOCK_UPTIME_RAW,
-/// the audio timestamps' clock) stops while the device sleeps.
-#[cfg(unix)]
-#[allow(clippy::unnecessary_cast, reason = "time_t and c_long are 32 bits on 32-bit Android")]
-pub fn now_us() -> i64 {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    const CLOCK: libc::clockid_t = libc::CLOCK_BOOTTIME;
-    #[cfg(target_vendor = "apple")]
-    const CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC_RAW;
-    #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
-    const CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC;
-    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: `t` is a valid timespec to write into.
-    unsafe { libc::clock_gettime(CLOCK, &mut t) };
-    t.tv_sec as i64 * 1_000_000 + t.tv_nsec as i64 / 1_000
-}
-
-#[cfg(not(unix))]
-pub fn now_us() -> i64 {
-    nori_time::monotonic().as_micros() as i64
-}
+/// This device's clock for remote timing, µs ([`nori_time::device_us`]). A remote reads it through its
+/// executor (`nori_tasks::Tasks::now_us`), which a test simulates.
+pub use nori_time::device_us as now_us;
 
 /// One time exchange, µs: sent (`t1`) and answered (`t4`) on the controller's clock, received (`t2`) and
 /// answered (`t3`) on the device's.

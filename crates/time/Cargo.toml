@@ -8,6 +8,9 @@ description = "The one clock the core reads: monotonic instants and the wall clo
 [lib]
 name = "nori_time"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # std's clocks panic on wasm32-unknown-unknown; there web-time reads `performance.now()` and `Date.now()`.
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 web-time = "1.1"
