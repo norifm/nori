@@ -151,19 +151,24 @@ fn playlist(core: &Core, p: &nori_core::Playlist) -> Value {
     v
 }
 
+/// How many of `v` show until Show all is pressed.
+fn few(v: &[Song]) -> u32 {
+    nori_core::browse::songs_shown(v.len() as u32, false)
+}
+
 /// A page as the web draws it.
 fn page(core: &Core, p: Page) -> Value {
     match p {
         Page::Albums { v } => json!({ "albums": albums(core, &v) }),
         Page::Artists { v } => json!({ "artists": artists(core, &v) }),
         Page::AlbumPage { v } => json!({ "album": album(core, &v.album), "songs": songs(core, &v.songs), "seconds": v.seconds }),
-        Page::ArtistPage { v } => json!({ "artist": artist(core, &v.artist), "albums": albums(core, &v.albums) }),
+        Page::ArtistPage { v } => json!({ "artist": artist(core, &v.artist), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs), "few": few(&v.songs) }),
         Page::Songs { v } => json!({ "songs": songs(core, &v) }),
         Page::Playlists { v } => json!({ "playlists": v.iter().map(|p| playlist(core, p)).collect::<Value>() }),
         Page::PlaylistPage { v } => json!({ "playlist": playlist(core, &v.playlist), "songs": songs(core, &v.songs), "seconds": v.seconds }),
         Page::StarredPage { v } => json!({ "artists": artists(core, &v.artists), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs) }),
         Page::Genres { v } => json!({ "genres": v }),
-        Page::Found { v } => json!({ "artists": artists(core, &v.artists), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs) }),
+        Page::Found { v } => json!({ "artists": artists(core, &v.artists), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs), "few": few(&v.songs) }),
         _ => Value::Null,
     }
 }

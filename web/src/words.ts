@@ -28,6 +28,7 @@ export const W = {
   mostPlayed: "Most played",
   discover: "Something different",
   seeAll: "See all",
+  showAll: "Show all",
   back: "Back",
   play: "Play",
   pause: "Pause",

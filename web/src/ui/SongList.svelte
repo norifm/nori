@@ -1,6 +1,7 @@
 <script lang="ts">
   // Songs as rows: a click plays them from there, as the page's list (`kind`, `id`); each has its menu
-  // (`extra`: the page's own entries). `numbered` shows track numbers instead of covers (an album).
+  // (`extra`: the page's own entries). `numbered` shows track numbers instead of covers (an album);
+  // `shown` shows only the first few, with Show all under them.
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import type { Item } from "../state/ui.svelte";
@@ -9,12 +10,14 @@
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
 
-  let { songs, kind = "", id = "", numbered = false, extra = () => [] }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; extra?: (s: Song, i: number) => Item[] } = $props();
+  let { songs, kind = "", id = "", numbered = false, shown, extra = () => [] }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; shown?: number; extra?: (s: Song, i: number) => Item[] } = $props();
   const playingId = $derived(player.song?.id);
+  let all = $state(false);
+  const rows = $derived(all || shown === undefined ? songs : songs.slice(0, shown));
 </script>
 
 <ol class="songs" class:numbered>
-  {#each songs as s, i (`${i}:${s.id}`)}
+  {#each rows as s, i (`${i}:${s.id}`)}
     <li class:now={s.id === playingId}>
       <button class="play" onclick={() => void player.play(songs, i, false, kind, id)}>
         {#if numbered}
@@ -32,8 +35,12 @@
     </li>
   {/each}
 </ol>
+{#if rows.length < songs.length}<button class="pill all" onclick={() => (all = true)}>{W.showAll}</button>{/if}
 
 <style>
+  .all {
+    margin-top: 8px;
+  }
   .songs {
     list-style: none;
     margin: 0;
