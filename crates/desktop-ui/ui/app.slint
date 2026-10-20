@@ -1,7 +1,7 @@
 // nori's desktop window, laid out as Android's look has it on a wide screen: the page under a top pill and a
 // player pill, a panel on the right (queue, lyrics) and a full-window Now Playing. Draws and forwards input only.
 
-import { ListView, Switch, ComboBox, Button } from "std-widgets.slint";
+import { ListView, Switch, ComboBox } from "std-widgets.slint";
 import { Icons } from "icons.slint";
 export { Icons }
 // The Android app's typefaces, from its resources.
@@ -1784,9 +1784,76 @@ component SmallButton inherits Rectangle {
     }
 }
 
+// A row of the devices panel: its glyph in a disc (lit in the accent for what is chosen), a title and a
+// line under it; what it holds after them (an icon button) sits at its end.
+component PanelRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> line;
+    in property <bool> lit;
+    callback clicked;
+    height: 52px;
+    border-radius: 10px;
+    background: rt.has-hover ? Theme.hover : transparent;
+    animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
+    rt := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 8px;
+        spacing: 10px;
+        Rectangle {
+            y: (parent.height - self.height) / 2;
+            width: 34px;
+            height: 34px;
+            border-radius: 17px;
+            background: root.lit ? Theme.chosen : Theme.fill;
+            animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+            Icon {
+                path: root.icon;
+                colour: root.lit ? Theme.accent : Theme.text;
+                width: 18px;
+                height: 18px;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            min-width: 0;
+            Text {
+                text: root.title;
+                color: root.lit ? Theme.accent : Theme.text;
+                font-size: 13px;
+                font-weight: 600;
+                overflow: elide;
+            }
+            if root.line != "": Text {
+                text: root.line;
+                color: Theme.dim;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+        @children
+    }
+}
+
+// A hairline between the panel's groups.
+component PanelRule inherits Rectangle {
+    height: 13px;
+    Rectangle {
+        x: 6px;
+        width: parent.width - 12px;
+        height: 1px;
+        background: Theme.hairline;
+    }
+}
+
 // Where the music plays (remote control), as Music's AirPlay list and Spotify's devices: this computer
 // first, then the account's other devices with what each plays, the one playing ticked. A click moves the
-// music there; this player then shows and controls it.
+// music there; this player then shows and controls it. Under them pairing, then the jam.
 component DevicesView inherits Rectangle {
     in property <[DeviceRow]> devices;
     in property <string> pairing-link;
@@ -1795,6 +1862,7 @@ component DevicesView inherits Rectangle {
     // The jam's row was clicked while it is on: the queue panel shows it.
     callback open-jam();
     callback join-jam();
+    callback show-pairing();
     Flickable {
         VerticalLayout {
             alignment: start;
@@ -1812,57 +1880,18 @@ component DevicesView inherits Rectangle {
                 }
             }
             for d in root.devices: VerticalLayout {
-                Rectangle {
-                    height: 52px;
-                    border-radius: 10px;
-                    background: dt.has-hover ? Theme.hover : transparent;
-                    animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
-                    dt := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.pick(d.id); }
-                    }
-                    HorizontalLayout {
-                        padding-left: 6px;
-                        padding-right: 8px;
-                        spacing: 10px;
-                        Rectangle {
-                            y: (parent.height - self.height) / 2;
-                            width: 34px;
-                            height: 34px;
-                            border-radius: 17px;
-                            background: d.active ? Theme.chosen : Theme.fill;
-                            animate background { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
-                            Icon {
-                                path: d.kind == 1 ? Icons.phone : d.kind == 2 ? Icons.terminal : Icons.computer;
-                                colour: d.active ? Theme.accent : Theme.text;
-                                width: 18px;
-                                height: 18px;
-                            }
-                        }
-                        VerticalLayout {
-                            alignment: center;
-                            horizontal-stretch: 1;
-                            Text {
-                                text: d.name;
-                                color: d.active ? Theme.accent : Theme.text;
-                                font-size: 13px;
-                                font-weight: 600;
-                                overflow: elide;
-                            }
-                            if d.line != "": Text {
-                                text: d.line;
-                                color: Theme.dim;
-                                font-size: 11px;
-                                overflow: elide;
-                            }
-                        }
-                        if d.active: Icon {
-                            y: (parent.height - self.height) / 2;
-                            path: Icons.check;
-                            colour: Theme.accent;
-                            width: 16px;
-                            height: 16px;
-                        }
+                PanelRow {
+                    icon: d.kind == 1 ? Icons.phone : d.kind == 2 ? Icons.terminal : Icons.computer;
+                    title: d.name;
+                    line: d.line;
+                    lit: d.active;
+                    clicked => { root.pick(d.id); }
+                    if d.active: Icon {
+                        y: (parent.height - self.height) / 2;
+                        path: Icons.check;
+                        colour: Theme.accent;
+                        width: 16px;
+                        height: 16px;
                     }
                 }
                 if d.note != "": HorizontalLayout {
@@ -1876,136 +1905,55 @@ component DevicesView inherits Rectangle {
                     }
                 }
             }
-            if root.pairing-link != "": VerticalLayout {
-                spacing: 6px;
-                Text { text: "Pair devices"; color: Theme.text; font-weight: 600; }
-                Text { text: "Copy this code to your other device. Paste its code in Join a jam or pair devices."; color: Theme.dim; wrap: word-wrap; font-size: 12px; }
-                TextInput { text: root.pairing-link; read-only: true; color: Theme.text; font-size: 12px; height: 28px; single-line: true; }
-                SmallButton { text: "Enter pairing code"; clicked => { root.join-jam(); } }
-                SmallButton { text: "Forget paired devices"; clicked => { root.forget-devices(); } }
+            // Pairing another device on this network: its code, a code from it, and forgetting them all.
+            if root.pairing-link != "": PanelRule {}
+            if root.pairing-link != "": PanelRow {
+                icon: Icons.qr;
+                title: "Pair a device";
+                line: "Show a code to scan or copy";
+                clicked => { root.show-pairing(); }
+            }
+            if root.pairing-link != "": PanelRow {
+                icon: Icons.delete;
+                title: "Forget paired devices";
+                line: "They pair again with a new code";
+                clicked => { root.forget-devices(); }
             }
             // The jam: starting one, or the one on (its row opens it in the queue panel) and ending it.
-            if Jam.on || Jam.hosting || Jam.note != "": Rectangle {
-                height: 13px;
-                Rectangle {
-                    x: 6px;
-                    width: parent.width - 12px;
-                    height: 1px;
-                    background: Theme.hairline;
-                }
-            }
+            if Jam.on || Jam.hosting || Jam.note != "": PanelRule {}
             if Jam.note != "": Text {
                 text: Jam.note;
                 color: Theme.dim;
                 font-size: 12px;
                 wrap: word-wrap;
             }
-            if Jam.on || Jam.hosting: Rectangle {
-                height: 52px;
-                border-radius: 10px;
-                background: jt.has-hover ? Theme.hover : transparent;
-                animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
-                jt := TouchArea {
-                    clicked => {
-                        if Jam.hosting {
-                            root.open-jam();
-                        } else {
-                            Jam.start();
-                        }
+            if Jam.on || Jam.hosting: PanelRow {
+                icon: Icons.people;
+                title: Jam.hosting ? "Your Jam" : "Start a Jam";
+                line: Jam.hosting ? Jam.strip : "Others join with a link and ask for songs";
+                lit: Jam.hosting;
+                clicked => {
+                    if Jam.hosting {
+                        root.open-jam();
+                    } else {
+                        Jam.start();
                     }
                 }
-                HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
-                    spacing: 10px;
-                    Rectangle {
-                        y: (parent.height - self.height) / 2;
-                        width: 34px;
-                        height: 34px;
-                        border-radius: 17px;
-                        background: Jam.hosting ? Theme.chosen : Theme.fill;
-                        Icon {
-                            path: Icons.people;
-                            colour: Jam.hosting ? Theme.accent : Theme.text;
-                            width: 18px;
-                            height: 18px;
-                        }
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        horizontal-stretch: 1;
-                        Text {
-                            text: Jam.hosting ? "Your Jam" : "Start a Jam";
-                            color: Theme.text;
-                            font-size: 13px;
-                            font-weight: 600;
-                            overflow: elide;
-                        }
-                        Text {
-                            text: Jam.hosting ? Jam.strip : "Others join with a link and ask for songs";
-                            color: Theme.dim;
-                            font-size: 11px;
-                            overflow: elide;
-                        }
-                    }
-                    if Jam.hosting: Text {
-                        text: "End";
-                        color: et.has-hover ? Theme.danger : Theme.danger;
-                        font-size: 12px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                        et := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => { Jam.end(); }
-                        }
-                    }
+                if Jam.hosting: IconButton {
+                    y: (parent.height - self.height) / 2;
+                    path: Icons.sign-out;
+                    size: 30px;
+                    icon: 16px;
+                    ink: Theme.danger;
+                    clicked => { Jam.end(); }
                 }
             }
             // Someone else's jam, joined with their invite link.
-            if !Jam.guest: Rectangle {
-                height: 52px;
-                border-radius: 10px;
-                background: jj.has-hover ? Theme.hover : transparent;
-                animate background { duration: Motion.reduced ? 0ms : 140ms; easing: ease-out; }
-                jj := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { root.join-jam(); }
-                }
-                HorizontalLayout {
-                    padding-left: 6px;
-                    padding-right: 6px;
-                    spacing: 10px;
-                    Rectangle {
-                        y: (parent.height - self.height) / 2;
-                        width: 34px;
-                        height: 34px;
-                        border-radius: 17px;
-                        background: Theme.fill;
-                        Icon {
-                            path: Icons.plus;
-                            colour: Theme.text;
-                            width: 16px;
-                            height: 16px;
-                        }
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        horizontal-stretch: 1;
-                        Text {
-                            text: "Join a Jam…";
-                            color: Theme.text;
-                            font-size: 13px;
-                            font-weight: 600;
-                            overflow: elide;
-                        }
-                        Text {
-                            text: "With the invite link someone sent you";
-                            color: Theme.dim;
-                            font-size: 11px;
-                            overflow: elide;
-                        }
-                    }
-                }
+            if !Jam.guest: PanelRow {
+                icon: Icons.plus;
+                title: "Join a Jam…";
+                line: root.pairing-link != "" ? "With an invite link or a pairing code" : "With the invite link someone sent you";
+                clicked => { root.join-jam(); }
             }
         }
     }
@@ -2173,9 +2121,29 @@ component JamHeader inherits VerticalLayout {
                 clicked => { invite.show(); }
             }
         }
-        if !Jam.guest: Button {
-            text: "Settings";
+        if !Jam.guest: IconButton {
+            y: (parent.height - self.height) / 2;
+            path: Icons.gear;
+            size: 28px;
+            icon: 16px;
+            ink: Theme.plate-ink;
+            base: Theme.plate;
             clicked => { people.show(); }
+        }
+        IconButton {
+            y: (parent.height - self.height) / 2;
+            path: Icons.sign-out;
+            size: 28px;
+            icon: 16px;
+            ink: Theme.danger;
+            base: Theme.plate;
+            clicked => {
+                if Jam.guest {
+                    Jam.leave();
+                } else {
+                    Jam.end();
+                }
+            }
         }
     }
     if Jam.along-note != "": Text {
@@ -2214,23 +2182,6 @@ component JamHeader inherits VerticalLayout {
             pa := TouchArea {
                 mouse-cursor: pointer;
                 clicked => { people.show(); }
-            }
-        }
-        Text {
-            text: Jam.guest ? "Leave" : "End";
-            color: ea.has-hover ? Theme.danger : Theme.danger;
-            font-size: 12px;
-            font-weight: 600;
-            vertical-alignment: center;
-            ea := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    if Jam.guest {
-                        Jam.leave();
-                    } else {
-                        Jam.end();
-                    }
-                }
             }
         }
     }
@@ -2479,9 +2430,11 @@ component JamHeader inherits VerticalLayout {
                                 overflow: elide;
                             }
                         }
-                        if !Jam.guest: SmallButton {
+                        // An admin's key is lit; a click makes them a guest again, or an admin.
+                        if !Jam.guest: RoundButton {
                             y: (parent.height - self.height) / 2;
-                            text: p.admin ? "Make guest" : "Make admin";
+                            path: Icons.key;
+                            lit: p.admin;
                             clicked => { Jam.promote(p.id, !p.admin); }
                         }
                         if !Jam.guest: RoundButton {
@@ -3863,6 +3816,10 @@ export component AppWindow inherits Window {
     // A device row was clicked: the music moves there ("" for this computer).
     callback pick-device(string);
     in property <string> pairing-link;
+    // The pairing sheet: this computer's code as a QR and a link to copy.
+    in property <image> pairing-qr;
+    in-out property <bool> pairing-open;
+    callback copy-pairing();
     callback forget-devices();
     // "Playing on <device>" while another device plays: the player shows and controls it.
     in property <string> playing-on;
@@ -5185,6 +5142,7 @@ export component AppWindow inherits Window {
                     pick(id) => { root.pick-device(id); }
                     open-jam => { root.inspector = 1; }
                     join-jam => { root.join-open = true; }
+                    show-pairing => { root.pairing-open = true; }
                 }
                 if root.shown-panel == 1 && root.panel-in > 0: QueueView {
                     y: 56px;
@@ -5720,6 +5678,7 @@ export component AppWindow inherits Window {
                 pick(id) => { root.pick-device(id); }
                 open-jam => { root.full-panel = 1; }
                 join-jam => { root.join-open = true; }
+                show-pairing => { root.pairing-open = true; }
             }
         }
 
@@ -5791,6 +5750,82 @@ export component AppWindow inherits Window {
                                     root.join-jam(root.join-link);
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pair a device: this computer's code to scan with nori, or to copy, in a sheet over the window.
+        if root.pairing-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.pairing-open = false; }
+            }
+            Popover {
+                x: (parent.width - self.width) / 2;
+                y: max(40px, (parent.height - self.height) / 2);
+                width: 380px;
+                height: pair-sheet.preferred-height;
+                TouchArea {}
+                pair-sheet := VerticalLayout {
+                    padding: 24px;
+                    spacing: 12px;
+                    Text {
+                        text: "Pair a device";
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Scan this code on your other device, or paste the link there. Paired devices can move and control playback on this network.";
+                        color: Theme.dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 208px;
+                            height: 208px;
+                            border-radius: 16px;
+                            background: white;
+                            Image {
+                                width: 184px;
+                                height: 184px;
+                                source: root.pairing-qr;
+                                image-rendering: pixelated;
+                            }
+                        }
+                    }
+                    Rectangle {
+                        height: 32px;
+                        border-radius: 8px;
+                        background: Theme.fill;
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            text: root.pairing-link;
+                            color: Theme.dim;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Done";
+                            clicked => { root.pairing-open = false; }
+                        }
+                        Capsule {
+                            text: "Copy link";
+                            icon: Icons.copy;
+                            clicked => { root.copy-pairing(); }
                         }
                     }
                 }

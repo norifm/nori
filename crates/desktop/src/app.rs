@@ -710,6 +710,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         }
     });
     on!(jam.on_copy_link, h, |a| a.jam_copy_link());
+    on!(ui.on_copy_pairing, h, |a| a.copy(a.ui().get_pairing_link().into()));
     on!(jam.on_leave, h, |a| a.leave_jam());
     on!(ui.on_forget_devices, h, |a| {
         if let Some(remote) = a.session.as_ref().and_then(|s| s.remote()) { remote.reset_pairing(); }
@@ -1961,7 +1962,14 @@ impl App {
         let unsupported = remote.as_ref().is_some_and(|r| r.relay() == nori_core::remote::RelaySupport::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());
         let lan = remote.as_ref().is_some_and(|r| r.pairing_link().is_some());
-        ui.set_pairing_link(remote.as_ref().and_then(|r| r.pairing_link()).unwrap_or_default().into());
+        let pairing = remote.as_ref().and_then(|r| r.pairing_link()).unwrap_or_default();
+        if ui.get_pairing_link() != pairing.as_str() {
+            ui.set_pairing_qr(if pairing.is_empty() { Image::default() } else { crate::jam::qr(&pairing) });
+            ui.set_pairing_link(pairing.as_str().into());
+        }
+        if pairing.is_empty() {
+            ui.set_pairing_open(false);
+        }
         g.set_on(remote.is_some() && (!unsupported || lan) && !guest);
         g.set_guest(guest);
         g.set_note(if unsupported && !lan && !guest { words::JAM_UNSUPPORTED.into() } else { "".into() });
@@ -2016,7 +2024,11 @@ impl App {
     }
 
     fn jam_copy_link(&self) {
-        let copied = arboard::Clipboard::new().and_then(|mut c| c.set_text(self.jam_link.clone()));
+        self.copy(self.jam_link.clone());
+    }
+
+    fn copy(&self, text: String) {
+        let copied = arboard::Clipboard::new().and_then(|mut c| c.set_text(text));
         match copied {
             Ok(()) => self.say(words::LINK_COPIED, false),
             Err(e) => self.say(&e.to_string(), true),
