@@ -111,8 +111,8 @@ pub enum Req {
 }
 
 pub enum Data {
-    /// Home shelf: index (into the session's `home_album_rows`, or the service's feed), title, albums.
-    HomeRow(usize, String, Vec<nori_core::Album>),
+    /// Home shelf: index (into the session's `home_album_rows`, or the service's feed), title, cards.
+    HomeRow(usize, String, Vec<crate::app::Item>),
     Albums(Vec<nori_core::Album>),
     Artists(Vec<nori_core::Artist>),
     Playlists(Vec<nori_core::Playlist>),
@@ -234,13 +234,20 @@ impl Session {
             Req::Home => {
                 let rows = self.host.home_album_rows();
                 self.host.read_home(rows.clone(), false, move |r| match r {
-                    // A source's own Home: its feed, as shelves of albums.
+                    // A source's own Home: its feed, each shelf's songs first (a song plays the shelf's songs
+                    // from it), then its albums, playlists and artists, as the desktop's.
                     Ok(HomePart::Feed(feed)) => {
-                        for (i, (title, albums)) in nori_core::browse::feed_album_shelves(feed).into_iter().enumerate() {
-                            send(Ok(Data::HomeRow(i, title, albums)));
+                        let shown = feed.into_iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty()));
+                        for (i, f) in shown.enumerate() {
+                            use crate::app::Item;
+                            let songs = (0..f.songs.len()).map(|n| Item::Song(f.songs.clone(), n));
+                            let rest = f.albums.into_iter().map(Item::Album).chain(f.playlists.into_iter().map(Item::Playlist)).chain(f.artists.into_iter().map(Item::Artist));
+                            send(Ok(Data::HomeRow(i, f.title, songs.chain(rest).collect())));
                         }
                     }
-                    Ok(HomePart::Shelf { at, items: ShelfItems::Albums(albums) }) => send(Ok(Data::HomeRow(at, crate::text::home_row(rows[at]).into(), albums))),
+                    Ok(HomePart::Shelf { at, items: ShelfItems::Albums(albums) }) => {
+                        send(Ok(Data::HomeRow(at, crate::text::home_row(rows[at]).into(), albums.into_iter().map(crate::app::Item::Album).collect())))
+                    }
                     Ok(_) => {}
                     Err(e) => send(Err(unreachable(&e))),
                 });

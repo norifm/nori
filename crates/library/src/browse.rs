@@ -1,6 +1,6 @@
 //! The browsing screens' rules: home shelves, list paging and orders, library sections, the stats page.
 
-use nori_model::{Album, FeedShelf, HistoryEntry, ListeningStats, Playlist, Song};
+use nori_model::{Album, HistoryEntry, ListeningStats, Playlist, Song};
 use nori_settings::settings::HomeRow;
 pub use nori_settings::settings::LibrarySection;
 
@@ -60,23 +60,6 @@ pub fn home_shelves(rows: Vec<HomeRow>) -> Vec<HomeShelf> {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn home_rows_shown(rows: Vec<HomeRow>, account: bool) -> Vec<HomeRow> {
     rows.into_iter().filter(|r| account || matches!(shelf(*r), HomeShelf::Albums { follows_stars: false, .. })).collect()
-}
-
-/// A source's own feed (`ProfileRules::feed`) as shelves of albums, for the Home that draws only albums
-/// (the terminal's): a shelf's songs stand for their albums, each once; its playlists and artists are
-/// left out, and a shelf left with nothing goes.
-pub fn feed_album_shelves(feed: Vec<FeedShelf>) -> Vec<(String, Vec<Album>)> {
-    feed.into_iter()
-        .filter_map(|f| {
-            let mut albums = f.albums;
-            for s in f.songs {
-                let Some(id) = s.album_id.filter(|id| !albums.iter().any(|a| &a.id == id)) else { continue };
-                let subtitle = nori_model::lines::album_subtitle(&s.artist, 0);
-                albums.push(Album { id, name: s.album, artist: s.artist, artist_id: s.artist_id, cover_art: s.cover_art, subtitle, ..Default::default() });
-            }
-            (!albums.is_empty()).then_some((f.title, albums))
-        })
-        .collect()
 }
 
 /// The pinned playlists, in the order the server lists them.
@@ -558,21 +541,6 @@ mod tests {
         let rules = |r: ProfileRules| (r.remote, r.measures, r.account, r.indexed, r.sections.is_empty(), r.stars, r.feed);
         assert_eq!(rules(profile_rules(false)), (true, true, true, true, false, true, false));
         assert_eq!(rules(profile_rules(true)), (true, false, false, false, false, false, false));
-    }
-
-    /// Songs stand for their albums once; playlists are left out, and a shelf of only them goes.
-    #[test]
-    fn a_feed_as_album_shelves() {
-        let song = |id: &str, album: Option<&str>| Song { id: id.into(), album: album.unwrap_or_default().into(), album_id: album.map(String::from), artist: "A".into(), ..Default::default() };
-        let feed = vec![
-            FeedShelf { title: "Quick picks".into(), songs: vec![song("s1", Some("al1")), song("s2", Some("al1")), song("s3", None), song("s4", Some("al2"))], ..Default::default() },
-            FeedShelf { title: "All hits".into(), playlists: vec![Playlist::default()], ..Default::default() },
-            FeedShelf { title: "New releases".into(), albums: vec![Album { id: "al3".into(), ..Default::default() }], ..Default::default() },
-        ];
-        let shelves = feed_album_shelves(feed);
-        let said: Vec<(&str, Vec<&str>)> = shelves.iter().map(|(t, a)| (t.as_str(), a.iter().map(|a| a.id.as_str()).collect())).collect();
-        assert_eq!(said, [("Quick picks", vec!["al1", "al2"]), ("New releases", vec!["al3"])]);
-        assert_eq!((shelves[0].1[0].name.as_str(), shelves[0].1[0].subtitle.as_str()), ("al1", "A"));
     }
 
     #[test]
