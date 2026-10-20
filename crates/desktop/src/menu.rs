@@ -28,7 +28,15 @@ impl MenuBar {
             "nori",
             true,
             &[
-                &PredefinedMenuItem::about(Some("About nori"), Some(AboutMetadata { name: Some("nori".into()), version: Some(env!("CARGO_PKG_VERSION").into()), ..Default::default() })),
+                &PredefinedMenuItem::about(Some("About nori"), Some(AboutMetadata {
+                    name: Some("nori".into()),
+                    version: Some(env!("CARGO_PKG_VERSION").into()),
+                    icon: crate::icon::rgba().and_then(|px| muda::Icon::from_rgba(px, crate::icon::SIDE, crate::icon::SIDE).ok()),
+                    comments: Some("A beautiful, fast music player.".into()),
+                    website: Some("https://norifm.com".into()),
+                    website_label: Some("norifm.com".into()),
+                    ..Default::default()
+                })),
                 &PredefinedMenuItem::separator(),
                 &item("settings", "Settings…", Some("CmdOrCtrl+Comma")),
                 &PredefinedMenuItem::separator(),
@@ -77,6 +85,7 @@ impl MenuBar {
             return;
         }
         menu.init_for_nsapp();
+        crate::icon::dock();
         window.set_as_windows_menu_for_nsapp();
         *self.menu.borrow_mut() = Some(menu);
     }

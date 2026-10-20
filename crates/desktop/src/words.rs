@@ -79,6 +79,23 @@ pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
     }
 }
 
+/// One of the album grid's orders (`browse::album_sorts`).
+pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
+    use nori_core::browse::AlbumSort;
+    match sort {
+        AlbumSort::ByName => "A–Z",
+        AlbumSort::ByArtist => "Artist",
+        AlbumSort::ArtistRows => "Artist rows",
+        AlbumSort::Newest => "Added",
+        AlbumSort::Recent => "Played",
+        AlbumSort::Frequent => "Most played",
+        AlbumSort::Starred => "Favorites",
+        AlbumSort::ByYear => "Year",
+        AlbumSort::Random => "Random",
+        AlbumSort::ByGenre => "Genres",
+    }
+}
+
 pub fn songs(n: usize) -> String {
     count(n as u64, "song", "songs")
 }
@@ -316,9 +333,59 @@ pub fn title(t: &str) -> &str {
     if t.trim().is_empty() { "Untitled" } else { t }
 }
 
+/// The profile in use as the settings menu heads it: who (the account, else the profile's name, else its
+/// service), then where in grey (the server's address, or the service, or that no one is signed in).
+pub fn profile_lines(p: &nori_core::settings::SavedServer) -> (String, String) {
+    let service = provider(p.kind).name;
+    let place = nori_core::settings::label(&p.name, &p.url);
+    match (p.user.is_empty(), p.kind) {
+        (false, ServerKind::YouTubeMusic) => (p.user.clone(), service.into()),
+        (true, ServerKind::YouTubeMusic) => (if place.is_empty() { service.into() } else { place }, "Not signed in".into()),
+        (false, _) => (p.user.clone(), place),
+        (true, _) => (if place.is_empty() { service.into() } else { place }, String::new()),
+    }
+}
+
+/// The AutoEQ search field's placeholder, with how many headphones the list has.
+pub fn autoeq_search(count: u32) -> String {
+    format!("Search {count} headphones")
+}
+
+/// An AutoEQ curve's line under its name: who measured it, the form and the target, whichever are known.
+pub fn autoeq_caption(e: &nori_core::AutoEqEntry) -> String {
+    [e.source.as_str(), e.form.as_str(), e.target.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+}
+
+pub fn autoeq_applied(name: &str) -> String {
+    format!("The equalizer is now {name}’s AutoEQ curve.")
+}
+
+/// Over the curves suggested for the output playing.
+pub fn autoeq_for(output: &str) -> String {
+    format!("For {output}")
+}
+
+pub const AUTOEQ_NO_CURVE: &str = "AutoEQ has no curve for these headphones.";
+
+/// A saved profile's line: the devices it is used on by itself.
+pub fn profile_use(outputs: &[String]) -> String {
+    if outputs.is_empty() { String::new() } else { format!("Used on {}", outputs.join(", ")) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_settings_menu_names_who_and_where() {
+        use nori_core::settings::SavedServer;
+        let p = |kind, name: &str, url: &str, user: &str| SavedServer { kind, name: name.into(), url: url.into(), user: user.into(), ..Default::default() };
+        let lines = |s: SavedServer| profile_lines(&s);
+        assert_eq!(lines(p(ServerKind::Subsonic, "", "https://music.example.com/x", "ann")), ("ann".into(), "music.example.com".into()));
+        assert_eq!(lines(p(ServerKind::YouTubeMusic, "", "", "Ann Lee")), ("Ann Lee".into(), "YouTube Music".into()));
+        assert_eq!(lines(p(ServerKind::YouTubeMusic, "", "", "")), ("YouTube Music".into(), "Not signed in".into()));
+        assert_eq!(lines(p(ServerKind::Subsonic, "Home", "http://h", "")), ("Home".into(), "".into()));
+    }
 
     #[test]
     fn formats_counts() {

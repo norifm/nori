@@ -60,9 +60,8 @@ import dev.nori.music.ffi.model.Album
 fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
     val load by vm.ui.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    // The mixes and the favourites are the account's: a jam guest's Home is the
-    // host's shelves.
-    val account = LocalRules.current.account
+    // "For you" is the profile's where it has one (`ProfileRules.mixes`): a jam guest's Home is the host's shelves.
+    val mixes = LocalRules.current.mixes
     val noLibrary = LocalRules.current.sections.isEmpty()
     val closed by vm.closedToGuests.collectAsStateWithLifecycle()
     val offer by vm.offer.collectAsStateWithLifecycle()
@@ -126,7 +125,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                 Text(say.searchIsTheWayIn, Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             // Favourites are always here; the mixes join them when the taste model is on (MixesViewModel).
-            if (account) item(key = "mixes") { Column(Modifier.arriving(arrival, 1, rise)) { SectionTitle(say.forYou); MixTiles() } }
+            if (mixes) item(key = "mixes") { Column(Modifier.arriving(arrival, 1, rise)) { SectionTitle(say.forYou); MixTiles() } }
             // The shelves carry on the count the sections above started, so each one arrives a moment
             // after the one over it; an empty shelf is not drawn and does not take a place in the order.
             var place = 2

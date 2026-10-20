@@ -216,6 +216,26 @@ impl Laid {
     pub fn is_for(&self, index: usize, size: f32, width: f32) -> bool {
         self.key == (index, size.to_bits(), width.to_bits())
     }
+
+    /// `text` (the line laid) with a line end for the space at each of its row breaks: drawn so, a line
+    /// takes the rows its pieces take, sung or not.
+    pub fn rows(&self, text: &str) -> String {
+        let mut out: Vec<char> = text.chars().collect();
+        let mut at = Vec::new();
+        for pair in self.pieces.windows(2) {
+            if pair[1].row > pair[0].row {
+                at.push(pair[1].start);
+            }
+        }
+        let mut units = 0;
+        for c in out.iter_mut() {
+            units += c.len_utf16() as u32;
+            if at.contains(&units) && c.is_whitespace() {
+                *c = '\n';
+            }
+        }
+        out.into_iter().collect()
+    }
 }
 
 #[cfg(test)]
@@ -249,6 +269,23 @@ mod tests {
         let l = lay(&face(), 0, &line(), 20.0, 40.0);
         assert!(l.pieces.iter().map(|p| p.row).max().unwrap_or(0) > 0);
         assert!(l.pieces.iter().filter(|p| p.x == 0.0).all(|p| !p.text.starts_with(' ')));
+    }
+
+    /// A line drawn as rows breaks where its pieces wrap: the space before each row's first piece is a line
+    /// end, and the text is the line's otherwise.
+    #[test]
+    fn rows_break_where_the_pieces_wrap() {
+        let line = line();
+        let wide = lay(&face(), 0, &line, 20.0, 1000.0);
+        assert_eq!(wide.rows(&line.text), "I wonder why");
+        let narrow = lay(&face(), 0, &line, 20.0, 40.0);
+        let rows = narrow.rows(&line.text);
+        let starts: Vec<u32> = narrow.pieces.iter().filter(|p| p.x == 0.0).map(|p| p.start).collect();
+        let mut at = 0;
+        let row_starts: Vec<u32> = rows.split('\n').map(|r| { let s = at; at += units(r) + 1; s }).collect();
+        assert!(starts.len() > 1);
+        assert_eq!(row_starts, starts, "each row starts where the layout starts one");
+        assert_eq!(rows.replace('\n', " "), line.text);
     }
 
     #[test]

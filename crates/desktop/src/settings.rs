@@ -22,7 +22,6 @@ const SLIDER: i32 = 5;
 const RANKED: i32 = 6;
 const SERVER: i32 = 8;
 /// A server row's Edit: the account sheet of the profile in use.
-const ACCOUNT: &str = "account";
 const NOTE: i32 = 9;
 const LINK: i32 = 11;
 const BUTTON: i32 = 12;
@@ -132,8 +131,9 @@ pub fn toggled(name: &str, on: bool) -> (&str, String) {
 pub enum Act {
     Equalizer,
     AddServer,
-    /// The account sheet of the profile in use (its server row's Edit).
-    Account,
+    /// A server row's Edit: the account sheet of the profile in use where its provider has one to sign
+    /// in to, else the profile in the sign-in form.
+    Edit(String),
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
@@ -145,10 +145,12 @@ impl Act {
         if let Some(id) = name.strip_prefix("server:") {
             return Some(Act::Server(id.to_string()));
         }
+        if let Some(id) = name.strip_prefix("edit:") {
+            return Some(Act::Edit(id.to_string()));
+        }
         match name {
             EQUALIZER => Some(Act::Equalizer),
             ADD_SERVER => Some(Act::AddServer),
-            ACCOUNT => Some(Act::Account),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -183,7 +185,9 @@ struct Row {
     value: f32,
     min: f32,
     max: f32,
-    centred: bool,
+    /// A lyrics service's rank among them, and whether it is switched on only once given a key it lacks.
+    rank: i32,
+    keyed: bool,
     /// A usage row's parts, as fractions of the whole.
     shares: Vec<f32>,
 }
@@ -287,7 +291,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "soundBypass" => ("No processing on this output", ""),
         "headphoneSound" => ("Headphone sound", ""),
         "compressor" => ("Compressor", ""),
-        "compressorPreset" => ("For", ""),
+        "compressorPreset" => ("Compressor type", ""),
         "replayGain" => ("Volume leveling", ""),
         "loudnessLevel" => ("Level", ""),
         "volumeBoostDb" => ("Volume boost", ""),
@@ -343,8 +347,8 @@ fn option_words(name: &str, v: &str) -> String {
         ("headphoneSound", "NATURAL") => "Natural".into(),
         ("headphoneSound", "WIDE") => "Wide".into(),
         ("compressorPreset", "LIGHT") => "Light".into(),
-        ("compressorPreset", "CAR") => "The car".into(),
-        ("compressorPreset", "NIGHT") => "The night".into(),
+        ("compressorPreset", "CAR") => "Car".into(),
+        ("compressorPreset", "NIGHT") => "Night".into(),
         ("replayGain", "TRACK") => "Per song".into(),
         ("replayGain", "ALBUM") => "Per album".into(),
         ("replayGain", "AUTO") => "Automatic".into(),
@@ -482,9 +486,9 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                 detail.push_str(" · second address");
             }
             let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
-            // Edit opens the account of the profile in use, where its provider has one to sign in to.
-            let account = active && nori_core::providers::providers().into_iter().any(|i| i.kind == sv.kind && !i.sign_in.is_empty());
-            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if account { "Edit".into() } else { "".into() }, ..Default::default() }
+            // A jam guest switches between the profiles; changing them is not its to do.
+            let edits = f.rules.settings.contains(&nori_core::settings_pages::SettingsPart::ServerOptions);
+            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if edits { "Edit".into() } else { "".into() }, ..Default::default() }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             let (name, _) = f.folders.get(index as usize)?;
@@ -493,9 +497,14 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         RowItem::LyricsSource { index } => {
             let src = s.lyrics_sources.get(index as usize)?;
             let (title, about) = service(&src.id)?;
-            // A service that takes a key has its key's field beside its switch (`centred`); a key typed there turns it on.
-            let button = if src.key_set { "Key set".to_string() } else { format!("{title} key") };
-            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: r.enabled && (!src.needs_key || src.key_set), centred: src.takes_key, button, ..Default::default() }
+            // As on Android: a key that is optional has a button beside the switch, one kept can be changed
+            // there, and one needed is asked for when the service is switched on (`keyed`).
+            let button = match (src.key_set, src.takes_key && !src.needs_key) {
+                (true, _) => "Change key",
+                (false, true) => "Add key",
+                (false, false) => "",
+            };
+            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: r.enabled, button: button.into(), rank: index as i32, keyed: src.needs_key && !src.key_set, ..Default::default() }
         }
     })
 }
@@ -588,6 +597,8 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<Setti
                 appearance_pick(p)
             } else if r.kind == SEASONS {
                 seasons(p, today).worn
+            } else if r.kind == RANKED {
+                r.rank
             } else { r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32) };
             let labels: Vec<SharedString> = r.options.iter().map(|o| o.0.as_str().into()).collect();
             out.push(SettingRow {
@@ -603,7 +614,7 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<Setti
                 value: r.value,
                 min: r.min,
                 max: r.max,
-                centred: r.centred,
+                keyed: r.keyed,
                 shares: ModelRc::new(VecModel::from(r.shares)),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
@@ -641,6 +652,25 @@ pub fn level_of(name: &str) -> Option<EqLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A key that is optional has its button; one needed is asked for when switching on; one kept changes.
+    #[test]
+    fn lyrics_keys_are_asked_as_on_android() {
+        let facts = Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
+        let tab = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Lyrics).unwrap() as i32;
+        let today = Today { month: 10, day: 19, southern: false };
+        let source = |p: &StoredPrefs, id: &str| {
+            let rows = rows(p, &facts, tab, today);
+            let r = slint::Model::iter(&rows).find(|r| r.kind == RANKED && r.name == id).unwrap();
+            (r.button.to_string(), r.keyed)
+        };
+        let p = StoredPrefs::default();
+        assert_eq!(source(&p, "BETTER_LYRICS"), ("Add key".into(), false));
+        assert_eq!(source(&p, "PAXSENIX_SPOTIFY"), ("".into(), true), "asked for when switched on");
+        assert_eq!(source(&p, "LRCLIB"), ("".into(), false));
+        let keyed = StoredPrefs { paxsenix_key: "k".into(), ..p };
+        assert_eq!(source(&keyed, "PAXSENIX_SPOTIFY"), ("Change key".into(), false));
+    }
 
     #[test]
     fn tabs_are_the_pages_the_profile_opens() {
@@ -712,5 +742,6 @@ mod tests {
         assert_eq!(Act::of(EQUALIZER), Some(Act::Equalizer));
         assert_eq!(Act::of(ADD_SERVER), Some(Act::AddServer));
         assert_eq!(Act::of("server:7"), Some(Act::Server("7".into())));
+        assert_eq!(Act::of("edit:7"), Some(Act::Edit("7".into())));
     }
 }

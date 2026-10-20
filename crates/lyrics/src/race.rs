@@ -403,6 +403,11 @@ fn chosen_before(cache: &dyn LyricsCache, song: &Song, services: &[LyricsService
     plausible(&k.lyrics, song).then(|| (rank, k.lyrics, k.named, k.score.unwrap_or(0.0)))
 }
 
+/// The name of the service whose lyrics were chosen for `song` last.
+pub fn chosen_service(cache: &dyn LyricsCache, song: &Song) -> Option<String> {
+    read_kept(&cache.get(&best_key(song))?)?.source
+}
+
 /// The last chosen service lyrics, without making requests. Timed server lyrics take precedence.
 pub fn cached_pick(cache: &dyn LyricsCache, song: &Song, server_has_lines: bool, server_synced: bool, lookup: &LyricsLookup) -> Option<LyricsPick> {
     if lookup.services.is_empty() || (server_has_lines && server_synced) { return None; }
@@ -945,6 +950,7 @@ mod tests {
         assert!(said.starts_with("lyrics: chose Unison (0.") && said.contains("word-timed"), "{said}");
         let best = read_kept(&cache.get(&best_key(&s)).unwrap()).unwrap();
         assert_eq!((best.source.as_deref(), best.lyrics.lines.len()), (Some("UNISON"), 18));
+        assert_eq!(chosen_service(&cache, &s).as_deref(), Some("UNISON"));
         assert!(best.score.unwrap() >= LOW);
         let asked_first = web.asked().len();
         let (again, kept) = run_saying(&web, &cache, &s, (false, false), &l);
@@ -962,6 +968,10 @@ mod tests {
         let picks = run(&web, &cache, &s, (false, false), &asked(&[LyricsService::Lrclib, LyricsService::Unison]));
         assert_eq!(picks.iter().map(|p| p.origin).collect::<Vec<_>>(), [LyricsOrigin::Unison]);
         assert_eq!(web.asked().len(), n, "no network");
+        // A jam's host chose LRCLIB: its guest shows LRCLIB's, not its own choice.
+        let both = asked(&[LyricsService::Lrclib, LyricsService::Unison]);
+        let picks = run(&web, &cache, &s, (false, false), &both.only("LRCLIB"));
+        assert_eq!(picks.iter().map(|p| p.origin).collect::<Vec<_>>(), [LyricsOrigin::Lrclib]);
         // Its service switched off: the choice no longer stands, and the others are asked.
         let picks = run(&web, &cache, &s, (false, false), &asked(&[LyricsService::Lrclib]));
         assert_eq!(picks.last().unwrap().origin, LyricsOrigin::Lrclib);

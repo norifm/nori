@@ -54,7 +54,7 @@
       {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
       {#snippet actions()}<button class="round" aria-label={W.more} title={W.more} onclick={more}><Icon name="more" /></button>{/snippet}
     </Hero>
-    <SongList {songs} kind="Playlist" {id} extra={edits} />
+    <SongList {songs} kind="Playlist" {id} extra={edits} {moved} />
   {/if}
 </Page>
 

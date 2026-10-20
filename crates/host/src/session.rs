@@ -1504,18 +1504,18 @@ mod tests {
         s.close();
     }
 
-    /// A source's own Home still answers "For you" first, empty, so no client waits on it.
+    /// A source's own Home answers "For you" first, as any Home, so no client waits on it.
     #[test]
-    fn a_feed_home_sends_no_mixes() {
+    fn a_feed_home_answers_for_you_first() {
         let dir = nori_testdir::TempDir::new("host-feed-mixes");
         let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
         let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
         let s = Session::open(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
         let (sent, parts) = std::sync::mpsc::channel();
         s.read_home(Vec::new(), true, move |r| {
-            let _ = sent.send(matches!(r, Ok(crate::pages::HomePart::Mixes(ref t)) if t.is_empty()));
+            let _ = sent.send(matches!(r, Ok(crate::pages::HomePart::Mixes(_))));
         });
-        assert!(parts.recv_timeout(Duration::from_secs(5)).unwrap(), "the first part is an empty \"For you\"");
+        assert!(parts.recv_timeout(Duration::from_secs(5)).unwrap(), "the first part is \"For you\"");
         s.close();
     }
 

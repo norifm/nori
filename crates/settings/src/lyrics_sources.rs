@@ -234,6 +234,18 @@ pub struct LyricsLookup {
     pub better_lyrics_key: String,
 }
 
+impl LyricsLookup {
+    /// Only service `name` (a jam host's choice), when this lookup asks anyone and that service can be
+    /// asked here; else this lookup as it is.
+    pub fn only(mut self, name: &str) -> LyricsLookup {
+        let usable = |s: &LyricsService| !s.needs_key() || !self.paxsenix_key.is_empty();
+        if let Some(s) = LyricsService::named(name).filter(|s| !self.services.is_empty() && usable(s)) {
+            self.services = vec![s];
+        }
+        self
+    }
+}
+
 /// The lookup the settings allow: none unless both the lookups and online lyrics switches are on, and
 /// no service whose key is missing.
 pub fn lyrics_lookup(p: &StoredPrefs) -> LyricsLookup {
@@ -271,6 +283,16 @@ mod tests {
             assert!(!s.title().is_empty());
         }
         assert_eq!(LyricsService::named("MUSIXMATCH"), None, "a test build's service is not read");
+    }
+
+    #[test]
+    fn a_jam_hosts_service_is_asked_alone_where_it_can_be() {
+        let on = lyrics_lookup(&StoredPrefs::default());
+        assert_eq!(on.clone().only("UNISON").services, [LyricsService::Unison]);
+        assert_eq!(on.clone().only("PAXSENIX_SPOTIFY").services, on.services, "no key here for it");
+        assert_eq!(on.clone().only("NOPE").services, on.services);
+        let off = lyrics_lookup(&StoredPrefs { lyrics_online: false, ..Default::default() });
+        assert!(off.only("UNISON").services.is_empty(), "lookups stay off");
     }
 
     #[test]

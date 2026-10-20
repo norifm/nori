@@ -30,16 +30,21 @@ your servers the same way. Adding it again opens the same profile.
 ## Signing in (optional)
 
 Signed in, Home is your own YouTube Music Home, Library has your saved albums, your liked songs (as
-Favorites) and your playlists, and the favorite seal on a song likes it on YouTube Music.
+Favorites) and your playlists, the favorite seal on a song likes it on YouTube Music, and songs you hear
+go into your YouTube history (with Scrobbling on, as for a server). Signed out, tapping the seal offers
+the sign-in.
 
 nori signs in with the cookies of a browser session, since YouTube no longer lets other apps sign in
 with an account's password or a code.
 
-### On Android: Sign in with Google
+### Sign in with Google
 
-Right after you add the profile, nori offers **Sign in with Google** (**Not Now** skips it). Later,
-it is in Settings, Servers: tap the YouTube Music profile (it must be the one in use), then **Sign in
-with Google**.
+- **Android**: right after you add the profile, nori offers **Sign in with Google** (**Not Now** skips
+  it). Later, it is in Settings, Servers: tap the YouTube Music profile (it must be the one in use),
+  then **Sign in with Google**.
+- **Desktop** (from 0.7.0): Settings, Accounts, **Edit** on the YouTube Music profile in use, then
+  **Sign in with Google**. The page opens in a small window of its own (the system's web view; on
+  Linux, WebKitGTK).
 
 Google's own sign-in page opens inside nori. Sign in as you would in a browser. Once the page reaches
 YouTube Music, nori keeps that session's cookies, wipes everything the sign-in page stored (its
@@ -47,9 +52,10 @@ cookies and site data), and closes it, so the page never keeps the session going
 **Cancel** closes it and wipes it the same way. The page is used for signing in and nothing else:
 music never plays through it.
 
-### Pasting cookies (the desktop's way, and Android's fallback)
+### Pasting cookies (the fallback)
 
-On Android, **Paste cookies instead** under **Sign in with Google** opens the field for this.
+**Paste cookies instead** under **Sign in with Google** opens the field for this, on Android and the
+desktop.
 
 1. Open a **private** (incognito) browser window and sign in at music.youtube.com.
 2. Open the browser's developer tools, Network, click any request to music.youtube.com, and copy the
@@ -59,6 +65,7 @@ On Android, **Paste cookies instead** under **Sign in with Google** opens the fi
 4. Paste it:
    - **Android**: Settings, Servers, tap the YouTube Music profile (it must be the one in use),
      **Paste cookies instead**, paste into **Cookies**, **Sign In**.
+   - **Desktop**: Settings, Accounts, **Edit**, **Paste cookies instead**, then **Sign in**.
    - **Terminal**: save it to a file and run
      `nori-cli --script --provider youtubeMusic --sign-in cookies.txt --home`.
 

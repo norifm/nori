@@ -6,6 +6,7 @@ mod compositor;
 #[cfg(all(feature = "test-control", unix))]
 mod control;
 mod eq;
+mod icon;
 mod jam;
 mod look;
 mod lyrics;

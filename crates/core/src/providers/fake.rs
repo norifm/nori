@@ -23,7 +23,7 @@ struct Fake {
 }
 
 fn rules(signed_in: bool) -> ProfileRules {
-    ProfileRules { account: false, indexed: false, remote: false, stars: signed_in, scrobbles: signed_in, feed: true, ..profile_rules(false) }
+    ProfileRules { account: false, indexed: false, remote: false, stars: signed_in, scrobbles: signed_in, feed: true, mixes: signed_in, ..profile_rules(false) }
 }
 
 fn album() -> AlbumDetail {

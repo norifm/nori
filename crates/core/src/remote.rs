@@ -28,7 +28,7 @@ use nori_remote::lan::Door;
 use nori_player::engine::Plan;
 use nori_player::transitions::engine_plan;
 use nori_player::types::TransitionPlan;
-use nori_remote::wire::{Along, Answer, Body, DeviceKind, DeviceState, Entry, JamMember, JamState, Member, Mix, Obeyed, Op, Outgoing, Pending, Refusal, Role, Room, HOLD_MS};
+use nori_remote::wire::{Along, Answer, Body, DeviceKind, DeviceState, Entry, JamLyrics, JamMember, JamState, Member, Mix, Obeyed, Op, Outgoing, Pending, Refusal, Role, Room, HOLD_MS};
 use parking_lot::Mutex;
 use serde::Deserialize;
 
@@ -2320,6 +2320,29 @@ impl Remote {
         }));
     }
 
+    /// The lyrics service chosen here for the song at list index `index`, which a jam's members ask too.
+    fn lyrics_chosen(&self, index: Option<u32>) -> Option<JamLyrics> {
+        let session = &self.client.core.session;
+        let id = session.playlist(|p| p.ids().get(index? as usize).cloned())?;
+        let service = nori_lyrics::race::chosen_service(&*self.client.core, &session.song(&id)?)?;
+        Some(JamLyrics { song: id, service })
+    }
+
+    /// Lyrics were chosen here: a jam this device hosts names them.
+    pub(crate) fn lyrics_chose(self: &Arc<Self>) {
+        let hosting = self.inner.lock().hosted.is_some();
+        if hosting {
+            self.publish();
+        }
+    }
+
+    /// The lyrics service the host of the jam joined chose for song `id`.
+    pub(crate) fn jam_lyrics(&self, id: &str) -> Option<String> {
+        let i = self.inner.lock();
+        let lyrics = i.joined()?.1?.state.as_ref()?.jam.as_ref()?.lyrics.as_ref()?;
+        (lyrics.song == id).then(|| lyrics.service.clone())
+    }
+
     /// What guests play along by: this device's speed and pitch, and the plan out of the song heard.
     fn along(&self, index: Option<u32>, playing: Playing) -> Along {
         let session = &self.client.core.session;
@@ -3298,7 +3321,7 @@ impl Remote {
             at.saturating_sub(ENTRIES_BEFORE)..(at + ENTRIES_AFTER + 1).min(len)
         });
         let p = i.playing;
-        let jam = i.hosted.as_ref().map(|h| JamState { along: h.along.then(|| self.along(q.index, p)), ..h.jam.state() });
+        let jam = i.hosted.as_ref().map(|h| JamState { along: h.along.then(|| self.along(q.index, p)), lyrics: self.lyrics_chosen(q.index), ..h.jam.state() });
         let mut st = DeviceState {
             seq: i.seq,
             listen_handoff: true,

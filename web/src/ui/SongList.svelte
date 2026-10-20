@@ -1,6 +1,8 @@
 <script lang="ts">
   // Songs as rows: a click plays them from there, as the page's list (`kind`, `id`); each has its menu
-  // (`extra`: the page's own entries). `numbered` shows track numbers instead of covers (an album).
+  // (`extra`: the page's own entries). `numbered` shows track numbers instead of covers (an album);
+  // `shown` shows only the first few, with Show all under them; `moved`, each row's handle drags it to
+  // another place (a playlist's).
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import type { Item } from "../state/ui.svelte";
@@ -8,14 +10,17 @@
   import { W } from "../words";
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
+  import { sortable } from "./sortable";
 
-  let { songs, kind = "", id = "", numbered = false, extra = () => [] }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; extra?: (s: Song, i: number) => Item[] } = $props();
+  let { songs, kind = "", id = "", numbered = false, shown, moved, extra = () => [] }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; shown?: number; moved?: (from: number, to: number) => unknown; extra?: (s: Song, i: number) => Item[] } = $props();
   const playingId = $derived(player.song?.id);
+  let all = $state(false);
+  const rows = $derived(all || shown === undefined ? songs : songs.slice(0, shown));
 </script>
 
-<ol class="songs" class:numbered>
-  {#each songs as s, i (`${i}:${s.id}`)}
-    <li class:now={s.id === playingId}>
+<ol class="songs" class:numbered use:sortable={{ moved: (from, to) => moved?.(from, to) }}>
+  {#each rows as s, i (`${i}:${s.id}`)}
+    <li class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
       <button class="play" onclick={() => void player.play(songs, i, false, kind, id)}>
         {#if numbered}
           <span class="n">{#if s.id === playingId}<Icon name={player.playing ? "play" : "pause"} />{:else}{s.track || i + 1}{/if}</span>
@@ -29,11 +34,16 @@
       {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="seal" /></span>{/if}
       <span class="len">{W.time(s.duration * 1000)}</span>
       <button class="round more" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, extra(s, i))}><Icon name="more" /></button>
+      {#if moved}<span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="drag" /></span>{/if}
     </li>
   {/each}
 </ol>
+{#if rows.length < songs.length}<button class="pill all" onclick={() => (all = true)}>{W.showAll}</button>{/if}
 
 <style>
+  .all {
+    margin-top: 8px;
+  }
   .songs {
     list-style: none;
     margin: 0;
@@ -55,6 +65,21 @@
   }
   li:hover {
     background: var(--hover);
+  }
+  li:global(.held) {
+    position: relative;
+    z-index: 1;
+    background: var(--surface);
+    box-shadow: 0 0 0 1px var(--hair);
+  }
+  .handle {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    color: var(--dim);
+    cursor: grab;
+    touch-action: none;
   }
   .play {
     flex: 1;
