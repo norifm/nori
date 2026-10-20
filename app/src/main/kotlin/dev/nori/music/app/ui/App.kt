@@ -234,7 +234,10 @@ private val tabs = listOf(
 fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    androidx.compose.runtime.SideEffect { AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL }
+    androidx.compose.runtime.SideEffect {
+        AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL
+        AppMotion.still = prefs.motion == dev.nori.music.ffi.settings.Motion.EINK
+    }
     NoriTheme(prefs) {
         // Sign-in fades to the app: the screens are different enough that a direction would invent a
         // relationship they do not have.
