@@ -57,6 +57,50 @@ const SETTINGS: i32 = 8;
 const EQUALIZER: i32 = 9;
 const FAVORITES: i32 = 12;
 
+/// The way back from the page shown: the pages opened from one another before it, and the tab the first
+/// of them was opened from.
+#[derive(Default)]
+struct PageTrail {
+    /// The page shown, and those before it, oldest first.
+    shown: Option<PageAsk>,
+    before: Vec<PageAsk>,
+    tab: i32,
+}
+
+/// Where Back leads.
+#[derive(Debug, PartialEq)]
+enum Back {
+    Page(PageAsk),
+    Tab(i32),
+}
+
+impl PageTrail {
+    /// `ask` is shown, opened from tab `from` (or from the page shown, when `from` is the page view).
+    fn opened(&mut self, ask: PageAsk, from: i32) {
+        if from == PAGE {
+            self.before.extend(self.shown.take());
+        } else {
+            self.before.clear();
+            self.tab = from;
+        }
+        self.shown = Some(ask);
+    }
+
+    /// Back from the page shown: the page before it (now shown), else the tab it was opened from.
+    fn back(&mut self) -> Back {
+        match self.before.pop() {
+            Some(page) => {
+                self.shown = Some(page.clone());
+                Back::Page(page)
+            }
+            None => {
+                self.shown = None;
+                Back::Tab(self.tab)
+            }
+        }
+    }
+}
+
 /// Weak handle to the app for callbacks and timers.
 #[derive(Clone)]
 struct AppHandle(Weak<RefCell<App>>);
@@ -335,7 +379,7 @@ pub struct App {
     page_cover: Option<CoverColours>,
     now_cover: Option<CoverColours>,
     /// The view a page was opened from, which back returns to.
-    came_from: i32,
+    trail: PageTrail,
     /// The look worn (or fading in), and the cross-fade to it.
     look: Option<crate::look::Look>,
     fade: Fade,
@@ -507,7 +551,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             backdrop: None,
             page_cover: None,
             now_cover: None,
-            came_from: HOME,
+            trail: PageTrail { tab: HOME, ..Default::default() },
             look: None,
             fade: Fade::default(),
             tickets: VecDeque::new(),
@@ -651,8 +695,13 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_messages_arrived, h, |a| a.drain_inbox());
     on!(ui.on_go, h, |a, v| a.go(v));
     on!(ui.on_back, h, |a| {
-        let to = if a.ui().get_view() == PAGE { a.came_from } else { HOME };
-        a.go(to);
+        if a.ui().get_view() != PAGE {
+            return a.go(HOME);
+        }
+        match a.trail.back() {
+            Back::Page(page) => a.show_page(page),
+            Back::Tab(tab) => a.go(tab),
+        }
     });
     on!(ui.on_swiped_back, h, |a| a.swiped_back());
     on!(ui.on_note_act, h, |a| a.note_act());
@@ -1066,6 +1115,16 @@ impl App {
     }
 
     fn open_page(&mut self, ask: PageAsk) {
+        let from = match self.ui().get_view() {
+            LOGIN | SEARCH => HOME,
+            v => v,
+        };
+        self.trail.opened(ask.clone(), from);
+        self.show_page(ask);
+    }
+
+    /// Shows page `ask`, the way back already kept ([`PageTrail`]).
+    fn show_page(&mut self, ask: PageAsk) {
         if !self.find.is_empty() {
             self.find.clear();
             self.ui().set_find_text("".into());
@@ -1099,9 +1158,6 @@ impl App {
         ui.set_page_songs(ModelRc::default());
         ui.set_page_albums(ModelRc::default());
         self.page_colours(None);
-        if ui.get_view() != PAGE {
-            self.came_from = if matches!(ui.get_view(), LOGIN | SEARCH) { HOME } else { ui.get_view() };
-        }
         ui.set_view(PAGE);
         ui.set_failed("".into());
         self.mirror();
@@ -2740,6 +2796,18 @@ mod tests {
         let ui = AppWindow::new().unwrap();
         dressed().paint(&ui.global::<Theme>());
         ui
+    }
+
+    #[test]
+    fn back_retraces_pages_then_the_tab() {
+        let (artist, album) = (PageAsk::Artist("ar".into()), PageAsk::Album("al".into()));
+        let mut trail = PageTrail::default();
+        trail.opened(artist.clone(), FAVORITES);
+        trail.opened(album, PAGE);
+        assert_eq!(trail.back(), Back::Page(artist), "the album opened from the artist goes back to it");
+        assert_eq!(trail.back(), Back::Tab(FAVORITES), "then where the artist was opened from");
+        trail.opened(PageAsk::Album("x".into()), HOME);
+        assert_eq!(trail.back(), Back::Tab(HOME), "a page opened from a tab forgets the pages before");
     }
 
     /// Two fingers swept to the right on a touchpad over a page go back once per swipe; scrolling up
