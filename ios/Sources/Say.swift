@@ -46,7 +46,7 @@ enum Say {
         ["Favorites", "Quick picks", "Discover", "Discover Weekly", "Listen again", "Your top songs"][safe: code] ?? ""
     }
 
-    /// A long list's order, by the name the core keeps it under: album orders by the server's `type`,
+    /// A long list's order, by the name the core keeps it under: album orders by `AlbumSort::name`,
     /// song orders by `browse::song_sorts` name.
     static func sort(_ name: String) -> String {
         switch name {

@@ -617,6 +617,7 @@ class Say(private val r: Resources) {
     fun albumSort(s: AlbumSort): String = when (s) {
         AlbumSort.BY_NAME -> r.getString(R.string.sort_az)
         AlbumSort.BY_ARTIST -> r.getString(R.string.sort_artist)
+        AlbumSort.ARTIST_ROWS -> r.getString(R.string.sort_artist_rows)
         AlbumSort.NEWEST -> r.getString(R.string.sort_added)
         AlbumSort.RECENT -> r.getString(R.string.sort_played)
         AlbumSort.FREQUENT -> r.getString(R.string.sort_most_played)

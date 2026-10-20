@@ -1206,15 +1206,15 @@ pub unsafe extern "C" fn nori_ios_lyrics_page(song: *const c_char) -> *mut c_cha
 }
 
 /// A long list's orders as JSON to free: `now` the one it is in, `all` every one in the menu's order
-/// (albums by the server's `type`, songs by [`song_sorts`] name, both for the client to word). Null for a
+/// (albums by [`AlbumSort::name`], songs by [`song_sorts`] name, both for the client to word). Null for a
 /// page without orders.
 #[no_mangle]
 pub extern "C" fn nori_ios_sorts(kind: i32) -> *mut c_char {
     let prefs = list_prefs();
     let v = match kind {
         PAGE_ALBUMS => json!({
-            "now": album_sort_saved(prefs).api(),
-            "all": album_sorts().iter().map(|s| s.api()).collect::<Vec<_>>(),
+            "now": album_sort_saved(prefs).name(),
+            "all": grid_album_sorts().map(|s| s.name()).collect::<Vec<_>>(),
         }),
         PAGE_SONGS => json!({
             "now": song_sort_saved(prefs),
@@ -1225,6 +1225,11 @@ pub extern "C" fn nori_ios_sorts(kind: i32) -> *mut c_char {
     owned(&v)
 }
 
+/// The album orders the iPod offers: its grid draws no artist rows.
+fn grid_album_sorts() -> impl Iterator<Item = AlbumSort> {
+    album_sorts().into_iter().filter(|&s| s != AlbumSort::ArtistRows)
+}
+
 /// Keeps `name` (one of [`nori_ios_sorts`]' `all`) as the order of list `kind`; the page reads again.
 ///
 /// # Safety
@@ -1233,7 +1238,7 @@ pub extern "C" fn nori_ios_sorts(kind: i32) -> *mut c_char {
 pub unsafe extern "C" fn nori_ios_sort(kind: i32, name: *const c_char) {
     let name = c_text(name);
     let kept = match kind {
-        PAGE_ALBUMS => match album_sorts().into_iter().find(|s| s.api() == name) {
+        PAGE_ALBUMS => match grid_album_sorts().find(|s| s.name() == name) {
             Some(s) => album_sort_kept(s),
             None => return,
         },

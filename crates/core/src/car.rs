@@ -160,7 +160,7 @@ impl Client {
                 } else { library() };
                 BrowsePage { folders, ..Default::default() }
             },
-            "albums" => match crate::browse::AlbumSort::of_api(arg) {
+            "albums" => match crate::browse::AlbumSort::of_name(arg) {
                 Some(crate::browse::AlbumSort::ByName) => match self.every_album(crate::browse::AlbumSort::ByName, None).await {
                     Some(v) => BrowsePage { folders: album_folders(&v, None, usize::MAX), ..Default::default() },
                     None => failed(),

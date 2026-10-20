@@ -174,7 +174,7 @@ pub fn albums_exhausted(got: u32) -> bool {
 
 // ---- album orders -------------------------------------------------------------
 
-/// The orders `getAlbumList2` knows.
+/// The album grid's orders: those `getAlbumList2` knows, and ByArtist drawn as a row per artist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum AlbumSort {
@@ -184,15 +184,17 @@ pub enum AlbumSort {
     Random,
     ByName,
     ByArtist,
+    /// ByArtist with each artist's albums in one row under their name ([`artist_rows`]).
+    ArtistRows,
     Starred,
     ByGenre,
     ByYear,
 }
 
 impl AlbumSort {
-    const ALL: [AlbumSort; 9] = [
+    const ALL: [AlbumSort; 10] = [
         AlbumSort::Newest, AlbumSort::Recent, AlbumSort::Frequent, AlbumSort::Random, AlbumSort::ByName, AlbumSort::ByArtist,
-        AlbumSort::Starred, AlbumSort::ByGenre, AlbumSort::ByYear,
+        AlbumSort::ArtistRows, AlbumSort::Starred, AlbumSort::ByGenre, AlbumSort::ByYear,
     ];
 
     /// The `type` the server is asked for.
@@ -203,16 +205,25 @@ impl AlbumSort {
             AlbumSort::Frequent => "frequent",
             AlbumSort::Random => "random",
             AlbumSort::ByName => "alphabeticalByName",
-            AlbumSort::ByArtist => "alphabeticalByArtist",
+            AlbumSort::ByArtist | AlbumSort::ArtistRows => "alphabeticalByArtist",
             AlbumSort::Starred => "starred",
             AlbumSort::ByGenre => "byGenre",
             AlbumSort::ByYear => "byYear",
         }
     }
 
-    /// The order the server calls `api` (a stored or car folder's name for it).
-    pub fn of_api(api: &str) -> Option<AlbumSort> {
-        AlbumSort::ALL.into_iter().find(|s| s.api() == api)
+    /// The name it is kept and offered under: the server's `type`, except for orders the server
+    /// has no `type` of their own for.
+    pub fn name(self) -> &'static str {
+        match self {
+            AlbumSort::ArtistRows => "artistRows",
+            s => s.api(),
+        }
+    }
+
+    /// The order called `name` (a stored, car folder's or client's name for it).
+    pub fn of_name(name: &str) -> Option<AlbumSort> {
+        AlbumSort::ALL.into_iter().find(|s| s.name() == name)
     }
 }
 
@@ -222,6 +233,7 @@ pub fn album_sorts() -> Vec<AlbumSort> {
     vec![
         AlbumSort::ByName,
         AlbumSort::ByArtist,
+        AlbumSort::ArtistRows,
         AlbumSort::Newest,
         AlbumSort::Recent,
         AlbumSort::Frequent,
@@ -242,16 +254,27 @@ pub struct ListPref {
 const ALBUMS_SORT_KEY: &str = "albums.sort";
 const SONGS_SORT_KEY: &str = "songs.sort";
 
-/// The album grid's order as it was left (A–Z the first time), kept under the server's name for it.
+/// The album grid's order as it was left (A–Z the first time), kept by [`AlbumSort::name`].
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn album_sort_saved(prefs: std::collections::HashMap<String, String>) -> AlbumSort {
-    prefs.get(ALBUMS_SORT_KEY).and_then(|n| AlbumSort::of_api(n)).unwrap_or(AlbumSort::ByName)
+    prefs.get(ALBUMS_SORT_KEY).and_then(|n| AlbumSort::of_name(n)).unwrap_or(AlbumSort::ByName)
 }
 
 /// The list setting that remembers the album grid's order.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn album_sort_kept(sort: AlbumSort) -> ListPref {
-    ListPref { key: ALBUMS_SORT_KEY.into(), value: sort.api().into() }
+    ListPref { key: ALBUMS_SORT_KEY.into(), value: sort.name().into() }
+}
+
+/// Where each artist's row starts among `albums` (in [`AlbumSort::ArtistRows`] order): an album
+/// joins the row before it when both are by the same artist, by id where both have one, else by name.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn artist_rows(albums: Vec<Album>) -> Vec<u32> {
+    let same = |a: &Album, b: &Album| match (&a.artist_id, &b.artist_id) {
+        (Some(x), Some(y)) => x == y,
+        _ => a.artist == b.artist,
+    };
+    (0..albums.len()).filter(|&i| i == 0 || !same(&albums[i - 1], &albums[i])).map(|i| i as u32).collect()
 }
 
 /// The songs list's order as it was left (by title the first time), by [`song_sorts`] name.
@@ -622,10 +645,29 @@ mod tests {
         assert_eq!((kept.key.as_str(), kept.value.as_str()), ("albums.sort", "frequent"));
         assert_eq!(album_sort_saved(HashMap::from([(kept.key, kept.value)])), AlbumSort::Frequent);
         assert_eq!(album_sort_saved(HashMap::from([("albums.sort".to_string(), "byYear".to_string())])), AlbumSort::ByYear);
+        let rows = album_sort_kept(AlbumSort::ArtistRows);
+        assert_eq!(album_sort_saved(HashMap::from([(rows.key, rows.value)])), AlbumSort::ArtistRows, "kept apart from ByArtist");
+        assert_eq!(AlbumSort::ArtistRows.api(), "alphabeticalByArtist");
         assert_eq!(song_sort_saved(HashMap::new()), "TITLE");
         assert_eq!(song_sort_saved(HashMap::from([("songs.sort".to_string(), "PLAYS".to_string())])), "PLAYS");
         assert_eq!(song_sort_saved(HashMap::from([("songs.sort".to_string(), "GONE".to_string())])), "TITLE");
         assert_eq!(song_sort_kept("YEAR".into()), ListPref { key: "songs.sort".into(), value: "YEAR".into() });
+    }
+
+    #[test]
+    fn artist_rows_start_where_the_artist_changes() {
+        let album = |artist: &str, id: Option<&str>| Album { artist: artist.into(), artist_id: id.map(String::from), ..Default::default() };
+        let albums = vec![
+            album("A", Some("1")),
+            album("A", Some("1")),
+            album("A", Some("2")),
+            album("B", None),
+            album("B", None),
+            album("B", Some("3")),
+            album("C", None),
+        ];
+        assert_eq!(artist_rows(albums), [0, 2, 3, 6], "same name, another id: another row; one id missing: by name");
+        assert!(artist_rows(Vec::new()).is_empty());
     }
 
     #[test]
