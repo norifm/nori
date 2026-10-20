@@ -5333,18 +5333,18 @@ export component AppWindow inherits Window {
                                 border-radius: 17px;
                                 background: Theme.chosen;
                                 Text {
-                                    text: root.account != "" ? root.account-initial : "?";
+                                    text: root.account-initial;
                                     font-weight: 600;
                                 }
                             }
                             VerticalLayout {
                                 alignment: center;
                                 Text {
-                                    text: root.account != "" ? root.account : root.server;
+                                    text: root.account;
                                     font-weight: 600;
                                     overflow: elide;
                                 }
-                                if root.account != "": Text {
+                                if root.server != "": Text {
                                     text: root.server;
                                     color: Theme.dim;
                                     font-size: 12px;

@@ -316,9 +316,33 @@ pub fn title(t: &str) -> &str {
     if t.trim().is_empty() { "Untitled" } else { t }
 }
 
+/// The profile in use as the settings menu heads it: who (the account, else the profile's name, else its
+/// service), then where in grey (the server's address, or the service, or that no one is signed in).
+pub fn profile_lines(p: &nori_core::settings::SavedServer) -> (String, String) {
+    let service = provider(p.kind).name;
+    let place = nori_core::settings::label(&p.name, &p.url);
+    match (p.user.is_empty(), p.kind) {
+        (false, ServerKind::YouTubeMusic) => (p.user.clone(), service.into()),
+        (true, ServerKind::YouTubeMusic) => (if place.is_empty() { service.into() } else { place }, "Not signed in".into()),
+        (false, _) => (p.user.clone(), place),
+        (true, _) => (if place.is_empty() { service.into() } else { place }, String::new()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_settings_menu_names_who_and_where() {
+        use nori_core::settings::SavedServer;
+        let p = |kind, name: &str, url: &str, user: &str| SavedServer { kind, name: name.into(), url: url.into(), user: user.into(), ..Default::default() };
+        let lines = |s: SavedServer| profile_lines(&s);
+        assert_eq!(lines(p(ServerKind::Subsonic, "", "https://music.example.com/x", "ann")), ("ann".into(), "music.example.com".into()));
+        assert_eq!(lines(p(ServerKind::YouTubeMusic, "", "", "Ann Lee")), ("Ann Lee".into(), "YouTube Music".into()));
+        assert_eq!(lines(p(ServerKind::YouTubeMusic, "", "", "")), ("YouTube Music".into(), "Not signed in".into()));
+        assert_eq!(lines(p(ServerKind::Subsonic, "Home", "http://h", "")), ("Home".into(), "".into()));
+    }
 
     #[test]
     fn formats_counts() {

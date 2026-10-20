@@ -912,9 +912,10 @@ impl App {
             s.close();
         }
         let ui = self.ui();
-        ui.set_server(nori_core::settings::label(&profile.name, &profile.url).into());
-        ui.set_account(profile.user.as_str().into());
-        ui.set_account_initial(profile.user.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into());
+        let (who, where_) = words::profile_lines(&profile);
+        ui.set_account_initial(who.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default().into());
+        ui.set_account(who.into());
+        ui.set_server(where_.into());
         match Session::open(&self.data, self.http.clone(), profile, self.tx.clone(), self.mpris.clone()) {
             Ok(s) => {
                 s.check();
