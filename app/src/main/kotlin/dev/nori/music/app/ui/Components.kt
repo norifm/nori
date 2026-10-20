@@ -627,8 +627,12 @@ private object SwipeActs {
  * fixed width inside a wider cell the card hugs the left edge of it and the grid looks ragged.
  */
 @Composable
-fun CoverCard(title: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, fill: Boolean = false, remote: Boolean = false) {
-    Column((if (fill) modifier else modifier.width(size)).clickable(onClick = onClick)) {
+@OptIn(ExperimentalFoundationApi::class)
+fun CoverCard(
+    title: String, subtitle: String, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier,
+    fill: Boolean = false, remote: Boolean = false, onLongClick: (() -> Unit)? = null,
+) {
+    Column((if (fill) modifier else modifier.width(size)).combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
         if (fill) Cover(coverUrl, 0.dp, Modifier.fillMaxWidth().aspectRatio(1f), radius = Radius.card)
         else Cover(coverUrl, size, radius = Radius.card)
         Text(
