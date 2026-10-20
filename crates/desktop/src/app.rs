@@ -3134,6 +3134,29 @@ mod tests {
         }
     }
 
+    /// A page's song rows show their songs: a row with a song draws more than an empty one.
+    #[test]
+    fn song_rows_show_their_songs() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let drawn = |song: SongRow| {
+            let ui = window();
+            ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+            ui.set_view(PAGE);
+            ui.set_page_songs(ModelRc::new(VecModel::from(vec![song])));
+            ui.show().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let shot = ui.window().take_snapshot().unwrap();
+            // The first row, under the page's head.
+            let (w, rows) = (shot.width() as usize, 380..420);
+            rows.flat_map(|y| shot.as_slice()[y * w..(y + 1) * w].to_vec()).collect::<Vec<_>>()
+        };
+        let song = SongRow { title: "Glass Harbour".into(), time: "3:21".into(), index: 0, ..Default::default() };
+        assert_ne!(drawn(song), drawn(SongRow::default()), "the row draws its song");
+    }
+
     /// A card opens on a click with jams on too, where a right press opens its menu.
     #[test]
     fn a_card_opens_on_a_click_with_jams_on() {

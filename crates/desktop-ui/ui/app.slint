@@ -1361,6 +1361,109 @@ component SongLine inherits Rectangle {
             }
         }
     }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 12px;
+        spacing: 12px;
+        if root.thumb: Art {
+            y: (parent.height - self.height) / 2;
+            width: 44px;
+            height: 44px;
+            border-radius: 5px;
+            source: root.picture;
+        }
+        if !root.thumb: Rectangle {
+            width: 24px;
+            if root.song.playing: PlayingBars {
+                x: parent.width - self.width - 2px;
+                y: (parent.height - self.height) / 2;
+                colour: Theme.accent;
+                width: 14px;
+                height: 13px;
+            }
+            if !root.song.playing: Text {
+                width: 100%;
+                text: root.number;
+                color: Theme.dim;
+                font-size: 13px;
+                horizontal-alignment: right;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 2;
+            preferred-width: 0;
+            Text {
+                text: root.song.title;
+                color: root.song.playing ? Theme.accent : Theme.text;
+                font-size: 13px;
+                overflow: elide;
+            }
+            if (root.thumb || root.show-album) && !root.table: ArtistLine {
+                text: root.song.artist;
+                artist: root.song.artist-id;
+                credits: root.song.credits;
+                color: Theme.dim;
+            }
+        }
+        if root.show-album && !root.table: Link {
+            horizontal-stretch: 1;
+            preferred-width: 0;
+            text: root.song.album;
+            album: root.song.album-id;
+            color: Theme.dim;
+            font-size: 13px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        // A table's two columns stand at fixed places (the heads use the same sums), not where the layout
+        // would share the width out.
+        if root.table: Rectangle {
+            preferred-width: 0;
+            horizontal-stretch: 2;
+        }
+        // "Asked": a guest's request, until the host takes it.
+        if root.song.by != "": Rectangle {
+            y: (parent.height - self.height) / 2;
+            height: 18px;
+            width: bt.preferred-width + 14px;
+            border-radius: 9px;
+            background: Theme.chosen;
+            bt := Text {
+                text: root.song.by;
+                color: Theme.dim;
+                font-size: 10px;
+                font-weight: 600;
+            }
+        }
+        Text {
+            text: root.song.time;
+            color: Theme.dim;
+            font-size: 13px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            width: 44px;
+        }
+    }
+    if root.table: ArtistLine {
+        x: 8px + 44px + 12px + root.cols * 0.5 + 12px;
+        width: root.cols * 0.25;
+        text: root.song.artist;
+        artist: root.song.artist-id;
+        credits: root.song.credits;
+        color: Theme.dim;
+        height: root.height;
+    }
+    if root.table: Link {
+        x: 8px + 44px + 12px + root.cols * 0.75 + 24px;
+        width: root.cols * 0.25;
+        text: root.song.album;
+        album: root.song.album-id;
+        color: Theme.dim;
+        font-size: 13px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
 }
 
 // The column heads over a table of SongLines: the same sums as its columns.
