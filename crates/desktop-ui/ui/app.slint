@@ -1385,6 +1385,48 @@ component Heading inherits VerticalLayout {
 }
 
 // A text field: a rounded well, a magnifier or another icon, the placeholder until something is typed.
+// A page with nothing to list: its glyph in a soft disc, what is missing, and where it comes from.
+component EmptyNote inherits VerticalLayout {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> line;
+    alignment: center;
+    spacing: 8px;
+    Rectangle {
+        height: 72px;
+        Rectangle {
+            width: 72px;
+            height: 72px;
+            border-radius: 36px;
+            background: Theme.fill;
+            Icon {
+                path: root.icon;
+                colour: Theme.dim;
+                width: 32px;
+                height: 32px;
+            }
+        }
+    }
+    Rectangle {
+        height: 6px;
+    }
+    Text {
+        text: root.title;
+        color: Theme.text;
+        font-family: Type.title;
+        font-size: 22px;
+        font-weight: 700;
+        horizontal-alignment: center;
+    }
+    Text {
+        text: root.line;
+        color: Theme.dim;
+        font-size: 14px;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+}
+
 component Field inherits Rectangle {
     in property <string> placeholder;
     in property <string> icon;
@@ -3870,6 +3912,8 @@ export component AppWindow inherits Window {
     in property <string> account-initial;
     callback open-accounts();
     in-out property <string> find-text;
+    // The library list shown has nothing in it.
+    property <bool> list-empty: (root.view == 2 && root.albums.length == 0) || (root.view == 3 && root.artists.length == 0) || (root.view == 4 && root.playlists.length == 0) || ((root.view == 5 || root.view == 12) && root.songs.length == 0);
     property <string> list-name: root.view == 10 ? root.shelves[root.shown-shelf].title : root.view == 11 ? "For you" : root.view == 2 ? "Albums" : root.view == 3 ? "Artists" : root.view == 4 ? "Playlists" : root.view == 5 ? "Songs" : root.view == 12 ? "Favorites" : root.view == 6 && root.page-kind == 0 ? "Album" : root.view == 6 && root.page-kind == 2 ? (root.page-mix ? "Mix" : "Playlist") : "";
     callback find-edited(string);
     // The artist chosen on the Artists page.
@@ -4567,6 +4611,7 @@ export component AppWindow inherits Window {
                             padding-right: 16px;
                             SongHeads {
                                 height: 28px;
+                                opacity: root.songs.length > 0 ? 1 : 0;
                             }
                         }
                         HorizontalLayout {
@@ -4912,6 +4957,14 @@ export component AppWindow inherits Window {
                 if root.loading: Text {
                     text: "Loading…";
                     color: Theme.dim;
+                }
+                // A list that came back empty, or that the filter left nothing of.
+                if !root.loading && root.failed == "" && root.list-empty: EmptyNote {
+                    x: root.view == 3 ? 300px + (parent.width - 300px) * 0.15 : parent.width * 0.2;
+                    width: root.view == 3 ? (parent.width - 300px) * 0.7 : parent.width * 0.6;
+                    icon: root.find-text != "" ? Icons.search : root.view == 2 ? Icons.albums : root.view == 3 ? Icons.artists : root.view == 4 ? Icons.playlists : root.view == 12 ? Icons.seal-outline : Icons.songs;
+                    title: root.find-text != "" ? "Nothing matches" : root.view == 2 ? "No albums" : root.view == 3 ? "No artists" : root.view == 4 ? "No playlists" : root.view == 12 ? "No favorites" : "No songs";
+                    line: root.find-text != "" ? "Nothing here has “" + root.find-text + "” in its name." : root.view == 12 ? "Songs you mark with the seal gather here." : root.view == 4 ? "Playlists you make or save gather here." : "Your library has none yet.";
                 }
                 if root.failed != "" && !root.loading: Text {
                     width: 60%;
