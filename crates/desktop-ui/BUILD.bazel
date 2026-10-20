@@ -1,0 +1,25 @@
+# Generated from Cargo manifests by tools/bazel/generate.py.
+load("//tools/bazel:workspace.bzl", "workspace_crate")
+
+workspace_crate({'name': 'nori-desktop-ui',
+ 'edition': '2021',
+ 'version': '0.7.0-beta.2',
+ 'targets': [{'name': 'nori_desktop_ui', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
+             {'name': 'build-script-build',
+              'kind': 'custom-build',
+              'root': 'build.rs',
+              'test': False}],
+ 'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
+ 'local': [],
+ 'registry': [{'label': '@crates//:slint-1.18.1',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']},
+              {'label': '@crates//:slint-build-1.18.1',
+               'kind': 'build',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']}],
+ 'resources': [],
+ 'aliases': {}})

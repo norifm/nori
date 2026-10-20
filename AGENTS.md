@@ -71,6 +71,7 @@ via nori-core):
 | android | Android only: the `norimusic` cdylib, uniffi scaffolding, JNI doors, AudioTrack writer (track.rs), playback path (player.rs) |
 | http, output-cpal, mpris | desktop: ureq transport, cpal output, Linux media controls |
 | cli, desktop | terminal (ratatui) and desktop (Slint) clients |
+| desktop-ui | the desktop client's Slint interface (`ui/app.slint`), its own crate so Rust edits don't recompile it |
 | ios | the iPod touch client's static library over nori-host behind a C ABI; the Swift app is `ios/`, the plan and work packages `docs/site/developers/ipod-internals.md` |
 | host | the session every client shares (terminal, desktop and iPod today; Android is moving onto it): engine, queue saving, remote and jams, config, index sync, media controls |
 | uniffi-jni-runtime, uniffi-bindgen | upstream uniffi JNI runtime with changes marked `NORI`; Kotlin binding generator |

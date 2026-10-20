@@ -2,6 +2,8 @@
 name = "nori-core"
 version.workspace = true
 edition.workspace = true
+# One test binary (tests/main.rs): fewer to link after an edit.
+autotests = false
 
 # The Core and Client objects, their calls into each domain crate, and the domain crates re-exported
 # (nori_core::playlist, ::settings_store, ...). See AGENTS.md.
@@ -9,6 +11,10 @@ edition.workspace = true
 [lib]
 crate-type = ["lib"]
 name = "nori_core"
+
+[[test]]
+name = "core"
+path = "tests/main.rs"
 
 [features]
 default = ["ffi", "youtube"]

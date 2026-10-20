@@ -151,7 +151,7 @@ The pipeline is `tools/ipod.sh` (like `tools/apk.sh`): `build` runs `tools/ios-b
 then `install` and `run` reach the iPod; plain `tools/ipod.sh` builds and, with an iPod on USB, installs
 and runs.
 
-1. **Rust**: `SDKROOT=<iPhoneOS SDK> IPHONEOS_DEPLOYMENT_TARGET=12.2 cargo build --release --target
+1. **Rust**: `SDKROOT=<iPhoneOS SDK> IPHONEOS_DEPLOYMENT_TARGET=12.2 cargo build --profile dist --target
    aarch64-apple-ios -p nori-ios`, every object `platform IOS minos 12.2`. Release profile as the workspace
    has it (fat LTO, one codegen unit, panic = unwind so a core panic surfaces as an error, not a crash).
 2. **The app**: **there is no Xcode project**: one `swiftc` call (`-target arm64-apple-ios12.2 -O -wmo`, the

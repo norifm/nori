@@ -1,6 +1,6 @@
 # Mac client redesign: checklist
 
-Client: `crates/desktop` (Slint + wgpu/Skia, `crates/desktop/ui/app.slint`, `src/compositor.rs`, `src/app.rs`).
+Client: `crates/desktop` (Slint + wgpu/Skia, `crates/desktop-ui/ui/app.slint`, `src/compositor.rs`, `src/app.rs`).
 Contract: `docs/redesign-contract.md`. Long form and rationale: `docs/macos-redesign.md`. Mockup (owner-approved,
 open it for pixel intent): `~/Desktop/nori-macos-mockup.html`.
 Branch/worktree: `feat/macos-redesign` in `~/Documents/Projects/Apps/nori-macos`.

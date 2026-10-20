@@ -77,7 +77,7 @@ def package(binaries, output, version, system, arch):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--binaries", type=Path, default=ROOT / "target/release")
+    p.add_argument("--binaries", type=Path, default=ROOT / "target/dist")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--arch", choices=("aarch64", "x86_64"))

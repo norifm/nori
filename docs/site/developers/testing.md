@@ -310,9 +310,11 @@ is Android glue and stays on the device. 50 moved, 60 stay.
   -PrustTargets=x86_64`, signed with the release key, installed, then About, Check for updates, Update.
 - Remote control and jams: the protocol, a device admitting commands, the jam's roles and requests, the LAN
   door and its proof are nori-remote's, and two cores controlling each other through a relay (and a door), and
-  a jam with a host, an admin and a guest, are nori-core's tests/remote.rs (with its timing on a clock the
-  test moves: a failed poll's retry, the clock's burst and quarter-minute exchanges, nothing left waiting
-  after a leave, sends in the order made), as is the active device: who plays, following it with the picker
+  a jam with a host, an admin and a guest, are nori-core's tests/remote.rs, all on one simulated executor
+  per test (`Native::simulated`) whose clock moves only when nothing is left to run: a request through a door
+  counts as work until it is answered, a poll the door holds as waiting. That covers a failed poll's retry,
+  the clock's burst and quarter-minute exchanges, nothing left waiting after a leave and sends in the order
+  made. The same file covers the active device: who plays, following it with the picker
   closed and stopping when it goes, its whole queue in pages, a command shown at once and corrected by the
   next state, a transfer's play order, shuffle and repeat, the volume both ways and the star. The desktop's and terminal's volume over remote control is nori-host's (remote.rs). What stays on a
   device is Android's: NsdManager announcing and finding doors, the system volume a command sets, an invite (the

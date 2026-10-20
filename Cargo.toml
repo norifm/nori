@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/android", "crates/automix", "crates/cli", "crates/core", "crates/covers", "crates/db", "crates/desktop", "crates/devices", "crates/engine", "crates/host", "crates/http", "crates/ios", "crates/library", "crates/look", "crates/lyrics", "crates/model", "crates/mpris", "crates/net", "crates/output-cpal", "crates/perf", "crates/player", "crates/queue", "crates/remote", "crates/settings", "crates/settings-derive", "crates/stretch", "crates/tasks", "crates/testdir", "crates/time", "crates/transfers", "crates/uniffi-bindgen", "crates/uniffi-jni-runtime", "crates/web", "crates/youtube"]
+members = ["crates/android", "crates/automix", "crates/cli", "crates/core", "crates/covers", "crates/db", "crates/desktop", "crates/desktop-ui", "crates/devices", "crates/engine", "crates/host", "crates/http", "crates/ios", "crates/library", "crates/look", "crates/lyrics", "crates/model", "crates/mpris", "crates/net", "crates/output-cpal", "crates/perf", "crates/player", "crates/queue", "crates/remote", "crates/settings", "crates/settings-derive", "crates/stretch", "crates/tasks", "crates/testdir", "crates/time", "crates/transfers", "crates/uniffi-bindgen", "crates/uniffi-jni-runtime", "crates/web", "crates/youtube"]
 exclude = ["vendor/i-slint-renderer-skia"]
 
 [workspace.package]
@@ -47,28 +47,29 @@ opt-level = 2
 [profile.test.package."*"]
 opt-level = 2
 
+# Local optimized builds (`cargo run --release`, debug APKs): fast code, rebuilt in seconds after an edit.
 [profile.release]
+opt-level = 3
+incremental = true
+
+# What ships (tools/release.sh: the APK, desktop packages, the iPod app): whole-program optimized, minutes
+# to link.
+[profile.dist]
+inherits = "release"
 lto = "fat"
 codegen-units = 1
-opt-level = 3
+incremental = false
 # Unwind, not abort: a panic in the core reached through uniffi then comes out in Kotlin as an exception
 # the caller can catch (runCatching around a measure, a page read), instead of ending the app. It costs
 # unwind tables in the library, nothing per call.
 panic = "unwind"
 strip = true
 
-# Fast native rebuilds for debug APKs; keep the sound chain optimized.
-[profile.android-dev]
-inherits = "release"
-lto = "off"
-codegen-units = 16
-incremental = true
-
 [patch.crates-io]
 i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }
 
 # The web client's wasm (web/build.sh): small over fast, and a panic ends the worker (wasm has no unwinding).
 [profile.web]
-inherits = "release"
+inherits = "dist"
 opt-level = "s"
 panic = "abort"

@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use nori_tasks::Tasks;
 use nori_time::{Duration, Instant};
 
 use parking_lot::{Mutex, MutexGuard};
@@ -43,15 +44,17 @@ struct Inside {
     me: Member,
     /// Replies by sequence, each to one controller.
     events: VecDeque<(u64, String, Body)>,
-    /// The bells of the polls held now, by hold number; the next change rings and drops them.
-    holds: HashMap<u64, Bell>,
+    /// The bells of the polls held now, by hold number, each with its [`Tasks::waiting`] guard; the
+    /// next change rings and drops them.
+    holds: HashMap<u64, (Bell, Option<Box<dyn Send>>)>,
     holds_opened: u64,
 }
 
 impl Inside {
     /// Wakes every held poll.
     fn ring(&mut self) {
-        for (_, bell) in self.holds.drain() {
+        for (_, (bell, waiting)) in self.holds.drain() {
+            drop(waiting);
             ring(&bell);
         }
     }
@@ -63,6 +66,8 @@ struct Shared {
     inside: Mutex<Inside>,
     handler: Handler,
     jam: Mutex<Option<LanJam>>,
+    /// Keeps this device's clock ([`crate::clock::now_us`] but where a test simulates it).
+    tasks: Arc<dyn Tasks>,
 }
 
 struct LanJam {
@@ -81,11 +86,11 @@ pub struct Door {
 }
 
 impl Door {
-    /// Listens on every interface, on a port the system picks.
-    pub fn open(me: Member, secret: String, handler: Handler) -> std::io::Result<Door> {
+    /// Listens on every interface, on a port the system picks; stamps time exchanges on `tasks`' clock.
+    pub fn open(me: Member, secret: String, handler: Handler, tasks: Arc<dyn Tasks>) -> std::io::Result<Door> {
         let listener = TcpListener::bind(("0.0.0.0", 0))?;
         let port = listener.local_addr()?.port();
-        let shared = Arc::new(Shared { secret: Mutex::new(secret), closed: AtomicBool::new(false), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0 }), handler, jam: Mutex::new(None) });
+        let shared = Arc::new(Shared { secret: Mutex::new(secret), closed: AtomicBool::new(false), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0 }), handler, jam: Mutex::new(None), tasks });
         let s = shared.clone();
         std::thread::Builder::new().name("nori-door".into()).spawn(move || {
             for conn in listener.incoming() {
@@ -172,7 +177,7 @@ fn serve(s: &Shared, conn: TcpStream) {
     let mut reader = BufReader::new(conn);
     while !s.closed.load(Ordering::Acquire) {
         let Some((method, target, body)) = read_request(&mut reader) else { break };
-        let received_us = crate::clock::now_us();
+        let received_us = s.tasks.now_us();
         // None: the controller hung up during a held poll.
         let Some((status, json)) = answer(s, &out, &method, &target, &body, received_us) else { break };
         let head = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n", json.len());
@@ -284,7 +289,7 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
         // A time exchange (`crate::clock`), answered at once, stamped as near the socket as this gets.
         "/rest/noriRemote.time" => {
             let Some(t1) = query(target, "t1").and_then(|v| v.parse().ok()) else { return Some(("400 Bad Request", "{}".into())) };
-            let times = Body::Clock { t1, t2: received_us, t3: crate::clock::now_us() };
+            let times = Body::Clock { t1, t2: received_us, t3: s.tasks.now_us() };
             Some(("200 OK", serde_json::to_string(&times).unwrap_or_default()))
         }
         "/rest/noriRemote.send" if method == "POST" => {
@@ -309,7 +314,7 @@ fn hold_poll(s: &Shared, i: &mut MutexGuard<Inside>, conn: &TcpStream, since: u6
     let Ok((bell, ear)) = alarm() else { return Some(()) };
     let hold = i.holds_opened;
     i.holds_opened += 1;
-    i.holds.insert(hold, bell);
+    i.holds.insert(hold, (bell, s.tasks.waiting()));
     let mut woke = Woke::Rung;
     while woke == Woke::Rung && i.seq <= since && !s.closed.load(Ordering::Acquire) {
         woke = MutexGuard::unlocked(i, || wait(conn, &ear, until));
@@ -444,7 +449,7 @@ mod tests {
     #[test]
     fn held_polls_recheck_access() {
         for guest in [false, true] {
-            let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(|_, _| {})).unwrap();
+            let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(|_, _| {}), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
             let secret = if guest {
                 door.open_jam("invite-secret".into(), Box::new(|_, _| {}), Box::new(|_| {}));
                 let nonce = "a".repeat(64);
@@ -472,7 +477,7 @@ mod tests {
         let jam_commands = Arc::new(Mutex::new(Vec::new()));
         let members = Arc::new(Mutex::new(Vec::new()));
         let got = device_commands.clone();
-        let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body)))).unwrap();
+        let door = Door::open(Member { id: "host".into(), ..Default::default() }, "paired-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body))), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
         let got = jam_commands.clone();
         let listed = members.clone();
         door.open_jam("invite-secret".into(), Box::new(move |from, body| got.lock().push((from.to_owned(), body))), Box::new(move |m| *listed.lock() = m));
@@ -510,7 +515,7 @@ mod tests {
         let got = Arc::new(Mutex::new(Vec::new()));
         let g = got.clone();
         let me = Member { id: "desk".into(), name: "Desk".into(), ..Default::default() };
-        let door = Door::open(me, "pw".into(), Box::new(move |from, body| g.lock().push((from.to_string(), body)))).unwrap();
+        let door = Door::open(me, "pw".into(), Box::new(move |from, body| g.lock().push((from.to_string(), body))), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
         door.publish(DeviceState { playing: true, rev: 3, ..Default::default() });
         door.reply("tablet", Body::Ack { id: 9, refusal: None });
 
