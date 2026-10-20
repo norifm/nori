@@ -609,6 +609,13 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             });
         }
         menu_actions(ui, &a.compositor);
+        // A touchpad's sideways swipe: back, where there is a way back.
+        let me = a.me.clone();
+        // Run after the scroll it came with: the app is busy with that event while the swipe is read.
+        a.compositor.on_swipe(move || {
+            let me = me.clone();
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || me.with(|a| a.swiped_back()));
+        });
         // Now Playing's lyrics: the active line sharp, the rest blurred by the compositor.
         let weak = ui.as_weak();
         a.compositor.set_focus_source(move || {
@@ -703,7 +710,6 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
             Back::Tab(tab) => a.go(tab),
         }
     });
-    on!(ui.on_swiped_back, h, |a| a.swiped_back());
     on!(ui.on_note_act, h, |a| a.note_act());
     on!(ui.on_open_album, h, |a, id| a.open_page(PageAsk::Album(id.into())));
     on!(ui.on_open_artist, h, |a, id| a.open_page(PageAsk::Artist(id.into())));
@@ -2810,32 +2816,6 @@ mod tests {
         assert_eq!(trail.back(), Back::Tab(FAVORITES), "then where the artist was opened from");
         trail.opened(PageAsk::Album("x".into()), HOME);
         assert_eq!(trail.back(), Back::Tab(HOME), "a page opened from a tab forgets the pages before");
-    }
-
-    /// Two fingers swept to the right on a touchpad over a page go back once per swipe; scrolling up
-    /// and down does not.
-    #[test]
-    fn a_sideways_swipe_goes_back() {
-        i_slint_backend_testing::init_no_event_loop();
-        let ui = window();
-        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
-        ui.set_view(PAGE);
-        ui.show().unwrap();
-        let backs = Rc::new(std::cell::Cell::new(0));
-        let counted = backs.clone();
-        ui.on_swiped_back(move || counted.set(counted.get() + 1));
-        // As a touchpad gives it (compositor.rs): a gesture's start, its moves and its end.
-        let gesture = |dx: f32, dy: f32| {
-            use winit::event::TouchPhase::*;
-            for phase in [Started, Moved, Moved, Moved, Moved, Moved, Moved, Moved, Moved, Ended] {
-                let (x, y) = if phase == Ended { (0.0, 0.0) } else { (dx, dy) };
-                ui.window().dispatch_event(crate::compositor::wheel_event(slint::LogicalPosition::new(640.0, 500.0), x, y, phase));
-            }
-        };
-        gesture(0.0, -30.0);
-        assert_eq!(backs.get(), 0, "scrolling the page");
-        gesture(30.0, 2.0);
-        assert_eq!(backs.get(), 1, "one swipe, one back");
     }
 
     fn pill() -> crate::PlayerBar {

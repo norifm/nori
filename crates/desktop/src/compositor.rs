@@ -190,6 +190,8 @@ struct Shared {
     occluded: Cell<bool>,
     /// Queried each frame for the lyrics focus blur.
     focus: RefCell<Option<FocusSource>>,
+    /// Run on a touchpad's sideways swipe ([`Swipe`]).
+    swiped: RefCell<Option<Box<dyn Fn()>>>,
     menu: MenuBar,
     /// Run as the event loop ends, however it ends: on macOS the app menu's and the Dock's Quit, and logging
     /// out, end the process from inside the loop, which never returns to the caller of `run`.
@@ -279,7 +281,7 @@ impl slint::platform::Platform for Platform {
 
     fn run_event_loop(&self) -> Result<(), PlatformError> {
         let event_loop = self.event_loop.borrow_mut().take().ok_or_else(|| PlatformError::from("the event loop ran already"))?;
-        let mut runner = Runner { shared: self.shared.clone(), draw: None, pointer: LogicalPosition::new(0.0, 0.0), over: None, held: None, modifiers: Default::default() };
+        let mut runner = Runner { shared: self.shared.clone(), swipe: Swipe::default(), draw: None, pointer: LogicalPosition::new(0.0, 0.0), over: None, held: None, modifiers: Default::default() };
         event_loop.run_app(&mut runner).map_err(|e| PlatformError::from(e.to_string()))
     }
 
@@ -344,6 +346,7 @@ pub fn install() -> Result<Compositor, String> {
         page_colour: Cell::new([0.0; 3]),
         occluded: Cell::new(false),
         focus: RefCell::new(None),
+        swiped: RefCell::new(None),
         menu: MenuBar::default(),
         on_exit: RefCell::new(None),
         on_wake: RefCell::new(None),
@@ -404,6 +407,11 @@ impl Compositor {
         if self.0.page_colour.replace(colour) != colour {
             redraw(&self.0);
         }
+    }
+
+    /// Runs `f` on each sideways swipe of a touchpad's two fingers, either way.
+    pub fn on_swipe(&self, f: impl Fn() + 'static) {
+        *self.0.swiped.borrow_mut() = Some(Box::new(f));
     }
 
     pub fn set_focus_source(&self, f: impl Fn() -> Option<Focus> + 'static) {
@@ -575,8 +583,45 @@ fn layout_layers(s: &Shared) {
     }
 }
 
+/// A touchpad's two-finger sideways swipe, read from the scrolls it sends: one swipe across [`SWIPE_PX`],
+/// mostly sideways, is one swipe, however many scrolls it took. A gesture's phases end it; a mouse
+/// wheel's scrolls, which have none, end after [`SWIPE_QUIET`] without one.
+#[derive(Default)]
+struct Swipe {
+    dx: f32,
+    dy: f32,
+    spent: bool,
+    last: Option<Instant>,
+}
+
+const SWIPE_PX: f32 = 90.0;
+const SWIPE_QUIET: Duration = Duration::from_millis(250);
+
+impl Swipe {
+    /// Takes one scroll; true once, when it makes a swipe.
+    fn scrolled(&mut self, dx: f32, dy: f32, phase: winit::event::TouchPhase, now: Instant) -> bool {
+        use winit::event::TouchPhase::*;
+        if phase == Started || self.last.is_some_and(|t| now.duration_since(t) > SWIPE_QUIET) {
+            *self = Swipe::default();
+        }
+        self.last = Some(now);
+        if matches!(phase, Ended | Cancelled) {
+            *self = Swipe::default();
+            return false;
+        }
+        self.dx += dx;
+        self.dy += dy;
+        if self.spent || self.dx.abs() < SWIPE_PX || self.dx.abs() < self.dy.abs() * 2.0 {
+            return false;
+        }
+        self.spent = true;
+        true
+    }
+}
+
 struct Runner {
     shared: Rc<Shared>,
+    swipe: Swipe,
     draw: Option<Draw>,
     pointer: LogicalPosition,
     /// Layer under the pointer, and the layer a button was pressed in (captures until release).
@@ -654,7 +699,7 @@ impl Runner {
     }
 }
 
-pub(crate) fn wheel_event(position: LogicalPosition, dx: f32, dy: f32, phase: winit::event::TouchPhase) -> WindowEvent {
+fn wheel_event(position: LogicalPosition, dx: f32, dy: f32, phase: winit::event::TouchPhase) -> WindowEvent {
     use i_slint_core::input::{BackendMouseEvent, TouchPhase};
     let phase = match phase {
         winit::event::TouchPhase::Started => TouchPhase::Started,
@@ -833,6 +878,11 @@ impl ApplicationHandler<Wake> for Runner {
                     MouseScrollDelta::PixelDelta(p) => (p.x as f32 / scale, p.y as f32 / scale),
                 };
                 self.pointer(|position| wheel_event(position, dx, dy, phase));
+                if self.swipe.scrolled(dx, dy, phase, Instant::now()) {
+                    if let Some(f) = self.shared.swiped.borrow().as_ref() {
+                        f();
+                    }
+                }
             }
             E::ModifiersChanged(m) => self.modifiers = m.state(),
             E::KeyboardInput { event, .. } => self.key(&event),
@@ -1289,6 +1339,28 @@ fn unified_toolbar(window: &WinitWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sideways_swipe_is_one_swipe_either_way() {
+        use winit::event::TouchPhase::*;
+        let t = Instant::now();
+        let gesture = |s: &mut Swipe, dx: f32, dy: f32| {
+            let mut swipes = s.scrolled(0.0, 0.0, Started, t) as u32;
+            for k in 1..10 {
+                swipes += s.scrolled(dx, dy, Moved, t + Duration::from_millis(k * 16)) as u32;
+            }
+            swipes + s.scrolled(0.0, 0.0, Ended, t + Duration::from_millis(170)) as u32
+        };
+        let mut s = Swipe::default();
+        assert_eq!(gesture(&mut s, 30.0, 2.0), 1, "to the right");
+        assert_eq!(gesture(&mut s, -30.0, 2.0), 1, "to the left");
+        assert_eq!(gesture(&mut s, 2.0, -30.0), 0, "up and down is scrolling");
+        assert_eq!(gesture(&mut s, 5.0, 0.0), 0, "too short");
+        // A wheel without phases: a pause ends one swipe.
+        let mut s = Swipe::default();
+        let wheel = |s: &mut Swipe, at: u64| (0..6).map(|k| s.scrolled(-40.0, 0.0, Moved, t + Duration::from_millis(at + k * 16)) as u32).sum::<u32>();
+        assert_eq!(wheel(&mut s, 0) + wheel(&mut s, 1_000), 2);
+    }
 
     #[test]
     fn pills_centre_in_the_window_and_stop_at_their_width() {
