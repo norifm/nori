@@ -2643,6 +2643,26 @@ component QueueView inherits Rectangle {
     property <length> drag-dy;
     property <length> drag-start;
     property <bool> dragging: false;
+    // Let go: the held row glides into its slot (dropping), then the move is sent and every row is drawn
+    // at its new place at once (landing), so nothing slides back first.
+    property <bool> dropping;
+    property <bool> landing;
+    Timer {
+        interval: Motion.reduced ? 1ms : 120ms;
+        running: root.dropping;
+        triggered => {
+            root.dropping = false;
+            root.landing = true;
+            root.move(root.queue[root.drag-from].index, root.queue[root.drag-to].index);
+            root.drag-from = -1;
+            root.drag-dy = 0;
+        }
+    }
+    Timer {
+        interval: 16ms;
+        running: root.landing;
+        triggered => { root.landing = false; }
+    }
     // The row of the song playing: songs land after it.
     property <int> playing-row: -1;
     property <int> drag-to: root.drag-from < 0 ? -1 : max(root.playing-row + 1, min(root.queue.length - 1, root.drag-from + round(root.drag-dy / 54px)));
@@ -2736,11 +2756,11 @@ component QueueView inherits Rectangle {
                 }
                 Rectangle {
                     y: qrow.caption-h + qrow.shift;
-                    animate y { duration: i == root.drag-from || Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+                    animate y { duration: (i == root.drag-from && root.dragging) || root.landing || Motion.reduced ? 0ms : i == root.drag-from ? 120ms : 160ms; easing: ease-out; }
                     height: 54px;
                     // Concentric with the cover: its 8 px corner and the 7 px around it.
                     border-radius: 15px;
-                    background: i == root.drag-from && root.dragging ? Theme.chosen : qt.has-hover ? Theme.hover : transparent;
+                    background: i == root.drag-from && (root.dragging || root.dropping) ? Theme.chosen : qt.has-hover ? Theme.hover : transparent;
                     // Already played: quieter.
                     opacity: s.played ? 0.45 : 1;
                     // The row's content inside it, so the row stays hovered over its links and buttons.
@@ -2752,7 +2772,7 @@ component QueueView inherits Rectangle {
                             if e.button != PointerEventButton.left {
                                 return;
                             }
-                            if e.kind == PointerEventKind.down && root.editable && root.movable && !s.played && !s.playing {
+                            if e.kind == PointerEventKind.down && root.editable && root.movable && !root.dropping && !s.played && !s.playing {
                                 root.drag-from = i;
                                 root.drag-dy = 0;
                                 root.dragging = false;
@@ -2760,11 +2780,14 @@ component QueueView inherits Rectangle {
                             }
                             if e.kind == PointerEventKind.up && root.drag-from == i {
                                 if root.dragging && root.drag-to != i {
-                                    root.move(s.index, root.queue[root.drag-to].index);
+                                    root.drag-dy = (root.drag-to - i) * 54px;
+                                    root.dragging = false;
+                                    root.dropping = true;
+                                } else {
+                                    root.drag-from = -1;
+                                    root.dragging = false;
+                                    root.drag-dy = 0;
                                 }
-                                root.drag-from = -1;
-                                root.dragging = false;
-                                root.drag-dy = 0;
                             }
                         }
                         moved => {

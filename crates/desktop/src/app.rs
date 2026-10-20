@@ -3246,6 +3246,58 @@ mod tests {
         assert_eq!(*did.borrow(), ["album al", "song 0 0 4", "song 0 0 0"]);
     }
 
+    /// A queue song dragged two rows down glides into its slot, then is moved once; on the frame the list
+    /// takes its new order, the rows are already where they end, with nothing sliding back.
+    #[test]
+    fn a_dropped_queue_song_lands_where_it_is_let_go() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_has_song(true);
+        ui.set_inspector(1);
+        let row = |i: i32, n: i32| SongRow { title: format!("Song {n}").into(), index: i, playing: i == 0, ..Default::default() };
+        let queue = Rc::new(VecModel::from((0..6).map(|i| row(i, i)).collect::<Vec<_>>()));
+        ui.set_queue(ModelRc::from(queue.clone()));
+        let moves = Rc::new(RefCell::new(Vec::new()));
+        let (seen, model) = (moves.clone(), queue.clone());
+        // As the app does: the session moves the song and the rows are read again, in their new order.
+        ui.on_move_queued(move |from, to| {
+            seen.borrow_mut().push((from, to));
+            let mut order: Vec<i32> = (0..6).collect();
+            let n = order.remove(from as usize);
+            order.insert(to as usize, n);
+            for (i, n) in order.into_iter().enumerate() {
+                model.set_row_data(i, row(i as i32, n));
+            }
+        });
+        ui.show().unwrap();
+        let pass = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap()
+        };
+        pass(1000);
+        let pointer = |e| ui.window().dispatch_event(e);
+        use slint::platform::{PointerEventButton::Left, WindowEvent::*};
+        let at = |y: f32| slint::LogicalPosition::new(1100.0, y);
+        pointer(PointerMoved { position: at(271.0) });
+        pointer(PointerPressed { position: at(271.0), button: Left });
+        for y in (271..=383).step_by(8) {
+            pointer(PointerMoved { position: at(y as f32) });
+            pass(16);
+        }
+        pointer(PointerReleased { position: at(383.0), button: Left });
+        pass(60);
+        assert!(moves.borrow().is_empty(), "still gliding into its slot");
+        pass(100);
+        assert_eq!(*moves.borrow(), [(1, 3)], "Song 1 lands two rows down, once");
+        let landed = pass(1);
+        let settled = pass(1000);
+        assert!(landed.as_slice() == settled.as_slice(), "the rows land in place, without sliding back first");
+    }
+
     /// A card opens on a click with jams on too, where a right press opens its menu.
     #[test]
     fn a_card_opens_on_a_click_with_jams_on() {
