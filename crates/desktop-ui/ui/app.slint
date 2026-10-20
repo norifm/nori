@@ -2695,6 +2695,8 @@ component QueueView inherits Rectangle {
             }
         }
         queue-scroll := Flickable {
+            // A mouse's press and drag moves a song; the wheel and touch still scroll.
+            mouse-drag-pan-enabled: false;
             width: root.width - 24px;
             content-width: self.width;
             vertical-stretch: 1;
