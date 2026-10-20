@@ -5379,7 +5379,17 @@ export component AppWindow inherits Window {
                     init => { self.came = true; }
                     y: 56px;
                     height: parent.height - 56px;
-                    content-height: sung.preferred-height;
+                    // As tall as where the last line ends, as laid out: the layout's own sum counts a wrapped line
+                    // as one row, and long lyrics stopped scrolling before their end.
+                    property <length> end;
+                    content-height: max(sung.preferred-height, self.end + self.height * 2 / 3);
+                    // A new song's lyrics start from their top, gliding there from where the last song's were.
+                    property <bool> waiting: root.lyrics-waiting;
+                    changed waiting => {
+                        if !self.waiting {
+                            self.content-y = 0;
+                        }
+                    }
                     animate content-y { duration: Motion.reduced ? 0ms : 560ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
                     // The line being sung rests a third of the way down, as on Android: the words start there and can
                     // run on until the last line is there too, clear of the fades at either edge.
@@ -5392,6 +5402,17 @@ export component AppWindow inherits Window {
                         spacing: 22px;
                         for line[i] in root.lyrics-lines: Text {
                             property <bool> lit: i == root.lyrics-active;
+                            property <length> bottom: i == root.lyrics-lines.length - 1 ? self.y + self.height : 0;
+                            changed bottom => {
+                                if self.bottom > 0 {
+                                    lyric-flick.end = self.bottom;
+                                }
+                            }
+                            changed height => {
+                                if self.bottom > 0 {
+                                    lyric-flick.end = self.bottom;
+                                }
+                            }
                             // How lit the line is, fading as it changes: set when it changes (a change handler
                             // runs whether or not the line is drawn just then), so a line sung fades from white.
                             property <float> level;
@@ -5400,13 +5421,13 @@ export component AppWindow inherits Window {
                             changed lit => {
                                 self.level = self.lit ? 1 : 0;
                                 if self.lit {
-                                    lyric-flick.content-y = -max(0, min(self.y - lyric-flick.height / 3, lyric-flick.content-height - lyric-flick.height));
+                                    lyric-flick.content-y = -max(0, self.y - lyric-flick.height / 3);
                                 }
                             }
                             init => {
                                 self.level = self.lit ? 1 : 0;
                                 if self.lit {
-                                    lyric-flick.content-y = -max(0, min(self.y - lyric-flick.height / 3, lyric-flick.content-height - lyric-flick.height));
+                                    lyric-flick.content-y = -max(0, self.y - lyric-flick.height / 3);
                                 }
                             }
                             // Lyrics with word times are drawn by the StyledText (the Text only lays the line out):
@@ -5889,6 +5910,12 @@ export component AppWindow inherits Window {
                 visible: root.full-panel == 2 && root.lyrics-lines.length > 0;
                 opacity: root.lyrics-waiting ? 0 : 1;
                 animate opacity { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
+                property <bool> waiting: root.lyrics-waiting;
+                changed waiting => {
+                    if !self.waiting {
+                        self.content-y = 0;
+                    }
+                }
                 flicked => { root.full-lyrics-browsed = true; }
                 x: root.width / 2 + 20px;
                 width: root.width / 2 - 140px;
