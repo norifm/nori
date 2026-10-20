@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-remote',
  'edition': '2021',
- 'version': '0.7.0-beta.3',
+ 'version': '0.7.0-beta.4',
  'targets': [{'name': 'nori_remote', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': ['ffi'], 'desktop': [], 'desktop-tests': []},
  'local': [{'package': 'nori-model',

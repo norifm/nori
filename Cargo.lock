@@ -4430,7 +4430,7 @@ dependencies = [
 
 [[package]]
 name = "nori-android"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "jni 0.21.1",
@@ -4461,7 +4461,7 @@ dependencies = [
 
 [[package]]
 name = "nori-automix"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "nori-db",
  "nori-model",
@@ -4475,7 +4475,7 @@ dependencies = [
 
 [[package]]
 name = "nori-cli"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "image",
@@ -4499,7 +4499,7 @@ dependencies = [
 
 [[package]]
 name = "nori-core"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4531,7 +4531,7 @@ dependencies = [
 
 [[package]]
 name = "nori-covers"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "gif",
@@ -4548,7 +4548,7 @@ dependencies = [
 
 [[package]]
 name = "nori-db"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "nori-model",
  "nori-testdir",
@@ -4562,7 +4562,7 @@ dependencies = [
 
 [[package]]
 name = "nori-desktop"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "arboard",
  "glow 0.18.0",
@@ -4600,7 +4600,7 @@ dependencies = [
 
 [[package]]
 name = "nori-desktop-ui"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "slint",
  "slint-build",
@@ -4608,7 +4608,7 @@ dependencies = [
 
 [[package]]
 name = "nori-devices"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "nori-db",
@@ -4624,7 +4624,7 @@ dependencies = [
 
 [[package]]
 name = "nori-engine"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "libc",
@@ -4641,7 +4641,7 @@ dependencies = [
 
 [[package]]
 name = "nori-host"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "libc",
@@ -4662,7 +4662,7 @@ dependencies = [
 
 [[package]]
 name = "nori-http"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "nori-core",
@@ -4672,7 +4672,7 @@ dependencies = [
 
 [[package]]
 name = "nori-ios"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "nori-core",
  "nori-covers",
@@ -4689,7 +4689,7 @@ dependencies = [
 
 [[package]]
 name = "nori-library"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "libc",
  "nori-db",
@@ -4707,14 +4707,14 @@ dependencies = [
 
 [[package]]
 name = "nori-look"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "uniffi",
 ]
 
 [[package]]
 name = "nori-lyrics"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -4735,7 +4735,7 @@ dependencies = [
 
 [[package]]
 name = "nori-model"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "nori-player",
  "nori-testdir",
@@ -4749,7 +4749,7 @@ dependencies = [
 
 [[package]]
 name = "nori-mpris"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "block2 0.6.2",
  "dispatch2",
@@ -4765,7 +4765,7 @@ dependencies = [
 
 [[package]]
 name = "nori-net"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "md-5",
@@ -4779,7 +4779,7 @@ dependencies = [
 
 [[package]]
 name = "nori-output-cpal"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "cpal",
  "nori-engine",
@@ -4788,7 +4788,7 @@ dependencies = [
 
 [[package]]
 name = "nori-perf"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "nori-devices",
  "nori-library",
@@ -4803,7 +4803,7 @@ dependencies = [
 
 [[package]]
 name = "nori-player"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "ebur128",
  "libc",
@@ -4821,7 +4821,7 @@ dependencies = [
 
 [[package]]
 name = "nori-queue"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "nori-automix",
  "nori-db",
@@ -4839,7 +4839,7 @@ dependencies = [
 
 [[package]]
 name = "nori-remote"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "getrandom 0.4.3",
  "libc",
@@ -4857,7 +4857,7 @@ dependencies = [
 
 [[package]]
 name = "nori-settings"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "nori-automix",
  "nori-db",
@@ -4876,7 +4876,7 @@ dependencies = [
 
 [[package]]
 name = "nori-settings-derive"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4885,7 +4885,7 @@ dependencies = [
 
 [[package]]
 name = "nori-stretch"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "rustfft",
  "signalsmith-stretch",
@@ -4893,7 +4893,7 @@ dependencies = [
 
 [[package]]
 name = "nori-tasks"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "js-sys",
  "nori-time",
@@ -4903,11 +4903,11 @@ dependencies = [
 
 [[package]]
 name = "nori-testdir"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 
 [[package]]
 name = "nori-time"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "libc",
  "web-time",
@@ -4915,7 +4915,7 @@ dependencies = [
 
 [[package]]
 name = "nori-transfers"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "nori-db",
  "nori-model",
@@ -4938,7 +4938,7 @@ dependencies = [
 
 [[package]]
 name = "nori-web"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "async-trait",
  "js-sys",
@@ -8370,7 +8370,7 @@ dependencies = [
 
 [[package]]
 name = "uniffi-bindgen"
-version = "0.7.0-beta.3"
+version = "0.7.0-beta.4"
 dependencies = [
  "uniffi-bindgen-kotlin-jni",
 ]
