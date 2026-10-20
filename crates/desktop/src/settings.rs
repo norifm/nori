@@ -185,7 +185,9 @@ struct Row {
     value: f32,
     min: f32,
     max: f32,
-    centred: bool,
+    /// A lyrics service's rank among them, and whether it is switched on only once given a key it lacks.
+    rank: i32,
+    keyed: bool,
     /// A usage row's parts, as fractions of the whole.
     shares: Vec<f32>,
 }
@@ -495,9 +497,14 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         RowItem::LyricsSource { index } => {
             let src = s.lyrics_sources.get(index as usize)?;
             let (title, about) = service(&src.id)?;
-            // A service that takes a key has its key's field beside its switch (`centred`); a key typed there turns it on.
-            let button = if src.key_set { "Key set".to_string() } else { format!("{title} key") };
-            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: r.enabled && (!src.needs_key || src.key_set), centred: src.takes_key, button, ..Default::default() }
+            // As on Android: a key that is optional has a button beside the switch, one kept can be changed
+            // there, and one needed is asked for when the service is switched on (`keyed`).
+            let button = match (src.key_set, src.takes_key && !src.needs_key) {
+                (true, _) => "Change key",
+                (false, true) => "Add key",
+                (false, false) => "",
+            };
+            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: r.enabled, button: button.into(), rank: index as i32, keyed: src.needs_key && !src.key_set, ..Default::default() }
         }
     })
 }
@@ -590,6 +597,8 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<Setti
                 appearance_pick(p)
             } else if r.kind == SEASONS {
                 seasons(p, today).worn
+            } else if r.kind == RANKED {
+                r.rank
             } else { r.options.iter().position(|o| o.1 == v).map_or(-1, |i| i as i32) };
             let labels: Vec<SharedString> = r.options.iter().map(|o| o.0.as_str().into()).collect();
             out.push(SettingRow {
@@ -605,7 +614,7 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<Setti
                 value: r.value,
                 min: r.min,
                 max: r.max,
-                centred: r.centred,
+                keyed: r.keyed,
                 shares: ModelRc::new(VecModel::from(r.shares)),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
@@ -643,6 +652,25 @@ pub fn level_of(name: &str) -> Option<EqLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A key that is optional has its button; one needed is asked for when switching on; one kept changes.
+    #[test]
+    fn lyrics_keys_are_asked_as_on_android() {
+        let facts = Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
+        let tab = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Lyrics).unwrap() as i32;
+        let today = Today { month: 10, day: 19, southern: false };
+        let source = |p: &StoredPrefs, id: &str| {
+            let rows = rows(p, &facts, tab, today);
+            let r = slint::Model::iter(&rows).find(|r| r.kind == RANKED && r.name == id).unwrap();
+            (r.button.to_string(), r.keyed)
+        };
+        let p = StoredPrefs::default();
+        assert_eq!(source(&p, "BETTER_LYRICS"), ("Add key".into(), false));
+        assert_eq!(source(&p, "PAXSENIX_SPOTIFY"), ("".into(), true), "asked for when switched on");
+        assert_eq!(source(&p, "LRCLIB"), ("".into(), false));
+        let keyed = StoredPrefs { paxsenix_key: "k".into(), ..p };
+        assert_eq!(source(&keyed, "PAXSENIX_SPOTIFY"), ("Change key".into(), false));
+    }
 
     #[test]
     fn tabs_are_the_pages_the_profile_opens() {

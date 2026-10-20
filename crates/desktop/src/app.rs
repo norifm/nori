@@ -923,7 +923,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_setting_action, h, |a, name| a.setting_action(&name));
     on!(ui.on_setting_slid, h, |a, name, v, last| a.slid(&name, v, last));
     on!(ui.on_setting_typed, h, |a, name, text| a.setting(&name, &text));
-    on!(ui.on_source_moved, h, |a, id, up| a.source_moved(&id, up));
+    on!(ui.on_source_moved, h, |a, id, by| a.source_moved(&id, by));
     on!(ui.on_eq_set, h, |a, name, value| {
         a.setting(&name, &value);
         a.tune();
@@ -2623,11 +2623,12 @@ impl App {
         self.settings_shown();
     }
 
-    fn source_moved(&mut self, id: &str, up: bool) {
+    /// Lyrics service `id` dragged `by` places (down +).
+    fn source_moved(&mut self, id: &str, by: i32) {
         let Some(p) = crate::session::app().settings.current() else { return };
         let s = nori_core::settings_model::state(&p, nori_core::settings_model::Output::default(), &crate::session::app().settings.model);
         let Some(at) = s.lyrics_sources.iter().position(|x| x.id == id) else { return };
-        let to = if up { at.saturating_sub(1) } else { (at + 1).min(s.lyrics_sources.len() - 1) };
+        let to = (at as i32 + by).clamp(0, s.lyrics_sources.len() as i32 - 1) as usize;
         if to != at {
             self.setting("lyricsPlace", &format!("{id}:{to}"));
         }
@@ -3296,6 +3297,44 @@ mod tests {
         let landed = pass(1);
         let settled = pass(1000);
         assert!(landed.as_slice() == settled.as_slice(), "the rows land in place, without sliding back first");
+    }
+
+    /// A lyrics service dragged by its handle past two others moves two places down, once let go.
+    #[test]
+    fn a_lyrics_service_is_dragged_to_its_rank() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.global::<crate::Chrome>().set_top_x(190.0);
+        ui.global::<crate::Chrome>().set_top_w(900.0);
+        let facts = crate::settings::Facts { rules: nori_core::browse::profile_rules(false), ..Default::default() };
+        let tab = crate::settings::tabs(&facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Lyrics).unwrap() as i32;
+        ui.set_view(SETTINGS);
+        ui.set_settings(crate::settings::rows(&nori_core::settings::StoredPrefs::default(), &facts, tab, crate::look::Today { month: 10, day: 19, southern: false }));
+        let moved = Rc::new(RefCell::new(Vec::new()));
+        let seen = moved.clone();
+        ui.on_source_moved(move |id, by| seen.borrow_mut().push((id.to_string(), by)));
+        ui.show().unwrap();
+        let pass = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(ms));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        pass(1000);
+        use slint::platform::{PointerEventButton::Left, WindowEvent::*};
+        // The first service's handle; the rows below it stand 56 px apart.
+        let at = |y: f32| slint::LogicalPosition::new(978.0, y);
+        ui.window().dispatch_event(PointerMoved { position: at(591.0) });
+        ui.window().dispatch_event(PointerPressed { position: at(591.0), button: Left });
+        for y in (591..=721).step_by(10) {
+            ui.window().dispatch_event(PointerMoved { position: at(y as f32) });
+            pass(16);
+        }
+        ui.window().dispatch_event(PointerReleased { position: at(721.0), button: Left });
+        pass(16);
+        assert_eq!(*moved.borrow(), [("LYRICS_PLUS".to_string(), 2)]);
     }
 
     /// A card opens on a click with jams on too, where a right press opens its menu.
