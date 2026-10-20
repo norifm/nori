@@ -439,9 +439,13 @@ line that starts the thread (the start-up NPE of 2026-09-25).
 - `the engine did not go to sleep` (tests/common) means the engine thread is stuck or spinning, not slow:
   the limit is 120 s of real time.
 - A test on the virtual clock that fails only under load has a real thread in it that the clock does not
-  see. The clock stands still while the engine waits for bytes (`BYTES_WAIT`, 2 s of real time; 20 ms when
-  a server is itself waiting for the clock through `Virtual::wait_until`). Make the thread wait for a
-  condition, not for time.
+  see. The clock stands still while the engine waits for bytes and while a loader thread takes bytes in
+  (`BYTES_WAIT`, 2 s of real time without progress; 20 ms when a server is itself waiting for the clock
+  through `Virtual::wait_until`), and the engine lets its loaders finish before it looks at what they hold
+  (`Clock::let_loaders_run`), so an in-memory server behaves as an instant network whatever the
+  scheduling. Make the thread wait for a condition, not for time. To find such a test, run its binary many
+  times side by side (`--exact NAME` in sixteen parallel loops) and compare its logs: on the virtual clock
+  every run must print the same.
 - A test file that is not in any binary never runs: testdir's `every_test_file_is_registered`
   names it. crates/engine has `autotests = false`, so a new file there needs a `[[test]]` or a `#[path]`
   line in tests/main.rs; a new file in crates/player/tests/pipeline needs a `mod` in main.rs.
