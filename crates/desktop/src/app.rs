@@ -2163,6 +2163,7 @@ impl App {
             p.set_buffering(ui.get_buffering());
             p.set_position_ms(ui.get_position_ms());
             p.set_duration_ms(ui.get_duration_ms());
+            p.set_live(ui.get_live());
             p.set_shuffle(ui.get_shuffle());
             p.set_repeat(ui.get_repeat());
             p.set_volume(ui.get_volume());
@@ -2674,6 +2675,7 @@ impl App {
         ui.set_now_album_id(song.album_id.clone().unwrap_or_default().into());
         ui.set_now_credits(credits(&song));
         ui.set_duration_ms((song.duration as i64 * 1000) as i32);
+        ui.set_live(nori_core::is_radio(&song.id));
         let art = song.cover_art.clone().unwrap_or_default();
         ui.set_now_art(art.as_str().into());
         let c = self.art.borrow().colours.get(&art).cloned();

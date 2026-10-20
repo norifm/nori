@@ -1624,6 +1624,8 @@ component PlayerControls inherits Rectangle {
     in property <bool> buffering;
     in property <int> position-ms;
     in property <int> duration-ms;
+    // A radio station or live stream plays: "Live" stands where the seek bar would.
+    in property <bool> live;
     in property <bool> shuffle;
     in property <int> repeat;
     in property <float> volume: 1;
@@ -1799,7 +1801,16 @@ component PlayerControls inherits Rectangle {
                     clicked => { root.cycle-repeat(); }
                 }
             }
-            HorizontalLayout {
+            if root.live: Text {
+                height: 14px;
+                text: "Live";
+                color: Theme.accent;
+                font-size: 11px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if !root.live: HorizontalLayout {
                 height: 14px;
                 spacing: 8px;
                 Text {
@@ -4262,6 +4273,8 @@ export component AppWindow inherits Window {
     in property <int> position-ms;
     in property <int> display-position-ms: root.position-ms;
     in property <int> duration-ms;
+    // A radio station or live stream plays: "Live" stands where the seek bar would.
+    in property <bool> live;
     in property <bool> shuffle;
     in property <int> repeat;
     in property <float> volume: 1;
@@ -6018,7 +6031,15 @@ export component AppWindow inherits Window {
                 Rectangle {
                     height: 20px;
                 }
-                Rectangle {
+                if root.live: Text {
+                    height: 14px;
+                    text: "Live";
+                    color: Theme.accent;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                if !root.live: Rectangle {
                     height: 14px;
                     property <int> dragged: -1;
                     Bar {
@@ -6037,7 +6058,7 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                HorizontalLayout {
+                if !root.live: HorizontalLayout {
                     padding-top: 4px;
                     Text {
                         text: root.clock(root.display-position-ms);
@@ -6580,6 +6601,8 @@ export component PlayerBar inherits Window {
     in property <bool> buffering;
     in property <int> position-ms;
     in property <int> duration-ms;
+    // A radio station or live stream plays: "Live" stands where the seek bar would.
+    in property <bool> live;
     in property <bool> shuffle;
     in property <int> repeat;
     in property <float> volume: 1;
@@ -6628,6 +6651,7 @@ export component PlayerBar inherits Window {
         buffering: root.buffering;
         position-ms: root.position-ms;
         duration-ms: root.duration-ms;
+        live: root.live;
         shuffle: root.shuffle;
         repeat: root.repeat;
         volume: root.volume;
