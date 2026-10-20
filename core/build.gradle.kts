@@ -26,7 +26,7 @@ plugins {
 val shipping = gradle.startParameter.taskNames.any { t -> listOf("release", "perf", "preview", "bundle").any { t.contains(it, ignoreCase = true) } }
 val emulatorAbi = if (System.getProperty("os.arch") in listOf("aarch64", "arm64")) "arm64-v8a" else "x86_64"
 val rustTargets = (project.findProperty("rustTargets") as String? ?: if (shipping) "arm64-v8a" else emulatorAbi).split(",")
-val rustProfile = project.findProperty("rustProfile") as String? ?: if (shipping) "release" else "android-dev"
+val rustProfile = project.findProperty("rustProfile") as String? ?: if (shipping) "dist" else "release"
 // Cargo features of the core. `neural-beats` builds in tract for "Better beat detection" (docs/research/analysis.md)
 // and the model's graph, without weights: with the switch on, the core fetches the weights from the model's
 // authors once (crates/core/src/beat_download.rs), and nothing of them is in the APK. The setting stays off by

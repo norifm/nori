@@ -16,7 +16,7 @@ use nori_time::Duration;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod native;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-pub use native::Native;
+pub use native::{Busy, Native};
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod web;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
@@ -35,6 +35,47 @@ pub trait Tasks: Send + Sync {
 
     /// Ready once `after` has passed on this executor's clock.
     fn sleep(&self, after: Duration) -> Sleep;
+
+    /// This device's clock, µs, as the executor's timers keep it ([`nori_time::device_us`]; a simulated
+    /// executor's own).
+    fn now_us(&self) -> i64 {
+        nori_time::device_us()
+    }
+
+    /// Outside work that now waits for the executor's own work (a request held until something
+    /// changes): while the guard lives it does not keep a simulated clock from moving. None elsewhere.
+    fn waiting(&self) -> Option<Box<dyn Send>> {
+        None
+    }
+
+    /// Runs `waited` to completion on this thread, as [`block_on`] does; a simulated executor moves its
+    /// clock meanwhile.
+    fn block_on(&self, waited: Pin<&mut (dyn Future<Output = ()> + Send + '_)>) {
+        block_on(waited)
+    }
+}
+
+/// Wakes the parked thread.
+struct Unpark(std::thread::Thread);
+
+impl std::task::Wake for Unpark {
+    fn wake(self: std::sync::Arc<Self>) {
+        self.0.unpark();
+    }
+}
+
+/// Runs `f` to completion on this thread, parking while it waits (a platform transport answers from its
+/// own threads; a blocking one is ready at the first poll).
+pub fn block_on<F: Future>(f: F) -> F::Output {
+    let waker = Waker::from(std::sync::Arc::new(Unpark(std::thread::current())));
+    let mut cx = Context::from_waker(&waker);
+    let mut f = std::pin::pin!(f);
+    loop {
+        if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+            return v;
+        }
+        std::thread::park();
+    }
 }
 
 /// Wakes every task waiting on it. A [`Notify::notified`] made before a notice is ready after it, so a

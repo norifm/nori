@@ -1,0 +1,12 @@
+[package]
+name = "nori-desktop-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The desktop client's Slint interface, compiled apart so an edit to the client's Rust does not rebuild it"
+
+[dependencies]
+slint = { version = "=1.18.1", default-features = false, features = ["std", "compat-1-2", "renderer-skia", "unstable-wgpu-30"] }
+
+[build-dependencies]
+slint-build = "=1.18.1"

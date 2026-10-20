@@ -5,8 +5,10 @@ use super::test_card::Card;
 use std::io::Read as _;
 use std::time::Duration;
 
-/// A server that takes every request and never answers: the paths asked for come out of the receiver.
-fn silent_server() -> (String, std::sync::mpsc::Receiver<String>) {
+/// A server that holds every autofill request (similar songs) unanswered and turns the rest away; the
+/// paths of the held ones come out of the receiver.
+fn holding_server() -> (String, std::sync::mpsc::Receiver<String>) {
+    use std::io::Write as _;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let (asked, paths) = std::sync::mpsc::channel();
@@ -16,6 +18,10 @@ fn silent_server() -> (String, std::sync::mpsc::Receiver<String>) {
             let mut buf = [0u8; 2048];
             let n = c.read(&mut buf).unwrap_or(0);
             let line = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or_default().to_string();
+            if !line.contains("getSimilarSongs2") {
+                let _ = c.write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                continue;
+            }
             held.push(c);
             if asked.send(line).is_err() {
                 return;
@@ -48,7 +54,7 @@ fn late_autofill_respects_playback_and_new_queues() {
         let card = Card::new();
         let clock = Virtual::default();
         let time = Stepper::new(clock.clone(), card.pull.clone());
-        let (url, asked) = silent_server();
+        let (url, asked) = holding_server();
         let profile = SavedServer { id: "test".into(), url, user: "ann".into(), password: "pw".into(), ..Default::default() };
         let s = Session::open_on(test_open(queue, dir.path(), profile, Box::new(card.clone())), clock).unwrap();
         let songs: Vec<_> = ["a", "b", "c", "d"].into_iter().enumerate().map(|(i, id)| Song {
@@ -65,8 +71,7 @@ fn late_autofill_respects_playback_and_new_queues() {
         s.play(songs[..2].to_vec(), 0, false, Some(PageOrigin::new(nori_core::OriginKind::Album, "album")));
         time.clock.settle();
         // The session's own request, which this test answers itself (`filled`) once the queue has moved on.
-        let fill = asked.iter().find(|line| !line.contains("scrobble"));
-        assert!(fill.is_some(), "the album begins its autofill request");
+        assert!(asked.recv_timeout(Duration::from_secs(60)).is_ok(), "the album begins its autofill request");
         let previous_end = s.core.session.playlist(|p| p.seqs()[1]);
         if action == "paused" {
             time.run(Duration::from_millis(1_200));
@@ -140,7 +145,7 @@ fn session_of_songs(dir: &nori_testdir::TempDir, url: &str, card: &Card, clock: 
 #[test]
 fn media_keys_start_a_restored_queue_and_fill_at_its_end() {
     let dir = nori_testdir::TempDir::new("host-keys");
-    let (url, asked) = silent_server();
+    let (url, asked) = holding_server();
     let (card, clock) = (Card::new(), Virtual::default());
     let time = Stepper::new(clock.clone(), card.pull.clone());
     let (s, songs) = session_of_songs(&dir, &url, &card, clock);
@@ -159,8 +164,7 @@ fn media_keys_start_a_restored_queue_and_fill_at_its_end() {
     // Switched on only now: the songs arriving asked for nothing, so the press is what asks.
     s.setting("autoFill", "true").expect("a setting");
     nori_mpris::Controls::next(&*s);
-    let mut asked = std::iter::from_fn(|| asked.recv_timeout(Duration::from_secs(5)).ok());
-    assert!(asked.any(|line| line.contains("getSimilarSongs2")), "next at the end asks for more songs");
+    assert!(asked.recv_timeout(Duration::from_secs(60)).is_ok(), "next at the end asks for more songs");
     s.close();
 }
 

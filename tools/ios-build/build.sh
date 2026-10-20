@@ -9,7 +9,7 @@ target_os=12.2
 out=build/ios
 app="$out/nori.app"
 obj="$out/obj"
-lib="$CARGO_TARGET_DIR/aarch64-apple-ios/release/libnori_ios.a"
+lib="$CARGO_TARGET_DIR/aarch64-apple-ios/dist/libnori_ios.a"
 
 # theos' copy of the iPhoneOS SDK: headers, .tbd stubs and Swift interfaces of iOS 16.4.
 sdk_name=iPhoneOS16.5.sdk
@@ -53,7 +53,7 @@ if [ ! -d "$swift_ios" ]; then
 fi
 
 echo "rust: libnori_ios.a for iOS $target_os …"
-SDKROOT="$sdk" IPHONEOS_DEPLOYMENT_TARGET=$target_os cargo build -j4 --release --target aarch64-apple-ios -p nori-ios
+SDKROOT="$sdk" IPHONEOS_DEPLOYMENT_TARGET=$target_os cargo build -j4 --profile dist --target aarch64-apple-ios -p nori-ios
 ls -lh "$lib" | awk '{print "  " $5 "  libnori_ios.a"}'
 
 echo "app: …"
