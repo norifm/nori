@@ -67,7 +67,7 @@ HOST_FLAGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --abi) ABI="$2"; shift ;;
-    --no-test) RUN_TESTS=0 ;;
+    --no-test) RUN_TESTS=0; HOST_FLAGS+=(--no-test) ;;
     --no-ipod) IPOD=0 ;;
     --no-hosts) HOSTS=0 ;;
     --build) GUIDED=0 ;;
@@ -293,8 +293,9 @@ if [ -n "$dirty" ] || [ "$(cat "$out/.commit" 2>/dev/null)" != "$built_for" ]; t
 fi
 
 if [ "$RUN_TESTS" = 1 ] && [ ! -f "$out/.tested" ]; then
-  echo "==> cargo test"
-  cargo test -q -j4 --workspace
+  echo "==> tests"
+  tools/check.sh rust --workspace --cargo-quiet --status-level fail
+  tools/check.sh rust-doc -q --workspace
   touch "$out/.tested"
 fi
 

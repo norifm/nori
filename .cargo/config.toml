@@ -4,3 +4,8 @@
 [build]
 rustc-wrapper = "sccache"
 jobs = 4
+
+# Room for the dependencies of every profile and worktree; at 10 GB it was full and fresh worktrees missed.
+# Read when the sccache server starts (it stops after 10 idle minutes).
+[env]
+SCCACHE_CACHE_SIZE = "30G"

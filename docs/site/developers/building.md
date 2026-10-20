@@ -21,9 +21,10 @@ with more than four jobs: the build machine runs out of memory. The full list of
 
 ## Faster development checks
 
-Debug Android builds use the optimized `android-dev` Rust profile: incremental
-compilation, sixteen codegen units and no LTO. Release, perf and preview builds
-keep the shipping release profile. The default debug ABI follows the host's
+Debug Android builds and `cargo run --release` use the `release` Rust profile:
+optimized, incremental, sixteen codegen units and no LTO, so an edit rebuilds in
+seconds. Release, perf and preview builds, desktop packages and the iPod app use
+`dist`, the shipping profile (fat LTO, one codegen unit), which takes minutes to link. The default debug ABI follows the host's
 architecture; override with `-PrustTargets=...`. Keep debug APKs out of runtime
 performance comparisons; use the perf profile for those.
 
@@ -74,7 +75,7 @@ The edit's critical path is the desktop crate's test binary (6.4 s of the 12 s):
 
 Each worktree keeps its own `target/` and Gradle `build/` directories. A shared writable Cargo target
 directory is not used: `target/debug/nori-cli` (the e2e peer) and the Android library under
-`target/<abi>/android-dev` would be overwritten by whichever worktree built last, and Cargo's lock
+`target/<abi>/release` would be overwritten by whichever worktree built last, and Cargo's lock
 would serialize every build. What worktrees share instead:
 
 - sccache (`.cargo/config.toml`) holds compiled dependencies for every worktree; a fresh worktree's
@@ -1023,11 +1024,12 @@ fails is left out of the release, and running the same command again uploads it 
 already published.
 
 The complete local build runs on macOS or Linux with Rust, Docker, and the Android build tools
-described above. On Apple Silicon Macs, macOS packages use the installed Apple SDK and Intel
-binaries are tested under Rosetta. Linux hosts build both Mac architectures in a Docker image with
+described above. On Apple Silicon Macs, macOS packages use the installed Apple SDK, and the Intel
+package is cross-compiled. Linux hosts build both Mac architectures in a Docker image with
 Clang, lld, a checksum-verified macOS 14.5 SDK, and `rcodesign` for ad-hoc signatures. Intel Macs use
 that container for the Apple Silicon package. Linux packages use Ubuntu 22.04 Docker images
-for ARM64 and x86-64, with Docker emulation for the foreign architecture. The iPod build also uses Docker. Android
+for ARM64 and x86-64. The foreign architecture is cross-compiled in the image of the machine's own,
+and only packaged and checked under Docker emulation, which runs its binaries. The iPod build also uses Docker. Android
 signing uses the existing `nori-release.jks` and `keystore.properties`; retain the same key for updates.
 Workspace tests also need the native desktop dependencies described above and FFmpeg 8.
 
@@ -1053,8 +1055,10 @@ tools/with-resource.py build tools/release.sh --publish --beta --live
 ```
 
 Artifacts land under `build/release-<version>/`, with desktop and CLI packages in
-`hosts/<platform>/`. `--no-hosts` and `--no-ipod` omit those clients. Release client tests run
-one at a time to avoid competing Metal shader compilations on Intel Macs.
+`hosts/<platform>/`. `--no-hosts` and `--no-ipod` omit those clients. The release's workspace tests
+(nextest, then doctests) cover the Mac clients; the native Linux builder also runs the Linux-only
+client tests (MPRIS, ALSA, X11) in a debug build. Emulated and cross-compiled builds run no tests: they
+check the same code as the native one. `--no-test` skips all of them.
 
 The desktop/CLI builder can run independently or on a native worker:
 
@@ -1085,9 +1089,8 @@ Cargo target directory. `--workspace DIR`, `--output DIR`, and `--jobs 1..4` let
 sources, handoff directories, and resource limits. Each worker builds, tests, packages, and runs
 package checks with the same command used locally.
 
-By default, workflow Mac builds use Apple Silicon workers for both architectures, with Intel tests under Rosetta.
-This uses the same rendering checks as the local build without the Intel hosted worker’s recurring
-one-second Metal compiler timeout.
+By default, workflow Mac builds use Apple Silicon workers for both architectures; the Intel package
+is cross-compiled and checked under Rosetta. The **macOS render** workflow runs the rendering tests.
 Enable `macos_on_linux` when dispatching either workflow to build both Mac packages on Linux Docker
 workers instead. That input explicitly acknowledges the skipped Mac execution and rendering checks.
 

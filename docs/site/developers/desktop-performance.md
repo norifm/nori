@@ -13,7 +13,7 @@ authorizes physical-display interaction. Check that DPMS says `Monitor is On` be
 NVIDIA presentation with the monitors off waited about one second in a later trace.
 
 ```sh
-cargo rustc -j4 --profile android-dev -p nori-desktop -- \
+cargo rustc -j4 --release -p nori-desktop -- \
   -C debuginfo=1 -C strip=none -C force-frame-pointers=yes
 perf record -e cycles:u -F 99 -g --call-graph dwarf,16384 -p "$NORI_PID" \
   -o build/desktop-cpu.data -- sleep 60
@@ -299,7 +299,7 @@ fullscreen/compact layouts keep their last displayed position until opened. Andr
 seek pacer draws quarter-pixel steps and still becomes idle while paused or off screen.
 
 A separate local Navidrome fixture on the physical X11/NVIDIA display, at 1280 × 820, used an
-optimized `android-dev` build with symbols, a private audio sink and generated music. After startup
+optimized `release` build with symbols, a private audio sink and generated music. After startup
 settled, five-second samples measured 0.4% of one CPU core paused, 10.2% playing on Home and 12.0%
 in fullscreen. The current fixture song was 80 seconds long. RSS was 128–144 MiB and anonymous RSS
 47–54 MiB. The fixture has no cover images; these are observations, not a matched CPU improvement

@@ -55,3 +55,5 @@ members = [re.search(r'^name = "([^"]+)"', m, re.M).group(1) for m in manifests 
 edit("Cargo.lock", [(rf'(\[\[package\]\]\nname = "{re.escape(m)}"\nversion = )"[^"]+"', rf'\g<1>"{new}"') for m in members])
 edit("docs/features.md", [(rf'nori {esc}\*\*', f'nori {new}**')])
 EOF
+# The Bazel BUILD files carry each crate's version.
+python3 "$(dirname "$0")/bazel/generate.py" >/dev/null && echo "  crates/*/BUILD.bazel"

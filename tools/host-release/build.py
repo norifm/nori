@@ -53,9 +53,9 @@ def cross_macos(workspace, output, target_platform, jobs, package_only):
     environment = dict(os.environ, RUSTC_WRAPPER="", NORI_MACOS_TARGET=target)
     environment.update({f"CARGO_TARGET_{key.upper()}_LINKER": "macos-cc",
                         f"CC_{key}": "macos-cc", f"CXX_{key}": "macos-cxx", f"AR_{key}": "llvm-ar"})
-    binaries = Path(environment["CARGO_TARGET_DIR"]) / target / "release"
+    binaries = Path(environment["CARGO_TARGET_DIR"]) / target / "dist"
     if not package_only:
-        run("cargo", "build", "--locked", "--release", f"-j{jobs}", "--target", target,
+        run("cargo", "build", "--locked", "--profile", "dist", f"-j{jobs}", "--target", target,
             "-p", "nori-cli", "-p", "nori-desktop", cwd=workspace, env=environment)
     version = re.search(r'^version = "([^"]+)"', (workspace / "Cargo.toml").read_text(), re.M).group(1)
     run(sys.executable, ROOT / "tools/host-release/package.py", "--binaries", binaries,
@@ -63,26 +63,42 @@ def cross_macos(workspace, output, target_platform, jobs, package_only):
     run(sys.executable, ROOT / "tools/host-release/check.py", "--checksums-only", output, env=environment)
 
 
-def native(workspace, output, target_platform, jobs, test, package_only, target_dir):
+def native(workspace, output, target_platform, jobs, test, package_only, target_dir, binaries=None, compile_into=None):
+    """Builds and packages `target_platform` on this worker. `compile_into`: only compiles, cross-compiling a
+    Linux of another architecture, and leaves the binaries there; `binaries`: packages those instead."""
     system, arch = target_platform.split("-", 1)
     current = {"Darwin": "macos", "Linux": "linux"}[platform.system()]
-    if system != current or (system == "linux" and arch != ARCHES[platform.machine()]):
+    cross = arch != ARCHES[platform.machine()]
+    if system != current or (system == "linux" and cross and compile_into is None):
         raise SystemExit(f"{target_platform} requires a matching native worker")
     environment = dict(os.environ)
     target_dir = Path(environment.get("CARGO_TARGET_DIR", target_dir)).resolve()
     environment["CARGO_TARGET_DIR"] = str(target_dir)
-    cross = arch != ARCHES[platform.machine()]
-    target = f"{arch}-apple-darwin" if cross else None
+    target = None
+    if cross:
+        target = f"{arch}-apple-darwin" if system == "macos" else f"{arch}-unknown-linux-gnu"
+    if cross and system == "linux":
+        gnu = f"{arch}-linux-gnu"
+        variable = target.replace("-", "_")
+        environment.update({f"CARGO_TARGET_{variable.upper()}_LINKER": f"{gnu}-gcc", f"CC_{variable}": f"{gnu}-gcc",
+                            f"CXX_{variable}": f"{gnu}-g++", "PKG_CONFIG_ALLOW_CROSS": "1",
+                            f"PKG_CONFIG_PATH_{variable}": f"/usr/lib/{gnu}/pkgconfig:/usr/share/pkgconfig"})
     cargo_target = ["--target", target] if target else []
-    binaries = target_dir / target / "release" if target else target_dir / "release"
+    built = target_dir / target / "dist" if target else target_dir / "dist"
     if not package_only:
-        if target:
+        if target and system == "macos":
             run("rustup", "target", "add", target)
-        if test:
-            run("cargo", "test", "--locked", "--release", f"-j{jobs}", *cargo_target,
-                "-p", "nori-cli", "-p", "nori-desktop", "--", "--test-threads=1", cwd=workspace, env=environment)
-        run("cargo", "build", "--locked", "--release", f"-j{jobs}", *cargo_target,
+        # The Mac's code is tested by the release's workspace tests; Linux's own (MPRIS, ALSA, X11) only here.
+        if test and system == "linux" and not cross:
+            run("cargo", "test", "--locked", f"-j{jobs}", "-p", "nori-cli", "-p", "nori-desktop", "-p", "nori-mpris",
+                "-p", "nori-output-cpal", "--", "--test-threads=1", cwd=workspace, env=environment)
+        run("cargo", "build", "--locked", "--profile", "dist", f"-j{jobs}", *cargo_target,
             "-p", "nori-cli", "-p", "nori-desktop", cwd=workspace, env=environment)
+    if compile_into is not None:
+        for client in ("nori-cli", "nori-desktop"):
+            shutil.copy2(built / client, Path(compile_into) / client)
+        return
+    binaries = Path(binaries) if binaries else built
     version = re.search(r'^version = "([^"]+)"', (workspace / "Cargo.toml").read_text(), re.M).group(1)
     run(sys.executable, ROOT / "tools/host-release/package.py", "--binaries", binaries,
         "--version", version, "--arch", arch, "--output", output, env=environment)
@@ -95,18 +111,29 @@ def native(workspace, output, target_platform, jobs, test, package_only, target_
 
 def container(workspace, output, target_platform, jobs, test, package_only):
     arch = target_platform.split("-", 1)[1]
-    docker_platform = {"aarch64": "linux/arm64", "x86_64": "linux/amd64"}[arch]
-    image = f"nori-host-build:{arch}"
-    cache = f"nori-host-{arch}-cache"
-    run("docker", "build", "--platform", docker_platform, "--build-arg", f"NORI_UID={os.getuid()}",
-        "--build-arg", f"NORI_GID={os.getgid()}", "-t", image, ROOT / "tools/host-release")
     output.mkdir(parents=True, exist_ok=True)
     command = ["python3", "/tooling/tools/host-release/build.py", "--workspace", "/workspace", "--native",
                "--platform", target_platform, "--output", "/output", "--jobs", str(jobs)]
     if not test:
         command.append("--no-test")
-    if package_only:
-        command.append("--package-only")
+    here = ARCHES[platform.machine()]
+    if arch == here or package_only:
+        in_linux(here if arch == here else arch, workspace, output, command + (["--package-only"] if package_only else []))
+        return
+    # Compiled by this machine's own architecture, cross; only packaging, which runs the binaries, is emulated.
+    with tempfile.TemporaryDirectory(prefix=".binaries-", dir=output.parent) as binaries:
+        inside = f"/output/{Path(binaries).name}"
+        in_linux(here, workspace, output, command + ["--compile-into", inside])
+        in_linux(arch, workspace, output, command + ["--package-only", "--binaries", inside])
+
+
+def in_linux(arch, workspace, output, command):
+    """Runs `command` in the Linux builder of `arch`, emulated when it is not this machine's."""
+    docker_platform = {"aarch64": "linux/arm64", "x86_64": "linux/amd64"}[arch]
+    image = f"nori-host-build:{arch}"
+    cache = f"nori-host-{arch}-cache"
+    run("docker", "build", "--platform", docker_platform, "--build-arg", f"NORI_UID={os.getuid()}",
+        "--build-arg", f"NORI_GID={os.getgid()}", "-t", image, ROOT / "tools/host-release")
     flatpak_environment = []
     if arch != ARCHES[platform.machine()]:
         flatpak_environment = ["--env", "FLATPAK_BWRAP=/tooling/tools/host-release/emulated-bwrap.py"]
@@ -134,6 +161,8 @@ def main():
     parser.add_argument("--allow-untested-macos", action="store_true", help="acknowledge skipped macOS execution checks on Linux")
     parser.add_argument("--preflight", action="store_true", help="check requirements and confirm skipped checks before building")
     parser.add_argument("--cross-macos", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--compile-into", help=argparse.SUPPRESS)
+    parser.add_argument("--binaries", help=argparse.SUPPRESS)
     args = parser.parse_args()
     selected = args.platforms or list(PLATFORMS)
     if args.native and not args.platforms:
@@ -164,7 +193,8 @@ def main():
             elif target_platform in cross_platforms:
                 macos_container(workspace, target_output, target_platform, args.jobs, args.package_only)
             elif args.native or target_platform.startswith("macos-"):
-                native(workspace, target_output, target_platform, args.jobs, not args.no_test, args.package_only, target_dir)
+                native(workspace, target_output, target_platform, args.jobs, not args.no_test, args.package_only, target_dir,
+                       args.binaries, args.compile_into)
             else:
                 container(workspace, target_output, target_platform, args.jobs, not args.no_test, args.package_only)
     print(f"Desktop and CLI packages: {output}")
