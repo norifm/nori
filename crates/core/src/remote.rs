@@ -424,6 +424,29 @@ pub fn jam_profile(pass: JamPass, id: String, name: String) -> crate::settings::
     crate::settings::SavedServer { id, name, kind, url: pass.url, api_key: pass.api_key, ..Default::default() }
 }
 
+/// The profile open before a jam was joined, opened again on leaving it (an app value).
+const BEFORE_JAM: &str = "host.beforeJam";
+
+/// A jam is being joined: the profile in use, an account's (not a jam's guest profile), is the one leaving
+/// the jam returns to ([`jam_return`]).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn jam_joining(settings: &crate::settings_store::Settings) {
+    let Some(prefs) = settings.current() else { return };
+    if prefs.active_server().is_some_and(|s| !nori_remote::is_guest_key(&s.api_key)) {
+        settings.keep_app_value(BEFORE_JAM, prefs.active_server_id.clone());
+    }
+}
+
+/// `list` once the jam is left: its guest profiles gone, and the profile open before the jam active again,
+/// else the one used last (the list is in the order they were opened), else none (the login).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn jam_return(settings: &crate::settings_store::Settings, list: crate::settings::ServerList) -> crate::settings::ServerList {
+    let servers: Vec<_> = list.servers.into_iter().filter(|s| !nori_remote::is_guest_key(&s.api_key)).collect();
+    let before = settings.app_value(BEFORE_JAM).filter(|id| servers.iter().any(|s| &s.id == id));
+    let active_server_id = before.or_else(|| servers.last().map(|s| s.id.clone())).unwrap_or_default();
+    crate::settings::ServerList { servers, active_server_id }
+}
+
 /// Where a command came from, and so how to answer it.
 #[derive(Debug, Clone)]
 enum Via {
@@ -3462,6 +3485,27 @@ mod tests {
         fn changed(&self) {}
         fn marks_changed(&self) {}
         fn jam_ended(&self, _: Option<String>) {}
+    }
+
+    /// Leaving a jam opens the profile in use before it, not whichever was added last, and drops only
+    /// guest profiles.
+    #[test]
+    fn leaving_a_jam_returns_to_the_profile_before_it() {
+        use crate::settings::{SavedServer, ServerList};
+        let dir = nori_testdir::TempDir::new("jam-return");
+        let settings = crate::settings_store::Settings::new();
+        let mut prefs = settings.open(&dir.path().join(crate::db::DB_FILE).to_string_lossy()).unwrap();
+        let own = |id: &str| SavedServer { id: id.into(), url: format!("http://{id}"), ..Default::default() };
+        let guest = jam_profile(JamPass { url: "http://friend".into(), api_key: nori_remote::guest_key("k") }, "guest".into(), "Jam".into());
+        prefs.servers = vec![own("navidrome"), own("youtube")];
+        prefs.active_server_id = "navidrome".into();
+        settings.put(prefs);
+        jam_joining(&settings);
+        crate::background::flush();
+        let list = ServerList { servers: vec![own("navidrome"), own("youtube"), guest], active_server_id: "guest".into() };
+        let back = jam_return(&settings, list);
+        assert_eq!(back.active_server_id, "navidrome");
+        assert_eq!(back.servers.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["navidrome", "youtube"]);
     }
 
     #[test]
