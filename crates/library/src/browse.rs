@@ -370,6 +370,14 @@ pub fn library_sizes() -> LibrarySizes {
     LibrarySizes { search_songs: 40, search_albums: 20, search_artists: 10, local_search: 30, smart_songs: 500, random_songs: 100, genre_songs: 200, sync_page: 500 }
 }
 
+/// How many of a page's `total` songs show (an artist's, search's): a few until Show all is pressed
+/// (`all`), as Spotify's Popular does; a list barely past that shows whole, with no Show all.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn songs_shown(total: u32, all: bool) -> u32 {
+    const FEW: u32 = 5;
+    if all || total <= FEW + 2 { total } else { FEW }
+}
+
 /// Page sizes of the long lists. A page shorter than its size is the last one.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn browse_paging() -> Paging {
@@ -496,6 +504,11 @@ pub struct Decade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_song_lists_show_a_few() {
+        assert_eq!([songs_shown(40, false), songs_shown(40, true), songs_shown(7, false), songs_shown(8, false), songs_shown(0, false)], [5, 40, 7, 5, 0]);
+    }
 
     #[test]
     fn a_guest_home_shows_the_hosts_album_shelves_only() {

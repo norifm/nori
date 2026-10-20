@@ -3492,6 +3492,40 @@ component EqualizerPage inherits Flickable {
     }
 }
 
+// "Show all" beside a section's title: quiet, as a shelf's.
+component ShowAllLink inherits Text {
+    callback clicked;
+    color: Theme.dim;
+    font-size: 14px;
+    vertical-alignment: center;
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Show all under a list cut short: a plate with its words in the page's ink, as the page's other buttons.
+component ShowAllButton inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+    height: 34px;
+    width: label.preferred-width + 32px;
+    border-radius: self.height / 2;
+    background: touch.has-hover ? Theme.chosen : Theme.fill;
+    label := Text {
+        text: root.text;
+        color: Theme.text;
+        font-size: 14px;
+        font-weight: 600;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 // Where the window is dragged from, and double-clicked to zoom: the content runs up under the titlebar.
 component TitleStrip inherits TouchArea {
     callback drag;
@@ -3774,6 +3808,10 @@ export component AppWindow inherits Window {
     in property <string> page-caption;
     in property <string> page-art;
     in property <[SongRow]> page-songs;
+    // More songs wait behind Show all: an artist's, search's (callback all-songs: 0 the page, 2 search).
+    in property <bool> page-songs-more;
+    in property <bool> search-songs-more;
+    callback all-songs(int);
     in property <[Card]> page-albums;
     // The page wears its cover's colours: the blurred cover (nori-look's wash) runs out into the page's own
     // colour, so there is no line where the picture stops.
@@ -4255,53 +4293,48 @@ export component AppWindow inherits Window {
                                 width: parent.width;
                                 padding-top: Chrome.top-room + 8px;
                                 padding-bottom: 100px;
+                                // The searches made before: a plain list under the top pill, newest first.
                                 if root.search-blank && root.recent-searches.length > 0: HorizontalLayout {
-                                    padding-left: 32px;
-                                    padding-right: 32px;
-                                    padding-bottom: 10px;
-                                    spacing: 8px;
-                                    alignment: start;
-                                    SectionTitle {
-                                        text: "Recent searches";
-                                    }
-                                    TextButton {
-                                        y: (parent.height - self.height) / 2;
-                                        text: "Clear";
-                                        clicked => { root.forget-searches(); }
-                                    }
-                                }
-                                // The searches made before as tiles, as many to a row as fit.
-                                if root.search-blank: recent := Rectangle {
-                                    property <length> gap: 8px;
-                                    property <int> columns: max(2, min(5, floor((self.width - 64px + self.gap) / (200px + self.gap))));
-                                    property <length> tile-w: (self.width - 64px - (self.columns - 1) * self.gap) / self.columns;
-                                    height: ceil(root.recent-searches.length / self.columns) * (40px + self.gap);
-                                    for q[i] in root.recent-searches: Rectangle {
-                                        x: 32px + mod(i, recent.columns) * (recent.tile-w + recent.gap);
-                                        y: floor(i / recent.columns) * (40px + recent.gap);
-                                        width: recent.tile-w;
-                                        height: 40px;
-                                        border-radius: 12px;
-                                        background: recent-touch.has-hover ? Theme.chosen : Theme.fill;
-                                        Icon {
-                                            x: 12px;
-                                            path: Icons.history;
-                                            colour: Theme.dim;
-                                            width: 16px;
-                                            height: 16px;
+                                    // Under the top pill, edge to edge with it (the page is the window's width).
+                                    padding-left: Chrome.top-x;
+                                    padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
+                                    VerticalLayout {
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-bottom: 6px;
+                                            SectionTitle {
+                                                text: "Recent searches";
+                                            }
+                                            Rectangle { horizontal-stretch: 1; }
+                                            ShowAllLink {
+                                                text: "Clear";
+                                                clicked => { root.forget-searches(); }
+                                            }
                                         }
-                                        Text {
-                                            x: 38px;
-                                            width: parent.width - 50px;
-                                            text: q;
-                                            color: Theme.text;
-                                            font-size: 14px;
-                                            vertical-alignment: center;
-                                            overflow: elide;
-                                        }
-                                        recent-touch := TouchArea {
-                                            mouse-cursor: pointer;
-                                            clicked => { root.search-again(q); }
+                                        for q in root.recent-searches: Rectangle {
+                                            height: 40px;
+                                            border-radius: 10px;
+                                            background: recent-touch.has-hover ? Theme.chosen : transparent;
+                                            Icon {
+                                                x: 10px;
+                                                path: Icons.history;
+                                                colour: Theme.dim;
+                                                width: 18px;
+                                                height: 18px;
+                                            }
+                                            Text {
+                                                x: 40px;
+                                                width: parent.width - 52px;
+                                                text: q;
+                                                color: Theme.text;
+                                                font-size: 15px;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                            recent-touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.search-again(q); }
+                                            }
                                         }
                                     }
                                 }
@@ -4377,6 +4410,15 @@ export component AppWindow inherits Window {
                                         radio => { root.song(2, i, 6); }
                                         next => { root.song(2, i, 1); }
                                         later => { root.song(2, i, 2); }
+                                    }
+                                }
+                                if root.search-songs-more: HorizontalLayout {
+                                    padding-left: 32px;
+                                    padding-top: 6px;
+                                    alignment: start;
+                                    ShowAllButton {
+                                        text: root.show-all-text;
+                                        clicked => { root.all-songs(2); }
                                     }
                                 }
                             }
@@ -4638,6 +4680,8 @@ export component AppWindow inherits Window {
                         }
 
                         page-flick := Flickable {
+                            // Up and down only: a long title or row is cut to the page, never scrolled sideways.
+                            content-width: self.width;
                             content-height: detail.preferred-height;
                             detail := VerticalLayout {
                                 width: parent.width;
@@ -4830,6 +4874,13 @@ export component AppWindow inherits Window {
                                             next => { root.song(0, s.index, 1); }
                                             later => { root.song(0, s.index, 2); }
                                         }
+                                    }
+                                }
+                                if root.page-songs-more: HorizontalLayout {
+                                    alignment: start;
+                                    ShowAllButton {
+                                        text: root.show-all-text;
+                                        clicked => { root.all-songs(0); }
                                     }
                                 }
                             }

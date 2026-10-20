@@ -53,6 +53,7 @@
     <string name="nothing_matches">Nothing matches</string>
     <string name="listen_now">Listen now</string>
     <string name="library_recently_added">Recently added</string>
+    <string name="show_all">Show all</string>
     <string name="library_your_albums">Your albums</string>
     <string name="library_your_playlists">Your playlists</string>
     <string name="smart_playlists">Smart playlists</string>

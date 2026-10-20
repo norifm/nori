@@ -128,6 +128,7 @@ class Say(private val r: Resources) {
     val homeRowsTitle: String = r.getString(R.string.settings_home_rows)
     val librarySectionsTitle: String = r.getString(R.string.settings_library_sections)
     val recentlyAdded: String = r.getString(R.string.library_recently_added)
+    val showAll: String = r.getString(R.string.show_all)
     val yourAlbums: String = r.getString(R.string.library_your_albums)
     val yourPlaylists: String = r.getString(R.string.library_your_playlists)
     val smartPlaylists: String = r.getString(R.string.smart_playlists)

@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -54,6 +55,8 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             items(scopes) { (scope, label) -> Chip(label, ui.scope == scope) { vm.setScope(scope) } }
         }
         val r = ui.shown
+        // A new search starts with its best few songs again.
+        var allSongs by androidx.compose.runtime.remember(ui.query) { androidx.compose.runtime.mutableStateOf(false) }
         if (r == null) {
             LazyColumn(Modifier.pageToEdges(), contentPadding = pagePadding(LocalChromeInset.current)) {
                 if (ui.history.isNotEmpty()) item {
@@ -97,7 +100,8 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                 }
             }
             if (r.songs.isNotEmpty()) item(key = "songs") { SectionTitle(say.songs) }
-            itemsIndexed(r.songs, key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { _, s ->
+            val shown = dev.nori.music.ffi.library.songsShown(r.songs.size.toUInt(), allSongs).toInt()
+            itemsIndexed(r.songs.take(shown), key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { _, s ->
                 // One tap plays one song: a search result list is not an album, and with octo-fiesta
                 // queueing the rest would make the server download every provider track in it.
                 // The same two swipes every other list of songs has: a result is a song like any other,
@@ -109,6 +113,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                     swipeRight = rowSwipe(onRight, s, actions), swipeLeft = rowSwipe(onLeft, s, actions),
                 )
             }
+            if (shown < r.songs.size) item(key = "songs-all") { TextAction(say.showAll, { allSongs = true }, Modifier.padding(horizontal = 8.dp)) }
             if (ui.nothingFound) item { EmptyNote(Note.NOTHING_FOUND) }
         }
     }

@@ -333,6 +333,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
     val groups = remember(ui?.detail) { ui?.detail?.let(::groupsOf).orEmpty() }
     val similar = remember(ui?.info) { ui?.info?.similar?.let { dev.nori.music.ffi.library.similarArtists(it) }.orEmpty() }
     val topFrom = rememberOrigin(OriginKind.ARTIST_TOP, artist.id)
+    var allSongs by remember(artist.id) { mutableStateOf(false) }
     HeroPage(
         coverUrl = vm.cover(artist.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(artist.coverArt, CoverSize.CARD), vm.cover(artist.coverArt, CoverSize.ROW)),
@@ -382,11 +383,16 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                 }
                 // The songs the artist's provider lists on the page (YouTube Music's); a server lists none.
                 if (ui.detail.songs.isNotEmpty()) {
+                    val total = ui.detail.songs.size.toUInt()
+                    val shown = dev.nori.music.ffi.library.songsShown(total, allSongs)
                     item(key = "songs", contentType = "title") { SectionTitle(say.songs, late(arrival)) }
                     songRows(
                         ui.detail.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, keyPrefix = "songs", appear = true,
-                        arrival = arrival, from = topFrom,
+                        arrival = arrival, from = topFrom, rows = if (shown < total) (0u until shown).toList() else null,
                     )
+                    if (shown < total) item(key = "songs-all", contentType = "more") {
+                        TextAction(say.showAll, { allSongs = true }, Modifier.padding(horizontal = 8.dp))
+                    }
                 }
                 if (ui.top.isNotEmpty()) {
                     item(key = "top", contentType = "title") { SectionTitle(say.topSongs, late(arrival)) }

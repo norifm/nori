@@ -303,9 +303,14 @@ pub struct App {
     queue: Option<QueueShown>,
     /// Songs behind the clickable lists: the page's, the Songs view's, the search's.
     page_songs: Vec<Song>,
+    /// The artist page's Show all pressed: every song listed, not the first few.
+    page_songs_all: bool,
     page_fetch: Option<Fetch>,
     songs: Vec<Song>,
     search_songs: Vec<Song>,
+    /// Search's Show all pressed, for the query in `search_query`.
+    search_songs_all: bool,
+    search_query: String,
     /// The read the shown page waits for.
     want: Option<Req>,
     shelves: Rc<VecModel<Shelf>>,
@@ -476,9 +481,12 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             song: None,
             queue: None,
             page_songs: Vec::new(),
+            page_songs_all: false,
             page_fetch: None,
             songs: Vec::new(),
             search_songs: Vec::new(),
+            search_songs_all: false,
+            search_query: String::new(),
             want: None,
             shelves,
             home_rows: Vec::new(),
@@ -686,6 +694,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         }
     });
     on!(ui.on_drag_window, h, |a| a.compositor.drag_window());
+    on!(ui.on_all_songs, h, |a, list| {
+        if list == 0 { a.page_songs_all = true; a.show_page_songs(); } else { a.search_songs_all = true; a.show_search_songs(); }
+    });
     on!(ui.on_zoom_window, h, |a| a.compositor.zoom_window());
     on!(ui.on_page_moved, h, |a| a.place_player());
     on!(ui.on_player_changed, h, |a| {
@@ -1035,6 +1046,7 @@ impl App {
         }
         let ui = self.ui();
         self.page_songs.clear();
+        self.page_songs_all = false;
         self.page_fetch = Some(match &ask {
             PageAsk::Album(id) => Fetch::Album(id.clone()),
             PageAsk::Artist(id) => Fetch::Artist(id.clone()),
@@ -1264,7 +1276,7 @@ impl App {
                 ui.set_page_caption(caption.join(" · ").into());
                 self.set_page_art(d.album.cover_art.clone());
                 self.page_songs = d.songs;
-                ui.set_page_songs(self.rows(&self.page_songs));
+                self.show_page_songs();
             }
             Data::Page(PageGot::Artist(d)) if shown => {
                 ui.set_page_title(d.artist.name.as_str().into());
@@ -1274,7 +1286,7 @@ impl App {
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
                 ui.set_page_albums(cards(d.albums.iter().map(|a| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) })));
                 self.page_songs = d.songs;
-                ui.set_page_songs(self.rows(&self.page_songs));
+                self.show_page_songs();
             }
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_title(d.playlist.name.as_str().into());
@@ -1282,7 +1294,7 @@ impl App {
                 ui.set_page_caption(words::songs_caption(d.songs.len(), d.seconds).into());
                 self.set_page_art(d.playlist.cover_art.clone());
                 self.page_songs = d.songs;
-                ui.set_page_songs(self.rows(&self.page_songs));
+                self.show_page_songs();
             }
             Data::Page(PageGot::Mix(m)) if shown => {
                 ui.set_page_title(words::mix_name(m.name).into());
@@ -1290,7 +1302,7 @@ impl App {
                 ui.set_page_caption(words::songs_caption(m.songs.len(), m.seconds).into());
                 self.set_page_art(m.covers.first().cloned());
                 self.page_songs = m.songs;
-                ui.set_page_songs(self.rows(&self.page_songs));
+                self.show_page_songs();
             }
             Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_)) => {}
         }
@@ -1306,6 +1318,23 @@ impl App {
     }
 
     /// Songs as rows filtered by the find text; each row keeps its index in `songs`.
+    /// The page's songs as listed: an artist's first few until Show all (`songs_shown`).
+    fn show_page_songs(&self) {
+        let ui = self.ui();
+        let all = self.page_songs_all || ui.get_page_kind() != 1;
+        let n = nori_core::browse::songs_shown(self.page_songs.len() as u32, all) as usize;
+        ui.set_page_songs(self.rows(&self.page_songs[..n]));
+        ui.set_page_songs_more(n < self.page_songs.len());
+    }
+
+    /// Search's songs as listed: the best few until Show all.
+    fn show_search_songs(&self) {
+        let ui = self.ui();
+        let n = nori_core::browse::songs_shown(self.search_songs.len() as u32, self.search_songs_all) as usize;
+        ui.set_search_songs(self.rows(&self.search_songs[..n]));
+        ui.set_search_songs_more(n < self.search_songs.len());
+    }
+
     fn rows(&self, songs: &[Song]) -> ModelRc<SongRow> {
         let heard = self.heard.as_deref();
         let find = self.find.to_lowercase();
@@ -1323,7 +1352,7 @@ impl App {
         ui.set_artists(pick(&self.lists.artists));
         ui.set_playlists(pick(&self.lists.playlists));
         ui.set_songs(self.rows(&self.songs));
-        ui.set_page_songs(self.rows(&self.page_songs));
+        self.show_page_songs();
     }
 
     /// Shows an artist beside the Artists list.
@@ -1336,6 +1365,7 @@ impl App {
         ui.set_page_caption("".into());
         ui.set_page_albums(ModelRc::default());
         self.page_songs.clear();
+        self.page_songs_all = false;
         self.page_fetch = Some(Fetch::Artist(id.clone()));
         self.load(Req::Page(PageAsk::Artist(id)));
         // Keep the list visible while the artist loads.
@@ -1345,8 +1375,8 @@ impl App {
     /// Refreshes the now-playing marks in the lists.
     fn mark_playing(&self) {
         let ui = self.ui();
-        ui.set_page_songs(self.rows(&self.page_songs));
-        ui.set_search_songs(self.rows(&self.search_songs));
+        self.show_page_songs();
+        self.show_search_songs();
         if !self.songs.is_empty() {
             ui.set_songs(self.rows(&self.songs));
         }
@@ -1404,7 +1434,11 @@ impl App {
         ui.set_search_albums(cards(found.albums.iter().map(album_card)));
         ui.set_search_playlists(cards(found.playlists.iter().map(playlist_card)));
         self.search_songs = found.songs;
-        ui.set_search_songs(self.rows(&self.search_songs));
+        if self.search_query != v.query.trim() {
+            self.search_query = v.query.trim().to_string();
+            self.search_songs_all = false;
+        }
+        self.show_search_songs();
         ui.set_search_busy(v.searching);
         let note = if let Some(e) = v.error {
             format!("The server could not be searched ({}); these are from the offline index", e.reason.unwrap_or_default())
