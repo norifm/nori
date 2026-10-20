@@ -199,6 +199,34 @@ export global Motion {
     in property <bool> reduced;
 }
 
+// Whether the music is moving now (playing, not waiting for bytes): the playing bars move only then.
+export global Playing {
+    in property <bool> advancing;
+}
+
+// The song playing's glyph, as Android's: four bars at speeds that never fall into step, moving with the
+// music and standing at rest while it waits or is paused. About thirty steps a second, and only while a
+// row with it is on screen.
+component PlayingBars inherits Rectangle {
+    in property <color> colour;
+    property <float> phase;
+    property <length> bar: self.width / 7;
+    Timer {
+        interval: 34ms;
+        running: Playing.advancing;
+        triggered => { root.phase += 0.034; }
+    }
+    for i in 4: Rectangle {
+        property <float> level: Playing.advancing ? 0.5 + 0.5 * sin((root.phase * (5.1 + i * 1.3) + i * 1.7) * 1rad) : [0.35, 0.8, 0.5, 0.65][i];
+        x: i * root.bar * 2;
+        width: root.bar;
+        height: root.height * (0.28 + 0.72 * self.level);
+        y: root.height - self.height;
+        border-radius: root.bar / 2;
+        background: root.colour;
+    }
+}
+
 // The colors of the page the window is on (look.rs paints them: the season's palette, or a cover's page).
 export global Theme {
     in property <color> ground;
@@ -1245,11 +1273,12 @@ component SongLine inherits Rectangle {
             }
             if !root.thumb: Rectangle {
                 width: 24px;
-                if root.song.playing: Icon {
-                    path: Icons.bars;
+                if root.song.playing: PlayingBars {
+                    x: parent.width - self.width - 2px;
+                    y: (parent.height - self.height) / 2;
                     colour: Theme.accent;
-                    width: 15px;
-                    height: 15px;
+                    width: 14px;
+                    height: 13px;
                 }
                 if !root.song.playing: Text {
                     width: 100%;
@@ -2604,11 +2633,12 @@ component QueueView inherits Rectangle {
                             if s.playing: Rectangle {
                                 border-radius: 8px;
                                 background: #00000066;
-                                Icon {
-                                    path: Icons.bars;
+                                PlayingBars {
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
                                     colour: white;
-                                    width: 18px;
-                                    height: 18px;
+                                    width: 17px;
+                                    height: 16px;
                                 }
                             }
                         }

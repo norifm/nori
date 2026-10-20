@@ -1739,7 +1739,10 @@ impl App {
                 match &e {
                     // A seek landed: the lyrics follow from the new place.
                     Event::Position { .. } => self.lyrics_step(true),
-                    Event::Buffering(b) if matches!(self.playback, Playback::Here) => self.ui().set_buffering(*b),
+                    Event::Buffering(b) if matches!(self.playback, Playback::Here) => {
+                        self.ui().set_buffering(*b);
+                        self.advancing();
+                    }
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     _ => {}
                 }
@@ -2346,6 +2349,12 @@ impl App {
         }
     }
 
+    /// Whether the music moves now, for the playing bars: playing and not waiting for bytes.
+    fn advancing(&self) {
+        let ui = self.ui();
+        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering());
+    }
+
     /// Syncs the window with what the player shows: this computer's playback and queue, the device's
     /// playing elsewhere, or the jam's.
     fn follow(&mut self) {
@@ -2368,6 +2377,7 @@ impl App {
                 ui.set_volume(v);
             }
         }
+        self.advancing();
         if let Some(q) = queue {
             ui.set_shuffle(q.view.shuffle);
             ui.set_repeat(q.view.repeat as i32);
