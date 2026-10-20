@@ -42,6 +42,15 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
@@ -772,16 +781,39 @@ fun <T> LoadBox(load: Load<T>, modifier: Modifier = Modifier, content: @Composab
 @Composable
 fun noteText(note: Note): String = remember(note) { say.note(note) }
 
-/** Big, quiet type for an empty list. */
+/** Big, quiet type for an empty list, under the glyph of what is missing. */
 @Composable
-fun EmptyNote(note: Note, modifier: Modifier = Modifier) = EmptyNote(noteText(note), modifier)
+fun EmptyNote(note: Note, modifier: Modifier = Modifier) = EmptyNote(noteText(note), modifier, noteIcon(note))
 
-/** Big, quiet type for an empty list: "Nothing here yet". */
+/** Big, quiet type for an empty list: "Nothing here yet", under [icon] in a soft disc when there is one. */
 @Composable
-fun EmptyNote(text: String, modifier: Modifier = Modifier) = Text(
-    text, modifier.fillMaxWidth().padding(Space.gutter), textAlign = TextAlign.Center,
-    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), color = MaterialTheme.colorScheme.onSurfaceVariant,
-)
+fun EmptyNote(text: String, modifier: Modifier = Modifier, icon: androidx.compose.ui.graphics.vector.ImageVector? = null) =
+    Column(modifier.fillMaxWidth().padding(Space.gutter), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (icon != null) Box(
+            Modifier.padding(top = 24.dp, bottom = 14.dp).size(64.dp).background(LocalLook.current.color(dev.nori.music.look.CoverLook.VEIL_6), androidx.compose.foundation.shape.CircleShape),
+            Alignment.Center,
+        ) { Icon(icon, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Text(
+            text, textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium), color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+/** The glyph over a note of an empty list; none over help and failures. */
+@Composable
+private fun noteIcon(note: Note): androidx.compose.ui.graphics.vector.ImageVector? = when (note) {
+    Note.NO_INDEX, Note.NO_SONGS -> Icons.Rounded.MusicNote
+    Note.NO_ALBUMS -> Icons.Rounded.Album
+    Note.NO_ARTISTS -> Icons.Rounded.Person
+    Note.NO_PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic
+    Note.NO_STATIONS -> Icons.Rounded.Radio
+    Note.NOTHING_DOWNLOADED, Note.NO_DOWNLOADS -> Icons.Rounded.Download
+    Note.NO_FAVOURITE_SONGS -> Kanji.Seal
+    Note.NOTHING_TO_MIX -> Icons.Rounded.AutoAwesome
+    Note.NO_HISTORY -> Icons.Rounded.History
+    Note.NOTHING_FOUND -> Icons.Rounded.Search
+    else -> null
+}
 
 /**
  * Warms artwork that is about to be needed. A server renders each thumbnail the first time it is

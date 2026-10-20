@@ -55,6 +55,7 @@ import dev.nori.music.app.vm.DecadesViewModel
 import dev.nori.music.app.vm.FoldersViewModel
 import dev.nori.music.ffi.settings.LibrarySection
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Category
@@ -131,6 +132,7 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
     val prefs by settings.prefs.collectAsStateWithLifecycle()
     val sections = remember(prefs.librarySections, rules.sections) { dev.nori.music.ffi.library.librarySectionsShown(prefs.librarySections, rules.sections) }
     val recent by vm.recent.collectAsStateWithLifecycle()
+    val playlists by vm.playlists.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     androidx.compose.foundation.layout.BoxWithConstraints {
     // As many across as the Albums page has (its grid's own count, [albumColumns]): two upright.
@@ -149,7 +151,7 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
         }
         // A profile with no library (a provider's, signed out) is found through search.
         if (rules.sections.isEmpty()) item(key = "search") {
-            Text(say.searchIsTheWayIn, Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            EmptyNote(say.searchIsTheWayIn, icon = Icons.Rounded.Search)
         }
         items(sections, key = { it.name }) { s ->
             NavRow(
@@ -157,12 +159,25 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
                 leading = { Icon(sectionIcon(s), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary) },
             )
         }
+        // Without an offline index the albums are the account's saved ones, in the source's order.
         if (recent.isNotEmpty()) {
-            item(key = "recent") { SectionTitle(say.recentlyAdded) }
+            item(key = "recent") { SectionTitle(if (rules.indexed) say.recentlyAdded else say.yourAlbums) }
             items(recent.chunked(across), key = { row -> row.first().id }) { row ->
                 Row(Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(ALBUM_GAP)) {
                     row.forEach { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.weight(1f), fill = true) }
                     repeat(across - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+        }
+        // A source's own playlists, where its library is not indexed and the page would otherwise end here.
+        if (!rules.indexed && playlists.isNotEmpty()) item(key = "playlists") {
+            Column {
+                SectionTitle(say.yourPlaylists)
+                LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(playlists, key = { it.id }) { p ->
+                        val line = remember(p.songCount, p.comment) { if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty() }
+                        CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 132.dp, { nav.playlist(p.id, p) })
+                    }
                 }
             }
         }
@@ -232,6 +247,7 @@ fun LibrarySectionScreen(section: LibrarySection, actions: ActionsViewModel) {
 private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel = viewModel()) {
     val albums by vm.albums.collectAsStateWithLifecycle()
     val sort by vm.sort.collectAsStateWithLifecycle()
+    val none by vm.none.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     Column {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -258,6 +274,7 @@ private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel = viewModel())
         // On its side the cards keep about the size they have upright (a little larger than Home's shelves,
         // which is the point of a grid of covers) and the row takes as many as fit.
         val wide = LocalWide.current
+        if (none) EmptyNote(Note.NO_ALBUMS)
         LazyVerticalGrid(if (wide) GridCells.Adaptive(ALBUM_MIN) else GridCells.Fixed(2), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, top = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(ALBUM_GAP), verticalArrangement = Arrangement.spacedBy(ALBUM_GAP)) {
             itemsIndexed(albums, key = { _, a -> a.id }, contentType = { _, _ -> "album" }) { i, a ->
                 if (i >= albums.size - 12) vm.loadMore()
@@ -281,6 +298,7 @@ private fun Artists(vm: ArtistsViewModel = viewModel()) {
         val view = remember(index, filter) { index.view(filter) }
         val artists = remember(view) { view.rows.map { all[it.toInt()] } }
         val letters = view.letters
+        if (all.isEmpty()) return@LoadBox EmptyNote(Note.NO_ARTISTS)
         Column {
             SearchField(filter, { filter = it }, say.filterArtists, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp))
             Row {
