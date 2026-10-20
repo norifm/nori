@@ -172,6 +172,13 @@ impl Client {
     }
 }
 
+/// The song among `found` (a songs search's) that `video` is the music video of: a song, not a video,
+/// of the same title by the same artist.
+fn song_of_video<'a>(video: &Song, found: &'a [Song]) -> Option<&'a Song> {
+    let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+    found.iter().find(|s| !s.video && same(&s.title, &video.title) && same(&s.artist, &video.artist))
+}
+
 /// Polls `futures` side by side until all are done; their answers in the same order.
 async fn join_all<F: Future>(futures: Vec<F>) -> Vec<F::Output> {
     let mut futures: Vec<_> = futures.into_iter().map(Box::pin).collect();
@@ -433,9 +440,28 @@ impl InnerTube {
         self.call(&WEB_REMIX, http, "browse", json!({ "browseId": id })).await
     }
 
-    /// Album `id` (`MPREb_...`) and its songs.
+    /// Album `id` (`MPREb_...`) and its songs. A track YouTube lists as its music video is the album's
+    /// song where a songs search finds it: the video's sound and length are not the record's, so its
+    /// lyrics and analysis would not fit it.
     pub async fn album<H: Http + Sync>(&self, http: &H, id: &str) -> Result<AlbumPage, H::Error> {
-        Ok(parse::album(&self.browse(http, id).await?, id))
+        let mut page = parse::album(&self.browse(http, id).await?, id);
+        let videos: Vec<usize> = (0..page.songs.len()).filter(|&i| page.songs[i].video).collect();
+        let asks = videos.iter().map(|&i| {
+            let s = &page.songs[i];
+            self.call(&WEB_REMIX, http, "search", json!({ "query": format!("{} {}", s.title, s.artist), "params": SONGS }))
+        });
+        let answers = join_all(asks.collect()).await;
+        for (i, answer) in videos.into_iter().zip(answers) {
+            let Ok(found) = answer else { continue };
+            if let Some(song) = song_of_video(&page.songs[i], &parse::search(&found).songs) {
+                let s = &mut page.songs[i];
+                (s.video_id, s.video) = (song.video_id.clone(), false);
+                if song.duration > 0 {
+                    s.duration = song.duration;
+                }
+            }
+        }
+        Ok(page)
     }
 
     /// Artist `id` (`UC...`): albums, top songs with their lengths, similar artists, description. A
@@ -801,6 +827,24 @@ pub(crate) mod tests {
         let page = ready(InnerTube::default().album(&fake, "MPREb_K8qWMWVqXGi")).unwrap();
         assert_eq!(page.album.id, "MPREb_K8qWMWVqXGi");
         assert_eq!(body(&fake.asked()[0])["browseId"], "MPREb_K8qWMWVqXGi");
+    }
+
+    /// An album page that lists its tracks as their music videos: each is searched among the songs, and
+    /// one found by its title and artist plays as the song; the others stay the videos they were.
+    #[test]
+    fn an_albums_videos_play_as_its_songs() {
+        let (album, found) = (fixture("album_videos"), fixture("search_song_of_video"));
+        let mut answers = vec![(200, album.as_str())];
+        answers.extend(std::iter::repeat_n((200, found.as_str()), 5));
+        let fake = Fake::answering(&answers);
+        let page = ready(InnerTube::default().album(&fake, "MPREb_WJjOQ3cXgzB")).unwrap();
+        let tracks: Vec<(&str, &str, bool)> = page.songs.iter().map(|s| (s.title.as_str(), s.video_id.as_str(), s.video)).collect();
+        assert_eq!(tracks[3], ("Bleed It Out", "83QdkHypPF8", false), "the album's song");
+        assert_eq!(tracks[0], ("Wake", "Me7TJDHCELk", true), "not found: still its video");
+        let asked = fake.asked();
+        assert_eq!(asked.len(), 1 + tracks.len(), "the album, then a search for each video track");
+        assert_eq!(body(&asked[4])["query"], "Bleed It Out Linkin Park");
+        assert_eq!(body(&asked[4])["params"], SONGS.unwrap());
     }
 
     #[test]
