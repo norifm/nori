@@ -287,7 +287,6 @@ pub(crate) enum K {
     /// Any set of these, by name (an enum's, in ordinal order).
     Flags(&'static [&'static str]),
     Level(f32, f32),
-    Text,
 }
 
 impl K {

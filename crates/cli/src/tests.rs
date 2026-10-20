@@ -499,8 +499,11 @@ fn settings_page() {
     }
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.last(), Some(&Cmd::Setting("autoMix".into(), "true".into())));
-    // ← and → change a choice (the crossfade, just above); here they do not seek.
-    key(&mut a, KeyCode::Up);
+    // ← and → change a choice (the crossfade, below AutoMix); here they do not seek.
+    let at = lines.iter().position(|l| matches!(l, Line::Row(Row::Choice { target: Target::Setting(name), .. }) if name == "crossfadeSec")).unwrap();
+    while a.settings.row.at < at {
+        key(&mut a, KeyCode::Down);
+    }
     a.cmds.clear();
     key(&mut a, KeyCode::Right);
     assert!(matches!(a.cmds.last(), Some(Cmd::Setting(n, _)) if n == "crossfadeSec"), "{:?}", a.cmds);

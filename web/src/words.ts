@@ -195,8 +195,7 @@ export const W = {
   },
   level: (name: string, v: number) => (name === "volumeBoostDb" ? (v === 0 ? "Off" : `+${v.toFixed(1)} dB`) : String(v)),
   notes: {
-    Boost: "A boost brings the limiter with it, so nothing clips.",
-    HeldByDac: "Bit-perfect output takes transitions, silence skipping and effects out of the path.",
+    HeldByDac: "Off in bit-perfect mode.",
   } as Record<string, string>,
   // The look: season and appearance.
   season: "Season",

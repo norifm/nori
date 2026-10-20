@@ -13,7 +13,6 @@ fn main() {
                 SettingKind::Choice => "choice",
                 SettingKind::Flags => "flags",
                 SettingKind::Level => "level",
-                SettingKind::Text => "text",
             };
             json!({ "name": s.name, "kind": kind, "options": s.options, "min": s.min, "max": s.max, "default": s.default })
         })

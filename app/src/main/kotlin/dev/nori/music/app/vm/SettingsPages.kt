@@ -56,7 +56,7 @@ sealed interface SettingRow {
     /** A line of explanation among the rows. */
     data class Note(val text: String) : SettingRow
     /** A row that opens something ([action]), with a status at its end; [dimmed]: it is not reaching the sound now. */
-    data class Link(val key: String, val title: String, val status: String, val dimmed: Boolean, val action: String, val divider: Boolean) : SettingRow
+    data class Link(val key: String, val title: String, val status: String, val dimmed: Boolean, val action: String, val divider: Boolean, val enabled: Boolean = true) : SettingRow
     /** A line of text and a button at its end; [error]: the line is a failure. */
     data class Action(val key: String, val title: String, val detail: String, val button: String, val enabled: Boolean, val error: Boolean, val action: String) : SettingRow
     data class Info(val key: String, val title: String, val detail: String) : SettingRow
@@ -74,20 +74,18 @@ sealed interface SettingRow {
     /** A saved server; the one in use carries its [libraries] when it has more than one, under [note]. */
     data class Server(val id: String, val label: String, val detail: String, val active: Boolean, val libraries: List<Pick> = emptyList(), val note: String = "") : SettingRow
     data class Button(val title: String, val action: String) : SettingRow
-    /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. [keyed]: it
-     *  is switched on only with a key, typed under [keyName]; [keySet]: that key is given. */
+    /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. [takesKey]: it
+     *  takes a key, typed under [keyName]; [keyed]: it is switched on only with that key; [keySet]: the key is given. */
     data class Ranked(
         val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean,
-        val keyed: Boolean = false, val keySet: Boolean = false, val keyName: String = "",
+        val takesKey: Boolean = false, val keyed: Boolean = false, val keySet: Boolean = false, val keyName: String = "",
     ) : SettingRow
     /** The compressor's gain reduction, read from the player only while the page is on screen. */
-    data class CompressionMeter(val key: String) : SettingRow
+    data class CompressionMeter(val key: String, val enabled: Boolean) : SettingRow
     /** One setting with a few values, all on view as chips, the one it has lit. */
-    data class ChipChoice(val key: String, val name: String, val title: String, val detail: String, val options: List<SettingOption>, val chosen: String) : SettingRow
+    data class ChipChoice(val key: String, val name: String, val title: String, val detail: String, val options: List<SettingOption>, val chosen: String, val enabled: Boolean) : SettingRow
     /** Independent conditions as chips, each lit while on; [value] is the core's form of the set (`SettingKind::Flags`). */
     data class Flags(val key: String, val name: String, val title: String, val detail: String, val options: List<SettingOption>, val value: String, val enabled: Boolean) : SettingRow
-    /** Text typed in (a service's key), hidden when [secret]. */
-    data class Text(val key: String, val name: String, val title: String, val detail: String, val value: String, val secret: Boolean) : SettingRow
 }
 
 /** One season's tile: its value, its name, and the colors of its theme in the mode the app is in (ARGB). */
@@ -197,7 +195,7 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "compressorPreset" to (R.string.settings_compressor_preset to 0),
     "replayGain" to (R.string.settings_volume_leveling to R.string.settings_hint_volume_leveling),
     "loudnessLevel" to (R.string.settings_level to R.string.settings_hint_level),
-    "volumeBoostDb" to (R.string.settings_volume_boost_title to R.string.settings_boost_note),
+    "volumeBoostDb" to (R.string.settings_volume_boost_title to R.string.settings_hint_volume_boost),
     "hiRes" to (R.string.settings_hi_res to R.string.settings_hint_hi_res),
     "maxRate" to (R.string.settings_max_rate to R.string.settings_hint_max_rate),
     "bitPerfect" to (R.string.settings_bit_perfect to R.string.settings_hint_bit_perfect),
@@ -220,7 +218,6 @@ private val SETTING_WORDS: Map<String, Pair<Int, Int>> = mapOf(
     "lyricsKeepScreenOn" to (R.string.settings_lyrics_screen_on to R.string.settings_hint_lyrics_screen_on),
     "lyricsOnline" to (R.string.settings_lyrics_online to R.string.settings_hint_lyrics_online),
     "lyricsPreferWords" to (R.string.settings_lyrics_words to R.string.settings_hint_lyrics_words),
-    "betterLyricsKey" to (R.string.settings_betterlyrics_key to R.string.settings_hint_betterlyrics_key),
     "tapAction" to (R.string.settings_tap_action to R.string.settings_hint_tap_action),
     "swipeRight" to (R.string.settings_swipe_right to 0),
     "swipeLeft" to (R.string.settings_swipe_left to 0),
@@ -454,9 +451,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         SectionId.DISPLAY -> R.string.settings_section_display
         SectionId.SOURCES -> R.string.settings_section_sources
         SectionId.ASKED_ORDER -> R.string.settings_section_asked_order
-        SectionId.KEYS -> R.string.settings_section_keys
         SectionId.LISTS -> R.string.settings_section_lists
-        SectionId.PLAYLISTS -> R.string.settings_section_playlists
         SectionId.SEARCH -> R.string.settings_section_search
         SectionId.HISTORY -> R.string.settings_section_history
         SectionId.ONLINE -> R.string.settings_section_online
@@ -536,11 +531,10 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
     /** The screen's row for one of the core's; null for one this screen does not draw. */
     fun row(r: dev.nori.music.ffi.settings.SettingsRow, libraries: List<Pick>): SettingRow? = when (val item = r.item) {
         is RowItem.Setting -> setting(item.spec, item.value, item.chips, r.enabled)
-        is RowItem.Link -> link(item.to)
+        is RowItem.Link -> link(item.to).let { if (it is SettingRow.Link) it.copy(enabled = r.enabled) else it }
         is RowItem.Action -> action(item.action, r.enabled)
         is RowItem.Note -> when (item.note) {
             SettingsNote.HELD_BY_DAC -> SettingRow.Note(str(R.string.settings_held_by_dac))
-            SettingsNote.BOOST -> SettingRow.Note(str(R.string.settings_boost_note))
             SettingsNote.DAC -> dacDetail(f.dac)?.let { SettingRow.Note(it) }
             SettingsNote.LYRICS_SOURCES -> SettingRow.Note(str(if (s.values["lyricsOnline"] == "true") R.string.settings_lyrics_sources_note else R.string.settings_lyrics_sources_note_off))
         }
@@ -564,9 +558,9 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             val (title, about) = SERVICES[src.id] ?: return null
             val t = str(title)
             val detail = if (src.keySet) str(R.string.settings_lyrics_key_set, str(about)) else str(about)
-            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, detail, src.on, src.needsKey, src.keySet, "lyricsKey:${src.id}")
+            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, detail, src.on, src.takesKey, src.needsKey, src.keySet, "lyricsKey:${src.id}")
         }
-        is RowItem.CompressionMeter -> SettingRow.CompressionMeter("compression-meter")
+        is RowItem.CompressionMeter -> SettingRow.CompressionMeter("compression-meter", r.enabled)
         is RowItem.MusicFolder -> null
     }
 
@@ -602,7 +596,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             SettingKind.CHOICE -> {
                 val options = spec.options.map { SettingOption(valueWords(name, it, spec.options), it) }
                 if (name == "season") seasons(key, title, options, value)
-                else if (chips) SettingRow.ChipChoice(key, name, title, detail(name), options, value)
+                else if (chips) SettingRow.ChipChoice(key, name, title, detail(name), options, value, enabled)
                 else SettingRow.Choice(key, name, title, options, options.firstOrNull { it.value == value }?.label ?: valueWords(name, value, spec.options), enabled)
             }
             SettingKind.FLAGS -> SettingRow.Flags(key, name, title, detail(name), spec.options.map { SettingOption(valueWords(name, it, spec.options), it) }, value, enabled)
@@ -611,7 +605,6 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
                 val shown = if (db <= 0f) str(R.string.settings_off) else str(R.string.settings_db, Fmt.signedDb(db))
                 SettingRow.Slider(name, str(R.string.settings_volume_boost, shown), db, spec.min, spec.max, false, if (name == "volumeBoostDb") EqLevel.VOLUME_BOOST else null)
             }
-            SettingKind.TEXT -> SettingRow.Text(key, name, title, detail(name), value, secret = true)
         }
     }
 

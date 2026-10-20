@@ -3016,8 +3016,8 @@ component SettingLine inherits VerticalLayout {
                 }
                 if root.item.kind == 6: HorizontalLayout {
                     spacing: 4px;
-                    // A service that needs a key: typed here, it is kept and the service switched on;
-                    // emptied, it is cleared and every service that needs it switched off.
+                    // A service that takes a key: typed here, it is kept and the service switched on;
+                    // an emptied PaxSenix key switches off every service that needs it.
                     if root.item.centred: Field {
                         y: (parent.height - self.height) / 2;
                         width: 130px;
@@ -3074,13 +3074,6 @@ component SettingLine inherits VerticalLayout {
                 value: (root.item.value - root.item.min) / max(0.0001, root.item.max - root.item.min);
                 moved(v) => { root.slid(root.item.name, root.item.min + v * (root.item.max - root.item.min), false); }
                 done(v) => { root.slid(root.item.name, root.item.min + v * (root.item.max - root.item.min), true); }
-            }
-            if root.item.kind == 7: Field {
-                height: 28px;
-                secret: true;
-                placeholder: "Not set";
-                text: root.item.button;
-                accepted => { root.typed(root.item.name, self.text); }
             }
         }
         if !root.item.last: Rectangle {

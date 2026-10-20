@@ -20,7 +20,6 @@ const ACTION: i32 = 3;
 const INFO: i32 = 4;
 const SLIDER: i32 = 5;
 const RANKED: i32 = 6;
-const TEXT: i32 = 7;
 const SERVER: i32 = 8;
 const NOTE: i32 = 9;
 const LINK: i32 = 11;
@@ -221,9 +220,7 @@ fn section_title(id: SectionId) -> &'static str {
         Display => "Display",
         Sources => "Sources",
         AskedOrder => "In the order they're asked",
-        Keys => "Keys",
         Lists => "Lists",
-        Playlists => "Playlists",
         Search => "Search",
         History => "Listening history",
         Online => "Online",
@@ -256,7 +253,7 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "previousAlwaysSkips" => ("Previous goes back a song", ""),
         "speed" => ("Speed", ""),
         "pitch" => ("Pitch", ""),
-        "skipSilence" => ("Skip silence", if s.untouched { "Off while the audio is played untouched." } else { "" }),
+        "skipSilence" => ("Skip silence", if s.untouched { "Off in bit-perfect mode." } else { "" }),
         "skipExplicit" => ("Skip explicit songs", ""),
         "autoFill" => ("Keep playing when the queue ends", ""),
         "autoFillKind" => ("Carry on with", ""),
@@ -281,7 +278,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "lyricsTranslation" => ("Show translations", ""),
         "lyricsOnline" => ("Find missing lyrics online", ""),
         "lyricsPreferWords" => ("Prefer word-by-word lyrics", ""),
-        "betterLyricsKey" => ("BetterLyrics key", ""),
         "tasteModel" => ("Keep listening history", ""),
         "scrobble" => ("Tell the server what you play", ""),
         "thirdPartyLookups" => ("Look things up online", ""),
@@ -408,7 +404,6 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                     let title = format!("{title}: {}", if v <= 0.0 { "Off".to_string() } else { format!("{} dB", crate::eq::signed(v)) });
                     Row { kind: SLIDER, name: spec.name, title, value: v.clamp(spec.min, spec.max), min: spec.min, max: spec.max, enabled: true, ..Default::default() }
                 }
-                SettingKind::Text => Row { kind: TEXT, name: spec.name, title, detail, button: value, enabled: true, ..Default::default() },
                 // Drawn by `flag_rows`.
                 SettingKind::Flags => return None,
             }
@@ -451,8 +446,7 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         }
         RowItem::Note { note: n } => note(match n {
             SettingsNote::HeldByDac => "The audio is played untouched: no mixing, skipping or effects.",
-            SettingsNote::Boost => "The boost turns the limiter on with it, so loud songs do not distort.",
-            SettingsNote::LyricsSources => "The quick ones (LyricsPlus, BetterLyrics and LRCLIB) are asked first, together, and the others only when those find nothing good. Every answer is scored on how well it matches the song, how finely it is timed and whether the other services agree, and the best is shown; the order here settles near ties. Your server's own timed lyrics always come before all of these.",
+            SettingsNote::LyricsSources => "Your server's lyrics always come first. Among these, the best match wins; the order breaks ties.",
             SettingsNote::Dac => return None,
         }),
         RowItem::Server { index } => {
@@ -474,9 +468,9 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         RowItem::LyricsSource { index } => {
             let src = s.lyrics_sources.get(index as usize)?;
             let (title, about) = service(&src.id)?;
-            // A service that needs a key has its key's field beside its switch (`centred`), which turns it on.
-            let button = if src.key_set { "Key set" } else { "PaxSenix key" };
-            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: !src.needs_key || src.key_set, centred: src.needs_key, button: button.into(), ..Default::default() }
+            // A service that takes a key has its key's field beside its switch (`centred`); a key typed there turns it on.
+            let button = if src.key_set { "Key set".to_string() } else { format!("{title} key") };
+            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: r.enabled && (!src.needs_key || src.key_set), centred: src.takes_key, button, ..Default::default() }
         }
     })
 }
@@ -666,7 +660,7 @@ mod tests {
         let specs: Vec<String> = settings_model::specs().into_iter().map(|s| s.name).collect();
         for tab in 0..7 {
             for (_, rows) in groups(&p, &f, tab, OCTOBER) {
-                for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE | TEXT) && r.name != DEVICE) {
+                for r in rows.iter().filter(|r| matches!(r.kind, TOGGLE | CHOICE) && r.name != DEVICE) {
                     let name = toggled(&r.name, r.on).0;
                     assert!(specs.iter().any(|s| s == name), "{name} is not a core setting");
                     assert!(!setting_words(name, &settings_model::state(&p, settings_model::Output::default(), &crate::session::app().settings.model)).0.eq(name), "{name} has no words");
