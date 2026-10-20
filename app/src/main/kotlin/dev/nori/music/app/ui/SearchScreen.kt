@@ -1,10 +1,14 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.History
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -40,7 +44,10 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), testTag = "search", autofocus = true,
             focusKey = searchFocusKey(),
         )
-        if (ui.searching) LinearProgressIndicator(Modifier.fillMaxWidth())
+        // Its room is kept whether or not it shows, so the results do not move as the server answers.
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(2.dp)) {
+            if (ui.searching) LinearProgressIndicator(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+        }
         ui.error?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
         if (ui.scopesOffered) LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -55,7 +62,12 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
                         TextAction(say.clear, vm::clearHistory)
                     }
                 }
-                items(ui.history, key = { it }) { q -> Text(q, Modifier.fillMaxWidth().clickable { vm.setQuery(q) }.padding(horizontal = Space.gutter, vertical = 13.dp), style = MaterialTheme.typography.bodyLarge) }
+                items(ui.history, key = { it }) { q ->
+                    Row(Modifier.fillMaxWidth().clickable { vm.setQuery(q) }.padding(horizontal = Space.gutter, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.History, null, Modifier.padding(end = 14.dp).size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(q, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
             }
             return@Column
         }
