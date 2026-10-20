@@ -5001,7 +5001,7 @@ export component AppWindow inherits Window {
                         prefs := VerticalLayout {
                             width: parent.width;
                             padding-bottom: 100px;
-                            // The title, then the tabs and the column, as wide as the top pill over them.
+                            // The title, then the tabs and the column at one reading width under the top pill.
                             Text {
                                 text: "Settings";
                                 color: Theme.text;
@@ -5014,8 +5014,8 @@ export component AppWindow inherits Window {
                                 vertical-alignment: bottom;
                             }
                             HorizontalLayout {
-                                padding-left: Chrome.top-x;
-                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
+                                padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
+                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
                                 padding-top: 16px;
                                 padding-bottom: 12px;
                                 Segments {
@@ -5025,8 +5025,8 @@ export component AppWindow inherits Window {
                                 }
                             }
                             HorizontalLayout {
-                                padding-left: Chrome.top-x;
-                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
+                                padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
+                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
                                 VerticalLayout {
                                     for r in root.settings: SettingLine {
                                         item: r;
