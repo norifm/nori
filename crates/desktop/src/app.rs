@@ -2190,8 +2190,17 @@ impl App {
         ui.set_lyric_sweeping(now.sweeping);
         let width = ui.window().size().to_logical(ui.window().scale_factor()).width;
         let mut pieces = |view, on: bool, size, w, lit, dim| if on && now.sweeping { l.pieces(view, &now, size, w, lit, dim) } else { Vec::new() };
-        renew(&self.pieces[0], pieces(0, side, 22.0, 320.0 - 44.0, 1.0, 0.36));
-        renew(&self.pieces[1], pieces(1, full, 44.0, width / 2.0 - 140.0, 1.0, 0.36));
+        // Every line is drawn in the rows the sung pieces take, a hair narrower than the view so the
+        // window's own wrapping never breaks them again.
+        let (side_w, full_w) = (320.0 - 44.0 - 2.0, width / 2.0 - 140.0 - 2.0);
+        renew(&self.pieces[0], pieces(0, side, 22.0, side_w, 1.0, 0.36));
+        renew(&self.pieces[1], pieces(1, full, 44.0, full_w, 1.0, 0.36));
+        if let Some(rows) = l.rows(0, 22.0, side_w) {
+            ui.set_lyrics_side_rows(rows);
+        }
+        if let Some(rows) = l.rows(1, 44.0, full_w) {
+            ui.set_lyrics_full_rows(rows);
+        }
         ui.set_lyric_sung(now.sung.into());
         ui.set_lyric_now(now.now.into());
         ui.set_lyric_mix(now.mix);

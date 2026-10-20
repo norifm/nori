@@ -4462,6 +4462,10 @@ export component AppWindow inherits Window {
     changed view => { root.player-changed(); }
     // The lyrics of the song playing: the lines, the one sung (-1 for none), and a line about them.
     in property <[string]> lyrics-lines;
+    // The lines broken into the rows the sung line's pieces take, per view (app.rs `rows`): drawn so, no line
+    // moves its words as it is sung or let go. Empty until laid out.
+    in property <[string]> lyrics-side-rows;
+    in property <[string]> lyrics-full-rows;
     in property <int> lyrics-active: -1;
     // The lit line filling word by word (lyrics with word times): what is sung, the character being sung and
     // how far, and the rest.
@@ -5842,21 +5846,20 @@ export component AppWindow inherits Window {
                                     lyric-flick.content-y = -max(0, self.y - lyric-flick.height / 3);
                                 }
                             }
-                            // Lyrics with word times are drawn by the StyledText (the Text only lays the line out):
-                            // the lit line fills, and a line sung fades from white as the others do.
-                            text: line;
+                            // With word times the lit line is drawn by its pieces over this text, which keeps its place;
+                            // a line sung fades from white as the others do.
+                            text: root.lyrics-side-rows.length > i ? root.lyrics-side-rows[i] : line;
                             wrap: word-wrap;
                             font-size: 22px;
                             font-weight: 700;
                             // As Now Playing's: gone over the last 48 px before either edge, unsung lines the ink at 36 %.
                             property <length> shown-at: self.y + lyric-flick.content-y;
                             opacity: clamp(self.shown-at / 48px, 0, 1) * clamp((lyric-flick.height - self.shown-at - self.height) / 48px, 0, 1);
-                            color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36);
-                            animate color { duration: Motion.reduced ? 0ms : 420ms; easing: ease-out; }
-                            if root.lyric-sweeping: StyledText {
-                                // Kept while the pieces draw the line lit, only hidden: its colour comes up to white with them, so
-                                // the line fades back from white when the next one takes over.
-                                visible: !(parent.lit && root.lyric-pieces-side.length > 0);
+                            color: !root.lyric-sweeping ? (!root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36))
+                                : self.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * self.level);
+                            animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 420ms; easing: ease-out; }
+                            // The lit line filling without pieces to draw it (no face to measure in).
+                            if root.lyric-sweeping && self.lit && root.lyric-pieces-side.length == 0: StyledText {
                                 width: 100%;
                                 height: 100%;
                                 default-font-size: 22px;
@@ -6374,7 +6377,7 @@ export component AppWindow inherits Window {
                                 root.full-lyric-at = self.y;
                             }
                         }
-                        text: line;
+                        text: root.lyrics-full-rows.length > i ? root.lyrics-full-rows[i] : line;
                         wrap: word-wrap;
                         font-size: 44px;
                         font-weight: 700;
@@ -6382,12 +6385,11 @@ export component AppWindow inherits Window {
                         property <length> shown-at: self.y + full-lyrics.content-y;
                         opacity: clamp(self.shown-at / 72px, 0, 1) * clamp((full-lyrics.height - self.shown-at - self.height) / 72px, 0, 1);
                         // Unsung lines are the ink at 36 %, as the swept line's are, so the cover's colours show through.
-                        color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36);
-                        animate color { duration: Motion.reduced ? 0ms : 500ms; easing: ease-out; }
-                        if root.lyric-sweeping: StyledText {
-                            // Kept while the pieces draw the line lit, only hidden: its colour comes up to white with them, so
-                            // the line fades back from white when the next one takes over.
-                            visible: !(parent.lit && root.lyric-pieces-full.length > 0);
+                        color: !root.lyric-sweeping ? (!root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36))
+                            : self.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * self.level);
+                        animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 500ms; easing: ease-out; }
+                        // The lit line filling without pieces to draw it (no face to measure in).
+                        if root.lyric-sweeping && self.lit && root.lyric-pieces-full.length == 0: StyledText {
                             width: 100%;
                             height: 100%;
                             default-font-size: 44px;
