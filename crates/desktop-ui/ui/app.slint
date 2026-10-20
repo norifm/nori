@@ -5000,7 +5000,8 @@ export component AppWindow inherits Window {
             }
 
             // The sheet on the right, floating between the two pills over the page (which stays where it is): the
-            // lyrics sung line by line, what plays next, or the other devices, under their tabs.
+            // lyrics sung line by line, what plays next, or the other devices, under their tabs. It wears the
+            // page's own colour, as the player pill does, never the song's colours.
             Rectangle {
                 width: Theme.panel-w;
                 x: parent.width - self.width - 16px + (1 - root.panel-in) * 24px;
@@ -5011,29 +5012,8 @@ export component AppWindow inherits Window {
                 border-radius: 22px;
                 border-width: 1px;
                 border-color: Theme.outline;
-                background: Theme.panel;
+                background: Theme.ground;
                 clip: true;
-                // The song playing's colours, as Android's player panels wear them: its wash under the page's
-                // ground (30 % dark, 60 % light), so the page's ink reads on it in either appearance.
-                Image {
-                    width: 100%;
-                    height: 100%;
-                    source: root.wash-a;
-                    image-fit: cover;
-                    opacity: root.wash-on-b ? 0 : 1;
-                    animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
-                }
-                Image {
-                    width: 100%;
-                    height: 100%;
-                    source: root.wash-b;
-                    image-fit: cover;
-                    opacity: root.wash-on-b ? 1 : 0;
-                    animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
-                }
-                Rectangle {
-                    background: Theme.ground.with-alpha(Theme.dark ? 0.3 : 0.6);
-                }
                 PanelTabs {
                     x: 10px;
                     y: 10px;
