@@ -107,12 +107,14 @@ impl PageTrail {
 struct AppHandle(Weak<RefCell<App>>);
 
 impl AppHandle {
-    /// Runs `f` on the app; dropped if the app is gone or already borrowed (a re-entrant callback).
+    /// Runs `f` on the app; dropped if the app is gone or already borrowed (a re-entrant callback, named
+    /// by where it is wired).
+    #[track_caller]
     fn with(&self, f: impl FnOnce(&mut App)) {
         let Some(app) = self.0.upgrade() else { return };
         match app.try_borrow_mut() {
             Ok(mut a) => f(&mut a),
-            Err(_) => eprintln!("nori: a callback came while the window's state was busy; dropped"),
+            Err(_) => eprintln!("nori: a callback came while the window's state was busy ({}); dropped", std::panic::Location::caller()),
         };
     }
 }
@@ -735,15 +737,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
             a.on_session(|s| s.play(songs, at, false, None));
         }
     });
-    on!(ui.on_back, h, |a| {
-        if a.ui().get_view() != PAGE {
-            return a.go(HOME);
-        }
-        match a.trail.back() {
-            Back::Page(page) => a.show_page(page),
-            Back::Tab(tab) => a.go(tab),
-        }
-    });
+    on!(ui.on_back, h, |a| a.back());
     on!(ui.on_note_act, h, |a| a.note_act());
     on!(ui.on_open_album, h, |a, id| a.open_page(PageAsk::Album(id.into())));
     on!(ui.on_open_artist, h, |a, id| a.open_page(PageAsk::Artist(id.into())));
@@ -2683,12 +2677,23 @@ impl App {
         }
     }
 
+    /// The back button: the page this one was opened from, else the tab it was opened on; Home from a
+    /// page of its own.
+    fn back(&mut self) {
+        if self.ui().get_view() != PAGE {
+            return self.go(HOME);
+        }
+        match self.trail.back() {
+            Back::Page(page) => self.show_page(page),
+            Back::Tab(tab) => self.go(tab),
+        }
+    }
+
     /// A touchpad's swipe back: what the back button showing does (a page's, the equalizer's), or nothing
     /// where there is none.
     fn swiped_back(&mut self) {
-        let ui = self.ui();
-        match ui.get_view() {
-            PAGE | 10 | 11 => ui.invoke_back(),
+        match self.ui().get_view() {
+            PAGE | 10 | 11 => self.back(),
             EQUALIZER => self.go(SETTINGS),
             _ => {}
         }
