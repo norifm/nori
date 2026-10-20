@@ -25,6 +25,14 @@ fn silent_server() -> (String, std::sync::mpsc::Receiver<String>) {
     (url, paths)
 }
 
+/// Waits until the session's tasks ran what was spawned before: the engine's events, which the
+/// session hears among its tasks, off the virtual clock.
+fn caught_up(s: &Session) {
+    let (done, ran) = std::sync::mpsc::channel();
+    s.run(async move { done.send(()).unwrap() });
+    ran.recv().unwrap();
+}
+
 #[test]
 fn late_autofill_respects_playback_and_new_queues() {
     for action in ["ended", "paused", "replaced", "stale_resume"] {
@@ -86,6 +94,7 @@ fn late_autofill_respects_playback_and_new_queues() {
             s.engine.queue_changed();
             s.engine.resume_after_refill(previous_end);
         }
+        caught_up(&s);
         let before = card.heard.lock().len();
         s.filled(nori_core::autofill::Refill { songs: vec![songs[2].clone()], after: Some(previous_end), ..Default::default() });
         time.run(Duration::from_secs(2));

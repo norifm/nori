@@ -5,7 +5,8 @@
 use std::thread::Thread;
 use nori_time::{Duration, Instant};
 
-/// Time as the engine's thread sees it. Every call but [`Clock::wake`] is made on that thread.
+/// Time as the engine's thread sees it. Every call but [`Clock::wake`], [`Clock::now_us`] and
+/// [`Clock::loading`] is made on that thread.
 pub trait Clock: Clone + Send + 'static {
     /// Monotonic milliseconds since creation.
     fn now_ms(&self) -> i64;
@@ -22,6 +23,12 @@ pub trait Clock: Clone + Send + 'static {
     fn wake(&self, engine: &Thread) {
         engine.unpark();
     }
+    /// A loader's thread starts (true) or stops (false) taking a song's bytes in; called on any thread. A
+    /// test clock stands still while one does, as if the network were instant.
+    fn loading(&self, _working: bool) {}
+    /// The engine is about to look at what its loaders hold. A test clock first lets those taking bytes
+    /// in finish, so what the engine finds does not depend on how threads were scheduled.
+    fn let_loaders_run(&self) {}
     /// Real-time limits of the songs' fetches; a test clock cannot see real time and may change them.
     fn waits(&self) -> crate::source::Waits {
         crate::source::Waits::default()
