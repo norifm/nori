@@ -438,6 +438,53 @@ component Icon inherits Path {
     fill: root.colour;
 }
 
+// A popover of the panel's: the dark rounded pane the choosers' lists use.
+component Popover inherits Rectangle {
+    border-radius: 18px;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.outline;
+}
+
+// A row of a menu: a glyph, its words, and a few more at the end.
+component MenuRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> detail;
+    callback clicked;
+    height: 40px;
+    border-radius: 12px;
+    background: ta.has-hover ? Theme.hover : transparent;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        Icon {
+            y: (parent.height - self.height) / 2;
+            path: root.icon;
+            colour: Theme.dim;
+            width: 20px;
+            height: 20px;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.detail != "": Text {
+            text: root.detail;
+            color: Theme.dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 // A pane in the chrome's outline: the surface, a hairline round it, no shadow.
 component Glass inherits Rectangle {
     in property <length> radius: 18px;
@@ -849,17 +896,37 @@ component CardView inherits Rectangle {
         overflow: elide;
         horizontal-alignment: root.round ? center : left;
     }
-    // Over the TouchArea, which would take the right press too: the menu area answers only that.
-    ContextMenuArea {
+    // A right press, where a Jam can be started from it: the card's menu where it was pressed.
+    property <length> menu-x;
+    property <length> menu-y;
+    TouchArea {
         enabled: root.playable && Jam.on && !Jam.hosting;
-        Menu {
-            MenuItem {
-                title: "Play";
-                activated => { root.play(); }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                root.menu-x = min(self.mouse-x, root.width - 120px);
+                root.menu-y = self.mouse-y;
+                card-menu.show();
             }
-            MenuItem {
-                title: "Start a Jam";
-                activated => { root.jam(); }
+        }
+    }
+    card-menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 220px;
+        close-policy: close-on-click-outside;
+        Popover {
+            VerticalLayout {
+                padding: 6px;
+                MenuRow {
+                    icon: Icons.play;
+                    text: "Play";
+                    clicked => { card-menu.close(); root.play(); }
+                }
+                MenuRow {
+                    icon: Icons.people;
+                    text: "Start a Jam";
+                    clicked => { card-menu.close(); root.jam(); }
+                }
             }
         }
     }
@@ -1147,6 +1214,8 @@ component PickCard inherits Rectangle {
     }
 }
 
+
+
 // A song in a list, as Music lists them: the number (or the small artwork), the title, the artist and
 // album, and the length, over a hairline. Double click plays; a right click offers the rest.
 component SongLine inherits Rectangle {
@@ -1178,148 +1247,73 @@ component SongLine inherits Rectangle {
         height: 1px;
         background: Theme.hairline;
     }
+    // A right press opens the song's menu where it was pressed, drawn as the app's own menus are.
     touch := TouchArea {
         double-clicked => { root.play(); }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                root.menu-x = min(self.mouse-x, root.width - 250px);
+                root.menu-y = self.mouse-y;
+                song-menu.show();
+            }
+        }
     }
-    // Over the TouchArea, which would take the right press too: the menu area answers only that.
-    ContextMenuArea {
-        Menu {
-            if !Jam.guest: MenuItem {
-                title: "Play";
-                activated => { root.play(); }
-            }
-            MenuItem {
-                title: "Play next";
-                activated => { root.next(); }
-            }
-            MenuItem {
-                title: "Add to queue";
-                activated => { root.later(); }
-            }
-            if Jam.on && !Jam.hosting: MenuItem {
-                title: "Start a Jam";
-                activated => { root.jam(); }
-            }
-            MenuSeparator {}
-            for m in root.song.menu: MenuItem {
-                title: m.title;
-                activated => {
-                    if m.kind == 0 {
-                        root.star();
-                    } else if m.kind == 1 {
-                        Go.album(m.id);
-                    } else if m.kind == 2 {
-                        Go.artist(m.id);
-                    } else if m.kind == 3 {
-                        root.download();
-                    } else {
-                        root.radio();
+    property <length> menu-x;
+    property <length> menu-y;
+    song-menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 240px;
+        close-policy: close-on-click-outside;
+        Popover {
+            VerticalLayout {
+                padding: 6px;
+                if !Jam.guest: MenuRow {
+                    icon: Icons.play;
+                    text: "Play";
+                    clicked => { song-menu.close(); root.play(); }
+                }
+                MenuRow {
+                    icon: Icons.next;
+                    text: "Play next";
+                    clicked => { song-menu.close(); root.next(); }
+                }
+                MenuRow {
+                    icon: Icons.queue;
+                    text: "Add to queue";
+                    clicked => { song-menu.close(); root.later(); }
+                }
+                if Jam.on && !Jam.hosting: MenuRow {
+                    icon: Icons.people;
+                    text: "Start a Jam";
+                    clicked => { song-menu.close(); root.jam(); }
+                }
+                Rectangle {
+                    height: 9px;
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.hairline;
+                    }
+                }
+                for m in root.song.menu: MenuRow {
+                    icon: m.kind == 0 ? Icons.seal-outline : m.kind == 1 ? Icons.albums : m.kind == 2 ? Icons.artists : m.kind == 3 ? Icons.download : Icons.radio;
+                    text: m.title;
+                    clicked => {
+                        song-menu.close();
+                        if m.kind == 0 {
+                            root.star();
+                        } else if m.kind == 1 {
+                            Go.album(m.id);
+                        } else if m.kind == 2 {
+                            Go.artist(m.id);
+                        } else if m.kind == 3 {
+                            root.download();
+                        } else {
+                            root.radio();
+                        }
                     }
                 }
             }
-        }
-        HorizontalLayout {
-            padding-left: 8px;
-            padding-right: 12px;
-            spacing: 12px;
-            if root.thumb: Art {
-                y: (parent.height - self.height) / 2;
-                width: 44px;
-                height: 44px;
-                border-radius: 5px;
-                source: root.picture;
-            }
-            if !root.thumb: Rectangle {
-                width: 24px;
-                if root.song.playing: PlayingBars {
-                    x: parent.width - self.width - 2px;
-                    y: (parent.height - self.height) / 2;
-                    colour: Theme.accent;
-                    width: 14px;
-                    height: 13px;
-                }
-                if !root.song.playing: Text {
-                    width: 100%;
-                    text: root.number;
-                    color: Theme.dim;
-                    font-size: 13px;
-                    horizontal-alignment: right;
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                horizontal-stretch: 2;
-                preferred-width: 0;
-                Text {
-                    text: root.song.title;
-                    color: root.song.playing ? Theme.accent : Theme.text;
-                    font-size: 13px;
-                    overflow: elide;
-                }
-                if (root.thumb || root.show-album) && !root.table: ArtistLine {
-                    text: root.song.artist;
-                    artist: root.song.artist-id;
-                    credits: root.song.credits;
-                    color: Theme.dim;
-                }
-            }
-            if root.show-album && !root.table: Link {
-                horizontal-stretch: 1;
-                preferred-width: 0;
-                text: root.song.album;
-                album: root.song.album-id;
-                color: Theme.dim;
-                font-size: 13px;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-            // A table's two columns stand at fixed places (the heads use the same sums), not where the layout
-            // would share the width out.
-            if root.table: Rectangle {
-                preferred-width: 0;
-                horizontal-stretch: 2;
-            }
-            // "Asked": a guest's request, until the host takes it.
-            if root.song.by != "": Rectangle {
-                y: (parent.height - self.height) / 2;
-                height: 18px;
-                width: bt.preferred-width + 14px;
-                border-radius: 9px;
-                background: Theme.chosen;
-                bt := Text {
-                    text: root.song.by;
-                    color: Theme.dim;
-                    font-size: 10px;
-                    font-weight: 600;
-                }
-            }
-            Text {
-                text: root.song.time;
-                color: Theme.dim;
-                font-size: 13px;
-                vertical-alignment: center;
-                horizontal-alignment: right;
-                width: 44px;
-            }
-        }
-        if root.table: ArtistLine {
-            x: 8px + 44px + 12px + root.cols * 0.5 + 12px;
-            width: root.cols * 0.25;
-            text: root.song.artist;
-            artist: root.song.artist-id;
-            credits: root.song.credits;
-            color: Theme.dim;
-            height: root.height;
-        }
-        if root.table: Link {
-            x: 8px + 44px + 12px + root.cols * 0.75 + 24px;
-            width: root.cols * 0.25;
-            text: root.song.album;
-            album: root.song.album-id;
-            color: Theme.dim;
-            font-size: 13px;
-            vertical-alignment: center;
-            overflow: elide;
         }
     }
 }
@@ -2014,13 +2008,6 @@ component Avatar inherits Rectangle {
     }
 }
 
-// A popover of the panel's: the dark rounded pane the choosers' lists use.
-component Popover inherits Rectangle {
-    border-radius: 18px;
-    background: Theme.panel;
-    border-width: 1px;
-    border-color: Theme.outline;
-}
 
 // The jam over the queue, as Music's SharePlay and Spotify's Jam put it: who listens (their avatars and how
 // many), the invite (a QR code and the link, in a popover), ending it, and the songs asked for, each to
@@ -3771,17 +3758,26 @@ component PageActions inherits HorizontalLayout {
             icon: 22px;
             ink: Theme.plate-ink;
             base: Theme.plate;
-            clicked => { menu.show({ x: 0, y: root.side + 4px }); }
+            clicked => { menu.show(); }
         }
-        menu := ContextMenuArea {
-            Menu {
-                MenuItem {
-                    title: "Add to Queue";
-                    activated => { root.later(); }
-                }
-                if root.download: MenuItem {
-                    title: "Download";
-                    activated => { root.download-page(); }
+        menu := PopupWindow {
+            x: 0;
+            y: root.side + 4px;
+            width: 220px;
+            close-policy: close-on-click-outside;
+            Popover {
+                VerticalLayout {
+                    padding: 6px;
+                    MenuRow {
+                        icon: Icons.queue;
+                        text: "Add to Queue";
+                        clicked => { menu.close(); root.later(); }
+                    }
+                    if root.download: MenuRow {
+                        icon: Icons.download;
+                        text: "Download";
+                        clicked => { menu.close(); root.download-page(); }
+                    }
                 }
             }
         }
@@ -3957,44 +3953,6 @@ component TopContent inherits Rectangle {
     }
 }
 
-// A row of a menu: a glyph, its words, and a few more at the end.
-component MenuRow inherits Rectangle {
-    in property <string> icon;
-    in property <string> text;
-    in property <string> detail;
-    callback clicked;
-    height: 40px;
-    border-radius: 12px;
-    background: ta.has-hover ? Theme.hover : transparent;
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 12px;
-        Icon {
-            y: (parent.height - self.height) / 2;
-            path: root.icon;
-            colour: Theme.dim;
-            width: 20px;
-            height: 20px;
-        }
-        Text {
-            horizontal-stretch: 1;
-            text: root.text;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-        if root.detail != "": Text {
-            text: root.detail;
-            color: Theme.dim;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-    }
-    ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
 
 export component AppWindow inherits Window {
     in property <bool> downloads;
