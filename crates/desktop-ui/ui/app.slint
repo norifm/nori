@@ -4641,7 +4641,7 @@ export component AppWindow inherits Window {
                                 if root.page-kind == 1: VerticalLayout {
                                     spacing: 16px;
                                     Rectangle {
-                                        height: max(420px, root.height * 0.64) - Chrome.top-room - 8px - 170px;
+                                        height: max(420px, root.height * 0.64) - Chrome.top-room - 8px - 170px - (root.page-caption != "" ? 32px : 0);
                                     }
                                     Text {
                                         text: root.page-title;
@@ -4650,6 +4650,13 @@ export component AppWindow inherits Window {
                                         font-size: 44px;
                                         font-weight: 800;
                                         letter-spacing: -1px;
+                                        horizontal-alignment: center;
+                                    }
+                                    if root.page-caption != "": Text {
+                                        text: root.page-caption;
+                                        color: Theme.dim;
+                                        font-size: 13px;
+                                        font-weight: 600;
                                         horizontal-alignment: center;
                                     }
                                     HorizontalLayout {
@@ -4750,8 +4757,13 @@ export component AppWindow inherits Window {
                                                 base: Theme.plate;
                                                 clicked => { root.page-later(); }
                                             }
-                                            if root.downloads && (root.page-kind == 0 || root.page-kind == 2): SmallButton {
-                                                text: "Download";
+                                            if root.downloads && (root.page-kind == 0 || root.page-kind == 2): IconButton {
+                                                y: (parent.height - self.height) / 2;
+                                                path: Icons.download;
+                                                size: 34px;
+                                                icon: 18px;
+                                                ink: Theme.plate-ink;
+                                                base: Theme.plate;
                                                 clicked => { root.page-download(); }
                                             }
                                         }
@@ -4778,9 +4790,11 @@ export component AppWindow inherits Window {
                                 // Only the rows on screen (and a few either side) are made: a playlist of thousands
                                 // opens as fast as one of ten.
                                 song-rows := Rectangle {
-                                    property <length> row-h: root.page-kind == 2 ? 56px : 44px;
-                                    // A playlist's column heads, right over its rows.
-                                    property <length> head: root.page-kind == 2 && root.page-songs.length > 0 ? 28px : 0;
+                                    // A playlist's and an artist's songs come from many albums: each row shows its cover and album.
+                                    property <bool> mixed: root.page-kind != 0;
+                                    property <length> row-h: self.mixed ? 56px : 44px;
+                                    // Their column heads, right over the rows.
+                                    property <length> head: self.mixed && root.page-songs.length > 0 ? 28px : 0;
                                     property <length> seen-from: -page-flick.content-y - self.y - self.head - 400px;
                                     property <length> seen-to: -page-flick.content-y - self.y - self.head + page-flick.height + 400px;
                                     height: self.head + root.page-songs.length * self.row-h;
@@ -4795,10 +4809,10 @@ export component AppWindow inherits Window {
                                             width: parent.width;
                                             song: s;
                                             number: s.index + 1;
-                                            table: root.page-kind == 2;
-                                            show-album: root.page-kind == 2;
-                                            thumb: root.page-kind == 2;
-                                            picture: root.page-kind == 2 ? root.art(s.art, 0, root.covers-rev) : root.art("", 0, 0);
+                                            table: song-rows.mixed;
+                                            show-album: song-rows.mixed;
+                                            thumb: song-rows.mixed;
+                                            picture: song-rows.mixed ? root.art(s.art, 0, root.covers-rev) : root.art("", 0, 0);
                                             play => { root.song(0, s.index, 0); }
                                             jam => { root.song(0, s.index, 3); }
                                             star => { root.song(0, s.index, 4); }
