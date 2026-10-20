@@ -27,7 +27,7 @@ packages, and AppImages use Ubuntu 22.04 and need glibc 2.35 or later. Linux `.d
 Linux archive and run its binary on other distributions. For AppImage, download the desktop
 `.AppImage` for your processor, make it executable with `chmod +x`, and open it. The desktop archive and
 AppImage use the system's WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk4.1` on
-Fedora) for signing in to YouTube Music; most desktops have it, and the `.deb` and Flatpak bring it.
+Fedora) for its sign-in window; most desktops have it, and the `.deb` and Flatpak bring it.
 For Flatpak, install the desktop `.flatpak` with `flatpak install --user ./nori-desktop-<version>-linux-<architecture>.flatpak`
 and run `flatpak run dev.nori.desktop`. The bundle also includes the terminal client:
 `flatpak run --command=nori-cli dev.nori.desktop`. Flatpak installs its GNOME runtime
