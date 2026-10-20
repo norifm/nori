@@ -28,7 +28,7 @@ pub enum Ask {
 impl Ask {
     fn read(self) -> Result<Read, String> {
         Ok(match self {
-            Ask::Albums { sort, size, offset } => Read::AlbumList { kind: AlbumSort::of_api(&sort).ok_or(format!("no album order {sort}"))?, size, offset, genre: None },
+            Ask::Albums { sort, size, offset } => Read::AlbumList { kind: AlbumSort::of_name(&sort).ok_or(format!("no album order {sort}"))?, size, offset, genre: None },
             Ask::Album { id } => Read::AlbumById { id },
             Ask::Artists => Read::ArtistIndex,
             Ask::Artist { id } => Read::ArtistById { id },
