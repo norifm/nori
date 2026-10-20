@@ -166,7 +166,7 @@ impl Jam {
         &self.added
     }
 
-    /// Its members and requests; the playback guests play along by is the host's to add.
+    /// Its members and requests; the playback guests play along by and the lyrics are the host's to add.
     pub fn state(&self) -> JamState {
         JamState {
             members: std::iter::once(&self.host).chain(&self.members).cloned().collect(),
@@ -176,6 +176,7 @@ impl Jam {
                 .map(|w| Pending { request: w.request, from: w.from.clone(), from_name: w.from_name.clone(), song: Entry::of(0, 0, &w.song, None), provider: is_provider_id(&w.song.id) })
                 .collect(),
             along: None,
+            lyrics: None,
             remote_songs: self.remote_songs,
         }
     }

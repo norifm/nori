@@ -380,6 +380,18 @@ pub struct JamState {
     /// What guests play along by, while the host lets them.
     #[serde(deserialize_with = "lenient")]
     pub along: Option<Along>,
+    /// The lyrics service the host chose for the song playing, which its members ask too.
+    #[serde(deserialize_with = "lenient", skip_serializing_if = "Option::is_none")]
+    pub lyrics: Option<JamLyrics>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+#[serde(rename_all = "camelCase")]
+pub struct JamLyrics {
+    pub song: String,
+    /// The service's stored name.
+    pub service: String,
 }
 
 /// What a jam's guests need beyond the host's place to play what it plays: its speed and pitch, and the
