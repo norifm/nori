@@ -729,10 +729,10 @@ const CHAIN_EVERY_MS: i64 = 100;
 /// How far ahead of the output's decoder the CPU opens an offloaded song it takes over.
 pub const REMAKE_LEAD_MS: i64 = 120;
 
-/// The fetches of an engine on `clock`: their arrival rates are measured on it.
+/// The fetches of an engine on `clock`: their arrival rates are measured on it, and it is told when their
+/// loaders take bytes in.
 fn fetching_on<C: Clock + Sync>(clock: &C) -> Fetching {
-    let clock = clock.clone();
-    Fetching::timed(move || clock.now_us())
+    Fetching::timed(clock.clone())
 }
 
 /// The engine's worker over `library`, `app` and `queue`, taking commands from `rx`; `woken` wakes it

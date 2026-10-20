@@ -10,7 +10,7 @@ use crate::common;
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -63,6 +63,8 @@ struct Net {
     stalled_until: AtomicI64,
     /// The songs are read from disk.
     downloaded: AtomicBool,
+    /// Real time each read of a body takes, ms: a busy machine's fetching.
+    read_ms: AtomicU64,
     #[allow(dead_code)]
     dir: nori_testdir::TempDir,
 }
@@ -77,7 +79,19 @@ impl ByteSource for Net {
         let len = file.len() as u64;
         let mut c = std::io::Cursor::new(file);
         c.set_position(from);
-        Ok(Body { start: from, len: Some(len), reader: Box::new(c) })
+        let read_ms = self.read_ms.load(Ordering::Relaxed);
+        Ok(Body { start: from, len: Some(len), reader: Box::new(Slow(c, read_ms)) })
+    }
+}
+
+/// A body each read of which takes `.1` ms of real time.
+struct Slow(std::io::Cursor<Vec<u8>>, u64);
+
+impl std::io::Read for Slow {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // A thread of a loaded machine: the read takes real time, which the test's clock must not see.
+        std::thread::sleep(Duration::from_millis(self.1));
+        self.0.read(buf)
     }
 }
 
@@ -92,7 +106,7 @@ impl Songs {
                 (id.to_string(), path, (s.len() / 2) as i64 * 1000 / RATE as i64)
             })
             .collect();
-        Songs(files, Arc::new(Net { clock, stalled_until: AtomicI64::new(0), downloaded: AtomicBool::new(false), dir }))
+        Songs(files, Arc::new(Net { clock, stalled_until: AtomicI64::new(0), downloaded: AtomicBool::new(false), read_ms: AtomicU64::new(0), dir }))
     }
 }
 
@@ -1313,6 +1327,27 @@ fn guests_resume_a_paused_mix() {
         }
         assert!(gaps.within(10, 2.5, 5.0), "hold={hold_ms}, downloaded={downloaded}: the resumed mix stays in phase: {gaps}; {:?}", jam.guests[0].rig.logs.lock());
     }
+}
+
+/// The clock stands still while a song's bytes come in, however long the machine takes to fetch them:
+/// a mix sounds the same whether each read is instant or takes real time.
+#[test]
+fn a_mix_is_heard_the_same_however_slowly_bytes_come() {
+    let (a, b) = (song(30.0, 1, None), song(40.0, 2, None));
+    let heard = |read_ms: u64| {
+        let rig = Rig::new(&[("a", &a), ("b", &b)], Some(mix(20_000, 4.0, 1.0, 0.0)), Settings::default());
+        rig.net.read_ms.store(read_ms, Ordering::Relaxed);
+        rig.engine.play_at(0, 12_000);
+        rig.run(14_000);
+        assert!(rig.logs.lock().iter().any(|l| l.starts_with("mixing: the next track arrived")), "{:?}", rig.logs.lock());
+        let logs = rig.logs.lock().clone();
+        let p = rig.card.0.lock();
+        (p.heard.clone(), p.pulls.clone(), logs)
+    };
+    let (fast, slow) = (heard(0), heard(20));
+    assert_eq!(fast.2, slow.2, "the same log");
+    assert_eq!(fast.1, slow.1, "the same pulls");
+    assert!(fast.0 == slow.0, "the same sound");
 }
 
 #[test]
