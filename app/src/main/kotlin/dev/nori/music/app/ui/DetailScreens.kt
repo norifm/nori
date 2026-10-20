@@ -339,7 +339,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         title = artist.name,
         caption = remember(ui?.detail, artist.albumCount) {
             if (ui != null) ui.detail.albums.size.let { n -> if (n == 0 && ui.detail.songs.isNotEmpty()) say.songs(ui.detail.songs.size) else say.releases(n) }
-            else artist.albumCount.takeIf { it > 0u }?.let { say.releases(it.toInt()) }.orEmpty()
+            else artist.albumCount?.takeIf { it > 0u }?.let { say.releases(it.toInt()) }.orEmpty()
         },
         onPlay = ui?.let { ready -> { actions.playArtist(ready.detail.artist.id) } },
         onShuffle = ui?.let { ready -> { actions.playArtist(ready.detail.artist.id, shuffle = true) } },

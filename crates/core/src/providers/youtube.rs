@@ -172,7 +172,7 @@ fn artist_detail(p: yt::ArtistPage) -> (ArtistDetail, ArtistInfo) {
     let albums: Vec<Album> = p.albums.into_iter().map(album).collect();
     let songs = p.top_songs.into_iter().map(song).collect();
     let mut a = artist(p.artist);
-    a.album_count = albums.len() as u32;
+    a.album_count = Some(albums.len() as u32);
     (ArtistDetail::new(a, albums, songs), about)
 }
 

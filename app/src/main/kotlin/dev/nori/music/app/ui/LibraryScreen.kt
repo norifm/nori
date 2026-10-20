@@ -291,7 +291,7 @@ private fun Artists(vm: ArtistsViewModel = viewModel()) {
                                 Cover(vm.cover(a.coverArt, CoverSize.ROW), 48.dp, radius = 24.dp)
                                 Column(Modifier.padding(start = 12.dp)) {
                                     Text(a.name, style = MaterialTheme.typography.bodyLarge)
-                                    Text(remember(a.albumCount) { say.albums(a.albumCount.toInt()) }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    a.albumCount?.let { n -> Text(remember(n) { say.albums(n.toInt()) }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                 }
                             }
                             Hairline(startIndent = Space.gutter + 60.dp)
