@@ -17,19 +17,16 @@ pub struct ProviderWords {
     pub add: &'static str,
     /// Under a profile that names no user.
     pub no_user: &'static str,
-    /// Under the account's Sign in, where the kind has accounts to sign in to.
-    pub sign_in_hint: &'static str,
 }
 
 pub fn provider(kind: ServerKind) -> ProviderWords {
     match kind {
-        ServerKind::Subsonic => ProviderWords { name: "Your server", note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In", no_user: "API key", sign_in_hint: "" },
+        ServerKind::Subsonic => ProviderWords { name: "Your server", note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In", no_user: "API key" },
         ServerKind::YouTubeMusic => ProviderWords {
             name: "YouTube Music",
             note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.",
             add: "Add YouTube Music",
             no_user: "best effort",
-            sign_in_hint: "Sign in to see your own Home, your library and your likes.",
         },
     }
 }
@@ -311,6 +308,8 @@ pub fn sign_in_failed(r: &nori_core::providers::SignInResult) -> String {
 }
 
 pub const YOUTUBE_MUSIC_PAGE: &str = "https://music.youtube.com";
+
+pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window could not open here. Paste cookies from a browser instead.";
 
 /// A song's title as shown: "Untitled" for one that has none (some uploads have a blank one).
 pub fn title(t: &str) -> &str {

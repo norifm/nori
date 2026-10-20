@@ -311,6 +311,8 @@ pub struct App {
     /// Search's Show all pressed, for the query in `search_query`.
     search_songs_all: bool,
     search_query: String,
+    /// The sign-in window's process while it is open (nori-sign-in).
+    sign_in_window: Option<std::process::Child>,
     /// The read the shown page waits for.
     want: Option<Req>,
     shelves: Rc<VecModel<Shelf>>,
@@ -487,6 +489,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             search_songs: Vec::new(),
             search_songs_all: false,
             search_query: String::new(),
+            sign_in_window: None,
             want: None,
             shelves,
             home_rows: Vec::new(),
@@ -737,6 +740,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_join_jam, h, |a, link| a.join_jam(link.trim().to_string()));
     on!(ui.on_sign_in, h, |a, answer| a.sign_in(answer.to_string()));
+    on!(ui.on_sign_in_window, h, |a| a.sign_in_window());
+    on!(ui.on_sign_out, h, |a| a.sign_out());
     ui.on_open_sign_in_page(|| open_in_browser(words::YOUTUBE_MUSIC_PAGE));
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
@@ -1457,7 +1462,7 @@ impl App {
         self.on_session(|s| s.play_later(what, false));
     }
 
-    fn song(&self, list: i32, i: usize, how: i32) {
+    fn song(&mut self, list: i32, i: usize, how: i32) {
         let (songs, origin) = match list {
             0 => (&self.page_songs, self.page_fetch.as_ref().map(Fetch::origin)),
             1 => (&self.songs, None),
@@ -1541,7 +1546,7 @@ impl App {
     }
 
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
-    fn star(&self, s: &Song) {
+    fn star(&mut self, s: &Song) {
         if self.session.as_ref().is_some_and(|x| !x.rules.stars && x.rules.stars_after_sign_in) {
             return self.offer_sign_in();
         }
@@ -1595,18 +1600,70 @@ impl App {
         nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(h.sign_in(answer))));
     }
 
-    /// The sign-in sheet, as Settings' Sign in and a seal tapped while signed out open it.
-    fn offer_sign_in(&self) {
+    /// The account sheet of the profile in use, as its server's Edit and a seal tapped while signed out open
+    /// it: who is signed in, or Sign in (the provider's own page in a window) with pasting folded under it.
+    fn offer_sign_in(&mut self) {
+        let user = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
         let ui = self.ui();
+        ui.set_signin_user(user.into());
+        ui.set_signin_pasting(false);
         ui.set_signin_error("".into());
         ui.set_signin_open(true);
     }
 
-    /// Opens the profile in use again, as the settings now keep it (its account signed in or out).
+    /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
+    /// web view); where that cannot start, the sheet unfolds pasting with why.
+    fn sign_in_window(&mut self) {
+        use nori_core::providers::SignIn;
+        let Some(s) = &self.session else { return };
+        let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind)) else { return };
+        let start = nori_core::providers::providers().into_iter().find(|i| i.kind == kind).and_then(|i| {
+            i.sign_in.into_iter().find_map(|s| match s { SignIn::WebPage { start_url } => Some(start_url), SignIn::Paste => None })
+        });
+        let ui = self.ui();
+        let Some(start) = start else { return ui.set_signin_pasting(true) };
+        if self.sign_in_window.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) {
+            return;
+        }
+        let child = std::env::current_exe().ok().and_then(|me| {
+            std::process::Command::new(me).arg("--sign-in").arg(format!("Sign in to {}", words::provider(kind).name)).arg(start)
+                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).spawn().ok()
+        });
+        let Some(mut child) = child else {
+            ui.set_signin_pasting(true);
+            ui.set_signin_error(words::SIGN_IN_WINDOW_FAILED.into());
+            return;
+        };
+        let Some(out) = child.stdout.take() else { return };
+        let (h, tx) = ((***s).clone(), self.tx.clone());
+        let pid = child.id();
+        nori_host::spawn("nori-sign-in-window", move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                let Some((address, cookies)) = line.split_once('\t') else { continue };
+                if nori_core::providers::sign_in_done(kind, address.to_string(), cookies.to_string()) {
+                    tx.send(Msg::SignInWindowDone(pid, h.sign_in(cookies.to_string())));
+                    return;
+                }
+            }
+        });
+        ui.set_signin_busy(true);
+        self.sign_in_window = Some(child);
+    }
+
+    fn sign_out(&mut self) {
+        self.on_session(|s| s.sign_out());
+        self.ui().set_signin_open(false);
+        self.reopen();
+    }
+
+    /// Opens the profile in use again, as the settings now keep it (its account signed in or out), on the
+    /// page it was on.
     fn reopen(&mut self) {
         if let Some(p) = crate::session::app().settings.current().and_then(|p| p.active_server().cloned()) {
+            let view = self.ui().get_view();
             self.open(p);
-            self.go(SETTINGS);
+            self.go(view);
         }
     }
 
@@ -1744,6 +1801,21 @@ impl App {
             }
             Msg::Volume(v) if self.there().is_none() => self.ui().set_volume(v),
             Msg::Volume(_) => {}
+            Msg::SignInWindowDone(pid, r) => {
+                if let Some(mut c) = self.sign_in_window.take_if(|c| c.id() == pid) {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                let ui = self.ui();
+                ui.set_signin_busy(false);
+                match r {
+                    nori_core::providers::SignInResult::SignedIn { .. } => {
+                        ui.set_signin_open(false);
+                        self.reopen();
+                    }
+                    failed => ui.set_signin_error(words::sign_in_failed(&failed).into()),
+                }
+            }
             Msg::SignedIn(r) => {
                 let ui = self.ui();
                 ui.set_signin_busy(false);
@@ -2223,11 +2295,7 @@ impl App {
                 crate::session::app().settings.put(prefs);
                 self.open(p);
             }
-            Some(Act::SignIn) => self.offer_sign_in(),
-            Some(Act::SignOut) => {
-                self.on_session(|s| s.sign_out());
-                self.reopen();
-            }
+            Some(Act::Account) => self.offer_sign_in(),
             Some(Act::Chore(c)) => {
                 self.on_session(|s| s.action(c));
                 self.on_session(|s| s.facts());

@@ -21,6 +21,8 @@ const INFO: i32 = 4;
 const SLIDER: i32 = 5;
 const RANKED: i32 = 6;
 const SERVER: i32 = 8;
+/// A server row's Edit: the account sheet of the profile in use.
+const ACCOUNT: &str = "account";
 const NOTE: i32 = 9;
 const LINK: i32 = 11;
 const BUTTON: i32 = 12;
@@ -115,8 +117,6 @@ impl<'a> Target<'a> {
 
 const EQUALIZER: &str = "equalizer";
 const ADD_SERVER: &str = "add-server";
-const SIGN_IN: &str = "sign-in";
-const SIGN_OUT: &str = "sign-out";
 /// A folder's toggle is named `musicFolders=<the value it stores>`.
 const MUSIC_FOLDERS: &str = "musicFolders";
 
@@ -130,9 +130,8 @@ pub fn toggled(name: &str, on: bool) -> (&str, String) {
 pub enum Act {
     Equalizer,
     AddServer,
-    /// The account of the profile in use: sign in with pasted cookies, or out.
-    SignIn,
-    SignOut,
+    /// The account sheet of the profile in use (its server row's Edit).
+    Account,
     /// Switch to the server with this id.
     Server(String),
     Chore(Chore),
@@ -147,8 +146,7 @@ impl Act {
         match name {
             EQUALIZER => Some(Act::Equalizer),
             ADD_SERVER => Some(Act::AddServer),
-            SIGN_IN => Some(Act::SignIn),
-            SIGN_OUT => Some(Act::SignOut),
+            ACCOUNT => Some(Act::Account),
             _ => CHORES.into_iter().find(|c| chore_name(*c) == name).map(Act::Chore),
         }
     }
@@ -465,7 +463,9 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                 detail.push_str(" · second address");
             }
             let title = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
-            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, ..Default::default() }
+            // Edit opens the account of the profile in use, where its provider has one to sign in to.
+            let account = active && nori_core::providers::providers().into_iter().any(|i| i.kind == sv.kind && !i.sign_in.is_empty());
+            Row { kind: SERVER, name: sv.id.clone(), title, detail, on: active, enabled: true, button: if account { "Edit".into() } else { "".into() }, ..Default::default() }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             let (name, _) = f.folders.get(index as usize)?;
@@ -538,7 +538,6 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
         }
     }
     if tab_page(tab) == SettingsPage::Servers {
-        groups.extend(account(p));
     }
     if tab == 0 {
         let mut devices = vec![("The system's own".to_string(), String::new())];
@@ -551,22 +550,6 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
         groups.push(("About", vec![info("nori", format!("Version {}", env!("CARGO_PKG_VERSION")))]));
     }
     groups
-}
-
-/// The account group of the profile in use, where its provider signs in with pasted cookies.
-fn account(p: &StoredPrefs) -> Option<(&'static str, Vec<Row>)> {
-    let sv = p.active_server()?;
-    let info = nori_core::providers::providers().into_iter().find(|i| i.kind == sv.kind)?;
-    if !info.sign_in.contains(&nori_core::providers::SignIn::Paste) {
-        return None;
-    }
-    let words = crate::words::provider(sv.kind);
-    let row = if sv.user.is_empty() {
-        Row { kind: ACTION, name: SIGN_IN.into(), title: words.name.into(), detail: words.sign_in_hint.into(), button: "Sign in".into(), enabled: true, ..Default::default() }
-    } else {
-        Row { kind: ACTION, name: SIGN_OUT.into(), title: format!("Signed in as {}", sv.user), detail: words.name.into(), button: "Sign out".into(), enabled: true, ..Default::default() }
-    };
-    Some(("Account", vec![row]))
 }
 
 /// Rows of settings tab `tab`: each group's heading, then its rows with first and last marked.
