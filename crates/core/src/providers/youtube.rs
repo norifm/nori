@@ -72,7 +72,7 @@ fn rules(signed_in: bool) -> ProfileRules {
     let mut sections = if signed_in { vec![LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists] } else { Vec::new() };
     sections.push(LibrarySection::Downloads);
     sections.push(LibrarySection::History);
-    ProfileRules { asks: false, account: false, downloads: true, radio: true, indexed: false, sections, settings, remote: true, measures: true, stars: signed_in, feed: true }
+    ProfileRules { asks: false, account: false, downloads: true, radio: true, indexed: false, sections, settings, remote: true, measures: true, stars: signed_in, stars_after_sign_in: !signed_in, feed: true }
 }
 
 /// The platform's transport as innertube-music's HTTP client.
@@ -330,6 +330,7 @@ impl Provider for YouTube {
             shown.radio = false;
             shown.measures = false;
             shown.stars = false;
+            shown.stars_after_sign_in = false;
             shown.sections.clear();
             shown.settings.retain(|p| !matches!(p, SettingsPart::ServerOptions | SettingsPart::Downloads));
         }
@@ -1325,13 +1326,14 @@ mod tests {
         let (out, signed) = (rules(false), rules(true));
         assert!(out.feed && signed.feed && out.measures && out.remote && !out.account && !out.indexed);
         assert_eq!(out.sections, [LibrarySection::Downloads, LibrarySection::History]);
-        assert!(out.downloads && !out.stars);
+        assert!(out.downloads && !out.stars && out.stars_after_sign_in, "signed out, the seal asks to sign in");
+        assert!(!signed.stars_after_sign_in);
         assert!(!out.settings.iter().any(|p| matches!(p, SettingsPart::Library | SettingsPart::Streaming)));
         assert!(signed.downloads && signed.stars && signed.sections == [LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists, LibrarySection::Downloads, LibrarySection::History]);
         assert!(!signed.account && signed.remote, "LAN remote is independent of a server account");
         let of = |user: &str, guest| super::super::rules_of(SavedServer { kind: ServerKind::YouTubeMusic, user: user.into(), ..Default::default() }, guest);
         let guest = of("", true);
-        assert!(guest.asks && guest.remote && !guest.downloads && !guest.radio && !guest.stars && !guest.measures && guest.sections.is_empty());
+        assert!(guest.asks && guest.remote && !guest.downloads && !guest.radio && !guest.stars && !guest.stars_after_sign_in && !guest.measures && guest.sections.is_empty());
         assert_eq!(of("Ann", false), signed, "signed in as Ann");
         assert!(of("", false).settings.contains(&SettingsPart::ServerOptions), "profiles are added from it");
     }

@@ -1489,6 +1489,9 @@ impl App {
 
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
     fn star(&self, s: &Song) {
+        if self.session.as_ref().is_some_and(|x| !x.rules.stars && x.rules.stars_after_sign_in) {
+            return self.offer_sign_in();
+        }
         let on = !self.starred(s);
         self.on_session(|x| x.star_song(s.id.clone(), on, self.there()));
     }
@@ -1519,9 +1522,10 @@ impl App {
         self.session.as_ref().is_some_and(|s| s.rules.account)
     }
 
-    /// `s`'s heart as the lists show it; none where songs carry no hearts (`ProfileRules::stars`).
+    /// `s`'s heart as the lists show it; none where songs carry no hearts (`ProfileRules::stars`), or one
+    /// that asks to sign in.
     fn heart(&self, s: &Song) -> Option<bool> {
-        self.session.as_ref().is_some_and(|x| x.rules.stars).then(|| self.starred(s))
+        self.session.as_ref().is_some_and(|x| x.rules.stars || x.rules.stars_after_sign_in).then(|| self.starred(s))
     }
 
     /// Joins the jam `link` invites to, as a guest profile of its own.
@@ -1536,6 +1540,13 @@ impl App {
         ui.set_signin_error("".into());
         let (h, tx) = ((***s).clone(), self.tx.clone());
         nori_host::spawn("nori-sign-in", move || tx.send(Msg::SignedIn(h.sign_in(answer))));
+    }
+
+    /// The sign-in sheet, as Settings' Sign in and a seal tapped while signed out open it.
+    fn offer_sign_in(&self) {
+        let ui = self.ui();
+        ui.set_signin_error("".into());
+        ui.set_signin_open(true);
     }
 
     /// Opens the profile in use again, as the settings now keep it (its account signed in or out).
@@ -2159,11 +2170,7 @@ impl App {
                 crate::session::app().settings.put(prefs);
                 self.open(p);
             }
-            Some(Act::SignIn) => {
-                let ui = self.ui();
-                ui.set_signin_error("".into());
-                ui.set_signin_open(true);
-            }
+            Some(Act::SignIn) => self.offer_sign_in(),
             Some(Act::SignOut) => {
                 self.on_session(|s| s.sign_out());
                 self.reopen();

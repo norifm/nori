@@ -680,10 +680,11 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             // The seal, as on an album, an artist and a playlist. A song being "starred" while
                             // everything else is "favourited" is a distinction the server makes and nobody else does.
                             // A jam guest's seals would be the host's; a provider may have them signed in.
-                            if (LocalRules.current.stars) TitleButton(
+                            val tap = LocalSealTap.current
+                            if (LocalRules.current.seals) TitleButton(
                                 if (starred) Kanji.Sealed else Kanji.Seal,
                                 say.favourite, starred, rememberStamp(),
-                            ) { actions.star(s, !starred) }
+                            ) { tap(s, !starred) }
                             TitleButton(Icons.Filled.MoreHoriz, say.more, false) { playerMenu(s) }
                         }
                     }

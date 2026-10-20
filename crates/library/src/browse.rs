@@ -299,6 +299,8 @@ pub struct ProfileRules {
     pub measures: bool,
     /// Songs carry hearts, and a heart is sent (an account's, or a provider account's likes).
     pub stars: bool,
+    /// Songs show a seal that asks to sign in: a provider's account, signed out, would carry them.
+    pub stars_after_sign_in: bool,
     /// Home is the service's own feed (`Read::HomeFeed`), not the library's shelves.
     pub feed: bool,
 }
@@ -322,7 +324,7 @@ pub fn profile_rules(guest: bool) -> ProfileRules {
     let sections = if guest { vec![Albums, Artists, Songs, Genres] } else { vec![Albums, Favourites, Artists, Songs, Playlists, Smart, History, Genres, Decades, Folders, Radio, Downloads] };
     let account_only = [SettingsPart::ServerOptions, SettingsPart::Library, SettingsPart::Downloads];
     let settings = SETTINGS_PARTS.into_iter().filter(|p| !guest || !account_only.contains(p)).collect();
-    ProfileRules { asks: guest, account: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, feed: false }
+    ProfileRules { asks: guest, account: !guest, downloads: !guest, radio: !guest, indexed: !guest, sections, settings, remote: true, measures: !guest, stars: !guest, stars_after_sign_in: false, feed: false }
 }
 
 /// A decade's years, first and last, from its first year.
