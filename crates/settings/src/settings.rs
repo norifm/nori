@@ -467,7 +467,7 @@ pub struct StoredPrefs {
     #[setting("autoMix", FLAG, default = false, show = K::Switch, effect = APPLY_AUDIO | REPLAN)]
     pub auto_mix: bool,
     /// "Better beat detection": the Beat This! model on each upcoming song's ends, for AutoMix's beat
-    /// grids. Needs the `neural-beats` feature and a one-time model download over Wi-Fi; downloaded
+    /// grids. Needs the `neural-beats` feature and a one-time model download; downloaded
     /// songs are analyzed with it as they arrive.
     #[setting("autoMixBetterBeats", FLAG, default = false, show = K::Switch)]
     pub auto_mix_better_beats: bool,

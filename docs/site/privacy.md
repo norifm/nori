@@ -33,12 +33,12 @@ of them asks anything.
 | Request | Sent to | What is sent | When | Controlled by |
 |---|---|---|---|---|
 | Update check (Android) | api.github.com (this project's releases) | nothing about you | when the app starts, at most once a day | **Check automatically** (on) |
-| Better beat detection model | cloud.cp.jku.at (the Beat This! authors) | nothing about you | once, about 8 MB, by default only on Wi-Fi | **Better beat detection** (off) |
+| Better beat detection model | cloud.cp.jku.at (the Beat This! authors) | nothing about you | once, about 8 MB | **Better beat detection** (off) |
 | Remote control | your own devices on the network (mDNS), or your server's octo-fiesta relay | what plays and the controls, signed with your server credentials | while music plays or another device is shown | **Control from other devices** (off) |
 | Jams | your server's octo-fiesta relay | the jam's queue and requests, each member's name | while a jam runs | **Jams** (off) |
 
-Lookups made for provider songs (octo-fiesta's streaming providers) are never made: no lyrics, no
-analysis.
+Provider songs (octo-fiesta's streaming providers) are never fetched or looked up ahead: their lyrics are
+looked up only when you play or download them (from nori 0.7.0; before, never).
 
 ## On your device
 

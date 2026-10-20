@@ -23,8 +23,8 @@ measurement checks the lyrics' timing against the singing. It costs a little CPU
 
 **Better beat detection** (off by default) runs a small neural beat tracker (Beat This!) over the start
 and end of each song, for mixes that land on the beat more often, and over downloaded songs as they
-arrive. It uses more battery, on any network. Only its one-time download of about 8 MB from the
-model's authors waits for Wi-Fi.
+arrive. It uses more battery. Its one-time download of about 8 MB from the model's authors comes over any
+network.
 
 ### When AutoMix does not mix
 
@@ -34,7 +34,8 @@ model's authors waits for Wi-Fi.
   follow each other in order join without a gap, as the album was made. Shuffled, they mix. Switched
   off, they mix like any others.
 - **The tempos are too far apart.** Beyond the biggest speed change, nori does not force a beat match.
-- **Provider songs** from octo-fiesta are never measured.
+- **Provider songs** from octo-fiesta are measured only as they play or once downloaded, never fetched
+  for it (from nori 0.7.0; before, never measured).
 
 ## Crossfade
 

@@ -135,6 +135,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
 private fun timingWords(t: dev.nori.music.ffi.model.LyricsTiming): String = when (t) {
     dev.nori.music.ffi.model.LyricsTiming.NotChecked -> "unchecked"
     dev.nori.music.ffi.model.LyricsTiming.DoesNotFit -> "unfit"
+    dev.nori.music.ffi.model.LyricsTiming.Unsure -> "unsure"
     is dev.nori.music.ffi.model.LyricsTiming.Automatic -> "auto:${t.ms}"
     is dev.nori.music.ffi.model.LyricsTiming.Yours -> "yours:${t.ms}"
 }
