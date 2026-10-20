@@ -2477,6 +2477,15 @@ component QueueView inherits Rectangle {
     callback undo;
     // The list was scrolled by hand: it stays where it was put until the panel opens again.
     property <bool> browsed;
+    // A song being dragged to another place: its row (-1: none), how far it has moved, and the row it would
+    // land on (rows of 54 px; only among the songs still to come).
+    property <int> drag-from: -1;
+    property <length> drag-dy;
+    property <length> drag-start;
+    property <bool> dragging: false;
+    // The row of the song playing: songs land after it.
+    property <int> playing-row: -1;
+    property <int> drag-to: root.drag-from < 0 ? -1 : max(root.playing-row + 1, min(root.queue.length - 1, root.drag-from + round(root.drag-dy / 54px)));
     VerticalLayout {
         padding-left: 12px;
         padding-right: 12px;
@@ -2527,8 +2536,19 @@ component QueueView inherits Rectangle {
                 property <length> caption-h: self.caption == "" ? 0 : 34px;
                 height: s.leaving || !self.opened ? 0 : self.caption-h + 54px;
                 opacity: s.leaving || !self.opened ? 0 : 1;
-                animate height, opacity { duration: Motion.reduced ? 0ms : 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
-                clip: true;
+                animate height, opacity { duration: Motion.reduced ? 0ms : 180ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                clip: s.leaving || !self.opened;
+                z: i == root.drag-from ? 1 : 0;
+                property <bool> is-playing: s.playing;
+                changed is-playing => {
+                    if self.is-playing {
+                        root.playing-row = i;
+                    }
+                }
+                // Where a drag puts this row: the dragged one under the pointer, those it passes a row aside.
+                property <length> shift: i == root.drag-from ? root.drag-dy
+                    : root.drag-from >= 0 && i > root.drag-from && i <= root.drag-to ? -54px
+                    : root.drag-from >= 0 && i < root.drag-from && i >= root.drag-to ? 54px : 0;
                 Timer {
                     interval: 16ms;
                     running: !parent.opened;
@@ -2540,7 +2560,12 @@ component QueueView inherits Rectangle {
                         queue-scroll.content-y = -max(0px, min(self.y + self.caption-h, queue-scroll.content-height - queue-scroll.height));
                     }
                 }
-                init => { self.follow(); }
+                init => {
+                    self.follow();
+                    if s.playing {
+                        root.playing-row = i;
+                    }
+                }
                 changed y => { self.follow(); }
                 if qrow.caption != "": Caption {
                     x: 8px;
@@ -2550,16 +2575,46 @@ component QueueView inherits Rectangle {
                     vertical-alignment: center;
                 }
                 Rectangle {
-                    y: qrow.caption-h;
+                    y: qrow.caption-h + qrow.shift;
+                    animate y { duration: i == root.drag-from || Motion.reduced ? 0ms : 160ms; easing: ease-out; }
                     height: 54px;
                     // Concentric with the cover: its 8 px corner and the 7 px around it.
                     border-radius: 15px;
-                    background: qt.has-hover ? Theme.hover : transparent;
+                    background: i == root.drag-from && root.dragging ? Theme.chosen : qt.has-hover ? Theme.hover : transparent;
                     // Already played: quieter.
                     opacity: s.played ? 0.45 : 1;
                     // The row's content inside it, so the row stays hovered over its links and buttons.
+                    // A song still to come is dragged to another place: pressed, it follows the pointer once it
+                    // has moved a few pixels, and lands on the row it is let go over.
                     qt := TouchArea {
                         double-clicked => { root.jump(s.index); }
+                        pointer-event(e) => {
+                            if e.button != PointerEventButton.left {
+                                return;
+                            }
+                            if e.kind == PointerEventKind.down && root.editable && root.movable && !s.played && !s.playing {
+                                root.drag-from = i;
+                                root.drag-dy = 0;
+                                root.dragging = false;
+                                root.drag-start = self.absolute-position.y + self.mouse-y;
+                            }
+                            if e.kind == PointerEventKind.up && root.drag-from == i {
+                                if root.dragging && root.drag-to != i {
+                                    root.move(s.index, root.queue[root.drag-to].index);
+                                }
+                                root.drag-from = -1;
+                                root.dragging = false;
+                                root.drag-dy = 0;
+                            }
+                        }
+                        moved => {
+                            if root.drag-from == i {
+                                root.drag-dy = self.absolute-position.y + self.mouse-y - root.drag-start;
+                                if abs(root.drag-dy) > 4px {
+                                    root.dragging = true;
+                                }
+                            }
+                        }
                     HorizontalLayout {
                         padding-left: 7px;
                         padding-right: 4px;

@@ -40,7 +40,7 @@ const PENDING_KEPT: usize = 1000;
 /// A pending cover not looked up for this long is off screen, and its request is cancelled.
 const GONE: Duration = Duration::from_millis(1500);
 /// How long a row leaving the queue takes to fold away (app.slint's QueueView).
-const QUEUE_FOLD_MS: u64 = 300;
+const QUEUE_FOLD_MS: u64 = 180;
 /// How long the undo of a song taken out of the queue is offered.
 const UNDO_MS: u64 = 5_000;
 
@@ -2158,6 +2158,14 @@ impl App {
     fn remove_queued(&mut self, index: usize) {
         let song = self.queue.as_ref().and_then(|q| q.view.songs.get(index).cloned());
         let Some(song) = song else { return };
+        // It starts folding away at the click, not once the queue is read again.
+        let m = &self.queue_rows;
+        if let Some(at) = (0..m.row_count()).find(|&i| m.row_data(i).is_some_and(|r| r.index == index as i32)) {
+            if let Some(mut r) = m.row_data(at) {
+                r.leaving = true;
+                m.set_row_data(at, r);
+            }
+        }
         self.on_session(|s| s.remove(index));
         self.ui().set_queue_undo(words::removed(&song.title).into());
         self.removed = Some(song.id);
