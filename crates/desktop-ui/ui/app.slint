@@ -15,6 +15,8 @@ export struct Card {
     art: string,
     // The artist the subtitle names, whose page a click on it opens (an album's); empty for none.
     sub-artist: string,
+    // What it is: 0 an album, 1 an artist, 2 a playlist, 3 a song.
+    kind: int,
 }
 
 // A piece of the line being sung (sung.rs): a word, a syllable or what lies between, where it was laid
@@ -4294,6 +4296,8 @@ export component AppWindow inherits Window {
     callback open-album(string);
     callback open-artist(string);
     callback open-playlist(string);
+    // The song `id` of Home's shelf `shelf`: the shelf's songs play from it.
+    callback shelf-song(int, string);
     callback play-album(string);
     callback play-playlist(string);
     // A song of a list: 0 the page, 1 the songs, 2 search. `how`: 0 play, 1 next, 2 at the end, 3 play and
@@ -4537,16 +4541,39 @@ export component AppWindow inherits Window {
                                     show-all => { root.shown-shelf = index; root.go(10); }
                                     count: shelf.cards.length;
                                     loading: !shelf.loaded;
+                                    // A source's feed mixes songs, albums, playlists and artists in a shelf: each opens or plays
+                                    // as what it is, a song with the shelf's songs after it.
                                     for slot in home-row.on-screen ? albums-shelf.visible-count : 0: CardView {
                                         property <int> i: albums-shelf.first + slot;
                                         property <Card> c: shelf.cards[self.i];
                                         x: albums-shelf.gap + self.i * albums-shelf.step;
                                         side: albums-shelf.side;
                                         card: self.c;
+                                        round: self.c.kind == 1;
                                         picture: root.art(self.c.art, 0, root.covers-rev);
-                                        open => { root.open-album(self.c.id); }
-                                        play => { root.play-album(self.c.id); }
-                                        jam => { root.jam-play(0, self.c.id); }
+                                        open => {
+                                            if self.c.kind == 1 {
+                                                root.open-artist(self.c.id);
+                                            } else if self.c.kind == 2 {
+                                                root.open-playlist(self.c.id);
+                                            } else if self.c.kind == 3 {
+                                                root.shelf-song(index, self.c.id);
+                                            } else {
+                                                root.open-album(self.c.id);
+                                            }
+                                        }
+                                        play => {
+                                            if self.c.kind == 2 {
+                                                root.play-playlist(self.c.id);
+                                            } else if self.c.kind == 3 {
+                                                root.shelf-song(index, self.c.id);
+                                            } else if self.c.kind == 1 {
+                                                root.open-artist(self.c.id);
+                                            } else {
+                                                root.play-album(self.c.id);
+                                            }
+                                        }
+                                        jam => { root.jam-play(self.c.kind == 2 ? 1 : 0, self.c.id); }
                                     }
                                 }
                             }
@@ -4750,15 +4777,24 @@ export component AppWindow inherits Window {
                         cards: root.view == 10 ? root.shelves[root.shown-shelf].cards : root.view == 2 ? root.albums : root.playlists;
                         rev: root.covers-rev;
                         art(a, s, r) => { return root.art(a, s, r); }
+                        // A shelf's cards open as what each is (a source's feed mixes kinds).
                         open(c) => {
-                            if (root.view == 2 || root.view == 10) {
+                            if c.kind == 1 {
+                                root.open-artist(c.id);
+                            } else if c.kind == 3 {
+                                root.shelf-song(root.shown-shelf, c.id);
+                            } else if (root.view == 2 || root.view == 10) && c.kind == 0 {
                                 root.open-album(c.id);
                             } else {
                                 root.open-playlist(c.id);
                             }
                         }
                         play(c) => {
-                            if (root.view == 2 || root.view == 10) {
+                            if c.kind == 3 {
+                                root.shelf-song(root.shown-shelf, c.id);
+                            } else if c.kind == 1 {
+                                root.open-artist(c.id);
+                            } else if (root.view == 2 || root.view == 10) && c.kind == 0 {
                                 root.play-album(c.id);
                             } else {
                                 root.play-playlist(c.id);

@@ -360,6 +360,8 @@ pub struct App {
     autoeq_hits: Vec<nori_core::AutoEqEntry>,
     /// The output playing now, as the engine names it.
     output: String,
+    /// Home's feed shelves' songs, by shelf (a source's own Home).
+    feed_songs: Vec<Vec<Song>>,
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
     sign_in_window: Option<std::process::Child>,
@@ -542,6 +544,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             autoeq_query: String::new(),
             autoeq_hits: Vec::new(),
             output: String::new(),
+            feed_songs: Vec::new(),
             profiles: Vec::new(),
             sign_in_window: None,
             want: None,
@@ -701,6 +704,12 @@ fn login_kind(info: &nori_core::providers::ProviderInfo) -> LoginKind {
 fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_messages_arrived, h, |a| a.drain_inbox());
     on!(ui.on_go, h, |a, v| a.go(v));
+    on!(ui.on_shelf_song, h, |a, shelf, id| {
+        let songs = a.feed_songs.get(shelf.max(0) as usize).cloned().unwrap_or_default();
+        if let Some(at) = songs.iter().position(|s| s.id == id.as_str()) {
+            a.on_session(|s| s.play(songs, at, false, None));
+        }
+    });
     on!(ui.on_back, h, |a| {
         if a.ui().get_view() != PAGE {
             return a.go(HOME);
@@ -1316,8 +1325,14 @@ impl App {
                 ui.set_picks_loaded(true);
             }
             Data::Home(HomePart::Feed(feed)) => {
-                let shelves = nori_core::browse::feed_album_shelves(feed).into_iter();
-                self.shelves.set_vec(shelves.map(|(title, albums)| Shelf { title: title.into(), cards: cards(albums.iter().map(album_card)), loaded: true }).collect::<Vec<_>>());
+                // Each shelf as the source lists it: its songs first (a song card plays the shelf's songs
+                // from it), then its albums, playlists and artists.
+                let shelves = feed.iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty())).map(|f| {
+                    let all = f.songs.iter().map(song_card).chain(f.albums.iter().map(album_card)).chain(f.playlists.iter().map(playlist_card)).chain(f.artists.iter().map(artist_card));
+                    Shelf { title: f.title.as_str().into(), cards: cards(all), loaded: true }
+                });
+                self.shelves.set_vec(shelves.collect::<Vec<_>>());
+                self.feed_songs = feed.into_iter().filter(|f| !(f.songs.is_empty() && f.albums.is_empty() && f.playlists.is_empty() && f.artists.is_empty())).map(|f| f.songs).collect();
             }
             Data::Home(HomePart::Shelf { at, items }) => {
                 let ShelfItems::Albums(albums) = items else { return };
@@ -2666,11 +2681,11 @@ fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
 
 fn album_card(a: &nori_core::Album) -> Card {
     let sub_artist = a.artist_id.clone().unwrap_or_default().into();
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.artist.as_str().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.artist.as_str().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0 }
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default() }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.album_count.map(words::albums).unwrap_or_default().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 1 }
 }
 
 /// A playlist's card: its song count, or its own line (a provider's, who made it) when not counted.
@@ -2679,7 +2694,13 @@ fn playlist_card(p: &nori_core::Playlist) -> Card {
         Some(line) if p.song_count == 0 => line.clone(),
         _ => words::songs(p.song_count as usize),
     };
-    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default() }
+    Card { id: p.id.as_str().into(), title: p.name.as_str().into(), sub: sub.into(), art: p.cover_art.clone().unwrap_or_default().into(), sub_artist: SharedString::default(), kind: 2 }
+}
+
+/// A song's card on a feed's shelf: played from it, with the shelf's songs after.
+fn song_card(s: &Song) -> Card {
+    let sub_artist = s.artist_id.clone().unwrap_or_default().into();
+    Card { id: s.id.as_str().into(), title: s.title.as_str().into(), sub: s.artist.as_str().into(), art: s.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 3 }
 }
 
 /// `starred`: its heart as shown; None where there is no heart (a jam guest's lists).

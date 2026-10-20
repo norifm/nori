@@ -62,8 +62,8 @@ pub fn home_rows_shown(rows: Vec<HomeRow>, account: bool) -> Vec<HomeRow> {
     rows.into_iter().filter(|r| account || matches!(shelf(*r), HomeShelf::Albums { follows_stars: false, .. })).collect()
 }
 
-/// A source's own feed (`ProfileRules::feed`) as shelves of albums, for the Homes that draw only albums
-/// (desktop, terminal): a shelf's songs stand for their albums, each once; its playlists and artists are
+/// A source's own feed (`ProfileRules::feed`) as shelves of albums, for the Home that draws only albums
+/// (the terminal's): a shelf's songs stand for their albums, each once; its playlists and artists are
 /// left out, and a shelf left with nothing goes.
 pub fn feed_album_shelves(feed: Vec<FeedShelf>) -> Vec<(String, Vec<Album>)> {
     feed.into_iter()
