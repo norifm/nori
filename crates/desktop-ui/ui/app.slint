@@ -3766,6 +3766,8 @@ export component AppWindow inherits Window {
     in property <[Card]> search-playlists;
     in property <[SongRow]> search-songs;
     in property <string> search-note;
+    // The server has not answered the search yet.
+    in property <bool> search-busy;
 
     // The page open: 0 album, 1 artist, 2 playlist, and its id (the sidebar marks a playlist's).
     in property <int> page-kind;
@@ -4191,6 +4193,23 @@ export component AppWindow inherits Window {
 
                 // What the top pill's search field found; the field is the pill's.
                 if root.view == 1: Fade {
+                    // The server is still being asked: a sliver sweeping under the top pill, over the page.
+                    if root.search-busy: Rectangle {
+                        y: Chrome.top-room - 6px;
+                        x: 32px;
+                        width: parent.width - 64px;
+                        height: 3px;
+                        border-radius: 1.5px;
+                        clip: true;
+                        background: Theme.accent.with-alpha(0.18);
+                        Rectangle {
+                            property <float> t: Motion.reduced ? 0.35 : mod(animation-tick() / 1.4s, 1);
+                            x: (self.t * 1.4 - 0.4) * parent.width;
+                            width: parent.width * 0.4;
+                            border-radius: 1.5px;
+                            background: Theme.accent;
+                        }
+                    }
                     // Nothing to list (no searches yet, or nothing found): a word in the middle of the page.
                     if (root.search-blank && root.recent-searches.length == 0) || root.search-nothing: VerticalLayout {
                         alignment: center;
@@ -4231,9 +4250,10 @@ export component AppWindow inherits Window {
                                 if root.search-blank && root.recent-searches.length > 0: HorizontalLayout {
                                     padding-left: 32px;
                                     padding-right: 32px;
-                                    padding-bottom: 6px;
+                                    padding-bottom: 10px;
+                                    spacing: 8px;
+                                    alignment: start;
                                     SectionTitle {
-                                        horizontal-stretch: 1;
                                         text: "Recent searches";
                                     }
                                     TextButton {
@@ -4242,29 +4262,34 @@ export component AppWindow inherits Window {
                                         clicked => { root.forget-searches(); }
                                     }
                                 }
-                                if root.search-blank: VerticalLayout {
-                                    padding-left: 24px;
-                                    padding-right: 24px;
-                                    for q in root.recent-searches: Rectangle {
+                                // The searches made before as tiles, as many to a row as fit.
+                                if root.search-blank: recent := Rectangle {
+                                    property <length> gap: 8px;
+                                    property <int> columns: max(2, min(5, floor((self.width - 64px + self.gap) / (200px + self.gap))));
+                                    property <length> tile-w: (self.width - 64px - (self.columns - 1) * self.gap) / self.columns;
+                                    height: ceil(root.recent-searches.length / self.columns) * (40px + self.gap);
+                                    for q[i] in root.recent-searches: Rectangle {
+                                        x: 32px + mod(i, recent.columns) * (recent.tile-w + recent.gap);
+                                        y: floor(i / recent.columns) * (40px + recent.gap);
+                                        width: recent.tile-w;
                                         height: 40px;
                                         border-radius: 12px;
-                                        background: recent-touch.has-hover ? Theme.hover : transparent;
-                                        HorizontalLayout {
-                                            padding-left: 8px;
-                                            spacing: 12px;
-                                            Icon {
-                                                y: (parent.height - self.height) / 2;
-                                                path: Icons.search;
-                                                colour: Theme.dim;
-                                                width: 16px;
-                                                height: 16px;
-                                            }
-                                            Text {
-                                                text: q;
-                                                font-size: 15px;
-                                                vertical-alignment: center;
-                                                overflow: elide;
-                                            }
+                                        background: recent-touch.has-hover ? Theme.chosen : Theme.fill;
+                                        Icon {
+                                            x: 12px;
+                                            path: Icons.history;
+                                            colour: Theme.dim;
+                                            width: 16px;
+                                            height: 16px;
+                                        }
+                                        Text {
+                                            x: 38px;
+                                            width: parent.width - 50px;
+                                            text: q;
+                                            color: Theme.text;
+                                            font-size: 14px;
+                                            vertical-alignment: center;
+                                            overflow: elide;
                                         }
                                         recent-touch := TouchArea {
                                             mouse-cursor: pointer;

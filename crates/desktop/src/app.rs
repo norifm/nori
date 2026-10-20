@@ -1396,9 +1396,8 @@ impl App {
         ui.set_search_playlists(cards(found.playlists.iter().map(playlist_card)));
         self.search_songs = found.songs;
         ui.set_search_songs(self.rows(&self.search_songs));
-        let note = if v.searching {
-            "Searching the server…".to_string()
-        } else if let Some(e) = v.error {
+        ui.set_search_busy(v.searching);
+        let note = if let Some(e) = v.error {
             format!("The server could not be searched ({}); these are from the offline index", e.reason.unwrap_or_default())
         } else {
             String::new()
