@@ -337,7 +337,9 @@ that beside the database, the same on every client (`nori-core::model_download`)
 - **`Paint`**: what a cover's file becomes, on the worker that fetched it. `Rgba` is tight RGBA rows at
   exactly the size asked for (an `Arc<Image>`); Android's paints a Bitmap (below).
 - Addresses are the core's (`cover_url_into`, or `Core.coverUrl`), so every client asks the server for
-  the same renditions. Provider covers (`is_provider_cover`) are never written to disk.
+  the same renditions. Provider covers (`is_provider_cover`) are never written to disk; their files
+  stay in memory (the last 4 MB, until `trim`), so a page measures the cover its list just drew
+  without asking the provider again.
 - **`DiskCache`**: the server's bytes, one file per address (its MD5) in the directory the client
   names, under `Config::disk_bytes` (the core's `cover_rules`), least recently used out first. The index
   is rebuilt from the directory when it opens, and a read sets the file's modification time, so the order

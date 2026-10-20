@@ -95,7 +95,7 @@ import kotlin.math.roundToInt
 
 /**
  * A cover of an octo-fiesta provider item (external song, album, artist or playlist), which is never
- * kept (`Covers.isProvider`).
+ * kept on disk (`Covers.isProvider`).
  */
 fun isProviderCover(url: String): Boolean = dev.nori.music.data.Covers.isProvider(url)
 

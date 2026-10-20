@@ -31,6 +31,7 @@ use parking_lot::{Condvar, Mutex};
 
 use crate::decode::{self, header, Decoder};
 use crate::disk::{DiskCache, Key};
+use crate::lru::Lru;
 use crate::memory::{Image, MemoryCache, Sized};
 use crate::scale::Alpha;
 
@@ -159,6 +160,9 @@ impl Job {
 /// Default [`Config::idle`]: well above the gaps between covers while scrolling.
 const IDLE: Duration = Duration::from_secs(20);
 
+/// Room for the provider covers of a few screens of lists.
+const PROVIDER_FILES_BYTES: u64 = 4 << 20;
+
 /// One in-progress cover at one size and its waiters.
 struct Flight<P> {
     url: String,
@@ -205,6 +209,9 @@ struct Inner<P: Paint> {
     /// Opened lazily, off the requesting thread.
     disk: OnceLock<Option<DiskCache>>,
     memory: MemoryCache<P::Picture>,
+    /// Provider covers' files, which never reach the disk: the page a list's tile opens measures the
+    /// picture the tile just drew without asking the provider again.
+    provider_files: Mutex<Lru<Key, Arc<[u8]>>>,
     jobs: Mutex<Jobs<P::Picture>>,
     work: Condvar,
     workers: usize,
@@ -277,6 +284,7 @@ impl<P: Paint> Loader<P> {
             disk_bytes: config.disk_bytes,
             disk: OnceLock::new(),
             memory: MemoryCache::new(config.memory_bytes),
+            provider_files: Mutex::new(Lru::default()),
             jobs: Mutex::new(Jobs::default()),
             work: Condvar::new(),
             workers: config.workers.max(1),
@@ -356,9 +364,10 @@ impl<P: Paint> Loader<P> {
         &self.inner.paint
     }
 
-    /// Drops decoded covers and rests the workers. A low-memory signal.
+    /// Drops decoded covers and provider files and rests the workers. A low-memory signal.
     pub fn trim(&self) {
         self.inner.memory.clear();
+        *self.inner.provider_files.lock() = Lru::default();
         self.rest();
     }
 
@@ -600,9 +609,16 @@ impl<P: Paint> Inner<P> {
         })
     }
 
-    /// Reads the cover file into `out` from disk, or fetches it and stores it (except provider covers).
+    /// Reads the cover file into `out` from disk (provider covers: memory), or fetches it and keeps it.
     fn bytes(&self, key: Key, url: &str, out: &mut Vec<u8>, waker: &Waker) -> Result<(), Error> {
-        if let Some(d) = self.disk() {
+        let provider = is_provider_cover(url);
+        if provider {
+            if let Some(file) = self.provider_files.lock().touch(key) {
+                out.clear();
+                out.extend_from_slice(file);
+                return Ok(());
+            }
+        } else if let Some(d) = self.disk() {
             if d.read(key, out) {
                 return Ok(());
             }
@@ -619,12 +635,17 @@ impl<P: Paint> Inner<P> {
             return Err(Error::Status(r.status));
         }
         *out = r.body;
-        // Provider artwork changes under the same URL once the item is in the library; an answer that is
-        // no picture (a Subsonic error sent with 200) is not kept either.
-        if !is_provider_cover(url) && decode::format(out).is_some() {
-            if let Some(d) = self.disk() {
-                let _ = d.put(key, out);
-            }
+        // An answer that is no picture (a Subsonic error sent with 200) is not kept. Provider artwork
+        // changes under the same URL once the item is in the library, so it stays in memory only.
+        if decode::format(out).is_none() {
+            return Ok(());
+        }
+        if provider {
+            let mut files = self.provider_files.lock();
+            files.insert(key, out.as_slice().into(), out.len() as u64);
+            files.fit(PROVIDER_FILES_BYTES, |_| {});
+        } else if let Some(d) = self.disk() {
+            let _ = d.put(key, out);
         }
         Ok(())
     }

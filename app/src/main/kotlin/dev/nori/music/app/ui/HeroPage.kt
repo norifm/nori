@@ -116,8 +116,6 @@ fun HeroPage(
     // Which pages wear their cover's colours, and which are black under only its accents, is the core's.
     val black = remember(dark, prefs.amoled, prefs.coverColors) { dev.nori.music.ffi.settings.coverBlack(prefs.coverColors, false, dark, prefs.amoled) }
     val tinted = prefs.coverColors.isNotEmpty()
-    // A provider's page too: its cover is on screen already, so measuring it asks the provider for
-    // nothing more, and the cover loader never keeps it (only the colours stay, in memory).
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.
     val lead = coverUrl ?: mosaic.firstOrNull()
     val picture: (@Composable (Modifier) -> Unit)? = when {
@@ -125,8 +123,9 @@ fun HeroPage(
         mosaic.isNotEmpty() -> { m -> Mosaic(mosaic, m) }
         else -> null
     }
-    // Measured from the smaller cover the tile that opened the page holds in memory, when it does: the
-    // full one is a download away, and the page wore the theme's colours until it came.
+    // Measured from the smaller cover the tile that opened the page holds in memory, when it does (a
+    // provider's too, whose file the core keeps in memory): the full one is a download away, and the
+    // page wore the theme's colours until it came.
     val context = androidx.compose.ui.platform.LocalContext.current
     val measured = remember(lead, coverStandIns) {
         coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead

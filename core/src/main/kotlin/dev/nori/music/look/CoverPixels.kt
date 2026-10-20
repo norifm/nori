@@ -60,7 +60,7 @@ object CoverPixels {
     @JvmStatic external fun warm(loader: Long, url: String)
 
     /**
-     * Whether [url] is an octo-fiesta provider's cover, which is never kept (nori-core's
+     * Whether [url] is an octo-fiesta provider's cover, which is never kept on disk (nori-core's
      * `is_provider_cover`). Asked for every cover a list draws: a look at the string, nothing allocated.
      */
     @JvmStatic @FastNative external fun isProvider(url: String): Boolean
@@ -73,8 +73,8 @@ object CoverPixels {
 
     /**
      * Lets go of what the loader keeps for covers to come: its threads end once they have nothing to do,
-     * with their buffers and the software Bitmaps kept for GPU copies. For memory running short; the next
-     * cover starts a thread again.
+     * with their buffers, the software Bitmaps kept for GPU copies and the provider covers' files. For
+     * memory running short; the next cover starts a thread again.
      */
     @JvmStatic external fun rest(loader: Long)
 
