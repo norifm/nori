@@ -344,8 +344,6 @@ pub const INVITE_ROOM: &str = "Make the window bigger to show the QR code.";
 // A guest's.
 pub const JAM_GUEST: &str = "Jam";
 pub const JAM_JOIN: &str = "Join a jam";
-/// The key the keyed lyrics services take.
-pub const LYRICS_KEY: &str = "PaxSenix";
 pub const JOIN_TITLE: &str = " Join a jam · enter joins, esc drops ";
 pub const JOIN_HOW: &str = "Paste the invite link the host sent you:";
 pub const JOINING: &str = "Joining…";

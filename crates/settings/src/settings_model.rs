@@ -24,7 +24,6 @@ pub enum SettingKind {
     Flags,
     /// A number from [`SettingSpec::min`] to [`SettingSpec::max`].
     Level,
-    Text,
 }
 
 /// One setting: its name for [`setting_set`], kind, offered values, range and default. Values are in
@@ -46,7 +45,6 @@ fn spec(name: &str, k: &K) -> SettingSpec {
         K::Choice(o) => (SettingKind::Choice, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Flags(o) => (SettingKind::Flags, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Level(lo, hi) => (SettingKind::Level, Vec::new(), (*lo, *hi)),
-        K::Text => (SettingKind::Text, Vec::new(), (0.0, 0.0)),
     };
     let default = value_of(&StoredPrefs::default(), name).unwrap_or_default();
     SettingSpec { name: name.into(), kind, options, min, max, default }
@@ -69,15 +67,17 @@ pub fn value_of(p: &StoredPrefs, name: &str) -> Option<String> {
 }
 
 /// One lyrics service in rank order. Changed by name with `lyricsService:<id>`, `lyricsKey:<id>` (its
-/// key, for one that `needs_key`), `lyricsPlace` (`<id>:<place>`) and `lyricsMove` (`<id>:-1`).
+/// key, for one that `takes_key`), `lyricsPlace` (`<id>:<place>`) and `lyricsMove` (`<id>:-1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LyricsSource {
     pub id: String,
     pub on: bool,
+    /// Takes a key, typed on its row.
+    pub takes_key: bool,
     /// Never on without its key: switching it on asks for the key first.
     pub needs_key: bool,
-    /// The key it needs is given.
+    /// Its key is given.
     pub key_set: bool,
 }
 
@@ -155,7 +155,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
     let on = lyrics_sources::switched_on(p);
     let lyrics_sources = lyrics_sources::complete_order(&p.lyrics_order)
         .into_iter()
-        .map(|s| LyricsSource { id: s.name().into(), on: on.contains(&s), needs_key: s.needs_key(), key_set: s.needs_key() && !p.paxsenix_key.trim().is_empty() })
+        .map(|s| LyricsSource { id: s.name().into(), on: on.contains(&s), takes_key: s.takes_key(), needs_key: s.needs_key(), key_set: !s.key(p).is_empty() })
         .collect();
     SettingsState {
         values: specs().into_iter().filter_map(|s| Some((s.name.clone(), value_of(p, &s.name)?))).collect(),
@@ -169,11 +169,9 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
 }
 
 /// The settings that differ from their defaults, one `name = value` per line, for a problem report.
-/// Text settings (keys) are left out.
 pub fn changed(p: &StoredPrefs) -> String {
     specs()
         .into_iter()
-        .filter(|s| s.kind != SettingKind::Text)
         .filter_map(|s| {
             let v = value_of(p, &s.name)?;
             (v != s.default).then(|| format!("{} = {v}\n", s.name))
@@ -327,14 +325,14 @@ mod tests {
     }
 
     #[test]
-    fn changed_report_skips_text() {
+    fn changed_report_skips_keys() {
         let p = StoredPrefs::default();
         assert_eq!(changed(&p), "");
         let switch = specs().into_iter().find(|s| s.kind == SettingKind::Switch).unwrap();
         let other = if switch.default == "true" { "false" } else { "true" };
         let p = set_by_name(&p, &switch.name, other).unwrap().prefs;
-        let text = specs().into_iter().find(|s| s.kind == SettingKind::Text).unwrap();
-        let p = set_by_name(&p, &text.name, "secret-key").unwrap().prefs;
+        let p = set_by_name(&p, "lyricsKey:BETTER_LYRICS", "secret-key").unwrap().prefs;
+        let p = set_by_name(&p, "lyricsKey:PAXSENIX_SPOTIFY", "secret-key").unwrap().prefs;
         let said = changed(&p);
         assert!(said.lines().any(|l| l == format!("{} = {other}", switch.name)), "{said}");
         assert!(!said.contains("secret-key"), "{said}");
@@ -463,7 +461,7 @@ mod tests {
         assert_eq!(on, defaults, "the default services on");
         let off = set_by_name(&d, "lyricsService:BINILYRICS", "false").unwrap().prefs;
         let s2 = state(&off, Output::default(), &beat_model::ModelFile::default());
-        assert_eq!(s2.lyrics_sources[5], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false, key_set: false }, "switched off where it stands");
+        assert_eq!(s2.lyrics_sources[5], LyricsSource { id: "BINILYRICS".into(), on: false, takes_key: false, needs_key: false, key_set: false }, "switched off where it stands");
         assert!(s.lyrics_sources.iter().any(|l| l.needs_key));
         assert_eq!(s.beat_model == BeatModel::Unavailable, !beats::AVAILABLE);
     }

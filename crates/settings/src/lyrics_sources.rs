@@ -112,6 +112,20 @@ impl LyricsService {
         matches!(self, LyricsService::PaxsenixMusixmatch | LyricsService::PaxsenixSpotify)
     }
 
+    /// Takes a key, needed or not (BetterLyrics finds more with one).
+    pub(crate) fn takes_key(self) -> bool {
+        self.needs_key() || self == LyricsService::BetterLyrics
+    }
+
+    /// The key it takes, as stored.
+    pub(crate) fn key(self, p: &StoredPrefs) -> &str {
+        match self {
+            LyricsService::BetterLyrics => p.better_lyrics_key.trim(),
+            s if s.needs_key() => p.paxsenix_key.trim(),
+            _ => "",
+        }
+    }
+
     pub fn first_wave(self) -> bool {
         ABOUT[self as usize].2
     }
@@ -299,6 +313,22 @@ mod tests {
         let spotify = state.lyrics_sources.iter().find(|s| s.id == "PAXSENIX_SPOTIFY").unwrap();
         assert!(spotify.needs_key && spotify.key_set);
         assert!(!state.values.contains_key("paxSenixKey"), "the key is never a value shown or reported");
+    }
+
+    #[test]
+    fn better_lyrics_takes_its_key_on_its_row_and_plays_without_one() {
+        use crate::settings::set_by_name;
+        let off = StoredPrefs { lyrics_on: Vec::new(), ..StoredPrefs::default() };
+        let keyed = set_by_name(&off, "lyricsKey:BETTER_LYRICS", " b1 ").unwrap().prefs;
+        assert_eq!((keyed.better_lyrics_key.as_str(), keyed.paxsenix_key.as_str()), ("b1", ""), "its own key, not PaxSenix's");
+        assert_eq!(keyed.lyrics_on, [LyricsService::BetterLyrics], "on once given");
+        let cleared = set_by_name(&keyed, "lyricsKey:BETTER_LYRICS", "").unwrap().prefs;
+        assert!(cleared.better_lyrics_key.is_empty() && cleared.lyrics_on == [LyricsService::BetterLyrics], "no key, still on");
+        let state = |p: &StoredPrefs| crate::settings_model::state(p, crate::settings_model::Output::default(), &nori_automix::beat_model::ModelFile::default());
+        let row = |p: &StoredPrefs| state(p).lyrics_sources.into_iter().find(|s| s.id == "BETTER_LYRICS").unwrap();
+        assert!(row(&keyed).takes_key && !row(&keyed).needs_key && row(&keyed).key_set);
+        assert!(!row(&cleared).key_set);
+        assert!(!state(&keyed).values.contains_key("betterLyricsKey"), "the key is never a value shown or reported");
     }
 
     #[test]

@@ -53,7 +53,7 @@
     <string name="settings_section_between">Between songs</string>
     <string name="settings_section_controls">Controls</string>
     <string name="settings_section_queue">Queue</string>
-    <string name="settings_held_by_dac">Off while the USB DAC is in bit perfect mode.</string>
+    <string name="settings_held_by_dac">Off in bit-perfect mode.</string>
     <string name="settings_crossfade">Crossfade</string>
     <string name="settings_automix">AutoMix</string>
     <string name="settings_better_beats">Better beat detection</string>
@@ -77,7 +77,7 @@
     <string name="settings_speed">Speed</string>
     <string name="settings_pitch">Pitch</string>
     <string name="settings_skip_silence">Skip silence</string>
-    <string name="settings_skip_silence_held">Off while the audio is played untouched.</string>
+    <string name="settings_skip_silence_held">Off in bit-perfect mode.</string>
     <string name="settings_skip_explicit">Skip explicit songs</string>
     <string name="settings_auto_fill">Keep playing when the queue ends</string>
     <string name="settings_auto_fill_kind">Carry on with</string>
@@ -101,12 +101,12 @@
     <string name="settings_autoeq_list">Keep the AutoEQ list</string>
     <string name="settings_per_device">Remember sound per device</string>
     <string name="settings_sound_bypass">No processing on this output</string>
-    <string name="settings_sound_bypass_detail">No equalizer, crossfeed or effects reach this output, and it can use audio offload. Saved with the device\'s sound.</string>
+    <string name="settings_sound_bypass_detail">No equalizer or effects on this output; allows offload. Kept per device.</string>
     <string name="settings_system_effects">System audio effects</string>
     <string name="settings_section_effects">Effects</string>
     <string name="settings_volume_boost">Volume boost: %1$s</string>
     <string name="settings_volume_boost_title">Volume boost</string>
-    <string name="settings_boost_note">The boost turns the limiter on with it, so loud songs do not distort.</string>
+    <string name="settings_hint_volume_boost">Louder, gain, amplify, limiter</string>
     <string name="settings_compressor">Compressor</string>
     <string name="settings_compressor_detail">Evens out quiet and loud parts</string>
     <string name="settings_compressor_preset">Tuned for</string>
@@ -135,7 +135,7 @@
     <string name="settings_dac_offloaded">%1$s, offloaded to the audio chip</string>
     <!-- Why a DAC plays nothing bit-perfect. -->
     <string name="settings_dac_no_mode">this DAC has no bit-perfect mode at %1$s</string>
-    <string name="settings_dac_needs_exclusive">this DAC wants %1$s at %2$s, which needs USB exclusive output (not built yet)</string>
+    <string name="settings_dac_needs_exclusive">this DAC wants %1$s at %2$s, which needs USB exclusive mode (not supported yet)</string>
     <string name="settings_dac_bits">%1$d bit</string>
     <string name="settings_dac_or">" or "</string>
     <string name="settings_dac_old_android">bit-perfect output needs Android 14 or newer</string>
@@ -212,15 +212,16 @@
     </plurals>
     <!-- The lyrics sources' own page. -->
     <string name="settings_section_asked_order">In the order they\'re asked</string>
-    <string name="settings_section_keys">Keys</string>
-    <string name="settings_lyrics_sources_note">The quick ones (LyricsPlus, BetterLyrics and LRCLIB) are asked first, together, and the others only when those find nothing good. Every answer is scored on how well it matches the song, how finely it is timed and whether the other services agree, and the best is shown; the order here settles near ties. Your server\'s own timed lyrics always come before all of these. The unofficial ones use other apps\' lyrics without asking them.</string>
-    <string name="settings_lyrics_sources_note_off">Nothing is asked while Find missing lyrics online is off.</string>
-    <string name="settings_paxsenix_key">PaxSenix key</string>
+    <string name="settings_lyrics_sources_note">Your server\'s lyrics always come first. Among these, the best match wins; the order breaks ties.</string>
+    <string name="settings_lyrics_sources_note_off">Off while Find missing lyrics online is off.</string>
+    <string name="settings_service_key">%1$s key</string>
+    <string name="settings_betterlyrics_key_ask">Optional. With a key, BetterLyrics also finds lyrics it hasn\'t stored yet.</string>
+    <string name="settings_key_change">A new key replaces the saved one. Save it empty to remove it.</string>
+    <string name="settings_add_key">Add key</string>
     <string name="settings_paxsenix_key_ask">Your own PaxSenix key, for its Spotify and Musixmatch lyrics. The service is on once it is saved.</string>
     <string name="settings_paxsenix_key_change">A new key replaces the one saved. Save it empty to remove the key and turn its services off.</string>
     <string name="settings_lyrics_key_set">%1$s Key set.</string>
     <string name="settings_change_key">Change key</string>
-    <string name="settings_betterlyrics_key">BetterLyrics key</string>
     <!-- Each lyrics service: its name, and what it is good at. -->
     <string name="lyrics_service_binilyrics" translatable="false">BiniLyrics</string>
     <string name="lyrics_service_binilyrics_about">Apple Music\'s lyrics, syllable by syllable, from a volunteer\'s copy. Unofficial.</string>
@@ -248,7 +249,6 @@
     <!-- Library. -->
     <string name="settings_section_lists">Songs in lists</string>
     <string name="settings_section_search">Search</string>
-    <string name="settings_section_playlists">Playlists</string>
     <string name="settings_section_history">Listening history</string>
     <string name="settings_section_online">Online</string>
     <string name="settings_tap_action">Choosing a song</string>
@@ -283,9 +283,9 @@
     <string name="settings_update_check_now">Check for updates</string>
     <string name="settings_hint_updates">A newer version of nori from its GitHub releases</string>
     <string name="settings_update_auto">Check automatically</string>
-    <string name="settings_update_auto_detail">When nori starts, at most once a day, it asks GitHub whether there is a newer release</string>
+    <string name="settings_update_auto_detail">At most once a day, from GitHub</string>
     <string name="settings_update_beta">Beta updates</string>
-    <string name="settings_update_beta_detail">Also offers test versions of the next release. They may have bugs; turned off, you move to the next stable release when it comes</string>
+    <string name="settings_update_beta_detail">Test versions of the next release. They may have bugs</string>
     <string name="settings_updating">Updating…</string>
     <string name="settings_taste_model">Keep listening history</string>
     <string name="settings_scrobble">Tell the server what you play</string>
@@ -314,7 +314,7 @@
     <string name="settings_download">Download</string>
     <!-- Better beat detection's model over downloaded songs, after their audio is saved. -->
     <string name="settings_analyse_downloads">Analyze downloaded songs</string>
-    <string name="settings_analyse_downloads_detail">Analyzes the downloads that have no analysis yet, for AutoMix and synced lyrics, one song at a time, and detects their beats with the ML model if you choose.</string>
+    <string name="settings_analyse_downloads_detail">Downloads not analyzed yet, for AutoMix and lyrics sync. One song at a time.</string>
     <string name="settings_hint_analyse_downloads">analysis automix measure beats lyrics sync downloads</string>
     <string name="settings_analyse">Analyze</string>
     <string name="settings_cache_size">Space for streamed music</string>
@@ -335,7 +335,7 @@
     <string name="settings_downloads_detail">Remove them from the Downloads page.</string>
     <string name="settings_show">Show</string>
     <string name="settings_clear_lyrics_title">Clear the lyrics cache?</string>
-    <string name="settings_clear_lyrics_text">The lyrics found online for your songs (%1$s) are forgotten, and looked up again the next time each song\'s lyrics are opened. Your server\'s own lyrics stay.</string>
+    <string name="settings_clear_lyrics_text">Lyrics found online (%1$s) are looked up again when needed. Your server\'s lyrics stay.</string>
 
     <!-- Servers. -->
     <string name="settings_section_accounts">Accounts</string>
@@ -399,7 +399,6 @@
     <string name="settings_hint_service_lrclib">Lyrics service. Open, run by volunteers</string>
     <string name="settings_hint_service_spotify">Lyrics service. Spotify\'s lyrics, with a key</string>
     <string name="settings_hint_service_untimed">Lyrics service. Not timed</string>
-    <string name="settings_hint_betterlyrics_key">Finds lyrics it has not stored yet</string>
     <string name="settings_hint_tap_action">What opening a song in a list does</string>
     <string name="settings_hint_offline_search">Song names kept on this device so search works without a connection</string>
     <string name="settings_hint_taste_model">Stored on this device. Powers mixes and stats</string>

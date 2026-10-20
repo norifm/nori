@@ -86,9 +86,7 @@ pub enum SectionId {
     Display,
     Sources,
     AskedOrder,
-    Keys,
     Lists,
-    Playlists,
     Search,
     History,
     Online,
@@ -134,8 +132,6 @@ pub enum SettingsAction {
 pub enum SettingsNote {
     /// Bit-perfect output takes transitions, silence skipping and effects out of the path.
     HeldByDac,
-    /// Volume boost brings the limiter with it.
-    Boost,
     /// What the USB DAC offers and plays (the phone's words).
     Dac,
     /// How the lyrics services are asked.
@@ -323,27 +319,23 @@ impl Page<'_> {
     fn playing(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let (p, s) = (self.p, self.s);
         let live = !s.untouched;
-        let mut between = vec![
-            row(RowItem::Note { note: SettingsNote::HeldByDac }).shown(s.untouched),
-            // AutoMix plans its own transitions, so the plain crossfade gives way to it.
-            self.setting("crossfadeSec").shown(!p.auto_mix).enabled(live),
-            self.setting("autoMix").enabled(live),
-        ];
+        let mut between = vec![row(RowItem::Note { note: SettingsNote::HeldByDac }).shown(s.untouched), self.setting("autoMix").enabled(live)];
         if s.beat_model != BeatModel::Unavailable {
-            between.push(self.setting("autoMixBetterBeats").under().shown(p.auto_mix).enabled(live));
+            between.push(self.setting("autoMixBetterBeats").under().enabled(live && p.auto_mix));
         }
         if !self.web() {
-            between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().shown(p.auto_mix).enabled(self.f.analysed > 0));
+            between.push(row(RowItem::Action { action: SettingsAction::MeasureAgain }).under().enabled(p.auto_mix && self.f.analysed > 0));
         }
-        between.push(self.setting("crossfadeKeepAlbums").shown(p.auto_mix || p.crossfade_sec > 0).enabled(live));
-        between.push(self.setting("fadeMs"));
-        let controls = vec![self.setting("previousAlwaysSkips"), self.setting("speed"), self.setting("pitch"), self.setting("skipSilence").enabled(live)];
+        // AutoMix plans its own transitions, so the plain crossfade gives way to it.
+        between.push(self.setting("crossfadeSec").enabled(live && !p.auto_mix));
+        between.push(self.setting("crossfadeKeepAlbums").enabled(live && (p.auto_mix || p.crossfade_sec > 0)));
+        let controls = vec![self.setting("previousAlwaysSkips"), self.setting("speed"), self.setting("pitch"), self.setting("skipSilence").enabled(live), self.setting("fadeMs")];
         let mut queue = vec![
             self.setting("skipExplicit"),
             self.setting("autoFill"),
-            self.chips("autoFillKind").under().shown(p.auto_fill),
-            self.setting("autoFillBasis").under().shown(p.auto_fill),
-            self.setting("autoFillRemote").under().shown(p.auto_fill),
+            self.chips("autoFillKind").under().enabled(p.auto_fill),
+            self.setting("autoFillBasis").under().enabled(p.auto_fill),
+            self.setting("autoFillRemote").under().enabled(p.auto_fill),
         ];
         if !self.web() {
             queue.push(self.setting("bridgeOffline"));
@@ -355,28 +347,30 @@ impl Page<'_> {
         let p = self.p;
         let volume = vec![
             self.chips("replayGain"),
-            self.chips("loudnessLevel").under().shown(p.replay_gain != GainMode::Off),
+            self.chips("loudnessLevel").under().enabled(p.replay_gain != GainMode::Off),
             self.setting("volumeBoostDb"),
-            row(RowItem::Note { note: SettingsNote::Boost }),
         ];
         if self.web() {
-            let effects = vec![self.setting("compressor"), self.chips("compressorPreset").under().shown(p.compressor)];
+            let effects = vec![self.setting("compressor"), self.chips("compressorPreset").under().enabled(p.compressor)];
             return vec![(SectionId::Effects, effects), (SectionId::Volume, volume)];
         }
         let mut eq = vec![row(RowItem::Link { to: SettingsLink::Equalizer })];
         if self.windowed() {
-            eq.extend([self.setting("autoEqAuto"), self.setting("autoEqDownload"), self.setting("profilePerOutput"), self.setting("soundBypass")]);
+            eq.extend([self.setting("autoEqAuto"), self.setting("autoEqDownload"), self.setting("profilePerOutput")]);
         }
         if self.phone() {
             eq.push(row(RowItem::Link { to: SettingsLink::SystemEffects }));
         }
-        let mut effects = vec![self.chips("headphoneSound"), self.setting("compressor"), self.chips("compressorPreset").under().shown(p.compressor)];
+        let mut effects = vec![self.chips("headphoneSound"), self.setting("compressor"), self.chips("compressorPreset").under().enabled(p.compressor)];
         if self.phone() {
-            effects.push(row(RowItem::CompressionMeter).under().shown(p.compressor));
+            effects.push(row(RowItem::CompressionMeter).under().enabled(p.compressor));
         }
         let mut output = vec![self.setting("hiRes"), self.setting("maxRate")];
         if self.phone() {
             output.extend([self.setting("bitPerfect"), row(RowItem::Note { note: SettingsNote::Dac }), self.setting("offload")]);
+        }
+        if self.windowed() {
+            output.push(self.setting("soundBypass"));
         }
         vec![(SectionId::Equalizer, eq), (SectionId::Effects, effects), (SectionId::Volume, volume), (SectionId::Output, output)]
     }
@@ -385,7 +379,7 @@ impl Page<'_> {
         let p = self.p;
         let mut theme = vec![self.chips("season")];
         if self.phone() || self.web() || self.client == SettingsClient::Terminal {
-            theme.extend([self.chips("theme"), self.setting("amoled").under().shown(p.theme != crate::settings::ThemeMode::Light)]);
+            theme.extend([self.chips("theme"), self.setting("amoled").under().enabled(p.theme != crate::settings::ThemeMode::Light)]);
         }
         if self.web() {
             return vec![(SectionId::Theme, theme)];
@@ -402,8 +396,8 @@ impl Page<'_> {
                 self.setting("hideStatusBar"),
                 self.setting("keepAwake"),
                 self.setting("burnInProtection"),
-                self.chips("dimWhenIdle").under().shown(p.burn_in_protection),
-                self.chips("dimLevel").under().shown(p.burn_in_protection && p.dim_when_idle != DimIdle::Never),
+                self.chips("dimWhenIdle").under().enabled(p.burn_in_protection),
+                self.chips("dimLevel").under().enabled(p.burn_in_protection && p.dim_when_idle != DimIdle::Never),
             ];
             // Only on a car's own screen, the only place it changes anything.
             if self.f.car {
@@ -424,32 +418,31 @@ impl Page<'_> {
             display.push(self.setting("lyricsKeepScreenOn"));
         }
         let online = self.on("lyricsOnline");
-        let mut sources = vec![self.setting("lyricsOnline"), self.setting("lyricsPreferWords").under().shown(online)];
+        let mut sources = vec![self.setting("lyricsOnline"), self.setting("lyricsPreferWords").under().enabled(online)];
         let mut out = vec![(SectionId::Display, display)];
         if self.phone() {
-            sources.push(row(RowItem::Link { to: SettingsLink::LyricsSources }).shown(online));
+            sources.push(row(RowItem::Link { to: SettingsLink::LyricsSources }).enabled(online));
             out.push((SectionId::Sources, sources));
         } else if self.web() {
             out.push((SectionId::Sources, sources));
         } else {
             out.push((SectionId::Sources, sources));
-            out.extend(self.lyrics_sources().into_iter().map(|(id, rows)| (id, rows.into_iter().map(|r| SettingsRow { shown: r.shown && online, ..r }).collect())));
+            out.extend(self.lyrics_sources().into_iter().map(|(id, rows)| (id, rows.into_iter().map(|r| SettingsRow { enabled: r.enabled && online, ..r }).collect())));
         }
         out
     }
 
-    /// Every lyrics service in the order they are asked, each switched where it stands, and the keys.
+    /// Every lyrics service in the order they are asked, each switched and keyed where it stands.
     fn lyrics_sources(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let mut ranked: Vec<SettingsRow> = (0..self.s.lyrics_sources.len() as u32).map(|index| row(RowItem::LyricsSource { index })).collect();
         ranked.push(row(RowItem::Note { note: SettingsNote::LyricsSources }));
-        vec![(SectionId::AskedOrder, ranked), (SectionId::Keys, vec![self.setting("betterLyricsKey")])]
+        vec![(SectionId::AskedOrder, ranked)]
     }
 
     fn library(&self) -> Vec<(SectionId, Vec<SettingsRow>)> {
         let mut out = Vec::new();
         if self.phone() {
-            out.push((SectionId::Lists, vec![self.chips("tapAction"), self.setting("swipeRight"), self.setting("swipeLeft")]));
-            out.push((SectionId::Playlists, vec![self.setting("playlistNotes")]));
+            out.push((SectionId::Lists, vec![self.chips("tapAction"), self.setting("swipeRight"), self.setting("swipeLeft"), self.setting("playlistNotes")]));
         }
         if !self.web() {
             out.push((SectionId::Search, vec![row(RowItem::Action { action: SettingsAction::SyncLibrary }).enabled(!self.f.syncing)]));
@@ -598,23 +591,38 @@ mod tests {
         }
     }
 
+    /// Whether `name`'s row acts for `p` on `client`'s pages.
+    fn live(client: SettingsClient, p: &StoredPrefs, name: &str) -> bool {
+        every_row(client, p, &facts()).iter().any(|r| r.shown && r.enabled && matches!(&r.item, RowItem::Setting { spec, .. } if spec.name == name))
+    }
+
     #[test]
     fn rows_follow_the_settings() {
-        let shown = |p: &StoredPrefs, name: &str| names(&every_row(SettingsClient::Phone, p, &facts()), true).iter().any(|n| n == name);
+        let live = |p: &StoredPrefs, name: &str| live(SettingsClient::Phone, p, name);
         let d = StoredPrefs::default();
-        assert!(shown(&d, "crossfadeSec") && !shown(&StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
+        assert!(live(&d, "crossfadeSec") && !live(&StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
         let mixing = [StoredPrefs { auto_mix: true, ..d.clone() }, StoredPrefs { crossfade_sec: 4, ..d.clone() }];
-        assert!(!shown(&d, "crossfadeKeepAlbums") && mixing.iter().all(|p| shown(p, "crossfadeKeepAlbums")), "only while songs mix");
-        assert!(!shown(&d, "compressorPreset") && shown(&StoredPrefs { compressor: true, ..d.clone() }, "compressorPreset"));
-        assert!(shown(&d, "loudnessLevel") && !shown(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
-        assert!(!shown(&StoredPrefs { auto_fill: false, ..d.clone() }, "autoFillKind"));
-        let dimming = |p: &StoredPrefs| shown(p, "dimLevel");
-        assert!(!dimming(&d) && dimming(&StoredPrefs { burn_in_protection: true, dim_when_idle: crate::settings::DimIdle::Minute, ..d.clone() }));
-        // A setting's row that is not on the page keeps its place, so the search finds it.
-        let all = names(&every_row(SettingsClient::Phone, &StoredPrefs { compressor: false, ..d.clone() }, &facts()), false);
-        assert!(all.iter().any(|n| n == "compressorPreset"));
+        assert!(!live(&d, "crossfadeKeepAlbums") && mixing.iter().all(|p| live(p, "crossfadeKeepAlbums")), "only while songs mix");
+        assert!(!live(&d, "compressorPreset") && live(&StoredPrefs { compressor: true, ..d.clone() }, "compressorPreset"));
+        assert!(live(&d, "loudnessLevel") && !live(&StoredPrefs { replay_gain: GainMode::Off, ..d.clone() }, "loudnessLevel"));
+        assert!(!live(&StoredPrefs { auto_fill: false, ..d.clone() }, "autoFillKind"));
+        assert!(!live(&d, "dimLevel") && live(&StoredPrefs { burn_in_protection: true, dim_when_idle: crate::settings::DimIdle::Minute, ..d.clone() }, "dimLevel"));
         // Black is a dark theme's.
-        assert!(shown(&d, "amoled") && !shown(&StoredPrefs { theme: crate::settings::ThemeMode::Light, ..d.clone() }, "amoled"));
+        assert!(live(&d, "amoled") && !live(&StoredPrefs { theme: crate::settings::ThemeMode::Light, ..d.clone() }, "amoled"));
+        assert!(!live(&StoredPrefs { lyrics_online: false, ..d.clone() }, "lyricsPreferWords"));
+    }
+
+    #[test]
+    fn a_switch_grays_the_rows_under_it_and_moves_none() {
+        let d = StoredPrefs::default();
+        let switched = [
+            StoredPrefs { auto_mix: true, compressor: true, auto_fill: false, burn_in_protection: true, replay_gain: GainMode::Off, theme: crate::settings::ThemeMode::Light, lyrics_online: false, ..d.clone() },
+            d.clone(),
+        ];
+        for client in [SettingsClient::Phone, SettingsClient::Desktop, SettingsClient::Terminal, SettingsClient::Web] {
+            let [a, b] = switched.each_ref().map(|p| every_row(client, p, &facts()).into_iter().map(|r| (std::mem::discriminant(&r.item), r.shown, r.depth)).collect::<Vec<_>>());
+            assert_eq!(a, b, "{client:?}: the same rows in the same places");
+        }
     }
 
     #[test]
@@ -654,8 +662,7 @@ mod tests {
             assert!(!has.iter().any(|n| n == left), "{left} is not offered in a browser");
         }
         assert!(!rows.iter().any(|r| matches!(r.item, RowItem::Action { .. } | RowItem::Link { .. } | RowItem::LyricsSource { .. })), "nothing the web has no screen or work for");
-        let shown = names(&every_row(SettingsClient::Web, &StoredPrefs { auto_mix: true, ..d.clone() }, &facts()), true);
-        assert!(!shown.iter().any(|n| n == "crossfadeSec"), "AutoMix plans its own");
+        assert!(!live(SettingsClient::Web, &StoredPrefs { auto_mix: true, ..d.clone() }, "crossfadeSec"), "AutoMix plans its own");
     }
 
     #[test]

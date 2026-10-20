@@ -127,13 +127,13 @@ fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = tru
 @Composable
 private fun ChipChoice(row: SettingRow.ChipChoice, onChange: (String) -> Unit) {
     Column {
-        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             androidx.compose.foundation.layout.FlowRow(
                 Modifier.padding(top = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) { row.options.forEach { o -> Chip(o.label, o.value == row.chosen) { if (o.value != row.chosen) onChange(o.value) } } }
+            ) { row.options.forEach { o -> Chip(o.label, o.value == row.chosen) { if (row.enabled && o.value != row.chosen) onChange(o.value) } } }
         }
         Hairline(startIndent = 16.dp)
     }
@@ -272,11 +272,11 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
  * not: nothing ticks with the screen off. Its own scope, so a reading redraws only this row.
  */
 @Composable
-private fun CompressionMeter() {
+private fun CompressionMeter(enabled: Boolean) {
     val db = meterReading(viewModel<SettingsViewModel>().compressionDb)
     val active = db > 0.05f
     val scheme = MaterialTheme.colorScheme
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).alpha(if (enabled) 1f else DIMMED)) {
         // The words change only with the tenth of a dB they show; the bar moves far more finely.
         Text(
             remember(kotlin.math.round(db * 10f)) { say.compression(db) },
@@ -300,7 +300,7 @@ private fun CompressionMeter() {
 @Composable
 private fun ActionRowSetting(row: SettingRow.Action, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().spotlight(row.key).padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             Text(row.detail, style = MaterialTheme.typography.bodySmall, color = if (row.error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -408,40 +408,20 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
     }
 }
 
-/** Text for a setting typed in (a service's key); hidden as it is typed when the row says it is secret. */
-@Composable
-private fun TextSettingDialog(row: SettingRow.Text, onDismiss: () -> Unit, onSave: (String) -> Unit) {
-    var text by remember(row.name) { mutableStateOf(row.value) }
-    AlertCard(
-        title = { Text(row.title) },
-        text = {
-            Column {
-                Text(row.detail, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FormField(
-                    text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
-                    visualTransformation = if (row.secret) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-                )
-            }
-        },
-        confirmButton = { TextButton({ onSave(text) }) { Text(say.save) } },
-        dismissButton = { TextButton(onDismiss) { Text(say.cancel) } },
-    )
-}
-
-/** The key a lyrics service needs, asked where it is switched on: saved, it is on; cleared, every service that
- *  needs it is off; cancelled, nothing changes. */
+/** A lyrics service's key, asked on its row: saved, the service is on; a cleared PaxSenix key turns off every
+ *  service that needs it; cancelled, nothing changes. */
 @Composable
 private fun KeyDialog(row: SettingRow.Ranked, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var text by remember(row.id) { mutableStateOf("") }
     AlertCard(
-        title = { Text(say.paxsenixKey) },
+        title = { Text(say.serviceKey(row.title)) },
         text = {
             Column {
-                Text(if (row.keySet) say.paxsenixKeyChange else say.paxsenixKeyAsk, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (row.keySet) (if (row.keyed) say.paxsenixKeyChange else say.keyChange) else if (row.keyed) say.paxsenixKeyAsk else say.betterLyricsKeyAsk, Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
             }
         },
-        confirmButton = { TextButton({ onSave(text) }, enabled = row.keySet || text.isNotBlank()) { Text(say.save) } },
+        confirmButton = { TextButton({ onSave(text) }, enabled = !row.keyed || row.keySet || text.isNotBlank()) { Text(say.save) } },
         dismissButton = { TextButton(onDismiss) { Text(say.cancel) } },
     )
 }
@@ -503,8 +483,6 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     val shown = drag?.shown ?: order
     // Once the core's order is the one shown, the drag is over.
     drag?.let { d -> if (!d.active && d.shown == order) androidx.compose.runtime.SideEffect { drag = null } }
-    var typing by remember { mutableStateOf<SettingRow.Text?>(null) }
-    NoriDialog(typing, { typing = null }) { row -> TextSettingDialog(row, { typing = null }) { v -> vm.set(row.name, v); typing = null } }
     var keying by remember { mutableStateOf<SettingRow.Ranked?>(null) }
     NoriDialog(keying, { keying = null }) { row -> KeyDialog(row, { keying = null }) { v -> vm.set(row.keyName, v); keying = null } }
     Section(section.title) {
@@ -519,8 +497,8 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                 is SettingRow.Flags -> Flags(row) { v -> vm.set(row.name, v) }
                 is SettingRow.Note -> Text(row.text, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 is SettingRow.Link -> {
-                    val dim = if (row.dimmed) DIMMED else 1f
-                    Row(Modifier.fillMaxWidth().spotlight(row.key).clickable { act(row.action) }.padding(horizontal = 16.dp, vertical = 15.dp)) {
+                    val dim = if (row.dimmed || !row.enabled) DIMMED else 1f
+                    Row(Modifier.fillMaxWidth().spotlight(row.key).clickable(row.enabled) { act(row.action) }.padding(horizontal = 16.dp, vertical = 15.dp)) {
                         Text(row.title, Modifier.weight(1f).alpha(dim), style = MaterialTheme.typography.bodyLarge)
                         if (row.status.isNotEmpty()) Text(row.status, Modifier.alpha(dim), color = MaterialTheme.colorScheme.primary)
                     }
@@ -539,7 +517,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     // A slider with a level is edited in place on every step, like the equalizer's.
                     NoriSlider(row.value, row.min..row.max, { v -> row.level?.let { vm.setLevel(it, v) } ?: vm.set(row.name, v.toString()) }, Modifier.padding(horizontal = 16.dp), centred = row.centred)
                 }
-                is SettingRow.CompressionMeter -> CompressionMeter()
+                is SettingRow.CompressionMeter -> CompressionMeter(row.enabled)
                 is SettingRow.Seasons -> SeasonPicker(row) { v -> vm.set(row.name, v) }
                 is SettingRow.Server -> {
                     Row(Modifier.fillMaxWidth().clickable(enabled = !row.active) { p.servers.firstOrNull { it.id == row.id }?.let(vm::switchServer) }.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -651,19 +629,17 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                             Column(Modifier.weight(1f).padding(end = 14.dp)) {
                                 Text(row.title, style = MaterialTheme.typography.bodyLarge, color = if (row.on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (row.keySet) TextAction(say.changeKey, { keying = row }, Modifier.padding(top = 4.dp))
+                                // Under the words, in line with them: a key is set where the service is.
+                                val keyLabel = if (row.keySet) say.changeKey else if (row.takesKey && !row.keyed) say.addKey else null
+                                if (keyLabel != null) Text(
+                                    keyLabel, Modifier.padding(top = 6.dp).clickable { keying = row },
+                                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                                )
                             }
                             NoriSwitch(row.on, { on -> if (on && row.keyed && !row.keySet) keying = row else vm.set(row.name, on.toString()) })
                         }
                         Hairline(startIndent = 16.dp)
                     }
-                }
-                is SettingRow.Text -> {
-                    Column(Modifier.fillMaxWidth().spotlight(row.key).clickable { typing = row }.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        Text(row.title, style = MaterialTheme.typography.bodyLarge)
-                        Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Hairline(startIndent = 16.dp)
                 }
             }
         } }
