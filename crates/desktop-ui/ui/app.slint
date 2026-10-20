@@ -3271,6 +3271,18 @@ component ToggleLine inherits HorizontalLayout {
     }
 }
 
+// A group of the equalizer's on a plate, as settings' groups are.
+component EqPlate inherits Rectangle {
+    background: Theme.panel;
+    border-radius: 10px;
+    height: plate.preferred-height;
+    plate := VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        @children
+    }
+}
+
 component EqualizerPage inherits Flickable {
     in property <bool> on;
     in property <bool> graphic;
@@ -3296,17 +3308,19 @@ component EqualizerPage inherits Flickable {
     callback tool(string, int);
     callback sized(length, length);
     content-height: page.preferred-height;
+    // Settings' column, as wide as the top pill, and its title; each part on a plate as settings' groups are.
     page := VerticalLayout {
         width: parent.width;
-        padding-left: 32px;
-        padding-right: 32px;
-        padding-top: 52px;
+        padding-left: Chrome.top-x;
+        padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
         padding-bottom: 110px;
-        spacing: 10px;
+        spacing: 12px;
         HorizontalLayout {
+            height: Chrome.top-room + 52px;
+            padding-bottom: 12px;
             spacing: 10px;
             IconButton {
-                y: (parent.height - self.height) / 2;
+                y: parent.height - self.height - 16px;
                 path: "M15 5.5 L8.5 12 L15 18.5";
                 size: 30px;
                 icon: 16px;
@@ -3315,12 +3329,16 @@ component EqualizerPage inherits Flickable {
             Text {
                 text: "Equalizer";
                 color: Theme.text;
-                font-size: 30px;
+                font-family: Type.title;
+                font-size: 34px;
                 font-weight: 700;
+                letter-spacing: -0.5px;
+                horizontal-alignment: center;
+                vertical-alignment: bottom;
                 horizontal-stretch: 1;
             }
             Toggle {
-                y: (parent.height - self.height) / 2;
+                y: parent.height - self.height - 18px;
                 on: root.on;
                 toggled(v) => { root.set("eq", v ? "true" : "false"); }
             }
@@ -3337,6 +3355,7 @@ component EqualizerPage inherits Flickable {
                 wrap: word-wrap;
             }
         }
+        EqPlate {
         HorizontalLayout {
             spacing: 8px;
             alignment: start;
@@ -3468,9 +3487,11 @@ component EqualizerPage inherits Flickable {
                 clicked => { root.tool("reset", 0); }
             }
         }
+        }
         EqSection {
             text: "Presets";
         }
+        EqPlate {
         HorizontalLayout {
             spacing: 8px;
             alignment: start;
@@ -3493,9 +3514,11 @@ component EqualizerPage inherits Flickable {
             enabled: root.on;
             moved(v, last) => { root.level("eqPreamp", v, last); }
         }
+        }
         EqSection {
             text: "Output";
         }
+        EqPlate {
         LevelRow {
             label: "Balance";
             shown: root.balance-label;
@@ -3523,6 +3546,7 @@ component EqualizerPage inherits Flickable {
             lo: root.ranges.length > 7 ? root.ranges[6] : -12;
             hi: root.ranges.length > 7 ? root.ranges[7] : 0;
             moved(v, last) => { root.level("limiter", v, last); }
+        }
         }
     }
 }
@@ -4960,7 +4984,7 @@ export component AppWindow inherits Window {
                         prefs := VerticalLayout {
                             width: parent.width;
                             padding-bottom: 100px;
-                            // The title and the tabs centred over one narrow column.
+                            // The title, then the tabs and the column, as wide as the top pill over them.
                             Text {
                                 text: "Settings";
                                 color: Theme.text;
@@ -4973,22 +4997,20 @@ export component AppWindow inherits Window {
                                 vertical-alignment: bottom;
                             }
                             HorizontalLayout {
-                                alignment: center;
+                                padding-left: Chrome.top-x;
+                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
                                 padding-top: 16px;
                                 padding-bottom: 12px;
                                 Segments {
-                                    width: min(660px, parent.width - 64px);
                                     options: ["General", "Playback", "Sound", "Lyrics", "Library", "Storage", "Accounts"];
                                     chosen: root.settings-tab;
                                     picked(i) => { root.settings-tab-chosen(i); }
                                 }
                             }
                             HorizontalLayout {
-                                padding-left: 32px;
-                                padding-right: 32px;
-                                alignment: center;
+                                padding-left: Chrome.top-x;
+                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
                                 VerticalLayout {
-                                    width: min(600px, parent.width - 64px);
                                     for r in root.settings: SettingLine {
                                         item: r;
                                         toggled(name, on) => { root.setting-toggled(name, on); }
