@@ -192,17 +192,30 @@ fn minus(v: &str) -> String {
     v.replace('-', "−")
 }
 
-/// The settings page a tab shows.
-fn tab_page(tab: i32) -> SettingsPage {
-    match tab {
-        1 => SettingsPage::Playing,
-        2 => SettingsPage::Sound,
-        3 => SettingsPage::Lyrics,
-        4 => SettingsPage::Library,
-        5 => SettingsPage::Data,
-        6 => SettingsPage::Servers,
-        _ => SettingsPage::Look,
+/// The desktop's tabs in its order: the pages the profile in use opens (the core's `pages`).
+pub fn tabs(parts: &[nori_core::settings_pages::SettingsPart]) -> Vec<SettingsPage> {
+    use SettingsPage::*;
+    let offered = settings_pages::pages(SettingsClient::Desktop, parts);
+    [Look, Playing, Sound, Lyrics, Library, Data, Servers].into_iter().filter(|p| offered.contains(p)).collect()
+}
+
+/// A tab's name.
+pub fn tab_name(page: SettingsPage) -> &'static str {
+    match page {
+        SettingsPage::Look => "General",
+        SettingsPage::Playing => "Playback",
+        SettingsPage::Sound => "Sound",
+        SettingsPage::Lyrics | SettingsPage::LyricsSources => "Lyrics",
+        SettingsPage::Library => "Library",
+        SettingsPage::Data => "Storage",
+        SettingsPage::Servers => "Accounts",
+        SettingsPage::About => "About",
     }
+}
+
+/// The settings page tab `tab` shows; the first where there is no such tab.
+fn tab_page(f: &Facts, tab: i32) -> SettingsPage {
+    tabs(&f.rules.settings).get(tab.max(0) as usize).copied().unwrap_or(SettingsPage::Look)
 }
 
 fn section_title(id: SectionId) -> &'static str {
@@ -516,7 +529,8 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
         ..PageFacts::default()
     };
     let mut groups: Vec<(&'static str, Vec<Row>)> = Vec::new();
-    for sec in settings_pages::page(tab_page(tab), SettingsClient::Desktop, p, &s, &facts) {
+    let page = tab_page(f, tab);
+    for sec in settings_pages::page(page, SettingsClient::Desktop, p, &s, &facts) {
         let rows: Vec<Row> = sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, &s).unwrap_or_else(|| row_of(r, p, &s, f).into_iter().collect())).flat_map(|r| {
             if r.kind != SEASONS {
                 return vec![r];
@@ -537,9 +551,7 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
             _ => groups.push((title, rows)),
         }
     }
-    if tab_page(tab) == SettingsPage::Servers {
-    }
-    if tab == 0 {
+    if page == SettingsPage::Look {
         let mut devices = vec![("The system's own".to_string(), String::new())];
         devices.extend(f.devices.iter().map(|d| (d.clone(), d.clone())));
         let output = vec![
@@ -622,6 +634,15 @@ pub fn level_of(name: &str) -> Option<EqLevel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tabs_are_the_pages_the_profile_opens() {
+        use nori_core::settings::{SavedServer, ServerKind};
+        let rules = |kind| nori_core::providers::rules_of(SavedServer { kind, ..Default::default() }, false).settings;
+        let names = |kind| tabs(&rules(kind)).into_iter().map(tab_name).collect::<Vec<_>>();
+        assert_eq!(names(ServerKind::Subsonic), ["General", "Playback", "Sound", "Lyrics", "Library", "Storage", "Accounts"]);
+        assert!(!names(ServerKind::YouTubeMusic).contains(&"Library"), "no library settings to show");
+    }
 
     #[test]
     fn an_appearance_sets_the_theme_and_amoled_and_reads_back() {

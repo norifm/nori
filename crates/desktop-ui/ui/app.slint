@@ -439,45 +439,10 @@ component Glass inherits Rectangle {
     border-color: Theme.outline;
 }
 
-// The press feedback: the ink at 16 % in the shape of what was pressed (`radius`, its corner), spreading
-// evenly from the middle out to its edges, growing from half size and gone in about 400 ms. It runs on a
-// timer only while it lasts; reduced motion draws none.
-component Ripple inherits Rectangle {
-    in property <bool> pressed;
-    in property <length> radius;
-    // 0 as it starts, 1 once it is gone.
-    property <float> t: 1;
-    property <float> scale: 0.5 + 0.5 * root.t;
-    changed pressed => {
-        if self.pressed && !Motion.reduced {
-            self.t = 0;
-            clock.running = true;
-        }
-    }
-    clock := Timer {
-        interval: 16ms;
-        running: false;
-        triggered => {
-            root.t = min(1, root.t + 0.04);
-            if root.t >= 1 {
-                self.running = false;
-            }
-        }
-    }
-    Rectangle {
-        visible: root.t < 1;
-        width: root.width * root.scale;
-        height: root.height * root.scale;
-        border-radius: root.radius * root.scale;
-        background: Theme.text.with-alpha(0.16 * (1 - root.t));
-    }
-}
 
-// A borderless button: a glyph that is quiet unless lit, a faint round plate under the pointer, and the
-// press ripple unless `still` (the top pill's).
+// A borderless button: a glyph that is quiet unless lit, and a faint round plate under the pointer.
 component IconButton inherits Rectangle {
     in property <string> path;
-    in property <bool> still;
     in property <bool> lit;
     in property <bool> quiet;
     in property <bool> enabled: true;
@@ -492,10 +457,6 @@ component IconButton inherits Rectangle {
     height: root.size;
     border-radius: root.size / 2;
     background: touch.has-hover ? Theme.hover : root.base;
-    if !root.still: Ripple {
-        pressed: touch.pressed;
-        radius: parent.border-radius;
-    }
     Icon {
         path: root.path;
         colour: root.lit ? Theme.accent : (root.quiet ? Theme.dim : root.ink);
@@ -517,7 +478,7 @@ component Caption inherits Text {
     letter-spacing: 0.5px;
 }
 
-// A word that does something (Clear, Undo): the ink, a faint plate under the pointer, and the press ripple.
+// A word that does something (Clear, Undo): the ink, and a faint plate under the pointer.
 component TextButton inherits Rectangle {
     in property <string> text;
     callback clicked;
@@ -525,10 +486,6 @@ component TextButton inherits Rectangle {
     width: label.preferred-width + 20px;
     border-radius: self.height / 2;
     background: touch.has-hover ? Theme.hover : transparent;
-    Ripple {
-        pressed: touch.pressed;
-        radius: parent.border-radius;
-    }
     label := Text {
         text: root.text;
         color: Theme.text;
@@ -542,7 +499,6 @@ component TextButton inherits Rectangle {
 }
 
 // A tab of the top pill: its glyph and, when named, its name; the current one lit in the accent and bold.
-// No press ripple: the tab lighting up is the answer.
 component TabButton inherits Rectangle {
     in property <string> text;
     in property <string> icon;
@@ -587,7 +543,7 @@ component TabButton inherits Rectangle {
     }
 }
 
-// Play and pause: the bare glyph, the two cross-fading by 180 ms with a scale from .8, and the press ripple. While
+// Play and pause: the bare glyph, the two cross-fading by 180 ms with a scale from .8. While
 // the player waits, a spinner takes the glyph's place, but only after 300 ms.
 component PlayPause inherits Rectangle {
     in property <bool> playing;
@@ -616,10 +572,6 @@ component PlayPause inherits Rectangle {
     height: root.size;
     border-radius: root.size / 2;
     background: touch.has-hover ? Theme.hover : transparent;
-    Ripple {
-        pressed: touch.pressed;
-        radius: parent.border-radius;
-    }
     Icon {
         path: Icons.play;
         colour: root.ink;
@@ -669,10 +621,6 @@ component Seal inherits Rectangle {
     height: root.size + 8px;
     border-radius: self.width / 2;
     background: touch.has-hover ? Theme.hover : transparent;
-    Ripple {
-        pressed: touch.pressed;
-        radius: parent.border-radius;
-    }
     Icon {
         path: root.liked ? Icons.seal : Icons.seal-outline;
         colour: root.liked ? Theme.accent : Theme.text;
@@ -725,9 +673,11 @@ component Capsule inherits Rectangle {
     in property <string> icon;
     in property <color> ink: Theme.pill;
     in property <color> label: Theme.pill-ink;
+    // Its height; the glyph, words and least width grow with it.
+    in property <length> size: 34px;
     callback clicked;
-    height: 34px;
-    width: max(124px, row.preferred-width + 40px);
+    height: root.size;
+    width: max(root.size * 3.6, row.preferred-width + root.size * 1.2);
     border-radius: self.height / 2;
     background: root.ink;
     opacity: touch.pressed ? 0.75 : 1;
@@ -738,14 +688,14 @@ component Capsule inherits Rectangle {
             y: (parent.height - self.height) / 2;
             path: root.icon;
             colour: root.label;
-            width: 13px;
-            height: 13px;
+            width: root.size * 0.38;
+            height: root.size * 0.38;
         }
         Text {
             text: root.text;
             color: root.label;
             font-weight: 600;
-            font-size: 13px;
+            font-size: root.size * 0.38;
             vertical-alignment: center;
         }
     }
@@ -2870,10 +2820,6 @@ component SeasonTiles inherits Rectangle {
                 border-width: i == root.chosen ? 2px : 1px;
                 border-color: i == root.chosen ? Theme.season-accents[i] : Theme.hairline;
                 clip: true;
-                Ripple {
-                    pressed: ta.pressed;
-                    radius: parent.border-radius;
-                }
                 Text {
                     text: root.marks[i];
                     color: Theme.season-accents[i];
@@ -2913,10 +2859,6 @@ component Segments inherits Rectangle {
         for o[i] in root.options: Rectangle {
             border-radius: 15px;
             background: i == root.chosen ? Theme.chosen : (ta.has-hover ? Theme.hover : transparent);
-            Ripple {
-                pressed: ta.pressed;
-                radius: parent.border-radius;
-            }
             Text {
                 text: o;
                 color: i == root.chosen ? Theme.accent : Theme.text;
@@ -2988,15 +2930,15 @@ component SettingLine inherits VerticalLayout {
         border-top-right-radius: root.item.first ? 10px : 0;
         border-bottom-left-radius: root.item.last ? 10px : 0;
         border-bottom-right-radius: root.item.last ? 10px : 0;
-        min-height: 44px;
+        min-height: 54px;
         if root.item.kind == 11 || root.item.kind == 12 || (root.item.kind == 8 && !root.item.on): TouchArea {
             clicked => { root.action(root.item.kind == 8 ? "server:" + root.item.name : root.item.name); }
         }
         VerticalLayout {
-            padding-left: 14px;
-            padding-right: 12px;
-            padding-top: 8px;
-            padding-bottom: 8px;
+            padding-left: 16px;
+            padding-right: 14px;
+            padding-top: 12px;
+            padding-bottom: 12px;
             spacing: 6px;
             HorizontalLayout {
                 spacing: 12px;
@@ -3014,13 +2956,13 @@ component SettingLine inherits VerticalLayout {
                         text: root.item.title;
                         color: root.item.kind == 12 ? Theme.accent : Theme.text;
                         opacity: root.item.enabled || root.item.kind == 4 ? 1 : 0.45;
-                        font-size: 13px;
+                        font-size: 14px;
                         wrap: word-wrap;
                     }
                     if root.item.detail != "" && root.item.kind != 11: Text {
                         text: root.item.detail;
                         color: Theme.dim;
-                        font-size: 11px;
+                        font-size: 12px;
                         wrap: word-wrap;
                     }
                 }
@@ -3595,18 +3537,19 @@ component PageActions inherits HorizontalLayout {
     callback star();
     callback later();
     callback download-page();
-    property <length> side: 34px;
+    property <length> side: 44px;
     spacing: 10px;
     IconButton {
         y: (parent.height - self.height) / 2;
         path: Icons.shuffle;
         size: root.side;
-        icon: 18px;
+        icon: 22px;
         ink: Theme.plate-ink;
         base: Theme.plate;
         clicked => { root.play(true); }
     }
     Capsule {
+        size: root.side;
         text: "Play";
         icon: Icons.play;
         clicked => { root.play(false); }
@@ -3619,7 +3562,7 @@ component PageActions inherits HorizontalLayout {
         background: Theme.plate;
         Seal {
             liked: root.liked;
-            size: 20px;
+            size: 24px;
             clicked => { root.star(); }
         }
     }
@@ -3630,7 +3573,7 @@ component PageActions inherits HorizontalLayout {
         IconButton {
             path: Icons.more;
             size: root.side;
-            icon: 18px;
+            icon: 22px;
             ink: Theme.plate-ink;
             base: Theme.plate;
             clicked => { menu.show({ x: 0, y: root.side + 4px }); }
@@ -3814,7 +3757,6 @@ component TopContent inherits Rectangle {
             lit: root.view == 8 || root.view == 9;
             quiet: true;
             size: 36px;
-            still: true;
             clicked => { root.open-menu(); }
         }
     }
@@ -3829,10 +3771,6 @@ component MenuRow inherits Rectangle {
     height: 40px;
     border-radius: 12px;
     background: ta.has-hover ? Theme.hover : transparent;
-    Ripple {
-        pressed: ta.pressed;
-        radius: parent.border-radius;
-    }
     HorizontalLayout {
         padding-left: 12px;
         padding-right: 12px;
@@ -4098,6 +4036,8 @@ export component AppWindow inherits Window {
     // Settings tab: 0 General, 1 Playback, 2 Sound, 3 Lyrics, 4 Library, 5 Data, 6 Servers.
     in-out property <int> settings-tab;
     callback settings-tab-chosen(int);
+    // The tabs the profile in use has (settings.rs `tabs`).
+    in property <[string]> settings-tabs;
 
     in-out property <string> login-name;
     in-out property <string> login-url: "https://";
@@ -5002,7 +4942,7 @@ export component AppWindow inherits Window {
                                 padding-top: 16px;
                                 padding-bottom: 12px;
                                 Segments {
-                                    options: ["General", "Playback", "Sound", "Lyrics", "Library", "Storage", "Accounts"];
+                                    options: root.settings-tabs;
                                     chosen: root.settings-tab;
                                     picked(i) => { root.settings-tab-chosen(i); }
                                 }

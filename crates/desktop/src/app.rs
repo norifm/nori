@@ -773,7 +773,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_choose_artist, h, |a, id| a.choose_artist(id.to_string()));
     on!(ui.on_open_accounts, h, |a| {
-        a.ui().set_settings_tab(6);
+        let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers);
+        a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
         a.go(SETTINGS);
     });
     on!(ui.on_clear_queue, h, |a| {
@@ -2126,6 +2127,8 @@ impl App {
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         let view = ui.get_view();
         if view == SETTINGS {
+            let tabs = crate::settings::tabs(&self.facts.rules.settings);
+            ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs.iter().map(|p| SharedString::from(crate::settings::tab_name(*p))).collect::<Vec<_>>())));
             ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab(), today));
         }
         if view == EQUALIZER {
