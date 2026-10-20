@@ -2022,7 +2022,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             None => {
                 self.reopen();
                 self.run_switch(s);
-                if self.playing() {
+                // A song asked to play that would not even start stops as one failing later does (`check`).
+                if self.playing() || kind == Switch::ToSong {
                     self.set_state(State::Playing);
                 }
             }

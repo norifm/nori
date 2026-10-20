@@ -65,7 +65,6 @@ struct Net {
     downloaded: AtomicBool,
     /// Real time each read of a body takes, ms: a busy machine's fetching.
     read_ms: AtomicU64,
-    #[allow(dead_code)]
     dir: nori_testdir::TempDir,
 }
 
@@ -1348,6 +1347,21 @@ fn a_mix_is_heard_the_same_however_slowly_bytes_come() {
     assert_eq!(fast.2, slow.2, "the same log");
     assert_eq!(fast.1, slow.1, "the same pulls");
     assert!(fast.0 == slow.0, "the same sound");
+}
+
+/// A song asked to play that cannot even be opened stops the play, saying so, as one failing later does.
+#[test]
+fn a_song_that_cannot_open_stops_the_play() {
+    let a = song(10.0, 1, None);
+    let rig = Rig::new(&[("a", &a)], None, Settings::default());
+    rig.net.downloaded.store(true, Ordering::Relaxed);
+    std::fs::remove_file(rig.net.dir.join("a.wav")).unwrap();
+    rig.engine.play_at(0, 0);
+    rig.run(1_000);
+    let events = rig.events.lock();
+    assert!(events.iter().any(|(_, e)| matches!(e, Event::Error { .. })), "{events:?}");
+    assert!(events.iter().any(|(_, e)| matches!(e, Event::Stopped { .. })), "{events:?}");
+    assert_eq!(rig.engine.status().state, nori_engine::State::Paused, "{events:?}");
 }
 
 #[test]
