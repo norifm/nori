@@ -2561,6 +2561,86 @@ mod tests {
         assert_eq!(ui.get_display_position_ms(), 40_000, "an embedded player follows playback");
     }
 
+    // The glyphs drawn in `columns` x `rows` of a snapshot, left to right, as (first column, last column,
+    // first row, last row): runs of columns with a pixel apart from the area's top-left one.
+    fn glyphs(shot: &SharedPixelBuffer<Rgba8Pixel>, columns: std::ops::Range<usize>, rows: std::ops::Range<usize>) -> Vec<(usize, usize, usize, usize)> {
+        let width = shot.width() as usize;
+        let px = shot.as_slice();
+        let ground = px[rows.start * width + columns.start];
+        let inked = |x: usize, y: usize| {
+            let p = px[y * width + x];
+            (p.r as i32 - ground.r as i32).abs() + (p.g as i32 - ground.g as i32).abs() + (p.b as i32 - ground.b as i32).abs() > 60
+        };
+        let mut found: Vec<(usize, usize, usize, usize)> = Vec::new();
+        for x in columns {
+            let inked_rows: Vec<usize> = rows.clone().filter(|&y| inked(x, y)).collect();
+            let (Some(&top), Some(&bottom)) = (inked_rows.first(), inked_rows.last()) else { continue };
+            match found.last_mut() {
+                Some(g) if g.1 + 1 == x => *g = (g.0, x, g.2.min(top), g.3.max(bottom)),
+                _ => found.push((x, x, top, bottom)),
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn lighting_a_panel_tab_moves_no_other() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_devices_on(true);
+        ui.set_full_player(true);
+        ui.show().unwrap();
+        // The tabs head the right half; their glyphs' tops sit above the names.
+        let glyph_tops = |panel: i32| {
+            ui.set_full_panel(panel);
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let shot = ui.window().take_snapshot().unwrap();
+            let top = glyphs(&shot, 640..1280, 4..48).iter().map(|g| g.2).min().unwrap();
+            glyphs(&shot, 640..1280, top..top + 3).iter().map(|g| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
+        };
+        let devices = glyph_tops(3);
+        assert!(devices.len() >= 3, "{devices:?}");
+        for panel in [2, 1] {
+            let lit = glyph_tops(panel);
+            assert_eq!(lit.len(), devices.len(), "panel {panel}");
+            assert!(lit.iter().zip(&devices).all(|(a, b)| (a - b).abs() <= 1.0), "panel {panel}: {lit:?} against {devices:?}");
+        }
+    }
+
+    #[test]
+    fn the_pills_seal_matches_the_speaker_beside_it() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        for dark in [false, true] {
+            let bar = crate::PlayerBar::new().unwrap();
+            crate::look::plain(&nori_core::settings::StoredPrefs::default(), dark, crate::look::Today { month: 10, day: 19, southern: false }).paint(&bar.global::<Theme>());
+            bar.window().set_size(slint::PhysicalSize::new(1200, 64));
+            bar.set_room(1200.0);
+            bar.set_has_song(true);
+            bar.set_devices_on(true);
+            bar.show().unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            let shot = bar.window().take_snapshot().unwrap();
+            // Right of the transport: the seal, then the speaker.
+            let found = glyphs(&shot, 840..1200, 8..56);
+            let (seal, speaker) = (found[0], found[1]);
+            let height = |g: (usize, usize, usize, usize)| g.3 - g.2 + 1;
+            assert!(height(seal).abs_diff(height(speaker)) <= 1, "dark {dark}: seal {seal:?}, speaker {speaker:?}");
+            // A glyph's ink: its pixel furthest from the pill under it.
+            let ground = shot.as_slice()[8 * 1200 + 840];
+            let apart = |p: Rgba8Pixel, q: Rgba8Pixel| (p.r as i32 - q.r as i32).abs() + (p.g as i32 - q.g as i32).abs() + (p.b as i32 - q.b as i32).abs();
+            let ink = |g: (usize, usize, usize, usize)| (g.2..=g.3).flat_map(|y| (g.0..=g.1).map(move |x| (x, y)))
+                .map(|(x, y)| shot.as_slice()[y * 1200 + x]).max_by_key(|&p| apart(p, ground)).unwrap();
+            assert!(apart(ink(seal), ink(speaker)) <= 24, "dark {dark}: seal {:?}, speaker {:?}", ink(seal), ink(speaker));
+        }
+    }
+
     #[test]
     fn the_pills_transport_stays_put_whatever_the_song_says() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
