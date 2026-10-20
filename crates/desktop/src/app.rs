@@ -8,6 +8,7 @@ use std::rc::{Rc, Weak};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
+use nori_core::browse::AlbumSort;
 use nori_core::search::SearchView;
 use nori_core::settings::SavedServer;
 use nori_core::Song;
@@ -127,7 +128,7 @@ macro_rules! on {
 /// Library lists as loaded, before the find filter.
 #[derive(Default)]
 struct Lists {
-    albums: Vec<Card>,
+    albums: Vec<nori_core::Album>,
     artists: Vec<Card>,
     playlists: Vec<Card>,
 }
@@ -370,8 +371,9 @@ pub struct App {
     shelves: Rc<VecModel<Shelf>>,
     /// The rows of the shelves shown.
     home_rows: Vec<nori_core::settings::HomeRow>,
-    /// The album list's pages asked for, to this offset.
+    /// The album list's pages asked for, to this offset, and its order.
     albums_asked: u32,
+    album_sort: AlbumSort,
     /// The player pill and the top pill: windows of their own, laid over the blurred page.
     player: Option<PlayerBar>,
     top: Option<TopBar>,
@@ -480,11 +482,12 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
 
 /// The album list once its page from `offset` came (`page`), and the page to ask for next: while pages
 /// come full, each once (`asked`: the pages asked for, to this offset).
-fn albums_paged(list: &mut Vec<Card>, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
+fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
     list.truncate(offset as usize);
-    list.extend(page.iter().map(album_card));
+    list.extend_from_slice(page);
     let next = offset + page.len() as u32;
-    let more = page.len() as u32 == nori_host::pages::ALBUM_PAGE && *asked < next;
+    // Every page is read at once here, and a random order never runs out.
+    let more = !nori_core::browse::albums_exhausted(page.len() as u32) && sort != AlbumSort::Random && *asked < next;
     more.then(|| {
         *asked = next;
         next
@@ -551,6 +554,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             shelves,
             home_rows: Vec::new(),
             albums_asked: 0,
+            album_sort: AlbumSort::ByName,
             backdrop: None,
             page_cover: None,
             now_cover: None,
@@ -847,6 +851,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         a.narrowed();
     });
     on!(ui.on_choose_artist, h, |a, id| a.choose_artist(id.to_string()));
+    on!(ui.on_album_sort_chosen, h, |a, at| a.sort_albums(at as usize));
     on!(ui.on_open_accounts, h, |a| {
         let accounts = crate::settings::tabs(&a.facts.rules.settings).iter().position(|p| *p == nori_core::settings_pages::SettingsPage::Servers);
         a.ui().set_settings_tab(accounts.unwrap_or(0) as i32);
@@ -1084,7 +1089,9 @@ impl App {
             HOME => self.home_req(),
             ALBUMS => {
                 self.albums_asked = 0;
-                Some(Req::Page(PageAsk::Albums { offset: 0 }))
+                self.album_sort = nori_core::browse::album_sort_saved(crate::session::app().settings.current().unwrap_or_default().list_prefs);
+                self.show_album_sorts();
+                Some(Req::Page(PageAsk::Albums { sort: self.album_sort, offset: 0 }))
             }
             ARTISTS => Some(Req::Page(PageAsk::Artists)),
             PLAYLISTS => Some(Req::Page(PageAsk::Playlists)),
@@ -1344,9 +1351,12 @@ impl App {
             }
             Data::Page(PageGot::Albums(v)) => {
                 // Pages of the list, each asked for once the one before came full.
-                let Req::Page(PageAsk::Albums { offset }) = req else { return };
-                if let Some(next) = albums_paged(&mut self.lists.albums, offset, &v, &mut self.albums_asked) {
-                    self.on_session(|s| s.load(Req::Page(PageAsk::Albums { offset: next })));
+                let Req::Page(PageAsk::Albums { sort, offset }) = req else { return };
+                if sort != self.album_sort {
+                    return;
+                }
+                if let Some(next) = albums_paged(&mut self.lists.albums, sort, offset, &v, &mut self.albums_asked) {
+                    self.on_session(|s| s.load(Req::Page(PageAsk::Albums { sort, offset: next })));
                 }
                 self.narrowed();
             }
@@ -1463,12 +1473,53 @@ impl App {
     fn narrowed(&self) {
         let ui = self.ui();
         let find = self.find.to_lowercase();
-        let pick = |v: &[Card]| cards(v.iter().filter(|c| find.is_empty() || c.title.to_lowercase().contains(&find) || c.sub.to_lowercase().contains(&find)).cloned());
-        ui.set_albums(pick(&self.lists.albums));
+        let found = |title: &str, sub: &str| find.is_empty() || title.to_lowercase().contains(&find) || sub.to_lowercase().contains(&find);
+        let pick = |v: &[Card]| cards(v.iter().filter(|c| found(&c.title, &c.sub)).cloned());
+        let albums: Vec<nori_core::Album> = self.lists.albums.iter().filter(|a| found(&a.name, &a.artist)).cloned().collect();
+        if self.album_sort == AlbumSort::ArtistRows {
+            let starts = nori_core::browse::artist_rows(albums.clone());
+            let ends = starts.iter().skip(1).copied().chain([albums.len() as u32]);
+            let rows = starts.iter().zip(ends).map(|(&from, to)| {
+                let row = &albums[from as usize..to as usize];
+                Shelf { title: row[0].artist.as_str().into(), cards: cards(row.iter().map(album_card)), loaded: true }
+            });
+            ui.set_album_rows(ModelRc::new(VecModel::from(rows.collect::<Vec<_>>())));
+        } else {
+            ui.set_album_rows(ModelRc::default());
+        }
+        ui.set_albums(cards(albums.iter().map(album_card)));
         ui.set_artists(pick(&self.lists.artists));
         ui.set_playlists(pick(&self.lists.playlists));
         ui.set_songs(self.rows(&self.songs));
         self.show_page_songs();
+    }
+
+    /// The Albums page's sort menu, the order in use marked.
+    fn show_album_sorts(&self) {
+        let ui = self.ui();
+        let sorts = nori_core::browse::album_sorts();
+        ui.set_album_sorts(ModelRc::new(VecModel::from(sorts.iter().map(|&s| SharedString::from(words::album_sort(s))).collect::<Vec<_>>())));
+        ui.set_album_sort(sorts.iter().position(|&s| s == self.album_sort).unwrap_or(0) as i32);
+        ui.set_albums_in_rows(self.album_sort == AlbumSort::ArtistRows);
+    }
+
+    /// Reads the albums again in the order chosen in the sort menu, and keeps it.
+    fn sort_albums(&mut self, at: usize) {
+        let Some(&sort) = nori_core::browse::album_sorts().get(at) else { return };
+        if sort == self.album_sort {
+            return;
+        }
+        let settings = &crate::session::app().settings;
+        let mut prefs = settings.current().unwrap_or_default();
+        let kept = nori_core::browse::album_sort_kept(sort);
+        prefs.list_prefs.insert(kept.key, kept.value);
+        settings.put(prefs);
+        self.album_sort = sort;
+        self.albums_asked = 0;
+        self.lists.albums.clear();
+        self.narrowed();
+        self.show_album_sorts();
+        self.load(Req::Page(PageAsk::Albums { sort, offset: 0 }));
     }
 
     /// Shows an artist beside the Artists list.
@@ -2861,11 +2912,13 @@ mod tests {
         let page = |from: usize, n: usize| (from..from + n).map(|i| nori_core::Album { id: i.to_string(), ..Default::default() }).collect::<Vec<_>>();
         let full = nori_host::pages::ALBUM_PAGE as usize;
         let (mut list, mut asked) = (Vec::new(), 0);
-        assert_eq!(albums_paged(&mut list, 0, &page(0, full), &mut asked), Some(full as u32));
-        assert_eq!(albums_paged(&mut list, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
-        assert_eq!(albums_paged(&mut list, full as u32, &page(full, 3), &mut asked), None, "the last page");
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked), Some(full as u32));
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(full, 3), &mut asked), None, "the last page");
         assert_eq!(list.len(), full + 3);
         assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 2).to_string()));
+        let (mut list, mut asked) = (Vec::new(), 0);
+        assert_eq!(albums_paged(&mut list, AlbumSort::Random, 0, &page(0, full), &mut asked), None, "a random order is one page");
     }
 
     #[test]

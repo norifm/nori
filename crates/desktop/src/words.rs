@@ -79,6 +79,23 @@ pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
     }
 }
 
+/// One of the album grid's orders (`browse::album_sorts`).
+pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
+    use nori_core::browse::AlbumSort;
+    match sort {
+        AlbumSort::ByName => "A–Z",
+        AlbumSort::ByArtist => "Artist",
+        AlbumSort::ArtistRows => "Artist rows",
+        AlbumSort::Newest => "Added",
+        AlbumSort::Recent => "Played",
+        AlbumSort::Frequent => "Most played",
+        AlbumSort::Starred => "Favorites",
+        AlbumSort::ByYear => "Year",
+        AlbumSort::Random => "Random",
+        AlbumSort::ByGenre => "Genres",
+    }
+}
+
 pub fn songs(n: usize) -> String {
     count(n as u64, "song", "songs")
 }

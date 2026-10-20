@@ -216,7 +216,7 @@ impl Session {
             let _ = tx.send(Msg::From(id, Box::new(Msg::Data(asked.clone(), r))));
         };
         let ask = match req.clone() {
-            Req::Albums { offset } => Some(PageAsk::Albums { offset }),
+            Req::Albums { offset } => Some(PageAsk::Albums { sort: nori_core::browse::AlbumSort::ByName, offset }),
             Req::Artists => Some(PageAsk::Artists),
             Req::Playlists => Some(PageAsk::Playlists),
             Req::Songs { offset } => Some(PageAsk::Songs { offset }),

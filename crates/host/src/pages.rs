@@ -14,8 +14,8 @@ use crate::session::{read_pages, Handle};
 /// A page a client reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageAsk {
-    /// The albums by name, a page from `offset` (more follow while pages come full).
-    Albums { offset: u32 },
+    /// The albums in `sort`'s order, a page from `offset` (more follow while pages come full).
+    Albums { sort: AlbumSort, offset: u32 },
     Artists,
     Playlists,
     /// What the account has starred.
@@ -100,8 +100,8 @@ impl Handle {
             }
         };
         match ask {
-            PageAsk::Albums { offset } => {
-                let read = Read::AlbumList { kind: AlbumSort::ByName, size: ALBUM_PAGE as i32, offset: offset as i32, genre: None };
+            PageAsk::Albums { sort, offset } => {
+                let read = Read::AlbumList { kind: sort, size: ALBUM_PAGE as i32, offset: offset as i32, genre: None };
                 pages(read, &|p| if let Page::Albums { v } = p { Some(PageGot::Albums(v)) } else { None });
             }
             PageAsk::Artists => pages(Read::ArtistIndex, &|p| if let Page::Artists { v } = p { Some(PageGot::Artists(v)) } else { None }),
