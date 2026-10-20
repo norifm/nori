@@ -52,6 +52,21 @@
   /** How much of line `i`'s text is sung, in fractional UTF-16 units (JavaScript's own); -1 while it is
    * not swept. A swept line is dim from its first frame, not lit whole until its first letter. */
   const sungPart = (i: number, text: string) => (i === player.line && player.sung >= 0 ? Math.min(text.length, player.sung) : -1);
+
+  /** Letters the sung edge spans: the line lights through a soft gradient this wide, as the other clients
+   * draw it, rather than a letter at a time. */
+  const SOFT = 3;
+
+  /** `text`'s letters (whole code points) with how lit each is, 0 to 1, for `cut` sung units. */
+  function swept(text: string, cut: number): { ch: string; lit: number }[] {
+    const out: { ch: string; lit: number }[] = [];
+    let at = 0;
+    for (const ch of text) {
+      out.push({ ch, lit: Math.min(1, Math.max(0, (cut - at) / SOFT + 0.5)) });
+      at += ch.length;
+    }
+    return out;
+  }
 </script>
 
 <div class="lyrics" class:synced id="lyrics" bind:this={box}>
@@ -65,9 +80,8 @@
       {#if synced}
         <button class="line" class:on={i === player.line} disabled={!taps} class:duet={l.voice === 1} data-i={i} onclick={() => void player.tapLine(i)}>
           {#if cut >= 0}
-            {@const whole = Math.floor(cut)}
-            <!-- The letter being sung fills from the left as the core's place moves through it, as Android draws it. -->
-            <span class="sung">{l.text.slice(0, whole)}</span>{#if whole < l.text.length}<span class="edge" style="--fill: {(cut - whole) * 100}%">{l.text[whole]}</span>{/if}<span class="rest">{l.text.slice(whole + 1)}</span>
+            <!-- The sung edge glides through the line as the core's place moves, a few letters soft. -->
+            {#each swept(l.text, cut) as s}<span style="color: color-mix(in srgb, var(--ink) {s.lit * 100}%, var(--quiet))">{s.ch}</span>{/each}
           {:else}{l.text || "♪"}{/if}
           {#if l.translation}<span class="tr">{l.translation}</span>{/if}
         </button>
@@ -112,18 +126,8 @@
   .line:hover:enabled {
     background: var(--hover);
   }
-  .line.on,
-  .line.on .sung {
+  .line.on {
     color: var(--ink);
-  }
-  .line.on .rest {
-    color: var(--quiet);
-  }
-  .edge {
-    background: linear-gradient(90deg, var(--ink) var(--fill), var(--quiet) var(--fill));
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
   }
   .duet {
     text-align: right;
