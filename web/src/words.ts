@@ -53,6 +53,7 @@ export const W = {
   rename: "Rename",
   deletePlaylist: "Delete playlist",
   deleteConfirm: (name: string) => `Delete "${name}"? This cannot be undone.`,
+  reorder: "Drag to reorder",
   moveUp: "Move up",
   moveDown: "Move down",
   removeFromPlaylist: "Remove from playlist",

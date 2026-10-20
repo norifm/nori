@@ -1,6 +1,6 @@
 <script lang="ts">
   // The queue in play order: what played (dimmed), the song heard, what plays next. A click plays a
-  // song; its menu and a drag move or remove it (dragging only while play order is list order).
+  // song; its menu and its handle's drag move or remove it (dragging only while play order is list order).
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import { W } from "../words";
@@ -8,11 +8,11 @@
   import Cover from "./Cover.svelte";
   import Icon from "./Icon.svelte";
   import JamQueue from "./JamQueue.svelte";
+  import { sortable } from "./sortable";
 
   const n = $derived(player.now);
   const rows = $derived(n?.queue ?? []);
   const current = $derived(n?.current ?? -1);
-  let dragged = $state<number | null>(null);
   let list = $state<HTMLOListElement>();
   let placed = false;
   // Opened with the song heard at the top and what played above it, as Android's queue opens; once.
@@ -22,8 +22,6 @@
     placed = true;
     list.scrollTop += el.getBoundingClientRect().top - list.getBoundingClientRect().top;
   });
-  let over = $state<number | null>(null);
-
   const move = (from: number, to: number) => player.control("move_song", from, to);
   const extra = (q: QueueSong, at: number) => [
     ...(n?.reorderable && at > 0 ? [{ label: W.moveUp, icon: "up", run: () => move(q.index, rows[at - 1].index) }] : []),
@@ -33,33 +31,11 @@
 </script>
 
 <JamQueue />
-<ol class="queue" id="queue" bind:this={list}>
+<ol class="queue" id="queue" bind:this={list} use:sortable={{ moved: (from, to) => move(rows[from].index, rows[to].index) }}>
   {#each rows as q, at (`${q.index}:${q.id}`)}
     {#if at === 0 && current > 0}<li class="head">{W.history}</li>{/if}
     {#if at === current + 1}<li class="head">{W.queue}</li>{/if}
-    <li
-      class="row"
-      class:current={at === current}
-      class:past={at < current}
-      class:over={over === at}
-      draggable={!!n?.reorderable && at !== current}
-      ondragstart={(e) => {
-        dragged = at;
-        e.dataTransfer?.setData("text/plain", String(at));
-      }}
-      ondragover={(e) => {
-        if (dragged === null) return;
-        e.preventDefault();
-        over = at;
-      }}
-      ondragleave={() => over === at && (over = null)}
-      ondrop={(e) => {
-        e.preventDefault();
-        if (dragged !== null && dragged !== at) void move(rows[dragged].index, q.index);
-        dragged = over = null;
-      }}
-      ondragend={() => (dragged = over = null)}
-    >
+    <li class="row" class:current={at === current} class:past={at < current} data-row={n?.reorderable && at !== current ? "" : undefined} data-at={at}>
       <button class="play" onclick={() => void player.control("jump", q.index)}>
         <span class="art"><Cover src={q.cover} /></span>
         <span class="text">
@@ -68,6 +44,9 @@
         </span>
         {#if at === current}<Icon name={player.playing ? "play" : "pause"} />{/if}
       </button>
+      {#if n?.reorderable && at !== current}
+        <span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="drag" /></span>
+      {/if}
       {#if q.id}
         <button class="round more" aria-label={W.more} title={W.more} onclick={() => void songMenu(q as Song, extra(q, at))}><Icon name="more" /></button>
       {/if}
@@ -107,8 +86,20 @@
   .row.past {
     opacity: 0.5;
   }
-  .row.over {
-    box-shadow: inset 0 2px 0 var(--ink);
+  .row:global(.held) {
+    position: relative;
+    z-index: 1;
+    background: var(--surface);
+    box-shadow: 0 0 0 1px var(--outline);
+  }
+  .handle {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    color: var(--dim);
+    cursor: grab;
+    touch-action: none;
   }
   .play {
     flex: 1;
