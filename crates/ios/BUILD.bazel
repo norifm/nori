@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-ios',
  'edition': '2021',
- 'version': '0.7.0-beta.2',
+ 'version': '0.7.0-beta.3',
  'targets': [{'name': 'nori_ios', 'kind': 'staticlib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
  'local': [{'package': 'nori-core',

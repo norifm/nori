@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-desktop',
  'edition': '2021',
- 'version': '0.7.0-beta.2',
+ 'version': '0.7.0-beta.3',
  'targets': [{'name': 'nori-desktop', 'kind': 'bin', 'root': 'src/main.rs', 'test': True},
              {'name': 'build-script-build',
               'kind': 'custom-build',
