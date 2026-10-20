@@ -29,6 +29,8 @@ const BUTTON: i32 = 12;
 /// The season tiles, and light / dark / AMOLED.
 const SEASONS: i32 = 13;
 const APPEARANCE_ROW: i32 = 14;
+/// What is stored, as a bar of its parts.
+const USAGE: i32 = 15;
 
 /// The appearance row's name: it is not one setting but two (the theme and AMOLED).
 pub const APPEARANCE: &str = "appearance";
@@ -182,6 +184,8 @@ struct Row {
     min: f32,
     max: f32,
     centred: bool,
+    /// A usage row's parts, as fractions of the whole.
+    shares: Vec<f32>,
 }
 
 fn options(name: &str) -> Vec<String> {
@@ -431,16 +435,18 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         }
         RowItem::Stored => {
             let bytes = |b: u64| numbers::bytes(b as i64, POINT);
-            let stored = format!(
-                "{} streamed · {} covers · {} lyrics · {} in {} · {} library",
-                bytes(f.stream_bytes),
-                bytes(f.cover_bytes),
-                bytes(f.lyrics_bytes),
-                bytes(f.download_bytes),
-                words::count(f.download_songs, "download", "downloads"),
-                bytes(f.database_bytes)
-            );
-            info("Stored on this Mac", stored)
+            let downloads = words::count(f.download_songs, "download", "downloads");
+            let parts = [("Streamed music", f.stream_bytes), (downloads.as_str(), f.download_bytes), ("Covers", f.cover_bytes), ("Lyrics", f.lyrics_bytes), ("Library index", f.database_bytes)];
+            let total: u64 = parts.iter().map(|p| p.1).sum();
+            Row {
+                kind: USAGE,
+                title: "Stored on this computer".into(),
+                detail: bytes(total),
+                options: parts.iter().map(|(name, b)| (format!("{name} · {}", bytes(*b)), String::new())).collect(),
+                shares: parts.iter().map(|p| p.1 as f32 / total.max(1) as f32).collect(),
+                enabled: true,
+                ..Default::default()
+            }
         }
         RowItem::Link { .. } | RowItem::CompressionMeter => return None,
         RowItem::Action { action: a } => {
@@ -598,6 +604,7 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<Setti
                 min: r.min,
                 max: r.max,
                 centred: r.centred,
+                shares: ModelRc::new(VecModel::from(r.shares)),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
             });

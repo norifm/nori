@@ -133,6 +133,8 @@ export struct SettingRow {
     centred: bool,
     first: bool,
     last: bool,
+    // A usage row's parts, as fractions of the whole, in `options`' order.
+    shares: [float],
 }
 
 // A kind of profile the login page adds (the core's providers): its words, and the fields its form asks.
@@ -2875,7 +2877,19 @@ component Segments inherits Rectangle {
 }
 
 // One row of the settings page, of whichever kind.
+// The storage bar's colors, one per kind of thing stored, as Android's.
+global UsageColors {
+    public pure function of(i: int) -> color {
+        return i == 0 ? #2D9CDB : i == 1 ? #27AE60 : i == 2 ? #F2994A : i == 3 ? #9B51E0 : #8A8A8A;
+    }
+}
+
 component SettingLine inherits VerticalLayout {
+    // Where usage part `i` starts along the bar: the parts before it.
+    pure function usage-start(i: int) -> float {
+        let shares = root.item.shares;
+        return (i > 0 ? shares[0] : 0) + (i > 1 ? shares[1] : 0) + (i > 2 ? shares[2] : 0) + (i > 3 ? shares[3] : 0) + (i > 4 ? shares[4] : 0);
+    }
     in property <SettingRow> item;
     callback toggled(string, bool);
     callback chosen(string, int);
@@ -3041,6 +3055,36 @@ component SettingLine inherits VerticalLayout {
                     colour: Theme.dim;
                     width: 12px;
                     height: 12px;
+                }
+            }
+            // What is stored, by kind: one bar split in the parts' colors, then a line per part.
+            if root.item.kind == 15: Rectangle {
+                height: 10px;
+                border-radius: 5px;
+                clip: true;
+                background: Theme.hairline;
+                for share[i] in root.item.shares: Rectangle {
+                    x: root.usage-start(i) * parent.width;
+                    width: max(0px, share * parent.width - 2px);
+                    background: UsageColors.of(i);
+                }
+            }
+            if root.item.kind == 15: VerticalLayout {
+                spacing: 2px;
+                for part[i] in root.item.options: HorizontalLayout {
+                    spacing: 8px;
+                    Rectangle {
+                        y: (parent.height - self.height) / 2;
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: UsageColors.of(i);
+                    }
+                    Text {
+                        text: part;
+                        color: Theme.dim;
+                        font-size: 12px;
+                    }
                 }
             }
             if root.item.kind == 5: Bar {
