@@ -17,6 +17,14 @@ uniffi = { git = "https://github.com/mozilla/uniffi-rs", rev = "aea52cbe269183af
 uniffi-bindgen-kotlin-jni = { git = "https://github.com/mozilla/uniffi-rs", rev = "aea52cbe269183afba665372c991420253cbe56e" }
 uniffi-bindgen-kotlin-jni-runtime = { git = "https://github.com/mozilla/uniffi-rs", rev = "aea52cbe269183afba665372c991420253cbe56e" }
 
+# Line tables only, none for dependencies: panics and backtraces keep their lines, while compiling,
+# linking and the target directory shrink. CARGO_PROFILE_DEV_DEBUG=true brings back a debugger's variables.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # The time-stretch (crates/stretch) is many times slower unoptimized; keep it fast in debug builds and tests too.
 [profile.dev.package.nori-stretch]
 opt-level = 3
