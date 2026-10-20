@@ -317,6 +317,25 @@ fn disk_keys() {
 }
 
 #[test]
+fn provider_files_kept_in_memory() {
+    // A page measures the provider cover its list just drew without asking the provider again; the file
+    // never reaches the disk and goes with the loader's memory.
+    let d = dir("provider-memory");
+    let server = Server::new(200);
+    let provider = "http://s/rest/getCoverArt.view?u=a&id=pl-ytmusic-LM&size=320";
+    let loader = Loader::new(config(Some(d.to_path_buf()), 1), CoverNet::over(server.clone()));
+    loader.load(provider, 8, 8).unwrap();
+    let mut file = Vec::new();
+    loader.read(provider, &mut file).unwrap();
+    assert!(header(&file).is_ok());
+    assert_eq!(server.calls(), 1);
+    assert!(!loader.disk().unwrap().contains(Key::of(&CoverNet::default(), provider)));
+    loader.trim();
+    loader.read(provider, &mut file).unwrap();
+    assert_eq!(server.calls(), 2);
+}
+
+#[test]
 fn dropped_loader_answers_closed() {
     let server = Server::new(200);
     server.hold();
