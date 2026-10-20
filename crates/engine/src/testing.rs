@@ -1,7 +1,8 @@
 //! A virtual clock for tests: time moves only while the engine sleeps, and the test's device pulls on that
 //! time, so results do not depend on machine load and minutes of music run in moments. [`Stepper`]
 //! waits for the engine to sleep, then advances to the next engine timer or device pull. While the engine
-//! waits for a song's bytes, time stands still (up to [`BYTES_WAIT`] of real time).
+//! waits for a song's bytes, or a loader takes bytes in, time stands still (up to [`BYTES_WAIT`] of real
+//! time without either moving on).
 
 use std::sync::Arc;
 use std::thread::Thread;
@@ -11,7 +12,8 @@ use parking_lot::{Condvar, Mutex};
 
 use crate::Clock;
 
-/// Real time the clock waits per sleep for bytes the engine awaits; longer than any in-memory server takes.
+/// Real time the clock waits for bytes the engine awaits, or a loader takes in, without either moving on;
+/// longer than any in-memory server takes.
 pub(crate) const BYTES_WAIT: Duration = Duration::from_millis(2_000);
 /// The shorter wait while a server itself waits for the clock (a paced transcode).
 pub(crate) const TIME_WAIT: Duration = Duration::from_millis(20);
@@ -37,6 +39,23 @@ struct State {
     handing: u32,
     /// Woken by the test and no turn taken since.
     woken: bool,
+    /// Loader threads taking bytes in, their changes so far, and the count at which waiting for them was
+    /// given up.
+    loading: u32,
+    loads: u64,
+    loads_gave_up: u64,
+}
+
+impl State {
+    /// A loader takes bytes in, not counting one in a server waiting for this clock, nor those given up on.
+    fn loaders_busy(&self) -> bool {
+        self.loading > self.time_waiters && self.loads_gave_up != self.loads
+    }
+
+    /// Real time to wait for bytes or loaders that do not move on.
+    fn hold(&self) -> Duration {
+        if self.time_waiters > 0 { TIME_WAIT } else { BYTES_WAIT }
+    }
 }
 
 #[derive(Default)]
@@ -96,6 +115,34 @@ impl Clock for Virtual {
         s.woken = true;
         engine.unpark();
     }
+
+    fn let_loaders_run(&self) {
+        let mut s = self.0.s.lock();
+        let mut still_since: Option<(u64, Instant)> = None;
+        while s.loaders_busy() {
+            match still_since {
+                Some((n, t)) if n == s.loads => {
+                    if t.elapsed() >= s.hold() {
+                        s.loads_gave_up = s.loads;
+                        return;
+                    }
+                }
+                _ => still_since = Some((s.loads, Instant::now())),
+            }
+            self.0.cv.wait_for(&mut s, Duration::from_millis(1));
+        }
+    }
+
+    fn loading(&self, working: bool) {
+        let mut s = self.0.s.lock();
+        if working {
+            s.loading += 1;
+        } else {
+            s.loading -= 1;
+        }
+        s.loads += 1;
+        self.0.cv.notify_all();
+    }
 }
 
 impl Virtual {
@@ -103,25 +150,26 @@ impl Virtual {
         self.0.s.lock().now_ns
     }
 
-    /// Blocks until the engine sleeps with nothing due now.
+    /// Blocks until the engine sleeps with nothing due now, and no loader takes bytes in (one blocked
+    /// in a server waiting for this clock does not count).
     pub fn settle(&self) {
         let started = Instant::now();
         let mut s = self.0.s.lock();
-        let mut bytes_since: Option<(u64, Instant)> = None;
+        let mut still_since: Option<((u64, u64), Instant)> = None;
         loop {
             if s.parked && !s.woken {
-                if !s.bytes || s.gave_up == s.sleeps {
+                if !(s.bytes && s.gave_up != s.sleeps) && !s.loaders_busy() {
                     return;
                 }
-                let hold = if s.time_waiters > 0 { TIME_WAIT } else { BYTES_WAIT };
-                match bytes_since {
-                    Some((n, t)) if n == s.sleeps => {
-                        if t.elapsed() >= hold {
+                match still_since {
+                    Some((n, t)) if n == (s.sleeps, s.loads) => {
+                        if t.elapsed() >= s.hold() {
                             s.gave_up = s.sleeps;
+                            s.loads_gave_up = s.loads;
                             return;
                         }
                     }
-                    _ => bytes_since = Some((s.sleeps, Instant::now())),
+                    _ => still_since = Some(((s.sleeps, s.loads), Instant::now())),
                 }
             }
             assert!(started.elapsed() < STUCK, "the engine did not go to sleep");
