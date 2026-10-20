@@ -550,6 +550,29 @@ impl InnerTube {
         self.call(&WEB_REMIX, http, endpoint, json!({ "target": { "videoId": video } })).await.map(|_| ())
     }
 
+    /// Adds `video` to the account's history, as YouTube Music's own player does when a song plays: the
+    /// web player's answer names its playback-stats address, which is asked with the account's cookies.
+    /// Signed in only.
+    pub async fn report_play<H: Http + Sync>(&self, http: &H, video: &str) -> Result<(), H::Error> {
+        if self.cookies().is_none() {
+            return Err(Error::SignedOut);
+        }
+        let answer = self.call(&WEB_REMIX, http, "player", json!({ "videoId": video })).await?;
+        let base = answer.pointer("/playbackTracking/videostatsPlaybackUrl/baseUrl").and_then(Value::as_str)
+            .ok_or_else(|| Error::Parse("no playback tracking in the player answer".into()))?;
+        let joiner = if base.contains('?') { '&' } else { '?' };
+        let url = format!("{base}{joiner}ver=2&c=WEB_REMIX&cpn={}", playback_nonce());
+        // The call may have rotated the session: the cookies as they are now.
+        let cookies = self.cookies().ok_or(Error::SignedOut)?;
+        let headers = vec![("Cookie".into(), cookies.header()), ("User-Agent".into(), BROWSER_UA.into()), ("Origin".into(), "https://music.youtube.com".into())];
+        let r = http.send(Request { url, headers, body: None }).await.map_err(Error::Transport)?;
+        self.take_set_cookies(&r.set_cookies);
+        if !(200..300).contains(&r.status) {
+            return Err(Error::Status(r.status));
+        }
+        Ok(())
+    }
+
     /// The stream to play `video` from: the first visionOS build YouTube still serves, and its best
     /// audio ([`pick`]). Refused for want of a visitor id, it is asked once more with the one the
     /// refusal gave. Never signed in.
@@ -583,6 +606,19 @@ impl InnerTube {
         }
         live::adts(&answer.body, out).ok_or_else(|| Error::Parse("not a live piece of AAC audio".into()))
     }
+}
+
+/// A client playback nonce: 16 of YouTube's 64 URL-safe characters, at random, new for each play.
+fn playback_nonce() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let random = |n: u64| {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(n);
+        h.finish()
+    };
+    let bits = [random(0), random(1)];
+    (0..16).map(|i| ALPHABET[((bits[i / 8] >> ((i % 8) * 6)) & 63) as usize] as char).collect()
 }
 
 #[cfg(test)]
@@ -985,6 +1021,26 @@ pub(crate) mod tests {
         let asked = fake.asked();
         assert!(asked[0].url.contains("/like/like?") && asked[1].url.contains("/like/removelike?"));
         assert_eq!(body(&asked[0])["target"]["videoId"], "v1");
+    }
+
+    /// A play goes into the account's history: the web player's stats address, asked with the cookies and
+    /// a fresh nonce. Signed out, nothing is asked.
+    #[test]
+    fn plays_reach_the_history() {
+        let player = r#"{"playbackTracking":{"videostatsPlaybackUrl":{"baseUrl":"https://s.youtube.com/api/stats/playback?docid=v1"}}}"#;
+        let fake = Fake::answering(&[(200, player), (204, "")]);
+        ready(signed_in().report_play(&fake, "v1")).unwrap();
+        let asked = fake.asked();
+        assert!(asked[0].url.contains("/player?") && body(&asked[0])["videoId"] == "v1");
+        let stats = &asked[1];
+        assert!(stats.url.starts_with("https://s.youtube.com/api/stats/playback?docid=v1&ver=2&c=WEB_REMIX&cpn="), "{}", stats.url);
+        let cpn = stats.url.rsplit("cpn=").next().unwrap();
+        assert!(cpn.len() == 16 && cpn.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'), "{cpn}");
+        assert_eq!(stats.header("Cookie"), Some(SESSION));
+
+        let fake = Fake::answering(&[]);
+        assert_eq!(ready(InnerTube::default().report_play(&fake, "v1")), Err(Error::SignedOut));
+        assert!(fake.asked().is_empty());
     }
 
     /// The library's playlists, without the "New playlist" button; its albums.

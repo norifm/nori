@@ -1083,7 +1083,7 @@ impl Handle {
             }
             _ => None,
         };
-        if let Some(send) = send.filter(|s| self.rules.account && (s.submit_id.is_some() || s.now_playing_id.is_some())) {
+        if let Some(send) = send.filter(|s| self.rules.scrobbles && (s.submit_id.is_some() || s.now_playing_id.is_some())) {
             let client = self.client.clone();
             self.run(async move {
                 // Offline, writes wait in the pending queue with their original time.

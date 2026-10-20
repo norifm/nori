@@ -24,7 +24,7 @@ pub fn provider(kind: ServerKind) -> ProviderWords {
         ServerKind::Subsonic => ProviderWords { name: "Your server", note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In", no_user: "API key" },
         ServerKind::YouTubeMusic => ProviderWords {
             name: "YouTube Music",
-            note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.",
+            note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Signed in, songs you hear go into your YouTube history.",
             add: "Add YouTube Music",
             no_user: "best effort",
         },

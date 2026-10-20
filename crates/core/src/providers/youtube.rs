@@ -72,7 +72,7 @@ fn rules(signed_in: bool) -> ProfileRules {
     let mut sections = if signed_in { vec![LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists] } else { Vec::new() };
     sections.push(LibrarySection::Downloads);
     sections.push(LibrarySection::History);
-    ProfileRules { asks: false, account: false, downloads: true, radio: true, indexed: false, sections, settings, remote: true, measures: true, stars: signed_in, stars_after_sign_in: !signed_in, feed: true }
+    ProfileRules { asks: false, account: false, downloads: true, radio: true, indexed: false, sections, settings, remote: true, measures: true, stars: signed_in, stars_after_sign_in: !signed_in, scrobbles: signed_in, feed: true }
 }
 
 /// The platform's transport as innertube-music's HTTP client.
@@ -297,6 +297,13 @@ impl State {
                 self.fresh_session(c, account::unix_now()).await;
                 self.after(c, self.api.like(&Wire(&*c.transport), raw(&id)?, on).await)
             }
+            // A song heard goes into the account's history, which YouTube's recommendations learn from;
+            // "now playing" has nowhere to go there.
+            Write::Scrobble { id, submission: true, .. } if self.signed_in(c) => {
+                self.fresh_session(c, account::unix_now()).await;
+                self.after(c, self.api.report_play(&Wire(&*c.transport), raw(&id)?).await)
+            }
+            Write::Scrobble { submission: false, .. } if self.signed_in(c) => Ok(()),
             _ => Err(super::nowhere("write")),
         }
     }
@@ -331,6 +338,7 @@ impl Provider for YouTube {
             shown.measures = false;
             shown.stars = false;
             shown.stars_after_sign_in = false;
+            shown.scrobbles = false;
             shown.sections.clear();
             shown.settings.retain(|p| !matches!(p, SettingsPart::ServerOptions | SettingsPart::Downloads));
         }
@@ -1328,6 +1336,7 @@ mod tests {
         assert_eq!(out.sections, [LibrarySection::Downloads, LibrarySection::History]);
         assert!(out.downloads && !out.stars && out.stars_after_sign_in, "signed out, the seal asks to sign in");
         assert!(!signed.stars_after_sign_in);
+        assert!(signed.scrobbles && !out.scrobbles, "plays go to the account's history");
         assert!(!out.settings.iter().any(|p| matches!(p, SettingsPart::Library | SettingsPart::Streaming)));
         assert!(signed.downloads && signed.stars && signed.sections == [LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists, LibrarySection::Downloads, LibrarySection::History]);
         assert!(!signed.account && signed.remote, "LAN remote is independent of a server account");

@@ -288,8 +288,9 @@ page starred [] [] [yt-zhl-Cs1-sG4*/545,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321]
 asked browse VLLM
 == writes with nowhere to go
 playlist: error Api { code: 0, reason: "this profile has no write" }
-scrobble: error Api { code: 0, reason: "this profile has no write" }
+scrobble: error Parse { reason: "no playback tracking in the player answer" }
 pending false
+asked player a
 == streams, downloads and covers
 stream youtube:dQw4w9WgXcQ yt-dQw4w9WgXcQ:0
 download youtube:dQw4w9WgXcQ dl:yt-dQw4w9WgXcQ

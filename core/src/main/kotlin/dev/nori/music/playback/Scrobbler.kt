@@ -22,7 +22,7 @@ class Scrobbler(private val nori: Nori, private val scope: CoroutineScope) {
         val wall = System.currentTimeMillis()
         val send = nori.session.scrobbleTrack(id, why, playing, SystemClock.elapsedRealtime(), wall, java.util.TimeZone.getDefault().getOffset(wall))
         // Plays are the account's to count: a jam guest's are its host's songs.
-        if ((send.submitId == null && send.nowPlayingId == null) || !nori.rules.account) return
+        if ((send.submitId == null && send.nowPlayingId == null) || !nori.rules.scrobbles) return
         scope.launch(Dispatchers.IO) {
             // Both are writes: made offline, they wait in the pending queue and keep their original time.
             send.submitId?.let { runCatching { nori.library.scrobble(it, submission = true, timeMs = send.submitAt) } }
