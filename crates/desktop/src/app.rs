@@ -1847,6 +1847,7 @@ impl App {
                     ui.set_lyrics_lines(l.lines());
                     ui.set_lyrics_synced(l.synced());
                     ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit().into() });
+                    ui.set_lyrics_waiting(false);
                     self.lyrics = Some(l);
                     self.lyrics_step(true);
                 }
@@ -2551,6 +2552,7 @@ impl App {
         ui.set_lyrics_lines(ModelRc::default());
         ui.set_lyrics_active(-1);
         ui.set_lyrics_note(if self.song.is_some() { "Looking for lyrics…".into() } else { "".into() });
+        ui.set_lyrics_waiting(self.song.is_some());
         if let (Some(s), Some(id)) = (&self.session, &self.heard) {
             s.lyrics(id.clone());
         }

@@ -4161,6 +4161,24 @@ export component AppWindow inherits Window {
     in property <[LyricPiece]> lyric-pieces-full;
     in property <bool> lyrics-synced;
     in property <string> lyrics-note;
+    // The song's lyrics are being looked for; their words come only if that takes a while
+    // (`lyrics-slow`), so a song whose lyrics are at hand changes without a flash of them.
+    in property <bool> lyrics-waiting;
+    property <bool> lyrics-slow;
+    changed lyrics-waiting => {
+        self.lyrics-slow = false;
+        lyrics-slow-timer.running = self.lyrics-waiting;
+    }
+    lyrics-slow-timer := Timer {
+        interval: 600ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            root.lyrics-slow = true;
+        }
+    }
+    // What stands where the lyrics would: shown once there is something to say.
+    property <float> lyrics-note-shown: !root.lyrics-waiting || root.lyrics-slow ? 1 : 0;
     in property <[SettingRow]> settings;
     // Who is signed in (the account row), and the text the page's list is narrowed by.
     in property <string> account;
@@ -5251,9 +5269,18 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                // Said only when the read takes a moment, then faded in: a page that comes at once never shows it.
                 if root.loading: Text {
+                    property <bool> said;
                     text: "Loading…";
                     color: Theme.dim;
+                    opacity: self.said ? 1 : 0;
+                    animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+                    Timer {
+                        interval: 400ms;
+                        running: !parent.said;
+                        triggered => { parent.said = true; }
+                    }
                 }
                 // A list that came back empty, or that the filter left nothing of.
                 if !root.loading && root.failed == "" && root.list-empty: EmptyNote {
@@ -5368,12 +5395,19 @@ export component AppWindow inherits Window {
                     x: 24px;
                     width: parent.width - 48px;
                     text: root.lyrics-note != "" ? root.lyrics-note : "No lyrics";
+                    opacity: root.lyrics-note-shown;
+                    animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
                     color: Theme.dim;
                     font-size: 15px;
                     horizontal-alignment: center;
                     wrap: word-wrap;
                 }
                 if root.shown-panel == 2 && root.lyrics-lines.length > 0: lyric-flick := Flickable {
+                    // New lyrics fade in rather than appear in one frame.
+                    property <bool> came;
+                    opacity: self.came ? 1 : 0;
+                    animate opacity { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
+                    init => { self.came = true; }
                     y: 56px;
                     height: parent.height - 56px;
                     content-height: sung.preferred-height;
@@ -5873,6 +5907,8 @@ export component AppWindow inherits Window {
                 x: root.width / 2 + 20px;
                 width: root.width / 2 - 100px;
                 text: root.lyrics-note != "" ? root.lyrics-note : "No lyrics for this song";
+                opacity: root.lyrics-note-shown;
+                animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
                 color: Theme.dim;
                 font-size: 26px;
                 font-weight: 700;
