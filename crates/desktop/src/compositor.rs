@@ -191,7 +191,7 @@ struct Shared {
     /// Queried each frame for the lyrics focus blur.
     focus: RefCell<Option<FocusSource>>,
     /// Run on a touchpad's sideways swipe ([`Swipe`]).
-    swiped: RefCell<Option<Box<dyn Fn()>>>,
+    swiped: RefCell<Option<Swiped>>,
     menu: MenuBar,
     /// Run as the event loop ends, however it ends: on macOS the app menu's and the Dock's Quit, and logging
     /// out, end the process from inside the loop, which never returns to the caller of `run`.
@@ -409,8 +409,8 @@ impl Compositor {
         }
     }
 
-    /// Runs `f` on each sideways swipe of a touchpad's two fingers, either way.
-    pub fn on_swipe(&self, f: impl Fn() + 'static) {
+    /// Runs `f` on each sideways swipe of a touchpad's two fingers, with its way.
+    pub fn on_swipe(&self, f: impl Fn(Way) + 'static) {
         *self.0.swiped.borrow_mut() = Some(Box::new(f));
     }
 
@@ -583,9 +583,20 @@ fn layout_layers(s: &Shared) {
     }
 }
 
+/// Run on each swipe, with its way.
+type Swiped = Box<dyn Fn(Way)>;
+
+/// Where a swipe goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Way {
+    Back,
+    Forward,
+}
+
 /// A touchpad's two-finger sideways swipe, read from the scrolls it sends: one swipe across [`SWIPE_PX`],
-/// mostly sideways, is one swipe, however many scrolls it took. A gesture's phases end it; a mouse
-/// wheel's scrolls, which have none, end after [`SWIPE_QUIET`] without one.
+/// mostly sideways, is one swipe, however many scrolls it took. A swipe is over once the scrolls pause
+/// for [`SWIPE_QUIET`]: the coasting after the fingers lift, which comes as a gesture of its own, is
+/// still the same swipe.
 #[derive(Default)]
 struct Swipe {
     dx: f32,
@@ -598,24 +609,25 @@ const SWIPE_PX: f32 = 90.0;
 const SWIPE_QUIET: Duration = Duration::from_millis(250);
 
 impl Swipe {
-    /// Takes one scroll; true once, when it makes a swipe.
-    fn scrolled(&mut self, dx: f32, dy: f32, phase: winit::event::TouchPhase, now: Instant) -> bool {
+    /// Takes one scroll; the way, once, when it makes a swipe.
+    fn scrolled(&mut self, dx: f32, dy: f32, phase: winit::event::TouchPhase, now: Instant) -> Option<Way> {
         use winit::event::TouchPhase::*;
-        if phase == Started || self.last.is_some_and(|t| now.duration_since(t) > SWIPE_QUIET) {
+        if self.last.is_some_and(|t| now.duration_since(t) > SWIPE_QUIET) {
             *self = Swipe::default();
         }
         self.last = Some(now);
-        if matches!(phase, Ended | Cancelled) {
-            *self = Swipe::default();
-            return false;
+        if matches!(phase, Started | Ended | Cancelled) {
+            (self.dx, self.dy) = (0.0, 0.0);
+            return None;
         }
         self.dx += dx;
         self.dy += dy;
         if self.spent || self.dx.abs() < SWIPE_PX || self.dx.abs() < self.dy.abs() * 2.0 {
-            return false;
+            return None;
         }
         self.spent = true;
-        true
+        // The fingers to the right (the page following them, with natural scrolling) go back, as in a browser.
+        Some(if self.dx > 0.0 { Way::Back } else { Way::Forward })
     }
 }
 
@@ -878,9 +890,9 @@ impl ApplicationHandler<Wake> for Runner {
                     MouseScrollDelta::PixelDelta(p) => (p.x as f32 / scale, p.y as f32 / scale),
                 };
                 self.pointer(|position| wheel_event(position, dx, dy, phase));
-                if self.swipe.scrolled(dx, dy, phase, Instant::now()) {
+                if let Some(way) = self.swipe.scrolled(dx, dy, phase, Instant::now()) {
                     if let Some(f) = self.shared.swiped.borrow().as_ref() {
-                        f();
+                        f(way);
                     }
                 }
             }
@@ -1341,24 +1353,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_sideways_swipe_is_one_swipe_either_way() {
+    fn a_sideways_swipe_is_one_swipe_its_way() {
         use winit::event::TouchPhase::*;
         let t = Instant::now();
-        let gesture = |s: &mut Swipe, dx: f32, dy: f32| {
-            let mut swipes = s.scrolled(0.0, 0.0, Started, t) as u32;
-            for k in 1..10 {
-                swipes += s.scrolled(dx, dy, Moved, t + Duration::from_millis(k * 16)) as u32;
+        // A gesture `at` ms from the start: its scrolls, `n` of them, then the coasting after the fingers
+        // lift, which winit sends as a gesture of its own.
+        let gesture = |s: &mut Swipe, at: u64, dx: f32, dy: f32, n: u64| {
+            let at = |ms: u64| t + Duration::from_millis(at + ms);
+            let mut ways = Vec::new();
+            ways.extend(s.scrolled(0.0, 0.0, Started, at(0)));
+            for k in 1..=n {
+                ways.extend(s.scrolled(dx, dy, Moved, at(k * 16)));
             }
-            swipes + s.scrolled(0.0, 0.0, Ended, t + Duration::from_millis(170)) as u32
+            ways.extend(s.scrolled(0.0, 0.0, Ended, at(n * 16 + 8)));
+            ways.extend(s.scrolled(0.0, 0.0, Started, at(n * 16 + 16)));
+            for k in 1..=20 {
+                ways.extend(s.scrolled(dx, dy, Moved, at(n * 16 + 16 + k * 16)));
+            }
+            ways.extend(s.scrolled(0.0, 0.0, Ended, at(n * 16 + 400)));
+            ways
         };
         let mut s = Swipe::default();
-        assert_eq!(gesture(&mut s, 30.0, 2.0), 1, "to the right");
-        assert_eq!(gesture(&mut s, -30.0, 2.0), 1, "to the left");
-        assert_eq!(gesture(&mut s, 2.0, -30.0), 0, "up and down is scrolling");
-        assert_eq!(gesture(&mut s, 5.0, 0.0), 0, "too short");
+        assert_eq!(gesture(&mut s, 0, 30.0, 2.0, 9), [Way::Back], "to the right, once however far it coasts");
+        assert_eq!(gesture(&mut s, 2_000, 30.0, 2.0, 40), [Way::Back], "a long swipe is still one");
+        assert_eq!(gesture(&mut s, 4_000, -30.0, 2.0, 9), [Way::Forward], "to the left");
+        assert_eq!(gesture(&mut s, 6_000, 2.0, -30.0, 9), [], "up and down is scrolling");
         // A wheel without phases: a pause ends one swipe.
         let mut s = Swipe::default();
-        let wheel = |s: &mut Swipe, at: u64| (0..6).map(|k| s.scrolled(-40.0, 0.0, Moved, t + Duration::from_millis(at + k * 16)) as u32).sum::<u32>();
+        let wheel = |s: &mut Swipe, at: u64| (0..6).filter_map(|k| s.scrolled(-40.0, 0.0, Moved, t + Duration::from_millis(at + k * 16))).count();
         assert_eq!(wheel(&mut s, 0) + wheel(&mut s, 1_000), 2);
     }
 

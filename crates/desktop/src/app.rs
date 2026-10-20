@@ -59,13 +59,15 @@ const EQUALIZER: i32 = 9;
 const FAVORITES: i32 = 12;
 
 /// The way back from the page shown: the pages opened from one another before it, and the tab the first
-/// of them was opened from.
+/// of them was opened from; and the way forward again, the pages gone back from, as a browser's.
 #[derive(Default)]
 struct PageTrail {
     /// The page shown, and those before it, oldest first.
     shown: Option<PageAsk>,
     before: Vec<PageAsk>,
     tab: i32,
+    /// The pages gone back from, the last one gone back from last.
+    after: Vec<PageAsk>,
 }
 
 /// Where Back leads.
@@ -78,6 +80,7 @@ enum Back {
 impl PageTrail {
     /// `ask` is shown, opened from tab `from` (or from the page shown, when `from` is the page view).
     fn opened(&mut self, ask: PageAsk, from: i32) {
+        self.after.clear();
         if from == PAGE {
             self.before.extend(self.shown.take());
         } else {
@@ -89,6 +92,7 @@ impl PageTrail {
 
     /// Back from the page shown: the page before it (now shown), else the tab it was opened from.
     fn back(&mut self) -> Back {
+        self.after.extend(self.shown.take());
         match self.before.pop() {
             Some(page) => {
                 self.shown = Some(page.clone());
@@ -99,6 +103,18 @@ impl PageTrail {
                 Back::Tab(self.tab)
             }
         }
+    }
+
+    /// Forward again: the page last gone back from, now shown; None when there is none.
+    fn forward(&mut self) -> Option<PageAsk> {
+        let page = self.after.pop()?;
+        self.before.extend(self.shown.replace(page.clone()));
+        Some(page)
+    }
+
+    /// Another tab was chosen: there is no way forward from it.
+    fn left(&mut self) {
+        self.after.clear();
     }
 }
 
@@ -639,12 +655,12 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             });
         }
         menu_actions(ui, &a.compositor);
-        // A touchpad's sideways swipe: back, where there is a way back.
+        // A touchpad's sideways swipe: back or forward, where there is a way.
         let me = a.me.clone();
         // Run after the scroll it came with: the app is busy with that event while the swipe is read.
-        a.compositor.on_swipe(move || {
+        a.compositor.on_swipe(move |way| {
             let me = me.clone();
-            slint::Timer::single_shot(std::time::Duration::ZERO, move || me.with(|a| a.swiped_back()));
+            slint::Timer::single_shot(std::time::Duration::ZERO, move || me.with(|a| a.swiped(way)));
         });
         // Now Playing's lyrics: the active line sharp, the rest blurred by the compositor.
         let weak = ui.as_weak();
@@ -730,7 +746,10 @@ fn login_kind(info: &nori_core::providers::ProviderInfo) -> LoginKind {
 
 fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_messages_arrived, h, |a| a.drain_inbox());
-    on!(ui.on_go, h, |a, v| a.go(v));
+    on!(ui.on_go, h, |a, v| {
+        a.trail.left();
+        a.go(v);
+    });
     on!(ui.on_shelf_song, h, |a, shelf, id| {
         let songs = a.feed_songs.get(shelf.max(0) as usize).cloned().unwrap_or_default();
         if let Some(at) = songs.iter().position(|s| s.id == id.as_str()) {
@@ -2689,12 +2708,18 @@ impl App {
         }
     }
 
-    /// A touchpad's swipe back: what the back button showing does (a page's, the equalizer's), or nothing
-    /// where there is none.
-    fn swiped_back(&mut self) {
-        match self.ui().get_view() {
-            PAGE | 10 | 11 => self.back(),
-            EQUALIZER => self.go(SETTINGS),
+    /// A touchpad's swipe: back, what the back button showing does (a page's, the equalizer's); forward,
+    /// the page last gone back from. Nothing where there is no way.
+    fn swiped(&mut self, way: crate::compositor::Way) {
+        use crate::compositor::Way;
+        match (way, self.ui().get_view()) {
+            (Way::Back, PAGE | 10 | 11) => self.back(),
+            (Way::Back, EQUALIZER) => self.go(SETTINGS),
+            (Way::Forward, _) => {
+                if let Some(page) = self.trail.forward() {
+                    self.show_page(page);
+                }
+            }
             _ => {}
         }
     }
@@ -2946,6 +2971,25 @@ mod tests {
         assert_eq!(trail.back(), Back::Tab(FAVORITES), "then where the artist was opened from");
         trail.opened(PageAsk::Album("x".into()), HOME);
         assert_eq!(trail.back(), Back::Tab(HOME), "a page opened from a tab forgets the pages before");
+    }
+
+    #[test]
+    fn forward_reopens_the_pages_gone_back_from() {
+        let (artist, album) = (PageAsk::Artist("ar".into()), PageAsk::Album("al".into()));
+        let mut trail = PageTrail::default();
+        trail.opened(artist.clone(), HOME);
+        trail.opened(album.clone(), PAGE);
+        trail.back();
+        trail.back();
+        assert_eq!(trail.forward(), Some(artist.clone()));
+        assert_eq!(trail.forward(), Some(album.clone()));
+        assert_eq!(trail.forward(), None, "nothing past the last page");
+        assert_eq!(trail.back(), Back::Page(artist.clone()), "back goes the same way again");
+        trail.opened(PageAsk::Playlist("p".into()), PAGE);
+        assert_eq!(trail.forward(), None, "a page opened forgets the way forward");
+        trail.back();
+        trail.left();
+        assert_eq!(trail.forward(), None, "and so does another tab");
     }
 
     fn pill() -> crate::PlayerBar {
