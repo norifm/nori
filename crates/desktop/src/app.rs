@@ -1132,9 +1132,16 @@ impl App {
         let ui = self.ui();
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
-        let cover = if ui.get_full_player() { self.now_cover.as_ref() } else if ui.get_view() == PAGE { self.page_cover.as_ref() } else { None };
+        use nori_core::settings::CoverPlace;
+        let cover = if ui.get_full_player() {
+            self.now_cover.as_ref().map(|c| (c, CoverPlace::Player))
+        } else if ui.get_view() == PAGE {
+            self.page_cover.as_ref().map(|c| (c, CoverPlace::Pages))
+        } else {
+            None
+        };
         match cover {
-            Some(c) => crate::look::cover(&prefs, dark, today, c),
+            Some((c, place)) => crate::look::cover(&prefs, dark, today, c, place),
             None => crate::look::plain(&prefs, dark, today),
         }
     }
@@ -1142,6 +1149,9 @@ impl App {
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
+        let places = crate::session::app().settings.current().unwrap_or_default().cover_colors;
+        self.ui().set_pages_wear_covers(places.contains(&nori_core::settings::CoverPlace::Pages));
+        self.ui().set_player_wears_covers(places.contains(&nori_core::settings::CoverPlace::Player));
         // nori's Motion setting, as on Android: animations run unless it asks for less.
         let reduced = crate::session::app().settings.current().unwrap_or_default().motion != nori_core::settings::Motion::Full;
         self.ui().global::<Motion>().set_reduced(reduced);

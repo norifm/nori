@@ -3886,6 +3886,9 @@ export component AppWindow inherits Window {
     // The page wears its cover's colours: the blurred cover (nori-look's wash) runs out into the page's own
     // colour, so there is no line where the picture stops.
     in property <image> page-wash;
+    // Colors from the cover, as the setting has them: on album and artist pages, in Now Playing.
+    in property <bool> pages-wear-covers: true;
+    in property <bool> player-wears-covers: true;
 
     // What plays.
     in property <bool> has-song;
@@ -4247,6 +4250,7 @@ export component AppWindow inherits Window {
                     y: 0;
                     width: 100%;
                     height: 440px;
+                    visible: root.pages-wear-covers;
                     source: root.page-wash;
                     image-fit: fill;
                 }
@@ -5352,6 +5356,7 @@ export component AppWindow inherits Window {
                 height: 100%;
                 source: root.wash-a;
                 image-fit: cover;
+                visible: root.player-wears-covers;
                 opacity: root.wash-on-b ? 0 : 1;
                 animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
             }
@@ -5360,6 +5365,7 @@ export component AppWindow inherits Window {
                 height: 100%;
                 source: root.wash-b;
                 image-fit: cover;
+                visible: root.player-wears-covers;
                 opacity: root.wash-on-b ? 1 : 0;
                 animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
             }
