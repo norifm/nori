@@ -392,7 +392,7 @@ mod tests {
         }
         let s = session(&["er1", "er2"], 0);
         s.playing();
-        assert_eq!(s.error(PlaybackError::Network, false, true), OnError::Skip, "bridge off by default");
+        assert_eq!(s.error(PlaybackError::Network, false, true), OnError::Stop, "bridge off by default: stays on the song");
         s.moved_to(1);
         assert_eq!(s.error(PlaybackError::Other, false, true), OnError::Stop, "nothing after the last song");
         assert!(!s.bridge_failed());

@@ -24,7 +24,7 @@ pub fn provider(kind: ServerKind) -> ProviderWords {
         ServerKind::Subsonic => ProviderWords { name: "Your server", note: "Sign in to your Navidrome or Subsonic server.", add: "Sign In", no_user: "API key" },
         ServerKind::YouTubeMusic => ProviderWords {
             name: "YouTube Music",
-            note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.",
+            note: "Search and play YouTube Music without an account. Best effort: YouTube can stop it working at any time. Sign in for your library and likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Signed in, songs you hear go into your YouTube history.",
             add: "Add YouTube Music",
             no_user: "best effort",
         },
@@ -294,6 +294,28 @@ pub fn removed(title: &str) -> String {
 
 pub const LINK_COPIED: &str = "Link copied";
 
+pub const PAIR_FAILED: &str = "Pairing failed";
+
+/// Why pasted cookies did not sign the account in.
+pub fn sign_in_failed(r: &nori_core::providers::SignInResult) -> String {
+    use nori_core::providers::SignInResult as R;
+    match r {
+        R::SignedIn { name } => format!("Signed in as {name}"),
+        R::NoSession => "These aren’t a signed-in session’s cookies. Copy them from music.youtube.com while signed in.".into(),
+        R::Refused => "YouTube didn’t accept these cookies. Sign in again in a private window and copy them anew.".into(),
+        R::Unreachable { reason } => format!("YouTube could not be reached ({reason})."),
+    }
+}
+
+pub const YOUTUBE_MUSIC_PAGE: &str = "https://music.youtube.com";
+
+pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window could not open here. Paste cookies from a browser instead.";
+
+/// A song's title as shown: "Untitled" for one that has none (some uploads have a blank one).
+pub fn title(t: &str) -> &str {
+    if t.trim().is_empty() { "Untitled" } else { t }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +327,3 @@ mod tests {
         assert_eq!(quality(&s).as_deref(), Some("FLAC 24/96.0"));
     }
 }
-
-pub const PAIR_FAILED: &str = "Pairing failed";

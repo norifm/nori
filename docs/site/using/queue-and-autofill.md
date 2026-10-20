@@ -16,7 +16,10 @@ handle, swipe it away (with Undo), or clear what is coming.
 - **Shuffle** spreads artists and albums apart, so the same artist rarely plays twice in a row.
 - **Repeat** goes off, all, one.
 - **Skip explicit songs** leaves out songs the server marks explicit.
-- A song that won't play is skipped, up to three in a row (from nori 0.7.0 always; before, a switch).
+- A song that won't play is skipped, up to three in a row (from nori 0.7.0 always; before, a switch). A song
+  that can't load because the connection is gone is not: the songs after it need the network too, so the
+  player stops on it, and Play tries it again (unless Play downloaded is on, which plays a downloaded song
+  instead).
 
 To carry the queue to another of your devices, see [Remote control](../connected/remote-control.md).
 

@@ -92,8 +92,12 @@ pub fn plain(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Look {
 }
 
 /// A page about a cover: the cover's page and ink, the theme's accent moved until it reads there.
-pub fn cover(prefs: &StoredPrefs, system_dark: bool, today: Today, c: &CoverColours) -> Look {
+pub fn cover(prefs: &StoredPrefs, system_dark: bool, today: Today, c: &CoverColours, place: nori_core::settings::CoverPlace) -> Look {
     let base = plain(prefs, system_dark, today);
+    // Colors from the cover, where the setting wears them.
+    if !prefs.cover_colors.contains(&place) {
+        return base;
+    }
     let (light, dark) = theme::accents(season_of(prefs.season), today.month, today.day, today.southern);
     let page = dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
     Look { table: dress::accented(&page, light, dark), ..base }
@@ -207,11 +211,21 @@ mod tests {
         };
         let prefs = prefs(ThemeSeason::Autumn, ThemeMode::Dark, false);
         let cover_colours = nori_look::cover::derive(&[0xFF20_5030], 1, 1, false);
-        let look = cover(&prefs, false, OCTOBER, &cover_colours);
+        let look = cover(&prefs, false, OCTOBER, &cover_colours, nori_core::settings::CoverPlace::Pages);
         assert_eq!((look.page(), look.ink()), (cover_colours.background, cover_colours.on));
         assert_ne!(look.accent(), cover_colours.accent, "the cover's own accent is not worn");
         let reads = calculate_contrast(look.accent(), look.page());
         assert!(reads >= 4.5f64.min(calculate_contrast(look.ink(), look.page())), "accent reads at {reads:.2}");
+    }
+
+    #[test]
+    fn colors_from_the_cover_off_wear_the_theme() {
+        use nori_core::settings::CoverPlace;
+        let cover_colours = nori_look::cover::derive(&[0xFF20_5030], 1, 1, false);
+        let only_player = StoredPrefs { cover_colors: vec![CoverPlace::Player], ..prefs(ThemeSeason::Autumn, ThemeMode::Dark, false) };
+        let plain_look = plain(&only_player, false, OCTOBER);
+        assert_eq!(cover(&only_player, false, OCTOBER, &cover_colours, CoverPlace::Pages), plain_look, "pages off");
+        assert_eq!(cover(&only_player, false, OCTOBER, &cover_colours, CoverPlace::Player).page(), cover_colours.background, "the player on");
     }
 
     #[test]

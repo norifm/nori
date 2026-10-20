@@ -22,12 +22,10 @@ pub struct CpalOutput {
     config: Option<(StreamConfig, SampleFormat)>,
     /// Period range the device supports, frames.
     periods: Option<(u32, u32)>,
-    /// Kept so the stream can be rebuilt with another period. Only the playing stream's callback locks it.
+    /// The engine's side of the stream. Only the playing stream's callback locks it.
     feed: Option<Arc<Mutex<Feed>>>,
     stream: Option<Stream>,
     playing: bool,
-    /// Equalizer tuning: the period is [`SHALLOW_PERIOD_MS`].
-    shallow: bool,
     /// When what the device took has been heard, on [`clock_us`].
     heard: Arc<Heard>,
     /// Why the stream stopped for good (its device went away), for [`AudioOutput::failed`].
@@ -119,11 +117,11 @@ fn rank(f: SampleFormat) -> Option<u8> {
     }
 }
 
-/// Default period. The sound server's own default is a few ms, which wakes the callback hundreds of
-/// times a second for music buffered seconds ahead.
+/// The period. The sound server's own default is a few ms, which wakes the callback hundreds of times a
+/// second for music buffered seconds ahead. It stays this while the equalizer is tuned: the engine's
+/// ring goes shallow ([`AudioOutput::shallow`] is left as nothing here), and a stream rebuilt for a
+/// shorter period was a gap in the music on entering and leaving the equalizer.
 const PERIOD_MS: u32 = 100;
-/// Period while the equalizer is tuned: a band moved is heard this much sooner.
-const SHALLOW_PERIOD_MS: u32 = 10;
 
 fn buffer_size(rate: u32, ms: u32, periods: Option<(u32, u32)>) -> BufferSize {
     match periods {
@@ -195,14 +193,6 @@ impl CpalOutput {
         }
     }
 
-    fn period_ms(&self) -> u32 {
-        if self.shallow {
-            SHALLOW_PERIOD_MS
-        } else {
-            PERIOD_MS
-        }
-    }
-
     /// Drops the current stream, then builds a new one from the current config and feed, playing if
     /// the engine wants it playing.
     fn rebuild(&mut self) -> Result<(), String> {
@@ -253,7 +243,7 @@ impl AudioOutput for CpalOutput {
             cpal::SupportedBufferSize::Range { min, max } if max >= min => Some((min, max)),
             _ => None,
         };
-        let buffer_size = buffer_size(chosen.sample_rate(), self.period_ms(), self.periods);
+        let buffer_size = buffer_size(chosen.sample_rate(), PERIOD_MS, self.periods);
         let config = StreamConfig { channels: chosen.channels(), sample_rate: chosen.sample_rate(), buffer_size };
         let got = OutputFormat { rate: config.sample_rate, channels: config.channels as usize, bits: 0 };
         if let (Some(w), Some(d)) = (&self.watch, describe(&device)) {
@@ -305,23 +295,6 @@ impl AudioOutput for CpalOutput {
     fn takes_float(&mut self) -> bool {
         let Ok(device) = self.pick() else { return false };
         device.supported_output_configs().is_ok_and(|mut c| c.any(|r| r.sample_format() == SampleFormat::F32))
-    }
-
-    /// Rebuilds the stream with the shorter period, so a sound change is heard sooner.
-    fn shallow(&mut self, on: bool) {
-        if on == self.shallow {
-            return;
-        }
-        self.shallow = on;
-        let period = self.period_ms();
-        let Some((config, _)) = &mut self.config else { return };
-        config.buffer_size = buffer_size(config.sample_rate, period, self.periods);
-        if self.stream.is_none() {
-            return;
-        }
-        if let Err(e) = self.rebuild() {
-            self.fail(e);
-        }
     }
 
     fn close(&mut self) {

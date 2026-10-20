@@ -59,6 +59,7 @@
   {:else if j.hosting}
     <div class="line">
       <Icon name="jam" /><span class="name">{W.jamYours}</span><span class="sub">{W.jamListening(guests.length)}</span>
+      <button class="round end" aria-label={W.jamEnd} title={W.jamEnd} onclick={act(() => ask("jam_close"))}><Icon name="sign-out" /></button>
     </div>
     <button class="pill solid" id="jam-invite" onclick={() => (inviting = true)}><Icon name="plus" />{W.jamInvite}</button>
     <label class="row">
@@ -74,14 +75,13 @@
       {#each guests as m (m.id)}
         <li>
           <Icon name="artist" /><span class="clip who">{m.name}<span class="sub line2">{W.roles[m.role] ?? m.role}</span></span>
-          <button class="pill small" onclick={act(() => ask("jam_promote", m.id, m.role !== "Admin"))}>{m.role === "Admin" ? W.jamMakeGuest : W.jamMakeAdmin}</button>
+          <button class="round" class:lit={m.role === "Admin"} aria-pressed={m.role === "Admin"} aria-label={m.role === "Admin" ? W.jamMakeGuest : W.jamMakeAdmin} title={m.role === "Admin" ? W.jamMakeGuest : W.jamMakeAdmin} onclick={act(() => ask("jam_promote", m.id, m.role !== "Admin"))}><Icon name="key" /></button>
           <button class="round" aria-label={W.jamSendOut} title={W.jamSendOut} onclick={act(() => ask("jam_kick", m.id))}><Icon name="close" /></button>
         </li>
       {:else}
         <li class="sub">{W.jamNoOne}</li>
       {/each}
     </ul>
-    <button class="pill" onclick={act(() => ask("jam_close"))}>{W.jamEnd}</button>
   {:else if !j.guest}
     {#if j.start === "Unavailable"}
       <p class="sub">{W.jamUnavailable}</p>
@@ -113,6 +113,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .lit {
+    color: var(--accent);
   }
   .line .name {
     flex: 1;

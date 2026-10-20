@@ -19,7 +19,7 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 asked getArtists&musicFolderId=7
 read_each AlbumById { id: "al1" }
@@ -27,11 +27,11 @@ page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 asked getAlbum&id=al1
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 asked getArtist&id=ar1
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 asked getArtistInfo2&id=ar1&count=10
 read_each TopSongs { artist: "A" }
@@ -47,7 +47,7 @@ page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 asked getPlaylist&id=p1
 read_each StarredItems
-page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+page starred [ar1] [al2*/1] [s2*/180] 1 #ec2cde5a3f51a96d
 ended: ok
 asked getStarred2&musicFolderId=7
 read_each GenreList
@@ -63,11 +63,11 @@ page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 asked getLyricsBySongId&id=s1&enhanced=true
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 asked getIndexes&musicFolderId=7
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1/200] #895bb72bc5c0c29d
 ended: ok
 asked getMusicDirectory&id=d1
 read_each HomeFeed
@@ -79,19 +79,19 @@ stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: albums [al
 stored AlbumList { kind: ByGenre, size: 20, offset: 0, genre: Some("Rock") }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
 stored AlbumsByYear { from: 2000, to: 2010, size: 20, offset: 0 }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
 stored FavouriteAlbums { size: 20 }: albums [al1/2,al2*/1] #e14ca79ccd5f3637 digest=true fresh=true
-stored ArtistIndex: artists [ar1] #e4328b60ef4d3dea digest=true fresh=true
+stored ArtistIndex: artists [ar1] #2332e55cddda59e7 digest=true fresh=true
 stored AlbumById { id: "al1" }: album al1/2 [s1/200,s2*/180] #048f055c9190ce17 digest=true fresh=true
-stored ArtistById { id: "ar1" }: artist ar1 [al1/2] [] #5f7eb56ef1fbbb45 digest=true fresh=true
-stored ArtistAbout { id: "ar1" }: about Some("http://m") [ar1] #875a0b766ae914c0 digest=true fresh=true
+stored ArtistById { id: "ar1" }: artist ar1 [al1/2] [] #602f5cd23431cde0 digest=true fresh=true
+stored ArtistAbout { id: "ar1" }: about Some("http://m") [ar1] #567bfb9006b6c122 digest=true fresh=true
 stored TopSongs { artist: "A" }: songs [s1/200] #16a140f7cf8f4e2c digest=true fresh=true
 stored PlaylistList: playlists [p1/1] #97710a49413c558f digest=true fresh=true
 stored PlaylistById { id: "p1" }: playlist p1/0 [s1/200] #ca5e40173283c07d digest=true fresh=true
-stored StarredItems: starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918 digest=true fresh=true
+stored StarredItems: starred [ar1] [al2*/1] [s2*/180] 1 #ec2cde5a3f51a96d digest=true fresh=true
 stored GenreList: genres [Rock:9,Jazz:1] #51661f63a458e397 digest=true fresh=true
 stored RadioList: stations [r1] #1138e27d000362dc digest=true fresh=true
 stored LyricsBySong { song_id: "s1" }: lyrics synced=true lines=1 #6c8ce2a474f6df7e digest=true fresh=true
-stored FolderIndex: artists [d1] #f40db99784f6a43d digest=true fresh=true
-stored FolderById { id: "d1" }: folder d1 [d2] [s1/200] #60d1ecafd6f08b38 digest=true fresh=true
+stored FolderIndex: artists [d1] #642b6847d177ef66 digest=true fresh=true
+stored FolderById { id: "d1" }: folder d1 [d2] [s1/200] #895bb72bc5c0c29d digest=true fresh=true
 stored HomeFeed: feed  #ef0697f9bdeeb4b1 digest=true fresh=true
 == read again while fresh: nothing asked
 read_each AlbumList { kind: Newest, size: 20, offset: 0, genre: None }
@@ -110,16 +110,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1/200] #16a140f7cf8f4e2c
@@ -131,7 +131,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+page starred [ar1] [al2*/1] [s2*/180] 1 #ec2cde5a3f51a96d
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -143,10 +143,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1/200] #895bb72bc5c0c29d
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -168,16 +168,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1/200] #16a140f7cf8f4e2c
@@ -189,7 +189,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+page starred [ar1] [al2*/1] [s2*/180] 1 #ec2cde5a3f51a96d
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -201,10 +201,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1/200] #895bb72bc5c0c29d
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -247,16 +247,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al2*/1] #ec85722c6e335ae5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1/200] #16a140f7cf8f4e2c
@@ -268,7 +268,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+page starred [ar1] [al2*/1] [s2*/180] 1 #ec2cde5a3f51a96d
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -281,10 +281,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1/200] #895bb72bc5c0c29d
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -332,18 +332,18 @@ ended: ok
 asked ping
 asked ping
 read_now Search { query: "a", songs: 5, albums: 5, artists: 5 }
-page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #5a081a62d8be0844
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #062e849cee19c9c8
 stored Search { query: "a", songs: 5, albums: 5, artists: 5 }: none digest=false fresh=false
 read_each Search { query: "a", songs: 5, albums: 5, artists: 5 }
-page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #5a081a62d8be0844
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #062e849cee19c9c8
 ended: ok
 asked search3&query=a&songCount=5&albumCount=5&artistCount=5&musicFolderId=7
 asked search3&query=a&songCount=5&albumCount=5&artistCount=5&musicFolderId=7
 read_now SongPage { offset: 0, count: 10 }
-page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #5a081a62d8be0844
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #062e849cee19c9c8
 stored SongPage { offset: 0, count: 10 }: none digest=false fresh=false
 read_each SongPage { offset: 0, count: 10 }
-page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #5a081a62d8be0844
+page found [ar1] [al1/2] [s1/200,ext-deezer-song-9/100] [] #062e849cee19c9c8
 ended: ok
 asked search3&query=&songCount=10&songOffset=0&albumCount=0&artistCount=0&musicFolderId=7
 asked search3&query=&songCount=10&songOffset=0&albumCount=0&artistCount=0&musicFolderId=7
@@ -431,13 +431,13 @@ page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 read_now FavouriteAlbums { size: 20 }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 read_now ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 read_now AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 read_now ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 read_now ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 read_now TopSongs { artist: "A" }
 page songs [s1/200] #16a140f7cf8f4e2c
 read_now PlaylistList
@@ -445,7 +445,7 @@ page playlists [p1/1] #97710a49413c558f
 read_now PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 read_now StarredItems
-page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+page starred [ar1] [al2*/1] [s2*/180] 1 #ec2cde5a3f51a96d
 read_now GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
 read_now RadioList
@@ -453,9 +453,9 @@ page stations [r1] #1138e27d000362dc
 read_now LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 read_now FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 read_now FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1/200] #895bb72bc5c0c29d
 read_now HomeFeed
 page feed  #ef0697f9bdeeb4b1
 kept ssssssssssssssssssF
@@ -497,16 +497,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2,al2*/1] #e14ca79ccd5f3637
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1/200,s2*/180] #048f055c9190ce17
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1/200] #16a140f7cf8f4e2c
@@ -518,7 +518,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1/200] #ca5e40173283c07d
 ended: ok
 read_each StarredItems
-page starred [ar1] [al2*/1] [s2*/180] 1 #b90c352b69472918
+page starred [ar1] [al2*/1] [s2*/180] 1 #ec2cde5a3f51a96d
 ended: ok
 read_each GenreList
 page genres [Pop:3] #1f6516e1210f60c6
@@ -531,10 +531,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1/200] #60d1ecafd6f08b38
+page folder d1 [d2] [s1/200] #895bb72bc5c0c29d
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -545,7 +545,7 @@ star s1: ok
 asked star&id=s1
 kept FsFFsFssFFFssFFFFFF
 read_each StarredItems
-page starred [ar1] [al2*/1] [s1*/200,s2*/180] 2 #5d8aa1998e469f71
+page starred [ar1] [al2*/1] [s1*/200,s2*/180] 2 #032fc15de90e4c9f
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
@@ -562,14 +562,14 @@ asked unstar&albumId=al2
 kept FsFFsFssFFFssFFFFFF
 stored FavouriteAlbums { size: 20 }: albums [al1/2] #0ec106fc480360b5 digest=true fresh=false
 stored AlbumList { kind: Starred, size: 20, offset: 0, genre: None }: albums [al1/2,al2/1] #0fc7c5725c9e3585 digest=true fresh=false
-stored StarredItems: starred [ar1] [] [s1*/200,s2*/180] 2 #1b095473e42e0333 digest=true fresh=false
+stored StarredItems: starred [ar1] [] [s1*/200,s2*/180] 2 #4f7bac572af43512 digest=true fresh=false
 == offline: a heart is queued and the favourites show it
 star s9: ok
 pending 1
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
-stored StarredItems: starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2 digest=true fresh=false
+stored StarredItems: starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb digest=true fresh=false
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
@@ -595,7 +595,7 @@ asked star&id=s9
 asked createPlaylist&name=x&songId=s1
 asked scrobble&id=s1&submission=true&time=5
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 asked getStarred2&musicFolderId=7
 == each write and what it leaves kept
@@ -615,16 +615,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -636,7 +636,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -648,10 +648,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -675,16 +675,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -696,7 +696,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -708,10 +708,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -735,16 +735,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -756,7 +756,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -768,10 +768,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -795,16 +795,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -816,7 +816,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -828,10 +828,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -855,16 +855,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -876,7 +876,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -888,10 +888,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -915,16 +915,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -936,7 +936,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -948,10 +948,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -975,16 +975,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -996,7 +996,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1008,10 +1008,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1035,16 +1035,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -1056,7 +1056,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1068,10 +1068,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1095,16 +1095,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -1116,7 +1116,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1128,10 +1128,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1155,16 +1155,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -1176,7 +1176,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1188,10 +1188,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1215,16 +1215,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -1236,7 +1236,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1248,10 +1248,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1275,16 +1275,16 @@ read_each FavouriteAlbums { size: 20 }
 page albums [al1/2] #0ec106fc480360b5
 ended: ok
 read_each ArtistIndex
-page artists [ar1] #e4328b60ef4d3dea
+page artists [ar1] #2332e55cddda59e7
 ended: ok
 read_each AlbumById { id: "al1" }
 page album al1/2 [s1*/200,s2*/180] #939a3a28a234c72d
 ended: ok
 read_each ArtistById { id: "ar1" }
-page artist ar1 [al1/2] [] #5f7eb56ef1fbbb45
+page artist ar1 [al1/2] [] #602f5cd23431cde0
 ended: ok
 read_each ArtistAbout { id: "ar1" }
-page about Some("http://m") [ar1] #875a0b766ae914c0
+page about Some("http://m") [ar1] #567bfb9006b6c122
 ended: ok
 read_each TopSongs { artist: "A" }
 page songs [s1*/200] #6e33e46b92deb7d2
@@ -1296,7 +1296,7 @@ read_each PlaylistById { id: "p1" }
 page playlist p1/0 [s1*/200] #fdfc97d0dd949d51
 ended: ok
 read_each StarredItems
-page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #308bca52a89ee8a2
+page starred [ar1] [] [s1*/200,s9*/90,s2*/180] 3 #185ac62e9ffb6deb
 ended: ok
 read_each GenreList
 page genres [Rock:9,Jazz:1] #51661f63a458e397
@@ -1308,10 +1308,10 @@ read_each LyricsBySong { song_id: "s1" }
 page lyrics synced=true lines=1 #6c8ce2a474f6df7e
 ended: ok
 read_each FolderIndex
-page artists [d1] #f40db99784f6a43d
+page artists [d1] #642b6847d177ef66
 ended: ok
 read_each FolderById { id: "d1" }
-page folder d1 [d2] [s1*/200] #54e3807a8c4d8539
+page folder d1 [d2] [s1*/200] #f63df4a48fa8dfee
 ended: ok
 read_each HomeFeed
 page feed  #ef0697f9bdeeb4b1
@@ -1320,7 +1320,7 @@ ended: ok
 star refused: ok
 asked unstar&id=s2
 kept FsFFsFssFFFssFFFFFF
-stored StarredItems: starred [ar1] [] [s1*/200,s9*/90] 2 #4504663f8835b13e digest=true fresh=false
+stored StarredItems: starred [ar1] [] [s1*/200,s9*/90] 2 #6263c7cf3cef6d57 digest=true fresh=false
 == Home's refresh drops the lists
 kept -----FssFF-s-FFFFFs
 == a page the server no longer has is dropped

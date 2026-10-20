@@ -199,6 +199,9 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     val sort: StateFlow<AlbumSort> = _sort
     private val _albums = MutableStateFlow(Grown.empty<Album>())
     val albums: StateFlow<List<Album>> = _albums
+    private val _none = MutableStateFlow(false)
+    /** The first page came back empty: there are no albums, rather than none read yet. */
+    val none: StateFlow<Boolean> = _none
     private var loading = false
     private var exhausted = false
 
@@ -210,6 +213,7 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
         val kept = albumSortKept(s)
         nori.settings.update { it.copy(listPrefs = it.listPrefs + (kept.key to kept.value)) }
         _albums.value = Grown.empty()
+        _none.value = false
         exhausted = false
         loading = false
         loadMore()
@@ -225,6 +229,7 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
                 if (sort != _sort.value) return@collect
                 _albums.value = _albums.value.from(offset, page)
                 exhausted = albumsExhausted(page.size.toUInt())
+                _none.value = offset == 0 && page.isEmpty()
             }
             loading = false
         }
@@ -260,6 +265,11 @@ class GenresViewModel(app: Application) : NoriViewModel(app) {
 /** The Library page's own: the albums added last, under its list of sections. */
 class LibraryHomeViewModel(app: Application) : NoriViewModel(app) {
     val recent: StateFlow<List<Album>> = nori.library.albums(AlbumSort.NEWEST, RECENT)
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** The account's playlists, for a profile whose library is not indexed (see LibraryScreen). */
+    val playlists: StateFlow<List<Playlist>> = (if (nori.rules.indexed) kotlinx.coroutines.flow.flowOf(emptyList()) else nori.library.playlists())
         .catch { emit(emptyList()) }
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
 

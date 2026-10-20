@@ -12,7 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 APP_ID = "dev.nori.desktop"
-RUNTIME = "25.08"
+# GNOME's runtime: it carries WebKitGTK, which the sign-in window uses.
+RUNTIME = "50"
 
 
 def run(*args, **kwargs):
@@ -54,6 +55,12 @@ def package(binaries, output, version):
         args = [arg for library in libraries for arg in ("--library", libdir / library)]
         plugins = (libdir / "alsa-lib/libasound_module_pcm_pulse.so", libdir / "alsa-lib/libasound_module_ctl_pulse.so")
         args += [arg for plugin in plugins for arg in ("--library", plugin)]
+        # The sign-in window's web view and the GTK under it are the system's: a WebKitGTK copied in would not
+        # find its own helper processes, and GTK's must match the desktop's theme and input modules.
+        shared = ("libwebkit2gtk-4.1.so*", "libjavascriptcoregtk-4.1.so*", "libsoup-3.0.so*", "libgtk-3.so*", "libgdk-3.so*",
+                  "libgdk_pixbuf-2.0.so*", "libpango*.so*", "libcairo*.so*", "libatk*.so*", "libharfbuzz*.so*",
+                  "libglib-2.0.so*", "libgobject-2.0.so*", "libgio-2.0.so*", "libgmodule-2.0.so*")
+        args += [arg for library in shared for arg in ("--exclude-library", library)]
         run(appimage_executable(deploy, work), "--appdir", app, "--executable", app / "usr/bin/nori-desktop", "--desktop-file", desktop, "--icon-file", icon, *args, env=env)
         (app / "usr/share/alsa").mkdir(parents=True)
         (app / "usr/share/alsa/nori.conf").write_text("pcm.!default { type pulse }\nctl.!default { type pulse }\n")
@@ -80,9 +87,9 @@ def package(binaries, output, version):
         run(sys.executable, "-c", "import ctypes; lib = ctypes.CDLL('libasound.so.2'); lib.snd_strerror.restype = ctypes.c_char_p; pcm = ctypes.c_void_p(); result = lib.snd_pcm_open(ctypes.byref(pcm), b'default', 0, 0); assert result == 0, lib.snd_strerror(result); lib.snd_pcm_close(pcm)", env=audio_env)
 
         run("flatpak", "remote-add", "--user", "--if-not-exists", "flathub", "https://dl.flathub.org/repo/flathub.flatpakrepo")
-        run("flatpak", "install", "--user", "--noninteractive", "flathub", f"org.freedesktop.Platform//{RUNTIME}", f"org.freedesktop.Sdk//{RUNTIME}")
+        run("flatpak", "install", "--user", "--noninteractive", "flathub", f"org.gnome.Platform//{RUNTIME}", f"org.gnome.Sdk//{RUNTIME}")
         bundle = work / "flatpak"
-        run("flatpak", "build-init", bundle, APP_ID, "org.freedesktop.Sdk", "org.freedesktop.Platform", RUNTIME)
+        run("flatpak", "build-init", bundle, APP_ID, "org.gnome.Sdk", "org.gnome.Platform", RUNTIME)
         files = bundle / "files"
         (files / "bin").mkdir()
         for client in ("desktop", "cli"):

@@ -268,11 +268,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songShelf(
     key: String = title,
 ) {
     item(key = key, contentType = "shelf") {
+        // A long press opens the song's menu, as it does on a row of a list.
+        val menu = LocalSongMenu.current
         Column(Modifier.arriving(arrival, place, rise)) {
             SectionTitle(title)
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(songs.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(songs, key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { i, s ->
-                    CoverCard(s.title, s.artist, vm.cover(s.coverArt, CoverSize.CARD), 150.dp, { actions.play(songs, i, from) })
+                    CoverCard(s.title, s.artist, vm.cover(s.coverArt, CoverSize.CARD), 150.dp, { actions.play(songs, i, from) }, onLongClick = { menu(s) })
                 }
             }
         }

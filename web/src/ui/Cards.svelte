@@ -4,12 +4,13 @@
   import { W } from "../words";
   import type { Album, Artist } from "../state/types";
   import Card from "./Card.svelte";
+  import Icon from "./Icon.svelte";
 
   let { albums = [], artists = [], row = false, sub }: { albums?: Album[]; artists?: Artist[]; row?: boolean; sub?: (a: Album) => string } = $props();
 </script>
 
 {#if albums.length === 0 && artists.length === 0}
-  <p class="empty">{W.empty}</p>
+  <p class="empty"><Icon name="note" />{W.empty}</p>
 {:else}
   <div class={row ? "row" : "grid"}>
     {#each artists as a (a.id)}

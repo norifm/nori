@@ -200,6 +200,12 @@ val LocalPlayerMenu = staticCompositionLocalOf<(Song) -> Unit> { {} }
 /** Opens the devices sheet (RemoteScreens.DevicesHost): where the music plays. */
 val LocalDevices = staticCompositionLocalOf<() -> Unit> { {} }
 
+/** A song's seal tapped: the like flipped, or, signed out where an account would keep it, the sign-in offer. */
+val LocalSealTap = staticCompositionLocalOf<(dev.nori.music.ffi.model.Song, Boolean) -> Unit> { { _, _ -> } }
+
+/** Whether songs show a seal: a like, or one that asks to sign in (`ProfileRules`). */
+val dev.nori.music.ffi.library.ProfileRules.seals: Boolean get() = stars || starsAfterSignIn
+
 /** Says one line in the app's message pill at the top ([ActionsViewModel.tell]). */
 val LocalMessages = staticCompositionLocalOf<(String) -> Unit> { {} }
 
@@ -234,7 +240,10 @@ private val tabs = listOf(
 fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    androidx.compose.runtime.SideEffect { AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL }
+    androidx.compose.runtime.SideEffect {
+        AppMotion.reduce = prefs.motion != dev.nori.music.ffi.settings.Motion.FULL
+        AppMotion.still = prefs.motion == dev.nori.music.ffi.settings.Motion.EINK
+    }
     NoriTheme(prefs) {
         // Sign-in fades to the app: the screens are different enough that a direction would invent a
         // relationship they do not have.
@@ -262,13 +271,14 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
 
         val controller = rememberNavController()
         val sheetScope = androidx.compose.runtime.rememberCoroutineScope()
-        val sheet = remember { PlayerSheet(sheetScope) }
-        sheet.plain = reduceMotion()
         // Whether the player was open, kept with the rest of the saved state, so an app Android put back
-        // together (after it was stopped in the background) opens on the player it was left on.
+        // together (stopped in the background, or a change of configuration as the phone is unlocked)
+        // opens on the player it was left on, from its first frame: opened a frame later, the page under
+        // it showed for that frame.
         var playerWasOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+        val sheet = remember { PlayerSheet(sheetScope, startOpen = playerWasOpen) }
+        sheet.plain = reduceMotion()
         LaunchedEffect(sheet) {
-            if (playerWasOpen) sheet.openAtOnce()
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { playerWasOpen = it }
         }
         // The player covers the page, so a field on it (search) lets go of its focus: held under the player,
@@ -374,6 +384,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LocalSongMenu provides { menuSong = it; menuFromPlayer = false },
             LocalPlayerMenu provides { menuSong = it; menuFromPlayer = true },
             LocalDevices provides { devicesOpen = true },
+            LocalSealTap provides { s, on -> if (rules.stars) actions.star(s, on) else settings.offerSignIn() },
             LocalMessages provides actions::tell,
             LocalRules provides rules,
             LocalAsked provides asked,

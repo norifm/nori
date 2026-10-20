@@ -1548,14 +1548,16 @@ fn failed_songs() {
     extra.server.cut.lock().push(("a".into(), 44 + RATE as u64 * 4 * 4));
     let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), extra);
     rig.engine.play_at(0, 0);
-    assert!(rig.wait_for(40, Rig::ended), "{:?}", rig.events.lock());
+    assert!(rig.wait_for(40, |r| r.engine.status().state == State::Paused), "{:?}", rig.events.lock());
     let events = rig.events.lock().clone();
     assert!(events.iter().any(|e| matches!(e, Event::Error { id, .. } if id == "a")), "{events:?}");
     let heard = rig.heard.lock().clone();
     // All but the packet being read when the bytes stopped.
     let four = RATE as usize * 2 * 39 / 10;
     assert!(heard[..four] == a[..four], "what came of a played: {} heard, {:?}", heard.len(), heard.iter().zip(&a).position(|(h, s)| h != s));
-    assert!(heard[heard.len() - b.len()..] == b[..], "then b, whole");
+    // b needs the same network: the player stays on a rather than skip to fail again.
+    assert!(heard.len() < a.len(), "nothing of b: {} heard", heard.len());
+    assert_eq!(rig.engine.status().index, Some(0), "still on a");
 
     // Play retries failed song.
     let a = music(3.0, 21);

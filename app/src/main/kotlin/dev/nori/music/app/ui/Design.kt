@@ -1036,7 +1036,9 @@ object AppMotion : androidx.compose.ui.MotionDurationScale {
      * answer for everything else.
      */
     @Volatile var reduce = false
-    override val scaleFactor: Float get() = 1f
+    /** The E-ink motion: every animation ends on its first frame. Kept current by App. */
+    @Volatile var still = false
+    override val scaleFactor: Float get() = if (still) 0f else 1f
 }
 
 

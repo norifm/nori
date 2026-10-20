@@ -680,10 +680,11 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             // The seal, as on an album, an artist and a playlist. A song being "starred" while
                             // everything else is "favourited" is a distinction the server makes and nobody else does.
                             // A jam guest's seals would be the host's; a provider may have them signed in.
-                            if (LocalRules.current.stars) TitleButton(
+                            val tap = LocalSealTap.current
+                            if (LocalRules.current.seals) TitleButton(
                                 if (starred) Kanji.Sealed else Kanji.Seal,
                                 say.favourite, starred, rememberStamp(),
-                            ) { actions.star(s, !starred) }
+                            ) { tap(s, !starred) }
                             TitleButton(Icons.Filled.MoreHoriz, say.more, false) { playerMenu(s) }
                         }
                     }
@@ -851,7 +852,7 @@ private data class PlayerTitleMeta(
 )
 
 private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?) = song?.let {
-    PlayerTitleMeta(it.id, it.title, it.artist, it.album.orEmpty(), it.artistId, it.albumId)
+    PlayerTitleMeta(it.id, say.title(it.title), it.artist, it.album.orEmpty(), it.artistId, it.albumId)
 } ?: PlayerTitleMeta(null, say.playerIdle(radio), "", "", null, null)
 
 /**
@@ -2481,11 +2482,20 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     // twice, as it is asked and as it lands, mid-glide: a loop stepped a moment ago steps on from that
     // step in its first frame (waiting a frame for a time to count from held the bar still for it).
     val stepped = remember { longArrayOf(0L) }
-    // An e-ink screen sets the bar and times where the song is on each of those, and nothing runs between.
+    // An e-ink screen sets the bar and times where the song is on each of those, and steps them on
+    // every EINK_STEP_MS while the music plays: one redraw of the panel in that time, not a glide.
     val eink = LocalEinkScreen.current
     LaunchedEffect(free, live, playing, state.current?.id, state.index, durationMs, watched, eink) {
         if (!free || !live) return@LaunchedEffect
-        if (eink) { pace.sync(vm.positionMs, length); publish(); return@LaunchedEffect }
+        if (eink) {
+            while (isActive) {
+                pace.sync(vm.positionMs, length)
+                publish()
+                if (!playing) break
+                kotlinx.coroutines.delay(EINK_STEP_MS)
+            }
+            return@LaunchedEffect
+        }
         var last = stepped[0]
         var now = androidx.compose.runtime.withFrameNanos { it }
         if (now - last >= 100_000_000L) { last = now; now = androidx.compose.runtime.withFrameNanos { it } }
@@ -2892,7 +2902,7 @@ private fun Queue(vm: PlayerViewModel) {
                     }
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         LookText(
-                            s.title, if (i == state.index) accent else ink,
+                            say.title(s.title), if (i == state.index) accent else ink,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge,
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3053,3 +3063,6 @@ private fun UndoPill(undo: QueueUndo<Song>, plain: Boolean, modifier: Modifier, 
         Spacer(Modifier.matchParentSize().pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } })
     }
 }
+
+/** How often an e-ink screen's seek bar and times move on while the music plays. */
+private const val EINK_STEP_MS = 30_000L

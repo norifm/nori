@@ -340,6 +340,9 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
 
     fun skipSignIn() = _account.update { it.copy(offer = false) }
 
+    /** Offers signing in, as a seal tapped while signed out does. */
+    fun offerSignIn() = _account.update { it.copy(offer = true) }
+
     fun login(profile: SavedServer) {
         if (_login.value.busy) return
         _login.value = LoginUi(busy = true)

@@ -46,9 +46,6 @@ pub fn device_name() -> String {
     if name.is_empty() { "nori".into() } else { name }
 }
 
-/// The profile open before a jam was joined, opened again on leaving it (an app value).
-const BEFORE_JAM: &str = "host.beforeJam";
-
 /// Why a jam was not joined.
 #[derive(Debug)]
 pub enum JoinError {
@@ -75,10 +72,8 @@ pub fn jam_join(transport: Arc<dyn nori_core::transport::Transport>, settings: &
 /// The guest profile `pass` signs in with, called `name`, made the active one in place of any guest
 /// profile before it. The account's profile active until now is opened again by [`jam_left`].
 pub fn jam_joined(settings: &Settings, pass: JamPass, name: &str) -> SavedServer {
+    nori_core::remote::jam_joining(settings);
     let mut prefs = settings.current().unwrap_or_default();
-    if prefs.active_server().is_some_and(|s| !nori_remote::is_guest_key(&s.api_key)) {
-        settings.keep_app_value(BEFORE_JAM, prefs.active_server_id.clone());
-    }
     let guest = nori_core::remote::jam_profile(pass, nori_core::settings::new_server_id(), name.into());
     prefs.servers.retain(|s| !nori_remote::is_guest_key(&s.api_key));
     settings.put(nori_core::providers::profile_activated(prefs, guest.clone()));
@@ -89,10 +84,9 @@ pub fn jam_joined(settings: &Settings, pass: JamPass, name: &str) -> SavedServer
 /// used last (the list is in the order they were opened), else none (the login).
 pub fn jam_left(settings: &Settings) -> Option<SavedServer> {
     let mut prefs = settings.current().unwrap_or_default();
-    prefs.servers.retain(|s| !nori_remote::is_guest_key(&s.api_key));
-    let before = settings.app_value(BEFORE_JAM).and_then(|id| prefs.servers.iter().find(|s| s.id == id));
-    let back = before.or(prefs.servers.last()).cloned();
-    prefs.active_server_id = back.as_ref().map(|s| s.id.clone()).unwrap_or_default();
+    let list = nori_core::remote::jam_return(settings, nori_core::settings::ServerList { servers: std::mem::take(&mut prefs.servers), active_server_id: prefs.active_server_id.clone() });
+    (prefs.servers, prefs.active_server_id) = (list.servers, list.active_server_id);
+    let back = prefs.active_server().cloned();
     settings.put(prefs);
     back
 }

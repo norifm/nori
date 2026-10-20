@@ -200,7 +200,7 @@ final class CardCell: UICollectionViewCell {
         title.text = item.title
         let line: String
         switch item.kind {
-        case "artist": line = Say.albums(item.count)
+        case "artist": line = item.count > 0 ? Say.albums(item.count) : ""
         case "playlist": line = item.count > 0 ? Say.songs(item.count) : item.subtitle
         default: line = item.subtitle
         }

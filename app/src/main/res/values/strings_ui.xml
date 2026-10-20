@@ -53,6 +53,10 @@
     <string name="nothing_matches">Nothing matches</string>
     <string name="listen_now">Listen now</string>
     <string name="library_recently_added">Recently added</string>
+    <string name="show_all">Show all</string>
+    <string name="untitled">Untitled</string>
+    <string name="library_your_albums">Your albums</string>
+    <string name="library_your_playlists">Your playlists</string>
     <string name="smart_playlists">Smart playlists</string>
     <string name="shuffle_songs">Shuffle songs</string>
     <string name="shuffle_albums">Shuffle albums</string>
@@ -205,7 +209,7 @@
     <string name="server_url">Server URL</string>
     <string name="profile_kind_server">Your server</string>
     <string name="youtube_music">YouTube Music</string>
-    <string name="youtube_music_hint">Search and play YouTube Music. Best effort: YouTube can stop it working at any time. Once added, you can sign in with Google to see your own Home, your library and your likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Scrobbling is off.</string>
+    <string name="youtube_music_hint">Search and play YouTube Music. Best effort: YouTube can stop it working at any time. Once added, you can sign in with Google to see your own Home, your library and your likes. Songs, albums and playlists can be downloaded for offline playback. Devices on your network can be paired for remote control and jams. Signed in, songs you hear go into your YouTube history.</string>
     <string name="youtube_music_add">Add YouTube Music</string>
     <string name="account">Account</string>
     <string name="signed_in_as">Signed in as %1$s</string>
@@ -357,6 +361,9 @@
     <!-- The empty-list, failure and help lines. -->
     <string name="note_no_index">No songs on this device yet. Settings, then Library and lists, then Update.</string>
     <string name="note_no_playlists">No playlists yet</string>
+    <string name="note_no_albums">No albums yet</string>
+    <string name="note_no_artists">No artists yet</string>
+    <string name="note_no_songs">No songs yet</string>
     <string name="note_no_stations">No stations yet</string>
     <string name="note_nothing_downloaded">Nothing downloaded yet</string>
     <string name="note_no_downloads">No downloads</string>

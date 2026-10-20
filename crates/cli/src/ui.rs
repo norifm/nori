@@ -687,7 +687,7 @@ fn artists(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             let row = |i: usize, w: usize| {
                 let a = &v[i];
                 let seal = if hearts && marks.starred(Starrable::Artist, &a.id, a.starred) { format!(" {SEAL}") } else { String::new() };
-                spread(vec![Span::styled("  ◉  ", t.dim()), Span::styled(a.name.as_str(), bold()), Span::styled(seal, Style::default().fg(t.accent))], Span::styled(crate::text::albums(a.album_count) + " ", t.dim()), w)
+                spread(vec![Span::styled("  ◉  ", t.dim()), Span::styled(a.name.as_str(), bold()), Span::styled(seal, Style::default().fg(t.accent))], Span::styled(a.album_count.map(crate::text::albums).unwrap_or_default() + " ", t.dim()), w)
             };
             list(f, body, &mut l.artists_sel, v.len(), ListRef::Artists, hits, t, focused, &row);
         }
@@ -785,7 +785,7 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
             let year = if a.year > 0 { format!("{} ", a.year) } else { String::new() };
             spread(vec![Span::styled("  ◫  ", t.dim()), Span::styled(a.name.clone(), Style::default().fg(t.ink)), Span::styled(format!("  {}", a.artist), t.dim())], Span::styled(year, t.dim()), w)
         }
-        SearchRow::Artist(a) => spread(vec![Span::styled("  ◉  ", t.dim()), Span::styled(a.name.clone(), Style::default().fg(t.ink))], Span::styled(crate::text::albums(a.album_count) + " ", t.dim()), w),
+        SearchRow::Artist(a) => spread(vec![Span::styled("  ◉  ", t.dim()), Span::styled(a.name.clone(), Style::default().fg(t.ink))], Span::styled(a.album_count.map(crate::text::albums).unwrap_or_default() + " ", t.dim()), w),
         SearchRow::Playlist(p) => spread(vec![Span::styled("  ≡  ", t.dim()), Span::styled(p.name.clone(), Style::default().fg(t.ink))], Span::styled(crate::text::playlist_line(p) + " ", t.dim()), w),
     };
     list(f, body, &mut sel, len, ListRef::Search, hits, t, lit, &row);
@@ -874,7 +874,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
     // star: None when the page cannot be starred.
     let (kind, title, sub, caption, art_key, star): (&str, String, String, String, Option<String>, Option<bool>) = match p {
         Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => ("ALBUM", d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), d.album.cover_art.clone(), Some(marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
-        Page::Artist { detail: Load::Ready(d), .. } => ("ARTIST", d.artist.name.clone(), if d.albums.is_empty() && !d.songs.is_empty() { crate::text::count(d.songs.len() as u64, "song", "songs") } else { crate::text::albums(d.artist.album_count) }, String::new(), None, Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
+        Page::Artist { detail: Load::Ready(d), .. } => ("ARTIST", d.artist.name.clone(), if d.albums.is_empty() && !d.songs.is_empty() { crate::text::count(d.songs.len() as u64, "song", "songs") } else { d.artist.album_count.map(crate::text::albums).unwrap_or_default() }, String::new(), None, Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
         Page::Playlist { detail: Load::Ready(d), .. } => ("PLAYLIST", d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), None, None),
         Page::Album { detail: Load::Failed(e), .. } | Page::DownloadedAlbum { detail: Load::Failed(e), .. } | Page::Artist { detail: Load::Failed(e), .. } | Page::Playlist { detail: Load::Failed(e), .. } => {
             return failed(f, area, t, e);

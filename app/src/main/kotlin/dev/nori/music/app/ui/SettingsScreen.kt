@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -505,6 +508,10 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     if (row.divider) Hairline(startIndent = 16.dp)
                 }
                 is SettingRow.Action -> ActionRowSetting(row) { act(row.action) }
+                is SettingRow.Usage -> {
+                    UsageBar(row)
+                    Hairline(startIndent = 16.dp)
+                }
                 is SettingRow.Info -> {
                     Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Text(row.title, style = MaterialTheme.typography.bodyLarge)
@@ -650,4 +657,35 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
 private data class RankDrag(val id: String, val from: List<String>, val to: Int, val active: Boolean) {
     /** The order drawn: [from] with the held row moved to [to]. */
     val shown: List<String> = from.toMutableList().apply { remove(id); add(to, id) }
+}
+
+/** The usage parts' colors, in [SettingRow.Usage.parts] order. */
+private val USAGE_COLORS = listOf(Color(0xFF2D9CDB), Color(0xFF27AE60), Color(0xFFF2994A), Color(0xFF9B51E0), Color(0xFF8A8A8A))
+
+/** What is stored on this device: the total, one bar split by kind, and a line per kind with its dot. */
+@Composable
+private fun UsageBar(row: SettingRow.Usage) {
+    val total = row.parts.sumOf { it.bytes }.coerceAtLeast(1)
+    Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(row.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+            Text(row.total, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Row(
+            Modifier.padding(top = 10.dp, bottom = 10.dp).fillMaxWidth().height(10.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(5.dp))
+                .background(MaterialTheme.colorScheme.outlineVariant),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            row.parts.forEachIndexed { i, p ->
+                if (p.bytes > 0) Box(Modifier.weight(p.bytes.toFloat() / total).fillMaxHeight().background(USAGE_COLORS[i % USAGE_COLORS.size]))
+            }
+        }
+        row.parts.forEachIndexed { i, p ->
+            Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(USAGE_COLORS[i % USAGE_COLORS.size]))
+                Text(p.label, Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(p.size, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
 }

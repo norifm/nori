@@ -295,7 +295,8 @@ pub struct Artist {
     #[serde(deserialize_with = "opt_id")]
     pub cover_art: Option<String>,
     pub artist_image_url: Option<String>,
-    pub album_count: u32,
+    /// None where the source does not say (a provider's search results).
+    pub album_count: Option<u32>,
     #[serde(deserialize_with = "flag")]
     pub starred: bool,
     /// Set by octo-fiesta for provider items that are not in the library yet.
