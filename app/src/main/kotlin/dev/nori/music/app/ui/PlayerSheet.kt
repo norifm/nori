@@ -34,10 +34,12 @@ import kotlinx.coroutines.launch
  *
  * Before this the player was a route: a drag on the mini player had to cross a threshold, and then a
  * separate slide played on its own - you pulled, and then something else happened.
+ *
+ * [startOpen]: put back together open (the app recreated on the player), open from its first frame.
  */
 @Stable
-class PlayerSheet(private val scope: CoroutineScope) {
-    val progress = Animatable(0f).also { it.updateBounds(0f, 1f) }
+class PlayerSheet(private val scope: CoroutineScope, startOpen: Boolean = false) {
+    val progress = Animatable(if (startOpen) 1f else 0f).also { it.updateBounds(0f, 1f) }
 
     /** The mini player's artwork, in root coordinates: where the cover flies from and back to. */
     var miniCover by mutableStateOf(Rect.Zero)
@@ -86,7 +88,7 @@ class PlayerSheet(private val scope: CoroutineScope) {
      * back handler off underneath the finger, so the player never sank and then vanished in one frame
      * instead of settling back onto the now playing bar.
      */
-    var isOpen by mutableStateOf(false)
+    var isOpen by mutableStateOf(startOpen)
         private set
 
     /** How far the sheet's leading edge travels, in pixels. */
@@ -111,12 +113,6 @@ class PlayerSheet(private val scope: CoroutineScope) {
         settle(1f, 0f)
     }
 
-    /** Open at once, no travel: the sheet as it was before the app was put back together. */
-    suspend fun openAtOnce() {
-        isOpen = true
-        progress.snapTo(1f)
-    }
-
     /**
      * The back gesture at [progress] (0..1): the sheet sinks with it, a fifth of the way at most - a hint
      * of where it is going, not the whole trip, which is the release's to make.
@@ -126,6 +122,7 @@ class PlayerSheet(private val scope: CoroutineScope) {
         val eased = 1f - (1f - progress.coerceIn(0f, 1f)).let { it * it }
         this.progress.snapTo(1f - BACK_TRAVEL * eased)
     }
+
     fun close() {
         sinking = false
         settle(0f, 0f)

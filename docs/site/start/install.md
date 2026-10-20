@@ -25,10 +25,12 @@ Choose `nori-desktop` for the window or `nori-cli` for the terminal. Linux archi
 packages, and AppImages use Ubuntu 22.04 and need glibc 2.35 or later. Linux `.deb` packages install with
 `sudo apt install ./nori-desktop_<version>_<architecture>.deb` (or the CLI package). Extract a
 Linux archive and run its binary on other distributions. For AppImage, download the desktop
-`.AppImage` for your processor, make it executable with `chmod +x`, and open it.
+`.AppImage` for your processor, make it executable with `chmod +x`, and open it. The desktop archive and
+AppImage use the system's WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk4.1` on
+Fedora) for signing in to YouTube Music; most desktops have it, and the `.deb` and Flatpak bring it.
 For Flatpak, install the desktop `.flatpak` with `flatpak install --user ./nori-desktop-<version>-linux-<architecture>.flatpak`
 and run `flatpak run dev.nori.desktop`. The bundle also includes the terminal client:
-`flatpak run --command=nori-cli dev.nori.desktop`. Flatpak installs its Freedesktop runtime
+`flatpak run --command=nori-cli dev.nori.desktop`. Flatpak installs its GNOME runtime
 from Flathub and keeps its data inside the app sandbox. On macOS, open the desktop `.dmg` and follow
 the arrow: drag nori onto the Applications folder. Then open nori from Applications and eject the
 disk image. The CLI archive contains `nori-cli`, which you can place on your PATH.

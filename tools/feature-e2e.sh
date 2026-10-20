@@ -945,7 +945,7 @@ jam_checks() {
     tapnode text "Far Song Two"
     check "and it plays" wait_for title "Far Song Two" 15
     "$app" open devices >/dev/null
-    tapnode text End
+    tapnode content-desc End
     adb shell input keyevent KEYCODE_BACK
     check "End Jam ends it for the guests" wait_until 15 grep -q "the jam is over" "$guests/gus.log"
     check "and here" wait_until 10 bash -c "'$app' remote view | grep -q 'no jam'"
@@ -959,7 +959,7 @@ jam_checks() {
     check "the devices sheet offers a jam again" wait_until 10 on_screen 'text="Start a Jam"'
     check "restarting the jam expands the existing devices sheet" start_jam || return 1
     check "and it starts at once" wait_until 5 on_screen 'text="Your Jam"'
-    tapnode text End
+    tapnode content-desc End
     adb shell input keyevent KEYCODE_BACK
     check "and ends" wait_until 10 bash -c "'$app' remote view | grep -q 'no jam'"
     "$app" login "$APP_URL|$USER|$PASS" >/dev/null; wait_for server "$APP_URL" 30 >/dev/null
@@ -1022,7 +1022,7 @@ print(json.dumps({k:s.get(k) for k in ['id','title','artist','album','albumId','
     "$app" do resume >/dev/null
     check "play joins the jam again" sounds 15
     check "the strip says the jam again" wait_until 10 off_screen 'text="Paused here · Jam still playing"'
-    tapnode text Leave
+    tapnode content-desc Leave
     check "leaving returns to the home server" wait_for server "$APP_URL" 20
     check "and its music stops at once" silent 5
     check "the host saw it leave" wait_until 15 grep -q "left:" "$guests/host.log"
@@ -1059,7 +1059,7 @@ print(json.dumps({k:s.get(k) for k in ['id','title','artist','album','albumId','
     check "an admin's queue addition goes straight to the host" wait_until 15 grep -q "obeyed: add" "$guests/admin-host.log"
     check "the admin sees the updated queue" wait_for queue 4 15
     check "the admin sees the queue confirmation" wait_until 5 on_screen 'text="Added to queue"'
-    tapnode text Leave
+    tapnode content-desc Leave
     check "leaving returns to the home server" wait_for server "$APP_URL" 20
     kill $host 2>/dev/null
 

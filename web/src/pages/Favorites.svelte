@@ -1,5 +1,6 @@
 <script lang="ts">
   // What has a seal: artists, albums and songs.
+  import Icon from "../ui/Icon.svelte";
   import { read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import type { Album, Artist, Song } from "../state/types";
@@ -17,6 +18,6 @@
     {#if d.artists?.length}<h2 class="section">{W.artists}</h2><Cards artists={d.artists} row />{/if}
     {#if d.albums?.length}<h2 class="section">{W.albums}</h2><Cards albums={d.albums} />{/if}
     {#if d.songs?.length}<h2 class="section">{W.songs}</h2><SongList songs={d.songs} />{/if}
-    {#if !d.artists?.length && !d.albums?.length && !d.songs?.length}<p class="empty">{W.empty}</p>{/if}
+    {#if !d.artists?.length && !d.albums?.length && !d.songs?.length}<p class="empty"><Icon name="seal-line" />{W.empty}</p>{/if}
   {/if}
 </Page>

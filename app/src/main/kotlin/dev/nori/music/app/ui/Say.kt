@@ -128,6 +128,12 @@ class Say(private val r: Resources) {
     val homeRowsTitle: String = r.getString(R.string.settings_home_rows)
     val librarySectionsTitle: String = r.getString(R.string.settings_library_sections)
     val recentlyAdded: String = r.getString(R.string.library_recently_added)
+    val showAll: String = r.getString(R.string.show_all)
+    private val untitled: String = r.getString(R.string.untitled)
+    /** A song's title as shown: Untitled for one that has none (some uploads have a blank one). */
+    fun title(t: String): String = t.ifBlank { untitled }
+    val yourAlbums: String = r.getString(R.string.library_your_albums)
+    val yourPlaylists: String = r.getString(R.string.library_your_playlists)
     val smartPlaylists: String = r.getString(R.string.smart_playlists)
     val forYou: String = r.getString(R.string.for_you)
     val holdARowToMoveIt: String = r.getString(R.string.hold_a_row_to_move_it)
@@ -917,6 +923,9 @@ enum class Note(val id: Int) {
     /** No index yet: the songs and decades lists. */
     NO_INDEX(R.string.note_no_index),
     NO_PLAYLISTS(R.string.note_no_playlists),
+    NO_ALBUMS(R.string.note_no_albums),
+    NO_ARTISTS(R.string.note_no_artists),
+    NO_SONGS(R.string.note_no_songs),
     NO_STATIONS(R.string.note_no_stations),
     NOTHING_DOWNLOADED(R.string.note_nothing_downloaded),
     NO_DOWNLOADS(R.string.note_no_downloads),

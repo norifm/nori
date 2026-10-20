@@ -314,6 +314,19 @@ select.field {
 .empty {
   color: var(--dim);
   padding: 24px 0;
+  text-align: center;
+}
+
+/* The glyph of what is missing, in a soft disc over the words. */
+.empty .icon {
+  display: block;
+  box-sizing: content-box;
+  width: 28px;
+  height: 28px;
+  padding: 18px;
+  margin: 16px auto 14px;
+  border-radius: 50%;
+  background: var(--raised);
 }
 
 .loading {
