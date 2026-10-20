@@ -107,10 +107,10 @@
     <string name="settings_hint_volume_boost">Louder, gain, amplify, limiter</string>
     <string name="settings_compressor">Compressor</string>
     <string name="settings_compressor_detail">Evens out quiet and loud parts</string>
-    <string name="settings_compressor_preset">Tuned for</string>
+    <string name="settings_compressor_preset">Compressor type</string>
     <string name="settings_compressor_light">Light</string>
-    <string name="settings_compressor_car">The car</string>
-    <string name="settings_compressor_night">The night</string>
+    <string name="settings_compressor_car">Car</string>
+    <string name="settings_compressor_night">Night</string>
     <string name="settings_hi_res">High quality output</string>
     <string name="settings_max_rate">Highest sample rate</string>
     <string name="settings_max_rate_auto">Each song\'s own</string>

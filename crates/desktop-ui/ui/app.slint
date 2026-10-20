@@ -15,6 +15,8 @@ export struct Card {
     art: string,
     // The artist the subtitle names, whose page a click on it opens (an album's); empty for none.
     sub-artist: string,
+    // What it is: 0 an album, 1 an artist, 2 a playlist, 3 a song.
+    kind: int,
 }
 
 // A piece of the line being sung (sung.rs): a word, a syllable or what lies between, where it was laid
@@ -130,11 +132,18 @@ export struct SettingRow {
     value: float,
     min: float,
     max: float,
-    centred: bool,
     first: bool,
     last: bool,
+    // A lyrics service switched on only once given the key it lacks: switching it on asks for the key.
+    keyed: bool,
     // A usage row's parts, as fractions of the whole, in `options`' order.
     shares: [float],
+}
+
+// A line with a quieter one under it: an AutoEQ curve, a saved sound profile.
+export struct EqLine {
+    title: string,
+    detail: string,
 }
 
 // A kind of profile the login page adds (the core's providers): its words, and the fields its form asks.
@@ -430,6 +439,53 @@ component Icon inherits Path {
     viewbox-height: 24;
     commands: root.path;
     fill: root.colour;
+}
+
+// A popover of the panel's: the dark rounded pane the choosers' lists use.
+component Popover inherits Rectangle {
+    border-radius: 18px;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.outline;
+}
+
+// A row of a menu: a glyph, its words, and a few more at the end.
+component MenuRow inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    in property <string> detail;
+    callback clicked;
+    height: 40px;
+    border-radius: 12px;
+    background: ta.has-hover ? Theme.hover : transparent;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        Icon {
+            y: (parent.height - self.height) / 2;
+            path: root.icon;
+            colour: Theme.dim;
+            width: 20px;
+            height: 20px;
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if root.detail != "": Text {
+            text: root.detail;
+            color: Theme.dim;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
 }
 
 // A pane in the chrome's outline: the surface, a hairline round it, no shadow.
@@ -830,8 +886,16 @@ component CardView inherits Rectangle {
         overflow: elide;
         horizontal-alignment: root.round ? center : left;
     }
+    // A click opens it; a right press, where a Jam can be started from it, opens its menu where it was pressed.
     touch := TouchArea {
         clicked => { root.open(); }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down && root.playable && Jam.on && !Jam.hosting {
+                root.menu-x = min(self.mouse-x, root.width - 120px);
+                root.menu-y = self.mouse-y;
+                card-menu.show();
+            }
+        }
     }
     Link {
         y: root.side + 25px;
@@ -843,17 +907,26 @@ component CardView inherits Rectangle {
         overflow: elide;
         horizontal-alignment: root.round ? center : left;
     }
-    // Over the TouchArea, which would take the right press too: the menu area answers only that.
-    ContextMenuArea {
-        enabled: root.playable && Jam.on && !Jam.hosting;
-        Menu {
-            MenuItem {
-                title: "Play";
-                activated => { root.play(); }
-            }
-            MenuItem {
-                title: "Start a Jam";
-                activated => { root.jam(); }
+    property <length> menu-x;
+    property <length> menu-y;
+    card-menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 220px;
+        close-policy: close-on-click-outside;
+        Popover {
+            VerticalLayout {
+                padding: 6px;
+                MenuRow {
+                    icon: Icons.play;
+                    text: "Play";
+                    clicked => { root.play(); card-menu.close(); }
+                }
+                MenuRow {
+                    icon: Icons.people;
+                    text: "Start a Jam";
+                    clicked => { root.jam(); card-menu.close(); }
+                }
             }
         }
     }
@@ -927,6 +1000,52 @@ component Grid inherits Flickable {
         open => { root.open(self.c); }
         play => { root.play(self.c); }
         jam => { root.jam(self.c); }
+    }
+}
+
+// A pill naming a list's order; it opens the orders, the one in use checked.
+component SortButton inherits Rectangle {
+    in property <[string]> names;
+    in property <int> chosen;
+    callback picked(int);
+    width: label.preferred-width + 46px;
+    height: 36px;
+    border-radius: 18px;
+    background: touch.has-hover ? Theme.hover : Theme.fill;
+    label := Text {
+        x: 14px;
+        text: root.names[root.chosen];
+        font-size: 13px;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+    Icon {
+        x: parent.width - self.width - 12px;
+        y: (parent.height - self.height) / 2;
+        path: Icons.down;
+        colour: Theme.dim;
+        width: 16px;
+        height: 16px;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { orders.show(); }
+    }
+    orders := PopupWindow {
+        x: root.width - self.width;
+        y: root.height + 6px;
+        width: 220px;
+        close-policy: close-on-click-outside;
+        Popover {
+            VerticalLayout {
+                padding: 6px;
+                for name[i] in root.names: MenuRow {
+                    icon: i == root.chosen ? Icons.check : "";
+                    text: name;
+                    clicked => { root.picked(i); orders.close(); }
+                }
+            }
+        }
     }
 }
 
@@ -1141,6 +1260,8 @@ component PickCard inherits Rectangle {
     }
 }
 
+
+
 // A song in a list, as Music lists them: the number (or the small artwork), the title, the artist and
 // album, and the length, over a hairline. Double click plays; a right click offers the rest.
 component SongLine inherits Rectangle {
@@ -1172,142 +1293,124 @@ component SongLine inherits Rectangle {
         height: 1px;
         background: Theme.hairline;
     }
+    // A right press opens the song's menu where it was pressed, drawn as the app's own menus are.
     touch := TouchArea {
         double-clicked => { root.play(); }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                root.menu-x = min(self.mouse-x, root.width - 250px);
+                root.menu-y = self.mouse-y;
+                song-menu.show();
+            }
+        }
     }
-    // Over the TouchArea, which would take the right press too: the menu area answers only that.
-    ContextMenuArea {
-        Menu {
-            if !Jam.guest: MenuItem {
-                title: "Play";
-                activated => { root.play(); }
-            }
-            MenuItem {
-                title: "Play next";
-                activated => { root.next(); }
-            }
-            MenuItem {
-                title: "Add to queue";
-                activated => { root.later(); }
-            }
-            if Jam.on && !Jam.hosting: MenuItem {
-                title: "Start a Jam";
-                activated => { root.jam(); }
-            }
-            MenuSeparator {}
-            for m in root.song.menu: MenuItem {
-                title: m.title;
-                activated => {
-                    if m.kind == 0 {
-                        root.star();
-                    } else if m.kind == 1 {
-                        Go.album(m.id);
-                    } else if m.kind == 2 {
-                        Go.artist(m.id);
-                    } else if m.kind == 3 {
-                        root.download();
-                    } else {
-                        root.radio();
+    property <length> menu-x;
+    property <length> menu-y;
+    song-menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 240px;
+        close-policy: close-on-click-outside;
+        Popover {
+            VerticalLayout {
+                padding: 6px;
+                if !Jam.guest: MenuRow {
+                    icon: Icons.play;
+                    text: "Play";
+                    clicked => { root.play(); song-menu.close(); }
+                }
+                MenuRow {
+                    icon: Icons.next;
+                    text: "Play next";
+                    clicked => { root.next(); song-menu.close(); }
+                }
+                MenuRow {
+                    icon: Icons.queue;
+                    text: "Add to queue";
+                    clicked => { root.later(); song-menu.close(); }
+                }
+                if Jam.on && !Jam.hosting: MenuRow {
+                    icon: Icons.people;
+                    text: "Start a Jam";
+                    clicked => { root.jam(); song-menu.close(); }
+                }
+                Rectangle {
+                    height: 9px;
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.hairline;
+                    }
+                }
+                for m in root.song.menu: MenuRow {
+                    icon: m.kind == 0 ? Icons.seal-outline : m.kind == 1 ? Icons.albums : m.kind == 2 ? Icons.artists : m.kind == 3 ? Icons.download : Icons.radio;
+                    text: m.title;
+                    // The menu closes after: closed, it can no longer reach the row.
+                    clicked => {
+                        if m.kind == 0 {
+                            root.star();
+                        } else if m.kind == 1 {
+                            Go.album(m.id);
+                        } else if m.kind == 2 {
+                            Go.artist(m.id);
+                        } else if m.kind == 3 {
+                            root.download();
+                        } else {
+                            root.radio();
+                        }
+                        song-menu.close();
                     }
                 }
             }
         }
-        HorizontalLayout {
-            padding-left: 8px;
-            padding-right: 12px;
-            spacing: 12px;
-            if root.thumb: Art {
+    }
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 12px;
+        spacing: 12px;
+        if root.thumb: Art {
+            y: (parent.height - self.height) / 2;
+            width: 44px;
+            height: 44px;
+            border-radius: 5px;
+            source: root.picture;
+        }
+        if !root.thumb: Rectangle {
+            width: 24px;
+            if root.song.playing: PlayingBars {
+                x: parent.width - self.width - 2px;
                 y: (parent.height - self.height) / 2;
-                width: 44px;
-                height: 44px;
-                border-radius: 5px;
-                source: root.picture;
+                colour: Theme.accent;
+                width: 14px;
+                height: 13px;
             }
-            if !root.thumb: Rectangle {
-                width: 24px;
-                if root.song.playing: PlayingBars {
-                    x: parent.width - self.width - 2px;
-                    y: (parent.height - self.height) / 2;
-                    colour: Theme.accent;
-                    width: 14px;
-                    height: 13px;
-                }
-                if !root.song.playing: Text {
-                    width: 100%;
-                    text: root.number;
-                    color: Theme.dim;
-                    font-size: 13px;
-                    horizontal-alignment: right;
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                horizontal-stretch: 2;
-                preferred-width: 0;
-                Text {
-                    text: root.song.title;
-                    color: root.song.playing ? Theme.accent : Theme.text;
-                    font-size: 13px;
-                    overflow: elide;
-                }
-                if (root.thumb || root.show-album) && !root.table: ArtistLine {
-                    text: root.song.artist;
-                    artist: root.song.artist-id;
-                    credits: root.song.credits;
-                    color: Theme.dim;
-                }
-            }
-            if root.show-album && !root.table: Link {
-                horizontal-stretch: 1;
-                preferred-width: 0;
-                text: root.song.album;
-                album: root.song.album-id;
+            if !root.song.playing: Text {
+                width: 100%;
+                text: root.number;
                 color: Theme.dim;
                 font-size: 13px;
-                vertical-alignment: center;
+                horizontal-alignment: right;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 2;
+            preferred-width: 0;
+            Text {
+                text: root.song.title;
+                color: root.song.playing ? Theme.accent : Theme.text;
+                font-size: 13px;
                 overflow: elide;
             }
-            // A table's two columns stand at fixed places (the heads use the same sums), not where the layout
-            // would share the width out.
-            if root.table: Rectangle {
-                preferred-width: 0;
-                horizontal-stretch: 2;
-            }
-            // "Asked": a guest's request, until the host takes it.
-            if root.song.by != "": Rectangle {
-                y: (parent.height - self.height) / 2;
-                height: 18px;
-                width: bt.preferred-width + 14px;
-                border-radius: 9px;
-                background: Theme.chosen;
-                bt := Text {
-                    text: root.song.by;
-                    color: Theme.dim;
-                    font-size: 10px;
-                    font-weight: 600;
-                }
-            }
-            Text {
-                text: root.song.time;
+            if (root.thumb || root.show-album) && !root.table: ArtistLine {
+                text: root.song.artist;
+                artist: root.song.artist-id;
+                credits: root.song.credits;
                 color: Theme.dim;
-                font-size: 13px;
-                vertical-alignment: center;
-                horizontal-alignment: right;
-                width: 44px;
             }
         }
-        if root.table: ArtistLine {
-            x: 8px + 44px + 12px + root.cols * 0.5 + 12px;
-            width: root.cols * 0.25;
-            text: root.song.artist;
-            artist: root.song.artist-id;
-            credits: root.song.credits;
-            color: Theme.dim;
-            height: root.height;
-        }
-        if root.table: Link {
-            x: 8px + 44px + 12px + root.cols * 0.75 + 24px;
-            width: root.cols * 0.25;
+        if root.show-album && !root.table: Link {
+            horizontal-stretch: 1;
+            preferred-width: 0;
             text: root.song.album;
             album: root.song.album-id;
             color: Theme.dim;
@@ -1315,6 +1418,53 @@ component SongLine inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
         }
+        // A table's two columns stand at fixed places (the heads use the same sums), not where the layout
+        // would share the width out.
+        if root.table: Rectangle {
+            preferred-width: 0;
+            horizontal-stretch: 2;
+        }
+        // "Asked": a guest's request, until the host takes it.
+        if root.song.by != "": Rectangle {
+            y: (parent.height - self.height) / 2;
+            height: 18px;
+            width: bt.preferred-width + 14px;
+            border-radius: 9px;
+            background: Theme.chosen;
+            bt := Text {
+                text: root.song.by;
+                color: Theme.dim;
+                font-size: 10px;
+                font-weight: 600;
+            }
+        }
+        Text {
+            text: root.song.time;
+            color: Theme.dim;
+            font-size: 13px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            width: 44px;
+        }
+    }
+    if root.table: ArtistLine {
+        x: 8px + 44px + 12px + root.cols * 0.5 + 12px;
+        width: root.cols * 0.25;
+        text: root.song.artist;
+        artist: root.song.artist-id;
+        credits: root.song.credits;
+        color: Theme.dim;
+        height: root.height;
+    }
+    if root.table: Link {
+        x: 8px + 44px + 12px + root.cols * 0.75 + 24px;
+        width: root.cols * 0.25;
+        text: root.song.album;
+        album: root.song.album-id;
+        color: Theme.dim;
+        font-size: 13px;
+        vertical-alignment: center;
+        overflow: elide;
     }
 }
 
@@ -1475,6 +1625,8 @@ component PlayerControls inherits Rectangle {
     in property <bool> buffering;
     in property <int> position-ms;
     in property <int> duration-ms;
+    // A radio station or live stream plays: "Live" stands where the seek bar would.
+    in property <bool> live;
     in property <bool> shuffle;
     in property <int> repeat;
     in property <float> volume: 1;
@@ -1650,7 +1802,16 @@ component PlayerControls inherits Rectangle {
                     clicked => { root.cycle-repeat(); }
                 }
             }
-            HorizontalLayout {
+            if root.live: Text {
+                height: 14px;
+                text: "Live";
+                color: Theme.accent;
+                font-size: 11px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if !root.live: HorizontalLayout {
                 height: 14px;
                 spacing: 8px;
                 Text {
@@ -2008,13 +2169,6 @@ component Avatar inherits Rectangle {
     }
 }
 
-// A popover of the panel's: the dark rounded pane the choosers' lists use.
-component Popover inherits Rectangle {
-    border-radius: 18px;
-    background: Theme.panel;
-    border-width: 1px;
-    border-color: Theme.outline;
-}
 
 // The jam over the queue, as Music's SharePlay and Spotify's Jam put it: who listens (their avatars and how
 // many), the invite (a QR code and the link, in a popover), ending it, and the songs asked for, each to
@@ -2484,6 +2638,35 @@ component QueueView inherits Rectangle {
     callback undo;
     // The list was scrolled by hand: it stays where it was put until the panel opens again.
     property <bool> browsed;
+    // A song being dragged to another place: its row (-1: none), how far it has moved, and the row it would
+    // land on (rows of 54 px; only among the songs still to come).
+    property <int> drag-from: -1;
+    property <length> drag-dy;
+    property <length> drag-start;
+    property <bool> dragging: false;
+    // Let go: the held row glides into its slot (dropping), then the move is sent and every row is drawn
+    // at its new place at once (landing), so nothing slides back first.
+    property <bool> dropping;
+    property <bool> landing;
+    Timer {
+        interval: Motion.reduced ? 1ms : 120ms;
+        running: root.dropping;
+        triggered => {
+            root.dropping = false;
+            root.landing = true;
+            root.move(root.queue[root.drag-from].index, root.queue[root.drag-to].index);
+            root.drag-from = -1;
+            root.drag-dy = 0;
+        }
+    }
+    Timer {
+        interval: 16ms;
+        running: root.landing;
+        triggered => { root.landing = false; }
+    }
+    // The row of the song playing: songs land after it.
+    property <int> playing-row: -1;
+    property <int> drag-to: root.drag-from < 0 ? -1 : max(root.playing-row + 1, min(root.queue.length - 1, root.drag-from + round(root.drag-dy / 54px)));
     VerticalLayout {
         padding-left: 12px;
         padding-right: 12px;
@@ -2512,6 +2695,8 @@ component QueueView inherits Rectangle {
             }
         }
         queue-scroll := Flickable {
+            // A mouse's press and drag moves a song; the wheel and touch still scroll.
+            mouse-drag-pan-enabled: false;
             width: root.width - 24px;
             content-width: self.width;
             vertical-stretch: 1;
@@ -2534,8 +2719,19 @@ component QueueView inherits Rectangle {
                 property <length> caption-h: self.caption == "" ? 0 : 34px;
                 height: s.leaving || !self.opened ? 0 : self.caption-h + 54px;
                 opacity: s.leaving || !self.opened ? 0 : 1;
-                animate height, opacity { duration: Motion.reduced ? 0ms : 300ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
-                clip: true;
+                animate height, opacity { duration: Motion.reduced ? 0ms : 180ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+                clip: s.leaving || !self.opened;
+                z: i == root.drag-from ? 1 : 0;
+                property <bool> is-playing: s.playing;
+                changed is-playing => {
+                    if self.is-playing {
+                        root.playing-row = i;
+                    }
+                }
+                // Where a drag puts this row: the dragged one under the pointer, those it passes a row aside.
+                property <length> shift: i == root.drag-from ? root.drag-dy
+                    : root.drag-from >= 0 && i > root.drag-from && i <= root.drag-to ? -54px
+                    : root.drag-from >= 0 && i < root.drag-from && i >= root.drag-to ? 54px : 0;
                 Timer {
                     interval: 16ms;
                     running: !parent.opened;
@@ -2547,7 +2743,12 @@ component QueueView inherits Rectangle {
                         queue-scroll.content-y = -max(0px, min(self.y + self.caption-h, queue-scroll.content-height - queue-scroll.height));
                     }
                 }
-                init => { self.follow(); }
+                init => {
+                    self.follow();
+                    if s.playing {
+                        root.playing-row = i;
+                    }
+                }
                 changed y => { self.follow(); }
                 if qrow.caption != "": Caption {
                     x: 8px;
@@ -2557,16 +2758,49 @@ component QueueView inherits Rectangle {
                     vertical-alignment: center;
                 }
                 Rectangle {
-                    y: qrow.caption-h;
+                    y: qrow.caption-h + qrow.shift;
+                    animate y { duration: (i == root.drag-from && root.dragging) || root.landing || Motion.reduced ? 0ms : i == root.drag-from ? 120ms : 160ms; easing: ease-out; }
                     height: 54px;
                     // Concentric with the cover: its 8 px corner and the 7 px around it.
                     border-radius: 15px;
-                    background: qt.has-hover ? Theme.hover : transparent;
+                    background: i == root.drag-from && (root.dragging || root.dropping) ? Theme.chosen : qt.has-hover ? Theme.hover : transparent;
                     // Already played: quieter.
                     opacity: s.played ? 0.45 : 1;
                     // The row's content inside it, so the row stays hovered over its links and buttons.
+                    // A song still to come is dragged to another place: pressed, it follows the pointer once it
+                    // has moved a few pixels, and lands on the row it is let go over.
                     qt := TouchArea {
                         double-clicked => { root.jump(s.index); }
+                        pointer-event(e) => {
+                            if e.button != PointerEventButton.left {
+                                return;
+                            }
+                            if e.kind == PointerEventKind.down && root.editable && root.movable && !root.dropping && !s.played && !s.playing {
+                                root.drag-from = i;
+                                root.drag-dy = 0;
+                                root.dragging = false;
+                                root.drag-start = self.absolute-position.y + self.mouse-y;
+                            }
+                            if e.kind == PointerEventKind.up && root.drag-from == i {
+                                if root.dragging && root.drag-to != i {
+                                    root.drag-dy = (root.drag-to - i) * 54px;
+                                    root.dragging = false;
+                                    root.dropping = true;
+                                } else {
+                                    root.drag-from = -1;
+                                    root.dragging = false;
+                                    root.drag-dy = 0;
+                                }
+                            }
+                        }
+                        moved => {
+                            if root.drag-from == i {
+                                root.drag-dy = self.absolute-position.y + self.mouse-y - root.drag-start;
+                                if abs(root.drag-dy) > 4px {
+                                    root.dragging = true;
+                                }
+                            }
+                        }
                     HorizontalLayout {
                         padding-left: 7px;
                         padding-right: 4px;
@@ -2884,6 +3118,143 @@ global UsageColors {
     }
 }
 
+// The lyrics service held by its handle and dragged to another rank: which (empty: none), where its
+// middle stood and how tall it is, how far it has moved, and how many places it has passed (down +).
+global RankDrag {
+    in-out property <string> held;
+    in-out property <int> from;
+    in-out property <length> mid;
+    in-out property <length> tall;
+    in-out property <length> dy;
+    in-out property <int> by;
+    // Let go: every row is drawn at its new place at once.
+    in-out property <bool> landing;
+}
+
+// A lyrics service among the ranked ones: its switch, its key behind a button where it takes one, and a
+// handle that drags it to another rank. The rows it passes step out of its way, whatever their heights.
+component SourceLine inherits Rectangle {
+    in property <SettingRow> item;
+    callback source(string, bool);
+    callback ask-key(string, string, bool);
+    callback placed(string, int);
+    property <bool> held: RankDrag.held == root.item.name;
+    // Its middle where it is laid out, and whether the one held has gone past it.
+    property <length> mid: self.absolute-position.y + self.height / 2;
+    property <bool> passed-down: RankDrag.held != "" && !root.held && RankDrag.from < root.item.chosen && RankDrag.mid + RankDrag.dy > root.mid;
+    property <bool> passed-up: RankDrag.held != "" && !root.held && RankDrag.from > root.item.chosen && RankDrag.mid + RankDrag.dy < root.mid;
+    changed passed-down => { RankDrag.by += root.passed-down ? 1 : -1; }
+    changed passed-up => { RankDrag.by += root.passed-up ? -1 : 1; }
+    min-height: line.preferred-height;
+    z: root.held ? 1 : 0;
+    plate := Rectangle {
+        y: root.held ? RankDrag.dy : root.passed-down ? -RankDrag.tall : root.passed-up ? RankDrag.tall : 0;
+        animate y { duration: root.held || RankDrag.landing || Motion.reduced ? 0ms : 160ms; easing: ease-out; }
+        height: root.height;
+        background: root.held ? Theme.chosen : Theme.panel;
+        border-top-left-radius: root.item.first || root.held ? 10px : 0;
+        border-top-right-radius: root.item.first || root.held ? 10px : 0;
+        border-bottom-left-radius: root.item.last || root.held ? 10px : 0;
+        border-bottom-right-radius: root.item.last || root.held ? 10px : 0;
+        line := HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 6px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            spacing: 12px;
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Text {
+                    text: root.item.title;
+                    color: Theme.text;
+                    opacity: root.item.enabled ? 1 : 0.45;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.item.detail;
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+            if root.item.button != "": SmallButton {
+                y: (parent.height - self.height) / 2;
+                text: root.item.button;
+                // A key kept shows as Change key (settings.rs).
+                clicked => { root.ask-key(root.item.name, root.item.title, root.item.button == "Change key"); }
+            }
+            Toggle {
+                y: (parent.height - self.height) / 2;
+                on: root.item.on;
+                enabled: root.item.enabled;
+                toggled(v) => {
+                    if v && root.item.keyed {
+                        root.ask-key(root.item.name, root.item.title, false);
+                    } else {
+                        root.source(root.item.name, v);
+                    }
+                }
+            }
+            Rectangle {
+                width: 32px;
+                Icon {
+                    path: Icons.drag;
+                    colour: root.held ? Theme.text : Theme.dim;
+                    width: 18px;
+                    height: 18px;
+                }
+                handle := TouchArea {
+                    mouse-cursor: root.held ? MouseCursor.grabbing : MouseCursor.grab;
+                    property <length> start;
+                    pointer-event(e) => {
+                        if e.button != PointerEventButton.left {
+                            return;
+                        }
+                        if e.kind == PointerEventKind.down {
+                            self.start = self.absolute-position.y + self.mouse-y;
+                            RankDrag.by = 0;
+                            RankDrag.dy = 0;
+                            RankDrag.from = root.item.chosen;
+                            RankDrag.mid = root.mid;
+                            RankDrag.tall = root.height;
+                            RankDrag.held = root.item.name;
+                        }
+                        if e.kind == PointerEventKind.up && root.held {
+                            RankDrag.landing = true;
+                            if RankDrag.by != 0 {
+                                root.placed(root.item.name, RankDrag.by);
+                            }
+                            RankDrag.held = "";
+                            RankDrag.dy = 0;
+                            RankDrag.by = 0;
+                        }
+                    }
+                    moved => {
+                        if root.held {
+                            RankDrag.dy = self.absolute-position.y + self.mouse-y - self.start;
+                        }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            x: 14px;
+            y: parent.height - 1px;
+            width: parent.width - 14px;
+            height: 1px;
+            visible: !root.item.last && !root.held;
+            background: Theme.hairline;
+        }
+    }
+    Timer {
+        interval: 16ms;
+        running: RankDrag.landing;
+        triggered => { RankDrag.landing = false; }
+    }
+}
+
 component SettingLine inherits VerticalLayout {
     // Where usage part `i` starts along the bar: the parts before it.
     pure function usage-start(i: int) -> float {
@@ -2896,8 +3267,15 @@ component SettingLine inherits VerticalLayout {
     callback action(string);
     callback slid(string, float, bool);
     callback typed(string, string);
-    callback moved(string, bool);
+    callback placed(string, int);
+    callback ask-key(string, string, bool);
     callback source(string, bool);
+    if root.item.kind == 6: SourceLine {
+        item: root.item;
+        source(id, on) => { root.source(id, on); }
+        ask-key(id, title, set) => { root.ask-key(id, title, set); }
+        placed(id, by) => { root.placed(id, by); }
+    }
     if root.item.kind == 0: Text {
         text: root.item.title;
         color: Theme.text;
@@ -2938,7 +3316,7 @@ component SettingLine inherits VerticalLayout {
             picked(i) => { root.chosen(root.item.name, i); }
         }
     }
-    if root.item.kind != 0 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind != 14: Rectangle {
+    if root.item.kind != 0 && root.item.kind != 6 && root.item.kind != 9 && root.item.kind != 13 && root.item.kind != 14: Rectangle {
         background: Theme.panel;
         border-top-left-radius: root.item.first ? 10px : 0;
         border-top-right-radius: root.item.first ? 10px : 0;
@@ -2999,45 +3377,10 @@ component SettingLine inherits VerticalLayout {
                     enabled: root.item.enabled;
                     clicked => { root.action(root.item.name); }
                 }
-                if root.item.kind == 6: HorizontalLayout {
-                    spacing: 4px;
-                    // A service that takes a key: typed here, it is kept and the service switched on;
-                    // an emptied PaxSenix key switches off every service that needs it.
-                    if root.item.centred: Field {
-                        y: (parent.height - self.height) / 2;
-                        width: 130px;
-                        height: 28px;
-                        secret: true;
-                        placeholder: root.item.button;
-                        accepted => { root.typed("lyricsKey:" + root.item.name, self.text); }
-                    }
-                    IconButton {
-                        y: (parent.height - self.height) / 2;
-                        path: Icons.up;
-                        quiet: true;
-                        size: 24px;
-                        icon: 14px;
-                        clicked => { root.moved(root.item.name, true); }
-                    }
-                    IconButton {
-                        y: (parent.height - self.height) / 2;
-                        path: Icons.down;
-                        quiet: true;
-                        size: 24px;
-                        icon: 14px;
-                        clicked => { root.moved(root.item.name, false); }
-                    }
-                    Toggle {
-                        y: (parent.height - self.height) / 2;
-                        on: root.item.on;
-                        enabled: root.item.enabled;
-                        toggled(v) => { root.source(root.item.name, v); }
-                    }
-                }
                 if root.item.kind == 8 && root.item.button != "": SmallButton {
                     y: (parent.height - self.height) / 2;
                     text: root.item.button;
-                    clicked => { root.action("account"); }
+                    clicked => { root.action("edit:" + root.item.name); }
                 }
                 if root.item.kind == 8 && root.item.on: Text {
                     text: "✓";
@@ -3293,6 +3636,23 @@ component EqualizerPage inherits Flickable {
     callback gain(int, float, bool);
     callback tool(string, int);
     callback sized(length, length);
+    // Headphones: the AutoEQ list (none until fetched), searched; the last curve's word or a failure.
+    in property <int> autoeq-count;
+    in property <string> autoeq-search-words;
+    in property <[EqLine]> autoeq-hits;
+    // Over the hits while nothing is searched: whose curves they may be (the output playing).
+    in property <string> autoeq-for;
+    in property <string> autoeq-note;
+    in property <bool> autoeq-busy;
+    in property <[EqLine]> profiles;
+    callback autoeq-search(string);
+    callback autoeq-pick(int);
+    callback autoeq-download();
+    callback profile-apply(int);
+    callback profile-delete(int);
+    callback profile-save(string);
+    property <string> autoeq-query;
+    property <string> profile-name;
     content-height: page.preferred-height;
     // Settings' column, as wide as the top pill, and its title; each part on a plate as settings' groups are.
     page := VerticalLayout {
@@ -3502,6 +3862,134 @@ component EqualizerPage inherits Flickable {
         }
         }
         EqSection {
+            text: "Headphones";
+        }
+        // AutoEQ's measured curves, as Android's headphone presets: search the list, pick one, and it is the curve.
+        EqPlate {
+            if root.autoeq-count == 0: Text {
+                text: "AutoEQ measures headphones and publishes a correction curve for each. The list is one download of about 850 kB; after that, searching happens on this computer.";
+                color: Theme.dim;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if root.autoeq-count == 0: HorizontalLayout {
+                alignment: start;
+                SmallButton {
+                    text: root.autoeq-busy ? "Downloading…" : "Download the list";
+                    enabled: !root.autoeq-busy;
+                    clicked => { root.autoeq-download(); }
+                }
+            }
+            if root.autoeq-count > 0: Field {
+                icon: Icons.search;
+                placeholder: root.autoeq-search-words;
+                text <=> root.autoeq-query;
+                edited(t) => { root.autoeq-search(t); }
+            }
+            if root.autoeq-note != "": Text {
+                text: root.autoeq-note;
+                color: Theme.accent;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+            if root.autoeq-query == "" && root.autoeq-hits.length > 0: Text {
+                text: root.autoeq-for;
+                color: Theme.dim;
+                font-size: 12px;
+            }
+            for hit[i] in root.autoeq-hits: Rectangle {
+                height: hit-lines.preferred-height + 12px;
+                border-radius: 8px;
+                background: hit-touch.has-hover ? Theme.hover : transparent;
+                hit-lines := VerticalLayout {
+                    padding-left: 8px;
+                    padding-top: 6px;
+                    padding-bottom: 6px;
+                    Text {
+                        text: hit.title;
+                        color: Theme.text;
+                    }
+                    Text {
+                        text: hit.detail;
+                        color: Theme.dim;
+                        font-size: 11px;
+                    }
+                }
+                hit-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.autoeq-pick(i); }
+                }
+            }
+            if root.autoeq-count > 0: Text {
+                text: "Curves from AutoEQ (autoeq.app), measured by the reviewers named under each.";
+                color: Theme.faint;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+        }
+        EqSection {
+            text: "Profiles";
+        }
+        // The sound saved under a name, to use again or give a device (Remember sound per device).
+        EqPlate {
+            for p[i] in root.profiles: HorizontalLayout {
+                spacing: 8px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: profile-lines.preferred-height + 12px;
+                    border-radius: 8px;
+                    background: profile-touch.has-hover ? Theme.hover : transparent;
+                    profile-lines := VerticalLayout {
+                        padding-left: 8px;
+                        padding-top: 6px;
+                        padding-bottom: 6px;
+                        alignment: center;
+                        Text {
+                            text: p.title;
+                            color: Theme.text;
+                        }
+                        if p.detail != "": Text {
+                            text: p.detail;
+                            color: Theme.dim;
+                            font-size: 11px;
+                        }
+                    }
+                    profile-touch := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.profile-apply(i); }
+                    }
+                }
+                IconButton {
+                    y: (parent.height - self.height) / 2;
+                    path: Icons.close;
+                    quiet: true;
+                    size: 26px;
+                    icon: 12px;
+                    clicked => { root.profile-delete(i); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Field {
+                    placeholder: "Save the sound as…";
+                    text <=> root.profile-name;
+                    accepted => {
+                        root.profile-save(root.profile-name);
+                        root.profile-name = "";
+                    }
+                }
+                SmallButton {
+                    y: (parent.height - self.height) / 2;
+                    text: "Save";
+                    enabled: root.profile-name != "";
+                    clicked => {
+                        root.profile-save(root.profile-name);
+                        root.profile-name = "";
+                    }
+                }
+            }
+        }
+        EqSection {
             text: "Output";
         }
         EqPlate {
@@ -3620,17 +4108,26 @@ component PageActions inherits HorizontalLayout {
             icon: 22px;
             ink: Theme.plate-ink;
             base: Theme.plate;
-            clicked => { menu.show({ x: 0, y: root.side + 4px }); }
+            clicked => { menu.show(); }
         }
-        menu := ContextMenuArea {
-            Menu {
-                MenuItem {
-                    title: "Add to Queue";
-                    activated => { root.later(); }
-                }
-                if root.download: MenuItem {
-                    title: "Download";
-                    activated => { root.download-page(); }
+        menu := PopupWindow {
+            x: 0;
+            y: root.side + 4px;
+            width: 220px;
+            close-policy: close-on-click-outside;
+            Popover {
+                VerticalLayout {
+                    padding: 6px;
+                    MenuRow {
+                        icon: Icons.queue;
+                        text: "Add to Queue";
+                        clicked => { root.later(); menu.close(); }
+                    }
+                    if root.download: MenuRow {
+                        icon: Icons.download;
+                        text: "Download";
+                        clicked => { root.download-page(); menu.close(); }
+                    }
                 }
             }
         }
@@ -3806,44 +4303,6 @@ component TopContent inherits Rectangle {
     }
 }
 
-// A row of a menu: a glyph, its words, and a few more at the end.
-component MenuRow inherits Rectangle {
-    in property <string> icon;
-    in property <string> text;
-    in property <string> detail;
-    callback clicked;
-    height: 40px;
-    border-radius: 12px;
-    background: ta.has-hover ? Theme.hover : transparent;
-    HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
-        spacing: 12px;
-        Icon {
-            y: (parent.height - self.height) / 2;
-            path: root.icon;
-            colour: Theme.dim;
-            width: 20px;
-            height: 20px;
-        }
-        Text {
-            horizontal-stretch: 1;
-            text: root.text;
-            vertical-alignment: center;
-            overflow: elide;
-        }
-        if root.detail != "": Text {
-            text: root.detail;
-            color: Theme.dim;
-            font-size: 12px;
-            vertical-alignment: center;
-        }
-    }
-    ta := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
 
 export component AppWindow inherits Window {
     in property <bool> downloads;
@@ -3891,6 +4350,12 @@ export component AppWindow inherits Window {
     in property <bool> picks-loaded;
     callback open-mix(string);
     in property <[Card]> albums;
+    // The album grid's orders, the one in use, and its rows when it is drawn a row per artist.
+    in property <[string]> album-sorts;
+    in property <int> album-sort;
+    in property <bool> albums-in-rows;
+    in property <[Shelf]> album-rows;
+    callback album-sort-chosen(int);
     in property <[Card]> artists;
     in property <[Card]> playlists;
     in property <[SongRow]> songs;
@@ -3943,6 +4408,8 @@ export component AppWindow inherits Window {
     in property <int> position-ms;
     in property <int> display-position-ms: root.position-ms;
     in property <int> duration-ms;
+    // A radio station or live stream plays: "Live" stands where the seek bar would.
+    in property <bool> live;
     in property <bool> shuffle;
     in property <int> repeat;
     in property <float> volume: 1;
@@ -3997,6 +4464,10 @@ export component AppWindow inherits Window {
     changed view => { root.player-changed(); }
     // The lyrics of the song playing: the lines, the one sung (-1 for none), and a line about them.
     in property <[string]> lyrics-lines;
+    // The lines broken into the rows the sung line's pieces take, per view (app.rs `rows`): drawn so, no line
+    // moves its words as it is sung or let go. Empty until laid out.
+    in property <[string]> lyrics-side-rows;
+    in property <[string]> lyrics-full-rows;
     in property <int> lyrics-active: -1;
     // The lit line filling word by word (lyrics with word times): what is sung, the character being sung and
     // how far, and the rest.
@@ -4010,6 +4481,24 @@ export component AppWindow inherits Window {
     in property <[LyricPiece]> lyric-pieces-full;
     in property <bool> lyrics-synced;
     in property <string> lyrics-note;
+    // The song's lyrics are being looked for; their words come only if that takes a while
+    // (`lyrics-slow`), so a song whose lyrics are at hand changes without a flash of them.
+    in property <bool> lyrics-waiting;
+    property <bool> lyrics-slow;
+    changed lyrics-waiting => {
+        self.lyrics-slow = false;
+        lyrics-slow-timer.running = self.lyrics-waiting;
+    }
+    lyrics-slow-timer := Timer {
+        interval: 600ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            root.lyrics-slow = true;
+        }
+    }
+    // What stands where the lyrics would: shown once there is something to say.
+    property <float> lyrics-note-shown: !root.lyrics-waiting || root.lyrics-slow ? 1 : 0;
     in property <[SettingRow]> settings;
     // Who is signed in (the account row), and the text the page's list is narrowed by.
     in property <string> account;
@@ -4041,9 +4530,28 @@ export component AppWindow inherits Window {
     in property <string> eq-ceiling-label;
     in property <string> eq-bypass;
     in property <[float]> eq-ranges;
+    in property <int> eq-autoeq-count;
+    in property <string> eq-autoeq-search-words;
+    in property <[EqLine]> eq-autoeq-hits;
+    in property <string> eq-autoeq-for;
+    in property <string> eq-autoeq-note;
+    in property <bool> eq-autoeq-busy;
+    in property <[EqLine]> eq-profiles;
+    callback eq-autoeq-search(string);
+    callback eq-autoeq-pick(int);
+    callback eq-autoeq-download();
+    callback eq-profile-apply(int);
+    callback eq-profile-delete(int);
+    callback eq-profile-save(string);
     callback setting-slid(string, float, bool);
     callback setting-typed(string, string);
-    callback source-moved(string, bool);
+    // A lyrics service dragged some places (down +), and the sheet its key is typed in.
+    callback source-moved(string, int);
+    in-out property <bool> key-open;
+    in-out property <string> key-service;
+    in-out property <string> key-title;
+    in-out property <string> key-text;
+    in-out property <bool> key-set;
     callback eq-set(string, string);
     callback eq-gain(int, float, bool);
     callback eq-tool(string, int);
@@ -4096,11 +4604,11 @@ export component AppWindow inherits Window {
 
     callback go(int);
     callback back();
-    // A touchpad's sideways swipe to go back (the page's swipe area).
-    callback swiped-back();
     callback open-album(string);
     callback open-artist(string);
     callback open-playlist(string);
+    // The song `id` of Home's shelf `shelf`: the shelf's songs play from it.
+    callback shelf-song(int, string);
     callback play-album(string);
     callback play-playlist(string);
     // A song of a list: 0 the page, 1 the songs, 2 search. `how`: 0 play, 1 next, 2 at the end, 3 play and
@@ -4306,36 +4814,6 @@ export component AppWindow inherits Window {
                 width: parent.width;
                 clip: true;
 
-                // Two fingers swept sideways on a touchpad, over nothing that scrolls sideways (a shelf takes its
-                // own): to the right goes back, as Safari and Finder do. One back per swipe; a swipe ends after a
-                // quarter second of quiet.
-                swipe := TouchArea {
-                    property <length> dx;
-                    property <bool> spent;
-                    scroll-event(e) => {
-                        if abs(e.delta-x) <= abs(e.delta-y) * 2 {
-                            return reject;
-                        }
-                        swipe-quiet.restart();
-                        if !self.spent {
-                            self.dx += e.delta-x;
-                            if self.dx > 90px {
-                                self.spent = true;
-                                root.swiped-back();
-                            }
-                        }
-                        accept
-                    }
-                    swipe-quiet := Timer {
-                        interval: 250ms;
-                        running: false;
-                        triggered => {
-                            self.running = false;
-                            swipe.dx = 0;
-                            swipe.spent = false;
-                        }
-                    }
-                }
 
                 if root.view == 0: Fade {
                     home-scroll := Flickable {
@@ -4374,16 +4852,39 @@ export component AppWindow inherits Window {
                                     show-all => { root.shown-shelf = index; root.go(10); }
                                     count: shelf.cards.length;
                                     loading: !shelf.loaded;
+                                    // A source's feed mixes songs, albums, playlists and artists in a shelf: each opens or plays
+                                    // as what it is, a song with the shelf's songs after it.
                                     for slot in home-row.on-screen ? albums-shelf.visible-count : 0: CardView {
                                         property <int> i: albums-shelf.first + slot;
                                         property <Card> c: shelf.cards[self.i];
                                         x: albums-shelf.gap + self.i * albums-shelf.step;
                                         side: albums-shelf.side;
                                         card: self.c;
+                                        round: self.c.kind == 1;
                                         picture: root.art(self.c.art, 0, root.covers-rev);
-                                        open => { root.open-album(self.c.id); }
-                                        play => { root.play-album(self.c.id); }
-                                        jam => { root.jam-play(0, self.c.id); }
+                                        open => {
+                                            if self.c.kind == 1 {
+                                                root.open-artist(self.c.id);
+                                            } else if self.c.kind == 2 {
+                                                root.open-playlist(self.c.id);
+                                            } else if self.c.kind == 3 {
+                                                root.shelf-song(index, self.c.id);
+                                            } else {
+                                                root.open-album(self.c.id);
+                                            }
+                                        }
+                                        play => {
+                                            if self.c.kind == 2 {
+                                                root.play-playlist(self.c.id);
+                                            } else if self.c.kind == 3 {
+                                                root.shelf-song(index, self.c.id);
+                                            } else if self.c.kind == 1 {
+                                                root.open-artist(self.c.id);
+                                            } else {
+                                                root.play-album(self.c.id);
+                                            }
+                                        }
+                                        jam => { root.jam-play(self.c.kind == 2 ? 1 : 0, self.c.id); }
                                     }
                                 }
                             }
@@ -4580,22 +5081,73 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.view == 2 || root.view == 4 || root.view == 10: Fade {
+                if root.view == 2 && root.albums-in-rows: Fade {
+                    rows-scroll := Flickable {
+                        property <int> columns: max(2, floor((self.width - 64px + 22px) / 198px));
+                        property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
+                        // A shelf's title, its gap, its cards with their words, and the space under it (ShelfView).
+                        property <length> row-step: 30px + 10px + self.side + 46px + 44px;
+                        property <length> head: Chrome.top-room + 68px;
+                        property <int> first: max(0, floor((-self.content-y - self.head) / self.row-step) - 1);
+                        property <int> visible-count: max(0, min(root.album-rows.length - self.first, ceil(self.height / self.row-step) + 2));
+                        content-height: self.head + root.album-rows.length * self.row-step + 100px;
+                        Text {
+                            x: 32px;
+                            y: Chrome.top-room + 8px;
+                            text: root.list-name;
+                            color: Theme.text;
+                            font-family: Type.title;
+                            font-size: 34px;
+                            font-weight: 700;
+                            letter-spacing: -0.5px;
+                        }
+                        for slot in self.visible-count: artist-row := ShelfView {
+                            property <int> index: rows-scroll.first + slot;
+                            property <Shelf> shelf: root.album-rows[self.index];
+                            y: rows-scroll.head + self.index * rows-scroll.row-step;
+                            width: rows-scroll.width;
+                            title: self.shelf.title;
+                            count: self.shelf.cards.length;
+                            for card-slot in artist-row.visible-count: CardView {
+                                property <int> i: artist-row.first + card-slot;
+                                property <Card> c: artist-row.shelf.cards[self.i];
+                                x: artist-row.gap + self.i * artist-row.step;
+                                side: artist-row.side;
+                                card: self.c;
+                                picture: root.art(self.c.art, 0, root.covers-rev);
+                                open => { root.open-album(self.c.id); }
+                                play => { root.play-album(self.c.id); }
+                                jam => { root.jam-play(0, self.c.id); }
+                            }
+                        }
+                    }
+                }
+
+                if (root.view == 2 && !root.albums-in-rows) || root.view == 4 || root.view == 10: Fade {
                     push: root.view == 10;
                     Grid {
                         title: root.list-name;
                         cards: root.view == 10 ? root.shelves[root.shown-shelf].cards : root.view == 2 ? root.albums : root.playlists;
                         rev: root.covers-rev;
                         art(a, s, r) => { return root.art(a, s, r); }
+                        // A shelf's cards open as what each is (a source's feed mixes kinds).
                         open(c) => {
-                            if (root.view == 2 || root.view == 10) {
+                            if c.kind == 1 {
+                                root.open-artist(c.id);
+                            } else if c.kind == 3 {
+                                root.shelf-song(root.shown-shelf, c.id);
+                            } else if (root.view == 2 || root.view == 10) && c.kind == 0 {
                                 root.open-album(c.id);
                             } else {
                                 root.open-playlist(c.id);
                             }
                         }
                         play(c) => {
-                            if (root.view == 2 || root.view == 10) {
+                            if c.kind == 3 {
+                                root.shelf-song(root.shown-shelf, c.id);
+                            } else if c.kind == 1 {
+                                root.open-artist(c.id);
+                            } else if (root.view == 2 || root.view == 10) && c.kind == 0 {
                                 root.play-album(c.id);
                             } else {
                                 root.play-playlist(c.id);
@@ -4997,11 +5549,13 @@ export component AppWindow inherits Window {
 
                 if root.view == 8: Fade {
                     Flickable {
+                        // A mouse's press and drag is the lyrics services' handles'; the wheel and touch still scroll.
+                        mouse-drag-pan-enabled: false;
                         content-height: prefs.preferred-height;
                         prefs := VerticalLayout {
                             width: parent.width;
                             padding-bottom: 100px;
-                            // The title, then the tabs and the column, as wide as the top pill over them.
+                            // The title, then the tabs and the column at one reading width under the top pill.
                             Text {
                                 text: "Settings";
                                 color: Theme.text;
@@ -5014,8 +5568,8 @@ export component AppWindow inherits Window {
                                 vertical-alignment: bottom;
                             }
                             HorizontalLayout {
-                                padding-left: Chrome.top-x;
-                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
+                                padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
+                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
                                 padding-top: 16px;
                                 padding-bottom: 12px;
                                 Segments {
@@ -5025,8 +5579,8 @@ export component AppWindow inherits Window {
                                 }
                             }
                             HorizontalLayout {
-                                padding-left: Chrome.top-x;
-                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w);
+                                padding-left: Chrome.top-x + max(0px, Chrome.top-w - 720px) / 2;
+                                padding-right: max(0px, root.width - Chrome.top-x - Chrome.top-w) + max(0px, Chrome.top-w - 720px) / 2;
                                 VerticalLayout {
                                     for r in root.settings: SettingLine {
                                         item: r;
@@ -5035,7 +5589,14 @@ export component AppWindow inherits Window {
                                         action(name) => { root.setting-action(name); }
                                         slid(name, v, last) => { root.setting-slid(name, v, last); }
                                         typed(name, text) => { root.setting-typed(name, text); }
-                                        moved(id, up) => { root.source-moved(id, up); }
+                                        placed(id, by) => { root.source-moved(id, by); }
+                                        ask-key(id, title, set) => {
+                                            root.key-service = id;
+                                            root.key-title = title;
+                                            root.key-set = set;
+                                            root.key-text = "";
+                                            root.key-open = true;
+                                        }
                                         source(id, on) => { root.setting-toggled("lyricsService:" + id, on); }
                                     }
                                 }
@@ -5065,6 +5626,19 @@ export component AppWindow inherits Window {
                         ceiling-label: root.eq-ceiling-label;
                         bypass: root.eq-bypass;
                         ranges: root.eq-ranges;
+                        autoeq-count: root.eq-autoeq-count;
+                        autoeq-search-words: root.eq-autoeq-search-words;
+                        autoeq-hits: root.eq-autoeq-hits;
+                        autoeq-for: root.eq-autoeq-for;
+                        autoeq-note: root.eq-autoeq-note;
+                        autoeq-busy: root.eq-autoeq-busy;
+                        profiles: root.eq-profiles;
+                        autoeq-search(q) => { root.eq-autoeq-search(q); }
+                        autoeq-pick(i) => { root.eq-autoeq-pick(i); }
+                        autoeq-download => { root.eq-autoeq-download(); }
+                        profile-apply(i) => { root.eq-profile-apply(i); }
+                        profile-delete(i) => { root.eq-profile-delete(i); }
+                        profile-save(name) => { root.eq-profile-save(name); }
                         back => { root.go(8); }
                         set(name, value) => { root.eq-set(name, value); }
                         level(name, v, last) => { root.setting-slid(name, v, last); }
@@ -5074,9 +5648,18 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                // Said only when the read takes a moment, then faded in: a page that comes at once never shows it.
                 if root.loading: Text {
+                    property <bool> said;
                     text: "Loading…";
                     color: Theme.dim;
+                    opacity: self.said ? 1 : 0;
+                    animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
+                    Timer {
+                        interval: 400ms;
+                        running: !parent.said;
+                        triggered => { parent.said = true; }
+                    }
                 }
                 // A list that came back empty, or that the filter left nothing of.
                 if !root.loading && root.failed == "" && root.list-empty: EmptyNote {
@@ -5129,6 +5712,13 @@ export component AppWindow inherits Window {
                     placeholder: "Find in " + root.list-name;
                     text <=> root.find-text;
                     edited(t) => { root.find-edited(t); }
+                }
+                if root.view == 2: SortButton {
+                    x: parent.width - self.width - 32px - 226px - 10px;
+                    y: Chrome.top-room + 14px;
+                    names: root.album-sorts;
+                    chosen: root.album-sort;
+                    picked(i) => { root.album-sort-chosen(i); }
                 }
 
                 // A note for a few seconds, over the page's top.
@@ -5185,21 +5775,39 @@ export component AppWindow inherits Window {
                     picked(p) => { root.inspector = root.inspector == p ? 0 : p; }
                 }
                 // Under the tabs, the panel showing.
-                if root.shown-panel == 2 && root.lyrics-lines.length == 0: Text {
+                if root.shown-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
                     y: 56px;
                     height: 120px;
                     x: 24px;
                     width: parent.width - 48px;
                     text: root.lyrics-note != "" ? root.lyrics-note : "No lyrics";
+                    opacity: root.lyrics-note-shown;
+                    animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
                     color: Theme.dim;
                     font-size: 15px;
                     horizontal-alignment: center;
                     wrap: word-wrap;
                 }
                 if root.shown-panel == 2 && root.lyrics-lines.length > 0: lyric-flick := Flickable {
+                    // A song's lyrics fade in, and out while the next song's are looked for: the last song's
+                    // words stay until then, so a change of song never jumps.
+                    property <bool> came;
+                    opacity: self.came && !root.lyrics-waiting ? 1 : 0;
+                    animate opacity { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
+                    init => { self.came = true; }
                     y: 56px;
                     height: parent.height - 56px;
-                    content-height: sung.preferred-height;
+                    // As tall as where the last line ends, as laid out: the layout's own sum counts a wrapped line
+                    // as one row, and long lyrics stopped scrolling before their end.
+                    property <length> end;
+                    content-height: max(sung.preferred-height, self.end + self.height * 2 / 3);
+                    // A new song's lyrics start from their top, gliding there from where the last song's were.
+                    property <bool> waiting: root.lyrics-waiting;
+                    changed waiting => {
+                        if !self.waiting {
+                            self.content-y = 0;
+                        }
+                    }
                     animate content-y { duration: Motion.reduced ? 0ms : 560ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
                     // The line being sung rests a third of the way down, as on Android: the words start there and can
                     // run on until the last line is there too, clear of the fades at either edge.
@@ -5212,6 +5820,17 @@ export component AppWindow inherits Window {
                         spacing: 22px;
                         for line[i] in root.lyrics-lines: Text {
                             property <bool> lit: i == root.lyrics-active;
+                            property <length> bottom: i == root.lyrics-lines.length - 1 ? self.y + self.height : 0;
+                            changed bottom => {
+                                if self.bottom > 0 {
+                                    lyric-flick.end = self.bottom;
+                                }
+                            }
+                            changed height => {
+                                if self.bottom > 0 {
+                                    lyric-flick.end = self.bottom;
+                                }
+                            }
                             // How lit the line is, fading as it changes: set when it changes (a change handler
                             // runs whether or not the line is drawn just then), so a line sung fades from white.
                             property <float> level;
@@ -5220,30 +5839,29 @@ export component AppWindow inherits Window {
                             changed lit => {
                                 self.level = self.lit ? 1 : 0;
                                 if self.lit {
-                                    lyric-flick.content-y = -max(0, min(self.y - lyric-flick.height / 3, lyric-flick.content-height - lyric-flick.height));
+                                    lyric-flick.content-y = -max(0, self.y - lyric-flick.height / 3);
                                 }
                             }
                             init => {
                                 self.level = self.lit ? 1 : 0;
                                 if self.lit {
-                                    lyric-flick.content-y = -max(0, min(self.y - lyric-flick.height / 3, lyric-flick.content-height - lyric-flick.height));
+                                    lyric-flick.content-y = -max(0, self.y - lyric-flick.height / 3);
                                 }
                             }
-                            // Lyrics with word times are drawn by the StyledText (the Text only lays the line out):
-                            // the lit line fills, and a line sung fades from white as the others do.
-                            text: line;
+                            // With word times the lit line is drawn by its pieces over this text, which keeps its place;
+                            // a line sung fades from white as the others do.
+                            text: root.lyrics-side-rows.length > i ? root.lyrics-side-rows[i] : line;
                             wrap: word-wrap;
                             font-size: 22px;
                             font-weight: 700;
                             // As Now Playing's: gone over the last 48 px before either edge, unsung lines the ink at 36 %.
                             property <length> shown-at: self.y + lyric-flick.content-y;
                             opacity: clamp(self.shown-at / 48px, 0, 1) * clamp((lyric-flick.height - self.shown-at - self.height) / 48px, 0, 1);
-                            color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36);
-                            animate color { duration: Motion.reduced ? 0ms : 420ms; easing: ease-out; }
-                            if root.lyric-sweeping: StyledText {
-                                // Kept while the pieces draw the line lit, only hidden: its colour comes up to white with them, so
-                                // the line fades back from white when the next one takes over.
-                                visible: !(parent.lit && root.lyric-pieces-side.length > 0);
+                            color: !root.lyric-sweeping ? (!root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36))
+                                : self.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * self.level);
+                            animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 420ms; easing: ease-out; }
+                            // The lit line filling without pieces to draw it (no face to measure in).
+                            if root.lyric-sweeping && self.lit && root.lyric-pieces-side.length == 0: StyledText {
                                 width: 100%;
                                 height: 100%;
                                 default-font-size: 22px;
@@ -5333,18 +5951,18 @@ export component AppWindow inherits Window {
                                 border-radius: 17px;
                                 background: Theme.chosen;
                                 Text {
-                                    text: root.account != "" ? root.account-initial : "?";
+                                    text: root.account-initial;
                                     font-weight: 600;
                                 }
                             }
                             VerticalLayout {
                                 alignment: center;
                                 Text {
-                                    text: root.account != "" ? root.account : root.server;
+                                    text: root.account;
                                     font-weight: 600;
                                     overflow: elide;
                                 }
-                                if root.account != "": Text {
+                                if root.server != "": Text {
                                     text: root.server;
                                     color: Theme.dim;
                                     font-size: 12px;
@@ -5566,7 +6184,15 @@ export component AppWindow inherits Window {
                 Rectangle {
                     height: 20px;
                 }
-                Rectangle {
+                if root.live: Text {
+                    height: 14px;
+                    text: "Live";
+                    color: Theme.accent;
+                    font-size: 13px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                if !root.live: Rectangle {
                     height: 14px;
                     property <int> dragged: -1;
                     Bar {
@@ -5585,7 +6211,7 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                HorizontalLayout {
+                if !root.live: HorizontalLayout {
                     padding-top: 4px;
                     Text {
                         text: root.clock(root.display-position-ms);
@@ -5692,10 +6318,12 @@ export component AppWindow inherits Window {
             }
 
             // The lyrics: big, the line sung at a fixed height and sharp, the rest soft and dim.
-            if root.full-panel == 2 && root.lyrics-lines.length == 0: Text {
+            if root.full-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
                 x: root.width / 2 + 20px;
                 width: root.width / 2 - 100px;
                 text: root.lyrics-note != "" ? root.lyrics-note : "No lyrics for this song";
+                opacity: root.lyrics-note-shown;
+                animate opacity { duration: Motion.reduced ? 0ms : 180ms; easing: ease-out; }
                 color: Theme.dim;
                 font-size: 26px;
                 font-weight: 700;
@@ -5705,6 +6333,14 @@ export component AppWindow inherits Window {
             // the window can say where the line sung is; its lines only while shown.
             full-lyrics := Flickable {
                 visible: root.full-panel == 2 && root.lyrics-lines.length > 0;
+                opacity: root.lyrics-waiting ? 0 : 1;
+                animate opacity { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
+                property <bool> waiting: root.lyrics-waiting;
+                changed waiting => {
+                    if !self.waiting {
+                        self.content-y = 0;
+                    }
+                }
                 flicked => { root.full-lyrics-browsed = true; }
                 x: root.width / 2 + 20px;
                 width: root.width / 2 - 140px;
@@ -5743,7 +6379,7 @@ export component AppWindow inherits Window {
                                 root.full-lyric-at = self.y;
                             }
                         }
-                        text: line;
+                        text: root.lyrics-full-rows.length > i ? root.lyrics-full-rows[i] : line;
                         wrap: word-wrap;
                         font-size: 44px;
                         font-weight: 700;
@@ -5751,12 +6387,11 @@ export component AppWindow inherits Window {
                         property <length> shown-at: self.y + full-lyrics.content-y;
                         opacity: clamp(self.shown-at / 72px, 0, 1) * clamp((full-lyrics.height - self.shown-at - self.height) / 72px, 0, 1);
                         // Unsung lines are the ink at 36 %, as the swept line's are, so the cover's colours show through.
-                        color: root.lyric-sweeping ? transparent : !root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36);
-                        animate color { duration: Motion.reduced ? 0ms : 500ms; easing: ease-out; }
-                        if root.lyric-sweeping: StyledText {
-                            // Kept while the pieces draw the line lit, only hidden: its colour comes up to white with them, so
-                            // the line fades back from white when the next one takes over.
-                            visible: !(parent.lit && root.lyric-pieces-full.length > 0);
+                        color: !root.lyric-sweeping ? (!root.lyrics-synced || self.lit ? Theme.text : Theme.text.with-alpha(0.36))
+                            : self.lit ? transparent : Theme.text.with-alpha(0.36 + (1 - 0.36) * self.level);
+                        animate color { duration: root.lyric-sweeping || Motion.reduced ? 0ms : 500ms; easing: ease-out; }
+                        // The lit line filling without pieces to draw it (no face to measure in).
+                        if root.lyric-sweeping && self.lit && root.lyric-pieces-full.length == 0: StyledText {
                             width: 100%;
                             height: 100%;
                             default-font-size: 44px;
@@ -5830,6 +6465,69 @@ export component AppWindow inherits Window {
         }
 
         // Join a Jam: a sheet over the window, as the Mac's sheets come down from its top.
+        // A lyrics service's key: typed, it is kept and the service switched on; removed, every service that
+        // needs it is switched off.
+        if root.key-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.key-open = false; }
+            }
+            Popover {
+                x: (parent.width - self.width) / 2;
+                y: 80px;
+                width: 380px;
+                height: key-sheet.preferred-height;
+                TouchArea {}
+                key-sheet := VerticalLayout {
+                    padding: 22px;
+                    spacing: 12px;
+                    Text {
+                        text: root.key-title + " key";
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    Field {
+                        height: 34px;
+                        border-radius: 8px;
+                        clip: true;
+                        icon: Icons.key;
+                        secret: true;
+                        placeholder: "Key";
+                        text <=> root.key-text;
+                        accepted => {
+                            root.setting-typed("lyricsKey:" + root.key-service, root.key-text);
+                            root.key-open = false;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        if root.key-set: SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Remove key";
+                            clicked => {
+                                root.setting-typed("lyricsKey:" + root.key-service, "");
+                                root.key-open = false;
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Cancel";
+                            clicked => { root.key-open = false; }
+                        }
+                        Capsule {
+                            text: "Save";
+                            clicked => {
+                                root.setting-typed("lyricsKey:" + root.key-service, root.key-text);
+                                root.key-open = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if root.join-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
@@ -6118,6 +6816,8 @@ export component PlayerBar inherits Window {
     in property <bool> buffering;
     in property <int> position-ms;
     in property <int> duration-ms;
+    // A radio station or live stream plays: "Live" stands where the seek bar would.
+    in property <bool> live;
     in property <bool> shuffle;
     in property <int> repeat;
     in property <float> volume: 1;
@@ -6166,6 +6866,7 @@ export component PlayerBar inherits Window {
         buffering: root.buffering;
         position-ms: root.position-ms;
         duration-ms: root.duration-ms;
+        live: root.live;
         shuffle: root.shuffle;
         repeat: root.repeat;
         volume: root.volume;

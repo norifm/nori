@@ -2842,6 +2842,13 @@ private fun Queue(vm: PlayerViewModel) {
             // Only the row picked up and put down recomposes; the drag itself is read in the layer below.
             val held by remember(key) { derivedStateOf { drag.liftKey == key } }
             val place by rememberUpdatedState(at)
+            // A row the held one passes slides out of its way, and back if it turns round.
+            val aside by remember(key) { derivedStateOf { drag.step(place) } }
+            val stepping = remember(key) { androidx.compose.animation.core.Animatable(0f) }
+            LaunchedEffect(aside) {
+                if (plain || drag.from < 0) stepping.snapTo(aside)
+                else stepping.animateTo(aside, tween(QUEUE_STEP_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+            }
             val back = undo.returning?.takeIf { it.key == key }
             // A row put back by the undo comes in from the side it left by, and does not fade as well.
             val swipe = remember { SwipeState().apply { if (back != null && !plain && back.side != 0f) offset.floatValue = back.side * listWidth } }
@@ -2873,11 +2880,28 @@ private fun Queue(vm: PlayerViewModel) {
                     )
                     .zIndex(if (held) 1f else 0f)
                     .graphicsLayer {
-                        translationY = drag.shift(place)
+                        // Once the drag is over the rows are where they were drawn: no step is left over.
+                        translationY = when {
+                            drag.from < 0 -> 0f
+                            drag.from == place -> drag.offset.floatValue
+                            else -> stepping.value
+                        }
                         if (drag.liftKey == key) {
                             val l = drag.lift.floatValue
                             shadowElevation = 14f * l; scaleX = 1f + 0.02f * l; scaleY = 1f + 0.02f * l
                         }
+                    }
+                    // The row held is a step of paper over the rows it passes, so they never show through it.
+                    .drawBehind {
+                        if (drag.liftKey != key) return@drawBehind
+                        val l = drag.lift.floatValue
+                        val corner = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx())
+                        // A little past the cover and the handle on either side, as a raised row's plate.
+                        val out = 8.dp.toPx()
+                        val at = Offset(-out, 0f)
+                        val area = androidx.compose.ui.geometry.Size(size.width + 2 * out, size.height)
+                        drawRoundRect(look.color(CoverLook.BACKGROUND), at, area, corner, alpha = l)
+                        drawRoundRect(look.color(CoverLook.VEIL_13), at, area, corner, alpha = l)
                     }
                     .onGloballyPositioned { if (drag.rowHeight == 0f) drag.rowHeight = it.size.height.toFloat() },
             ) {
@@ -2969,7 +2993,10 @@ private fun Queue(vm: PlayerViewModel) {
                                 },
                                 onDragEnd = { drop(send = true) },
                                 onDragCancel = { drop(send = false) },
-                            ) { change, d -> change.consume(); drag.offset.floatValue += d.y }
+                            ) { change, d ->
+                                change.consume()
+                                if (drag.moveBy(d.y)) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
                         },
                     ) } } }
                 }
@@ -3010,6 +3037,8 @@ private const val QUEUE_MOVE_MS = 260
 /** A held row lifting and settling, and a dropped row going into its slot. */
 private const val QUEUE_LIFT_MS = 150
 private const val QUEUE_DROP_MS = 140
+/** A row stepping out of the held one's way. */
+private const val QUEUE_STEP_MS = 160
 /** How long the rows wait for a move to reach the queue before they give it up. */
 private const val QUEUE_LANDING_MS = 1_000L
 /** How long the undo is offered for. */

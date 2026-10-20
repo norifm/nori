@@ -61,12 +61,28 @@ class QueueEditsTest {
         val queue = listOf("a", "b", "c", "d")
         d.landing = queue
         assertFalse(d.landed(queue))
-        assertEquals(200f, d.shift(0), 0f)
+        assertEquals(-100f, d.step(1), 0f)
         assertTrue(d.landed(listOf("b", "c", "a", "d")))
         d.clear()
         assertEquals(-1, d.from)
-        assertEquals(0f, d.shift(0), 0f)
+        assertEquals(0f, d.step(1), 0f)
         assertFalse(d.landed(queue))
+    }
+
+    @Test fun `the held row stays among the places it can land in, and says when it changes place`() {
+        val d = QueueDrag()
+        d.rowHeight = 100f
+        d.size = 6
+        d.first = 2
+        d.from = 3
+        assertFalse(d.moveBy(40f))
+        assertTrue(d.moveBy(20f))
+        assertEquals(4, d.target())
+        d.moveBy(10_000f)
+        assertEquals("no further than the last row", 200f, d.offset.floatValue, 0f)
+        d.moveBy(-10_000f)
+        assertEquals("no higher than the first after the song playing", -100f, d.offset.floatValue, 0f)
+        assertEquals(listOf(0f, 0f, 100f, 0f, 0f), (0..4).map { d.step(it) })
     }
 
     @Test fun `the undo offers the last song taken out, once`() {

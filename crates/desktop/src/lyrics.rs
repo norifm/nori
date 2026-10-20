@@ -16,12 +16,14 @@ pub struct SongLyrics {
     face: Option<Typeface>,
     /// Active line as last laid out, per view (side panel, Now Playing).
     laid: [Option<Laid>; 2],
+    /// The width every line was last broken into rows at, per view.
+    rows_at: [Option<f32>; 2],
 }
 
 impl SongLyrics {
     pub fn new(pick: LyricsPick, position_ms: i64, face: Option<Typeface>) -> SongLyrics {
         let clock = nori_core::look::clock_on(&pick.lyrics, position_ms);
-        SongLyrics { pick, clock, face, laid: [None, None] }
+        SongLyrics { pick, clock, face, laid: [None, None], rows_at: [None, None] }
     }
 
     pub fn lines(&self) -> ModelRc<SharedString> {
@@ -74,6 +76,18 @@ impl SongLyrics {
             *slot = Some(sung::lay(face, i, line, size, width));
         }
         slot.as_ref().map_or_else(Vec::new, |l| sung::frame(l, line, now.at, now.ms, lit, dim, size * 0.6))
+    }
+
+    /// Every line broken into the rows its pieces take for `view` at `size` within `width`, when that width
+    /// is new; None when the lines are already so, or there is no face to measure in.
+    pub fn rows(&mut self, view: usize, size: f32, width: f32) -> Option<ModelRc<SharedString>> {
+        let face = self.face.as_ref()?;
+        if self.rows_at[view] == Some(width) {
+            return None;
+        }
+        self.rows_at[view] = Some(width);
+        let lines = self.pick.lyrics.lines.iter().enumerate().map(|(i, l)| SharedString::from(sung::lay(face, i, l, size, width).rows(&l.text)));
+        Some(ModelRc::new(VecModel::from(lines.collect::<Vec<_>>())))
     }
 
     /// Seek target for a click on `line`.

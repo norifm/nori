@@ -71,7 +71,20 @@ internal class QueueDrag {
 
     fun target(): Int = reorderTarget(from, offset.floatValue, rowHeight, size, first)
 
-    fun shift(at: Int): Float = reorderShift(at, from, target(), offset.floatValue, rowHeight)
+    /** How far a row other than the one held steps aside; the held row's own is [offset]. */
+    fun step(at: Int): Float = if (at == from) 0f else reorderShift(at, from, target(), offset.floatValue, rowHeight)
+
+    /**
+     * The held row moved [dy] pixels, kept between the first and last places it can land in. Returns
+     * whether that changed where it would land.
+     */
+    fun moveBy(dy: Float): Boolean {
+        val was = target()
+        val top = (first.coerceAtMost(from) - from) * rowHeight
+        val bottom = (size - 1 - from).coerceAtLeast(0) * rowHeight
+        offset.floatValue = (offset.floatValue + dy).coerceIn(top, bottom.coerceAtLeast(top))
+        return target() != was
+    }
 
     /** Whether a drop has landed: the queue on the page is no longer the one it was sent against. */
     fun landed(queue: Any): Boolean = landing != null && landing !== queue

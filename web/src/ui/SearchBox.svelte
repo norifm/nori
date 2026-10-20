@@ -10,7 +10,11 @@
   import Icon from "./Icon.svelte";
 
   type Found = { artists?: Artist[]; albums?: Album[]; songs?: Song[] };
-  let query = $state(route.top === "search" ? route.arg : "");
+  let query = $state("");
+  // The search page's query, however it was reached (typed, a link, Back).
+  $effect(() => {
+    if (route.top === "search") query = route.arg;
+  });
   let found = $state.raw<Found | null>(null);
   let open = $state(false);
   let box = $state<HTMLDivElement>();

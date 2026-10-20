@@ -20,7 +20,7 @@ use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, Button, DeviceRow, Focus, Hit, ListRef, Load, Overlay, Page, Panel, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
+use crate::app::{App, Button, DeviceRow, Focus, Hit, Item, ListRef, Load, Overlay, Page, Panel, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
 use crate::art::{Art, Theme};
 use crate::keys::{Scope, BINDINGS};
 use crate::settings_view::{self, EqRow, Line as SLine, SettingsView};
@@ -645,13 +645,18 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         put(f, Paragraph::new(spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(more, t.dim()), area.width as usize)), Rect { y, height: 1, ..area });
         let row = Rect { y: y + 1, height: card_h.min((area.y + area.height).saturating_sub(y + 1)), ..area };
         app.hits.push((row, Hit::List(ListRef::Shelf(*i))));
-        let Some(Some((_, albums))) = app.home.rows.get(*i) else { continue };
+        let Some(Some((_, items))) = app.home.rows.get(*i) else { continue };
         for c in 0..cols {
             let n = left + c;
-            let Some(a) = albums.get(n) else { break };
+            let Some(item) = items.get(n) else { break };
             let r = Rect { x: area.x + c as u16 * (w + 1), width: w, ..row };
-            let sub = if a.year > 0 { format!("{} · {}", a.artist, a.year) } else { a.artist.clone() };
-            one_card(f, r, &a.name, &sub, a.cover_art.as_deref(), pics, t, chosen_shelf && n == pos, focused);
+            let (name, sub, art) = match item {
+                Item::Album(a) | Item::DownloadedAlbum(a) => (&a.name, if a.year > 0 { format!("{} · {}", a.artist, a.year) } else { a.artist.clone() }, &a.cover_art),
+                Item::Song(songs, at) => (&songs[*at].title, songs[*at].artist.clone(), &songs[*at].cover_art),
+                Item::Playlist(p) => (&p.name, crate::text::playlist_line(p), &p.cover_art),
+                Item::Artist(a) => (&a.name, a.album_count.map(crate::text::albums).unwrap_or_default(), &a.cover_art),
+            };
+            one_card(f, r, name, &sub, art.as_deref(), pics, t, chosen_shelf && n == pos, focused);
             app.hits.push((r, Hit::Row(ListRef::Shelf(*i), n)));
         }
     }

@@ -11,7 +11,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, Mo
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
-use crate::app::{App, Button, Cmd, Focus, Hit, ListRef, Overlay, Panel, Target, View};
+use crate::app::{App, Button, Cmd, Focus, Hit, Item, ListRef, Overlay, Panel, Target, View};
 use crate::backend::{Data, Msg, Req};
 use crate::settings_view::{Facts, Line, Row, SettingsView, Switch, GROUPS};
 
@@ -371,10 +371,31 @@ fn album_grid_keys_and_clicks() {
 }
 
 #[test]
+fn a_feed_shelf_shows_songs_and_playlists_too() {
+    let mut a = app();
+    a.go(View::Home);
+    let songs = vec![song("s1", "Quick One", 200), song("s2", "Quick Two", 180)];
+    let list = nori_core::Playlist { id: "p1".into(), name: "Mixed Bag".into(), ..Default::default() };
+    let cards = vec![Item::Song(songs.clone(), 0), Item::Song(songs.clone(), 1), Item::Playlist(list)];
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Quick picks".into(), cards))));
+    let s = draw(&mut a, 160, 40);
+    assert!(s.contains("Quick Two") && s.contains("Mixed Bag"), "{s}");
+    key(&mut a, KeyCode::Right);
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.iter().any(|c| matches!(c, Cmd::Play { songs: v, start: 1, .. } if v.len() == 2) || matches!(c, Cmd::Play { songs: v, .. } if v[0].id == "s2")), "the shelf's songs from the second: {:?}", a.cmds);
+    key(&mut a, KeyCode::Right);
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert!(a.cmds.contains(&Cmd::Load(Req::Playlist("p1".into()))), "{:?}", a.cmds);
+}
+
+#[test]
 fn home_shelves() {
     let mut a = app();
     a.go(View::Home);
-    let shelf = |n: usize, p: &str| (0..n).map(|i| album(&format!("{p}-{i}"), &format!("{p} {i}"))).collect::<Vec<_>>();
+    let shelf = |n: usize, p: &str| (0..n).map(|i| Item::Album(album(&format!("{p}-{i}"), &format!("{p} {i}")))).collect::<Vec<_>>();
+    let id = |a: &App| match a.home.item() { Some(Item::Album(al)) => al.id.clone(), _ => String::new() };
     a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Recently added".into(), shelf(12, "New")))));
     a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(2, "Most played".into(), shelf(3, "Top")))));
     let s = draw(&mut a, 160, 40);
@@ -383,11 +404,11 @@ fn home_shelves() {
     dump("home", &s);
     key(&mut a, KeyCode::Right);
     key(&mut a, KeyCode::Right);
-    assert_eq!(a.home.album().unwrap().id, "New-2");
+    assert_eq!(id(&a), "New-2");
     key(&mut a, KeyCode::Down);
-    assert_eq!(a.home.album().unwrap().id, "Top-0", "down to the next shelf with albums on it");
+    assert_eq!(id(&a), "Top-0", "down to the next shelf with albums on it");
     key(&mut a, KeyCode::Up);
-    assert_eq!(a.home.album().unwrap().id, "New-2", "each shelf keeps its place");
+    assert_eq!(id(&a), "New-2", "each shelf keeps its place");
     a.cmds.clear();
     key(&mut a, KeyCode::Enter);
     assert!(a.cmds.contains(&Cmd::Load(Req::Album("New-2".into()))));

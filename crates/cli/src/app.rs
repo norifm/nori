@@ -353,11 +353,11 @@ pub enum Item {
     Playlist(Playlist),
 }
 
-/// The home page: album shelves, each scrolled independently.
+/// The home page: shelves of cards, each scrolled independently.
 #[derive(Default)]
 pub struct Home {
     /// Indexed like the session's `home_album_rows`; None until loaded.
-    pub rows: Vec<Option<(String, Vec<Album>)>>,
+    pub rows: Vec<Option<(String, Vec<Item>)>>,
     pub error: Option<String>,
     pub asked: bool,
     /// Selected shelf, indexed like `rows`.
@@ -373,12 +373,12 @@ pub struct Home {
 
 impl Home {
     /// Non-empty shelves: index, title, albums.
-    pub fn shelves(&self) -> Vec<(usize, &str, &[Album])> {
+    pub fn shelves(&self) -> Vec<(usize, &str, &[Item])> {
         self.rows.iter().enumerate().filter_map(|(i, r)| r.as_ref().filter(|(_, v)| !v.is_empty()).map(|(t, v)| (i, t.as_str(), v.as_slice()))).collect()
     }
 
-    /// The selected album.
-    pub fn album(&self) -> Option<&Album> {
+    /// The selected card.
+    pub fn item(&self) -> Option<&Item> {
         let (_, v) = self.rows.get(self.shelf)?.as_ref()?;
         v.get(*self.pos.get(self.shelf)?)
     }
@@ -1272,7 +1272,7 @@ impl App {
 
     fn data(&mut self, req: Req, r: Result<Data, String>) {
         match (req, r) {
-            (Req::Home, Ok(Data::HomeRow(i, title, albums))) => {
+            (Req::Home, Ok(Data::HomeRow(i, title, items))) => {
                 // A feed has as many shelves as the service sends.
                 if i >= self.home.rows.len() {
                     self.home.rows.resize(i + 1, None);
@@ -1280,7 +1280,7 @@ impl App {
                     self.home.left.resize(i + 1, 0);
                 }
                 if let Some(slot) = self.home.rows.get_mut(i) {
-                    *slot = Some((title, albums));
+                    *slot = Some((title, items));
                 }
                 self.home.error = None;
                 self.home.settle(true);
@@ -2010,7 +2010,7 @@ impl App {
         }
         let l = &self.library;
         match self.view {
-            View::Home => self.home.album().cloned().map(Item::Album),
+            View::Home => self.home.item().cloned(),
             View::Albums => l.albums.ready()?.get(l.albums_sel.at).cloned().map(Item::Album),
             View::Artists => l.artists.ready()?.get(l.artists_sel.at).cloned().map(Item::Artist),
             View::Songs => l.songs.ready().filter(|s| l.songs_sel.at < s.len()).map(|s| Item::Song(s.clone(), l.songs_sel.at)),

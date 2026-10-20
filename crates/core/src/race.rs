@@ -136,7 +136,13 @@ impl Client {
     /// twice. A service's timed lyrics shown before the song playing is measured are shown again once
     /// it is, checked against its voice. Dropping the future cancels its requests.
     pub async fn lyrics_for(&self, id: String, shown: Arc<dyn LyricsShown>) -> NetResult<()> {
-        self.lyrics_for_with(id, &self.lyrics_asked(), shown).await
+        // A jam's members ask the service its host chose, so everyone reads the same words.
+        let remote = self.core.remote.lock().upgrade();
+        let asked = match remote.and_then(|r| r.jam_lyrics(&id)) {
+            Some(service) => self.lyrics_asked().only(&service),
+            None => self.lyrics_asked(),
+        };
+        self.lyrics_for_with(id, &asked, shown).await
     }
 }
 
@@ -215,6 +221,10 @@ impl Client {
             let song = match song { Some(song) => song, None => self.song_of(id.clone()).await? };
             if let Some(line) = lookup(&*self.transport, &*self.core, &song, has_lines, synced, asked, &*screen, &self.lyrics).await {
                 nori_perf::perf_log::note_core("lyrics", line.trim_start_matches("lyrics: "));
+                let remote = self.core.remote.lock().upgrade();
+                if let Some(remote) = remote {
+                    remote.lyrics_chose();
+                }
             }
             Ok::<(), crate::transport::NetError>(())
         };

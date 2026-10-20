@@ -14,8 +14,8 @@ use crate::session::{read_pages, Handle};
 /// A page a client reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageAsk {
-    /// The albums by name, a page from `offset` (more follow while pages come full).
-    Albums { offset: u32 },
+    /// The albums in `sort`'s order, a page from `offset` (more follow while pages come full).
+    Albums { sort: AlbumSort, offset: u32 },
     Artists,
     Playlists,
     /// What the account has starred.
@@ -100,8 +100,8 @@ impl Handle {
             }
         };
         match ask {
-            PageAsk::Albums { offset } => {
-                let read = Read::AlbumList { kind: AlbumSort::ByName, size: ALBUM_PAGE as i32, offset: offset as i32, genre: None };
+            PageAsk::Albums { sort, offset } => {
+                let read = Read::AlbumList { kind: sort, size: ALBUM_PAGE as i32, offset: offset as i32, genre: None };
                 pages(read, &|p| if let Page::Albums { v } = p { Some(PageGot::Albums(v)) } else { None });
             }
             PageAsk::Artists => pages(Read::ArtistIndex, &|p| if let Page::Artists { v } = p { Some(PageGot::Artists(v)) } else { None }),
@@ -141,8 +141,8 @@ impl Handle {
         self.home_rows().into_iter().filter(|&r| matches!(home_shelves(vec![r])[..], [HomeShelf::Albums { .. }])).collect()
     }
 
-    /// Reads Home on a thread of its own: a source's own (its feed), else the shelves of `rows` (some of
-    /// [`Handle::home_rows`]) and, with `mixes`, "For you". `each` gets every part as it comes; an error
+    /// Reads Home on a thread of its own: with `mixes`, "For you" first; then a source's own (its feed),
+    /// else the shelves of `rows` (some of [`Handle::home_rows`]). `each` gets every part as it comes; an error
     /// only while nothing has come.
     pub fn read_home(&self, rows: Vec<HomeRow>, mixes: bool, each: impl Fn(Result<HomePart, NetError>) + Send + 'static) {
         let me = self.clone();
@@ -150,20 +150,9 @@ impl Handle {
     }
 
     fn home(&self, rows: Vec<HomeRow>, mixes: bool, each: &dyn Fn(Result<HomePart, NetError>)) {
-        if self.rules.feed {
-            if mixes {
-                each(Ok(HomePart::Mixes(Vec::new())));
-            }
-            let r = read_pages(&self.client, Read::HomeFeed, |p| {
-                if let Page::Feed { v } = p {
-                    each(Ok(HomePart::Feed(v)));
-                }
-            });
-            return r.unwrap_or_else(|e| each(Err(e)));
-        }
         let client = &self.client;
-        // The mixes and the favourites are the account's.
-        let mixes = mixes.then_some(self.rules.account);
+        // The mixes and the favourites are the profile's where it has them (`ProfileRules::mixes`).
+        let mixes = mixes.then_some(self.rules.mixes);
         let taste = self.core.session.settings.prefs(|p| p.taste_model);
         // The favourites' tile follows the starred songs: stored at once, the server's after.
         let stored = mixes.filter(|&account| account).map(|_| client.mix_favourites_stored());
@@ -173,8 +162,20 @@ impl Handle {
             each(Ok(HomePart::Mixes(t.clone())));
             t
         });
-        let pins = self.core.session.settings.prefs(|p| p.pinned_playlists.clone());
         let mut any = sent.is_some();
+        // A source's own Home: its feed under "For you", as on Android.
+        if self.rules.feed {
+            let r = read_pages(client, Read::HomeFeed, |p| {
+                if let Page::Feed { v } = p {
+                    each(Ok(HomePart::Feed(v)));
+                }
+            });
+            if let Err(e) = r {
+                return each(Err(e));
+            }
+        }
+        let pins = self.core.session.settings.prefs(|p| p.pinned_playlists.clone());
+        let rows = if self.rules.feed { Vec::new() } else { rows };
         for (at, shelf) in home_shelves(rows).into_iter().enumerate() {
             let r = match shelf {
                 HomeShelf::Albums { sort, size, .. } => {

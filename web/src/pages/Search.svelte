@@ -12,7 +12,7 @@
   import SongList from "../ui/SongList.svelte";
 
   let { query }: { query: string } = $props();
-  type Found = { artists: Artist[]; albums: Album[]; songs: Song[]; query?: string };
+  type Found = { artists: Artist[]; albums: Album[]; songs: Song[]; few: number; query?: string };
   let field = $state<HTMLInputElement>();
 
   const page = reading("search", async (): Promise<Found | null> => {
@@ -42,7 +42,7 @@
     {#if !d.artists?.length && !d.albums?.length && !d.songs?.length}<p class="empty"><Icon name="search" />{W.noResults}</p>{/if}
     {#if d.artists?.length}<h2 class="section">{W.artists}</h2><Cards artists={d.artists} row />{/if}
     {#if d.albums?.length}<h2 class="section">{W.albums}</h2><Cards albums={d.albums} row />{/if}
-    {#if d.songs?.length}<h2 class="section">{W.songs}</h2><SongList songs={d.songs} kind="Search" id={query} />{/if}
+    {#if d.songs?.length}<h2 class="section">{W.songs}</h2>{#key d.query}<SongList songs={d.songs} kind="Search" id={query} shown={d.few} />{/key}{/if}
   {:else if !query.trim()}
     <p class="empty">{W.searchHint}</p>
   {/if}
