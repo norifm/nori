@@ -3984,6 +3984,7 @@ dependencies = [
  "naga",
  "nori-core",
  "nori-covers",
+ "nori-desktop-ui",
  "nori-engine",
  "nori-host",
  "nori-http",
@@ -3998,10 +3999,17 @@ dependencies = [
  "serde_json",
  "skia-safe",
  "slint",
- "slint-build",
  "wgpu",
  "winit",
  "x11rb",
+]
+
+[[package]]
+name = "nori-desktop-ui"
+version = "0.7.0-beta.2"
+dependencies = [
+ "slint",
+ "slint-build",
 ]
 
 [[package]]

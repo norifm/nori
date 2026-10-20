@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use nori_core::settings::SavedServer;
 
-slint::include_modules!();
+use nori_desktop_ui::*;
 
 /// $XDG_DATA_HOME/nori, else ~/.local/share/nori (same as the terminal client).
 fn data_dir() -> PathBuf {
