@@ -1937,14 +1937,18 @@ private fun SleeveCarousel(
 /**
  * The soft band's blur, and on a white, cream or black page the page's tint over it: the band's
  * luminance scaled per channel by the page's colour relative to its brightest channel (grey for white,
- * the same shading warmed for cream). Made once per tint and kept; a page cross-fading between a tinted
- * page and a coloured one mixes the two matrices rather than switching in one frame.
+ * the same shading warmed for cream). The last two tints' effects are kept, as a cross-fade asks for both
+ * every frame; a page cross-fading between a tinted page and a coloured one mixes the two matrices rather
+ * than switching in one frame.
  */
 @androidx.annotation.RequiresApi(31)
 private class BandEffect(blurPx: Float) {
     private val blur = android.graphics.RenderEffect.createBlurEffect(blurPx, blurPx, android.graphics.Shader.TileMode.CLAMP)
     private val plain = blur.asComposeRenderEffect()
-    private val made = androidx.collection.MutableLongObjectMap<androidx.compose.ui.graphics.RenderEffect>()
+    private var lastKey = -1L
+    private var last = plain
+    private var priorKey = -1L
+    private var prior = plain
 
     fun of(look: Look): androidx.compose.ui.graphics.RenderEffect {
         val s = Float.fromBits(look.argb(CoverLook.BAND_TINT))
@@ -1955,11 +1959,15 @@ private class BandEffect(blurPx: Float) {
         // Kept by the tint to a 1/256th, which is finer than the blurred band can show.
         fun q(x: Float) = (x * 256f).toLong().coerceIn(0, 1023)
         val key = (q(s) shl 30) or (q(kr) shl 20) or (q(kg) shl 10) or q(kb)
-        return made[key] ?: run {
-            // The matrix is nori-look's (`sleeve::band_matrix`), asked once per tint.
+        if (key == lastKey) return last
+        val effect = if (key == priorKey) prior else {
+            // The matrix is nori-look's (`sleeve::band_matrix`).
             val m = android.graphics.ColorMatrix(dev.nori.music.ffi.look.bandMatrix(s, kr, kg, kb).toFloatArray())
             android.graphics.RenderEffect.createColorFilterEffect(android.graphics.ColorMatrixColorFilter(m), blur).asComposeRenderEffect()
-        }.also { made[key] = it }
+        }
+        priorKey = lastKey; prior = last
+        lastKey = key; last = effect
+        return effect
     }
 }
 
