@@ -262,13 +262,14 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
 
         val controller = rememberNavController()
         val sheetScope = androidx.compose.runtime.rememberCoroutineScope()
-        val sheet = remember { PlayerSheet(sheetScope) }
-        sheet.plain = reduceMotion()
         // Whether the player was open, kept with the rest of the saved state, so an app Android put back
-        // together (after it was stopped in the background) opens on the player it was left on.
+        // together (stopped in the background, or a change of configuration as the phone is unlocked)
+        // opens on the player it was left on, from its first frame: opened a frame later, the page under
+        // it showed for that frame.
         var playerWasOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+        val sheet = remember { PlayerSheet(sheetScope, startOpen = playerWasOpen) }
+        sheet.plain = reduceMotion()
         LaunchedEffect(sheet) {
-            if (playerWasOpen) sheet.openAtOnce()
             androidx.compose.runtime.snapshotFlow { sheet.isOpen }.collect { playerWasOpen = it }
         }
         // The player covers the page, so a field on it (search) lets go of its focus: held under the player,
