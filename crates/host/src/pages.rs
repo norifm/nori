@@ -151,8 +151,8 @@ impl Handle {
 
     fn home(&self, rows: Vec<HomeRow>, mixes: bool, each: &dyn Fn(Result<HomePart, NetError>)) {
         let client = &self.client;
-        // The mixes and the favourites are the account's.
-        let mixes = mixes.then_some(self.rules.account);
+        // The mixes and the favourites are the profile's where it has them (`ProfileRules::mixes`).
+        let mixes = mixes.then_some(self.rules.mixes);
         let taste = self.core.session.settings.prefs(|p| p.taste_model);
         // The favourites' tile follows the starred songs: stored at once, the server's after.
         let stored = mixes.filter(|&account| account).map(|_| client.mix_favourites_stored());

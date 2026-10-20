@@ -72,7 +72,7 @@ fn rules(signed_in: bool) -> ProfileRules {
     let mut sections = if signed_in { vec![LibrarySection::Albums, LibrarySection::Favourites, LibrarySection::Playlists] } else { Vec::new() };
     sections.push(LibrarySection::Downloads);
     sections.push(LibrarySection::History);
-    ProfileRules { asks: false, account: false, downloads: true, radio: true, indexed: false, sections, settings, remote: true, measures: true, stars: signed_in, stars_after_sign_in: !signed_in, scrobbles: signed_in, feed: true }
+    ProfileRules { asks: false, account: false, downloads: true, radio: true, indexed: false, sections, settings, remote: true, measures: true, stars: signed_in, stars_after_sign_in: !signed_in, scrobbles: signed_in, feed: true, mixes: signed_in }
 }
 
 /// The platform's transport as innertube-music's HTTP client.
@@ -121,6 +121,7 @@ fn song(s: yt::Song) -> Song {
         track: s.track,
         year: s.year,
         cover_art: s.thumbnail,
+        starred: s.liked,
         ..Default::default()
     }
     .dressed()
