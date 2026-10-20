@@ -919,12 +919,12 @@ component CardView inherits Rectangle {
                 MenuRow {
                     icon: Icons.play;
                     text: "Play";
-                    clicked => { card-menu.close(); root.play(); }
+                    clicked => { root.play(); card-menu.close(); }
                 }
                 MenuRow {
                     icon: Icons.people;
                     text: "Start a Jam";
-                    clicked => { card-menu.close(); root.jam(); }
+                    clicked => { root.jam(); card-menu.close(); }
                 }
             }
         }
@@ -1041,7 +1041,7 @@ component SortButton inherits Rectangle {
                 for name[i] in root.names: MenuRow {
                     icon: i == root.chosen ? Icons.check : "";
                     text: name;
-                    clicked => { orders.close(); root.picked(i); }
+                    clicked => { root.picked(i); orders.close(); }
                 }
             }
         }
@@ -1316,22 +1316,22 @@ component SongLine inherits Rectangle {
                 if !Jam.guest: MenuRow {
                     icon: Icons.play;
                     text: "Play";
-                    clicked => { song-menu.close(); root.play(); }
+                    clicked => { root.play(); song-menu.close(); }
                 }
                 MenuRow {
                     icon: Icons.next;
                     text: "Play next";
-                    clicked => { song-menu.close(); root.next(); }
+                    clicked => { root.next(); song-menu.close(); }
                 }
                 MenuRow {
                     icon: Icons.queue;
                     text: "Add to queue";
-                    clicked => { song-menu.close(); root.later(); }
+                    clicked => { root.later(); song-menu.close(); }
                 }
                 if Jam.on && !Jam.hosting: MenuRow {
                     icon: Icons.people;
                     text: "Start a Jam";
-                    clicked => { song-menu.close(); root.jam(); }
+                    clicked => { root.jam(); song-menu.close(); }
                 }
                 Rectangle {
                     height: 9px;
@@ -1343,8 +1343,8 @@ component SongLine inherits Rectangle {
                 for m in root.song.menu: MenuRow {
                     icon: m.kind == 0 ? Icons.seal-outline : m.kind == 1 ? Icons.albums : m.kind == 2 ? Icons.artists : m.kind == 3 ? Icons.download : Icons.radio;
                     text: m.title;
+                    // The menu closes after: closed, it can no longer reach the row.
                     clicked => {
-                        song-menu.close();
                         if m.kind == 0 {
                             root.star();
                         } else if m.kind == 1 {
@@ -1356,6 +1356,7 @@ component SongLine inherits Rectangle {
                         } else {
                             root.radio();
                         }
+                        song-menu.close();
                     }
                 }
             }
@@ -3974,12 +3975,12 @@ component PageActions inherits HorizontalLayout {
                     MenuRow {
                         icon: Icons.queue;
                         text: "Add to Queue";
-                        clicked => { menu.close(); root.later(); }
+                        clicked => { root.later(); menu.close(); }
                     }
                     if root.download: MenuRow {
                         icon: Icons.download;
                         text: "Download";
-                        clicked => { menu.close(); root.download-page(); }
+                        clicked => { root.download-page(); menu.close(); }
                     }
                 }
             }

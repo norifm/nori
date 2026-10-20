@@ -3201,6 +3201,49 @@ mod tests {
         assert_ne!(drawn(song), drawn(SongRow::default()), "the row draws its song");
     }
 
+    /// A song's menu does what its entries say: Favorite stars the song, the album's opens it.
+    #[test]
+    fn a_songs_menu_entries_act() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_view(PAGE);
+        let menu = vec![crate::SongGo { kind: 0, title: "Favorite".into(), ..Default::default() }, crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into() }];
+        ui.set_page_songs(ModelRc::new(VecModel::from(vec![SongRow { title: "Glass Harbour".into(), menu: ModelRc::new(VecModel::from(menu)), ..Default::default() }])));
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_song(move |list, i, how| seen.borrow_mut().push(format!("song {list} {i} {how}")));
+        let seen = did.clone();
+        ui.global::<crate::Go>().on_album(move |id| seen.borrow_mut().push(format!("album {id}")));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        settle();
+        let press = |x: f32, y: f32, button| {
+            let at = slint::LogicalPosition::new(x, y);
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+            settle();
+        };
+        use slint::platform::PointerEventButton::{Left, Right};
+        // The menu opens where the row is pressed: Play, Play next, Add to queue, a line, then the song's own.
+        let row = (400.0, 400.0);
+        let entry = |n: f32| row.1 + 6.0 + 3.0 * 40.0 + 9.0 + n * 40.0 + 20.0;
+        press(row.0, row.1, Right);
+        press(row.0 + 40.0, entry(1.0), Left);
+        press(row.0, row.1, Right);
+        press(row.0 + 40.0, entry(0.0), Left);
+        press(row.0, row.1, Right);
+        press(row.0 + 40.0, row.1 + 26.0, Left);
+        assert_eq!(*did.borrow(), ["album al", "song 0 0 4", "song 0 0 0"]);
+    }
+
     /// A card opens on a click with jams on too, where a right press opens its menu.
     #[test]
     fn a_card_opens_on_a_click_with_jams_on() {
