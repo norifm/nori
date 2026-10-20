@@ -3526,6 +3526,71 @@ component ShowAllButton inherits Rectangle {
     }
 }
 
+// A page's buttons, as Android's: Shuffle, a wide Play, the page's seal where it has one, and its menu.
+component PageActions inherits HorizontalLayout {
+    in property <bool> seal;
+    in property <bool> liked;
+    // The menu offers Download.
+    in property <bool> download;
+    callback play(bool);
+    callback star();
+    callback later();
+    callback download-page();
+    property <length> side: 34px;
+    spacing: 10px;
+    IconButton {
+        y: (parent.height - self.height) / 2;
+        path: Icons.shuffle;
+        size: root.side;
+        icon: 18px;
+        ink: Theme.plate-ink;
+        base: Theme.plate;
+        clicked => { root.play(true); }
+    }
+    Capsule {
+        text: "Play";
+        icon: Icons.play;
+        clicked => { root.play(false); }
+    }
+    if root.seal: Rectangle {
+        y: (parent.height - self.height) / 2;
+        width: root.side;
+        height: root.side;
+        border-radius: self.height / 2;
+        background: Theme.plate;
+        Seal {
+            liked: root.liked;
+            size: 20px;
+            clicked => { root.star(); }
+        }
+    }
+    Rectangle {
+        y: (parent.height - self.height) / 2;
+        width: root.side;
+        height: root.side;
+        IconButton {
+            path: Icons.more;
+            size: root.side;
+            icon: 18px;
+            ink: Theme.plate-ink;
+            base: Theme.plate;
+            clicked => { menu.show({ x: 0, y: root.side + 4px }); }
+        }
+        menu := ContextMenuArea {
+            Menu {
+                MenuItem {
+                    title: "Add to Queue";
+                    activated => { root.later(); }
+                }
+                if root.download: MenuItem {
+                    title: "Download";
+                    activated => { root.download-page(); }
+                }
+            }
+        }
+    }
+}
+
 // Where the window is dragged from, and double-clicked to zoom: the content runs up under the titlebar.
 component TitleStrip inherits TouchArea {
     callback drag;
@@ -3994,6 +4059,10 @@ export component AppWindow inherits Window {
     // The page's songs added at the end of the queue.
     callback page-later();
     callback page-download();
+    // The album's or artist's seal: offered where the profile keeps the account's favorites, and its state.
+    in property <bool> page-can-star;
+    in property <bool> page-starred;
+    callback page-star();
     callback more();
     callback search-edited(string);
     // Nothing is typed in the search field: the page lists the searches made before.
@@ -4714,34 +4783,14 @@ export component AppWindow inherits Window {
                                     }
                                     HorizontalLayout {
                                         alignment: center;
-                                        spacing: 18px;
-                                        IconButton {
-                                            y: (parent.height - self.height) / 2;
-                                            path: Icons.shuffle;
-                                            size: 42px;
-                                            icon: 18px;
-                                            ink: Theme.plate-ink;
-                                            base: Theme.plate;
-                                            clicked => { root.play-page(true); }
-                                        }
-                                        Rectangle {
-                                            width: 64px;
-                                            height: 64px;
-                                            border-radius: 32px;
-                                            background: Theme.pill;
-                                            Icon {
-                                                x: (parent.width - self.width) / 2 + 2px;
-                                                path: Icons.play;
-                                                colour: Theme.pill-ink;
-                                                width: 26px;
-                                                height: 26px;
-                                            }
-                                            pt := TouchArea {
-                                                clicked => { root.play-page(false); }
-                                            }
-                                        }
-                                        Rectangle {
-                                            width: 42px;
+                                        PageActions {
+                                            seal: root.page-can-star;
+                                            liked: root.page-starred;
+                                            download: root.downloads;
+                                            play(shuffle) => { root.play-page(shuffle); }
+                                            star => { root.page-star(); }
+                                            later => { root.page-later(); }
+                                            download-page => { root.page-download(); }
                                         }
                                     }
                                 }
@@ -4783,42 +4832,15 @@ export component AppWindow inherits Window {
                                         Rectangle {
                                             vertical-stretch: 1;
                                         }
-                                        // Shuffle in a circle, a wide Play, and add to the queue: quiet grey, in the accent, as Music has them.
-                                        HorizontalLayout {
-                                            spacing: 10px;
+                                        PageActions {
                                             alignment: start;
-                                            IconButton {
-                                                y: (parent.height - self.height) / 2;
-                                                path: Icons.shuffle;
-                                                size: 34px;
-                                                icon: 18px;
-                                                ink: Theme.plate-ink;
-                                                base: Theme.plate;
-                                                clicked => { root.play-page(true); }
-                                            }
-                                            Capsule {
-                                                text: "Play";
-                                                icon: Icons.play;
-                                                clicked => { root.play-page(false); }
-                                            }
-                                            IconButton {
-                                                y: (parent.height - self.height) / 2;
-                                                path: Icons.plus;
-                                                size: 34px;
-                                                icon: 18px;
-                                                ink: Theme.plate-ink;
-                                                base: Theme.plate;
-                                                clicked => { root.page-later(); }
-                                            }
-                                            if root.downloads && (root.page-kind == 0 || root.page-kind == 2): IconButton {
-                                                y: (parent.height - self.height) / 2;
-                                                path: Icons.download;
-                                                size: 34px;
-                                                icon: 18px;
-                                                ink: Theme.plate-ink;
-                                                base: Theme.plate;
-                                                clicked => { root.page-download(); }
-                                            }
+                                            seal: root.page-can-star && root.page-kind == 0;
+                                            liked: root.page-starred;
+                                            download: root.downloads;
+                                            play(shuffle) => { root.play-page(shuffle); }
+                                            star => { root.page-star(); }
+                                            later => { root.page-later(); }
+                                            download-page => { root.page-download(); }
                                         }
                                     }
                                 }

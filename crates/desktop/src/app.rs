@@ -651,6 +651,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_song, h, |a, list, i, how| a.song(list, i as usize, how));
     on!(ui.on_play_page, h, |a, shuffle| a.play_page(shuffle));
     on!(ui.on_page_later, h, |a| a.enqueue_page());
+    on!(ui.on_page_star, h, |a| a.star_page());
     on!(ui.on_page_download, h, |a| {
         if let Some(fetch) = a.page_fetch.clone() {
             a.on_session(|s| { if s.rules.downloads { s.download_later(fetch); } });
@@ -912,6 +913,8 @@ impl App {
                 s.check();
                 ui.set_volume(s.volume());
                 ui.set_downloads(s.rules.downloads);
+                // Albums and artists carry the account's seals, as on Android.
+                ui.set_page_can_star(s.rules.account && s.rules.stars);
                 self.session = Some(s);
                 self.heard = None;
                 self.song = None;
@@ -1262,6 +1265,7 @@ impl App {
             }
             // Page details apply only if that page is still shown.
             Data::Page(PageGot::Album(d)) if shown => {
+                ui.set_page_starred(self.session.as_ref().is_some_and(|s| s.core.starred(nori_core::client::Starrable::Album, &d.album.id, d.album.starred)));
                 ui.set_page_title(d.album.name.as_str().into());
                 ui.set_page_sub(d.album.artist.as_str().into());
                 ui.set_page_sub_artist(d.album.artist_id.clone().unwrap_or_default().into());
@@ -1279,6 +1283,7 @@ impl App {
                 self.show_page_songs();
             }
             Data::Page(PageGot::Artist(d)) if shown => {
+                ui.set_page_starred(self.session.as_ref().is_some_and(|s| s.core.starred(nori_core::client::Starrable::Artist, &d.artist.id, d.artist.starred)));
                 ui.set_page_title(d.artist.name.as_str().into());
                 ui.set_page_sub("".into());
                 let caption = if d.albums.is_empty() && !d.songs.is_empty() { words::songs(d.songs.len()) } else { words::albums(d.albums.len() as u32) };
@@ -1519,6 +1524,20 @@ impl App {
     /// Whether `s` shows starred: as the device playing shows it, while that is another one.
     fn starred(&self, s: &Song) -> bool {
         self.session.as_ref().is_some_and(|x| x.starred(s, self.there()))
+    }
+
+    /// Flips the album's or artist's seal on the page shown.
+    fn star_page(&self) {
+        let ui = self.ui();
+        let kind = match ui.get_page_kind() {
+            0 => nori_core::client::Starrable::Album,
+            1 => nori_core::client::Starrable::Artist,
+            _ => return,
+        };
+        let on = !ui.get_page_starred();
+        ui.set_page_starred(on);
+        let id = ui.get_page_id().to_string();
+        self.on_session(|s| s.star(kind, id, on));
     }
 
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
