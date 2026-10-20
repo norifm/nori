@@ -1444,11 +1444,11 @@ impl Demuxed {
         self.loader_failure().unwrap_or((PlaybackError::Other, why))
     }
 
-    /// The loader's failure: the network's, unless the server answered with an error status.
+    /// The loader's failure: the network's, unless the server answered with an error status or the loader died.
     fn loader_failure(&self) -> Option<(PlaybackError, String)> {
         let (l, _) = self.loader.as_ref()?;
         let e = l.error()?;
-        Some((if l.answered().is_some() { PlaybackError::Other } else { PlaybackError::Network }, e))
+        Some((if l.failed_on_network() { PlaybackError::Network } else { PlaybackError::Other }, e))
     }
 }
 

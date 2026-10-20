@@ -120,11 +120,13 @@ pub enum OnError {
 }
 
 /// What to do when a song will not play: an offload refusal drops offload, a network error goes to the
-/// bridge if enabled, anything else skips (at most three in a row), else stop.
+/// bridge if enabled and otherwise stops on the song (the songs ahead need the same network; Play tries it
+/// again), anything else skips (at most three in a row), else stop.
 pub fn on_error(kind: PlaybackError, offload_refused: bool, bridge: bool, has_next: bool, errors_in_a_row: u32) -> OnError {
     match kind {
         PlaybackError::Output if !offload_refused => OnError::GiveUpOffload,
         PlaybackError::Network if bridge => OnError::Bridge,
+        PlaybackError::Network => OnError::Stop,
         _ if has_next && errors_in_a_row < 3 => OnError::Skip,
         _ => OnError::Stop,
     }
@@ -337,6 +339,8 @@ mod tests {
         assert_eq!(on_error(PlaybackError::Output, false, false, true, 0), OnError::GiveUpOffload);
         assert_eq!(on_error(PlaybackError::Output, true, false, true, 0), OnError::Skip, "already off offload");
         assert_eq!(on_error(PlaybackError::Network, false, true, true, 0), OnError::Bridge);
+        // Every song ahead needs the same network: a skip would only fail again, ten seconds a song.
+        assert_eq!(on_error(PlaybackError::Network, false, false, true, 0), OnError::Stop, "no bridge: stays on the song");
         assert_eq!(on_error(PlaybackError::Other, false, true, true, 2), OnError::Skip);
         assert_eq!(on_error(PlaybackError::Other, false, true, true, 3), OnError::Stop);
         assert_eq!(on_error(PlaybackError::Other, false, false, false, 0), OnError::Stop, "nothing after it");
