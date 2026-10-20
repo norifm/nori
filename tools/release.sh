@@ -292,49 +292,73 @@ if [ -n "$dirty" ] || [ "$(cat "$out/.commit" 2>/dev/null)" != "$built_for" ]; t
   echo "$built_for" > "$out/.commit"
 fi
 
-if [ "$RUN_TESTS" = 1 ] && [ ! -f "$out/.tested" ]; then
-  echo "==> tests"
-  tools/check.sh rust --workspace --cargo-quiet --status-level fail
-  tools/check.sh rust-doc -q --workspace
-  touch "$out/.tested"
-fi
-
-if [ -f "$out/$name" ]; then
-  echo "==> $name already built"
-else
-  echo "==> building $version for $ABI"
-  ./gradlew :app:assembleRelease -PrustTargets="$ABI" -q
-  cp app/build/outputs/apk/release/app-release.apk "$out/$name"
-fi
-
-if [ "$IPOD" = 1 ] && [ -f "$out/$ipa" ]; then
-  echo "==> $ipa already built"
-elif [ "$IPOD" = 1 ]; then
-  echo "==> building the iPod app"
-  ./tools/ipod.sh build || die "the iPod build failed (tools/ipod.sh build, needs Docker); --no-ipod releases the APK alone"
-  cp "build/ios/$ipa" "$out/$ipa"
-fi
-
+# The steps run in lanes side by side, each lane one step after another: the tests and then the APK
+# (this checkout's target directory); the Mac packages (a target directory of their own, so neither waits
+# for the other's lock); the iPod app and the Linux packages (Docker). Shipping builds spend most of their
+# time in fat LTO on one core, so the lanes share the machine instead of waiting in a row. Each step's
+# output goes to $out/logs/<step>.log; what failed is said when every lane is done. Steps chain with &&:
+# a function run as a condition does not stop at a failing command.
+logs="$out/logs"
+mkdir -p "$logs"
+step() {
+  local step=$1 began=$SECONDS
+  shift
+  echo "==> $step"
+  if "$@" > "$logs/$step.log" 2>&1; then
+    echo "==> $step done in $(( (SECONDS - began) / 60 ))m $(( (SECONDS - began) % 60 ))s"
+  else
+    echo "==> $step failed after $(( (SECONDS - began) / 60 ))m $(( (SECONDS - began) % 60 ))s: $logs/$step.log" >&2
+    return 1
+  fi
+}
+run_tests() {
+  tools/check.sh rust --workspace --cargo-quiet --status-level fail && tools/check.sh rust-doc -q --workspace
+}
+build_apk() {
+  ./gradlew :app:assembleRelease -PrustTargets="$ABI" -q && cp app/build/outputs/apk/release/app-release.apk "$out/$name"
+}
+build_ipod() {
+  ./tools/ipod.sh build && cp "build/ios/$ipa" "$out/$ipa"
+}
 # Each desktop platform on its own: one that fails is left out of this release, and a run again adds it.
-if [ "$HOSTS" = 1 ]; then
-  for target in $HOST_PLATFORMS; do
-    if [ -f "$out/hosts/$target/.built" ]; then
-      echo "==> $target packages already built"
-      continue
-    fi
+build_hosts() {
+  local target
+  for target in "$@"; do
+    [ "$HOSTS" = 1 ] && [ ! -f "$out/hosts/$target/.built" ] || continue
     rm -rf "$out/hosts/$target"
-    if "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts" --platform "$target" ${HOST_FLAGS[@]+"${HOST_FLAGS[@]}"}; then
+    if step "$target" "$tooling/tools/host-release.sh" --workspace "$PWD" --output "$out/hosts" --platform "$target" ${HOST_FLAGS[@]+"${HOST_FLAGS[@]}"}; then
       touch "$out/hosts/$target/.built"
     else
       rm -rf "$out/hosts/$target"
-      echo "==> the $target packages failed: this release goes without them; run again to add them" >&2
+      echo "==> this release goes without the $target packages; run again to add them" >&2
     fi
   done
-fi
+}
+lane_android() {
+  if [ "$RUN_TESTS" = 1 ] && [ ! -f "$out/.tested" ]; then
+    step tests run_tests && touch "$out/.tested"
+  fi
+  [ -f "$out/$name" ] || step apk build_apk || true
+}
+lane_mac() {
+  CARGO_TARGET_DIR="$PWD/target/hosts" build_hosts macos-aarch64 macos-x86_64
+}
+lane_docker() {
+  if [ "$IPOD" = 1 ] && [ ! -f "$out/$ipa" ]; then step ipod build_ipod || true; fi
+  build_hosts linux-aarch64 linux-x86_64
+}
+lane_android &
+android=$!
+lane_mac &
+mac=$!
+lane_docker &
+docker=$!
+wait $android $mac $docker || true
+if [ "$RUN_TESTS" = 1 ] && [ ! -f "$out/.tested" ]; then die "the tests failed: $logs/tests.log"; fi
 fi
 
 [ -f "$out/$name" ] || die "missing release APK: $out/$name"
-[ -z "$ipa" ] || [ -f "$out/$ipa" ] || die "missing iPod IPA: $out/$ipa"
+[ -z "$ipa" ] || [ -f "$out/$ipa" ] || die "missing iPod IPA: $out/$ipa (tools/ipod.sh build, needs Docker; --no-ipod releases the APK alone)"
 hosts_missing=""
 if [ "$HOSTS" = 1 ]; then
   for target in $HOST_PLATFORMS; do

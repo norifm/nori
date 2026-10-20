@@ -1060,6 +1060,13 @@ Artifacts land under `build/release-<version>/`, with desktop and CLI packages i
 client tests (MPRIS, ALSA, X11) in a debug build. Emulated and cross-compiled builds run no tests: they
 check the same code as the native one. `--no-test` skips all of them.
 
+The steps run in three lanes side by side, each lane one step after another: the tests, then the APK;
+the two Mac packages (in `target/hosts`, so they never wait for the first lane's Cargo lock); the iPod
+app, then the two Linux packages (Docker). A shipping build spends most of its time in fat LTO on one
+core, so the lanes overlap instead of queueing. The terminal shows one line as each step starts and
+ends; each step's output is in `build/release-<version>/logs/<step>.log`. A failed step is reported when
+every lane is done.
+
 The desktop/CLI builder can run independently or on a native worker:
 
 ```sh
