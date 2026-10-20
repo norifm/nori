@@ -5118,12 +5118,14 @@ export component AppWindow inherits Window {
                     height: parent.height - 56px;
                     content-height: sung.preferred-height;
                     animate content-y { duration: Motion.reduced ? 0ms : 560ms; easing: cubic-bezier(0.25, 0.8, 0.3, 1); }
+                    // The line being sung rests a third of the way down, as on Android: the words start there and can
+                    // run on until the last line is there too, clear of the fades at either edge.
                     sung := VerticalLayout {
                         width: parent.width;
                         padding-left: 22px;
                         padding-right: 22px;
-                        padding-top: 16px;
-                        padding-bottom: 400px;
+                        padding-top: lyric-flick.height / 3;
+                        padding-bottom: lyric-flick.height * 2 / 3;
                         spacing: 22px;
                         for line[i] in root.lyrics-lines: Text {
                             property <bool> lit: i == root.lyrics-active;
@@ -5135,13 +5137,13 @@ export component AppWindow inherits Window {
                             changed lit => {
                                 self.level = self.lit ? 1 : 0;
                                 if self.lit {
-                                    lyric-flick.content-y = -max(0, min(self.y - lyric-flick.height * 0.1, lyric-flick.content-height - lyric-flick.height));
+                                    lyric-flick.content-y = -max(0, min(self.y - lyric-flick.height / 3, lyric-flick.content-height - lyric-flick.height));
                                 }
                             }
                             init => {
                                 self.level = self.lit ? 1 : 0;
                                 if self.lit {
-                                    lyric-flick.content-y = -max(0, min(self.y - lyric-flick.height * 0.1, lyric-flick.content-height - lyric-flick.height));
+                                    lyric-flick.content-y = -max(0, min(self.y - lyric-flick.height / 3, lyric-flick.content-height - lyric-flick.height));
                                 }
                             }
                             // Lyrics with word times are drawn by the StyledText (the Text only lays the line out):
