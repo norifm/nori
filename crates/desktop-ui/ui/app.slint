@@ -4096,6 +4096,8 @@ export component AppWindow inherits Window {
 
     callback go(int);
     callback back();
+    // A touchpad's sideways swipe to go back (the page's swipe area).
+    callback swiped-back();
     callback open-album(string);
     callback open-artist(string);
     callback open-playlist(string);
@@ -4303,6 +4305,37 @@ export component AppWindow inherits Window {
                 x: 0;
                 width: parent.width;
                 clip: true;
+
+                // Two fingers swept sideways on a touchpad, over nothing that scrolls sideways (a shelf takes its
+                // own): to the right goes back, as Safari and Finder do. One back per swipe; a swipe ends after a
+                // quarter second of quiet.
+                swipe := TouchArea {
+                    property <length> dx;
+                    property <bool> spent;
+                    scroll-event(e) => {
+                        if abs(e.delta-x) <= abs(e.delta-y) * 2 {
+                            return reject;
+                        }
+                        swipe-quiet.restart();
+                        if !self.spent {
+                            self.dx += e.delta-x;
+                            if self.dx > 90px {
+                                self.spent = true;
+                                root.swiped-back();
+                            }
+                        }
+                        accept
+                    }
+                    swipe-quiet := Timer {
+                        interval: 250ms;
+                        running: false;
+                        triggered => {
+                            self.running = false;
+                            swipe.dx = 0;
+                            swipe.spent = false;
+                        }
+                    }
+                }
 
                 if root.view == 0: Fade {
                     home-scroll := Flickable {

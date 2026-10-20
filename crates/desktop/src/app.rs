@@ -644,6 +644,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         let to = if a.ui().get_view() == PAGE { a.came_from } else { HOME };
         a.go(to);
     });
+    on!(ui.on_swiped_back, h, |a| a.swiped_back());
     on!(ui.on_note_act, h, |a| a.note_act());
     on!(ui.on_open_album, h, |a, id| a.open_page(PageAsk::Album(id.into())));
     on!(ui.on_open_artist, h, |a, id| a.open_page(PageAsk::Artist(id.into())));
@@ -2352,6 +2353,17 @@ impl App {
         }
     }
 
+    /// A touchpad's swipe back: what the back button showing does (a page's, the equalizer's), or nothing
+    /// where there is none.
+    fn swiped_back(&mut self) {
+        let ui = self.ui();
+        match ui.get_view() {
+            PAGE | 10 | 11 => ui.invoke_back(),
+            EQUALIZER => self.go(SETTINGS),
+            _ => {}
+        }
+    }
+
     /// Whether the music moves now, for the playing bars: playing and not waiting for bytes.
     fn advancing(&self) {
         let ui = self.ui();
@@ -2581,6 +2593,31 @@ mod tests {
         let ui = AppWindow::new().unwrap();
         dressed().paint(&ui.global::<Theme>());
         ui
+    }
+
+    /// Two fingers swept to the right on a touchpad over a page go back once per swipe; scrolling up
+    /// and down does not.
+    #[test]
+    fn a_sideways_swipe_goes_back() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_view(PAGE);
+        ui.show().unwrap();
+        let backs = Rc::new(std::cell::Cell::new(0));
+        let counted = backs.clone();
+        ui.on_swiped_back(move || counted.set(counted.get() + 1));
+        let scroll = |dx: f32, dy: f32| {
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled { position: slint::LogicalPosition::new(640.0, 500.0), delta_x: dx, delta_y: dy });
+        };
+        for _ in 0..10 {
+            scroll(0.0, -30.0);
+        }
+        assert_eq!(backs.get(), 0, "scrolling the page");
+        for _ in 0..10 {
+            scroll(30.0, 2.0);
+        }
+        assert_eq!(backs.get(), 1, "one swipe, one back");
     }
 
     fn pill() -> crate::PlayerBar {
