@@ -408,10 +408,10 @@ extern "system" fn key(env: JNIEnv, _: JClass, h: jlong, url: JString) -> jlong 
     key.map_or(0, |k| i64::from_be_bytes(k.0[..8].try_into().expect("16 bytes")))
 }
 
-/// `Loader::rest`: idle threads end and reused Bitmaps and buffers are freed (low memory).
+/// `Loader::trim`: idle threads end, and reused Bitmaps, buffers and provider files are freed (low memory).
 extern "system" fn rest(_: JNIEnv, _: JClass, h: jlong) {
     if let Some(loader) = loader(h) {
-        loader.rest();
+        loader.trim();
     }
 }
 

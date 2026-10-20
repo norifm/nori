@@ -251,7 +251,7 @@ class CoverLoader private constructor(context: Context) {
             val b = got
             got = null
             // Smaller than asked for, or asked for at its own size: that is the whole picture.
-            if (b != null && !Covers.isProvider(url)) keep(url, b, width == 0 || b.width < width || b.height < height)
+            if (b != null) keep(url, b, width == 0 || b.width < width || b.height < height)
             then(b, status)
         }
 
