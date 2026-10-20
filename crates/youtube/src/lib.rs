@@ -847,6 +847,19 @@ pub(crate) mod tests {
         assert_eq!(body(&asked[4])["params"], SONGS.unwrap());
     }
 
+    /// A signed-in answer's like button says which songs the account liked.
+    #[test]
+    fn liked_songs_come_liked() {
+        // The first song row, with a pressed like button as a signed-in answer has.
+        let album = serde_json::from_str::<Value>(&fixture("album")).unwrap().to_string();
+        let row = "\"musicResponsiveListItemRenderer\":{";
+        assert!(album.contains(row));
+        let album = album.replacen(row, &format!("{row}\"menu\":{{\"menuRenderer\":{{\"topLevelButtons\":[{{\"likeButtonRenderer\":{{\"likeStatus\":\"LIKE\"}}}}]}}}},"), 1);
+        let page = ready(InnerTube::default().album(&Fake::answering(&[(200, &album)]), "MPREb_K8qWMWVqXGi")).unwrap();
+        assert!(page.songs[0].liked);
+        assert!(page.songs[1..].iter().all(|s| !s.liked), "the others not");
+    }
+
     #[test]
     fn radio_asks_for_related_tracks_without_audio() {
         let fake = Fake::answering(&[(200, &fixture("radio"))]);

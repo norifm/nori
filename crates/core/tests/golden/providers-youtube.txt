@@ -50,9 +50,9 @@ ended: ok
 == stored
 stored HomeFeed: feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/229] [] [] []},{All hits: [] [] [] [yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA,yt-VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8]},{Party music: [] [] [] [yt-VLRDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ,yt-VLRDCLAK5uy_mVQsicmiGWIirrcMMQO4g7QL3BQKuKCSM]},{New releases: [] [yt-MPREb_avc015OeXxY/0,yt-MPREb_belO7bZVmAt/0] [] []} #a7400dc9472979d0 digest=true fresh=true
 stored AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }: album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008 digest=true fresh=true
-stored ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #2f48be303e7a0314 digest=true fresh=true
+stored ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #4b32d5908d6c749b digest=true fresh=true
 stored ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #e8717fad35135733 digest=true fresh=true
-stored PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169 digest=true fresh=true
+stored PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #5be757adaf526c28 digest=true fresh=true
 stored PlaylistList: playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f digest=true fresh=true
 stored AlbumList { kind: ByName, size: 60, offset: 0, genre: None }: albums [yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_NP5KiWDRCjf/0] #67588f093b146986 digest=true fresh=true
 stored AlbumList { kind: ByName, size: 60, offset: 60, genre: None }: albums [] #7cb24232f87d40dd digest=true fresh=true
@@ -68,13 +68,13 @@ read_each AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }
 page album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008
 ended: ok
 read_each ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
-page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #2f48be303e7a0314
+page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #4b32d5908d6c749b
 ended: ok
 read_each ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
 page about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #e8717fad35135733
 ended: ok
 read_each PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }
-page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169
+page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #5be757adaf526c28
 ended: ok
 read_each PlaylistList
 page playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f
@@ -105,13 +105,13 @@ read_each AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }
 page album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008
 ended: ok
 read_each ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
-page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #2f48be303e7a0314
+page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #4b32d5908d6c749b
 ended: ok
 read_each ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
 page about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #e8717fad35135733
 ended: ok
 read_each PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }
-page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169
+page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #5be757adaf526c28
 ended: ok
 read_each PlaylistList
 page playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f
@@ -165,7 +165,7 @@ page songs [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #b264c97cd
 stored AlbumSongs { id: "yt-MPREb_K8qWMWVqXGi" }: none digest=false fresh=false
 asked browse MPREb_K8qWMWVqXGi
 read_now PlaylistSongs { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }
-page songs [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #47f2542cf8f4b49f
+page songs [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #0ef872f94897b9e1
 stored PlaylistSongs { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: none digest=false fresh=false
 asked browse VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA
 read_now RandomSongs { size: 5, genre: None }
@@ -195,13 +195,13 @@ read_each AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }
 page album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4/545] #f0329fbb1e1df008
 ended: ok
 read_each ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
-page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #2f48be303e7a0314
+page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #4b32d5908d6c749b
 ended: ok
 read_each ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
 page about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #e8717fad35135733
 ended: ok
 read_each PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }
-page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169
+page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24*/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #5be757adaf526c28
 ended: ok
 read_each PlaylistList
 page playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f
@@ -232,9 +232,9 @@ asked like/removelike
 kept FssFsFFFssFF
 stored HomeFeed: feed {Quick picks: [yt-hHZ4ej144rc/238,yt-5F28ye50-Kc/213,yt-o_eLrGr6Sqs/229] [] [] []},{All hits: [] [] [] [yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA,yt-VLRDCLAK5uy_nmS3YoxSwVVQk9lEQJ0UX4ZCjXsW_psU8]},{Party music: [] [] [] [yt-VLRDCLAK5uy_k1Wu8QbZASiGVqr1wmie9NIYo38aBqscQ,yt-VLRDCLAK5uy_mVQsicmiGWIirrcMMQO4g7QL3BQKuKCSM]},{New releases: [] [yt-MPREb_avc015OeXxY/0,yt-MPREb_belO7bZVmAt/0] [] []} #a7400dc9472979d0 digest=true fresh=true
 stored AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }: album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4*/545] #38ba7b27b4c3aeae digest=true fresh=false
-stored ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #2f48be303e7a0314 digest=true fresh=false
+stored ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #6d811aba1203f90c digest=true fresh=false
 stored ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }: about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #e8717fad35135733 digest=true fresh=true
-stored PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169 digest=true fresh=false
+stored PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }: playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #c7323118aa754583 digest=true fresh=false
 stored PlaylistList: playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f digest=true fresh=true
 stored AlbumList { kind: ByName, size: 60, offset: 0, genre: None }: albums [yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_NP5KiWDRCjf/0] #67588f093b146986 digest=true fresh=true
 stored AlbumList { kind: ByName, size: 60, offset: 60, genre: None }: albums [] #7cb24232f87d40dd digest=true fresh=true
@@ -249,13 +249,13 @@ read_each AlbumById { id: "yt-MPREb_K8qWMWVqXGi" }
 page album yt-MPREb_K8qWMWVqXGi/3 [yt-IluRBvnYMoY/276,yt-ajGKWk0auOc/323,yt-zhl-Cs1-sG4*/545] #38ba7b27b4c3aeae
 ended: ok
 read_each ArtistById { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
-page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #2f48be303e7a0314
+page artist yt-UCRr1xG_2WIDs18a6cIiCxeA [yt-MPREb_OgeEnoHTsCm/0,yt-MPREb_K8qWMWVqXGi/0,yt-MPREb_BQHrCwSBM37/0,yt-MPREb_X1DQ1j0PPrX/0,yt-MPREb_7VGCTgAVWt7/0,yt-MPREb_AkAwWpvJOOS/0] [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #6d811aba1203f90c
 ended: ok
 read_each ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA" }
 page about Some("https://lh3.googleusercontent.com/qLhu6Py_4_xoBsoubKQsXlhOQGqU9YU1ZRAbFusF0LlrPkXbbpu7bEh-k_ZtE4JwLgubvucAQqcK1hRk=w800-h800-l90-rj") [yt-UCyPCkwR4gcQNybC2XzMNFTA,yt-UCcP74mIhs125nerd5o5Dd-Q,yt-UCq7VAQmXDurV-9VN2bSFXvw] #e8717fad35135733
 ended: ok
 read_each PlaylistById { id: "yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA" }
-page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8/249,yt-wU26xVT_vBU/321] #791d01693fee5169
+page playlist yt-VLRDCLAK5uy_nHSqCJjDrW9HBhCNdF6tWPdnOMngOv0wA/908 [yt-khnokW3Mw24/338,yt-Rgrt_8mXrK8*/249,yt-wU26xVT_vBU*/321] #c7323118aa754583
 ended: ok
 read_each PlaylistList
 page playlists [yt-VLLM/0,yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs/0] #8919a900aabf8c5f

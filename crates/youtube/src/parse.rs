@@ -40,6 +40,8 @@ pub struct Song {
     pub live: bool,
     /// A music video or an upload, not one of YouTube Music's songs (its `musicVideoType` says so).
     pub video: bool,
+    /// The account liked it: a signed-in answer's like button on the song says so.
+    pub liked: bool,
 }
 
 /// Whether `item` plays a music video or an upload rather than a song: the first `musicVideoType` in it
@@ -53,6 +55,18 @@ fn plays_video(item: &Value) -> bool {
         }
     }
     kind(item).is_some_and(|k| k != "MUSIC_VIDEO_TYPE_ATV")
+}
+
+/// Whether `item`'s first like button (`likeStatus`, in a signed-in answer) is pressed.
+fn liked(item: &Value) -> bool {
+    fn status(v: &Value) -> Option<&str> {
+        match v {
+            Value::Object(m) => m.get("likeStatus").and_then(Value::as_str).or_else(|| m.values().find_map(status)),
+            Value::Array(a) => a.iter().find_map(status),
+            _ => None,
+        }
+    }
+    status(item) == Some("LIKE")
 }
 
 /// An album, single or EP.
@@ -315,7 +329,7 @@ fn list_item(item: &Value, labelled: bool) -> Option<Item> {
     let video = str_at(item, "/playlistItemData/videoId").or_else(|| cols[0].iter().find_map(|r| r.video));
     if let Some(v) = video {
         let lines: Vec<&[Run]> = cols[1..].iter().enumerate().map(|(i, c)| if labelled && i == 0 { after_first(c) } else { c.as_slice() }).collect();
-        return Some(Item::Song(Song { video: plays_video(item), ..song_of(v, title, thumb, live(item), &lines) }));
+        return Some(Item::Song(Song { video: plays_video(item), liked: liked(item), ..song_of(v, title, thumb, live(item), &lines) }));
     }
     let (b, kind) = browse(item)?;
     let subtitle = cols.get(1).map_or(&[][..], Vec::as_slice);
@@ -329,7 +343,7 @@ fn card(item: &Value) -> Option<Item> {
     let subtitle = item.get("subtitle").map(runs).unwrap_or_default();
     let thumb = item.get("thumbnailRenderer").and_then(thumbnail);
     if let Some(v) = str_at(item, "/navigationEndpoint/watchEndpoint/videoId") {
-        let mut song = Song { video_id: v.to_string(), title, thumbnail: thumb, live: live(item), ..Default::default() };
+        let mut song = Song { video_id: v.to_string(), title, thumbnail: thumb, live: live(item), liked: liked(item), ..Default::default() };
         if let Some((name, links)) = segments(&subtitle).find_map(artists_of) {
             song.artist = name;
             song.artists = links;
@@ -379,7 +393,7 @@ fn top_result(card: &Value) -> Vec<Item> {
     let subtitle = card.get("subtitle").map(runs).unwrap_or_default();
     let thumb = card.get("thumbnail").and_then(thumbnail);
     let top = title.first().and_then(|first| match (first.video, first.browse) {
-        (Some(v), _) => Some(Item::Song(Song { video: plays_video(card), ..song_of(v, joined(&title), thumb, live(card), &[after_first(&subtitle)]) })),
+        (Some(v), _) => Some(Item::Song(Song { video: plays_video(card), liked: liked(card), ..song_of(v, joined(&title), thumb, live(card), &[after_first(&subtitle)]) })),
         (None, Some((b, kind))) => linked(kind, b, joined(&title), thumb, unlabelled(kind, &subtitle)),
         (None, None) => None,
     });
@@ -617,7 +631,7 @@ fn panel_video(item: &Value) -> Option<Song> {
         Some(AlbumLink { id: id.to_string(), name: joined(seg) })
     });
     let duration = item.get("lengthText").map(runs).and_then(|r| seconds(&joined(&r))).unwrap_or(0);
-    Some(Song { video_id, title, artist, artists, album, duration, thumbnail: item.get("thumbnail").and_then(thumbnail), live: live(item), ..Default::default() })
+    Some(Song { video_id, title, artist, artists, album, duration, thumbnail: item.get("thumbnail").and_then(thumbnail), live: live(item), liked: liked(item), ..Default::default() })
 }
 
 /// A carousel's title and its songs, albums, artists and playlists, in order.

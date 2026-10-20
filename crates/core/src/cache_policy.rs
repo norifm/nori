@@ -346,23 +346,25 @@ impl Client {
     /// record has (a Home row YouTube lists without one).
     fn overlaid(&self, read: &Read, page: Page) -> Page {
         let mut page = match (read, page) {
-            (_, Page::StarredPage { v }) => Page::StarredPage { v: self.marked_favourites(v) },
+            (_, Page::StarredPage { v }) => {
+                self.core.listed.lock().keep(&v);
+                Page::StarredPage { v: self.marked_favourites(v) }
+            }
             (Read::FavouriteAlbums { .. }, Page::Albums { v }) => Page::Albums { v: self.core.stars.lock().overlay_albums(v) },
             (_, page) => page,
         };
-        let marks = self.core.stars.lock().clone();
         let (songs, albums, artists) = records(&mut page);
         for s in songs {
-            s.starred = marks.starred(Starrable::Song, &s.id, s.starred);
+            s.starred = self.core.starred(Starrable::Song, &s.id, s.starred);
             if s.duration == 0 {
                 s.duration = self.stored_song_of(&s.id).or_else(|| self.core.indexed_song(&s.id)).map_or(0, |known| known.duration);
             }
         }
         for a in albums {
-            a.starred = marks.starred(Starrable::Album, &a.id, a.starred);
+            a.starred = self.core.starred(Starrable::Album, &a.id, a.starred);
         }
         for a in artists {
-            a.starred = marks.starred(Starrable::Artist, &a.id, a.starred);
+            a.starred = self.core.starred(Starrable::Artist, &a.id, a.starred);
         }
         page
     }
@@ -759,7 +761,7 @@ mod tests {
         block(c.star(crate::client::Starrable::Song, "s2".into(), true, Arc::new(crate::providers::harness::Marked))).unwrap();
         fake.answer(r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s1","title":"One"}]}}}"#);
         let Some(Page::StarredPage { v }) = block(c.cached_or_fetched(Read::StarredItems)).unwrap() else { panic!() };
-        assert_eq!(v.songs.iter().map(|s| (s.id.as_str(), s.starred)).collect::<Vec<_>>(), [("s2", true), ("s1", false)]);
+        assert_eq!(v.songs.iter().map(|s| (s.id.as_str(), s.starred)).collect::<Vec<_>>(), [("s2", true), ("s1", true)], "a song the favourites list is starred, whatever its record says");
     }
 
     /// A heart queued offline leaves the favourites and the album's page readable offline, stale: the

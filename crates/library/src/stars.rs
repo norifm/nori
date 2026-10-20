@@ -1,7 +1,7 @@
 //! This session's star changes, laid over favourites the server sent earlier: an unstarred item leaves at
 //! once; a newly starred one arrives with the next answer (the old one lacks its details).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use nori_model::{Album, Artist, Song};
 use nori_net::requests::Starrable;
@@ -89,9 +89,52 @@ impl StarMarks {
     }
 }
 
+/// The favourites the source listed last: an item among them shows starred where its own record does
+/// not say so (a YouTube Music song played from an album, a search or a radio).
+#[derive(Debug, Default)]
+pub struct Listed {
+    songs: HashSet<String>,
+    albums: HashSet<String>,
+    artists: HashSet<String>,
+}
+
+impl Listed {
+    /// The source's favourites as it listed them now.
+    pub fn keep(&mut self, starred: &Starred) {
+        self.songs = starred.songs.iter().map(|s| s.id.clone()).collect();
+        self.albums = starred.albums.iter().map(|a| a.id.clone()).collect();
+        self.artists = starred.artists.iter().map(|a| a.id.clone()).collect();
+    }
+
+    /// Whether the item shows starred by its record (`listed`) or the favourites.
+    pub fn starred(&self, kind: Starrable, id: &str, listed: bool) -> bool {
+        listed
+            || match kind {
+                Starrable::Song => self.songs.contains(id),
+                Starrable::Album => self.albums.contains(id),
+                Starrable::Artist => self.artists.contains(id),
+            }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A song among the favourites listed shows starred though its own record does not say so; the
+    /// list kept is the last one, and kinds stay apart.
+    #[test]
+    fn listed_favourites_show_starred() {
+        let s = |id: &str| Song { id: id.into(), ..Default::default() };
+        let mut listed = Listed::default();
+        listed.keep(&Starred::new(vec![], vec![], vec![s("rap-god")]));
+        assert!(listed.starred(Starrable::Song, "rap-god", false));
+        assert!(!listed.starred(Starrable::Album, "rap-god", false));
+        assert!(!listed.starred(Starrable::Song, "other", false));
+        assert!(listed.starred(Starrable::Song, "other", true), "its record still counts");
+        listed.keep(&Starred::new(vec![], vec![], vec![]));
+        assert!(!listed.starred(Starrable::Song, "rap-god", false), "taken off the list");
+    }
 
     #[test]
     fn star_marks() {
