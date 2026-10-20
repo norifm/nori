@@ -2555,7 +2555,10 @@ impl App {
         }
         self.mark_playing();
         self.lyrics = None;
-        ui.set_lyrics_lines(ModelRc::default());
+        // The last song's lines stay (faded out while waiting) until this one's come; none without a song.
+        if self.song.is_none() {
+            ui.set_lyrics_lines(ModelRc::default());
+        }
         ui.set_lyrics_active(-1);
         ui.set_lyrics_note(if self.song.is_some() { "Looking for lyrics…".into() } else { "".into() });
         ui.set_lyrics_waiting(self.song.is_some());

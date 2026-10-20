@@ -5357,7 +5357,7 @@ export component AppWindow inherits Window {
                     picked(p) => { root.inspector = root.inspector == p ? 0 : p; }
                 }
                 // Under the tabs, the panel showing.
-                if root.shown-panel == 2 && root.lyrics-lines.length == 0: Text {
+                if root.shown-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
                     y: 56px;
                     height: 120px;
                     x: 24px;
@@ -5371,9 +5371,10 @@ export component AppWindow inherits Window {
                     wrap: word-wrap;
                 }
                 if root.shown-panel == 2 && root.lyrics-lines.length > 0: lyric-flick := Flickable {
-                    // New lyrics fade in rather than appear in one frame.
+                    // A song's lyrics fade in, and out while the next song's are looked for: the last song's
+                    // words stay until then, so a change of song never jumps.
                     property <bool> came;
-                    opacity: self.came ? 1 : 0;
+                    opacity: self.came && !root.lyrics-waiting ? 1 : 0;
                     animate opacity { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
                     init => { self.came = true; }
                     y: 56px;
@@ -5871,7 +5872,7 @@ export component AppWindow inherits Window {
             }
 
             // The lyrics: big, the line sung at a fixed height and sharp, the rest soft and dim.
-            if root.full-panel == 2 && root.lyrics-lines.length == 0: Text {
+            if root.full-panel == 2 && (root.lyrics-lines.length == 0 || root.lyrics-waiting): Text {
                 x: root.width / 2 + 20px;
                 width: root.width / 2 - 100px;
                 text: root.lyrics-note != "" ? root.lyrics-note : "No lyrics for this song";
@@ -5886,6 +5887,8 @@ export component AppWindow inherits Window {
             // the window can say where the line sung is; its lines only while shown.
             full-lyrics := Flickable {
                 visible: root.full-panel == 2 && root.lyrics-lines.length > 0;
+                opacity: root.lyrics-waiting ? 0 : 1;
+                animate opacity { duration: Motion.reduced ? 0ms : 200ms; easing: ease-out; }
                 flicked => { root.full-lyrics-browsed = true; }
                 x: root.width / 2 + 20px;
                 width: root.width / 2 - 140px;
