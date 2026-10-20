@@ -3129,6 +3129,30 @@ mod tests {
         }
     }
 
+    /// A card opens on a click with jams on too, where a right press opens its menu.
+    #[test]
+    fn a_card_opens_on_a_click_with_jams_on() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.global::<crate::Jam>().set_on(true);
+        ui.set_view(ALBUMS);
+        ui.set_albums(cards((0..4).map(|i| Card { id: i.to_string().into(), title: "Album".into(), ..Default::default() })));
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        let seen = opened.clone();
+        ui.on_open_album(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.show().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        // The first card's cover, under the page's title.
+        let at = slint::LogicalPosition::new(100.0, 220.0);
+        let button = slint::platform::PointerEventButton::Left;
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+        assert_eq!(*opened.borrow(), ["0"]);
+    }
+
     #[test]
     fn playback_only_moves_the_visible_player() {
         i_slint_backend_testing::init_no_event_loop();

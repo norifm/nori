@@ -885,8 +885,16 @@ component CardView inherits Rectangle {
         overflow: elide;
         horizontal-alignment: root.round ? center : left;
     }
+    // A click opens it; a right press, where a Jam can be started from it, opens its menu where it was pressed.
     touch := TouchArea {
         clicked => { root.open(); }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down && root.playable && Jam.on && !Jam.hosting {
+                root.menu-x = min(self.mouse-x, root.width - 120px);
+                root.menu-y = self.mouse-y;
+                card-menu.show();
+            }
+        }
     }
     Link {
         y: root.side + 25px;
@@ -898,19 +906,8 @@ component CardView inherits Rectangle {
         overflow: elide;
         horizontal-alignment: root.round ? center : left;
     }
-    // A right press, where a Jam can be started from it: the card's menu where it was pressed.
     property <length> menu-x;
     property <length> menu-y;
-    TouchArea {
-        enabled: root.playable && Jam.on && !Jam.hosting;
-        pointer-event(e) => {
-            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
-                root.menu-x = min(self.mouse-x, root.width - 120px);
-                root.menu-y = self.mouse-y;
-                card-menu.show();
-            }
-        }
-    }
     card-menu := PopupWindow {
         x: root.menu-x;
         y: root.menu-y;
