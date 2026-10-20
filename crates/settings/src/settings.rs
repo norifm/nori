@@ -614,8 +614,8 @@ pub struct StoredPrefs {
     /// on (`lyricsKey:<name>`).
     #[setting("paxSenixKey", TEXT, default = String::new(), hidden)]
     pub paxsenix_key: String,
-    /// BetterLyrics key, for songs it has not cached; empty for none.
-    #[setting("betterLyricsKey", TEXT, default = String::new(), show = K::Text)]
+    /// BetterLyrics key, for songs it has not cached; empty for none. Given on its row (`lyricsKey:<name>`).
+    #[setting("betterLyricsKey", TEXT, default = String::new(), hidden)]
     pub better_lyrics_key: String,
     // The library.
     #[setting("tapAction", PICK, default = TapAction::PlayList, show = K::Choice(TapAction::NAMES))]
@@ -1397,13 +1397,20 @@ fn set_special(p: &StoredPrefs, n: &mut StoredPrefs, server: &mut bool, name: &s
                 n.lyrics_on.push(s);
             }
         }),
-        // `lyricsKey:PAXSENIX_SPOTIFY`: the key a service needs, kept and the service switched on; an
-        // empty key switches off every service that needs it.
-        _ if name.starts_with("lyricsKey:") => LyricsService::named(&name["lyricsKey:".len()..]).filter(|s| s.needs_key()).map(|s| {
-            n.paxsenix_key = value.trim().to_string();
-            if n.paxsenix_key.is_empty() {
+        // `lyricsKey:PAXSENIX_SPOTIFY`: a service's key, kept and the service switched on; an empty
+        // PaxSenix key switches off every service that needs it.
+        _ if name.starts_with("lyricsKey:") => LyricsService::named(&name["lyricsKey:".len()..]).filter(|s| s.takes_key()).map(|s| {
+            let key = value.trim().to_string();
+            if s == LyricsService::BetterLyrics {
+                n.better_lyrics_key = key;
+            } else if key.is_empty() {
+                n.paxsenix_key = key;
                 n.lyrics_on.retain(|x| !x.needs_key());
-            } else if !n.lyrics_on.contains(&s) {
+                return;
+            } else {
+                n.paxsenix_key = key;
+            }
+            if !n.lyrics_on.contains(&s) {
                 n.lyrics_on.push(s);
             }
         }),
