@@ -1,5 +1,6 @@
 <script lang="ts">
   // Every playlist, and a new one.
+  import Icon from "../ui/Icon.svelte";
   import { read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { newPlaylist } from "../state/menus";
@@ -19,7 +20,7 @@
       {#each page.data as p (p.id)}<Card href={href("playlist", p.id)} cover={p.cover} title={p.name} sub={W.songCount(p.songCount)} fallback="playlist" />{/each}
     </div>
   {:else}
-    <p class="empty">{W.empty}</p>
+    <p class="empty"><Icon name="playlist" />{W.empty}</p>
   {/if}
 </Page>
 
