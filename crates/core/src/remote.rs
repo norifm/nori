@@ -16,7 +16,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use futures_util::future::{select, Either};
 use nori_tasks::{Notify, Tasks};
-use nori_time::{Duration, Instant};
+use nori_time::Duration;
 
 use nori_remote::clock::{self, ClockSync};
 use nori_remote::device::{admit, is_jam, Sender};
@@ -591,8 +591,8 @@ impl Change {
 }
 
 impl Mirrored {
-    fn new(id: String) -> Mirrored {
-        Mirrored { id, heard: None, arrived: 0, shown: None, at: clock::now_us(), device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new() }
+    fn new(id: String, now: i64) -> Mirrored {
+        Mirrored { id, heard: None, arrived: 0, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new() }
     }
 
     /// A state arrived from the device (`at`: when, on this device's clock). It ends the foresight of
@@ -747,11 +747,10 @@ impl Mirrored {
 
     /// Command `id`, `op`, as expected: until the player reports it, it is refused, or an unanswered
     /// command expires.
-    fn foresee(&mut self, id: u64, op: &Op) {
+    fn foresee(&mut self, id: u64, op: &Op, here: i64) {
         let rows = self.rows();
         let at = self.shown_at();
         let Some(st) = &self.shown else { return };
-        let here = clock::now_us();
         let now = nori_remote::position_now(st, (here - at) / 1000);
         let at = rows.iter().position(|e| Some(e.index) == st.index);
         let to = |k: Option<usize>| k.and_then(|k| rows.get(k)).map(|e| e.index);
@@ -855,7 +854,7 @@ struct Inner {
     ending_foresight: bool,
     /// Bumped to end the running time keeper (each runs while its generation is current).
     timing: u64,
-    published: Option<(DeviceState, Instant)>,
+    published: Option<(DeviceState, i64)>,
     /// The last published state's [`DeviceState::seq`].
     seq: u64,
     next_id: u64,
@@ -919,12 +918,12 @@ impl Inner {
     }
 
     /// Device `id`'s last state and when it arrived; a nearby device's door says it first.
-    fn state_of(&self, id: &str) -> Option<(&DeviceState, i64)> {
+    fn state_of(&self, id: &str) -> Option<(&DeviceState, Option<i64>)> {
         if let Some(p) = self.peers.iter().find(|p| p.member.id == id) {
-            return p.member.state.as_ref().map(|s| (s, p.received));
+            return p.member.state.as_ref().map(|s| (s, Some(p.received)));
         }
         let m = self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members).find(|m| m.id == id)?;
-        m.state.as_ref().map(|s| (s, self.received.get(id).copied().unwrap_or_else(clock::now_us)))
+        m.state.as_ref().map(|s| (s, self.received.get(id).copied()))
     }
 
     /// Whether device `id` is still there to be followed, as [`Remote::devices`] lists it: heard from nearby,
@@ -1030,21 +1029,20 @@ impl Inner {
 
     /// When the jam's host heard `st`'s place, on this device's clock, once its clock is known here
     /// (listening along): through the relay's clock when both know it, else as learned from the host.
-    fn heard_at(&self, st: &DeviceState) -> Option<i64> {
+    fn heard_at(&self, st: &DeviceState, now: i64) -> Option<i64> {
         let l = self.listen.as_ref()?;
-        let now = clock::now_us();
         let server = st.server_us.zip(self.server_clock.settled_offset_at(now)).map(|(host, here)| host - here);
         Some(st.at_us? + server.or_else(|| l.clock.settled_offset_at(now).map(|o| -o))?)
     }
 
     /// The host's playback as this guest plays along with it; None while it should not, or the host's
     /// clock is not known yet.
-    fn lead(&self) -> Option<Lead> {
+    fn lead(&self, now: i64) -> Option<Lead> {
         self.listen.as_ref().filter(|_| self.listening() == Listening::Playing)?;
         let (_, host) = self.joined()?;
         let st = host?.state.as_ref()?;
         let along = st.jam.as_ref()?.along.as_ref()?;
-        let at = self.heard_at(st)?;
+        let at = self.heard_at(st, now)?;
         let index = st.entries.iter().position(|e| Some(e.index) == st.index)?;
         let mix = along.mix.as_ref().and_then(|m| plan_of(m, &st.entries));
 
@@ -1070,8 +1068,8 @@ impl Inner {
         })
     }
 
-    fn age(&self, id: &str) -> i64 {
-        self.received.get(id).map_or(0, |t| (clock::now_us() - t) / 1000)
+    fn age(&self, id: &str, now: i64) -> i64 {
+        self.received.get(id).map_or(0, |t| (now - t) / 1000)
     }
 
     fn since_played_ms(&self, now_us: i64) -> i64 {
@@ -1079,8 +1077,8 @@ impl Inner {
     }
 
     /// Where this device's song is now, run on from when the platform last said.
-    fn position_now(&self) -> i64 {
-        let elapsed = self.since_played_ms(clock::now_us());
+    fn position_now(&self, now: i64) -> i64 {
+        let elapsed = self.since_played_ms(now);
         if self.playing.playing { self.playing.position_ms + (elapsed as f64 * self.playing.rate as f64) as i64 } else { self.playing.position_ms }
     }
 
@@ -1371,7 +1369,7 @@ impl Remote {
     pub fn played(self: Arc<Self>, playing: Playing) {
 
         // The report belongs to call entry, before waiting for the session lock.
-        let now = clock::now_us();
+        let now = self.now();
         let (publish, started, shown, cancelled) = {
             let mut i = self.inner.lock();
             let started = playing.playing && !i.playing.playing;
@@ -1472,13 +1470,14 @@ impl Remote {
 
     /// The account's other devices, nearby ones first; through the relay only while it answers.
     pub fn devices(&self) -> Vec<RemoteDevice> {
+        let now = self.now();
         let i = self.inner.lock();
         let seen = |m: &Member, age_ms: i64, nearby: bool| RemoteDevice { id: m.id.clone(), name: m.name.clone(), kind: m.kind, state: m.state.clone(), age_ms, nearby, refused: i.refused.get(&m.id).copied() };
-        let mut out: Vec<RemoteDevice> = i.peers.iter().filter(|p| p.member.state.is_some()).map(|p| seen(&p.member, (clock::now_us() - p.received) / 1000, true)).collect();
+        let mut out: Vec<RemoteDevice> = i.peers.iter().filter(|p| p.member.state.is_some()).map(|p| seen(&p.member, (now - p.received) / 1000, true)).collect();
         for room in i.rooms.iter().filter(|r| !r.jam && !i.relay_down) {
             for m in room.members.iter().filter(|m| m.state.is_some()) {
                 if !out.iter().any(|d| d.id == m.id) {
-                    out.push(seen(m, i.age(&m.id), false));
+                    out.push(seen(m, i.age(&m.id, now), false));
                 }
             }
         }
@@ -1502,7 +1501,7 @@ impl Remote {
                         m.taken.push((e.song(), index));
                     }
                 }
-                m.foresee(id, &op);
+                m.foresee(id, &op, self.now());
                 // A play foreseen starts the time keeper, and a foresight ends on time.
                 self.timing.notify();
                 foreseen = true;
@@ -1569,7 +1568,7 @@ impl Remote {
             }
             i.peers.retain(|p| p.service != service && p.member.id != id);
             let member = Member { id, name: get("name"), kind, state: None };
-            i.peers.push(Peer { library_marks: get("marks") == "1", service, bases: vec![base], failed: 0, member, received: clock::now_us(), since: None, polling: false });
+            i.peers.push(Peer { library_marks: get("marks") == "1", service, bases: vec![base], failed: 0, member, received: self.now(), since: None, polling: false });
         }
         self.keep_polling();
     }
@@ -1747,7 +1746,7 @@ impl Remote {
         if let Some(h) = &i.hosted {
             let st = h.jam.state();
             let queue = i.published.as_ref().map(|(s, _)| DeviceState { jam: None, ..s.clone() });
-            let age_ms = i.published.as_ref().map_or(0, |(_, at)| at.elapsed().as_millis() as i64);
+            let age_ms = i.published.as_ref().map_or(0, |(_, at)| (self.now() - at) / 1000);
             return Some(JamView { hosting: true, remote_songs: st.remote_songs, link: Some(h.link.clone()), you: self.id.clone(), members: st.members, pending: st.pending, queue, age_ms, refused: None, along: h.along, listening: Listening::Watching });
         }
         let (_, host) = i.joined()?;
@@ -1762,7 +1761,7 @@ impl Remote {
             you: i.you.clone(),
             members: jam.members,
             pending: jam.pending,
-            age_ms: host.map_or(0, |h| i.age(&h.id)),
+            age_ms: host.map_or(0, |h| i.age(&h.id, self.now())),
             refused: host.and_then(|h| i.refused.get(&h.id).copied()),
             queue: state.map(|s| DeviceState { jam: None, ..s }),
         })
@@ -1849,7 +1848,9 @@ impl Remote {
             }
         };
         #[cfg(not(target_arch = "wasm32"))]
-        transport::block_on(select(std::pin::pin!(sent), self.tasks.sleep(Duration::from_millis(SENT_WAIT_MS))));
+        self.tasks.block_on(std::pin::pin!(async {
+            select(std::pin::pin!(sent), self.tasks.sleep(Duration::from_millis(SENT_WAIT_MS))).await;
+        }));
         // A browser cannot wait: its tasks end and its sends go on their own.
         #[cfg(target_arch = "wasm32")]
         drop(sent);
@@ -1893,7 +1894,7 @@ impl Remote {
             mixing: st.mixing,
             position_ms: st.position_ms,
             rate: nori_remote::pace(st),
-            at_us: i.heard_at(st).or_else(|| i.received.get(&host.id).copied()).unwrap_or_else(clock::now_us),
+            at_us: i.heard_at(st, self.now()).or_else(|| i.received.get(&host.id).copied()).unwrap_or_else(|| self.now()),
             shuffle: st.shuffle,
             repeat: st.repeat,
             volume: None,
@@ -2250,12 +2251,12 @@ impl Remote {
                         i.ending_foresight = false;
                         return;
                     };
-                    Duration::from_micros((until - clock::now_us()).max(0) as u64)
+                    Duration::from_micros((until - me.now()).max(0) as u64)
                 };
                 if let Either::Right(_) = select(me.tasks.sleep(wait), timing).await {
                     continue;
                 }
-                let changed = me.inner.lock().mirror.as_mut().is_some_and(|m| m.forget(None, clock::now_us()));
+                let changed = me.inner.lock().mirror.as_mut().is_some_and(|m| m.forget(None, me.now()));
                 if changed {
                     me.shown.changed();
                 }
@@ -2270,7 +2271,7 @@ impl Remote {
         let follower = self.follower.lock();
         let lead = {
             let mut i = self.inner.lock();
-            let lead = i.lead();
+            let lead = i.lead(self.now());
             match i.listen.as_mut() {
                 Some(l) if l.given == lead => return,
                 Some(l) => l.given = lead.clone(),
@@ -2371,6 +2372,11 @@ impl Remote {
             }
             cancel.await;
         }
+    }
+
+    /// This device's clock, µs, as the remote's executor keeps it.
+    fn now(&self) -> i64 {
+        self.tasks.now_us()
     }
 
     fn next_id(&self) -> u64 {
@@ -2477,7 +2483,7 @@ impl Remote {
             let weak = Arc::downgrade(self);
             let members = weak.clone();
             door.open_jam(secret, Box::new(move |from, body| {
-                if let (Some(remote), Body::Command { id, op }) = (weak.upgrade(), body) { remote.obey(Via::LanJam, from.into(), id, *op, clock::now_us()); }
+                if let (Some(remote), Body::Command { id, op }) = (weak.upgrade(), body) { remote.obey(Via::LanJam, from.into(), id, *op, remote.now()); }
             }), Box::new(move |listed| {
                 if let Some(remote) = members.upgrade() {
                     if let Some(hosted) = remote.inner.lock().hosted.as_mut() { hosted.jam.present(&listed); }
@@ -2505,9 +2511,10 @@ impl Remote {
             secret,
             Box::new(move |from, body| {
                 if let (Some(r), Body::Command { id, op }) = (weak.upgrade(), body) {
-                    r.obey(Via::Door, from.to_string(), id, *op, clock::now_us());
+                    r.obey(Via::Door, from.to_string(), id, *op, r.now());
                 }
             }),
+            self.tasks.clone(),
         );
         opened.map_err(|e| crate::alog::info(&format!("remote: no door: {e}"))).ok()
     }
@@ -2606,7 +2613,7 @@ impl Remote {
                 }
                 Either::Right((got, _)) => got,
             };
-            let received = clock::now_us();
+            let received = self.now();
             let asked_since = {
                 let mut i = self.inner.lock();
                 // Asked for before the rooms changed: its seq may pass events of a room it did not cover.
@@ -2718,7 +2725,7 @@ impl Remote {
             let url = format!("{base}{}", lan::signed(&secret, "GET", &query, b"", db::now_ms()));
             let Some(got) = self.get(url, POLL_TIMEOUT_MS, |_| true).await else { return };
             let got = got.ok().and_then(|b| serde_json::from_slice::<Answer>(&b).ok());
-            let received = clock::now_us();
+            let received = self.now();
             let Some(a) = got else {
                 // Not there at this address: the next one it was seen at, until none answers.
                 let gone = {
@@ -2855,7 +2862,7 @@ impl Remote {
             if i.mirror.as_ref().map(|m| &m.id) == to.as_ref() || (to.is_some() && i.jams()) {
                 return;
             }
-            i.mirror = to.map(Mirrored::new);
+            i.mirror = to.map(|id| Mirrored::new(id, self.now()));
         }
         self.retime();
         self.follow_active();
@@ -2930,8 +2937,8 @@ impl Remote {
             match (target, link) {
                 (Timed::Server, _) => {
                     let base = self.client.profile.read().url.trim_end_matches('/').to_string();
-                    let Some(got) = self.get(format!("{base}/nori/time?t1={}", clock::now_us()), 5_000, |_| true).await else { return };
-                    let t4 = clock::now_us();
+                    let Some(got) = self.get(format!("{base}/nori/time?t1={}", self.now()), 5_000, |_| true).await else { return };
+                    let t4 = self.now();
                     if let Some(Body::Clock { t1, t2, t3 }) = got.ok().and_then(|b| serde_json::from_slice(&b).ok()) {
                         self.inner.lock().server_clock.add(clock::Exchange { t1, t2, t3, t4 });
                         self.follow_lead();
@@ -2941,10 +2948,10 @@ impl Remote {
                 }
                 (Timed::Device { id, .. }, Some(Link::Lan(base))) => {
                     let Some(secret) = lan_secret(&self.client) else { return };
-                    let t1 = clock::now_us();
+                    let t1 = self.now();
                     let url = format!("{base}{}", lan::signed(&secret, "GET", &format!("/rest/noriRemote.time?dev={}&t1={t1}", self.id), b"", db::now_ms()));
                     let Some(got) = self.get(url, 5_000, |_| true).await else { return };
-                    let t4 = clock::now_us();
+                    let t4 = self.now();
                     if let Some(Body::Clock { t1, t2, t3 }) = got.ok().and_then(|b| serde_json::from_slice(&b).ok()) {
                         timed(&mut self.inner.lock(), &id, clock::Exchange { t1, t2, t3, t4 });
                         self.follow_lead();
@@ -2952,7 +2959,7 @@ impl Remote {
                     }
                 }
                 (Timed::Device { id, room }, Some(Link::Relay)) => {
-                    let command = Body::Command { id: self.next_id(), op: Box::new(Op::Clock { t1: clock::now_us() }) };
+                    let command = Body::Command { id: self.next_id(), op: Box::new(Op::Clock { t1: self.now() }) };
                     self.out(Out::send(Link::Relay, Outgoing { room, to: Some(id), body: Some(command), ..Default::default() }));
                 }
                 (Timed::Device { .. }, None) => {}
@@ -2981,7 +2988,7 @@ impl Remote {
             };
             to.map(|id| {
                 let before = i.browsing();
-                i.mirror = Some(Mirrored::new(id));
+                i.mirror = Some(Mirrored::new(id, self.now()));
                 i.discovering = false;
                 if !i.watching {
                     i.lan_generation += 1;
@@ -3008,7 +3015,7 @@ impl Remote {
                 self.keep_polling();
                 return;
             }
-            let heard = i.state_of(&id).map(|(s, at)| (s.clone(), at));
+            let heard = i.state_of(&id).map(|(s, at)| (s.clone(), at.unwrap_or_else(|| self.now())));
             let me = self.id.clone();
             let m = i.mirror.as_mut().expect("mirrored");
             let moved = match heard {
@@ -3062,7 +3069,7 @@ impl Remote {
                 };
                 Body::Ack { id, refusal }
             }
-            Op::Clock { t1 } => Body::Clock { t1, t2: received, t3: clock::now_us() },
+            Op::Clock { t1 } => Body::Clock { t1, t2: received, t3: self.now() },
             Op::Page { from: turn, count } if !matches!(via, Via::Relay(Some(_)) | Via::LanJam) => {
                 let q = self.read_queue(|_, len| turn as usize..(turn.saturating_add(count.min(PAGE_MAX)) as usize).min(len));
                 Body::Page { id, rev: q.rev, from: turn, entries: q.entries }
@@ -3207,14 +3214,14 @@ impl Remote {
         let (playing, position_ms) = {
             let mut i = self.inner.lock();
             i.handed_to = Some(to.clone());
-            (i.playing.playing, i.position_now())
+            (i.playing.playing, i.position_now(self.now()))
         };
         let accepts_listen = (to == from && listen_handoff) || {
             let i = self.inner.lock();
             i.peers.iter().map(|p| &p.member).chain(i.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members))
                 .any(|m| m.id == to && m.state.as_ref().is_some_and(|s| s.listen_handoff))
         };
-        let listen = accepts_listen.then(|| session.hand_listen(clock::now_us() / 1_000)).flatten();
+        let listen = accepts_listen.then(|| session.hand_listen(self.now() / 1_000)).flatten();
         let op = Op::Replace { songs, index: index as u32, position_ms, play: playing, order, shuffle, repeat, transfer, listen };
         let id = self.next_id();
         let command = Body::Command { id, op: Box::new(op) };
@@ -3291,7 +3298,7 @@ impl Remote {
             server_us: None,
             rate: Some(p.rate),
         };
-        let now = clock::now_us();
+        let now = self.now();
         st.position_ms = i.position_at_of(&st, now);
 
         if p.playing && !p.buffering {
@@ -3323,7 +3330,7 @@ impl Remote {
             }
             i.seq += 1;
             state.seq = i.seq;
-            i.published = Some((state.clone(), Instant::now()));
+            i.published = Some((state.clone(), self.now()));
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(d) = &i.door {
                 d.publish(state.clone());
@@ -3370,7 +3377,7 @@ fn plan_of(mix: &Mix, entries: &[Entry]) -> Option<(String, Plan)> {
 fn heard(i: &mut Inner, from: &str, body: Body, received: i64) -> Option<(u64, Op)> {
     match body {
         Body::Command { id, op } => return Some((id, *op)),
-        Body::Ack { id, refusal } => note(i, from, id, refusal),
+        Body::Ack { id, refusal } => note(i, from, id, refusal, received),
         Body::Page { rev, from: turn, entries, .. } => paged(i, from, rev, turn, entries),
         Body::Clock { t1, t2, t3 } => timed(i, from, clock::Exchange { t1, t2, t3, t4: received }),
     }
@@ -3396,12 +3403,12 @@ fn timed(i: &mut Inner, from: &str, exchange: clock::Exchange) {
 }
 
 /// Device `from` answered command `id`; a refusal ends its foresight.
-fn note(i: &mut Inner, from: &str, id: u64, refusal: Option<Refusal>) {
+fn note(i: &mut Inner, from: &str, id: u64, refusal: Option<Refusal>, now: i64) {
     match refusal {
         Some(r) => {
             i.refused.insert(from.to_string(), r);
             if let Some(m) = i.mirror.as_mut().filter(|m| m.id == from) {
-                m.forget(Some(id), clock::now_us());
+                m.forget(Some(id), now);
             }
         }
         None => {
@@ -3545,9 +3552,9 @@ mod tests {
         let entries = (0..3).map(|index| Entry { index, turn: index, duration: 300, ..Default::default() }).collect();
         let old = DeviceState { seq: 1, index: Some(0), len: 3, entries, ..Default::default() };
         for refused in [false, true] {
-            let mut m = Mirrored::new("desk".into());
+            let mut m = Mirrored::new("desk".into(), clock::now_us());
             m.heard(&old, 0, "me");
-            m.foresee(1, &Op::Next);
+            m.foresee(1, &Op::Next, clock::now_us());
             assert_eq!(m.shown.as_ref().unwrap().index, Some(1));
             let accepted = DeviceState { seq: 2, obeyed: vec![Obeyed { from: "me".into(), id: 1 }], ..old.clone() };
             m.heard(&accepted, 1, "me");
@@ -3562,9 +3569,9 @@ mod tests {
             assert!(m.foreseen.is_empty(), "the heard song or a refusal settles the skip");
             assert_eq!(m.shown.as_ref().unwrap().index, Some(if refused { 0 } else { 1 }));
         }
-        let mut unanswered = Mirrored::new("legacy".into());
+        let mut unanswered = Mirrored::new("legacy".into(), clock::now_us());
         unanswered.heard(&old, 0, "me");
-        unanswered.foresee(1, &Op::Next);
+        unanswered.foresee(1, &Op::Next, clock::now_us());
         assert!(unanswered.forget(None, clock::now_us() + FORESEEN_US * 2));
         assert_eq!(unanswered.shown.as_ref().unwrap().index, Some(0), "an unanswered skip expires");
     }
@@ -3572,9 +3579,9 @@ mod tests {
     #[test]
     fn older_remote_state_cannot_undo_a_confirmed_command() {
         let old = DeviceState { seq: 2, playing: true, index: Some(0), len: 1, entries: vec![Entry { duration: 300, ..Default::default() }], ..Default::default() };
-        let mut m = Mirrored::new("desk".into());
+        let mut m = Mirrored::new("desk".into(), clock::now_us());
         m.heard(&old, 0, "me");
-        m.foresee(1, &Op::Pause);
+        m.foresee(1, &Op::Pause, clock::now_us());
         let paused = DeviceState { seq: 3, playing: false, obeyed: vec![Obeyed { from: "me".into(), id: 1 }], ..old.clone() };
         m.heard(&paused, 1, "me");
         assert!(m.foreseen.is_empty());
@@ -3587,10 +3594,10 @@ mod tests {
         for ops in [vec![Op::Next, Op::Next], vec![Op::Pause, Op::Play]] {
             let entries = (0..3).map(|index| Entry { index, turn: index, duration: 300, ..Default::default() }).collect();
             let old = DeviceState { seq: 1, index: Some(0), len: 3, entries, playing: true, ..Default::default() };
-            let mut m = Mirrored::new("desk".into());
+            let mut m = Mirrored::new("desk".into(), clock::now_us());
             m.heard(&old, 0, "me");
             for (k, op) in ops.iter().enumerate() {
-                m.foresee(k as u64 + 1, op);
+                m.foresee(k as u64 + 1, op, clock::now_us());
             }
             let expected = m.shown.clone().unwrap();
             let confirmed = DeviceState { seq: 2, obeyed: vec![Obeyed { from: "me".into(), id: 2 }], ..expected.clone() };
@@ -3604,9 +3611,9 @@ mod tests {
     #[test]
     fn restarted_remote_replaces_its_old_process() {
         let old = DeviceState { instance: Some(1), seq: 80, playing: true, len: 2, rev: 1, ..Default::default() };
-        let mut m = Mirrored::new("desk".into());
+        let mut m = Mirrored::new("desk".into(), clock::now_us());
         m.heard(&old, 0, "me");
-        m.foresee(1, &Op::Pause);
+        m.foresee(1, &Op::Pause, clock::now_us());
         let restarted = DeviceState { instance: Some(2), seq: 1, len: 2, rev: 1, playing: true, ..Default::default() };
         assert!(m.heard(&restarted, 1, "me"));
         assert!(m.foreseen.is_empty());
@@ -3614,7 +3621,7 @@ mod tests {
         assert!(!m.heard(&DeviceState { seq: 81, ..old }, 2, "me"));
         assert!(!m.heard(&DeviceState { seq: 90, ..Default::default() }, 3, "me"));
         assert_eq!(m.heard.as_ref().unwrap().instance, Some(2));
-        let mut fresh = Mirrored::new("desk".into());
+        let mut fresh = Mirrored::new("desk".into(), clock::now_us());
         fresh.heard(&restarted, 0, "me");
         assert!(!fresh.heard(&DeviceState { instance: Some(1), seq: 100, ..Default::default() }, 1, "me"));
     }
@@ -3638,7 +3645,7 @@ mod tests {
     fn a_mirrored_playhead_runs_on_from_when_it_was_heard_there() {
         let entries = vec![Entry { index: 0, duration: 300, ..Default::default() }];
         let st = DeviceState { seq: 4, playing: true, position_ms: 10_000, index: Some(0), len: 1, entries, at_us: Some(50_000_000), ..Default::default() };
-        let mut m = Mirrored::new("desk".into());
+        let mut m = Mirrored::new("desk".into(), clock::now_us());
         let view = |m: &Mirrored| m.view("Desk".into(), DeviceKind::Desktop, None).unwrap();
         // Its clock not known yet: as of when the state arrived.
         assert!(m.heard(&st, 2_000_000, "me"));
@@ -3662,7 +3669,7 @@ mod tests {
         assert!(m.heard(&DeviceState { seq: 7, position_ms: 12_000, at_us: Some(55_000_000), ..st }, 6_000_000, "me"));
         assert_eq!(view(&m).position_at(6_800_000), 13_000, "the playhead resumes from the next heard position");
         // A command foreseen here runs on from when it was sent.
-        m.foresee(1, &Op::Pause);
+        m.foresee(1, &Op::Pause, clock::now_us());
         assert!(!view(&m).playing && view(&m).position_at(900_000_000) == view(&m).position_ms);
     }
 
@@ -3806,7 +3813,7 @@ mod tests {
             .unwrap()
             .position_ms = Some(29_000);
         assert!(same_but_time(&last, &now));
-        let mut mirrored = Mirrored::new("host".into());
+        let mut mirrored = Mirrored::new("host".into(), clock::now_us());
         mirrored.heard(&now, 2_000_000, "guest");
         assert!(
             mirrored

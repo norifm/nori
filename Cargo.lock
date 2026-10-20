@@ -4176,6 +4176,7 @@ dependencies = [
  "async-trait",
  "md-5",
  "nori-model",
+ "nori-tasks",
  "parking_lot",
  "rusqlite",
  "serde",
@@ -4250,6 +4251,7 @@ dependencies = [
  "libc",
  "nori-model",
  "nori-net",
+ "nori-tasks",
  "nori-time",
  "parking_lot",
  "qrcode",
@@ -4313,6 +4315,7 @@ version = "0.7.0-beta.2"
 name = "nori-time"
 version = "0.7.0-beta.2"
 dependencies = [
+ "libc",
  "web-time",
 ]
 
