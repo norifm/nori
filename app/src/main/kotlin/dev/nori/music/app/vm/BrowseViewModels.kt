@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.nori.music.ffi.settings.HomeRow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -286,21 +287,13 @@ class GenresViewModel(app: Application) : NoriViewModel(app) {
     val genres: StateFlow<Load<List<Genre>>> = nori.library.genres().asLoad()
 }
 
-/** The Library page's own: the albums added last, under its list of sections. */
+/** The Library page's own: what the downloads weigh, for its row of places. */
 class LibraryHomeViewModel(app: Application) : NoriViewModel(app) {
-    val recent: StateFlow<List<Album>> = nori.library.albums(AlbumSort.NEWEST, RECENT)
-        .catch { emit(emptyList()) }
-        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    /** The account's playlists, for a profile whose library is not indexed (see LibraryScreen). */
-    val playlists: StateFlow<List<Playlist>> = (if (nori.rules.indexed) kotlinx.coroutines.flow.flowOf(emptyList()) else nori.library.playlists())
-        .catch { emit(emptyList()) }
-        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    private companion object {
-        /** Three rows of two. */
-        const val RECENT = 6
-    }
+    /** The downloaded songs' size, worded; null until weighed. */
+    val downloadsSize: StateFlow<String?> = nori.downloads.state
+        .map { dev.nori.music.text.Fmt.bytes(nori.sources.downloadBytes()) }
+        .flowOn(Dispatchers.IO)
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), null)
 }
 
 class RadioViewModel(app: Application) : NoriViewModel(app) {
