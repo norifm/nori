@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clip
@@ -51,7 +52,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.PlayerViewModel
@@ -79,6 +83,8 @@ fun HeroPage(
     subtitle: String? = null,
     /** A quiet line under that, in sentence case: year, song count, length, quality. */
     caption: String = "",
+    /** The title's size: Literata 27 for a record, larger for an artist. */
+    titleSize: TextUnit = 27.sp,
     onSubtitle: (() -> Unit)? = null,
     onPlay: (() -> Unit)? = null,
     onShuffle: (() -> Unit)? = null,
@@ -95,8 +101,12 @@ fun HeroPage(
      * leaves them Play and Shuffle. Null: the page has no queue of its own.
      */
     queue: dev.nori.music.ffi.library.PageQueue? = null,
-    /** Icon buttons on the line with the pills: favourite, queue, download. */
+    /** The seal, bare, after the Play pill. */
     actions: @Composable RowScope.() -> Unit = {},
+    /** The list head's quiet label at the left ("8 songs · 36:28"); with [headActions] it heads the songs. */
+    headLabel: String = "",
+    /** Bare glyphs at the right of the list head: download, add to queue, or a mix's refresh (`PageActionGlyphs`). */
+    headActions: (@Composable RowScope.() -> Unit)? = null,
     /**
      * Artwork of the page's own making, for a page with no cover to bleed (a mix): drawn as a tile in the
      * middle, below the status bar, the way Apple shows a made-for-you mix. Used only when [coverUrl] is null.
@@ -224,32 +234,37 @@ fun HeroPage(
             // Nothing is painted here: the artwork above has already dissolved onto the page
             // colour, and the page colour is what the root is painted with.
             Column(Modifier.fillMaxWidth()) {
+            // Upright over a picture the title block rises into the melt, overlapping the picture's last rows.
+            val rise = showArt && coverSide == null && picture != null
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = Space.gutter).then(if (rise) Modifier.raised(Space.titleRise) else Modifier.padding(vertical = 4.dp)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    title, style = titled(MaterialTheme.typography.headlineSmall), textAlign = TextAlign.Center,
+                    title, style = titled(MaterialTheme.typography.headlineSmall.copy(fontSize = titleSize)), textAlign = TextAlign.Center,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
                 if (!subtitle.isNullOrEmpty()) Text(
                     subtitle,
-                    Modifier.padding(top = 2.dp).then(if (onSubtitle != null) Modifier.clickable(onClick = onSubtitle) else Modifier),
-                    style = MaterialTheme.typography.titleMedium,
+                    Modifier.padding(top = 3.dp).then(if (onSubtitle != null) Modifier.clickable(onClick = onSubtitle) else Modifier),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.Medium),
                     textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                // Sentence case, as Apple writes it ("25 songs, 1 hour 42 minutes"). Small
-                // capitals here made the line shout louder than the artist above it.
-                Caption(caption, Modifier.padding(top = 6.dp), align = TextAlign.Center, caps = false)
+                if (caption.isNotEmpty()) {
+                    val look = LocalLook.current
+                    LookText(
+                        caption, { look.color(CoverLook.ON_VARIANT) }, Modifier.padding(top = 5.dp),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), textAlign = TextAlign.Center,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
 
-            // Apple's arrangement: shuffle in a circle on the left, one wide Play pill in the
-            // middle, and the page's other action in a circle on the right. Two equal pills
-            // side by side give the page two things to look at instead of one. The row is
-            // reserved while [awaitingPlay] so the layout does not jump when the taps land.
+            // Shuffle · Play · the page's seal: bare glyphs either side of an ink pill that fills the row. The
+            // row is reserved while [awaitingPlay] so the layout does not jump when the taps land.
             if (awaitingPlay || onPlay != null || onShuffle != null) Row(
-                Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 16.dp),
-                Arrangement.spacedBy(12.dp), Alignment.CenterVertically,
+                Modifier.fillMaxWidth().padding(start = Space.tight, end = Space.tight, top = 12.dp),
+                Arrangement.spacedBy(4.dp), Alignment.CenterVertically,
             ) {
                 val press: (dev.nori.music.ffi.library.HeroPress, (() -> Unit)?) -> Unit = { p, start ->
                     when (p) {
@@ -273,6 +288,7 @@ fun HeroPage(
                 Modifier.fillMaxWidth().padding(start = Space.tight, end = Space.tight, top = 2.dp),
                 Arrangement.Center, Alignment.CenterVertically,
             ) { actions() }
+            if (headLabel.isNotEmpty() || headActions != null) ListHead(headLabel, headActions)
             Spacer(Modifier.height(10.dp))
             }
         }
@@ -376,6 +392,29 @@ private fun Mosaic(urls: List<String>, modifier: Modifier) {
             for (col in 0..1) Cover(urls[row * 2 + col], 0.dp, Modifier.weight(1f).fillMaxHeight(), radius = 0.dp)
         }
     }
+}
+
+/** The line over a page's songs: [label] quiet at the left, [actions] at the right, a hairline under. */
+@Composable
+private fun ListHead(label: String, actions: (@Composable RowScope.() -> Unit)?) {
+    val look = LocalLook.current
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = Space.gutter, end = Space.tight), verticalAlignment = Alignment.CenterVertically) {
+            LookText(
+                label, { look.color(CoverLook.ON_VARIANT) }, Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            actions?.invoke(this)
+        }
+        Box(Modifier.padding(end = Space.gutter)) { Hairline() }
+    }
+}
+
+/** Placed [by] higher than it is laid out, so what follows moves up with it and the two overlap. */
+private fun Modifier.raised(by: androidx.compose.ui.unit.Dp): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val up = by.roundToPx()
+    layout(placeable.width, placeable.height - up) { placeable.place(0, -up) }
 }
 
 /** On its side: the space above the cover and above the first song, under the status bar. */

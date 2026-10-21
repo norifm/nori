@@ -122,6 +122,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -538,7 +539,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                         }
                         .then(if (across) Modifier.fillMaxHeight() else Modifier.layout { measurable, constraints ->
                             val placeable = measurable.measure(constraints)
-                            val takes = (placeable.height * (1f - SLEEVE_UNDER_TEXT)).toInt()
+                            val takes = placeable.height - Space.titleRise.roundToPx()
                             layout(placeable.width, takes) { placeable.place(0, 0) }
                         })
                         .onGloballyPositioned {
@@ -642,7 +643,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             Column {
                                 LookText(
                                     m.title, { live.color(CoverLook.ON) },
-                                    Modifier.readable(key = m.key), style = MaterialTheme.typography.titleLarge,
+                                    Modifier.readable(key = m.key), style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 26.sp)),
                                     maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                                 )
                                 // Artist and album, each on its own line and each a way there: on one line they
@@ -655,7 +656,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                                     Modifier.clickable(enabled = m.artistId != null) {
                                         m.artistId?.let(nav::artist)
                                     },
-                                    style = MaterialTheme.typography.titleMedium,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 )
                                 m.album.takeIf { it.isNotEmpty() }?.let { album ->
@@ -664,7 +665,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                                         Modifier.clickable(enabled = m.albumId != null) {
                                             m.albumId?.let(nav::album)
                                         },
-                                        style = MaterialTheme.typography.bodyMedium,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
                                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     )
                                 }
@@ -702,14 +703,12 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     ) else SeekBar(vm, state.advancing, state.durationMs, seekable = state.offersSeek)
                 }
 
-                // Three controls, plain glyphs with no containers. Shuffle and repeat live in the queue header.
-                // Sized off `w4` as a share of the screen's width: Apple's pause glyph stands 9.8 % of the
-                // width tall and the skip glyphs are 9.7 % wide; these were about a fifth smaller. The
-                // seek bar, volume bar and bottom icons below were scaled by their own measured ratios.
-                // Apple leaves a clear gap between the times and these, rather than letting them follow on.
-                // A jam guest's are those its role offers (Spotify's Jam): an admin's are the host's, a
+                // One row of bare glyphs: Lyrics, rewind, play, fast-forward, Up next. Shuffle and repeat live in
+                // the queue header. The panels' glyphs are quiet and lit only while their panel is open.
+                // A jam guest's transport is what its role offers (Spotify's Jam): an admin's is the host's, a
                 // guest listening here has play and pause of its own, one only watching has none.
-                if (state.offersPlayPause || state.offersSkip) Row(kept("transport").fillMaxWidth().padding(top = 24.dp), Arrangement.spacedBy(34.dp, Alignment.CenterHorizontally), Alignment.CenterVertically) {
+                Row(kept("transport").fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 18.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                    PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, enabled = !radio) { choose(Panel.LYRICS) }
                     // The buttons send the record across exactly as a swipe does, so the two ways of
                     // changing song look like the same thing happening. A previous that only rewinds
                     // this song is not a record change and gets no slide - there is nothing to slide
@@ -721,12 +720,13 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             val rewinds = vm.previousRestarts(vm.positionMs, state.previousIndex >= 0)
                             if (rewinds || !slide.ask(1)) vm.previous()
                         },
-                        Modifier.size(72.dp),
-                    ) { LookIcon(Icons.Rounded.FastRewind, say.previous, Modifier.size(55.dp), ink) }
-                    if (state.offersPlayPause) IconButton(vm::toggle, Modifier.size(84.dp)) {
-                        PlayPauseGlyph(state.playing, state.buffering, 70.dp, 28.dp, ink)
+                        Modifier.size(56.dp),
+                    ) { LookIcon(Icons.Rounded.FastRewind, say.previous, Modifier.size(38.dp), ink) }
+                    if (state.offersPlayPause) IconButton(vm::toggle, Modifier.size(68.dp)) {
+                        PlayPauseGlyph(state.playing, state.buffering, 60.dp, 26.dp, ink)
                     }
-                    if (state.offersSkip) IconButton({ if (!slide.ask(-1)) vm.next() }, Modifier.size(72.dp)) { LookIcon(Icons.Rounded.FastForward, say.next, Modifier.size(55.dp), ink) }
+                    if (state.offersSkip) IconButton({ if (!slide.ask(-1)) vm.next() }, Modifier.size(56.dp)) { LookIcon(Icons.Rounded.FastForward, say.next, Modifier.size(38.dp), ink) }
+                    PanelButton(Icons.AutoMirrored.Filled.QueueMusic, say.queue, page == Panel.QUEUE) { choose(Panel.QUEUE) }
                 }
                 // Paused here while the jam plays on: play joins it again where it is.
                 if (state.jam?.pausedHere == true) LookText(
@@ -734,48 +734,10 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     Modifier.fillMaxWidth().padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium.copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
                 )
 
-                if (page == Panel.ART && !across) Spacer(Modifier.weight(0.17f))
+                if (page == Panel.ART && !across) Spacer(Modifier.weight(0.1f))
                 // A jam guest's volume is its own while the music plays here.
                 if (state.offersVolume) Box(kept("volume")) { VolumeRow(vm) }
-                val jam by vm.jamStrip.collectAsStateWithLifecycle()
-
-                // Three slots of fixed shares, so the middle one's words, however long a device's name, never
-                // move the lyrics and queue buttons; each keeps the line under its glyph whether it has words or not.
-                Row(kept("icons").fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 2.dp, bottom = 4.dp), verticalAlignment = Alignment.Top) {
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, nudge = (-1.5).dp, drop = 2.7.dp, enabled = !radio) { choose(Panel.LYRICS) }
-                        Spacer(Modifier.height(OUTPUT_LINE))
-                    }
-                    // Apple's middle glyph is AirPlay, not a sleep timer: on this screen the thing worth
-                    // one tap is where the sound is going. The sleep timer moved to the ⋯ on the title row,
-                    // which is where a setting for the evening belongs.
-                    Column(Modifier.weight(1.6f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        val panel = LocalLook.current
-                        val jamOn = jam
-                        // While a jam is on it stands here instead of the speaker: a jam plays on this device only.
-                        if (jamOn != null) {
-                            JamButton(jamOn, 27.dp) { panel.color(CoverLook.ON_VARIANT) }
-                            Text(
-                                jamLabel(jamOn), Modifier.height(OUTPUT_LINE),
-                                style = MaterialTheme.typography.labelSmall, color = live.color(CoverLook.ON_VARIANT), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        } else if (!state.jamGuest) {
-                            OutputButton(
-                                state.playingOn != null, 27.dp,
-                                idle = { panel.color(CoverLook.ON_VARIANT) }, lit = { panel.color(CoverLook.ACCENT) },
-                            )
-                            Text(
-                                state.playingOn?.let { words(R.string.devices_playing_on, it) }.orEmpty(), Modifier.height(OUTPUT_LINE),
-                                style = MaterialTheme.typography.labelSmall, color = live.color(CoverLook.ACCENT), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        PanelButton(Icons.AutoMirrored.Filled.QueueMusic, say.queue, page == Panel.QUEUE, size = 30.dp, nudge = 0.5.dp) { choose(Panel.QUEUE) }
-                        Spacer(Modifier.height(OUTPUT_LINE))
-                    }
-                }
-                if (page == Panel.ART && !across) Spacer(Modifier.weight(0.19f))
+                if (page == Panel.ART && !across) Spacer(Modifier.weight(0.25f))
             })
             }
             }
@@ -783,9 +745,6 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
       }
     }
 }
-
-/** The line under the lyrics, output and queue glyphs: the output's "Playing on" or the jam's words, or nothing, the same height. */
-private val OUTPUT_LINE = 14.dp
 
 /** The larger of the status bar's and the gesture bar's heights, for room kept alike above and below. */
 @Composable
@@ -939,16 +898,10 @@ private const val MIX_SLIDE = 2
  * sharp as the ones above it, with a strip of red tape running across it unbroken: it is the picture,
  * not the blur behind it. That is the whole trick, and it is why their sleeve can touch the top edge
  * and still reach down behind the title, which no square can do. A phone's box: a desktop window
- * lays its player out otherwise, so the ratio is the phone's layout and not the core's.
+ * lays its player out otherwise, so the ratio is the phone's layout and not the core's. At 0.68 the sleeve
+ * is about 68 % of a 20:9 screen's height; the title block rises [Space.titleRise] into its melt.
  */
-private const val SLEEVE = 0.74f
-
-/**
- * How much of the sleeve's height runs on underneath the title block instead of above it. With the
- * sleeve at [SLEEVE] this puts the title where `w4` has it, 56.5 % of the screen, with the picture's
- * blurred tail behind it.
- */
-private const val SLEEVE_UNDER_TEXT = 0.095f
+private const val SLEEVE = 0.68f
 
 /** A soft sleeve's own box as the sleeve: its bottom (its right edge, on its side) and its whole height (width). */
 private val SLEEVE_ALL: androidx.compose.ui.draw.CacheDrawScope.() -> Pair<Float, Float> = { size.height to size.height }
@@ -2260,11 +2213,24 @@ private fun VolumeRow(vm: PlayerViewModel) {
         if (plain) shown.floatValue = system
         else androidx.compose.animation.core.animate(shown.floatValue, system, animationSpec = androidx.compose.animation.core.tween(180)) { v, _ -> shown.floatValue = v }
     }
+    val state by vm.state.collectAsStateWithLifecycle()
+    val jam by vm.jamStrip.collectAsStateWithLifecycle()
+    // The glyphs' hit boxes are 48 dp, so the bar's side margin is kept less their inset.
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 52.dp, vertical = 2.dp),
-        Arrangement.spacedBy(12.dp), Alignment.CenterVertically,
+        Modifier.fillMaxWidth().padding(start = 15.dp, end = 28.dp, top = 2.dp, bottom = 2.dp),
+        Arrangement.spacedBy(0.dp), Alignment.CenterVertically,
     ) {
-        LookIcon(Icons.AutoMirrored.Filled.VolumeDown, null, Modifier.size(16.dp)) { look.color(CoverLook.ON_VARIANT) }
+        // The output is the speaker at the start of the bar: quiet while this phone plays, ink while another
+        // device does. While a jam is on its button stands here (a jam plays on this device only); a guest's
+        // volume is its own, so it has no output to choose.
+        val jamOn = jam
+        if (jamOn != null) JamButton(jamOn, 22.dp) { look.color(CoverLook.ON_VARIANT) }
+        else if (!state.jamGuest) OutputButton(
+            state.playingOn != null, 22.dp,
+            idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
+        ) else Box(Modifier.size(48.dp), Alignment.Center) {
+            LookIcon(Icons.AutoMirrored.Filled.VolumeDown, null, Modifier.size(16.dp)) { look.color(CoverLook.ON_VARIANT) }
+        }
         val pick: (Float, Float) -> Unit = { x, w ->
             val f = (x / w).coerceIn(0f, 1f)
             vm.setVolumeFraction(f)
@@ -2380,27 +2346,10 @@ private class ReadOut(val key: String) {
 internal const val READ_OUT = 2
 
 @Composable
-private fun PanelButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    on: Boolean,
-    /**
-     * Optical alignment. The three boxes are spaced evenly and the glyphs are centred in them, but the
-     * ink inside a Material glyph is not centred in its own square and no two of these three fill it
-     * the same way: measured on screen, the queue's marks came out a sixth narrower than the other two
-     * and the row read as leaning, and the lyrics' bubble, its weight in its top, stood 2.7 dp above the
-     * others' middles. [size] evens out how much of the box each one covers and [nudge] and [drop] move its
-     * ink, not its touch target, so the three sit symmetrically about the middle one and on one line.
-     */
-    size: androidx.compose.ui.unit.Dp = 27.dp,
-    nudge: androidx.compose.ui.unit.Dp = 0.dp,
-    drop: androidx.compose.ui.unit.Dp = 0.dp,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
+private fun PanelButton(icon: ImageVector, label: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     val look = LocalLook.current
     IconButton(onClick, enabled = enabled) {
-        LookIcon(icon, label, Modifier.size(size).offset(x = nudge, y = drop)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+        LookIcon(icon, label, Modifier.size(26.dp)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
     }
 }
 
@@ -2557,14 +2506,14 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
                     val hold = held.value
                     val f = if (dragging.value) drag.floatValue else if (hold != null) (hold / d).coerceIn(0f, 1f) else bar.floatValue
                     val track = look.color(CoverLook.ON_22)
-                    val filled = look.color(CoverLook.ON_85)
+                    val filled = look.color(CoverLook.ON)
                     val h = thickness.value.dp.toPx()
                     val y = (size.height - h) / 2f
                     val r = CornerRadius(h / 2f, h / 2f)
                     drawRoundRect(track, Offset(0f, y), Size(size.width, h), r)
                     drawRoundRect(filled, Offset(0f, y), Size(size.width * f, h), r)
-                    val k = knob.value
-                    if (k > 0.01f) drawCircle(filled, h * k, Offset(size.width * f, size.height / 2f))
+                    // The playhead is the accent: a dot at rest, bigger under the finger.
+                    drawCircle(look.color(CoverLook.ACCENT), h * (0.7f + knob.value * 0.5f), Offset(size.width * f, size.height / 2f))
                 },
         )
         val mixing = vm.mixing.collectAsStateWithLifecycle()
@@ -2725,7 +2674,10 @@ private fun Queue(vm: PlayerViewModel) {
         // A jam guest's queue is the host's to change: it only shows it.
         val edits = !state.jamGuest
         Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-            Caption(remember { say.queue }, Modifier.padding(top = 4.dp, bottom = 8.dp))
+            LookText(
+                remember { say.upNext }, ink, Modifier.padding(top = 4.dp, bottom = 8.dp),
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
+            )
             if (state.offersReorder) Row(Modifier, Arrangement.spacedBy(4.dp), Alignment.CenterVertically) {
                 val shuffleOn = state.shuffle
                 val repeatOn = state.repeat != Repeat.OFF
@@ -2796,7 +2748,7 @@ private fun Queue(vm: PlayerViewModel) {
     // a title arriving in the same place. It goes soft over the last stretch instead, the way the
     // lyrics do, and a mask is used rather than a colour laid on top because the page behind is the
     // cover's blur and any flat colour meeting it draws a line of its own.
-    val fadeOut = with(androidx.compose.ui.platform.LocalDensity.current) { 28.dp.toPx() }
+    val fadeOut = with(androidx.compose.ui.platform.LocalDensity.current) { 64.dp.toPx() }
     LazyColumn(
         Modifier.fillMaxSize().weight(1f)
             .onSizeChanged { listWidth = it.width.toFloat() }
@@ -2886,7 +2838,7 @@ private fun Queue(vm: PlayerViewModel) {
                         }
                         if (drag.liftKey == key) {
                             val l = drag.lift.floatValue
-                            shadowElevation = 14f * l; scaleX = 1f + 0.02f * l; scaleY = 1f + 0.02f * l
+                            scaleX = 1f + 0.02f * l; scaleY = 1f + 0.02f * l
                         }
                     }
                     // The row held is a step of paper over the rows it passes, so they never show through it.
@@ -2915,7 +2867,7 @@ private fun Queue(vm: PlayerViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Cover(vm.cover(s.coverArt, CoverSize.ROW), 44.dp, radius = 6.dp)
+                        Cover(vm.cover(s.coverArt, CoverSize.ROW), 44.dp, radius = Radius.cover)
                         // The song playing: its cover darkened under the playing bars, as in Apple's queue.
                         if (i == state.index) {
                             Box(Modifier.matchParentSize().drawBehind { drawRoundRect(QUEUE_NOW_VEIL, cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx())) })
@@ -2950,7 +2902,7 @@ private fun Queue(vm: PlayerViewModel) {
                         exit = androidx.compose.animation.fadeOut(),
                     ) { LookIcon(
                         Icons.Filled.DragHandle, say.reorder,
-                        tint = { if (drag.liftKey == key) androidx.compose.ui.graphics.lerp(quiet(), accent(), drag.lift.floatValue) else quiet() },
+                        tint = { if (drag.liftKey == key) androidx.compose.ui.graphics.lerp(quiet(), ink(), drag.lift.floatValue) else quiet() },
                         modifier = Modifier.size(44.dp).padding(11.dp).pointerInput(Unit) {
                             var lifting: kotlinx.coroutines.Job? = null
                             fun lift(to: Float) {
