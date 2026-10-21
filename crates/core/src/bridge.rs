@@ -29,8 +29,8 @@ impl Core {
     }
 }
 
-/// Whether the server is back is the server's answer to a ping, asked when the parked song comes up and
-/// when the platform reports another network; never on a timer.
+/// Whether the server is back is the server's answer to a ping, asked when the parked song comes up, when
+/// the user skips out of the bridge and when the platform reports another network; never on a timer.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
     /// The parked song is next (`BridgeStep::Parked`): the parked queue comes back if the server answers,
@@ -41,6 +41,15 @@ impl Client {
         } else {
             self.core.bridge_start().ok().flatten()
         }
+    }
+
+    /// The user skipped out of the bridge (`BridgeStep::Left`): the bridge's songs go if the server
+    /// answers, the song playing staying on. None when the server is still gone.
+    pub async fn bridge_left(&self) -> Option<QueueEdit> {
+        if !self.server_answers().await {
+            return None;
+        }
+        self.core.session.leave_bridge()
     }
 
     /// The platform moved to another network while bridging: the parked queue comes back if the server
@@ -177,6 +186,22 @@ pub(crate) mod tests {
             let edit = block(c.bridge_parked()).expect("the queue changes either way");
             assert_eq!(c.core.session.bridge_state().bridging, !up, "parked, server up {up}");
             assert_eq!(edit.remove.is_empty(), !up, "back: the bridge's songs go; still gone: more go in");
+        }
+
+        for up in [false, true] {
+            let (c, fake) = bridged();
+            c.core.session.settings.open("").unwrap();
+            c.core.session.settings.put(crate::settings::StoredPrefs { bridge_offline: true, ..Default::default() });
+            let last = c.core.session.playlist(|p| p.len() - 1);
+            c.core.session.moved_to(last as i32);
+            assert_eq!(c.core.session.song_arrived().bridge, crate::rules::BridgeStep::Left);
+            ping(&fake, up);
+            let edit = block(c.bridge_left());
+            assert_eq!((edit.is_some(), c.core.session.bridge_state().bridging), (up, !up), "left the bridge, server up {up}");
+            if let Some(edit) = edit {
+                assert_eq!(edit.seek, None, "the song skipped to plays on");
+                assert_eq!(c.core.session.bridge_state().current.as_deref(), Some("on2"));
+            }
         }
 
         let (c, fake) = client(profile());

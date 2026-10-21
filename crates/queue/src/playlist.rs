@@ -179,6 +179,12 @@ impl Session {
         self.edit_splice(|p| p.unbridge(), Vec::new())
     }
 
+    /// The server is back after the user left the bridge: drops the bridge's songs, the song playing goes
+    /// on. None when not bridging.
+    pub fn leave_bridge(&self) -> Option<QueueEdit> {
+        self.edit_splice(|p| p.leave_bridge(), Vec::new())
+    }
+
     /// Whether shuffle is shown as on (`Playlist::lit`).
     pub fn shuffle_shown(&self) -> bool {
         self.playlist(|p| p.lit())
