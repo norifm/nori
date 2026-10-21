@@ -810,12 +810,16 @@ impl Handle {
 
     /// Where song `id`'s download stands.
     pub fn download_state(&self, id: &str) -> nori_core::menus::SongDownload {
+        self.download_states(&[id])[0]
+    }
+
+    /// Where each song's download stands, the queue read once for them all.
+    pub fn download_states(&self, ids: &[&str]) -> Vec<nori_core::menus::SongDownload> {
         use nori_core::menus::SongDownload;
-        if self.core.download_song(id).is_some() {
-            return SongDownload::Done;
-        }
-        let pending = self.core.download_sections().is_ok_and(|d| d.active.iter().chain(d.queued.iter()).any(|song| song.id == id));
-        if pending { SongDownload::Pending } else { SongDownload::None }
+        let waiting = self.core.download_waiting().unwrap_or_default();
+        ids.iter()
+            .map(|id| if self.core.download_song(id).is_some() { SongDownload::Done } else if waiting.contains(*id) { SongDownload::Pending } else { SongDownload::None })
+            .collect()
     }
 
     /// Deletes a download from disk.

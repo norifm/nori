@@ -144,6 +144,23 @@ impl Core {
         Ok(())
     }
 
+    /// The songs being or waiting to be downloaded (not failed), by id, without reading the songs.
+    pub fn download_waiting(&self) -> crate::Result<std::collections::HashSet<String>> {
+        let [active, queued, _, _] = self.download_id_sections()?;
+        Ok(active.into_iter().chain(queued).collect())
+    }
+
+    /// [`Core::download_sections`] as ids.
+    fn download_id_sections(&self) -> crate::Result<[Vec<String>; 4]> {
+        let pending = self.download_ids(false)?;
+        let recent = self.downloads.with(|t| t.saved_ids());
+        let done: Vec<String> = {
+            let held = self.downloads.held();
+            recent.into_iter().filter(|id| held.state(id) == HeldState::Done).collect()
+        };
+        Ok(self.downloads.with(|t| t.sections(&pending, &done, |id: &String| id.as_str())))
+    }
+
     fn download_kbps(&self) -> i32 {
         self.session.settings.prefs(|p| p.download.bit_rate)
     }
@@ -251,13 +268,7 @@ impl Core {
 
     /// [`Core::download_sections`]' counts, without reading the songs.
     pub fn download_queue_counts(&self) -> crate::Result<DownloadQueueCounts> {
-        let pending = self.download_ids(false)?;
-        let recent = self.downloads.with(|t| t.saved_ids());
-        let done: Vec<String> = {
-            let held = self.downloads.held();
-            recent.into_iter().filter(|id| held.state(id) == HeldState::Done).collect()
-        };
-        let [active, queued, failed, _] = self.downloads.with(|t| t.sections(&pending, &done, |id: &String| id.as_str()));
+        let [active, queued, failed, _] = self.download_id_sections()?;
         Ok(DownloadQueueCounts { waiting: (active.len() + queued.len()) as u32, failed: failed.len() as u32 })
     }
 }
@@ -422,6 +433,7 @@ mod tests {
         let s = core.download_sections().unwrap();
         let counts = core.download_queue_counts().unwrap();
         assert_eq!(counts, DownloadQueueCounts { waiting: (s.active.len() + s.queued.len()) as u32, failed: s.failed.len() as u32 });
+        assert_eq!(core.download_waiting().unwrap(), s.active.iter().chain(&s.queued).map(|s| s.id.clone()).collect());
         // "a" downloading, "e" saved and processed, "c" and "d" queued.
         assert_eq!(counts, DownloadQueueCounts { waiting: 4, failed: 1 });
     }

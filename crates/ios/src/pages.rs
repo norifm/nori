@@ -857,9 +857,10 @@ fn act_code(a: DownloadAct) -> i32 {
 
 /// Each song of `songs` with whether it is downloaded or on its way, and whether it is downloaded.
 fn download_states(s: &nori_host::session::Session, songs: &[Song]) -> Vec<(bool, bool)> {
-    songs
-        .iter()
-        .map(|song| match s.download_state(&song.id) {
+    let ids: Vec<&str> = songs.iter().map(|song| song.id.as_str()).collect();
+    s.download_states(&ids)
+        .into_iter()
+        .map(|state| match state {
             SongDownload::Done => (true, true),
             SongDownload::Pending => (true, false),
             SongDownload::None => (false, false),
