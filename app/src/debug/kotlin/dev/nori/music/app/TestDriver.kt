@@ -72,7 +72,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 """"positionMs":${player2.positionMs},"durationMs":${st.durationMs},"queue":${st.queue.size},"index":${st.index},"playingOn":"${st.playingOn.orEmpty()}",""" +
                 // The next songs in the order they will play, and which of them were added by hand.
                 st.order.drop(st.order.indexOf(st.index) + 1).take(8).let { up ->
-                    """"upNext":"${up.joinToString(" ") { st.queue[it].id }}","upNextQueued":"${up.joinToString(" ") { if (it in st.queued) "1" else "0" }}","shuffle":${st.shuffle},"""
+                    """"upNext":"${up.joinToString(" ") { st.queue.getOrNull(it)?.id ?: "?" }}","upNextQueued":"${up.joinToString(" ") { if (it in st.queued) "1" else "0" }}","shuffle":${st.shuffle},"""
                 } +
                 """"error":"${st.error.orEmpty()}","bridging":${st.bridging},"parkedId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().parked.orEmpty()}","songId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().current.orEmpty()}","eq":${p.eqEnabled},"limiter":${p.limiter},"hiRes":${p.hiRes},""" +
                 """"dspActive":${dev.nori.music.playback.Equalizer.inChain},"gainReductionDb":${dev.nori.music.playback.Equalizer.meterDb},"compressionDb":${dev.nori.music.playback.Equalizer.compressionDb},"soundBypass":${p.soundBypass},""" +

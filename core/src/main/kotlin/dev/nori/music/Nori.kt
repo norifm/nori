@@ -51,6 +51,12 @@ class Nori private constructor(private val context: Context) {
      */
     private class Opened(val key: String, val id: String, val core: Core, val client: Client)
     @Volatile private var opened: Opened? = null
+
+    // Before every field whose init may open the core (downloads reads it on a thread at once).
+    private val _reportedRules = kotlinx.coroutines.flow.MutableStateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?>(null)
+
+    /** The rules the open profile's core last reported, by profile key: they change with the account. */
+    val reportedRules: kotlinx.coroutines.flow.StateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?> = _reportedRules
     private val lazyHttp = lazy { Http(context).also { it.configure(settings.value.server) } }
     private val lazySources = lazy { MediaSources(context, ::client, http, settings) }
 
@@ -116,11 +122,6 @@ class Nori private constructor(private val context: Context) {
     val deviceSound by lazy { dev.nori.music.playback.DeviceSound(settings, { core }, { client }, { http.metered }) }
     /** Remote control and jams; nothing runs unless they are switched on (or this is a jam guest). */
     val remotes = dev.nori.music.remote.Remotes(context, this)
-
-    private val _reportedRules = kotlinx.coroutines.flow.MutableStateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?>(null)
-
-    /** The rules the open profile's core last reported, by profile key: they change with the account. */
-    val reportedRules: kotlinx.coroutines.flow.StateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?> = _reportedRules
 
     /**
      * What the app offers over the profile in use: as its core has them once it is open (an account whose
