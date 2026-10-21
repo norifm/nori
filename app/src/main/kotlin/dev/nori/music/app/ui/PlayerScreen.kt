@@ -690,8 +690,8 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     }
                 }
                 state.error?.let { Text(it, Modifier.padding(horizontal = PLAYER_GUTTER), color = scheme.error, style = MaterialTheme.typography.bodySmall) }
-                if (state.bridging) LookText(
-                    remember { say.bridging }, { live.color(CoverLook.ON_55) },
+                if (state.bridging || state.waiting) LookText(
+                    if (state.bridging) say.bridging else say.waitingForServer, { live.color(CoverLook.ON_55) },
                     Modifier.padding(horizontal = PLAYER_GUTTER, vertical = 2.dp),
                     style = MaterialTheme.typography.bodySmall,
                 )

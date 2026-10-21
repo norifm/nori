@@ -122,6 +122,9 @@ pub enum Event {
     Mixing(bool),
     /// A song failed for want of network and the offline bridge is to take over; playback waits paused.
     Bridge { plays: u64 },
+    /// A song failed for want of network: the player holds it, playing still, and tries it again
+    /// ([`Status::waiting`]); `false` once it tries or is told otherwise.
+    Waiting(bool),
     /// The place moved without a jump (between the CPU and the output's decoder, a mix's tempo ended, or
     /// the place heard left the one said as it ran on): a client extrapolating the position re-anchors here.
     Placed { index: usize, ms: i64 },
@@ -211,6 +214,8 @@ pub struct Status {
     /// Playing but not heard: waiting for bytes, or a start not heard yet. Written with `state`, so a
     /// reader never sees a start as playing before [`Event::Buffering`] says otherwise.
     pub buffering: bool,
+    /// Holding a song the network would not bring, to try it again ([`Event::Waiting`]).
+    pub waiting: bool,
 }
 
 impl Default for Status {
@@ -239,6 +244,7 @@ impl Default for Status {
             pcm_why: None,
             awake: true,
             buffering: false,
+            waiting: false,
         }
     }
 }
@@ -310,6 +316,8 @@ enum Command {
     Device(Device),
     Release,
     Follow(Option<Box<Leading>>),
+    /// The device is on a network again.
+    NetworkBack,
     Stop,
 }
 
@@ -483,6 +491,11 @@ impl Engine {
     /// music moved to another device. Play opens it again where it was.
     pub fn release_now(&self) {
         self.send(Command::Release);
+    }
+
+    /// The device is on a network again: a song waiting for it is tried now.
+    pub fn network_back(&self) {
+        self.send(Command::NetworkBack);
     }
 
     pub fn toggle(&self) {
@@ -719,6 +732,11 @@ const START_LATE_US: i64 = 15_000;
 const START_FADE_MS: i64 = 10;
 /// While a start waits to be heard, it looks at least this far apart, ms.
 const START_HEARD_MS: i64 = 20;
+/// A song the network would not bring is tried again this soon...
+const WAIT_FIRST_MS: i64 = 5_000;
+/// ...then this often, until it plays or the listener does something else.
+const WAIT_EVERY_MS: i64 = 30_000;
+
 /// Less than this to play while a song's bytes are on their way is [`Event::Buffering`].
 const STALL_US: i64 = 200_000;
 const TEAR_DOWNS: u32 = 2;
@@ -787,6 +805,10 @@ struct Worker<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> {
     parked: Option<Parked>,
     /// Paused: when the output is let go.
     idle_at: Option<i64>,
+    /// Holding a song the network would not bring: when it is tried again.
+    retry_at: Option<i64>,
+    /// Tries since music was last heard, for the time to the next.
+    tries: u32,
     releases: u64,
     /// Jumps and plays taken off the channel.
     jumps: u64,
@@ -837,6 +859,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             dip: None,
             parked: None,
             idle_at: None,
+            retry_at: None,
+            tries: 0,
             releases: 0,
             jumps: 0,
             plays: 0,
@@ -951,11 +975,13 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         Some(self.wake_in(now))
     }
 
-    /// The CPU may sleep only while offloaded, fed, and nothing else is under way.
+    /// The CPU may sleep only while offloaded, fed, and nothing else is under way, or while a song waits
+    /// for the network.
     fn follow_awake(&mut self) {
         let h = &self.h;
         let quiet = self.pause_at.is_none() && self.dip.is_none() && h.takeover.is_none() && h.entering.is_none() && h.probe.is_none() && h.at_end.is_none() && self.parked.is_none();
-        let sleeps = self.state == State::Playing && quiet && self.chip().is_some_and(Offload::lets_cpu_sleep);
+        // Waiting for the network, nothing plays: the next try comes when the device wakes or the network does.
+        let sleeps = self.retry_at.is_some() || self.state == State::Playing && quiet && self.chip().is_some_and(Offload::lets_cpu_sleep);
         self.say_awake(!sleeps);
     }
 
@@ -1404,6 +1430,16 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
 
     /// Carries out `c` as this engine's own command.
     fn obey(&mut self, c: Command, now: i64) {
+        // A press ends a wait as if paused there: play tries the song now, a seek or a jump plays on.
+        let pressed = matches!(c, Command::PlayAt(..) | Command::GoTo(..) | Command::Next | Command::Previous | Command::Seek(_) | Command::Play | Command::Pause(_) | Command::Toggle | Command::Release);
+        if pressed && self.end_wait() {
+            let goes_on = matches!(c, Command::GoTo(..) | Command::Seek(_));
+            self.obey(c, now);
+            if goes_on {
+                self.play();
+            }
+            return;
+        }
         match c {
             Command::PlayAt(i, ms) => {
                 self.jumps += 1;
@@ -1474,6 +1510,11 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
                 self.release();
             }
             Command::Follow(lead) => self.follow(lead),
+            Command::NetworkBack => {
+                if self.retry_at.is_some() {
+                    self.try_again();
+                }
+            }
             Command::Look | Command::Stop => {}
         }
     }
@@ -2129,6 +2170,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         if self.idle_at.is_some_and(|t| now >= t) {
             self.release();
         }
+        if self.retry_at.is_some_and(|t| now >= t) {
+            self.try_again();
+        }
         if self.pause_at.is_some_and(|t| now >= t) {
             self.pause_at = None;
             self.halt();
@@ -2163,6 +2207,55 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn gain_of(&mut self, i: usize) -> f32 {
         let p = &mut self.p;
         p.queue.read(|q| p.app.gain(q, i)).min(p.gain_max)
+    }
+
+    /// A song the network would not bring: held where it was, the output let go, still playing to the
+    /// listener, and tried again after [`WAIT_FIRST_MS`], then every [`WAIT_EVERY_MS`].
+    fn wait(&mut self) {
+        let now = self.now();
+        let Some((i, ms)) = self.p.stopped_place() else { return };
+        self.p.release();
+        self.p.sink.track.release();
+        self.parked = Some(Parked { at: i, ms, shown: None });
+        self.retry_at = Some(now + if self.tries == 0 { WAIT_FIRST_MS } else { WAIT_EVERY_MS });
+        self.tries += 1;
+        self.p.app.log(&format!("waiting for the network, song {i} at {ms} ms"));
+        {
+            let mut st = self.status.lock();
+            st.waiting = true;
+            st.buffering = true;
+        }
+        if !std::mem::replace(&mut self.told.stalled, true) {
+            (self.events)(Event::Buffering(true));
+        }
+        (self.events)(Event::Waiting(true));
+    }
+
+    /// Ends a wait; false when there was none.
+    fn unwait(&mut self) -> bool {
+        if self.retry_at.take().is_none() {
+            return false;
+        }
+        self.status.lock().waiting = false;
+        (self.events)(Event::Waiting(false));
+        true
+    }
+
+    /// A press during a wait: the player stands paused on the song, for the press to act on.
+    fn end_wait(&mut self) -> bool {
+        if !self.unwait() {
+            return false;
+        }
+        self.tries = 0;
+        self.set_state(State::Paused);
+        true
+    }
+
+    /// The song waited on is opened again where it was.
+    fn try_again(&mut self) {
+        self.unwait();
+        self.reopen();
+        self.resume();
     }
 
     fn check(&mut self) {
@@ -2202,8 +2295,12 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         } else if ended {
             self.p.pause();
             self.set_state(State::Ended);
-        } else if !self.p.playing() && self.state == State::Playing && self.pause_at.is_none() && self.dip.is_none() && !self.p.priming {
-            // The queue's rules stopped playback (a run of songs that would not play), or the bridge takes over.
+        } else if !self.p.playing() && self.state == State::Playing && self.pause_at.is_none() && self.dip.is_none() && !self.p.priming && self.retry_at.is_none() {
+            // The queue's rules stopped playback (a run of songs that would not play), the bridge takes
+            // over, or the song waits for the network.
+            if std::mem::take(&mut self.p.waiting) {
+                return self.wait();
+            }
             if std::mem::take(&mut self.p.bridge) {
                 (self.events)(Event::Bridge { plays: self.plays });
             } else {
@@ -2355,6 +2452,10 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     /// Writes the status, then says what changed: a client reading the status on an event finds the
     /// event's song and state there.
     fn report(&mut self, now: i64) {
+        // Waiting for the network: the place and the loading said when it began stand.
+        if self.retry_at.is_some() {
+            return;
+        }
         if let Some(p) = self.parked.as_ref().map(|p| (p.at, p.ms, p.shown.clone())) {
             self.unstall();
             let (i, ms, Some(id)) = p else {
@@ -2396,6 +2497,9 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
         let unheard = self.p.unheard() && !self.told.audible;
         let stalled = self.state == State::Playing && ((self.p.starved() && track.filled_us() < STALL_US && track.latency_us() < STALL_US) || unheard);
         self.told.audible = self.state == State::Playing && !stalled && (self.told.audible || !self.p.unheard());
+        if self.told.audible {
+            self.tries = 0;
+        }
         let stall_changed = std::mem::replace(&mut self.told.stalled, stalled) != stalled;
         let seen = self.p.bar();
         let Some(i) = seen.index.or(self.p.current()) else { return };
@@ -2585,7 +2689,7 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn wake_for_music(&self, now: i64) -> Option<i64> {
         let mut d: Option<i64> = None;
         let mut at = |ms: i64| d = Some(d.map_or(ms, |x| x.min(ms)));
-        for t in [self.pause_at, self.dip.as_ref().map(|d| d.at), self.idle_at, self.told.title.as_ref().map(|t| t.1)].into_iter().flatten() {
+        for t in [self.pause_at, self.dip.as_ref().map(|d| d.at), self.idle_at, self.retry_at, self.told.title.as_ref().map(|t| t.1)].into_iter().flatten() {
             at(t - now);
         }
         if self.chain_wanted.is_some() {

@@ -100,6 +100,8 @@ enum Say {
         }
     }
 
+    static let waitingForServer = "Waiting for the server…"
+
     static func playbackError(_ detail: String) -> String {
         detail.isEmpty ? "This song could not be played" : "This song could not be played: \(detail)"
     }

@@ -16,6 +16,7 @@ pub use nori_player::queue::OnError;
 pub enum OnError {
     GiveUpOffload,
     Bridge,
+    Wait,
     Skip,
     Stop,
 }
@@ -396,7 +397,7 @@ mod tests {
         }
         let s = session(&["er1", "er2"], 0);
         s.playing();
-        assert_eq!(s.error(PlaybackError::Network, false, true), OnError::Stop, "bridge off by default: stays on the song");
+        assert_eq!(s.error(PlaybackError::Network, false, true), OnError::Wait, "bridge off by default: waits on the song");
         s.moved_to(1);
         assert_eq!(s.error(PlaybackError::Other, false, true), OnError::Stop, "nothing after the last song");
         assert!(!s.bridge_failed());

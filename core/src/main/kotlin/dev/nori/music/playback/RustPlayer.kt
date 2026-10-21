@@ -68,6 +68,8 @@ internal object RustPlayerJni {
     /** The engine reads its output once, now. */
     @JvmStatic @CriticalNative external fun look(h: Long)
     @JvmStatic @CriticalNative external fun mixing(h: Long): Boolean
+    @JvmStatic @CriticalNative external fun waiting(h: Long): Boolean
+    @JvmStatic @CriticalNative external fun networkBack(h: Long)
     /**
      * Tells [remote] (`Remote.uniffiCloneHandle()`, taken over) where the engine is now, at media [volume] 0 to 100
      * (-1: none). Not `@CriticalNative`: the remote calls back into Kotlin, and a garbage collection walking
@@ -333,6 +335,11 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
     fun setForeground(on: Boolean) = RustPlayerJni.setForeground(h, on)
     fun replan() = RustPlayerJni.replan(h)
     val mixing: Boolean get() = RustPlayerJni.mixing(h)
+    /** A song the network would not bring is held, playing still, and tried again by the engine. */
+    val waiting: Boolean get() = RustPlayerJni.waiting(h)
+
+    /** The device is on a network again: a song waiting for it is tried now. */
+    fun networkBack() = RustPlayerJni.networkBack(h)
     internal var onRemoteStateChanged: (() -> Unit)? = null
     /** Tells [remote] where the engine is now, at media [volume] 0 to 100 (null: none): the core's `playing`. */
     internal fun remotePlayed(remote: dev.nori.music.ffi.Remote, volume: Int?) = RustPlayerJni.remotePlayed(h, remote.uniffiCloneHandle(), volume ?: -1)
@@ -705,6 +712,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
                 EVENT_MIXING -> { remoteChanged = true; PlaybackService.onMixingChanged?.invoke() }
                 EVENT_PLACED -> { placed = true; remoteChanged = true }
                 EVENT_FOLLOWING -> onFollowing(arg)
+                EVENT_WAITING -> remoteChanged = true
                 // The engine is where a jump or seek asked: the session says that place, not its own guess.
                 EVENT_LANDED -> { landed = RustPlayerJni.eventJumps(h); placed = true; remoteChanged = true; PlaybackService.onLanded?.invoke() }
                 // Handed on after the batch: the bridge edits and seeks this player itself.
@@ -1110,6 +1118,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         const val EVENT_PLACED = 10
         const val EVENT_LANDED = 11
         const val EVENT_FOLLOWING = 12
+        const val EVENT_WAITING = 13
 
         val ATTRIBUTES: AudioAttributes = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build()
         val PLATFORM_ATTRIBUTES: android.media.AudioAttributes = android.media.AudioAttributes.Builder()

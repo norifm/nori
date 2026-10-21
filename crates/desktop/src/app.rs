@@ -1918,6 +1918,7 @@ impl App {
                         self.advancing();
                     }
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
+                    Event::Waiting(true) => self.say("Waiting for the server…", true),
                     _ => {}
                 }
                 self.follow();

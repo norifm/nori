@@ -1239,6 +1239,8 @@ impl App {
             Event::Output { name } => self.say(format!("Playing on {name}"), false),
             Event::Title(t) => self.say(format!("On air: {t}"), false),
             Event::Bridge { .. } => self.say("The network is gone", true),
+            Event::Waiting(true) => self.say("The server could not be reached: trying again", true),
+            Event::Waiting(false) => {}
             Event::Mixing(on) => self.now.mixing = on,
             // How a jam's host is followed is the core's jam controls' to show.
             Event::Position { .. } | Event::Placed { .. } | Event::Awake(_) | Event::Following(_) => {}

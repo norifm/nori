@@ -54,6 +54,8 @@ pub(crate) static CLASS: Class = Class {
         native!(c"shownMs", c"(JI)J", shown_ms),
         native!(c"look", c"(J)V", look),
         native!(c"mixing", c"(J)Z", mixing),
+        native!(c"waiting", c"(J)Z", waiting),
+        native!(c"networkBack", c"(J)V", network_back),
         native!(c"remotePlayed", c"(JJI)V", remote_played),
         native!(c"chainIn", c"(J)Z", chain_in),
         native!(c"onCpu", c"(J)Z", on_cpu),
@@ -1289,6 +1291,7 @@ const EVENT_MIXING: i32 = 9;
 const EVENT_PLACED: i32 = 10;
 const EVENT_LANDED: i32 = 11;
 const EVENT_FOLLOWING: i32 = 12;
+const EVENT_WAITING: i32 = 13;
 
 impl Events {
     fn push(&self, e: Event) {
@@ -1306,6 +1309,7 @@ impl Events {
             Event::Bridge { plays } => log(&format!("the network would not bring the song: the offline bridge takes over, after play {plays}")),
             Event::Placed { index, ms } => log(&format!("song {index} goes on at {ms} ms on another path")),
             Event::Following(f) => log(&format!("following: {f:?}")),
+            Event::Waiting(on) => log(if *on { "the network would not bring the song: waits for it" } else { "no longer waits for the network" }),
             _ => {}
         }
         let jumps = match &e {
@@ -1334,6 +1338,7 @@ impl Events {
             // A seek or jump landed (Android asks for no periodic positions).
             Event::Position { index, .. } => (EVENT_LANDED, index as i32, String::new()),
             Event::Awake(_) => return,
+            Event::Waiting(on) => (EVENT_WAITING, on as i32, String::new()),
             // -1: not following; else bit 0 the music plays there, bit 1 held here.
             Event::Following(f) => (EVENT_FOLLOWING, f.map_or(-1, |f| f.playing as i32 | (f.held as i32) << 1), String::new()),
         };
@@ -1570,6 +1575,17 @@ fn look_now(p: &Player) {
     let last = p.looked_ms.load(Ordering::Relaxed);
     if now - last >= nori_player::heard::LOOK_AFTER_MS && p.looked_ms.compare_exchange(last, now, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
         p.engine.look();
+    }
+}
+
+extern "system" fn waiting(h: jlong) -> jboolean {
+    player(h).is_some_and(|p| p.engine.status_with(|s| s.waiting)) as jboolean
+}
+
+/// The device is on a network again: a song waiting for it is tried now.
+extern "system" fn network_back(h: jlong) {
+    if let Some(p) = player(h) {
+        p.engine.network_back();
     }
 }
 

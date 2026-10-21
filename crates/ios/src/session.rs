@@ -71,6 +71,8 @@ pub const REPORT_JAM_LEFT: i32 = 21;
 pub const REPORT_CURVE: i32 = 22;
 /// The hearts changed (`nori_ios_starred` reads them again).
 pub const REPORT_STARRED: i32 = 23;
+/// A song waits for the network (`flag` 1), tried again by itself, or no longer (`flag` 0).
+pub const REPORT_WAITING: i32 = 24;
 
 pub const STATE_IDLE: i32 = 0;
 pub const STATE_PLAYING: i32 = 1;
@@ -326,6 +328,10 @@ fn pack_event(p: &mut Packed, e: &Event) {
         }
         Event::Awake(on) => {
             p.kind = REPORT_AWAKE;
+            p.flag = i32::from(*on);
+        }
+        Event::Waiting(on) => {
+            p.kind = REPORT_WAITING;
             p.flag = i32::from(*on);
         }
         // Listening along paused or played here, or the host did: the jam's controls are read again.
