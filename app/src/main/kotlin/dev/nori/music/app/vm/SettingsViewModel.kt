@@ -98,6 +98,9 @@ data class StorageUi(
     val downloadSongs: Int = 0,
     val indexBytes: Long = 0L,
     val busy: Boolean = false,
+    /** Changes waiting for the server, and dropped unsent. */
+    val unsentWaiting: Int = 0,
+    val unsentDropped: Int = 0,
 )
 
 class SettingsViewModel(app: Application) : NoriViewModel(app) {
@@ -262,6 +265,7 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
         // Which files are the index is the core's rule; weighing them is the file system's.
         val files = app.filesDir.listFiles().orEmpty()
         val index = storageIndexFiles(files.map { it.name })
+        val unsent = runCatching { nori.client.unsent() }.getOrNull()
         _storage.value = StorageUi(
             streamBytes = nori.sources.streamBytes(),
             coverBytes = dirBytes(java.io.File(app.cacheDir, dev.nori.music.data.CoverLoader.DIR)),
@@ -269,6 +273,8 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
             downloadBytes = nori.sources.downloadBytes(),
             downloadSongs = nori.downloads.state.value.done.size,
             indexBytes = index.sumOf { dirBytes(files[it.toInt()]) },
+            unsentWaiting = unsent?.waiting?.toInt() ?: 0,
+            unsentDropped = unsent?.dropped?.toInt() ?: 0,
         )
     }
 

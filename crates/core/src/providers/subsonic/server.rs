@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use rusqlite::params;
 
 use super::wire;
-use crate::client::{blank, pairs, Client, NetResult, Starrable, Write};
+use crate::client::{blank, pairs, Client, NetResult, Starrable, Unsent, Write};
 use crate::transport::{self, FailureKind, NetError, Outcome, Transport};
 use crate::{api, browse, settings, Core, IngestStats, Result, ServerConfig, ServerInfo};
 
@@ -194,12 +194,16 @@ impl Core {
     }
 
     /// The server put off a queued write at `now`: counts a try (one an hour at most, so an outage behind
-    /// a proxy that answers every request with 502 costs one) and drops the write once it is spent.
-    pub(crate) fn pending_put_off(&self, row_id: i64, now: i64) -> Result<()> {
+    /// a proxy that answers every request with 502 costs one) and drops the write once it is spent. Whether
+    /// it was dropped.
+    pub(crate) fn pending_put_off(&self, row_id: i64, now: i64) -> Result<bool> {
         let c = self.db.lock();
         c.execute("UPDATE pending SET tries=tries+1, tried_ms=?2 WHERE server=sid() AND rowid=?1 AND ?2-tried_ms>=?3", params![row_id, now, TRY_SPACING_MS])?;
-        c.execute("DELETE FROM pending WHERE server=sid() AND rowid=?1 AND (tries>=?2 OR ?3-queued_ms>=?4)", params![row_id, MOST_TRIES, now, OLDEST_MS])?;
-        Ok(())
+        Ok(c.execute("DELETE FROM pending WHERE server=sid() AND rowid=?1 AND (tries>=?2 OR ?3-queued_ms>=?4)", params![row_id, MOST_TRIES, now, OLDEST_MS])? > 0)
+    }
+
+    fn pending_count(&self) -> Result<u32> {
+        Ok(self.db.lock().query_row("SELECT count(*) FROM pending WHERE server=sid()", [], |r| r.get(0))?)
     }
 
     pub(crate) fn pending_any(&self) -> Result<bool> {
@@ -311,6 +315,11 @@ impl Client {
         changed
     }
 
+    /// The changes made here the server has not taken.
+    pub fn unsent(&self) -> NetResult<Unsent> {
+        Ok(Unsent { waiting: self.core.pending_count()?, dropped: self.dropped.load(Ordering::Relaxed) })
+    }
+
     /// Replays queued writes in order until none are left, stopping at the first that is not
     /// [`Outcome::Refused`]; refused writes are dropped, and so are writes the server keeps putting off
     /// (see `Core::pending_put_off`). While one replay runs, another returns at once: the running one sends
@@ -343,8 +352,15 @@ impl Client {
                 if let Err(e) = self.get(&p.endpoint, &p.params).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
                     match e.outcome() {
                         Outcome::Offline => return Ok(()),
-                        Outcome::Later => return Ok(self.core.pending_put_off(p.row_id, crate::db::now_ms())?),
-                        Outcome::Refused => {}
+                        Outcome::Later => {
+                            if self.core.pending_put_off(p.row_id, crate::db::now_ms())? {
+                                self.dropped.fetch_add(1, Ordering::Relaxed);
+                            }
+                            return Ok(());
+                        }
+                        Outcome::Refused => {
+                            self.dropped.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
                 self.core.pending_done(p.row_id)?;
@@ -544,6 +560,7 @@ mod tests {
             block(c.flush_pending()).unwrap();
             let left: Vec<String> = c.core.pending_list().unwrap().into_iter().map(|p| p.endpoint).collect();
             assert_eq!(left, if kept { vec!["savePlayQueue", "scrobble"] } else { vec![] }, "HTTP {status}");
+            assert_eq!(c.unsent().unwrap(), if kept { Unsent { waiting: 2, dropped: 0 } } else { Unsent { waiting: 0, dropped: 1 } }, "HTTP {status}");
         }
         // Sent now, a refused write says so and is not queued.
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
@@ -579,8 +596,12 @@ mod tests {
         let row = c.core.pending_list().unwrap()[0].row_id;
         c.core.pending_put_off(row, now + OLDEST_MS - 1_000).unwrap();
         assert_eq!(head().as_deref(), Some("scrobble"));
-        c.core.pending_put_off(row, now + OLDEST_MS).unwrap();
+        assert_eq!(c.unsent().unwrap(), Unsent { waiting: 1, dropped: 0 });
+        c.core.db.lock().execute("UPDATE pending SET queued_ms=queued_ms-?1, tried_ms=0", [OLDEST_MS]).unwrap();
+        fake.answers.lock().push_back(Ok((503, vec![])));
+        block(c.flush_pending()).unwrap();
         assert_eq!(head(), None, "two weeks old");
+        assert_eq!(c.unsent().unwrap(), Unsent { waiting: 0, dropped: 1 });
     }
 
     #[test]

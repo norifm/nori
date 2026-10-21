@@ -410,6 +410,7 @@ fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Opti
         },
         folders,
         devices: CpalOutput::devices(),
+        unsent: client.unsent().map_or((0, 0), |u| (u.waiting, u.dropped)),
         rules: core.rules(),
     }
 }

@@ -48,6 +48,13 @@ only the next one's lyrics.
 Without a network, nori opens on what it has stored: your library, its covers and your downloads. What
 you do meanwhile (favorites, plays, playlist edits) is queued and sent when the server is back.
 
+From nori 0.7, a queued change the server or a proxy refuses is dropped, and so is one the server keeps
+putting off (ten tries an hour or more apart, or two weeks queued), so the changes behind it still go.
+Time spent offline never counts. Settings › Downloads and storage shows how many changes are waiting
+and how many were dropped since the app opened, on Android, the desktop and the terminal. Long queues
+and playlists are sent as a form rather than in the address, so proxies that cap address length take
+them.
+
 **Play downloads when offline** (off by default): if the server drops mid-queue, nori jumps to a
 download further on in the queue, or plays from your downloads, and comes back to your queue when the
 server does: after the download playing then, from nori 0.7.
