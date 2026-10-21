@@ -35,7 +35,7 @@ impl Client {
                 let c = self.core.db.lock();
                 (autoeq::count(&c)?, autoeq::fetched_ms(&c)?)
             };
-            if !autoeq::index_due(auto, metered, stored, fetched, now) {
+            if !autoeq::index_due(auto, metered, stored, fetched, *self.autoeq_failed_ms.lock(), now) {
                 return Ok(None);
             }
         }
@@ -43,7 +43,7 @@ impl Client {
             return Ok(None);
         }
         let _fetching = Fetching(&self.autoeq_fetching);
-        let markdown = autoeq::fetch_text(&*self.transport, autoeq::INDEX_URL.to_string()).await?;
+        let markdown = autoeq::fetch_text(&*self.transport, autoeq::INDEX_URL.to_string()).await.inspect_err(|_| *self.autoeq_failed_ms.lock() = Some(now))?;
         let n = autoeq::store(&mut self.core.db.lock(), &markdown, now)?;
         alog::info(&format!("autoeq: index kept, {n} headphones"));
         Ok(Some(n))
@@ -552,6 +552,12 @@ pub(crate) mod tests {
         fake.answer(index);
         let d = block(c.curve_as(BUDS, CurveStep::Offer, false));
         assert_eq!(offered(&d).as_deref(), Some("Sony WH-1000XM6"));
+        assert_eq!(fake.asked(), [autoeq::INDEX_URL]);
+        // A failed list is not asked for again within the hour.
+        let (c, fake) = fresh(false);
+        for _ in 0..5 {
+            assert_eq!(block(c.curve_as(BUDS, CurveStep::Offer, false)), DeviceCurve::none());
+        }
         assert_eq!(fake.asked(), [autoeq::INDEX_URL]);
         // On a metered network the list waits: nothing to offer.
         let (c, fake) = fresh(false);
