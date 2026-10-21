@@ -97,6 +97,7 @@ fn net_error(e: yt::Error<NetError>) -> NetError {
         yt::Error::Parse(reason) => NetError::Parse { reason },
         yt::Error::Unplayable(reason) => NetError::Api { code: 0, reason: format!("YouTube will not play it: {reason}") },
         yt::Error::SignedOut => NetError::Api { code: 0, reason: "signed out of YouTube Music".into() },
+        yt::Error::Refused => NetError::Api { code: 0, reason: "YouTube Music answered as if signed out".into() },
     }
 }
 
@@ -346,11 +347,13 @@ impl Provider for YouTube {
         shown
     }
 
-    /// No server and no Subsonic account. Clears the library when the profile was a server's.
+    /// No server and no Subsonic account; a session YouTube ended shows signed out. Clears the library
+    /// when the profile was a server's.
     fn configure(&self, core: &Core, profile: &SavedServer) -> nori_model::Result<()> {
         core.serves(IDENT)?;
         *core.server.write() = crate::api::Server::default();
-        core.set_rules(self.rules(profile, nori_remote::is_guest_key(&profile.api_key)));
+        let guest = nori_remote::is_guest_key(&profile.api_key);
+        core.set_rules(if account::ended(core) && !guest { rules(false) } else { self.rules(profile, guest) });
         *core.native_login.write() = None;
         *core.account.write() = None;
         Ok(())
@@ -394,6 +397,14 @@ impl Provider for YouTube {
 
     fn account(&self, client: &Client) -> AccountState {
         self.0.account(client)
+    }
+
+    fn reminds_to_sign_in(&self, client: &Client) -> bool {
+        self.0.reminds(client)
+    }
+
+    fn stop_reminding(&self, client: &Client) {
+        self.0.stop_reminding(client)
     }
 }
 
@@ -582,6 +593,7 @@ mod tests {
 
     const ROTATE: &str = "https://accounts.youtube.com/RotateCookies";
     const BROWSE: &str = "https://music.youtube.com/youtubei/v1/browse";
+    const ACCOUNT_MENU: &str = "https://music.youtube.com/youtubei/v1/account/account_menu";
 
     #[test]
     fn a_queued_song_is_read_without_a_request() {
@@ -1037,18 +1049,121 @@ mod tests {
     }
 
     /// A rotation YouTube refuses ends the session: it says so, keeps the cookies for a look, and the
-    /// profile goes on as a visitor's until signed in again.
+    /// profile goes on as a visitor's, shown signed out, until signed in again. The ended session is
+    /// asked about once more, not on every call.
     #[test]
     fn a_refused_session_ends_but_is_not_wiped() {
-        let (c, t) = signed_in(601, vec![answer(401, "", &[]), answer(200, "home", &[]), answer(200, "home_more", &[]), answer(200, "queue", &[])]);
+        let (c, t) = signed_in(601, vec![answer(401, "", &[]), answer(200, "home", &[]), answer(200, "home_more", &[]), answer(200, "queue", &[]), answer(401, "", &[]), answer(401, "", &[])]);
+        c.core.set_rules(rules(true));
         let Page::Feed { v } = block(c.read_now(Read::HomeFeed)).unwrap() else { panic!() };
         assert_eq!(v.len(), 4, "everyone's feed");
         assert_eq!(c.account(), AccountState::Ended);
+        assert_eq!(c.core.rules(), rules(false), "shown signed out at once");
         let kept = account::tests::stored(&c).unwrap();
         assert!(kept.ended() && kept.cookies() == SESSION);
         assert!(!t.asked.lock()[1].headers.contains_key("Cookie"), "asked as a visitor");
         assert!(matches!(block(c.read_now(Read::PlaylistList)), Ok(Page::Playlists { v }) if v.is_empty()));
-        assert_eq!(t.asked.lock().len(), 4, "the library is not asked");
+        assert!(matches!(block(c.read_now(Read::PlaylistList)), Ok(Page::Playlists { v }) if v.is_empty()));
+        assert_eq!(t.urls()[4..], [ACCOUNT_MENU, ROTATE], "asked about once; the library is not asked");
+        assert_eq!(c.account(), AccountState::Ended);
+    }
+
+    /// An ended session whose cookies YouTube still knows is signed in again when next used, keeping
+    /// the cookies it is given.
+    #[test]
+    fn an_ended_session_that_still_works_comes_back() {
+        let (c, t) = youtube_answering(vec![answer(200, "account_menu", &["SIDCC=cc2"]), answer(200, "playlist", &[])]);
+        let ended = account::tests::session(SESSION, 0).replace("\"ended\":false", "\"ended\":true");
+        account::tests::store(&c, &ended);
+        let Page::StarredPage { v } = block(c.read_now(Read::StarredItems)).unwrap() else { panic!() };
+        assert_eq!(v.songs.len(), 3);
+        assert_eq!(t.urls(), [ACCOUNT_MENU, BROWSE]);
+        assert_eq!((c.account(), c.core.rules()), (AccountState::SignedIn, rules(true)));
+        assert!(account::tests::stored(&c).unwrap().cookies().contains("SIDCC=cc2"));
+    }
+
+    /// An ended session reminds to sign in until asked not to; signing in again and ending again
+    /// reminds again.
+    #[test]
+    fn an_ended_session_reminds_until_quieted() {
+        assert!(!youtube(&[]).0.reminds_to_sign_in(), "never signed in");
+        let (c, _) = youtube_answering(vec![answer(200, "account_menu", &[])]);
+        let ended = account::tests::session(SESSION, 0).replace("\"ended\":false", "\"ended\":true");
+        account::tests::store(&c, &ended);
+        assert!(c.reminds_to_sign_in());
+        c.stop_reminding();
+        assert!(!c.reminds_to_sign_in() && c.account() == AccountState::Ended);
+        assert!(matches!(block(c.sign_in(SESSION.into())), SignInResult::SignedIn { .. }));
+        assert!(!c.reminds_to_sign_in());
+        let (c2, _) = youtube(&[]);
+        account::tests::store(&c2, &account::tests::stored(&c).map(|k| serde_json::to_string(&k).unwrap()).unwrap().replace("\"ended\":false", "\"ended\":true"));
+        assert!(c2.reminds_to_sign_in(), "ended again");
+    }
+
+    /// While an ended session is asked about, the profile's other calls go on as a visitor's.
+    #[test]
+    fn an_ended_sessions_recheck_keeps_its_cookies_to_itself() {
+        struct Paused {
+            asking: std::sync::mpsc::SyncSender<()>,
+            release: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
+            others: parking_lot::Mutex<Vec<TransportResponse>>,
+            with_cookies: parking_lot::Mutex<Vec<String>>,
+        }
+        #[async_trait::async_trait]
+        impl Transport for Paused {
+            async fn get(&self, url: String, _: u32) -> Result<TransportResponse, TransportError> {
+                panic!("{url}");
+            }
+            async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
+                let url = request.url.split('?').next().unwrap_or_default().to_string();
+                if url == ACCOUNT_MENU {
+                    self.asking.send(()).unwrap();
+                    self.release.lock().recv().unwrap();
+                    return Ok(answer(200, "signed_out", &[]));
+                }
+                if url == ROTATE {
+                    return Ok(answer(401, "", &[]));
+                }
+                if request.headers.contains_key("Cookie") {
+                    self.with_cookies.lock().push(url);
+                }
+                self.others.lock().pop().ok_or(TransportError::Failed { kind: FailureKind::Connect, detail: None })
+            }
+            fn address_changed(&self) {}
+            fn network(&self) -> Network {
+                Network::Unmetered
+            }
+        }
+        let (asking, asked) = std::sync::mpsc::sync_channel(1);
+        let (release, released) = std::sync::mpsc::channel();
+        let others = vec![answer(200, "home", &[]), answer(200, "home_more", &[]), answer(200, "queue", &[])].into_iter().rev().collect();
+        let t = Arc::new(Paused { asking, release: parking_lot::Mutex::new(released), others: parking_lot::Mutex::new(others), with_cookies: Default::default() });
+        let core = crate::Core::new(String::new(), "yt".into(), Default::default()).unwrap();
+        core.configure_profile(SavedServer { kind: ServerKind::YouTubeMusic, ..Default::default() }).unwrap();
+        let c = Client::new(core, t.clone(), Default::default());
+        account::tests::store(&c, &account::tests::session(SESSION, 0).replace("\"ended\":false", "\"ended\":true"));
+        let rechecking = std::thread::spawn({
+            let c = c.clone();
+            move || block(c.read_now(Read::PlaylistList)).map(|_| ())
+        });
+        asked.recv().unwrap();
+        assert!(block(c.read_now(Read::HomeFeed)).is_ok(), "Home reads meanwhile");
+        release.send(()).unwrap();
+        rechecking.join().unwrap().unwrap();
+        assert_eq!(*t.with_cookies.lock(), Vec::<String>::new());
+        assert_eq!(c.account(), AccountState::Ended);
+    }
+
+    /// Another process using the profile rotated the cookies: they are taken from its rows, not rotated
+    /// again from stale ones.
+    #[test]
+    fn cookies_another_process_rotated_are_taken_up() {
+        let (c, t) = signed_in(601, vec![answer(200, "home", &[]), answer(200, "home_more", &[]), answer(200, "queue", &[])]);
+        assert_eq!(c.account(), AccountState::SignedIn, "read into this process, due a rotation");
+        account::tests::store(&c, &account::tests::session("SAPISID=sapi; __Secure-1PSIDTS=other", 0));
+        block(c.read_now(Read::HomeFeed)).unwrap();
+        assert!(!t.urls().contains(&ROTATE.to_string()));
+        assert!(t.asked.lock()[0].headers["Cookie"].contains("__Secure-1PSIDTS=other"));
     }
 
     /// A refusal that a rotation does not set right ends the session too.
@@ -1346,6 +1461,20 @@ mod tests {
         assert!(guest.asks && guest.remote && !guest.downloads && !guest.radio && !guest.stars && !guest.stars_after_sign_in && !guest.measures && guest.sections.is_empty());
         assert_eq!(of("Ann", false), signed, "signed in as Ann");
         assert!(of("", false).settings.contains(&SettingsPart::ServerOptions), "profiles are added from it");
+    }
+
+    /// A session YouTube ended opens signed out: the seal asks to sign in again, and no favorites or
+    /// playlists stand empty for an account that cannot be read.
+    #[test]
+    fn an_ended_session_opens_signed_out() {
+        let ann = SavedServer { kind: ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
+        for ended in [false, true] {
+            let (c, _) = youtube(&[]);
+            let kept = account::tests::session(SESSION, 0).replace("\"ended\":false", &format!("\"ended\":{ended}"));
+            account::tests::store(&c, &kept);
+            c.core.configure_profile(ann.clone()).unwrap();
+            assert_eq!(c.core.rules(), rules(!ended), "ended {ended}");
+        }
     }
 
     /// The profile asks only for a name, keeps its kind, and a second one added takes over the first,

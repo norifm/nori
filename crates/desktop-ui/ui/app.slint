@@ -4627,6 +4627,9 @@ export component AppWindow inherits Window {
     in-out property <bool> signin-pasting;
     callback sign-in-window();
     callback sign-out();
+    // The source ended the session: the sheet can be asked not to come back at start.
+    in property <bool> signin-ended;
+    callback sign-in-quiet();
     in-out property <string> join-link;
     in property <string> join-error;
     in property <bool> join-busy;
@@ -6929,7 +6932,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.signin-user == "": Text {
-                        text: root.signin-busy ? "Finish signing in in the window that opened." : "See your own Home, your library and your likes. Music plays without it too.";
+                        text: root.signin-busy ? "Finish signing in in the window that opened." : root.signin-ended ? "YouTube signed you out. Sign in again to see your library and likes." : "See your own Home, your library and your likes. Music plays without it too.";
                         color: Theme.dim;
                         font-size: 13px;
                         wrap: word-wrap;
@@ -6995,6 +6998,11 @@ export component AppWindow inherits Window {
                     }
                     HorizontalLayout {
                         alignment: end;
+                        spacing: 8px;
+                        if root.signin-ended: SmallButton {
+                            text: "Don’t show again";
+                            clicked => { root.sign-in-quiet(); }
+                        }
                         SmallButton {
                             text: "Close";
                             clicked => { root.signin-open = false; }

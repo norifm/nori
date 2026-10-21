@@ -133,7 +133,7 @@ impl Handle {
     /// (`browse::home_rows_shown`).
     pub fn home_rows(&self) -> Vec<HomeRow> {
         let kept = self.core.session.settings.prefs(|p| p.home_rows.clone());
-        home_rows_shown(kept, self.rules.account)
+        home_rows_shown(kept, self.rules().account)
     }
 
     /// [`Handle::home_rows`] that are shelves of albums, for a Home that draws only albums.
@@ -152,7 +152,7 @@ impl Handle {
     fn home(&self, rows: Vec<HomeRow>, mixes: bool, each: &dyn Fn(Result<HomePart, NetError>)) {
         let client = &self.client;
         // The mixes and the favourites are the profile's where it has them (`ProfileRules::mixes`).
-        let mixes = mixes.then_some(self.rules.mixes);
+        let mixes = mixes.then_some(self.rules().mixes);
         let taste = self.core.session.settings.prefs(|p| p.taste_model);
         // The favourites' tile follows the starred songs: stored at once, the server's after.
         let stored = mixes.filter(|&account| account).map(|_| client.mix_favourites_stored());
@@ -164,7 +164,7 @@ impl Handle {
         });
         let mut any = sent.is_some();
         // A source's own Home: its feed under "For you", as on Android.
-        if self.rules.feed {
+        if self.rules().feed {
             let r = read_pages(client, Read::HomeFeed, |p| {
                 if let Page::Feed { v } = p {
                     each(Ok(HomePart::Feed(v)));
@@ -175,7 +175,7 @@ impl Handle {
             }
         }
         let pins = self.core.session.settings.prefs(|p| p.pinned_playlists.clone());
-        let rows = if self.rules.feed { Vec::new() } else { rows };
+        let rows = if self.rules().feed { Vec::new() } else { rows };
         for (at, shelf) in home_shelves(rows).into_iter().enumerate() {
             let r = match shelf {
                 HomeShelf::Albums { sort, size, .. } => {

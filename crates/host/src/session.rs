@@ -314,8 +314,8 @@ pub struct Parts {
     device: nori_core::remote::RemoteMe,
     /// The profile is a jam guest's: songs picked are asked of the jam's host, and nothing else plays.
     pub guest: bool,
-    /// What the app offers over the profile (a guest's: the host's library, read only).
-    pub rules: ProfileRules,
+    /// The rules the client was last told of ([`Parts::account_changed`]).
+    rules_shown: parking_lot::Mutex<ProfileRules>,
     discovery: Option<Arc<dyn nori_core::remote::Discovery>>,
     /// The AutoEQ notice said last, waiting for an answer.
     curve: parking_lot::Mutex<Option<CurveNotice>>,
@@ -417,7 +417,7 @@ impl Session {
             remotes,
             device,
             guest,
-            rules,
+            rules_shown: parking_lot::Mutex::new(rules),
             discovery: o.discovery,
             curve: Default::default(),
             tasks: o.tasks,
@@ -431,7 +431,7 @@ impl Session {
         }
         h.restore();
         h.follow_remote();
-        if !h.offline && h.rules.downloads && h.core.download_counts().pending > 0 {
+        if !h.offline && h.rules().downloads && h.core.download_counts().pending > 0 {
             h.start_downloads();
         }
         Ok(Session { h })
@@ -500,7 +500,7 @@ impl Handle {
             let ok = r.is_ok();
             (me.out)(Said::Reachable(r));
             // Search and the songs list read the offline index, where the profile keeps one.
-            if ok && me.rules.indexed && me.core.index_size().map_or(true, |s| s.songs == 0) {
+            if ok && me.rules().indexed && me.core.index_size().map_or(true, |s| s.songs == 0) {
                 me.sync();
             }
             let _ = me.client.flush_pending().await;
@@ -541,7 +541,7 @@ impl Handle {
         } else {
             save(&self.core, &self.engine);
         }
-        if k.push && self.rules.account {
+        if k.push && self.rules().account {
             let (client, st) = (self.client.clone(), self.engine.status());
             self.run(async move {
                 let _ = client.playlist_push(st.id.clone(), st.position_now().max(0)).await;
@@ -695,7 +695,7 @@ impl Handle {
     /// Makes or drops the remote as the settings say, and serves while remote control is on.
     fn follow_remote(&self) {
         let prefs = self.core.session.settings.current().unwrap_or_default();
-        if self.offline || !self.rules.remote || !(prefs.remote_control || self.guest) {
+        if self.offline || !self.rules().remote || !(prefs.remote_control || self.guest) {
             return self.remotes.set(None);
         }
         let remote = self.remotes.get().unwrap_or_else(|| {
@@ -1001,6 +1001,23 @@ impl Handle {
         r
     }
 
+    /// What the app offers over the profile (a guest's: the host's library, read only), as the core
+    /// has it now.
+    pub fn rules(&self) -> ProfileRules {
+        self.core.rules()
+    }
+
+    /// The account as it is, once its rules changed since the client was last told (a source ended the
+    /// account's session, or took it up again); None while they stand.
+    pub fn account_changed(&self) -> Option<nori_core::providers::AccountState> {
+        let now = self.core.rules();
+        let mut shown = self.rules_shown.lock();
+        (now != *shown).then(|| {
+            *shown = now;
+            self.client.account()
+        })
+    }
+
     /// Signs the profile's account out here; the profile forgets the account's name.
     pub fn sign_out(&self) {
         self.client.sign_out();
@@ -1019,7 +1036,7 @@ impl Handle {
 
     /// Stars or unstars on the server (queued when offline); says so when it fails.
     pub fn star(&self, kind: Starrable, id: String, on: bool) {
-        if !self.rules.stars {
+        if !self.rules().stars {
             return;
         }
         let (client, out, hearts) = (self.client.clone(), self.out.clone(), self.hearts());
@@ -1093,7 +1110,7 @@ impl Handle {
             }
             _ => None,
         };
-        if let Some(send) = send.filter(|s| self.rules.scrobbles && (s.submit_id.is_some() || s.now_playing_id.is_some())) {
+        if let Some(send) = send.filter(|s| self.rules().scrobbles && (s.submit_id.is_some() || s.now_playing_id.is_some())) {
             let client = self.client.clone();
             self.run(async move {
                 // Offline, writes wait in the pending queue with their original time.
@@ -1554,6 +1571,21 @@ mod tests {
         s.close();
     }
 
+    /// An account the core signed out under the session is taken up once, with the core's rules.
+    #[test]
+    fn an_account_signed_out_underneath_is_noticed_once() {
+        let dir = nori_testdir::TempDir::new("host-account-changed");
+        let queue = Arc::new(nori_core::queue::Session::new(nori_core::settings_store::Settings::new()));
+        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
+        let s = Session::open(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        assert_eq!(s.account_changed(), None);
+        s.client.sign_out();
+        assert_eq!(s.account_changed(), Some(nori_core::providers::AccountState::SignedOut));
+        assert!(!s.rules().stars && s.rules().stars_after_sign_in);
+        assert_eq!(s.account_changed(), None);
+        s.close();
+    }
+
     /// A profile opens on its own saved queue or none, not on the one the profile open before left (a
     /// jam's host's songs, once the guest left).
     #[test]
@@ -1598,8 +1630,8 @@ mod tests {
                 settings.put(prefs);
                 let profile = SavedServer { id: "own".into(), kind, url: "http://127.0.0.1:9".into(), user: "ann".into(), ..Default::default() };
                 let s = Session::open(test_open(queue.clone(), dir.path(), profile.clone(), Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0)))).unwrap();
-                assert_eq!(s.rules, nori_core::providers::rules_of(profile, false));
-                assert_eq!(s.remote().is_some(), on && s.rules.remote);
+                assert_eq!(s.rules(), nori_core::providers::rules_of(profile, false));
+                assert_eq!(s.remote().is_some(), on && s.rules().remote);
                 s.close();
             }
         }

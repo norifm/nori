@@ -133,7 +133,7 @@ pub extern "C" fn nori_ios_song_menu(token: u64, index: i32, starred: i32, playe
     let Some(song) = song_at(token, index) else {
         return std::ptr::null_mut();
     };
-    with_session(|s| owned(&menu_json(&song, starred != 0, s.download_state(&song.id), player != 0, &s.rules)))
+    with_session(|s| owned(&menu_json(&song, starred != 0, s.download_state(&song.id), player != 0, &s.rules())))
         .unwrap_or(std::ptr::null_mut())
 }
 
@@ -216,7 +216,7 @@ pub unsafe extern "C" fn nori_ios_playlist_create(token: u64, index: i32, name: 
 /// `starred`: -1 nothing, else a `NORI_SWIPE_*` code.
 #[no_mangle]
 pub extern "C" fn nori_ios_row_swipe(left: i32, starred: i32) -> i32 {
-    let setting = with_session(|s| (s.core.session.settings.prefs(|p| if left != 0 { p.swipe_left } else { p.swipe_right }), (s.rules.stars, s.rules.downloads)));
+    let setting = with_session(|s| (s.core.session.settings.prefs(|p| if left != 0 { p.swipe_left } else { p.swipe_right }), (s.rules().stars, s.rules().downloads)));
     match setting.and_then(|(s, (stars, account))| row_swipe(s, starred != 0, stars, account)) {
         None => -1,
         Some(RowSwipeAct::Queue) => 0,

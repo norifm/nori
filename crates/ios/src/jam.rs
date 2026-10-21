@@ -35,7 +35,7 @@ fn rules_json(r: &ProfileRules) -> Value {
 #[no_mangle]
 pub extern "C" fn nori_ios_rules() -> *mut c_char {
     with_session(|s|  {
-        let mut rules = s.rules.clone();
+        let mut rules = s.rules();
         if let Some(c) = s.remote().and_then(|r| r.jam_controls()) {
             rules.asks = c.asks;
         }

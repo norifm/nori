@@ -110,6 +110,14 @@ pub trait Provider: Send + Sync {
     fn account(&self, _client: &Client) -> AccountState {
         AccountState::SignedOut
     }
+
+    /// The account's session ended and the client reminds to sign in again at start.
+    fn reminds_to_sign_in(&self, _client: &Client) -> bool {
+        false
+    }
+
+    /// No reminder until the account is signed in, and its session ends, again.
+    fn stop_reminding(&self, _client: &Client) {}
 }
 
 /// A source's answer to a read.
@@ -429,6 +437,16 @@ impl Client {
     /// Where the profile's account stands.
     pub fn account(&self) -> AccountState {
         self.core.provider().account(self)
+    }
+
+    /// The account's session ended and the client reminds to sign in again at start.
+    pub fn reminds_to_sign_in(&self) -> bool {
+        self.core.provider().reminds_to_sign_in(self)
+    }
+
+    /// No reminder until the account is signed in, and its session ends, again.
+    pub fn stop_reminding(&self) {
+        self.core.provider().stop_reminding(self)
     }
 }
 
