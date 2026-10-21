@@ -213,16 +213,10 @@ class PagePalette(val look: IntArray, val wash: androidx.compose.ui.graphics.Ima
     val edge: Color get() = Color(look[CoverLook.EDGE])
     /** The page under it. */
     val background: Color get() = Color(look[CoverLook.BACKGROUND])
-    // The last papers asked for and the page dyed on them, so each composition gets the same one back.
-    private var dyedOn: Papers? = null
-    private var dyedPage: PagePalette? = null
-
-    /** This page on the season's [papers] dyed with its cover (nori_look::dress::dyed), wash included. */
-    fun dyed(papers: Papers): PagePalette {
-        dyedPage?.let { if (dyedOn == papers) return it }
-        return CoverLook.dyed(look, papers.table, papers.darkTheme, wash?.asAndroidBitmap())
-            .let { PagePalette(it.look, it.wash?.asImageBitmap()) }.also { dyedOn = papers; dyedPage = it }
-    }
+    /** This page on the season's [papers] dyed with its cover (nori_look::dress::dyed), wash included. Not for the main thread. */
+    fun dyed(papers: Papers): PagePalette =
+        CoverLook.dyed(look, papers.table, papers.darkTheme, wash?.asAndroidBitmap())
+            .let { PagePalette(it.look, it.wash?.asImageBitmap()) }
     override fun equals(other: Any?): Boolean = other is PagePalette && other.wash == wash && other.look.contentEquals(look)
     override fun hashCode(): Int = look.contentHashCode() * 31 + (wash?.hashCode() ?: 0)
 }

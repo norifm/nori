@@ -42,6 +42,15 @@ private object CoverPalette {
         synchronized(locks) { locks.get(key) ?: kotlinx.coroutines.sync.Mutex().also { locks.put(key, it) } }.withLock { block() }
 }
 
+/** A cover's page dyed on one season's papers. */
+private data class DyedKey(val cover: String, val papers: Papers)
+
+/** Dyed pages, by bytes like [CoverPalette.cache]; they are worked out off the main thread. */
+private val dyedPages = object : LruCache<DyedKey, PagePalette>(2 * 1024 * 1024) {
+    override fun sizeOf(key: DyedKey, value: PagePalette): Int =
+        1024 + (value.wash?.let { it.width * it.height * 4 } ?: 0)
+}
+
 /** By the cover's [CoverLoader.key], so its colours outlast a change of the server's address. */
 private fun paletteKey(context: android.content.Context, url: String, amoled: Boolean) = "${CoverLoader.get(context).key(url)}|$amoled"
 
@@ -114,8 +123,20 @@ fun rememberCoverTint(url: String?, amoled: Boolean): CoverTint {
         if (url == null || ready != null) return@LaunchedEffect
         measured = paletteOf(context, url, amoled)
     }
-    // The cover dyes the season's paper; the accent on it is the theme's.
-    return CoverTint(url, (ready ?: measured)?.dyed(LocalPapers.current))
+    // The cover dyes the season's paper. The dyeing runs off the main thread; until it is done the
+    // last page of this cover (another season's, after a change) is worn, and none for a new cover.
+    val papers = LocalPapers.current
+    val base = ready ?: measured
+    val dyedKey = key?.let { DyedKey(it, papers) }
+    var made by remember(key) { mutableStateOf<Pair<DyedKey, PagePalette>?>(null) }
+    val cached = dyedKey?.let(dyedPages::get)
+    LaunchedEffect(dyedKey, base) {
+        if (dyedKey == null || base == null || dyedPages.get(dyedKey) != null) return@LaunchedEffect
+        val page = withContext(Dispatchers.Default) { base.dyed(papers) }
+        dyedPages.put(dyedKey, page)
+        made = dyedKey to page
+    }
+    return CoverTint(url, cached ?: made?.second)
 }
 
 @Composable
