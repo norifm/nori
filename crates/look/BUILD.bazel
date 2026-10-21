@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-look',
  'edition': '2021',
- 'version': '0.7.0-beta.4',
+ 'version': '0.7.0-beta.5',
  'targets': [{'name': 'nori_look', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': ['ffi'], 'desktop': [], 'desktop-tests': []},
  'local': [],
