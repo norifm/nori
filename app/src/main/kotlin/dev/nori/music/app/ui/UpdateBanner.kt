@@ -68,10 +68,10 @@ private fun BannerCard(vm: SettingsViewModel, s: Updates.State) {
     var open by remember(update.version) { mutableStateOf(false) }
     Surface(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = TileShape,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        shadowElevation = 6.dp,
+        border = hairlineBorder(),
     ) {
         Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp)) {
             Text(res.getString(R.string.update_banner_title, update.version), Modifier.padding(end = 8.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
