@@ -167,7 +167,7 @@ private fun MarkBody(glyph: Glyph, drawn: Glyph, mark: DownloadMark?, growIn: Bo
             val s = 0.6f + 0.4f * presence.value
             scaleX = s; scaleY = s
         }
-    val accent = MaterialTheme.colorScheme.primary
+    val ink = MaterialTheme.colorScheme.onSurface
     // A song that was already downloaded when the row appeared has nothing to change into but gone,
     // which the presence above handles: it is drawn as the plain icon it always was.
     if (drawn == Glyph.DONE && mark == null && !growIn) {
@@ -185,7 +185,7 @@ private fun MarkBody(glyph: Glyph, drawn: Glyph, mark: DownloadMark?, growIn: Bo
         label = "download mark",
     ) { g ->
         when (g) {
-            Glyph.RING -> DownloadRing(mark?.progress, MARK, 1.5.dp, tint.copy(alpha = 0.3f), accent, plain)
+            Glyph.RING -> DownloadRing(mark?.progress, MARK, 1.5.dp, tint.copy(alpha = 0.3f), ink, plain)
             Glyph.FAILED -> Icon(Icons.Outlined.ErrorOutline, say.downloadFailed, Modifier.size(MARK), tint.copy(alpha = 0.85f))
             else -> Icon(Icons.Filled.DownloadDone, say.downloaded, Modifier.size(MARK), tint)
         }
@@ -269,7 +269,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
         AlertCard(
             title = { Text(say.stopAllTitle) },
             text = { Text(say.stopAllText(unfinished)) },
-            confirmButton = { TextAction(say.stopAll, { actions.cancelAllDownloads(); confirm = false }) },
+            confirmButton = { TextAction(say.stopAll, { actions.cancelAllDownloads(); confirm = false }, destructive = true) },
             dismissButton = { TextAction(say.cancel, { confirm = false }) },
         )
     }
@@ -281,7 +281,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
                 Text(
                     say.stopAll,
                     Modifier.clip8().clickable { if (asks) confirm = true else actions.cancelAllDownloads() }.padding(horizontal = 8.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge,
                 )
             }
         }
@@ -302,7 +302,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
             // row: its second line cross-fades rather than being drawn anew.
             fun LazyListScope.section(key: String, title: String, songs: List<Song>, section: DownloadPhase, action: (@Composable RowScope.() -> Unit)? = null) {
                 if (songs.isEmpty()) return
-                item(key = "h-$key", contentType = "header") { SectionHeader(title, moving(plain), action) }
+                item(key = "h-$key", contentType = "header") { SectionHeader(title, moving(plain), action = action) }
                 itemsIndexed(songs, key = { _, song -> song.id }, contentType = { _, _ -> "download" }) { i, song ->
                     // A saved song still being processed is listed with the downloading ones and says what it waits for.
                     val phase = LocalDownloadMarks.current?.marks?.value?.get(song.id)?.phase?.takeIf { section == DownloadPhase.DOWNLOADING && it.processing } ?: section
@@ -313,7 +313,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
                     ) {
                         when (section) {
                             DownloadPhase.FAILED -> {
-                                IconButton({ actions.retryDownloads(listOf(song)) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Refresh, say.retry, Modifier.size(20.dp), MaterialTheme.colorScheme.primary) }
+                                IconButton({ actions.retryDownloads(listOf(song)) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Refresh, say.retry, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurface) }
                                 IconButton({ actions.cancelDownloads(listOf(song)) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Close, say.remove, Modifier.size(19.dp), MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
                             // The ring hands over to the downloaded icon as the song moves to the finished ones.
@@ -338,7 +338,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
             section("queued", say.waiting, queued, DownloadPhase.QUEUED)
             section(
                 "failed", say.failed, failed, DownloadPhase.FAILED,
-                action = { Text(say.retryAll, Modifier.clip8().clickable { actions.retryDownloads(s.failed) }.padding(8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) },
+                action = { Text(say.retryAll, Modifier.clip8().clickable { actions.retryDownloads(s.failed) }.padding(8.dp), style = MaterialTheme.typography.labelLarge) },
             )
             section("finished", say.finished, finished, DownloadPhase.DONE)
             if (s.active.isEmpty() && s.queued.isEmpty() && s.failed.isEmpty() && s.finished.isEmpty()) item(key = "empty", contentType = "empty") {
@@ -428,8 +428,8 @@ private fun StopControl(song: Song, plain: Boolean, stoppable: Boolean, onStop: 
         Modifier.size(40.dp).clip8().clickable(stoppable, onClickLabel = say.stopDownload, onClick = onStop),
         Alignment.Center,
     ) {
-        DownloadRing(if (stoppable) mark?.takeIf { it.phase == DownloadPhase.DOWNLOADING }?.progress else TURNING, 24.dp, 1.5.dp, scheme.onSurfaceVariant.copy(alpha = 0.3f), scheme.primary, plain)
-        Box(Modifier.size(7.dp).graphicsLayer { alpha = square }.background(scheme.primary, RoundedCornerShape(1.5.dp)))
+        DownloadRing(if (stoppable) mark?.takeIf { it.phase == DownloadPhase.DOWNLOADING }?.progress else TURNING, 24.dp, 1.5.dp, scheme.onSurfaceVariant.copy(alpha = 0.3f), scheme.onSurface, plain)
+        Box(Modifier.size(7.dp).graphicsLayer { alpha = square }.background(scheme.onSurface, RoundedCornerShape(1.5.dp)))
     }
 }
 

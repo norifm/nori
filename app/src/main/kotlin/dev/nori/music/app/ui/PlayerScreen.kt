@@ -2699,7 +2699,7 @@ private fun Queue(vm: PlayerViewModel) {
     val ink = androidx.compose.ui.graphics.ColorProducer { look.color(CoverLook.ON) }
     // A swipe's strip in the page's own colours: the player is dressed in the cover's, not the theme's.
     val swipeColours = remember(look) {
-        SwipeColours({ look.color(CoverLook.VEIL_13) }, { look.color(CoverLook.ACCENT) }, { look.color(CoverLook.ON_VARIANT) }, { look.color(CoverLook.ON_PRIMARY) })
+        SwipeColours({ look.color(CoverLook.VEIL_13) }, { look.color(CoverLook.ON) }, { look.color(CoverLook.ON_VARIANT) }, { look.color(CoverLook.BACKGROUND) })
     }
     var listWidth by remember { mutableFloatStateOf(0f) }
 
@@ -2931,7 +2931,7 @@ private fun Queue(vm: PlayerViewModel) {
                             // Added by hand: plays before the rest of the queue carries on. A jam guest's song says who.
                             val by = added[s.id]
                             if (by != null) AddedBy(by, ink, plate)
-                            else if (i in state.queued) LookIcon(Icons.AutoMirrored.Filled.QueueMusic, say.addedByYou, Modifier.padding(end = 4.dp).size(14.dp), accent)
+                            else if (i in state.queued) LookIcon(Icons.AutoMirrored.Filled.QueueMusic, say.addedByYou, Modifier.padding(end = 4.dp).size(14.dp), quiet)
                             LookText(s.artist, quiet, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                         }
                     }

@@ -330,7 +330,10 @@ fun SelectionBar(actions: ActionsViewModel) {
  */
 @Composable
 private fun BarAction(label: String, onClick: () -> Unit) =
-    TextButton(onClick, Modifier.widthIn(min = 40.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) {
+    TextButton(
+        onClick, Modifier.widthIn(min = 40.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+    ) {
         Text(label, maxLines = 1, softWrap = false)
     }
 

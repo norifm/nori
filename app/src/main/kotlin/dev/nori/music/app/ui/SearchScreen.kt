@@ -47,7 +47,7 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
         )
         // Its room is kept whether or not it shows, so the results do not move as the server answers.
         androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().height(2.dp)) {
-            if (ui.searching) LinearProgressIndicator(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.primary, trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+            if (ui.searching) LinearProgressIndicator(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
         }
         ui.error?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 

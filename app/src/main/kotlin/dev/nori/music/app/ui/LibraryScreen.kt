@@ -114,8 +114,8 @@ private fun ShuffleLink(onClick: () -> Unit) {
         Modifier.padding(end = Space.gutter - 4.dp, top = 2.dp).clip(PillShape).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.Shuffle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(say.shuffle, Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Icon(Icons.Rounded.Shuffle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(say.shuffle, Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -156,7 +156,7 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
         items(sections, key = { it.name }) { s ->
             NavRow(
                 say.librarySection(s), { nav.librarySection(s) }, chevron = true,
-                leading = { Icon(sectionIcon(s), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary) },
+                leading = { Icon(sectionIcon(s), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) },
             )
         }
         // Without an offline index the albums are the account's saved ones, in the source's order.
@@ -345,7 +345,7 @@ private fun Artists(vm: ArtistsViewModel = viewModel()) {
                     }
                 }
                 if (view.showLetters) Column(Modifier.padding(end = 2.dp).verticalScroll(rememberScrollState())) {
-                    letters.forEach { l -> Text(l.letter, Modifier.clickable { scope.launch { list.scrollToItem(l.row.toInt()) } }.padding(horizontal = 8.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+                    letters.forEach { l -> Text(l.letter, Modifier.clickable { scope.launch { list.scrollToItem(l.row.toInt()) } }.padding(horizontal = 8.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
         }
@@ -403,7 +403,7 @@ private fun Folders(vm: FoldersViewModel = viewModel()) {
             items(roots, key = { it.id }) { f ->
                 NavRow(
                     f.name, { nav.folder(f.id) }, chevron = true,
-                    leading = { Icon(Icons.Filled.Folder, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                    leading = { Icon(Icons.Filled.Folder, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
                 )
             }
         }
@@ -434,7 +434,7 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
             if (smart) item {
-                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary) })
+                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) })
             }
             item { ActionRow(say.newPlaylist, Icons.Filled.Add, { name = ""; creating = true }) }
             item { ActionRow(say.importPlaylistFile, Icons.Filled.FileDownload, { pickM3u.launch(arrayOf("*/*")) }) }
@@ -463,7 +463,7 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
                 NavRow(
                     say.favouriteSongs, { nav.mix(dev.nori.music.app.vm.FAVOURITES_MIX) }, chevron = true,
                     subtitle = remember(s.librarySongs) { say.songs(s.librarySongs.toInt()) },
-                    leading = { Icon(Kanji.Sealed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                    leading = { Icon(Kanji.Sealed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
                 )
             }
             if (s.albums.isNotEmpty()) item(key = "albums") {
@@ -515,7 +515,7 @@ private fun Radio(vm: RadioViewModel = viewModel()) {
             items(stations, key = { it.id }) { s ->
                 NavRow(
                     s.name, { vm.play(s) },
-                    leading = { Icon(Icons.Filled.Radio, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                    leading = { Icon(Icons.Filled.Radio, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
                     action = { IconButton({ vm.delete(s.id) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Delete, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
@@ -545,7 +545,7 @@ private fun Downloads(actions: ActionsViewModel) {
             NavRow(
                 say.downloadQueue, nav::downloads, chevron = true,
                 subtitle = remember(c) { say.downloadQueue((c?.waiting ?: 0u).toInt(), (c?.failed ?: 0u).toInt()) },
-                leading = { Icon(Icons.Filled.Downloading, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                leading = { Icon(Icons.Filled.Downloading, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
             )
         }
         // Until the songs are read there is nothing to say, not "nothing downloaded" for a frame.

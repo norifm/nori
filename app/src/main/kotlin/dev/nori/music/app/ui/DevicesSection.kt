@@ -233,7 +233,7 @@ private fun Option(title: String, subtitle: String?, selected: Boolean, modifier
                 if (!subtitle.isNullOrEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             AnimatedVisibility(selected, enter = fadeIn(tween(motion())), exit = fadeOut(tween(motion()))) {
-                Icon(Icons.Filled.Check, say.chosen, Modifier.size(20.dp), tint = scheme.primary)
+                Icon(Icons.Filled.Check, say.chosen, Modifier.size(20.dp), tint = scheme.onSurface)
             }
         }
         Hairline()

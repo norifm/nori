@@ -577,7 +577,7 @@ fun PillButton(
 
 /**
  * A short message on a pill lifted off the page (the chrome's slab, edge and shadow: it floats over
- * whatever is under it), its action and its optional × in the accent: the app's messages at the top and
+ * whatever is under it), its action in ink and its optional × quiet: the app's messages at the top and
  * the queue's undo at its foot. Colors are read while drawing, so a look cross-fading under it redraws it
  * without recomposing. [behind] sits under the words.
  */
@@ -587,7 +587,7 @@ fun MessagePill(
     maxLines: Int = 1, action: String? = null, actionEnabled: Boolean = true, onAction: () -> Unit = {},
     onDismiss: (() -> Unit)? = null, behind: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
 ) {
-    val accent = ColorProducer { look.color(CoverLook.ACCENT) }
+    val ink = ColorProducer { look.color(CoverLook.CHROME_CONTENT) }
     Box(
         modifier.shadow(12.dp, PillShape).drawBehind {
             val round = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
@@ -598,16 +598,16 @@ fun MessagePill(
         behind()
         Row(Modifier.padding(start = 18.dp, end = 4.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
             LookText(
-                text, { look.color(CoverLook.CHROME_CONTENT) }, Modifier.weight(1f, fill = false).padding(vertical = 10.dp),
+                text, ink, Modifier.weight(1f, fill = false).padding(vertical = 10.dp),
                 style = MaterialTheme.typography.bodyMedium, maxLines = maxLines, overflow = TextOverflow.Ellipsis,
             )
             if (action != null) {
                 androidx.compose.material3.TextButton(onAction, enabled = actionEnabled) {
-                    LookText(action, accent, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
+                    LookText(action, ink, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
                 }
             }
             if (onDismiss != null) {
-                IconButton(onDismiss) { LookIcon(Icons.Filled.Clear, words(R.string.close), Modifier.size(20.dp), accent) }
+                IconButton(onDismiss) { LookIcon(Icons.Filled.Clear, words(R.string.close), Modifier.size(20.dp)) { look.color(CoverLook.CHROME_CONTENT_75) } }
             } else if (action == null) {
                 Spacer(Modifier.width(14.dp))
             }
@@ -756,7 +756,7 @@ fun NoriSlider(
 ) {
     val scheme = MaterialTheme.colorScheme
     val track = scheme.onSurface.copy(alpha = if (enabled) 0.16f else 0.07f)
-    val fill = if (enabled) scheme.primary else scheme.onSurface.copy(alpha = 0.25f)
+    val fill = if (enabled) scheme.onSurface else scheme.onSurface.copy(alpha = 0.25f)
     val knob = if (enabled) Color.White else Color(0xFFBDBDBD)
     val span = (range.endInclusive - range.start).takeIf { it > 0f } ?: 1f
     val fraction = ((value - range.start) / span).coerceIn(0f, 1f)
@@ -845,8 +845,6 @@ fun NavRow(
     divider: Boolean = true,
     /** How many lines the subtitle may take. */
     subtitleLines: Int = 1,
-    /** [trailing] in the accent, as a count or a tap's word. */
-    trailingAccent: Boolean = false,
     action: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -867,7 +865,7 @@ fun NavRow(
             }
             if (!trailing.isNullOrEmpty()) Text(
                 trailing, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium,
-                color = if (trailingAccent) scheme.primary else scheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
             )
             action?.invoke(this)
             if (chevron) Icon(
@@ -882,10 +880,14 @@ fun NavRow(
 /** The width a row's leading characters (a rank) stand in. */
 private val LEADING_TEXT = 28.dp
 
-/** A word in the accent that does something when tapped: a dialog's buttons, a row's "Edit". */
+/** A word in ink that does something when tapped: a dialog's buttons, a row's "Edit". [destructive] is in the error color. */
 @Composable
-fun TextAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    androidx.compose.material3.TextButton(onClick, modifier, enabled = enabled) { Text(label) }
+fun TextAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, destructive: Boolean = false) {
+    val scheme = MaterialTheme.colorScheme
+    androidx.compose.material3.TextButton(
+        onClick, modifier, enabled = enabled,
+        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = if (destructive) scheme.error else scheme.onSurface),
+    ) { Text(label) }
 }
 
 /** A row that does something rather than going somewhere: "New playlist", "Import M3U…". */
@@ -896,11 +898,8 @@ fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Bo
             Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = Space.gutter, vertical = 13.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-            Text(
-                title, Modifier.padding(start = 12.dp),
-                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary,
-            )
+            Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
+            Text(title, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
         }
         if (divider) Hairline(startIndent = Space.gutter + 32.dp)
     }

@@ -213,14 +213,14 @@ private fun LeaveButton(tint: ColorProducer, onClick: () -> Unit) {
 internal fun GuestLeaveHeader() {
     val vm: RemoteViewModel = viewModel()
     val look = LocalLook.current
-    val accent = ColorProducer { look.color(CoverLook.ACCENT) }
+    val ink = ColorProducer { look.color(CoverLook.ON) }
     Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 6.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-        LookIcon(Icons.Filled.Groups, null, Modifier.size(22.dp), accent)
+        LookIcon(Icons.Filled.Groups, null, Modifier.size(22.dp), ink)
         LookText(
-            words(R.string.jam_title), { look.color(CoverLook.ON) }, Modifier.weight(1f).padding(start = 8.dp),
+            words(R.string.jam_title), ink, Modifier.weight(1f).padding(start = 8.dp),
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1,
         )
-        LeaveButton(accent, vm::leave)
+        LeaveButton(ink, vm::leave)
     }
 }
 
@@ -234,7 +234,6 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
     val look = LocalLook.current
     val ink = ColorProducer { look.color(CoverLook.ON) }
     val quiet = ColorProducer { look.color(CoverLook.ON_VARIANT) }
-    val accent = ColorProducer { look.color(CoverLook.ACCENT) }
     var people by remember { mutableStateOf(false) }
     val host = remember(j.members) { j.members.firstOrNull { it.role == Role.HOST } }
     val listeners = remember(j.members) { j.members.filter { it.role != Role.HOST } }
@@ -242,7 +241,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
     Column(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
         // Where the host has Invite: playing the jam on this phone too, or only watching it.
         Row(Modifier.fillMaxWidth().padding(top = 2.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-            LookIcon(Icons.Filled.Groups, null, Modifier.size(22.dp), accent)
+            LookIcon(Icons.Filled.Groups, null, Modifier.size(22.dp), ink)
             LookText(
                 host?.let { words(R.string.jam_of, it.name) } ?: words(R.string.jam_title), ink, Modifier.weight(1f).padding(start = 8.dp),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -258,7 +257,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Listeners(remember(j.members) { j.members.map { it.name } }, listeners.size, quiet, Modifier.weight(1f)) { look.color(CoverLook.BACKGROUND) }
             PeopleButton(listeners.size, prominent = false) { people = true }
-            LeaveButton(accent, vm::leave)
+            LeaveButton(ink, vm::leave)
         }
         when (j.listening) {
             Listening.WATCHING -> if (j.along) R.string.jam_watching else null
@@ -401,7 +400,7 @@ internal fun JamControls(j: JamView, onInvite: () -> Unit = {}, onSettings: () -
                         IconButton({ vm.promote(m.id, !admin) }) {
                             Icon(
                                 Icons.Filled.Key, words(if (admin) R.string.jam_make_guest else R.string.jam_make_admin), Modifier.size(20.dp),
-                                tint = if (admin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (admin) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         IconButton({ vm.remove(m.id) }) {

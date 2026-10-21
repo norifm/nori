@@ -324,7 +324,7 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
 
         // The headline: two numbers worth reading from across the room, the rest as a grid of tiles.
         Column(Modifier.padding(horizontal = Space.gutter, vertical = 14.dp)) {
-            Text("${st.plays}", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
+            Text("${st.plays}", style = MaterialTheme.typography.displaySmall)
             Text(headline, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (fromServer) Text(
                 say.statsServerNote(server), Modifier.padding(top = 6.dp),
@@ -379,7 +379,7 @@ private val HOUR_TICKS = listOf("00", "06", "12", "18", "23")
 /** Twenty-four bars, drawn: the shape of a listening day says more than "most around 20:00" alone. */
 @Composable
 private fun HourChart(perHour: List<Float>) {
-    val bar = MaterialTheme.colorScheme.primary
+    val bar = MaterialTheme.colorScheme.onSurface
     val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
     Column(Modifier.padding(horizontal = Space.gutter)) {
         androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(96.dp)) {
@@ -404,4 +404,4 @@ private fun HourChart(perHour: List<Float>) {
 /** A place in a chart: rank, what it is, and how often. */
 @Composable
 private fun RankRow(rank: Int, title: String, subtitle: String, count: String) =
-    NavRow(title, subtitle = subtitle, trailing = count, leadingText = "$rank", trailingAccent = true)
+    NavRow(title, subtitle = subtitle, trailing = count, leadingText = "$rank")
