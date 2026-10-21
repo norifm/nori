@@ -1,7 +1,10 @@
 package dev.nori.music.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -175,14 +178,19 @@ fun SongMenu(
                 main.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < main.lastIndex || folded.isNotEmpty()) }
                 // A jam guest's menu has nothing under "More".
                 if (folded.isNotEmpty()) {
-                    val turn by animateFloatAsState(if (more) 180f else 0f, label = "more")
+                    val ms = if (reduceMotion()) 0 else 220
+                    val turn by animateFloatAsState(if (more) 180f else 0f, animationSpec = tween(ms), label = "more")
                     GroupRow(
                         say.more, { more = !more }, icon = Icons.Filled.MoreHoriz, divider = more,
                         // The chevron turns over rather than swapping for its opposite, so the row says which
                         // way it is about to move before it moves.
                         trailing = { Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(22.dp).graphicsLayer { rotationZ = turn }, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     )
-                    AnimatedVisibility(more, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                    AnimatedVisibility(
+                        more,
+                        enter = if (ms == 0) EnterTransition.None else fadeIn(tween(ms)) + expandVertically(tween(ms)),
+                        exit = if (ms == 0) ExitTransition.None else fadeOut(tween(ms)) + shrinkVertically(tween(ms)),
+                    ) {
                         Column { folded.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < folded.lastIndex) } }
                     }
                 }
