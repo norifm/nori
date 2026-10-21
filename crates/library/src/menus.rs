@@ -1,5 +1,5 @@
-//! What a song's menu, its artist line's links, the sleep timer, a row swipe and a page's download entry
-//! offer; the client draws and words each action.
+//! What a song's menu, its artist line's links, the sleep timer, a row swipe, a page's head and its
+//! download entry offer; the client draws and words each action.
 
 use nori_model::model::ArtistRef;
 use nori_model::{DownloadPhase, Song};
@@ -302,6 +302,61 @@ pub fn download_entries(songs: u32, missing: u32) -> Vec<DownloadAct> {
     }
 }
 
+/// A page whose head offers actions on its songs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PageKind {
+    Album,
+    Artist,
+    Playlist,
+    /// `refreshable`: a draw, which can be drawn again (not a ranking).
+    Mix { refreshable: bool },
+    Smart,
+}
+
+/// Something a page's head can do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PageAction {
+    /// The page's songs, as [`download_entry`] words it.
+    Download { act: DownloadAct },
+    /// Everything by the artist.
+    DownloadEverything,
+    AddToQueue,
+    /// The playlist as a playlist file.
+    Export,
+    /// A new draw of the mix.
+    Refresh,
+    /// The smart playlist's rules.
+    Edit,
+}
+
+/// The actions a page's head offers, in order, for `songs` songs of which `missing` are not downloaded:
+/// what acts on its songs (nothing for a page with none, though an artist's are not counted), then the
+/// page's own. Downloads are offered where the profile keeps them ([`crate::browse::ProfileRules::downloads`]).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -> Vec<PageAction> {
+    let mut out = Vec::with_capacity(3);
+    if kind == PageKind::Artist {
+        if downloads {
+            out.push(PageAction::DownloadEverything);
+        }
+        out.push(PageAction::AddToQueue);
+    } else if songs > 0 {
+        if downloads {
+            out.push(PageAction::Download { act: download_entry(songs, missing) });
+        }
+        out.push(PageAction::AddToQueue);
+    }
+    match kind {
+        PageKind::Playlist => out.push(PageAction::Export),
+        PageKind::Mix { refreshable: true } => out.push(PageAction::Refresh),
+        PageKind::Smart => out.push(PageAction::Edit),
+        PageKind::Album | PageKind::Artist | PageKind::Mix { refreshable: false } => {}
+    }
+    out
+}
+
 /// The positions of `songs` not yet `done`: what [`DownloadAct::Missing`] fetches. Twin of Android's
 /// `downloadEntry` (DetailScreens.kt).
 pub fn download_missing<'a>(songs: impl IntoIterator<Item = &'a str>, done: impl Fn(&str) -> bool) -> Vec<usize> {
@@ -317,6 +372,34 @@ mod tests {
         use DownloadAct::*;
         for (songs, missing, want) in [(12, 12, vec![All]), (12, 0, vec![Remove]), (12, 5, vec![Missing, Remove]), (0, 0, vec![All])] {
             assert_eq!(download_entries(songs, missing), want, "{songs} songs, {missing} missing");
+        }
+    }
+
+    #[test]
+    fn page_heads() {
+        use DownloadAct::{All, Missing, Remove};
+        use PageAction::*;
+        let mix = |refreshable| PageKind::Mix { refreshable };
+        // Kind, songs, missing, downloads (off for a jam guest and a profile that keeps none).
+        let cases = [
+            (PageKind::Album, 8, 8, true, vec![Download { act: All }, AddToQueue]),
+            (PageKind::Album, 8, 3, true, vec![Download { act: Missing }, AddToQueue]),
+            (PageKind::Album, 8, 0, true, vec![Download { act: Remove }, AddToQueue]),
+            (PageKind::Album, 8, 8, false, vec![AddToQueue]),
+            (PageKind::Album, 0, 0, true, vec![]),
+            (PageKind::Artist, 0, 0, true, vec![DownloadEverything, AddToQueue]),
+            (PageKind::Artist, 0, 0, false, vec![AddToQueue]),
+            (PageKind::Playlist, 12, 12, true, vec![Download { act: All }, AddToQueue, Export]),
+            (PageKind::Playlist, 12, 12, false, vec![AddToQueue, Export]),
+            (PageKind::Playlist, 0, 0, true, vec![Export]),
+            (mix(true), 50, 50, true, vec![Download { act: All }, AddToQueue, Refresh]),
+            (mix(false), 50, 0, true, vec![Download { act: Remove }, AddToQueue]),
+            (mix(true), 0, 0, false, vec![Refresh]),
+            (PageKind::Smart, 30, 30, false, vec![AddToQueue, Edit]),
+            (PageKind::Smart, 0, 0, true, vec![Edit]),
+        ];
+        for (kind, songs, missing, downloads, want) in cases {
+            assert_eq!(page_actions(kind, songs, missing, downloads), want, "{kind:?}, {songs} songs, {missing} missing, downloads {downloads}");
         }
     }
 
