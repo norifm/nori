@@ -617,7 +617,7 @@
     <string name="update_changelog_title">New in nori %1$s</string>
     <string name="update_changelog_done">OK</string>
     <!-- The devices sheet: where the music plays, and the account's other devices. -->
-    <string name="devices_title">Play on</string>
+    <string name="devices_title">Playing on</string>
     <string name="devices_this">@string/remote_this_phone</string>
     <!-- Told after a device's name when another has the same one: "Mac (terminal)". -->
     <string name="devices_kind_phone">phone</string>
@@ -625,16 +625,16 @@
     <string name="devices_kind_terminal">terminal</string>
     <string name="devices_kind_guest">guest</string>
     <string name="devices_output">Audio output</string>
-    <string name="devices_nearby">On this network</string>
-    <string name="devices_idle">Not playing</string>
+    <string name="devices_nearby">Nearby</string>
+    <string name="devices_idle">Idle</string>
     <string name="devices_playing_on">Playing on %1$s</string>
     <string name="devices_playing_here">Playing here</string>
     <string name="devices_stale">The queue changed there. Try again.</string>
     <string name="devices_not_allowed">That device said no.</string>
     <string name="devices_unknown">That is no longer there.</string>
     <!-- Jams: one phone plays, the others ask for songs. The jam lives in the player, its queue and the devices sheet. -->
-    <string name="jam_start">Start a Jam</string>
-    <string name="jam_yours">Your Jam</string>
+    <string name="jam_start">Start a jam</string>
+    <string name="jam_yours">Your jam</string>
     <string name="jam_title">Jam</string>
     <!-- The player's strip while this phone hosts a jam: "Jam · 2 listening". -->
     <string name="jam_strip">Jam · %1$s</string>

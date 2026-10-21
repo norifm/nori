@@ -439,7 +439,7 @@
     <string name="download_mobile_title">Download on mobile data?</string>
     <string name="download_mobile_text">You’re not on Wi-Fi. The songs will download over mobile data now.</string>
     <string name="download_mobile_yes">Download</string>
-    <string name="pair_devices">Pair devices</string>
+    <string name="pair_devices">Pair a device</string>
     <string name="pair_hint">Scan this code on your other device, or paste its pairing link below. Paired devices can move and control playback on this network.</string>
     <string name="pair_link">Pairing link</string>
     <string name="pair_confirm">Pair this device?</string>

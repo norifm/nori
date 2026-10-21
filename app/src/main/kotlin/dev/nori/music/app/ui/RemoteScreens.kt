@@ -27,6 +27,19 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.outlined.Speaker
+import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,11 +65,12 @@ import dev.nori.music.ffi.remote.Entry
 import dev.nori.music.ffi.remote.Refusal
 import dev.nori.music.ffi.remote.Role
 
-private fun kindIcon(kind: DeviceKind): ImageVector = when (kind) {
-    DeviceKind.PHONE -> Icons.Filled.PhoneAndroid
-    DeviceKind.DESKTOP -> Icons.Filled.Computer
-    DeviceKind.TERMINAL -> Icons.Filled.Terminal
-    DeviceKind.GUEST -> Icons.Filled.Person
+/** A device's glyph: filled for the one playing, outlined for the rest. */
+private fun kindIcon(kind: DeviceKind, filled: Boolean): ImageVector = when (kind) {
+    DeviceKind.PHONE -> if (filled) Icons.Filled.PhoneAndroid else Icons.Outlined.PhoneAndroid
+    DeviceKind.DESKTOP -> if (filled) Icons.Filled.Computer else Icons.Outlined.Computer
+    DeviceKind.TERMINAL -> if (filled) Icons.Filled.Terminal else Icons.Outlined.Terminal
+    DeviceKind.GUEST -> if (filled) Icons.Filled.Person else Icons.Outlined.Person
 }
 
 @Composable
@@ -105,48 +119,52 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
         BackHandler(page != RoomPage.MAIN) { page = RoomPage.MAIN }
         Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
             if (page == RoomPage.PAIR && pairing != null) {
-                ActionRow(words(R.string.back), Icons.AutoMirrored.Filled.ArrowBack, { page = RoomPage.MAIN }, divider = false)
+                SheetBack(words(R.string.pair_devices)) { page = RoomPage.MAIN }
                 PairingBody(pairing!!, vm) { page = RoomPage.MAIN }
             } else if (hosted != null && page != RoomPage.MAIN) {
-                ActionRow(words(R.string.back), Icons.AutoMirrored.Filled.ArrowBack, { page = RoomPage.MAIN }, divider = false)
+                SheetBack(words(if (page == RoomPage.INVITE) R.string.jam_invite_title else R.string.settings)) { page = RoomPage.MAIN }
                 if (page == RoomPage.INVITE) hosted.link?.let { InviteBody(it) } else JamSettings(hosted)
             } else {
-                SectionHeader(words(R.string.devices_title))
-                DeviceRow(words(R.string.devices_this), Icons.Filled.PhoneAndroid, null, mirror == null) { pick(null) }
-                if (hosted == null) {
-                    devices.forEachIndexed { k, d ->
+                Text(
+                    words(R.string.devices_title), Modifier.padding(horizontal = Space.gutter).padding(top = 4.dp, bottom = 12.dp),
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
+                )
+                GroupCard {
+                    DeviceRow(words(R.string.devices_this), kindIcon(DeviceKind.PHONE, mirror == null), null, mirror == null, divider = hosted == null && devices.isNotEmpty()) { pick(null) }
+                    if (hosted == null) devices.forEachIndexed { k, d ->
                         val now = d.state?.current()
                         DeviceRow(
-                            names.getOrNull(k) ?: d.name, kindIcon(d.kind),
+                            names.getOrNull(k) ?: d.name, kindIcon(d.kind, mirror?.id == d.id),
                             now?.let { "${it.title} · ${it.artist}" } ?: words(R.string.devices_idle),
-                            mirror?.id == d.id, if (d.nearby) words(R.string.devices_nearby) else null,
+                            mirror?.id == d.id, k < devices.lastIndex, if (d.nearby) words(R.string.devices_nearby) else null,
                         ) { pick(d.id) }
                     }
+                }
+                if (hosted == null) {
                     mirror?.refused?.let { Text(refusal(it), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
                     if (unsupported) Text(
                         words(R.string.devices_nearby_only), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                // The phone's own speaker, headphones or Bluetooth: Android's picker, a row like the devices'. The
-                // speaker's outline, as the player's button has it idle: a filled glyph is one lit in the accent.
-                SheetRow(words(R.string.devices_output), Icons.Outlined.Speaker, onOutput)
-                if (pairing != null) SheetRow(words(R.string.pair_devices), Icons.Filled.PhoneAndroid, { page = RoomPage.PAIR })
                 val start by vm.jamStarting.collectAsStateWithLifecycle()
-                when {
-                    !jams -> {}
-                    hosted != null -> {
-                        YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
-                    }
-                    unsupported && start == dev.nori.music.ffi.JamStart.UNAVAILABLE -> Text(
+                val offered = jams && hosted == null && start == dev.nori.music.ffi.JamStart.OFFERED
+                // The phone's own speaker, headphones or Bluetooth: Android's picker. The speaker's outline, as the
+                // player's button has it idle: a filled glyph is one lit in the accent.
+                GroupCard(Modifier.padding(top = 12.dp)) {
+                    SheetRow(words(R.string.devices_output), Icons.Outlined.Speaker, divider = pairing != null || offered || (jams && hosted != null), onClick = onOutput)
+                    if (pairing != null) SheetRow(words(R.string.pair_devices), Icons.Outlined.PhoneAndroid, divider = offered || (jams && hosted != null), onClick = { page = RoomPage.PAIR })
+                    if (offered) SheetRow(words(R.string.jam_start), Icons.Filled.Groups, divider = false, onClick = vm::jamStart)
+                    if (jams && hosted != null) YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
+                }
+                if (jams && hosted == null) {
+                    if (unsupported && start == dev.nori.music.ffi.JamStart.UNAVAILABLE) Text(
                         words(R.string.jam_unsupported), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    start == dev.nori.music.ffi.JamStart.STARTING -> Text(
+                    ) else if (start == dev.nori.music.ffi.JamStart.STARTING) Text(
                         words(R.string.jam_starting), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    start == dev.nori.music.ffi.JamStart.OFFERED -> SheetRow(words(R.string.jam_start), Icons.Filled.Groups, vm::jamStart)
                 }
                 val ms = if (reduceMotion()) 0 else 220
                 AnimatedVisibility(jams && hosted != null, enter = fadeIn(tween(ms)) + expandVertically(tween(ms)), exit = fadeOut(tween(ms)) + shrinkVertically(tween(ms))) {
@@ -212,27 +230,44 @@ fun DevicesHost(open: Boolean, onDismiss: () -> Unit) {
 /** The jam this phone hosts, as the devices list it: a tap opens its queue, End ends it. */
 @Composable
 private fun YourJam(listening: Int, onOpen: () -> Unit, onEnd: () -> Unit) {
-    NavRow(
-        words(R.string.jam_yours), onOpen, subtitle = words(R.string.jam_strip, jamListening(listening)), divider = false,
-        leading = { Icon(Icons.Filled.Groups, null, tint = MaterialTheme.colorScheme.primary) },
-        action = {
+    GroupRow(
+        words(R.string.jam_yours), onOpen, subtitle = words(R.string.jam_strip, jamListening(listening)), icon = Icons.Filled.Groups, divider = false,
+        trailing = {
             IconButton(onEnd) { Icon(Icons.AutoMirrored.Filled.Logout, words(R.string.jam_end_short), Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) }
         },
     )
 }
 
-/** A row of the sheet that is not a device, drawn as the devices are: the same icon, size and words. */
+/** A row of the sheet that is not a device. */
 @Composable
-private fun SheetRow(name: String, icon: ImageVector, onClick: () -> Unit) =
-    NavRow(name, onClick, leading = { Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface) })
+private fun SheetRow(name: String, icon: ImageVector, divider: Boolean, onClick: () -> Unit) = GroupRow(name, onClick, icon = icon, divider = divider)
 
-/** A place the music can play, ticked while it plays there. */
+/** A sub-page's head: a bare back glyph and its title. */
 @Composable
-private fun DeviceRow(name: String, icon: ImageVector, subtitle: String?, active: Boolean, trailing: String? = null, onClick: () -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    NavRow(
-        name, onClick, subtitle = subtitle, trailing = trailing,
-        leading = { Icon(icon, null, tint = if (active) accent else MaterialTheme.colorScheme.onSurface) },
-        action = if (active) ({ Icon(Icons.Filled.Check, words(R.string.devices_playing_here), Modifier.padding(start = 8.dp).size(20.dp), tint = accent) }) else null,
-    )
+private fun SheetBack(title: String, onBack: () -> Unit) {
+    Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
+        GlyphButton(Icons.AutoMirrored.Filled.ArrowBack, words(R.string.back), onClick = onBack)
+        Text(title, Modifier.padding(start = 4.dp), style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** A place the music can play: the one playing has its name in the accent and a filled glyph, the rest are ink. */
+@Composable
+private fun DeviceRow(name: String, icon: ImageVector, subtitle: String?, active: Boolean, divider: Boolean, trailing: String? = null, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Column(Modifier.semantics { selected = active }) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 52.dp).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, null, Modifier.size(24.dp), tint = if (active) scheme.primary else scheme.onSurface)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.bodyLarge, color = if (active) scheme.primary else scheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!subtitle.isNullOrEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (trailing != null) Text(trailing, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp), color = scheme.onSurfaceVariant)
+        }
+        if (divider) Hairline(startIndent = 52.dp)
+    }
 }
