@@ -9,7 +9,7 @@ use nori_settings::settings::SwipeAction;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum SongAction {
-    /// The heart; `on` is what pressing it sets.
+    /// The seal; `on` is what pressing it sets.
     Favourite { on: bool },
     PlayNext,
     AddToQueue,
@@ -67,7 +67,8 @@ pub enum SongDownload {
 }
 
 /// The menu of `song`, most used first. `starred` as shown; `player`: opened from the player, which adds
-/// the sleep timer, and the lyrics' source and timing (greyed while it shows no `lyrics`). `stars`: songs carry hearts ([`crate::browse::ProfileRules::stars`]). `account`: the
+/// the sleep timer, and the lyrics' source and timing (greyed while it shows no `lyrics`), and leaves the
+/// seal to the player's own. `stars`: songs carry seals ([`crate::browse::ProfileRules::stars`]). `account`: the
 /// profile has an account's playlists, mixes and shares (not a jam guest's, nor a
 /// profile without a Subsonic account). A provider's song has no mix or share actions: those need it
 /// on the server. `jam`: what a jam adds.
@@ -76,7 +77,7 @@ pub enum SongDownload {
 pub fn song_menu(song: Song, starred: bool, download: SongDownload, player: bool, lyrics: bool, stars: bool, account: bool, downloads: bool, radio: bool, jam: Option<JamOffer>) -> Vec<SongMenuItem> {
     let mut out = Vec::with_capacity(16);
     let mut add = |action: SongAction, more: bool, enabled: bool| out.push(SongMenuItem { action, more, enabled });
-    if stars {
+    if stars && !player {
         add(SongAction::Favourite { on: !starred }, false, true);
     }
     add(SongAction::PlayNext, false, true);
@@ -369,7 +370,7 @@ mod tests {
         assert_eq!(
             actions(&song_menu(s, true, SongDownload::None, false, false, true, false, false, false, None))[..3],
             [(Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false)],
-            "hearts without an account: still no playlists or downloads"
+            "seals without an account: still no playlists or downloads"
         );
         assert_eq!(
             actions(&m),
@@ -390,8 +391,9 @@ mod tests {
         let m = song_menu(s, true, SongDownload::Pending, true, false, true, true, true, true, None);
         assert_eq!(
             actions(&m),
+            // The player's menu: the seal is the player's own.
             [
-                (Favourite { on: false }, false), (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false), (StopDownload, false),
+                (PlayNext, false), (AddToQueue, false), (AddToPlaylist, false), (StopDownload, false),
                 (GoToArtist { id: "a".into(), name: "A".into(), named: true }, false), (GoToArtist { id: "b".into(), name: "B".into(), named: true }, false),
                 (AddToLibrary, false), (Lyrics, false), (SleepTimer, false),
                 (StartRadio, true), (Details, true),
