@@ -105,6 +105,9 @@ class Nori private constructor(private val context: Context) {
         if (lazySources.isInitialized()) sources.setStreamLimitMb(settings.value.cacheMb)
     }
 
+    // Before `downloads`: its first read of `core` (on its own thread) opens the profile, which sets this.
+    private val _reportedRules = kotlinx.coroutines.flow.MutableStateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?>(null)
+
     val library = Library(::core, ::client)
     val downloads = Downloads(context, ::core, ::client, { analyses }, lazySources, settings)
     val dac = BitPerfect(context)
@@ -116,8 +119,6 @@ class Nori private constructor(private val context: Context) {
     val deviceSound by lazy { dev.nori.music.playback.DeviceSound(settings, { core }, { client }, { http.metered }) }
     /** Remote control and jams; nothing runs unless they are switched on (or this is a jam guest). */
     val remotes = dev.nori.music.remote.Remotes(context, this)
-
-    private val _reportedRules = kotlinx.coroutines.flow.MutableStateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?>(null)
 
     /** The rules the open profile's core last reported, by profile key: they change with the account. */
     val reportedRules: kotlinx.coroutines.flow.StateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?> = _reportedRules
