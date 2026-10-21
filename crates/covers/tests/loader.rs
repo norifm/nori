@@ -228,23 +228,42 @@ fn dropped_tickets() {
 fn not_kept() {
     let d = dir("no-picture");
     let server = Server::new(200);
-    let photo = std::mem::replace(&mut *server.body.lock(), br#"{"subsonic-response":{"status":"failed"}}"#.to_vec());
+    *server.body.lock() = br#"{"subsonic-response":{"status":"failed"}}"#.to_vec();
     let loader = Loader::new(config(Some(d.to_path_buf()), 1), CoverNet::over(server.clone()));
     assert!(matches!(loader.load(PHOTO, 8, 8), Err(Error::Decode(DecodeError::Unknown))));
-    *server.body.lock() = photo;
-    assert_eq!(loader.load(PHOTO, 8, 8).unwrap().width, 8);
-    assert_eq!(server.calls(), 2);
+    assert_eq!(loader.disk().unwrap().bytes(), 0);
 
-    // Error status is not cached.
     let d = dir("error");
     let server = Server::new(404);
     let loader = Loader::new(config(Some(d.to_path_buf()), 1), CoverNet::over(server.clone()));
     assert_eq!(loader.load(PHOTO, 8, 8), Err(Error::Status(404)));
     assert_eq!(loader.disk().unwrap().bytes(), 0);
-    // Failures are not cached either.
-    assert_eq!(loader.load(PHOTO, 8, 8), Err(Error::Status(404)));
-    assert_eq!(server.calls(), 2);
     drop(loader);
+}
+
+#[test]
+fn failures_remembered_unless_unreachable() {
+    for (status, error) in [(404, Error::Status(404)), (200, Error::Decode(DecodeError::Unknown))] {
+        let server = Server::new(status);
+        *server.body.lock() = b"not a picture".to_vec();
+        let loader = Loader::new(config(None, 1), CoverNet::over(server.clone()));
+        for _ in 0..10 {
+            assert_eq!(loader.load(PHOTO, 8, 8), Err(error.clone()));
+        }
+        // Any size of the same cover.
+        assert_eq!(loader.load(PHOTO, 16, 16), Err(error));
+        assert_eq!(server.calls(), 1);
+        loader.trim();
+        let _ = loader.load(PHOTO, 8, 8);
+        assert_eq!(server.calls(), 2);
+    }
+
+    let server = Server::new(0);
+    let loader = Loader::new(config(None, 1), CoverNet::over(server.clone()));
+    for _ in 0..3 {
+        assert!(matches!(loader.load(PHOTO, 8, 8), Err(Error::Transport { .. })));
+    }
+    assert_eq!(server.calls(), 3);
 }
 
 #[test]

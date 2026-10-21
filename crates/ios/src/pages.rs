@@ -857,9 +857,10 @@ fn act_code(a: DownloadAct) -> i32 {
 
 /// Each song of `songs` with whether it is downloaded or on its way, and whether it is downloaded.
 fn download_states(s: &nori_host::session::Session, songs: &[Song]) -> Vec<(bool, bool)> {
-    songs
-        .iter()
-        .map(|song| match s.download_state(&song.id) {
+    let ids: Vec<&str> = songs.iter().map(|song| song.id.as_str()).collect();
+    s.download_states(&ids)
+        .into_iter()
+        .map(|state| match state {
             SongDownload::Done => (true, true),
             SongDownload::Pending => (true, false),
             SongDownload::None => (false, false),
@@ -1033,7 +1034,7 @@ pub unsafe extern "C" fn nori_ios_star(kind: i32, id: *const c_char, on: i32) {
 pub unsafe extern "C" fn nori_ios_starred(kind: i32, id: *const c_char, listed: i32) -> i32 {
     let (Some(kind), id, listed) = (starrable(kind), c_text(id), listed != 0) else { return listed };
     let shown = with_session(|s| match kind {
-        Starrable::Song => s.starred(&Song { id: id.clone(), starred: listed, ..Song::default() }, s.elsewhere().as_ref()),
+        Starrable::Song => s.song_starred(&id, listed),
         _ => s.core.starred(kind, &id, listed),
     });
     i32::from(shown.unwrap_or(listed))
@@ -1376,14 +1377,7 @@ pub extern "C" fn nori_ios_equalizer_band(index: u32, gain_db: f32) -> f32 {
 /// the core's rule.
 #[no_mangle]
 pub extern "C" fn nori_ios_tuning(in_sight: i32, touched: i32) {
-    with_session(|s| {
-        let on = s.core.session.settings.prefs(|p| p.eq_enabled);
-        s.engine.set_shallow(nori_core::rules::equalizer_tuning(
-            in_sight != 0,
-            touched != 0,
-            on,
-        ));
-    });
+    with_session(|s| s.engine.set_shallow(nori_core::rules::sound_tuning(in_sight != 0, touched != 0)));
 }
 
 /// Keeps `query` in the recent searches: the user picked a result or pressed search.

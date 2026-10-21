@@ -72,6 +72,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.nori.music.app.vm.SettingsViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.R
@@ -387,6 +388,7 @@ fun SettingsGroupScreen(vm: SettingsViewModel, id: String, highlight: String = "
     // phone, the server's music folders.
     LaunchedEffect(id, p.autoMix) { if (id == "playing" && p.autoMix) vm.refreshAnalysed() }
     LaunchedEffect(id) { if (id == "data") vm.refreshStorage() }
+    if (id == "sound") LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
     LaunchedEffect(id, p.activeServerId) { if (id == "servers") vm.loadMusicFolders() }
     val res = LocalContext.current.resources
     val config = LocalConfiguration.current

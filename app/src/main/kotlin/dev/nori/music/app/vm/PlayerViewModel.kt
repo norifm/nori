@@ -110,6 +110,12 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
         }
     }
 
+    /** The lyrics view came in sight ([open]) or left it: the core warms the songs ahead's lyrics only while one is. */
+    fun lyricsView(open: Boolean) {
+        nori.client.lyricsView(open)
+        if (open) viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { nori.client.lyricsPrefetch() } }
+    }
+
     private fun lyricsFound() = state.map { it.current }
         .followSong(
             id = { it.id },

@@ -692,6 +692,16 @@ impl Handle {
         self.remotes.get()
     }
 
+    /// The app came into sight or left it: a mirrored device's clock and the search for a playing
+    /// device follow only while it is seen.
+    pub fn in_sight(&self, seen: bool) {
+        let Some(remote) = self.remote() else { return };
+        remote.clone().sight(if seen { nori_core::remote::Sight::Screen } else { nori_core::remote::Sight::Nothing });
+        if seen {
+            remote.discover_active(true);
+        }
+    }
+
     /// Makes or drops the remote as the settings say, and serves while remote control is on.
     fn follow_remote(&self) {
         let prefs = self.core.session.settings.current().unwrap_or_default();
@@ -810,12 +820,16 @@ impl Handle {
 
     /// Where song `id`'s download stands.
     pub fn download_state(&self, id: &str) -> nori_core::menus::SongDownload {
+        self.download_states(&[id])[0]
+    }
+
+    /// Where each song's download stands, the queue read once for them all.
+    pub fn download_states(&self, ids: &[&str]) -> Vec<nori_core::menus::SongDownload> {
         use nori_core::menus::SongDownload;
-        if self.core.download_song(id).is_some() {
-            return SongDownload::Done;
-        }
-        let pending = self.core.download_sections().is_ok_and(|d| d.active.iter().chain(d.queued.iter()).any(|song| song.id == id));
-        if pending { SongDownload::Pending } else { SongDownload::None }
+        let waiting = self.core.download_waiting().unwrap_or_default();
+        ids.iter()
+            .map(|id| if self.core.download_song(id).is_some() { SongDownload::Done } else if waiting.contains(*id) { SongDownload::Pending } else { SongDownload::None })
+            .collect()
     }
 
     /// Deletes a download from disk.
@@ -830,10 +844,6 @@ impl Handle {
     pub fn setting(&self, name: &str, value: &str) -> Option<SettingChange> {
         let change = self.core.session.settings.edit_by_name(name, value)?;
         self.apply(change.effect, &change.prefs);
-        if name == "lyricsPrefetch" {
-            let client = self.client.clone();
-            self.run(async move { client.lyrics_prefetch().await });
-        }
         if matches!(name, "remoteControl" | "jam") {
             self.follow_remote();
         }
@@ -939,6 +949,15 @@ impl Handle {
     pub fn applied(&self, effect: u32) {
         if let Some(p) = self.core.session.settings.current() {
             self.apply(effect, &p);
+        }
+    }
+
+    /// A lyrics view opened or closed: the core warms the songs ahead's lyrics only while one is open.
+    pub fn lyrics_view(&self, open: bool) {
+        self.client.lyrics_view(open);
+        if open {
+            let client = self.client.clone();
+            self.run(async move { client.lyrics_prefetch().await });
         }
     }
 
@@ -1051,6 +1070,12 @@ impl Handle {
     /// when the song is in its queue, else this session's mark over the song's record.
     pub fn starred(&self, song: &Song, there: Option<&crate::remote::Elsewhere>) -> bool {
         there.and_then(|e| e.starred(&song.id)).unwrap_or_else(|| self.core.starred(Starrable::Song, &song.id, song.starred))
+    }
+
+    /// Whether song `id` shows starred, its record saying `listed`, as [`Handle::starred`] does with the
+    /// device playing elsewhere, without copying that device's queue.
+    pub fn song_starred(&self, id: &str, listed: bool) -> bool {
+        self.remotes.get().and_then(|r| r.mirrored_starred(id)).unwrap_or_else(|| self.core.starred(Starrable::Song, id, listed))
     }
 
     /// Stars or unstars a song once: through `there` while the song is in its queue (that device tells

@@ -54,8 +54,10 @@ const PAGE_MAX: u32 = 200;
 /// (as the player's own rule does, before the device's next state says what it did).
 const PREVIOUS_RESTARTS_MS: i64 = 3_000;
 
-/// After a failed poll, the relay is asked again this much later (or when something changes here).
+/// After a failed poll, the relay is asked again this much later, twice as late after each further
+/// failure up to [`RETRY_MAX_MS`] (or at once when the network is back).
 const RETRY_MS: u64 = 30_000;
+const RETRY_MAX_MS: u64 = 300_000;
 
 /// The longest [`Remote::stop`] waits for the sends queued before it (leaving the relay among them).
 #[cfg(not(target_arch = "wasm32"))]
@@ -766,6 +768,16 @@ impl Mirrored {
             }
         }
         all
+    }
+
+    /// Song `id`'s star as [`Mirrored::rows`] has it, without copying them; None when it is not there.
+    fn starred(&self, id: &str) -> Option<bool> {
+        let st = self.shown.as_ref()?;
+        if self.pages.is_empty() || self.pages.iter().any(Option::is_none) {
+            return st.entries.iter().find(|e| e.id == id).map(|e| e.starred);
+        }
+        let newer = |turn: usize, page: &Entry| st.entries.iter().find(|e| e.turn as usize == turn && e.index == page.index);
+        self.pages.iter().flatten().enumerate().map(|(turn, e)| newer(turn, e).unwrap_or(e)).find(|e| e.id == id).map(|e| e.starred)
     }
 
     /// Command `id`, `op`, as expected: until the player reports it, it is refused, or an unanswered
@@ -2211,6 +2223,15 @@ async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
 }
 
 impl Remote {
+    /// Song `id`'s star in the queue of the device [`Remote::active`] shows, without copying that queue;
+    /// None while nothing is mirrored or the song is not in it.
+    pub fn mirrored_starred(&self, id: &str) -> Option<bool> {
+        let i = self.inner.lock();
+        let m = i.mirror.as_ref()?;
+        i.who(&m.id)?;
+        m.starred(id)
+    }
+
     /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
     pub fn hand_over(self: Arc<Self>, to: String) {
         let me = self.id.clone();
@@ -2609,8 +2630,9 @@ impl Remote {
                 start_peers.push((p.service.clone(), generation));
             }
         }
-        self.retry.notify();
         if let Some(generation) = start_relay {
+            // An older poller resting after a failure ends now.
+            self.retry.notify();
             self.spawn(self.clone().poll_relay(generation));
         }
         for (service, generation) in start_peers {
@@ -2631,6 +2653,7 @@ impl Remote {
     async fn relay_polls(self: Arc<Self>, generation: u64) -> bool {
         let mut first_poll = true;
         let mut said_serving = false;
+        let mut retry_ms = RETRY_MS;
         loop {
             let (url, probes) = {
                 let mut i = self.inner.lock();
@@ -2678,6 +2701,7 @@ impl Remote {
             match (found, got) {
                 (Some(RelaySupport::Supported), Ok(body)) => {
                     self.inner.lock().relay = RelaySupport::Supported;
+                    retry_ms = RETRY_MS;
                     self.took(answer(&body).unwrap_or_default(), received);
                 }
                 // Asked again while this answer was on its way: the server may have gained the relay since.
@@ -2693,7 +2717,10 @@ impl Remote {
                     }
                     let retry = self.retry.notified();
                     if self.inner.lock().generation == generation {
-                        select(self.tasks.sleep(Duration::from_millis(RETRY_MS)), retry).await;
+                        retry_ms = match select(self.tasks.sleep(Duration::from_millis(retry_ms)), retry).await {
+                            Either::Left(_) => (retry_ms * 2).min(RETRY_MAX_MS),
+                            Either::Right(_) => RETRY_MS,
+                        };
                     }
                 }
             }
@@ -2942,37 +2969,29 @@ impl Remote {
                 let gap = if sent < clock::BURST { Duration::from_millis(BURST_GAP_MS) } else { Duration::from_micros(clock::EVERY_US as u64) };
                 self.wait_timing(gap, |i| i.timing != generation || i.timed() != last).await;
             }
-            loop {
+            let (target, link) = loop {
                 let timing = self.timing.notified();
                 {
                     let i = self.inner.lock();
-                    if i.timing != generation || i.wants_time() {
-                        break;
+                    if i.timing != generation {
+                        return;
+                    }
+                    if i.wants_time() {
+                        // A jam's host is known once the relay has answered: a guest listening along waits.
+                        match i.timed() {
+                            None if i.listen.is_none() => return,
+                            None => {}
+                            Some(target) => {
+                                let door = match &target {
+                                    Timed::Device { id, room: None } => i.peers.iter().find(|p| p.member.id == *id).map(|p| Link::Lan(p.base())),
+                                    _ => None,
+                                };
+                                break (target, door.or((i.relay != RelaySupport::Unsupported).then_some(Link::Relay)));
+                            }
+                        }
                     }
                 }
                 timing.await;
-            }
-            let next = {
-                let i = self.inner.lock();
-                if i.timing != generation {
-                    return;
-                }
-                // A jam's host is known once the relay has answered.
-                match i.timed() {
-                    None if i.listen.is_none() => return,
-                    None => None,
-                    Some(target) => {
-                        let door = match &target {
-                            Timed::Device { id, room: None } => i.peers.iter().find(|p| p.member.id == *id).map(|p| Link::Lan(p.base())),
-                            _ => None,
-                        };
-                        Some((target, door.or((i.relay != RelaySupport::Unsupported).then_some(Link::Relay))))
-                    }
-                }
-            };
-            let Some((target, link)) = next else {
-                self.wait_timing(Duration::from_millis(BURST_GAP_MS), |i| i.timing != generation).await;
-                continue;
             };
             // Another clock: its burst again.
             if last.as_ref() != Some(&target) {
@@ -3706,6 +3725,26 @@ mod tests {
         let fast = DeviceState { rate: Some(1.25), ..last.clone() };
         assert!(same_but_time(&fast, &DeviceState { position_ms: 16_250, ..DeviceState { at_us: Some(6_000_000), ..fast.clone() } }));
         assert!(!same_but_time(&fast, &DeviceState { rate: Some(1.0), position_ms: 16_250, at_us: Some(6_000_000), ..fast.clone() }), "the speed changed");
+    }
+
+    #[test]
+    fn a_songs_star_is_read_as_the_mirrored_rows_have_it() {
+        let entry = |index: u32, turn: u32, id: &str, starred: bool| Entry { index, turn, id: id.into(), starred, duration: 300, ..Default::default() };
+        let window = vec![entry(1, 1, "b", true), entry(2, 2, "c", false)];
+        let st = DeviceState { seq: 1, rev: 7, index: Some(1), len: 4, entries: window, ..Default::default() };
+        let mut m = Mirrored::new("desk".into(), clock::now_us());
+        m.heard(&st, 0, "me");
+        let from_rows = |m: &Mirrored, id: &str| m.view("Desk".into(), DeviceKind::Desktop, None).unwrap().rows.iter().find(|r| r.song.id == id).map(|r| r.song.starred);
+        let ids = ["a", "b", "c", "d", "e"];
+        for id in ids {
+            assert_eq!(m.starred(id), from_rows(&m, id), "{id}, the window only");
+        }
+        m.page(7, 0, vec![entry(0, 0, "a", true), entry(1, 1, "b", false), entry(2, 2, "c", true), entry(3, 3, "d", true)]);
+        m.foresee(1, &Op::Star { id: "c".into(), on: true }, clock::now_us());
+        for id in ids {
+            assert_eq!(m.starred(id), from_rows(&m, id), "{id}, every page in, the window over them");
+        }
+        assert_eq!((m.starred("a"), m.starred("b"), m.starred("c")), (Some(true), Some(true), Some(true)));
     }
 
     #[test]

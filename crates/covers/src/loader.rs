@@ -22,7 +22,7 @@ use std::pin::pin;
 use std::sync::{mpsc, Arc, OnceLock};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use nori_core::covers::is_provider_cover;
 use nori_core::covers::CoverNet;
@@ -160,6 +160,9 @@ impl Job {
 /// Default [`Config::idle`]: well above the gaps between covers while scrolling.
 const IDLE: Duration = Duration::from_secs(20);
 
+/// How long a cover the server answered without a picture is answered from memory.
+const FAILURE_REST: Duration = Duration::from_secs(600);
+
 /// Room for the provider covers of a few screens of lists.
 const PROVIDER_FILES_BYTES: u64 = 4 << 20;
 
@@ -212,6 +215,8 @@ struct Inner<P: Paint> {
     /// Provider covers' files, which never reach the disk: the page a list's tile opens measures the
     /// picture the tile just drew without asking the provider again.
     provider_files: Mutex<Lru<Key, Arc<[u8]>>>,
+    /// Covers the server answered without a picture, and when; unreachable servers are not kept.
+    failures: Mutex<HashMap<Key, (Instant, Error)>>,
     jobs: Mutex<Jobs<P::Picture>>,
     work: Condvar,
     workers: usize,
@@ -285,6 +290,7 @@ impl<P: Paint> Loader<P> {
             disk: OnceLock::new(),
             memory: MemoryCache::new(config.memory_bytes),
             provider_files: Mutex::new(Lru::default()),
+            failures: Mutex::new(HashMap::new()),
             jobs: Mutex::new(Jobs::default()),
             work: Condvar::new(),
             workers: config.workers.max(1),
@@ -303,6 +309,10 @@ impl<P: Paint> Loader<P> {
         let inner = &self.inner;
         if let Some(picture) = inner.memory.get(&key) {
             done(Ok(picture));
+            return Ticket { inner: None, key, id: 0 };
+        }
+        if let Some(e) = inner.failed(key.key) {
+            done(Err(e));
             return Ticket { inner: None, key, id: 0 };
         }
         let mut jobs = inner.jobs.lock();
@@ -368,6 +378,7 @@ impl<P: Paint> Loader<P> {
     pub fn trim(&self) {
         self.inner.memory.clear();
         *self.inner.provider_files.lock() = Lru::default();
+        self.inner.failures.lock().clear();
         self.rest();
     }
 
@@ -474,6 +485,17 @@ impl<P: Paint> Inner<P> {
         self.disk.get_or_init(|| self.dir.as_ref().and_then(|d| DiskCache::open(d, self.disk_bytes).ok())).as_ref()
     }
 
+    /// The remembered failure for `key`, while it rests.
+    fn failed(&self, key: Key) -> Option<Error> {
+        let mut failures = self.failures.lock();
+        let (at, e) = failures.get(&key)?;
+        if at.elapsed() < FAILURE_REST {
+            return Some(e.clone());
+        }
+        failures.remove(&key);
+        None
+    }
+
     /// Queues flight `job` (`first`: served next, else last), waking an idle worker or spawning one
     /// below the limit.
     fn enqueue(self: &Arc<Self>, jobs: &mut Jobs<P::Picture>, job: Job, first: bool) {
@@ -561,6 +583,9 @@ impl<P: Paint> Inner<P> {
                     Err(Error::Panicked(panic_message(&*p)))
                 }
             };
+            if let Err(e @ (Error::Status(_) | Error::Decode(decode::Error::Unknown | decode::Error::TooLarge))) = &result {
+                self.failures.lock().insert(job.key(), (Instant::now(), e.clone()));
+            }
             let waiters = self.jobs.lock().flights.remove(&job).map(|f| f.waiters).unwrap_or_default();
             for (_, done) in waiters {
                 let r = result.clone();

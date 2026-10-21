@@ -24,6 +24,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.cache.Cache
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dalvik.annotation.optimization.CriticalNative
@@ -58,7 +59,7 @@ internal object RustPlayerJni {
     @JvmStatic @CriticalNative external fun setRepeat(h: Long, mode: Int)
     @JvmStatic @CriticalNative external fun replan(h: Long)
     @JvmStatic @CriticalNative external fun gainChanged(h: Long)
-    @JvmStatic @CriticalNative external fun setForeground(h: Long, on: Boolean)
+    @JvmStatic @CriticalNative external fun setShallow(h: Long, on: Boolean)
     /** The sound and the controls' fades as the core's settings are now. */
     @JvmStatic @CriticalNative external fun applySettings(h: Long)
     /** Where the ear is in it now (the engine's `status().position_now()`), read when asked, never ticked. */
@@ -135,6 +136,8 @@ internal class RustBridge(private val player: EnginePlayer) {
     fun openLive(url: String): RustBody? = player.openLive(url)
     /** The files that hold every byte of download [key], in order, for the engine to read in place; null while any is missing. */
     fun downloaded(key: String): Array<String>? = player.downloaded(key)
+    /** The same over the stream cache: asked once a song has arrived whole, to play it from disk, not memory. */
+    fun streamed(key: String): Array<String>? = player.streamed(key)
     /**
      * For the songs fetched ahead (nori-engine's one fetcher, through [open]): whether all of [key] is in the
      * stream cache, and whether the player is writing it now. Asked once per song.
@@ -331,8 +334,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         if (p != parameters) { parameters = p; invalidateState() }
     }
     fun gainChanged() = RustPlayerJni.gainChanged(h)
-    /** The app is in sight: the engine trades its deep buffer for a shallow one until the next boundary after it leaves. */
-    fun setForeground(on: Boolean) = RustPlayerJni.setForeground(h, on)
+    /** A sound page is tuned: the engine trades its deep buffer for a shallow one until it stops. */
+    fun setShallow(on: Boolean) = RustPlayerJni.setShallow(h, on)
     fun replan() = RustPlayerJni.replan(h)
     val mixing: Boolean get() = RustPlayerJni.mixing(h)
     /** A song the network would not bring is held, playing still, and tried again by the engine. */
@@ -958,7 +961,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         // The DAC's mixer attributes are read by the framework when the track is built: set for this format first.
         nori.dac.onFormat(rate, encoding)
         val bitPerfect = nori.dac.state.value.bitPerfect
-        // Always opened deep, in power saving mode: the shallow buffer while the app is in sight is the same
+        // Always opened deep, in power saving mode: a sound page's shallow buffer is the same
         // track made smaller in place (setBufferSizeInFrames, crates/android/src/track.rs), not another one.
         val mode = if (bitPerfect) AudioTrack.PERFORMANCE_MODE_NONE else AudioTrack.PERFORMANCE_MODE_POWER_SAVING
         val track = AudioTrack.Builder()
@@ -1071,8 +1074,10 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         return RustBody(source, if (length == C.LENGTH_UNSET.toLong()) -1 else length) { tickets.end(ticket); loaded(-1) }
     }
 
-    internal fun downloaded(key: String): Array<String>? =
-        runCatching { AutoMixPrefetch.files(nori.sources.downloadCache, key, tail = 0) }.getOrNull()?.let { it.copyOfRange(1, it.size) }
+    internal fun downloaded(key: String): Array<String>? = wholeFiles(nori.sources.downloadCache, key)
+    internal fun streamed(key: String): Array<String>? = wholeFiles(nori.sources.streamCache, key)
+    private fun wholeFiles(cache: Cache, key: String): Array<String>? =
+        runCatching { AutoMixPrefetch.files(cache, key, tail = 0) }.getOrNull()?.let { it.copyOfRange(1, it.size) }
     internal fun kept(key: String): Boolean = runCatching { MediaSources.isWhole(nori.sources.streamCache, key) }.getOrDefault(true)
     internal fun busy(key: String): Boolean = nori.sources.beingWritten(key)
     internal fun disk(key: String): String = nori.sources.cacheWords(key)

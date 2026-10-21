@@ -34,6 +34,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
@@ -470,6 +472,26 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun addBand() { nori.settings.soundTool(SoundTool.AddBand) }
     fun removeBand(index: Int) { nori.settings.soundTool(SoundTool.RemoveBand(index.toUInt())) }
     fun resetBands() { nori.settings.soundTool(SoundTool.ResetBands) }
+
+    /** Sound pages started and not stopped: one coming in sight can start before the one it covers stops. */
+    private var soundPages = 0
+    private var touchWatch: Job? = null
+
+    /**
+     * A sound page (the equalizer, AutoEQ, the sound settings) came in sight ([on]) or left it. A setting
+     * changed while one is trades the deep buffer for one heard at once until the last leaves
+     * (`rules::sound_tuning`).
+     */
+    fun soundPageShown(on: Boolean) {
+        soundPages += if (on) 1 else -1
+        if (soundPages == 0) {
+            touchWatch?.cancel(); touchWatch = null
+            nori.player.tuning(false)
+        } else if (touchWatch == null) touchWatch = viewModelScope.launch {
+            prefs.drop(1).first()
+            nori.player.tuning(dev.nori.music.ffi.queue.soundTuning(true, true))
+        }
+    }
 
     /** AutoEQ "ParametricEQ.txt" / Equalizer APO text. Returns how many filters were found. */
     fun importPreset(text: String): Int = try { import(text) } catch (e: SoundException) { 0 }

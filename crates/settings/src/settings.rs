@@ -162,7 +162,7 @@ pub fn cover_black(colors: Vec<CoverPlace>, player: bool, dark: bool, amoled: bo
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum Motion {
     Full,
-    /// Short fades instead of slides and zooms.
+    /// Short fades instead of slides and zooms; the seek bar steps whole pixels.
     Reduced,
     /// Nothing moves: the player redraws only when something changes, its seek bar steps every 30 s
     /// rather than ticking, and the lyrics do not step.

@@ -127,21 +127,32 @@ if want eq; then section "the equalizer leaves without stopping the track"
   check "still playing after the EQ leaves" sounds 5
 fi
 
-if want tuning; then section "the buffer is shallow in sight and deep out of sight, in place"
-  # The app in sight trades the deep buffer for a sound change heard at once, and gives it back as it
-  # leaves (the service's inSight, from the activity's controller). The AudioTrack is resized in place by
-  # crates/android track.rs, which only a device has; what it plays is tested there on a simulated track.
+if want tuning; then section "the buffer is shallow only while a sound page is tuned, in place"
+  # A change made on a sound page (the equalizer, the sound settings) trades the deep buffer for one heard
+  # at once, given back as the page or the app goes (the service's tuning, from the activity's controller).
+  # The AudioTrack is resized in place by crates/android track.rs, which only a device has; what it plays
+  # is tested there on a simulated track.
   playing_now
-  "$app" set eq true >/dev/null
+  "$app" open home >/dev/null
   watch_from_now
+  "$app" set eq true >/dev/null
+  check "a change elsewhere is made in place" waitfor_log "the change is heard after [0-9]+ ms" 10
+  check "and keeps the deep buffer" never "shallow [0-9]+ ms"
+  "$app" open equalizer >/dev/null
+  "$app" set limiter true >/dev/null
+  check "tuned, the shallow buffer, in place" waitfor_log "shallow [0-9]+ ms.*topped up at" 15
   adb shell input keyevent KEYCODE_HOME
   check "out of sight, the deep buffer is back, in place" waitfor_log "deep again in place" 15
   check "still playing out of sight" sounds 5
-  "$app" launch >/dev/null
-  check "in sight, the shallow buffer, in place" waitfor_log "shallow [0-9]+ ms.*topped up at" 15
-  "$app" set eq false >/dev/null
-  check "a change in sight is made in place" waitfor_log "the change is heard after [0-9]+ ms" 10
   check "the track was never reopened or emptied for it" never "rust AudioTrack: .*(160|80) ms|emptied for the music"
+  "$app" launch >/dev/null
+  "$app" open settings/sound >/dev/null
+  watch_from_now
+  "$app" set limiter false >/dev/null
+  check "tuned on the sound settings, the shallow buffer" waitfor_log "shallow [0-9]+ ms.*topped up at" 15
+  "$app" open home >/dev/null
+  check "off them, the deep buffer is back" waitfor_log "deep again in place" 15
+  "$app" set eq false >/dev/null
   check "still playing" sounds 5
 fi
 

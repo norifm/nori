@@ -35,6 +35,8 @@ pub(crate) struct Prefetch {
     /// Those of them already warmed.
     warmed: Vec<u64>,
     cancel: Option<futures_util::future::AbortHandle>,
+    /// A lyrics view is open: only then are the songs ahead warmed.
+    viewed: bool,
 }
 
 // A cancelled caller releases its entries so a later visit can warm them again.
@@ -90,10 +92,27 @@ impl LyricsShown for Screen {
 
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
+    /// A lyrics view opened (`open`) or closed. While one is open [`Client::lyrics_prefetch`] warms the
+    /// songs ahead, so their words are there as each comes (call it as the view opens); with none, nothing
+    /// is fetched ahead and a running warm-up stops. Cheap: called from the main thread, in order.
+    pub fn lyrics_view(&self, open: bool) {
+        let mut work = self.prefetch.lock();
+        work.viewed = open;
+        if !open {
+            if let Some(cancel) = work.cancel.take() {
+                cancel.abort();
+            }
+            work.entries.clear();
+        }
+    }
+
     /// Warms the lyrics of the songs prepared ahead ([`nori_queue::Session::lyrics_ahead`]) one after
-    /// another, without publishing them to a screen.
+    /// another, without publishing them to a screen; only while a lyrics view is open ([`Client::lyrics_view`]).
     pub async fn lyrics_prefetch(&self) {
         use futures_util::future::{AbortHandle, Abortable};
+        if !self.prefetch.lock().viewed {
+            return;
+        }
         let next = self.core.session.lyrics_ahead(self.metered());
         let entries: Vec<u64> = next.iter().map(|(entry, _)| *entry).collect();
         let (old, todo, registration) = {
@@ -394,6 +413,7 @@ pub(crate) mod tests {
         // Mobile data: the next song only, by default.
         for next in ["ahead", "ext-ahead"] {
             let (c, fake) = setup();
+            c.lyrics_view(true);
             *fake.metered.lock() = true;
             let ahead = Song { id: next.into(), ..song() };
             c.core.session.register(vec![Song { id: "current".into(), ..song() }, ahead]);
@@ -414,6 +434,7 @@ pub(crate) mod tests {
         }
         // Wi-Fi: as many as the songs prepared ahead there, three by default.
         let (c, fake) = setup();
+        c.lyrics_view(true);
         let queue = ["current", "s1", "s2", "s3", "s4"];
         c.core.session.register(queue.iter().map(|id| Song { id: id.to_string(), ..song() }).collect());
         c.core.session.set(queue.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
@@ -426,6 +447,26 @@ pub(crate) mod tests {
         block(c.lyrics_prefetch());
         assert!(stored(&c, "s4"));
         assert_eq!(fake.asked().len(), 4);
+    }
+
+    /// The songs ahead are warmed only while a lyrics view is open: nothing is fetched for a screen nobody
+    /// looks at.
+    #[test]
+    fn prefetch_waits_for_a_lyrics_view() {
+        let (c, fake) = setup();
+        let queue = ["current", "s1", "s2", "s3"];
+        c.core.session.register(queue.iter().map(|id| Song { id: id.to_string(), ..song() }).collect());
+        c.core.session.set(queue.iter().map(|id| id.to_string()).collect(), Some(0), false, None);
+        block(c.lyrics_prefetch());
+        assert!(fake.asked().is_empty(), "no view open: nothing asked");
+        (0..3).for_each(|_| fake.answer(SYNCED));
+        c.lyrics_view(true);
+        block(c.lyrics_prefetch());
+        assert_eq!(fake.asked().len(), 3, "a view open: the songs ahead are warmed");
+        c.lyrics_view(false);
+        c.core.session.moved_to(1);
+        block(c.lyrics_prefetch());
+        assert_eq!(fake.asked().len(), 3, "closed again: the next song brings nothing");
     }
 
     #[test]
@@ -460,6 +501,7 @@ pub(crate) mod tests {
         let dir = nori_testdir::TempDir::new("lyrics-prefetch-cancel");
         c.settings().open(&dir.join("settings.db").to_string_lossy()).unwrap();
         c.settings().edit_by_name("lyricsOnline", "false");
+        c.lyrics_view(true);
         c.core.session.register(vec![Song { id: "first".into(), ..song() }, Song { id: "second".into(), ..song() }]);
         c.core.session.set(vec!["now".into(), "first".into()], Some(0), false, None);
         let mut first = Box::pin(c.lyrics_prefetch());

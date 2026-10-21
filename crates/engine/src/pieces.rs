@@ -24,16 +24,21 @@ pub struct Pieces<F = File> {
 }
 
 impl Pieces<File> {
-    /// Opens every file up front, so a piece the cache evicts meanwhile stays readable.
     pub fn open(files: &[PathBuf]) -> io::Result<Pieces<File>> {
-        let mut parts = Vec::with_capacity(files.len());
-        for f in files {
+        Ok(Pieces::new(open_all(files)?))
+    }
+}
+
+/// Every file with its length, opened up front so a piece the cache evicts meanwhile stays readable.
+pub(crate) fn open_all(files: &[PathBuf]) -> io::Result<Vec<(File, u64)>> {
+    files
+        .iter()
+        .map(|f| {
             let file = File::open(f)?;
             let len = file.metadata()?.len();
-            parts.push((file, len));
-        }
-        Ok(Pieces::new(parts))
-    }
+            Ok((file, len))
+        })
+        .collect()
 }
 
 impl<F: Read + Seek> Pieces<F> {

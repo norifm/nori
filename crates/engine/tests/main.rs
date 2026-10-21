@@ -38,5 +38,7 @@ mod album;
 mod transcode;
 #[path = "pushed.rs"]
 mod pushed;
+#[path = "on_disk.rs"]
+mod on_disk;
 #[path = "later.rs"]
 mod later;

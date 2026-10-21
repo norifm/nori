@@ -28,7 +28,8 @@ system's media controls, notification and lock screen.
   is enough. Text follows Android's font size; with a large display size the layout keeps a phone's proportions.
   Burn-in pixel shifting and idle dimming are off by default from 0.7.0. Upgrading resets the old
   automatic pixel shifting and one-minute dimming once; other dimming intervals are kept.
-- **Motion** (from 0.7.0): Full, Reduced (short fades instead of slides and zooms) or E-ink (nothing
+- **Motion** (from 0.7.0): Full, Reduced (short fades instead of slides and zooms, and a seek bar that
+  moves a pixel at a time, a quarter of the redraws) or E-ink (nothing
   animates, and the player redraws only when something changes; the seek bar and times step every
   30 seconds while music plays). nori's choice holds whatever Android's own
   animation setting says; the playing bars move in every mode but E-ink.

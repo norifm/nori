@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.nori.music.app.vm.SettingsViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.compose.runtime.collectAsState
 import dev.nori.music.ffi.settings.EqLevel
 import dev.nori.music.ffi.settings.EqMode
@@ -66,6 +67,7 @@ private val ranges get() = EQ.eqRanges
 @Composable
 fun EqualizerScreen(vm: SettingsViewModel) {
     val p by vm.prefs.collectAsStateWithLifecycle()
+    LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
     val nav = LocalNav.current
     var importing by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(-1) }

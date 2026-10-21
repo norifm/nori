@@ -346,9 +346,9 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         Log.i(TAG, "resuming: ${pending.size} pending, ${r.lost.size} asked for again, ${r.failed.size} failed")
         main.post {
             resumed = runCatching {
-                // The first intent brings the service - and with it the manager and its restored queue - up.
-                if (r.lost.isEmpty()) DownloadService.start(context, DownloadWorker::class.java)
-                for (id in r.lost) DownloadService.sendAddDownload(context, DownloadWorker::class.java, request(id), false)
+                // Starting the service brings the manager and its restored queue up; the lost go straight to it.
+                DownloadService.start(context, DownloadWorker::class.java)
+                for (id in r.lost) manager.addDownload(request(id))
             }.onFailure { Log.w(TAG, "could not start the download service yet", it) }.isSuccess
         }
     }
@@ -414,11 +414,11 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         val requests = q.fresh.map(::request)
         val retries = q.again.map(::request)
         main.post {
-            for (r in requests) add(r)
-            if (retries.isEmpty()) return@post
             // Listed once: media3 hands out a fresh copy of its list each time it is asked.
-            val working = manager.currentDownloads.mapTo(HashSet()) { it.request.id }
-            for (r in retries) if (r.id !in working) { unmark(listOf(r.id)); add(r) }
+            val working = if (retries.isEmpty()) emptySet() else manager.currentDownloads.mapTo(HashSet()) { it.request.id }
+            val again = retries.filter { it.id !in working }
+            unmark(again.map { it.id })
+            add(requests + again)
         }
     }
 
@@ -430,13 +430,17 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
             val q = runCatching { core.downloadQueue(songs) }.getOrElse { Log.w(TAG, "could not retry downloads", it); return@execute }
             publish()
             val requests = (q.fresh + q.again).map(::request)
-            main.post { requests.forEach(::add) }
+            main.post { add(requests) }
         }
     }
 
-    private fun add(r: DownloadRequest) {
-        runCatching { DownloadService.sendAddDownload(context, DownloadWorker::class.java, r, false) }
-            .onFailure { Log.w(TAG, "could not queue ${r.id}", it) }
+    /** Straight to the manager, as [cancelAll] does, rather than a service intent per song; the service is started once to run them. */
+    private fun add(requests: List<DownloadRequest>) {
+        if (requests.isEmpty()) return
+        runCatching {
+            DownloadService.start(context, DownloadWorker::class.java)
+            for (r in requests) manager.addDownload(r)
+        }.onFailure { Log.w(TAG, "could not queue ${requests.size} downloads", it) }
     }
 
     /** What the song is and how much it should weigh the core knows from its own downloads table. */
