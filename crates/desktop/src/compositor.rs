@@ -1285,6 +1285,17 @@ fn unified_toolbar(window: &WinitWindow) {
     let toolbar = NSToolbar::new(mtm);
     ns.setToolbar(Some(&toolbar));
     ns.setToolbarStyle(NSWindowToolbarStyle::Unified);
+    // The toolbar's height would drag the window from any press that moves a pixel, the top pill's
+    // included; the page's title strip drags it instead (`TitleStrip`, through `drag_window`).
+    extern "C-unwind" fn moves_no_window(_: *mut objc2::runtime::AnyObject, _: objc2::runtime::Sel) -> objc2::runtime::Bool {
+        objc2::runtime::Bool::NO
+    }
+    // SAFETY: winit's view class gains a method of NSView's own signature (BOOL, no arguments).
+    unsafe {
+        let class = objc2::ffi::object_getClass((view as *const NSView).cast()) as *mut objc2::runtime::AnyClass;
+        let imp: objc2::runtime::Imp = std::mem::transmute(moves_no_window as extern "C-unwind" fn(_, _) -> _);
+        objc2::ffi::class_addMethod(class, objc2::sel!(mouseDownCanMoveWindow), imp, c"c@:".as_ptr());
+    }
 }
 
 #[cfg(test)]
