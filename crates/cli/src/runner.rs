@@ -244,7 +244,7 @@ impl Runner {
                 *app = App::new(prefs);
                 (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server, app.settings.own.data, app.colors, app.paint, app.reduced_motion) = keep;
                 app.retheme();
-                app.rules = self.session.as_ref().map(|s| s.rules.clone()).unwrap_or_default();
+                app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 self.remote_read(app);
                 self.follow(app);
             }

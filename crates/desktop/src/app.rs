@@ -772,7 +772,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_page_star, h, |a| a.star_page());
     on!(ui.on_page_download, h, |a| {
         if let Some(fetch) = a.page_fetch.clone() {
-            a.on_session(|s| { if s.rules.downloads { s.download_later(fetch); } });
+            a.on_session(|s| { if s.rules().downloads { s.download_later(fetch); } });
         }
     });
     on!(ui.on_more, h, |a| a.more_songs());
@@ -857,6 +857,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_sign_in, h, |a, answer| a.sign_in(answer.to_string()));
     on!(ui.on_sign_in_window, h, |a| a.sign_in_window());
     on!(ui.on_sign_out, h, |a| a.sign_out());
+    on!(ui.on_sign_in_quiet, h, |a| a.sign_in_quiet());
     ui.on_open_sign_in_page(|| open_in_browser(words::YOUTUBE_MUSIC_PAGE));
     on!(jam.on_listen, h, |a, on| {
         if let Some(r) = a.session.as_ref().and_then(|s| s.remote()) {
@@ -1044,9 +1045,9 @@ impl App {
             Ok(s) => {
                 s.check();
                 ui.set_volume(s.volume());
-                ui.set_downloads(s.rules.downloads);
+                ui.set_downloads(s.rules().downloads);
                 // Albums and artists carry the account's seals, as on Android.
-                ui.set_page_can_star(s.rules.account && s.rules.stars);
+                ui.set_page_can_star(s.rules().account && s.rules().stars);
                 self.session = Some(s);
                 self.heard = None;
                 self.song = None;
@@ -1059,6 +1060,9 @@ impl App {
                 self.follow();
                 self.jam_shown();
                 self.go(HOME);
+                if self.session.as_ref().is_some_and(|s| s.client.reminds_to_sign_in()) {
+                    self.offer_sign_in();
+                }
                 if !self.account() {
                     // A jam guest's: the host's library, and the jam in the queue panel.
                     ui.set_inspector(1);
@@ -1674,11 +1678,11 @@ impl App {
         let Some(s) = self.session.as_ref() else { return ModelRc::default() };
         let ui = self.ui();
         let jam = ui.global::<crate::Jam>();
-        let offer = if s.rules.asks { Some(JamOffer::Guest) } else { (jam.get_on() && !jam.get_hosting()).then_some(JamOffer::Start) };
+        let offer = if s.rules().asks { Some(JamOffer::Guest) } else { (jam.get_on() && !jam.get_hosting()).then_some(JamOffer::Start) };
         let starred = self.heart(&one);
-        let download = if s.rules.downloads { s.download_state(&one.id) } else { SongDownload::None };
+        let download = if s.rules().downloads { s.download_state(&one.id) } else { SongDownload::None };
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
-        let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules.account, s.rules.downloads, s.rules.radio, offer);
+        let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, offer);
         let first_more = items.iter().position(|m| m.more);
         let lines = items.into_iter().enumerate().filter(|(_, m)| m.enabled).map(|(n, m)| {
             let (kind, id) = match &m.action {
@@ -1922,7 +1926,7 @@ impl App {
 
     /// Flips `s`'s heart, once: through the device playing while it has the song, else here.
     fn star(&mut self, s: &Song) {
-        if self.session.as_ref().is_some_and(|x| !x.rules.stars && x.rules.stars_after_sign_in) {
+        if self.session.as_ref().is_some_and(|x| !x.rules().stars && x.rules().stars_after_sign_in) {
             return self.offer_sign_in();
         }
         let on = !self.starred(s);
@@ -1952,13 +1956,13 @@ impl App {
     /// Whether the open profile has the account's things (hearts, playlists, settings): a jam guest's has
     /// not (the core's `ProfileRules`).
     fn account(&self) -> bool {
-        self.session.as_ref().is_some_and(|s| s.rules.account)
+        self.session.as_ref().is_some_and(|s| s.rules().account)
     }
 
     /// `s`'s heart as the lists show it; none where songs carry no hearts (`ProfileRules::stars`), or one
     /// that asks to sign in.
     fn heart(&self, s: &Song) -> Option<bool> {
-        self.session.as_ref().is_some_and(|x| x.rules.stars || x.rules.stars_after_sign_in).then(|| self.starred(s))
+        self.session.as_ref().is_some_and(|x| x.rules().stars || x.rules().stars_after_sign_in).then(|| self.starred(s))
     }
 
     /// Joins the jam `link` invites to, as a guest profile of its own.
@@ -1996,12 +2000,37 @@ impl App {
         self.go(LOGIN);
     }
 
+    /// The account changed under the open profile: its seals and downloads follow, and a session the
+    /// source ended asks to sign in again.
+    fn account_changed(&mut self) {
+        let Some(s) = self.session.as_ref() else { return };
+        let Some(state) = s.account_changed() else { return };
+        let rules = s.rules();
+        let ui = self.ui();
+        ui.set_downloads(rules.downloads);
+        ui.set_page_can_star(rules.account && rules.stars);
+        match state {
+            nori_core::providers::AccountState::Ended => self.offer_sign_in(),
+            nori_core::providers::AccountState::SignedIn => ui.set_signin_open(false),
+            nori_core::providers::AccountState::SignedOut => {}
+        }
+    }
+
+    /// The ended session's sheet no longer comes back at start.
+    fn sign_in_quiet(&self) {
+        self.on_session(|s| s.client.stop_reminding());
+        self.ui().set_signin_open(false);
+    }
+
     fn offer_sign_in(&mut self) {
-        let user = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.user.clone())).unwrap_or_default();
+        use nori_core::providers::AccountState;
+        let ended = self.session.as_ref().is_some_and(|s| s.client.account() == AccountState::Ended);
+        let user = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.user.clone())).filter(|_| !ended).unwrap_or_default();
         let ui = self.ui();
         ui.set_signin_user(user.into());
         ui.set_signin_pasting(false);
         ui.set_signin_error("".into());
+        ui.set_signin_ended(ended);
         ui.set_signin_open(true);
     }
 
@@ -2145,6 +2174,7 @@ impl App {
             Msg::Data(req, r) => {
                 self.data(req, r);
                 self.mirror();
+                self.account_changed();
             }
             Msg::Cover { key, image, colours } => self.cover(key, &image, colours),
             Msg::Search(v) => {
