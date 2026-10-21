@@ -10,6 +10,10 @@ name = "nori-cli"
 path = "src/main.rs"
 
 [features]
+default = ["sign-in-window"]
+# The provider's sign-in page in a window (the system's web view: WebKitGTK on Linux), from this program.
+# Off for a machine without a desktop: signing in then takes pasted cookies.
+sign-in-window = ["dep:nori-sign-in-window"]
 # "Better beat detection": the measurer runs Beat This! through tract (nori-engine's feature). Off unless asked
 # for, so a plain build links nothing of it.
 neural-beats = ["nori-engine/neural-beats"]
@@ -17,6 +21,7 @@ neural-beats = ["nori-engine/neural-beats"]
 [dependencies]
 # The providers this client offers: a Subsonic server's and YouTube Music.
 nori-core = { path = "../core", default-features = false, features = ["youtube"] }
+nori-sign-in-window = { path = "../sign-in-window", optional = true }
 nori-engine = { path = "../engine", features = ["core"] }
 nori-output-cpal = { path = "../output-cpal" }
 nori-http = { path = "../http" }

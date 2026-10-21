@@ -87,3 +87,12 @@ the outer terminal, and nori draws them again when the pane has focus back; it t
 
 Idle or paused, the client does not wake at all. Playing, its screen wakes about once a second for the
 clock, and a few times a second with word-by-word lyrics on screen.
+
+## YouTube Music
+
+Settings, Server, Enter on the YouTube Music profile in use opens its account sheet: Enter signs in with
+Google in a small window that the terminal's own program opens (the system's web view, as on the desktop),
+**p** pastes cookies instead, and a signed-in account's sheet signs out. Pressing **f** on a song while
+signed out opens the same sheet. When YouTube ends the session, the sheet says so at once and each time
+the terminal starts, until you sign in or press **d** (don't show again). See
+[YouTube Music](../start/youtube-music.md#signing-in-optional).

@@ -262,7 +262,8 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         }
         // A provider account's name (its `user`) brings its library and hearts.
         val account = prefs.server?.user.orEmpty()
-        val rules = remember(guest, kind, account) { dev.nori.music.ffi.rulesOf(prefs.server ?: dev.nori.music.settings.newServer(""), guest) }
+        val reported by settings.reportedRules.collectAsStateWithLifecycle()
+        val rules = remember(guest, kind, account, reported) { settings.rules() }
         val home = "home"
         // A guest follows the host while the app is in sight: what plays, the queue, its requests.
         val remote: dev.nori.music.app.vm.RemoteViewModel = viewModel()

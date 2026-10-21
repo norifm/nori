@@ -1,0 +1,26 @@
+# Generated from Cargo manifests by tools/bazel/generate.py.
+load("//tools/bazel:workspace.bzl", "workspace_crate")
+
+workspace_crate({'name': 'nori-sign-in-window',
+ 'edition': '2021',
+ 'version': '0.7.0-beta.4',
+ 'targets': [{'name': 'nori_sign_in_window', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
+ 'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
+ 'local': [{'package': 'nori-core',
+            'label': '//crates/core:nori_core',
+            'alias': 'nori_core',
+            'kind': 'normal',
+            'macro': False,
+            'profiles': ['tests', 'desktop', 'desktop-tests']}],
+ 'registry': [{'label': '@crates//:tao-0.37.1',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']},
+              {'label': '@crates//:wry-0.57.0',
+               'kind': 'normal',
+               'macro': False,
+               'systems': ['macos', 'linux', 'android', 'ios', 'windows'],
+               'profiles': ['tests', 'desktop', 'desktop-tests']}],
+ 'resources': [],
+ 'aliases': {}})

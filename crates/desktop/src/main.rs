@@ -33,15 +33,9 @@ fn data_dir() -> PathBuf {
     }
 }
 
-mod sign_in_window;
-
 fn main() -> Result<(), String> {
     // The sign-in window, started by the app as a process of its own (app.rs `sign_in_window`).
-    if std::env::args().nth(1).as_deref() == Some("--sign-in") {
-        let mut args = std::env::args().skip(2);
-        let (Some(title), Some(start)) = (args.next(), args.next()) else { return Err("usage: nori-desktop --sign-in TITLE ADDRESS".into()) };
-        sign_in_window::run(title, start);
-    }
+    nori_sign_in_window::serve_if_asked();
     // Return large freed cover/analysis buffers to Linux.
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     unsafe {

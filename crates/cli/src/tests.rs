@@ -776,6 +776,58 @@ fn seeking() {
     assert!(matches!(a.cmds.last(), Some(Cmd::Seek(_))), ". seeks over the cards too");
 }
 
+/// Signed out of a provider whose account would carry likes, the seal says where to sign in.
+#[test]
+fn a_signed_out_like_says_where_to_sign_in() {
+    let mut a = app();
+    a.rules = nori_core::providers::rules_of(nori_core::settings::SavedServer { kind: nori_core::settings::ServerKind::YouTubeMusic, ..Default::default() }, false);
+    a.go(View::Songs);
+    a.handle(Msg::Data(Req::Songs { offset: 0 }, Ok(Data::Songs(vec![song("yt-1", "One", 200)], false))));
+    key(&mut a, KeyCode::Char('f'));
+    assert!(matches!(a.cmds.last(), Some(Cmd::OfferSignIn)));
+    assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Star(..))));
+}
+
+fn account(user: &str, ended: bool) -> Overlay {
+    Overlay::Account { kind: nori_core::settings::ServerKind::YouTubeMusic, user: user.into(), ended, pasting: false, text: String::new(), error: None, busy: false }
+}
+
+/// The account sheet signs in with the provider's page, or with cookies pasted; an ended session's can
+/// be told not to come back; a signed-in one signs out.
+#[test]
+fn the_account_sheet_signs_in_and_out() {
+    let mut a = app();
+    a.overlay = Some(account("", true));
+    let s = draw(&mut a, 100, 30);
+    assert!(s.contains("Sign in to YouTube Music") && s.contains("YouTube signed you out") && s.contains("don't show again"), "{s}");
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::SignInWindow)) && matches!(a.overlay, Some(Overlay::Account { busy: true, .. })));
+    key(&mut a, KeyCode::Char('p'));
+    assert!(matches!(a.overlay, Some(Overlay::Account { pasting: false, .. })), "no keys while the window is open");
+    a.handle(Msg::SignedIn(nori_core::providers::SignInResult::Refused));
+    assert!(draw(&mut a, 100, 30).contains("didn't accept"));
+
+    key(&mut a, KeyCode::Char('p'));
+    a.handle(Msg::Paste("SID=x; SAPISID=y".into()));
+    let s = draw(&mut a, 100, 30);
+    assert!(s.contains("paste it here") && !s.contains("SAPISID"), "pasted cookies stay hidden:\n{s}");
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::SignIn(c)) if c == "SID=x; SAPISID=y"));
+    a.handle(Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { name: "Ann".into() }));
+    assert!(a.overlay.is_none());
+
+    a.overlay = Some(account("", true));
+    key(&mut a, KeyCode::Char('d'));
+    assert!(matches!(a.cmds.last(), Some(Cmd::StopReminding)) && a.overlay.is_none());
+
+    a.overlay = Some(account("Ann", false));
+    assert!(draw(&mut a, 100, 30).contains("Signed in as Ann"));
+    key(&mut a, KeyCode::Char('d'));
+    assert!(a.overlay.is_some(), "only an ended session's sheet can be quieted");
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::SignOut)) && a.overlay.is_none());
+}
+
 #[test]
 fn star_marks_from_the_core_redraw_the_seals() {
     let mut a = app();

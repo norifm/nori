@@ -61,6 +61,8 @@ pub enum Msg {
     Joined(Result<nori_core::remote::JamPass, String>),
     /// This guest left its jam, or the jam ended: what to say.
     Left(String),
+    /// How signing the account in went.
+    SignedIn(nori_core::providers::SignInResult),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }
@@ -88,6 +90,7 @@ impl Msg {
             Msg::Jam(r) => format!("jam opened: {}", r.is_ok()),
             Msg::Joined(r) => format!("jam joined: {}", r.is_ok()),
             Msg::Left(said) => format!("jam left: {said}"),
+            Msg::SignedIn(r) => format!("signed in: {}", matches!(r, nori_core::providers::SignInResult::SignedIn { .. })),
             Msg::From(id, m) => format!("session {id}: {}", m.brief()),
         }
     }

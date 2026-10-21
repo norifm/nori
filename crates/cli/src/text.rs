@@ -283,6 +283,15 @@ pub fn search_fallback(reason: Option<&str>) -> String {
 /// The hint line under the player, and in the full player.
 pub const HINT: &str = "space play  s shuffle  r repeat  f favorite  / search  1-9 go  F player  ? help";
 pub const HINT_FULL: &str = "esc back  space play  tab panel  L lyrics  Q queue  C devices  ? help";
+pub const SIGNED_OUT_AGAIN: &str = "YouTube signed you out. Sign in again to see your library and likes.";
+pub const SIGN_IN_WHY: &str = "See your own Home, your library and your likes. Music plays without it too.";
+pub const SIGN_IN_KEYS: &str = "enter sign in with Google · p paste cookies · esc close";
+pub const SIGN_IN_KEYS_ENDED: &str = "enter sign in with Google · p paste cookies · d don't show again · esc close";
+pub const SIGNED_IN_KEYS: &str = "enter sign out · esc close";
+pub const SIGNING_IN: &str = "Finish signing in in the window that opened.";
+pub const PASTE_COOKIES: &str = "Sign in to music.youtube.com in a private browser window, copy the Cookie header of any request it makes from the developer tools, and paste it here. enter signs in · esc back";
+pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
+pub const RISK: &str = "Unofficial apps are against YouTube's terms, and YouTube may flag an account that uses one.";
 pub const THIS_COMPUTER: &str = "This computer";
 pub const PLAY_ON: &str = "Play on";
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";

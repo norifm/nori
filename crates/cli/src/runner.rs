@@ -140,6 +140,9 @@ struct Runner {
     playback: Playback,
     /// The queue shown, as last read.
     queue: Option<QueueShown>,
+    /// The provider's sign-in page, while it is open.
+    #[cfg(feature = "sign-in-window")]
+    sign_in_window: Option<nori_sign_in_window::SignInWindow>,
 }
 
 pub fn run(o: Options) -> Result<(), String> {
@@ -197,7 +200,7 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, focused: true, unseen_cover: false, playback: Playback::Here, queue: None, o };
+    let mut r = Runner { http: Http::new(), tx, session: None, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, focused: true, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => app.view = View::Login,
@@ -245,6 +248,9 @@ impl Runner {
                 (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server, app.settings.own.data, app.colors, app.paint, app.reduced_motion) = keep;
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
+                if self.session.as_ref().is_some_and(|s| s.client.reminds_to_sign_in()) {
+                    self.offer_sign_in(app);
+                }
                 self.remote_read(app);
                 self.follow(app);
             }
@@ -293,11 +299,44 @@ impl Runner {
                         self.carry_out(app);
                         self.take(app, m);
                     }
+                    self.account_changed(app);
                 }
                 Err(RecvTimeoutError::Timeout) => app.tick(Instant::now()),
                 Err(RecvTimeoutError::Disconnected) => return Ok(()),
             }
         }
+    }
+
+    /// The screens follow the account when it changed under the profile; a session the source ended
+    /// says so.
+    fn account_changed(&self, app: &mut App) {
+        let Some(s) = &self.session else { return };
+        let Some(state) = s.account_changed() else { return };
+        app.rules = s.rules();
+        app.dirty = true;
+        if state == nori_core::providers::AccountState::Ended {
+            self.offer_sign_in(app);
+        }
+    }
+
+    /// The account sheet over the profile in use, as its provider has the account.
+    fn offer_sign_in(&self, app: &mut App) {
+        let Some(s) = &self.session else { return };
+        let Some(profile) = crate::backend::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        if !nori_core::providers::providers().iter().any(|i| i.kind == profile.kind && !i.sign_in.is_empty()) {
+            return;
+        }
+        let ended = s.client.account() == nori_core::providers::AccountState::Ended;
+        let user = if ended { String::new() } else { profile.user };
+        app.overlay = Some(crate::app::Overlay::Account { kind: profile.kind, user, ended, pasting: false, text: String::new(), error: None, busy: false });
+        app.dirty = true;
+    }
+
+    /// The profile in use opened again, as signing in or out left it.
+    fn reopen(&mut self, app: &mut App) {
+        let Some(profile) = crate::backend::app().settings.current().and_then(|p| p.active_server().cloned()) else { return };
+        self.open(app, profile);
+        app.go(View::Home);
     }
 
     fn take(&mut self, app: &mut App, m: Msg) {
@@ -318,6 +357,14 @@ impl Runner {
                 }
             }
             Msg::Remote | Msg::Jam(_) => self.remote_read(app),
+            Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => {
+                #[cfg(feature = "sign-in-window")]
+                {
+                    self.sign_in_window = None;
+                }
+                app.handle(m);
+                return self.reopen(app);
+            }
             // The guest profile opens in place of the user's own, which opens again on leaving.
             Msg::Joined(Ok(pass)) => {
                 let guest = nori_host::jam_joined(&crate::backend::app().settings, pass.clone(), crate::text::JAM_GUEST);
@@ -522,6 +569,48 @@ impl Runner {
                 app.say(if on { "Covers on (from the next song or page; restart to fetch covers again)" } else { "Covers off" }, false);
                 return;
             }
+            Cmd::OfferSignIn => return self.offer_sign_in(app),
+            Cmd::SignInWindow => {
+                let (Some(s), Some(crate::app::Overlay::Account { kind, pasting, error, busy, .. })) = (&self.session, &mut app.overlay) else { return };
+                #[cfg(feature = "sign-in-window")]
+                {
+                    if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
+                        return;
+                    }
+                    let (h, tx) = ((**s).clone(), self.tx.clone());
+                    self.sign_in_window = nori_sign_in_window::SignInWindow::open(*kind, format!("Sign in to {}", crate::text::provider(*kind).name), move |_, cookies| {
+                        let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                    });
+                    if self.sign_in_window.is_some() {
+                        return;
+                    }
+                }
+                let _ = (s, kind);
+                *pasting = true;
+                *busy = false;
+                *error = Some(crate::text::SIGN_IN_WINDOW_FAILED.into());
+                return;
+            }
+            Cmd::SignIn(cookies) => {
+                let (Some(s), tx) = (&self.session, self.tx.clone()) else { return };
+                let h = (**s).clone();
+                nori_host::spawn("nori-sign-in", move || {
+                    let _ = tx.send(Msg::SignedIn(h.sign_in(cookies)));
+                });
+                return;
+            }
+            Cmd::SignOut => {
+                if let Some(s) = &self.session {
+                    s.sign_out();
+                }
+                return self.reopen(app);
+            }
+            Cmd::StopReminding => {
+                if let Some(s) = &self.session {
+                    s.client.stop_reminding();
+                }
+                return;
+            }
             Cmd::JoinJam(link) => {
                 let (http, tx, remote) = (self.http.clone(), self.tx.clone(), self.session.as_ref().and_then(|s| s.remote()));
                 nori_host::spawn("nori-jam-join", move || {
@@ -677,7 +766,7 @@ impl Runner {
                     }
                 }
             }
-            Cmd::Quit | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::CardCovers(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) => {}
+            Cmd::Quit | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::CardCovers(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding => {}
         }
     }
 

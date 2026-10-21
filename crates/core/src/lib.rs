@@ -113,6 +113,8 @@ pub struct Core {
     native_login: RwLock<Option<(String, String)>>,
     /// What the app offers over the profile (a jam guest's: the host's library, read only).
     rules: RwLock<browse::ProfileRules>,
+    /// Told the rules whenever they change ([`Core::watch_rules`]).
+    rules_shown: RwLock<Option<Arc<dyn browse::RulesShown>>>,
     /// What the profile plays from (providers/).
     provider: RwLock<providers::Installed>,
     /// What the stored queue's songs were saved from (queue.rs).
@@ -225,6 +227,7 @@ impl Core {
             account: RwLock::new(None), lan_jam: RwLock::new(None),
             native_login: RwLock::new(None),
             rules: RwLock::new(browse::profile_rules(false)),
+            rules_shown: RwLock::new(None),
             provider: RwLock::default(),
             saved_queue: Mutex::new(None),
             starts_transcodes: std::sync::atomic::AtomicBool::new(false),

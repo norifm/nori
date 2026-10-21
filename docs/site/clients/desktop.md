@@ -44,7 +44,8 @@ Sign in from Settings, Servers, the profile's Edit: Sign in with Google opens Go
 small window (the system's web view: WebKit on macOS, WebKitGTK on Linux) and closes it once you are back on
 YouTube Music signed in. Nothing of that window is kept. On Linux nori uses the system's WebKitGTK 4.1 (see
 [Install](../start/install.md#desktop-and-terminal)); Paste cookies instead takes cookies copied from a
-browser. Tapping a song's seal while signed out opens the same sheet.
+browser. Tapping a song's seal while signed out opens the same sheet. When YouTube ends the session, the sheet says so at once and each time nori starts,
+until you sign in or choose Don't show again.
 
 ## Install
 

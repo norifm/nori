@@ -1,0 +1,15 @@
+[package]
+name = "nori-sign-in-window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "nori's sign-in window for desktop clients: a provider's own page in the system's web view, run by the same program as a process of its own"
+
+[lib]
+name = "nori_sign_in_window"
+
+[dependencies]
+nori-core = { path = "../core", default-features = false }
+# The system's web view (WebKit, WebView2, WebKitGTK) and its window.
+wry = "0.57"
+tao = "0.37"

@@ -267,12 +267,9 @@ impl SettingsView {
                 Act::JoinJam => Opened::Overlay(Overlay::Join { text: String::new(), error: None, busy: false }),
                 Act::Chore(c) => Opened::Cmds(vec![Cmd::Action(c)]),
             },
-            Row::Server { id, active, .. } => {
-                if active {
-                    return None;
-                }
-                Opened::Cmds(vec![Cmd::SwitchServer(id)])
-            }
+            // The profile in use: its account, where its provider signs in to one.
+            Row::Server { active: true, .. } => Opened::Cmds(vec![Cmd::OfferSignIn]),
+            Row::Server { id, .. } => Opened::Cmds(vec![Cmd::SwitchServer(id)]),
             // Switched on, one that takes a key asks for it (empty: none).
             Row::Ranked { enabled: false, .. } => return None,
             Row::Ranked { id, title, keyed: true, on: false, .. } => {
