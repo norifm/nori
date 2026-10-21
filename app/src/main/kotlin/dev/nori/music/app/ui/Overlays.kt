@@ -236,13 +236,9 @@ fun AlertCard(
                     ProvideTextStyle(MaterialTheme.typography.bodyMedium) { Box(Modifier.weight(1f, fill = false).padding(bottom = 24.dp)) { it() } }
                 }
             }
-            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.primary) {
-                ProvideTextStyle(MaterialTheme.typography.labelLarge) {
-                    Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        dismissButton?.invoke()
-                        confirmButton()
-                    }
-                }
+            Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                dismissButton?.invoke()
+                confirmButton()
             }
         }
     }
@@ -252,6 +248,9 @@ fun AlertCard(
  * A bottom sheet showing [value] while it is not null. Material's sheet slides itself in, and out when
  * it is swiped or its scrim tapped; a sheet whose caller simply stops composing it (a menu item that
  * closes the menu) vanished instead. Here the value going null slides the sheet down first.
+ *
+ * Every sheet is the same paper: the surface, the page faintly through it, over a light scrim, with a
+ * hairline along its top edge and a quiet bar for a handle; no shadow.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -281,11 +280,55 @@ fun <T : Any> NoriSheet(
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
     MaterialTheme(colorScheme = scheme) {
         CompositionLocalProvider(LocalLook provides look) {
-            ModalBottomSheet(onDismissRequest = { if (live) dismiss() }, sheetState = state) {
+            ModalBottomSheet(
+                onDismissRequest = { if (live) dismiss() }, sheetState = state,
+                shape = SheetShape, containerColor = scheme.surfaceContainer.copy(alpha = SHEET_ALPHA), contentColor = scheme.onSurface,
+                tonalElevation = 0.dp, scrimColor = Color.Black.copy(alpha = SHEET_SCRIM),
+                dragHandle = { SheetHandle(state, scheme.outlineVariant) },
+            ) {
                 AppStatusBar()
                 content(shown)
             }
         }
+    }
+}
+
+private val SheetShape = RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet)
+/** How much of the page a sheet hides, and how much the scrim under it darkens the rest. */
+private const val SHEET_ALPHA = 0.92f
+private const val SHEET_SCRIM = 0.32f
+
+/**
+ * A sheet's handle, a quiet bar, and the hairline along the sheet's top edge, drawn from here because the
+ * handle is the sheet's first row. When the sheet reaches under the status bar Material pads its content
+ * down by the part it covers, so the edge is that far above the handle.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SheetHandle(state: androidx.compose.material3.SheetState, hair: Color) {
+    val insets = WindowInsets.safeDrawing
+    Box(
+        Modifier.fillMaxWidth().drawWithCache {
+            val stroke = HAIRLINE.toPx()
+            val r = Radius.sheet.toPx()
+            // The stroke's middle runs half its width in from the sheet's edge.
+            val half = stroke / 2f
+            val d = 2f * (r - half)
+            val edge = Path().apply {
+                moveTo(half, r)
+                arcTo(Rect(half, half, half + d, half + d), 180f, 90f, false)
+                lineTo(size.width - r, half)
+                arcTo(Rect(size.width - half - d, half, size.width - half, half + d), 270f, 90f, false)
+            }
+            val style = Stroke(stroke)
+            onDrawBehind {
+                val under = (insets.getTop(this) - state.requireOffset()).coerceAtLeast(0f)
+                translate(top = -under) { drawPath(edge, hair, style = style) }
+            }
+        }.padding(vertical = 10.dp),
+        Alignment.Center,
+    ) {
+        Box(Modifier.size(width = 36.dp, height = 4.dp).background(hair, PillShape))
     }
 }
 
