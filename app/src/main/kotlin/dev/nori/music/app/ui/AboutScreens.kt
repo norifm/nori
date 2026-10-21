@@ -65,7 +65,7 @@ internal fun AboutContent(
         InfoRow(say.interfaceTitle, facts.ui)
     }
     section(say.openSource) {
-        InfoRow(say.freeSoftware, say.licenceLine, end = "MIT")
+        InfoRow(say.freeSoftware, say.licenceLine, end = "AGPL-3.0")
         InfoRow(say.licences, say.licencesDetail, onClick = openLicences)
     }
 }

@@ -610,7 +610,7 @@ final class SettingsPage: UITableViewController {
                 cell.detailTextLabel?.text = Fmt.bytes(facts["stream"] as? Int ?? 0)
             case 3:
                 cell.textLabel?.text = Say.freeSoftware
-                cell.detailTextLabel?.text = "MIT"
+                cell.detailTextLabel?.text = "AGPL-3.0"
             case 4:
                 cell.textLabel?.text = Say.licences
                 cell.detailTextLabel?.text = nil

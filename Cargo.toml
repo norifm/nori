@@ -6,7 +6,7 @@ exclude = ["vendor/i-slint-renderer-skia"]
 [workspace.package]
 version = "0.7.0-beta.4"
 edition = "2021"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 # The Kotlin bindings go through JNI (uniffi-bindgen-kotlin-jni), which is only on uniffi's main branch so
