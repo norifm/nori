@@ -19,6 +19,10 @@ const TRY_SPACING_MS: i64 = 3_600_000;
 /// Age at which a queued write the server puts off is dropped: Last.fm refuses scrobbles older than this.
 const OLDEST_MS: i64 = 14 * 86_400_000;
 
+/// Longer requests are POSTed as a form (OpenSubsonic's `formPost`, which Navidrome takes): proxies
+/// refuse long URLs with 414, some from 4 KB.
+const LONGEST_URL: usize = 2_000;
+
 /// The endpoints that take `musicFolderId`.
 const FOLDERED: [&str; 7] = ["getAlbumList2", "getArtists", "search3", "getRandomSongs", "getStarred2", "getSongsByGenre", "getIndexes"];
 
@@ -235,7 +239,11 @@ impl Client {
             return Err(crate::providers::nowhere(endpoint));
         }
         let url = self.core.server.read().url(endpoint, params);
-        transport::get(&*self.transport, url, 0).await
+        if url.len() <= LONGEST_URL {
+            return transport::get(&*self.transport, url, 0).await;
+        }
+        let url = self.core.server.read().url(endpoint, &[]);
+        transport::post_form(&*self.transport, url, api::form(params)).await
     }
 
     /// One request, retried once through the other address on an I/O failure (not a metered refusal:
@@ -573,6 +581,22 @@ mod tests {
         assert_eq!(head().as_deref(), Some("scrobble"));
         c.core.pending_put_off(row, now + OLDEST_MS).unwrap();
         assert_eq!(head(), None, "two weeks old");
+    }
+
+    #[test]
+    fn a_long_queue_is_posted() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        fake.answer(OK);
+        fake.answer(OK);
+        let ids: Vec<String> = (0..300).map(|i| format!("song-{i}")).collect();
+        block(c.write(Write::SaveQueue { ids: ids.clone(), current: Some("song-1".into()), position_ms: 5 })).unwrap();
+        block(c.write(Write::SaveQueue { ids: ids[..2].to_vec(), current: None, position_ms: 0 })).unwrap();
+        let sent = fake.sent.lock().clone();
+        assert_eq!(sent.len(), 1, "the short one is a GET");
+        assert!(sent[0].url.contains("/rest/savePlayQueue?u=u&t=") && sent[0].url.ends_with("&f=json"), "signed in the URL: {}", sent[0].url);
+        let form = sent[0].form.as_deref().unwrap();
+        assert!(form.starts_with("id=song-0&id=song-1&") && form.ends_with("&id=song-299&current=song-1&position=5"), "{form}");
+        assert!(fake.asked()[1].ends_with("&id=song-0&id=song-1&position=0"));
     }
 
     #[test]

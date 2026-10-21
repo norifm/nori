@@ -98,6 +98,9 @@ pub struct Exchange {
     pub headers: std::collections::HashMap<String, String>,
     /// POSTed as `application/json` when set; a GET otherwise.
     pub json: Option<String>,
+    /// POSTed as `application/x-www-form-urlencoded` when set and `json` is not.
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub form: Option<String>,
     /// As in [`Transport::get`].
     pub timeout_ms: u32,
 }
@@ -220,7 +223,15 @@ impl From<TransportError> for NetError {
 /// One GET through the platform. An error status still returns its body when it is a Subsonic answer
 /// (octo-fiesta sends auth failures as 401 with a Subsonic error body); otherwise it is [`NetError::Http`].
 pub async fn get(transport: &dyn Transport, url: String, timeout_ms: u32) -> Result<Vec<u8>, NetError> {
-    let r = transport.get(url, timeout_ms).await?;
+    subsonic_answer(transport.get(url, timeout_ms).await?)
+}
+
+/// [`get`] with `form` POSTed rather than in the URL.
+pub async fn post_form(transport: &dyn Transport, url: String, form: String) -> Result<Vec<u8>, NetError> {
+    subsonic_answer(transport.send(Exchange { url, form: Some(form), ..Default::default() }).await?)
+}
+
+fn subsonic_answer(r: TransportResponse) -> Result<Vec<u8>, NetError> {
     if !(200..300).contains(&r.status) && (r.body.is_empty() || !subsonic_body(&r.body)) {
         return Err(NetError::Http { status: r.status });
     }

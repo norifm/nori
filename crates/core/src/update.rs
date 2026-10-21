@@ -334,8 +334,8 @@ impl Client {
         let request = Exchange {
             url: if beta { RECENT_URL } else { LATEST_URL }.to_string(),
             headers: [("Accept".to_string(), "application/vnd.github+json".to_string()), ("X-GitHub-Api-Version".to_string(), "2022-11-28".to_string())].into(),
-            json: None,
             timeout_ms: TIMEOUT_MS,
+            ..Default::default()
         };
         let r = self.transport.send(request).await?;
         if !(200..300).contains(&r.status) {

@@ -41,6 +41,7 @@ import kotlin.coroutines.resumeWithException
 import dev.nori.music.settings.server
 
 private val JSON = "application/json".toMediaType()
+private val FORM = "application/x-www-form-urlencoded".toMediaType()
 
 /** The server is only allowed on unmetered networks and this is not one. Its message is for the log; [said] words it. */
 class MeteredNetworkException : IOException("metered network, server is Wi-Fi only")
@@ -169,13 +170,13 @@ class Http(private val context: Context) {
     suspend fun exchange(url: String, timeoutMs: Long = 0): TransportResponse = exchange(Request.Builder().url(url).build(), timeoutMs)
 
     /**
-     * [exchange] with a third party's own headers, and a JSON body POSTed when there is one: the core's
+     * [exchange] with a third party's own headers, and a JSON or form body POSTed when there is one: the core's
      * [Exchange], which says what to send; this only carries the bytes.
      */
     suspend fun exchange(e: Exchange): TransportResponse {
         val request = Request.Builder().url(e.url)
         for ((name, value) in e.headers) request.header(name, value)
-        e.json?.let { request.post(it.toRequestBody(JSON)) }
+        e.json?.let { request.post(it.toRequestBody(JSON)) } ?: e.form?.let { request.post(it.toRequestBody(FORM)) }
         return exchange(request.build(), e.timeoutMs.toLong())
     }
 
