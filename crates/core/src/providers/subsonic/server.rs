@@ -13,6 +13,12 @@ use crate::{api, browse, settings, Core, IngestStats, Result, ServerConfig, Serv
 /// Ping timeout for the first address before falling back to the second.
 const ADDRESS_PROBE_MS: u32 = 2_500;
 
+/// Tries the server puts off before a queued write is dropped, counted [`TRY_SPACING_MS`] apart.
+const MOST_TRIES: i64 = 10;
+const TRY_SPACING_MS: i64 = 3_600_000;
+/// Age at which a queued write the server puts off is dropped: Last.fm refuses scrobbles older than this.
+const OLDEST_MS: i64 = 14 * 86_400_000;
+
 /// The endpoints that take `musicFolderId`.
 const FOLDERED: [&str; 7] = ["getAlbumList2", "getArtists", "search3", "getRandomSongs", "getStarred2", "getSongsByGenre", "getIndexes"];
 
@@ -179,7 +185,16 @@ impl Core {
 
     pub(crate) fn pending_add(&self, endpoint: &str, params: &[(String, String)]) -> Result<()> {
         let json = serde_json::to_string(params).unwrap_or_default();
-        self.db.lock().execute("INSERT INTO pending(server, endpoint, params) VALUES(sid(), ?1, ?2)", params![endpoint, json])?;
+        self.db.lock().execute("INSERT INTO pending(server, endpoint, params, queued_ms) VALUES(sid(), ?1, ?2, ?3)", params![endpoint, json, crate::db::now_ms()])?;
+        Ok(())
+    }
+
+    /// The server put off a queued write at `now`: counts a try (one an hour at most, so an outage behind
+    /// a proxy that answers every request with 502 costs one) and drops the write once it is spent.
+    pub(crate) fn pending_put_off(&self, row_id: i64, now: i64) -> Result<()> {
+        let c = self.db.lock();
+        c.execute("UPDATE pending SET tries=tries+1, tried_ms=?2 WHERE server=sid() AND rowid=?1 AND ?2-tried_ms>=?3", params![row_id, now, TRY_SPACING_MS])?;
+        c.execute("DELETE FROM pending WHERE server=sid() AND rowid=?1 AND (tries>=?2 OR ?3-queued_ms>=?4)", params![row_id, MOST_TRIES, now, OLDEST_MS])?;
         Ok(())
     }
 
@@ -289,8 +304,9 @@ impl Client {
     }
 
     /// Replays queued writes in order until none are left, stopping at the first that is not
-    /// [`Outcome::Refused`]; refused writes are dropped. While one replay runs, another returns at once:
-    /// the running one sends what was queued meanwhile too.
+    /// [`Outcome::Refused`]; refused writes are dropped, and so are writes the server keeps putting off
+    /// (see `Core::pending_put_off`). While one replay runs, another returns at once: the running one sends
+    /// what was queued meanwhile too.
     pub async fn flush_pending(&self) -> NetResult<()> {
         if std::mem::replace(&mut *self.replaying.lock(), true) {
             return Ok(());
@@ -317,8 +333,10 @@ impl Client {
             };
             for p in queued {
                 if let Err(e) = self.get(&p.endpoint, &p.params).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
-                    if e.outcome() != Outcome::Refused {
-                        return Ok(());
+                    match e.outcome() {
+                        Outcome::Offline => return Ok(()),
+                        Outcome::Later => return Ok(self.core.pending_put_off(p.row_id, crate::db::now_ms())?),
+                        Outcome::Refused => {}
                     }
                 }
                 self.core.pending_done(p.row_id)?;
@@ -524,6 +542,37 @@ mod tests {
         fake.answers.lock().push_back(Ok((414, b"<html>too long</html>".to_vec())));
         assert!(matches!(block(c.write(Write::Star { kind: Starrable::Song, id: "s".into(), on: true })), Err(NetError::Http { status: 414 })));
         assert!(c.core.pending_list().unwrap().is_empty());
+    }
+
+    /// A write the server keeps putting off goes after ten tries an hour apart, or once two weeks old, so
+    /// the ones behind it are sent. Being offline never counts.
+    #[test]
+    fn a_write_put_off_for_good_is_dropped() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        c.core.pending_add("savePlayQueue", &[]).unwrap();
+        c.core.pending_add("scrobble", &[]).unwrap();
+        let head = || c.core.pending_list().unwrap().first().map(|p| p.endpoint.clone());
+        for _ in 0..20 {
+            fake.answers.lock().push_back(Ok((502, vec![])));
+            block(c.flush_pending()).unwrap();
+            fake.fail(FailureKind::Connect);
+            block(c.flush_pending()).unwrap();
+        }
+        assert_eq!(head().as_deref(), Some("savePlayQueue"), "an outage within the hour is one try");
+        let row = c.core.pending_list().unwrap()[0].row_id;
+        let now = crate::db::now_ms();
+        for hour in 1..9 {
+            c.core.pending_put_off(row, now + hour * TRY_SPACING_MS).unwrap();
+        }
+        assert_eq!(head().as_deref(), Some("savePlayQueue"), "nine tries");
+        c.core.pending_put_off(row, now + 9 * TRY_SPACING_MS).unwrap();
+        assert_eq!(head().as_deref(), Some("scrobble"), "the tenth drops it");
+
+        let row = c.core.pending_list().unwrap()[0].row_id;
+        c.core.pending_put_off(row, now + OLDEST_MS - 1_000).unwrap();
+        assert_eq!(head().as_deref(), Some("scrobble"));
+        c.core.pending_put_off(row, now + OLDEST_MS).unwrap();
+        assert_eq!(head(), None, "two weeks old");
     }
 
     #[test]
