@@ -40,6 +40,25 @@ pub struct Now {
     pub art_file: Option<PathBuf>,
 }
 
+/// What the system's controls show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Status {
+    Playing,
+    Paused,
+    Stopped,
+}
+
+impl Now {
+    /// By the state alone: a song whose details are still on their way (another device's queue) plays.
+    fn status(&self) -> Status {
+        match (self.playing, self.loaded) {
+            (true, _) => Status::Playing,
+            (false, true) => Status::Paused,
+            _ => Status::Stopped,
+        }
+    }
+}
+
 #[cfg(any(target_os = "linux", all(test, unix)))]
 mod bus {
     use std::collections::HashMap;
@@ -55,16 +74,16 @@ mod bus {
     use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
     use zbus::Connection;
 
-    use super::{Controls, Now};
+    use super::{Controls, Now, Status};
 
     const OBJECT: &str = "/org/mpris/MediaPlayer2";
     const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 
     fn status(n: &Now) -> &'static str {
-        match (n.playing, n.loaded) {
-            (true, _) => "Playing",
-            (false, true) => "Paused",
-            _ => "Stopped",
+        match n.status() {
+            Status::Playing => "Playing",
+            Status::Paused => "Paused",
+            Status::Stopped => "Stopped",
         }
     }
 
@@ -518,7 +537,7 @@ mod mac {
         MPRemoteCommandCenter, MPRemoteCommandEvent, MPRemoteCommandHandlerStatus,
     };
 
-    use super::{Controls, Current, Now};
+    use super::{Controls, Current, Now, Status};
 
     /// A cover's file and the artwork made of it.
     type Made = (Arc<[u8]>, Retained<MPMediaItemArtwork>);
@@ -568,7 +587,7 @@ mod mac {
         unsafe {
             let center = MPNowPlayingInfoCenter::defaultCenter();
             MPRemoteCommandCenter::sharedCommandCenter().likeCommand().setActive(n.starred);
-            if n.index.is_none() {
+            if n.status() == Status::Stopped {
                 ART.with(|a| a.borrow_mut().take());
                 center.setNowPlayingInfo(None);
                 center.setPlaybackState(MPNowPlayingPlaybackState::Stopped);
@@ -587,7 +606,7 @@ mod mac {
                 info.insert(MPMediaItemPropertyArtwork, AsRef::<AnyObject>::as_ref(&*art));
             }
             center.setNowPlayingInfo(Some(&info));
-            center.setPlaybackState(if n.playing { MPNowPlayingPlaybackState::Playing } else { MPNowPlayingPlaybackState::Paused });
+            center.setPlaybackState(if n.status() == Status::Playing { MPNowPlayingPlaybackState::Playing } else { MPNowPlayingPlaybackState::Paused });
         }
     }
 
@@ -746,6 +765,13 @@ mod current_tests {
         current.play();
         assert_eq!((*old.0.lock().unwrap(), *new.0.lock().unwrap()), (1, 2));
         assert!(current.now().playing);
+    }
+
+    #[test]
+    fn a_song_whose_details_are_on_their_way_still_plays() {
+        assert_eq!(Now { playing: true, index: None, ..Now::default() }.status(), Status::Playing);
+        assert_eq!(Now { loaded: true, ..Now::default() }.status(), Status::Paused);
+        assert_eq!(Now::default().status(), Status::Stopped);
     }
 }
 
