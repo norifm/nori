@@ -146,19 +146,91 @@ pub fn net_error(e: &NetError) -> String {
     said.to_string()
 }
 
-/// A line of a song's menu, for the actions the desktop's menu offers beyond playing.
-pub fn song_action(a: &nori_core::menus::SongAction) -> Option<String> {
+/// A line of a song's menu (menus.rs's `song_menu`).
+pub fn song_action(a: &nori_core::menus::SongAction) -> String {
     use nori_core::menus::SongAction as A;
-    Some(match a {
+    match a {
         A::Favourite { on: true } => "Add to Favorites".into(),
         A::Favourite { on: false } => "Remove from Favorites".into(),
+        A::PlayNext => "Play next".into(),
+        A::AddToQueue => "Add to queue".into(),
+        A::AddToPlaylist => "Add to playlist…".into(),
+        A::RemoveDownload => "Remove download".into(),
+        A::StopDownload => "Stop download".into(),
         A::Download => "Download".into(),
-        A::StartRadio => "Start radio".into(),
         A::GoToAlbum { .. } => "Go to Album".into(),
         A::GoToArtist { name, named: true, .. } => format!("Go to {name}"),
         A::GoToArtist { named: false, .. } => "Go to Artist".into(),
-        _ => return None,
-    })
+        A::AddToLibrary => "Add to library".into(),
+        A::Lyrics => "Lyrics".into(),
+        A::SleepTimer => "Sleep timer…".into(),
+        A::StartRadio => "Start radio".into(),
+        A::InstantMix => "Instant mix".into(),
+        A::ExcludeFromMixes => "Exclude from mixes".into(),
+        A::Share => "Copy link".into(),
+        A::Details => "Details".into(),
+        A::StartJam => "Start a Jam".into(),
+    }
+}
+
+pub const EXCLUDED_FROM_MIXES: &str = "Left out of mixes";
+pub const SHARE_FAILED: &str = "The server made no link";
+
+pub fn added_to_playlist(name: &str) -> String {
+    format!("Added to {name}")
+}
+
+pub fn playlist_created(name: &str) -> String {
+    format!("Made {name}")
+}
+
+pub fn playlist_failed(e: &str) -> String {
+    format!("The playlist could not be changed: {e}")
+}
+
+/// Everything the server said about one file, in the order the details sheet shows it, blanks left out
+/// (as Android's `Say.trackInfo`).
+pub fn details(s: &nori_core::Song) -> Vec<(&'static str, String)> {
+    use nori_core::numbers::{fixed, megabytes};
+    let join = |parts: Vec<String>, by: &str| parts.into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(by);
+    let some = |on: bool, v: String| if on { v } else { String::new() };
+    let artists = join(s.artists.iter().map(|a| a.name.clone()).collect(), ", ");
+    let gain = s.replay_gain.as_ref().map_or_else(String::new, |g| {
+        join(vec![
+            g.track_gain.map_or_else(String::new, |v| format!("track {} dB", fixed(v as f64, 2, true, "."))),
+            g.album_gain.map_or_else(String::new, |v| format!("album {} dB", fixed(v as f64, 2, true, "."))),
+            g.track_peak.map_or_else(String::new, |v| format!("peak {}", fixed(v as f64, 3, false, "."))),
+        ], " · ")
+    });
+    let khz = fixed(s.sampling_rate as f64 / 1000.0, 1, false, ".");
+    let khz = khz.strip_suffix(".0").unwrap_or(&khz).to_string();
+    let rows = [
+        ("Title", s.title.clone()),
+        ("Artist", if artists.is_empty() { s.artist.clone() } else { artists }),
+        ("Album", s.album.clone()),
+        ("Track", join(vec![some(s.disc_number > 0, format!("disc {}", s.disc_number)), some(s.track > 0, format!("track {}", s.track))], ", ")),
+        ("Year", some(s.year > 0, s.year.to_string())),
+        ("Genre", s.genre.clone().unwrap_or_default()),
+        ("Duration", nori_core::numbers::clock(s.duration as i64, false)),
+        ("Format", join(vec![s.suffix.to_uppercase(), s.content_type.clone()], " · ")),
+        ("Quality", join(vec![
+            some(s.bit_rate > 0, format!("{} kbps", s.bit_rate)),
+            some(s.sampling_rate > 0, format!("{khz} kHz")),
+            some(s.bit_depth > 0, format!("{} bit", s.bit_depth)),
+            some(s.channel_count > 0, format!("{} ch", s.channel_count)),
+        ], " · ")),
+        ("Size", some(s.size > 0, megabytes(s.size as i64, "."))),
+        ("ReplayGain", gain),
+        ("BPM", some(s.bpm > 0, s.bpm.to_string())),
+        ("Plays (server)", some(s.play_count > 0, s.play_count.to_string())),
+        ("Last played", s.played.as_deref().map(|p| p.chars().take(16).collect::<String>().replace('T', " ")).unwrap_or_default()),
+        ("Added", s.created.as_deref().map(|c| c.chars().take(10).collect()).unwrap_or_default()),
+        ("Path", s.path.clone().unwrap_or_default()),
+        ("MusicBrainz", s.music_brainz_id.clone().unwrap_or_default()),
+        ("Comment", s.comment.clone().unwrap_or_default()),
+        ("Id", s.id.clone()),
+    ];
+    rows.into_iter().filter(|(_, v)| !v.trim().is_empty()).collect()
 }
 
 /// A mix's name, as its tile and page say it.

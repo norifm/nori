@@ -85,19 +85,27 @@ export struct Credits {
     choices: [ArtistLink],
 }
 
-// A line of a song's menu beyond playing it: 0 its heart, 1 its album, 2 one of its artists (`id` the page).
+// A line of a song's menu beyond playing it (menus.rs's `song_menu`): 0 its seal, 1 its album, 2 one of
+// its artists (`id` the page), 3 download, 4 radio, 5 play next, 6 add to queue, 7 add to a playlist,
+// 8 remove the download, 9 stop it, 10 add to the library, 11 instant mix, 12 leave out of mixes,
+// 13 share, 14 details, 15 start a jam. `rule`: a rule above it, where the lines reached for less begin.
 export struct SongGo {
     title: string,
     kind: int,
     id: string,
+    rule: bool,
+}
+
+// One line of a song's details: what it is, and the server's value.
+export struct Detail {
+    label: string,
+    value: string,
 }
 
 export struct SongRow {
     title: string,
     artist: string,
     credits: Credits,
-    // The heart, the album and the artists, in its menu.
-    menu: [SongGo],
     album: string,
     // The pages a click on the artist and the album opens; empty for none.
     artist-id: string,
@@ -1276,12 +1284,28 @@ component SongLine inherits Rectangle {
     property <length> cols: root.width - 8px - 12px - 44px - 44px - 4 * 12px;
     in property <image> picture;
     callback play;
-    callback next;
-    callback later;
-    callback jam;
-    callback star;
-    callback download;
-    callback radio;
+    // The menu's lines, asked for as it opens, and one of them chosen.
+    callback menu() -> [SongGo];
+    callback act(int, string);
+    property <[SongGo]> lines;
+    pure function song-icon(kind: int) -> string {
+        if kind == 0 { return Icons.seal-outline; }
+        if kind == 1 { return Icons.albums; }
+        if kind == 2 { return Icons.artists; }
+        if kind == 3 { return Icons.download; }
+        if kind == 4 { return Icons.radio; }
+        if kind == 5 { return Icons.next; }
+        if kind == 6 { return Icons.queue; }
+        if kind == 7 { return Icons.plus; }
+        if kind == 8 { return Icons.delete; }
+        if kind == 9 { return Icons.close; }
+        if kind == 10 { return Icons.library; }
+        if kind == 11 { return Icons.infinity; }
+        if kind == 12 { return Icons.close; }
+        if kind == 13 { return Icons.link; }
+        if kind == 15 { return Icons.people; }
+        return Icons.info;
+    }
     height: root.thumb ? 56px : 44px;
     border-radius: 7px;
     background: touch.has-hover ? Theme.hover : transparent;
@@ -1300,6 +1324,7 @@ component SongLine inherits Rectangle {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
                 root.menu-x = min(self.mouse-x, root.width - 250px);
                 root.menu-y = self.mouse-y;
+                root.lines = root.menu();
                 song-menu.show();
             }
         }
@@ -1319,45 +1344,28 @@ component SongLine inherits Rectangle {
                     text: "Play";
                     clicked => { root.play(); song-menu.close(); }
                 }
-                MenuRow {
-                    icon: Icons.next;
-                    text: "Play next";
-                    clicked => { root.next(); song-menu.close(); }
-                }
-                MenuRow {
-                    icon: Icons.queue;
-                    text: "Add to queue";
-                    clicked => { root.later(); song-menu.close(); }
-                }
-                if Jam.on && !Jam.hosting: MenuRow {
-                    icon: Icons.people;
-                    text: "Start a Jam";
-                    clicked => { root.jam(); song-menu.close(); }
-                }
-                Rectangle {
-                    height: 9px;
-                    Rectangle {
-                        height: 1px;
-                        background: Theme.hairline;
-                    }
-                }
-                for m in root.song.menu: MenuRow {
-                    icon: m.kind == 0 ? Icons.seal-outline : m.kind == 1 ? Icons.albums : m.kind == 2 ? Icons.artists : m.kind == 3 ? Icons.download : Icons.radio;
-                    text: m.title;
-                    // The menu closes after: closed, it can no longer reach the row.
-                    clicked => {
-                        if m.kind == 0 {
-                            root.star();
-                        } else if m.kind == 1 {
-                            Go.album(m.id);
-                        } else if m.kind == 2 {
-                            Go.artist(m.id);
-                        } else if m.kind == 3 {
-                            root.download();
-                        } else {
-                            root.radio();
+                for m in root.lines: VerticalLayout {
+                    if m.rule: Rectangle {
+                        height: 9px;
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.hairline;
                         }
-                        song-menu.close();
+                    }
+                    MenuRow {
+                        icon: song-icon(m.kind);
+                        text: m.title;
+                        // The menu closes after: closed, it can no longer reach the row.
+                        clicked => {
+                            if m.kind == 1 {
+                                Go.album(m.id);
+                            } else if m.kind == 2 {
+                                Go.artist(m.id);
+                            } else {
+                                root.act(m.kind, m.id);
+                            }
+                            song-menu.close();
+                        }
                     }
                 }
             }
@@ -4562,6 +4570,15 @@ export component AppWindow inherits Window {
     // Where the queue's songs come from.
     in property <string> queue-from;
     callback clear-queue();
+    // A song's details, in a sheet.
+    in-out property <bool> details-open;
+    in property <[Detail]> details;
+    // Adding a song to a playlist: the sheet open, the playlists offered, and a new one's name.
+    in-out property <bool> picker-open;
+    in property <[Card]> picker-playlists;
+    in-out property <string> picker-name;
+    callback add-to-playlist(string);
+    callback add-to-new-playlist(string);
     // "Join a Jam": the sheet open, its link, why it failed, and joining under way.
     in-out property <bool> join-open;
     // Signing the profile's account in with cookies pasted from a browser (YouTube Music).
@@ -4611,9 +4628,10 @@ export component AppWindow inherits Window {
     callback shelf-song(int, string);
     callback play-album(string);
     callback play-playlist(string);
-    // A song of a list: 0 the page, 1 the songs, 2 search. `how`: 0 play, 1 next, 2 at the end, 3 play and
-    // start a jam, 4 its heart.
+    // A song of a list: 0 the page, 1 the songs, 2 search. `how`: -1 play, else a line of its menu
+    // (`SongGo::kind`), whose lines `song-menu` gives.
     callback song(int, int, int);
+    callback song-menu(int, int) -> [SongGo];
     callback play-page(bool);
     // Plays an album (0) or playlist (1) and starts a jam.
     callback jam-play(int, string);
@@ -5058,13 +5076,9 @@ export component AppWindow inherits Window {
                                         thumb: true;
                                         show-album: false;
                                         picture: root.art(s.art, 0, root.covers-rev);
-                                        play => { root.song(2, i, 0); }
-                                        jam => { root.song(2, i, 3); }
-                                        star => { root.song(2, i, 4); }
-                                        download => { root.song(2, i, 5); }
-                                        radio => { root.song(2, i, 6); }
-                                        next => { root.song(2, i, 1); }
-                                        later => { root.song(2, i, 2); }
+                                        play => { root.song(2, i, -1); }
+                                        menu => { return root.song-menu(2, i); }
+                                        act(kind, id) => { root.song(2, i, kind); }
                                     }
                                 }
                                 if root.search-songs-more: HorizontalLayout {
@@ -5346,13 +5360,9 @@ export component AppWindow inherits Window {
                                     table: true;
                                     thumb: true;
                                     picture: root.art(s.art, 0, root.covers-rev);
-                                    play => { root.song(1, i, 0); }
-                                    jam => { root.song(1, i, 3); }
-                                    star => { root.song(1, i, 4); }
-                                    download => { root.song(1, i, 5); }
-                                    radio => { root.song(1, i, 6); }
-                                    next => { root.song(1, i, 1); }
-                                    later => { root.song(1, i, 2); }
+                                    play => { root.song(1, i, -1); }
+                                    menu => { return root.song-menu(1, i); }
+                                    act(kind, id) => { root.song(1, i, kind); }
                                 }
                             }
                         }
@@ -5525,13 +5535,9 @@ export component AppWindow inherits Window {
                                             show-album: song-rows.mixed;
                                             thumb: song-rows.mixed;
                                             picture: song-rows.mixed ? root.art(s.art, 0, root.covers-rev) : root.art("", 0, 0);
-                                            play => { root.song(0, s.index, 0); }
-                                            jam => { root.song(0, s.index, 3); }
-                                            star => { root.song(0, s.index, 4); }
-                                            download => { root.song(0, s.index, 5); }
-                                            radio => { root.song(0, s.index, 6); }
-                                            next => { root.song(0, s.index, 1); }
-                                            later => { root.song(0, s.index, 2); }
+                                            play => { root.song(0, s.index, -1); }
+                                            menu => { return root.song-menu(0, s.index); }
+                                            act(kind, id) => { root.song(0, s.index, kind); }
                                         }
                                     }
                                 }
@@ -6521,6 +6527,126 @@ export component AppWindow inherits Window {
                             clicked => {
                                 root.setting-typed("lyricsKey:" + root.key-service, root.key-text);
                                 root.key-open = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.details-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.details-open = false; }
+            }
+            Popover {
+                x: (parent.width - self.width) / 2;
+                y: 60px;
+                width: 440px;
+                height: min(details-sheet.preferred-height, parent.height - 120px);
+                TouchArea {}
+                details-sheet := VerticalLayout {
+                    padding: 22px;
+                    spacing: 12px;
+                    Text {
+                        text: "Details";
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    Flickable {
+                        vertical-stretch: 1;
+                        min-height: min(lines.preferred-height, 120px);
+                        preferred-height: lines.preferred-height;
+                        content-height: lines.preferred-height;
+                        lines := VerticalLayout {
+                            spacing: 8px;
+                            for d in root.details: VerticalLayout {
+                                Text {
+                                    text: d.label;
+                                    color: Theme.dim;
+                                    font-size: 11px;
+                                }
+                                Text {
+                                    text: d.value;
+                                    color: Theme.text;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        Capsule {
+                            text: "Close";
+                            clicked => { root.details-open = false; }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.picker-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.picker-open = false; }
+            }
+            Popover {
+                x: (parent.width - self.width) / 2;
+                y: 60px;
+                width: 380px;
+                height: min(picker-sheet.preferred-height, parent.height - 120px);
+                TouchArea {}
+                picker-sheet := VerticalLayout {
+                    padding: 22px;
+                    spacing: 12px;
+                    Text {
+                        text: "Add to playlist";
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    Field {
+                        height: 34px;
+                        border-radius: 8px;
+                        clip: true;
+                        icon: Icons.plus;
+                        placeholder: "New playlist";
+                        text <=> root.picker-name;
+                        accepted => {
+                            if root.picker-name != "" {
+                                root.add-to-new-playlist(root.picker-name);
+                            }
+                        }
+                    }
+                    Flickable {
+                        vertical-stretch: 1;
+                        min-height: min(choices.preferred-height, 120px);
+                        preferred-height: choices.preferred-height;
+                        content-height: choices.preferred-height;
+                        choices := VerticalLayout {
+                            for c in root.picker-playlists: MenuRow {
+                                icon: Icons.playlists;
+                                text: c.title;
+                                clicked => { root.add-to-playlist(c.id); }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Cancel";
+                            clicked => { root.picker-open = false; }
+                        }
+                        Capsule {
+                            text: "Create";
+                            clicked => {
+                                if root.picker-name != "" {
+                                    root.add-to-new-playlist(root.picker-name);
+                                }
                             }
                         }
                     }
