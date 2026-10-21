@@ -20,13 +20,16 @@ use crate::lrclib::{self, clean, form_encode, DURATION_SLACK_S};
 use crate::trust::{latin, Named};
 use crate::{formats, json as answers, lyrics};
 
-/// A service's answer. `Failed` (unreachable, refused, unknown shape, too slow) is never kept as a miss.
+/// A service's answer. `Failed` (refused, unknown shape, too slow) and `Unreachable` are never kept as
+/// a miss.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Lookup {
     /// The words, and what the service said about the song it found them for.
     Found(Lyrics, Named),
     Missing,
     Failed,
+    /// No request reached the service: the device's network, which says nothing of the service.
+    Unreachable,
 }
 
 /// Longest one request may take...
@@ -166,12 +169,16 @@ fn settle(service: LyricsService, r: Asked<Lookup>) -> Lookup {
     match r {
         Ok(l) => l,
         Err(Fail::Status(404)) => Lookup::Missing,
+        Err(Fail::Unreachable) => {
+            alog::info(&format!("{} lyrics failed: unreachable", service.name()));
+            Lookup::Unreachable
+        }
         Err(e) => {
             let why = match e {
                 Fail::Status(status) => format!("HTTP {status}"),
-                Fail::Unreachable => "unreachable".into(),
                 Fail::Late => "too slow".into(),
                 Fail::Shape(what) => what,
+                Fail::Unreachable => unreachable!("settled above"),
             };
             alog::info(&format!("{} lyrics failed: {why}", service.name()));
             Lookup::Failed
@@ -579,13 +586,14 @@ const LYRICS_PLUS_HOSTS: [&str; 6] = [
 /// first real answer winning. A miss needs two servers saying so: one server's miss can be its own trouble.
 async fn lyrics_plus(a: &Ask<'_>, song: &Song) -> Lookup {
     let query = song_query(song, "title", "artist", Some("album"), Some("duration"));
-    let mut misses = 0;
+    let (mut misses, mut reached) = (0, false);
     let first = *a.shared.memory.lyrics_plus_host.lock();
     if let Some(host) = first {
         match lyrics_plus_from(a, host, &query, song).await {
             Lookup::Found(l, n) => return Lookup::Found(l, n),
             Lookup::Missing => misses += 1,
-            Lookup::Failed => {}
+            Lookup::Failed => reached = true,
+            Lookup::Unreachable => {}
         }
     }
     let query = query.as_str();
@@ -598,14 +606,18 @@ async fn lyrics_plus(a: &Ask<'_>, song: &Song) -> Lookup {
                 return Lookup::Found(l, n);
             }
             Lookup::Missing => misses += 1,
-            Lookup::Failed => {}
+            Lookup::Failed => reached = true,
+            Lookup::Unreachable => {}
         }
     }
     if misses >= 2 {
         Lookup::Missing
-    } else {
+    } else if reached || misses > 0 {
         alog::info("LYRICS_PLUS lyrics failed: no server answered");
         Lookup::Failed
+    } else {
+        alog::info("LYRICS_PLUS lyrics failed: unreachable");
+        Lookup::Unreachable
     }
 }
 
@@ -616,6 +628,7 @@ async fn lyrics_plus_from(a: &Ask<'_>, host: &str, query: &str, song: &Song) -> 
         Ok(body) if !body.trim_start().starts_with('{') => return Lookup::Failed,
         Ok(body) => body,
         Err(Fail::Status(404)) => return Lookup::Missing,
+        Err(Fail::Unreachable) => return Lookup::Unreachable,
         Err(_) => return Lookup::Failed,
     };
     let meta = parse(&body).ok().and_then(|v| v.get("metadata").cloned());
@@ -887,7 +900,7 @@ pub(crate) mod tests {
         assert!(l.word_timed);
         assert!(web.asked()[0].contains("track_name=Glass+Harbour&"), "the title cleaned");
         let web = Web::default();
-        assert_eq!(asking(&web, LyricsService::Lrclib), Lookup::Failed, "unreachable");
+        assert_eq!(asking(&web, LyricsService::Lrclib), Lookup::Unreachable, "nothing answers");
         let web = Web::default();
         web.answer("https://lrclib.net/api/get", 503, r#"{"message":"The server is busy","name":"ServerOverloaded","statusCode":503}"#);
         web.answer("https://lrclib.net/api/search", 200, "[]");

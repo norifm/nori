@@ -595,6 +595,8 @@ async fn ask(transport: &dyn Transport, cache: &dyn LyricsCache, lookup: &Lyrics
             shared.memory.failures.lock().failed(service, key.to_string(), Instant::now());
             None
         }
+        // The device was offline: asked again the next time, the service not rested.
+        Lookup::Unreachable => None,
     }
 }
 
@@ -992,6 +994,20 @@ mod tests {
         assert!(said.unwrap().contains("was LRCLIB (0.50)"));
         let best = read_kept(&cache.get(&best_key(&s)).unwrap()).unwrap();
         assert_eq!(best.source.as_deref(), Some("UNISON"), "and the better choice is what is kept");
+    }
+
+    /// A device offline for a while rests no service: back online, the songs it missed are asked again.
+    #[test]
+    fn offline_rests_no_service() {
+        let (web, cache, memory) = (Web::default(), Kept::default(), LyricsMemory::default());
+        let l = asked(&[LyricsService::Unison]);
+        let s = Song { title: "Glass Harbour".into(), id: "offline".into(), ..song() };
+        for _ in 0..4 {
+            assert!(run_remembering(&web, &cache, &s, (false, false), &l, &memory).0.last().is_none_or(|p| p.lyrics.lines.is_empty()));
+        }
+        unison(&web, &lrc(&OURS, true));
+        let picks = run_remembering(&web, &cache, &s, (false, false), &l, &memory).0;
+        assert_eq!(picks.last().map(|p| p.origin), Some(LyricsOrigin::Unison));
     }
 
     #[test]
