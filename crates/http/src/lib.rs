@@ -141,9 +141,11 @@ impl Transport for Http {
         let agent = self.agent.clone();
         Call::run(move || {
             let (headers, timeout) = (&request.headers, request.timeout_ms);
-            response(match &request.json {
-                Some(json) => configured(agent.post(&request.url).header("Content-Type", "application/json"), headers, timeout).send(json.as_bytes()),
-                None => configured(agent.get(&request.url), headers, timeout).call(),
+            let post = |kind, body: &String| configured(agent.post(&request.url).header("Content-Type", kind), headers, timeout).send(body.as_bytes());
+            response(match (&request.json, &request.form) {
+                (Some(json), _) => post("application/json", json),
+                (None, Some(form)) => post("application/x-www-form-urlencoded", form),
+                (None, None) => configured(agent.get(&request.url), headers, timeout).call(),
             })
         })
         .await

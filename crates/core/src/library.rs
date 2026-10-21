@@ -255,7 +255,7 @@ pub(crate) mod tests {
         fake.answer(crate::client::tests::OK);
         let seen = Arc::new(Marks::default());
         assert!(block(c.star(Starrable::Song, "lib-refused".into(), true, seen.clone())).is_ok());
-        fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":50,"message":"no"}}}"#);
+        fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"no"}}}"#);
         assert!(block(c.star(Starrable::Song, "lib-refused".into(), false, seen.clone())).is_err());
         assert_eq!(*seen.0.lock(), [Some(true), Some(false), Some(true)]);
         assert_eq!(c.core.stars.lock().songs.get("lib-refused"), Some(&true));

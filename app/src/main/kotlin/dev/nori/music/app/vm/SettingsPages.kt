@@ -309,6 +309,8 @@ private fun pageFacts(res: Resources, f: SettingsFacts, parts: List<SettingsPart
     lyricsBytes = f.storage.lyricsBytes,
     downloadSongs = f.storage.downloadSongs.toUInt(),
     storageBusy = f.storage.busy,
+    unsentWaiting = f.storage.unsentWaiting.toUInt(),
+    unsentDropped = f.storage.unsentDropped.toUInt(),
 )
 
 /**
@@ -564,6 +566,11 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             val t = str(title)
             val detail = if (src.keySet) str(R.string.settings_lyrics_key_set, str(about)) else str(about)
             SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, detail, src.on, src.takesKey, src.needsKey, src.keySet, "lyricsKey:${src.id}")
+        }
+        is RowItem.Unsent -> {
+            val t = str(R.string.settings_unsent)
+            val parts = listOf(R.plurals.settings_unsent_waiting to item.waiting.toInt(), R.plurals.settings_unsent_dropped to item.dropped.toInt())
+            SettingRow.Info(settingKey(t), t, parts.filter { it.second > 0 }.joinToString(" · ") { (id, n) -> res.getQuantityString(id, n, n) })
         }
         is RowItem.CompressionMeter -> SettingRow.CompressionMeter("compression-meter", r.enabled)
         is RowItem.MusicFolder -> null

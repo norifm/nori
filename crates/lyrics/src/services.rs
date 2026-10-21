@@ -136,6 +136,7 @@ impl<'a> Ask<'a> {
             url: url.to_string(),
             headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             json,
+            form: None,
             timeout_ms: (request_ms as u64).min(left) as u32,
         };
         let r = self.transport.send(request).await.map_err(|_| Fail::Unreachable)?;

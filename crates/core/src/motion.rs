@@ -471,7 +471,7 @@ impl Client {
 
     /// One request's status and body; None without a response.
     async fn motion_get(&self, url: &str, headers: &[(&str, &str)]) -> Option<(u16, String)> {
-        let request = Exchange { url: url.to_string(), headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), json: None, timeout_ms: REQUEST_MS };
+        let request = Exchange { url: url.to_string(), headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), timeout_ms: REQUEST_MS, ..Default::default() };
         match self.transport.send(request).await {
             Ok(r) => Some((r.status, String::from_utf8_lossy(&r.body).into_owned())),
             Err(e) => {

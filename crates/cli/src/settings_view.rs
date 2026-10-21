@@ -133,6 +133,8 @@ pub struct Facts {
     pub folders: Vec<MusicFolder>,
     /// Output device names.
     pub devices: Vec<String>,
+    /// Changes waiting for the server, and dropped unsent.
+    pub unsent: (u32, u32),
     /// What the open profile offers: a jam guest's settings are this device's own.
     pub rules: nori_core::browse::ProfileRules,
 }
@@ -366,6 +368,8 @@ fn page_facts(f: &Facts) -> PageFacts {
         cover_bytes: f.storage.covers,
         lyrics_bytes: f.storage.lyrics,
         download_songs: f.storage.download_songs,
+        unsent_waiting: f.unsent.0,
+        unsent_dropped: f.unsent.1,
         ..PageFacts::default()
     }
 }
@@ -659,6 +663,10 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             .into(),
         },
         RowItem::Stored => info("Database", numbers::bytes(f.storage.database, POINT)),
+        RowItem::Unsent { waiting, dropped } => {
+            let parts = [(waiting, "waiting for the server"), (dropped, "the server would not take")];
+            info("Changes not sent", parts.iter().filter(|p| p.0 > 0).map(|(n, what)| format!("{n} {what}")).collect::<Vec<_>>().join(" · "))
+        }
         RowItem::Server { index } => {
             let sv = p.servers.get(index as usize)?;
             let active = sv.id == p.active_server_id;

@@ -6,12 +6,22 @@ use std::sync::atomic::Ordering;
 use rusqlite::params;
 
 use super::wire;
-use crate::client::{blank, pairs, Client, NetResult, Starrable, Write};
-use crate::transport::{self, FailureKind, NetError, Transport};
-use crate::{api, browse, settings, Core, CoreError, IngestStats, Result, ServerConfig, ServerInfo};
+use crate::client::{blank, pairs, Client, NetResult, Starrable, Unsent, Write};
+use crate::transport::{self, FailureKind, NetError, Outcome, Transport};
+use crate::{api, browse, settings, Core, IngestStats, Result, ServerConfig, ServerInfo};
 
 /// Ping timeout for the first address before falling back to the second.
 const ADDRESS_PROBE_MS: u32 = 2_500;
+
+/// Tries the server puts off before a queued write is dropped, counted [`TRY_SPACING_MS`] apart.
+const MOST_TRIES: i64 = 10;
+const TRY_SPACING_MS: i64 = 3_600_000;
+/// Age at which a queued write the server puts off is dropped: Last.fm refuses scrobbles older than this.
+const OLDEST_MS: i64 = 14 * 86_400_000;
+
+/// Longer requests are POSTed as a form (OpenSubsonic's `formPost`, which Navidrome takes): proxies
+/// refuse long URLs with 414, some from 4 KB.
+const LONGEST_URL: usize = 2_000;
 
 /// The endpoints that take `musicFolderId`.
 const FOLDERED: [&str; 7] = ["getAlbumList2", "getArtists", "search3", "getRandomSongs", "getStarred2", "getSongsByGenre", "getIndexes"];
@@ -179,8 +189,21 @@ impl Core {
 
     pub(crate) fn pending_add(&self, endpoint: &str, params: &[(String, String)]) -> Result<()> {
         let json = serde_json::to_string(params).unwrap_or_default();
-        self.db.lock().execute("INSERT INTO pending(server, endpoint, params) VALUES(sid(), ?1, ?2)", params![endpoint, json])?;
+        self.db.lock().execute("INSERT INTO pending(server, endpoint, params, queued_ms) VALUES(sid(), ?1, ?2, ?3)", params![endpoint, json, crate::db::now_ms()])?;
         Ok(())
+    }
+
+    /// The server put off a queued write at `now`: counts a try (one an hour at most, so an outage behind
+    /// a proxy that answers every request with 502 costs one) and drops the write once it is spent. Whether
+    /// it was dropped.
+    pub(crate) fn pending_put_off(&self, row_id: i64, now: i64) -> Result<bool> {
+        let c = self.db.lock();
+        c.execute("UPDATE pending SET tries=tries+1, tried_ms=?2 WHERE server=sid() AND rowid=?1 AND ?2-tried_ms>=?3", params![row_id, now, TRY_SPACING_MS])?;
+        Ok(c.execute("DELETE FROM pending WHERE server=sid() AND rowid=?1 AND (tries>=?2 OR ?3-queued_ms>=?4)", params![row_id, MOST_TRIES, now, OLDEST_MS])? > 0)
+    }
+
+    fn pending_count(&self) -> Result<u32> {
+        Ok(self.db.lock().query_row("SELECT count(*) FROM pending WHERE server=sid()", [], |r| r.get(0))?)
     }
 
     pub(crate) fn pending_any(&self) -> Result<bool> {
@@ -220,7 +243,11 @@ impl Client {
             return Err(crate::providers::nowhere(endpoint));
         }
         let url = self.core.server.read().url(endpoint, params);
-        transport::get(&*self.transport, url, 0).await
+        if url.len() <= LONGEST_URL {
+            return transport::get(&*self.transport, url, 0).await;
+        }
+        let url = self.core.server.read().url(endpoint, &[]);
+        transport::post_form(&*self.transport, url, api::form(params)).await
     }
 
     /// One request, retried once through the other address on an I/O failure (not a metered refusal:
@@ -233,7 +260,7 @@ impl Client {
     async fn send(&self, endpoint: &str, params: Vec<(String, String)>, repeatable: bool) -> NetResult<Vec<u8>> {
         let p = self.scoped(endpoint, params);
         match self.get(endpoint, &p).await {
-            Err(e) if e.is_io() && (repeatable || e.nothing_sent()) && !matches!(e, NetError::Transport { kind: FailureKind::Metered, .. }) => {
+            Err(e) if e.outcome() != Outcome::Refused && (repeatable || e.nothing_sent()) && !matches!(e, NetError::Transport { kind: FailureKind::Metered, .. }) => {
                 if !self.choose_address().await {
                     return Err(e);
                 }
@@ -256,11 +283,9 @@ impl Client {
             }
             self.flush_pending().await?;
         } else {
-            match self.send(endpoint, params.clone(), repeatable).await {
-                Ok(body) => {
-                    self.core.parse_status(body)?;
-                }
-                Err(e) if e.nothing_sent() || (repeatable && e.is_io()) => self.core.pending_add(endpoint, &params)?,
+            match self.send(endpoint, params.clone(), repeatable).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
+                Ok(_) => {}
+                Err(e) if e.nothing_sent() || (repeatable && e.outcome() != Outcome::Refused) => self.core.pending_add(endpoint, &params)?,
                 Err(e) => return Err(e),
             }
         }
@@ -290,9 +315,15 @@ impl Client {
         changed
     }
 
-    /// Replays queued writes in order until none are left, stopping at the first network failure or an
-    /// answer that is not the server's (a captive portal's page); writes the server rejects are dropped. While one replay runs, another returns at once: the running one sends what was
-    /// queued meanwhile too.
+    /// The changes made here the server has not taken.
+    pub fn unsent(&self) -> NetResult<Unsent> {
+        Ok(Unsent { waiting: self.core.pending_count()?, dropped: self.dropped.load(Ordering::Relaxed) })
+    }
+
+    /// Replays queued writes in order until none are left, stopping at the first that is not
+    /// [`Outcome::Refused`]; refused writes are dropped, and so are writes the server keeps putting off
+    /// (see `Core::pending_put_off`). While one replay runs, another returns at once: the running one sends
+    /// what was queued meanwhile too.
     pub async fn flush_pending(&self) -> NetResult<()> {
         if std::mem::replace(&mut *self.replaying.lock(), true) {
             return Ok(());
@@ -318,10 +349,19 @@ impl Client {
                 queued
             };
             for p in queued {
-                match self.get(&p.endpoint, &p.params).await.map(|body| self.core.parse_status(body)) {
-                    Err(e) if e.is_io() => return Ok(()),
-                    Ok(Err(CoreError::Parse { .. })) => return Ok(()),
-                    _ => {}
+                if let Err(e) = self.get(&p.endpoint, &p.params).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
+                    match e.outcome() {
+                        Outcome::Offline => return Ok(()),
+                        Outcome::Later => {
+                            if self.core.pending_put_off(p.row_id, crate::db::now_ms())? {
+                                self.dropped.fetch_add(1, Ordering::Relaxed);
+                            }
+                            return Ok(());
+                        }
+                        Outcome::Refused => {
+                            self.dropped.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
                 }
                 self.core.pending_done(p.row_id)?;
             }
@@ -500,8 +540,8 @@ mod tests {
         // Rejected write errors and is not queued.
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         c.core.cache_put("page:starred".into(), b"x".to_vec()).unwrap();
-        fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":50,"message":"no"}}}"#);
-        assert!(matches!(block(c.write(Write::Star { kind: Starrable::Song, id: "1".into(), on: false })), Err(NetError::Api { code: 50, .. })));
+        fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"no"}}}"#);
+        assert!(matches!(block(c.write(Write::Star { kind: Starrable::Song, id: "1".into(), on: false })), Err(NetError::Api { code: 70, .. })));
         assert!(c.core.pending_list().unwrap().is_empty());
         assert!(c.core.cache_get("page:starred".into()).unwrap().is_some());
     }
@@ -520,6 +560,7 @@ mod tests {
             block(c.flush_pending()).unwrap();
             let left: Vec<String> = c.core.pending_list().unwrap().into_iter().map(|p| p.endpoint).collect();
             assert_eq!(left, if kept { vec!["savePlayQueue", "scrobble"] } else { vec![] }, "HTTP {status}");
+            assert_eq!(c.unsent().unwrap(), if kept { Unsent { waiting: 2, dropped: 0 } } else { Unsent { waiting: 0, dropped: 1 } }, "HTTP {status}");
         }
         // Sent now, a refused write says so and is not queued.
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
@@ -528,12 +569,69 @@ mod tests {
         assert!(c.core.pending_list().unwrap().is_empty());
     }
 
+    /// A write the server keeps putting off goes after ten tries an hour apart, or once two weeks old, so
+    /// the ones behind it are sent. Being offline never counts.
+    #[test]
+    fn a_write_put_off_for_good_is_dropped() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        c.core.pending_add("savePlayQueue", &[]).unwrap();
+        c.core.pending_add("scrobble", &[]).unwrap();
+        let head = || c.core.pending_list().unwrap().first().map(|p| p.endpoint.clone());
+        for _ in 0..20 {
+            fake.answers.lock().push_back(Ok((502, vec![])));
+            block(c.flush_pending()).unwrap();
+            fake.fail(FailureKind::Connect);
+            block(c.flush_pending()).unwrap();
+        }
+        assert_eq!(head().as_deref(), Some("savePlayQueue"), "an outage within the hour is one try");
+        let row = c.core.pending_list().unwrap()[0].row_id;
+        let now = crate::db::now_ms();
+        for hour in 1..9 {
+            c.core.pending_put_off(row, now + hour * TRY_SPACING_MS).unwrap();
+        }
+        assert_eq!(head().as_deref(), Some("savePlayQueue"), "nine tries");
+        c.core.pending_put_off(row, now + 9 * TRY_SPACING_MS).unwrap();
+        assert_eq!(head().as_deref(), Some("scrobble"), "the tenth drops it");
+
+        let row = c.core.pending_list().unwrap()[0].row_id;
+        c.core.pending_put_off(row, now + OLDEST_MS - 1_000).unwrap();
+        assert_eq!(head().as_deref(), Some("scrobble"));
+        assert_eq!(c.unsent().unwrap(), Unsent { waiting: 1, dropped: 0 });
+        c.core.db.lock().execute("UPDATE pending SET queued_ms=queued_ms-?1, tried_ms=0", [OLDEST_MS]).unwrap();
+        fake.answers.lock().push_back(Ok((503, vec![])));
+        block(c.flush_pending()).unwrap();
+        assert_eq!(head(), None, "two weeks old");
+        assert_eq!(c.unsent().unwrap(), Unsent { waiting: 0, dropped: 1 });
+    }
+
+    #[test]
+    fn a_long_queue_is_posted() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        fake.answer(OK);
+        fake.answer(OK);
+        let ids: Vec<String> = (0..300).map(|i| format!("song-{i}")).collect();
+        block(c.write(Write::SaveQueue { ids: ids.clone(), current: Some("song-1".into()), position_ms: 5 })).unwrap();
+        block(c.write(Write::SaveQueue { ids: ids[..2].to_vec(), current: None, position_ms: 0 })).unwrap();
+        let sent = fake.sent.lock().clone();
+        assert_eq!(sent.len(), 1, "the short one is a GET");
+        assert!(sent[0].url.contains("/rest/savePlayQueue?u=u&t=") && sent[0].url.ends_with("&f=json"), "signed in the URL: {}", sent[0].url);
+        let form = sent[0].form.as_deref().unwrap();
+        assert!(form.starts_with("id=song-0&id=song-1&") && form.ends_with("&id=song-299&current=song-1&position=5"), "{form}");
+        assert!(fake.asked()[1].ends_with("&id=song-0&id=song-1&position=0"));
+    }
+
     #[test]
     fn a_portal_page_keeps_the_queue() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         c.core.pending_add("star", &[]).unwrap();
         fake.answer("<html>sign in</html>");
         block(c.flush_pending()).unwrap();
+        assert_eq!(c.core.pending_list().unwrap().len(), 1);
+
+        // Sent now, a write the portal answers is queued, not lost.
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        fake.answer("<html>sign in</html>");
+        block(c.write(Write::Star { kind: Starrable::Song, id: "s".into(), on: true })).unwrap();
         assert_eq!(c.core.pending_list().unwrap().len(), 1);
     }
 

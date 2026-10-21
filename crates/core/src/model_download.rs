@@ -67,7 +67,7 @@ fn fetch(transport: &dyn nori_net::transport::Transport, url: &str, total: u64, 
         }
         let from = out.len() as u64;
         let to = (from + PIECE).min(total) - 1;
-        let ask = nori_net::transport::Exchange { url: url.to_string(), headers: [("Range".to_string(), format!("bytes={from}-{to}"))].into(), json: None, timeout_ms: PIECE_TIMEOUT_MS };
+        let ask = nori_net::transport::Exchange { url: url.to_string(), headers: [("Range".to_string(), format!("bytes={from}-{to}"))].into(), timeout_ms: PIECE_TIMEOUT_MS, ..Default::default() };
         let r = nori_net::transport::block_on(transport.send(ask)).map_err(|e| e.to_string())?;
         match r.status {
             206 if !r.body.is_empty() => out.extend_from_slice(&r.body),

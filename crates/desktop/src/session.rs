@@ -228,6 +228,7 @@ impl Session {
                 devices: CpalOutput::devices(),
                 device: own::text(own::DEVICE).unwrap_or_default(),
                 syncing: false,
+                unsent: client.unsent().map_or((0, 0), |u| (u.waiting, u.dropped)),
                 rules: core.rules(),
             })));
         });

@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS items(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(text, tokenize='unicode61 remove_diacritics 2', prefix='2 3');
 CREATE TABLE IF NOT EXISTS cache(server TEXT NOT NULL, key TEXT NOT NULL, body BLOB NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS kv(server TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(server, key)) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS pending(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, endpoint TEXT NOT NULL, params TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pending(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, endpoint TEXT NOT NULL, params TEXT NOT NULL, queued_ms INTEGER NOT NULL DEFAULT 0, tries INTEGER NOT NULL DEFAULT 0, tried_ms INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS downloads(server TEXT NOT NULL, id TEXT NOT NULL, json TEXT NOT NULL, ts INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS download_beats(server TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY(server, id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS autoeq(rowid INTEGER PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL, form TEXT NOT NULL, target TEXT NOT NULL, path TEXT NOT NULL);
@@ -91,6 +91,7 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
     drop_old_analysis(&c)?;
     c.execute_batch(APP_SCHEMA)?;
     c.execute_batch(SCHEMA)?;
+    add_pending_tries(&c)?;
     drop_old_lyrics(&c)?;
     drop_old_pages(&c)?;
     Ok(c)
@@ -125,6 +126,18 @@ fn drop_old_analysis(c: &Connection) -> rusqlite::Result<()> {
     let have: Vec<String> = c.prepare("PRAGMA table_info(track_analysis)")?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
     if !have.is_empty() && !have.iter().any(|h| h == "outro_grid_source") {
         c.execute_batch("DROP TABLE track_analysis")?;
+    }
+    Ok(())
+}
+
+/// Adds the replay bookkeeping to a `pending` table from before it; its rows count as queued now.
+fn add_pending_tries(c: &Connection) -> rusqlite::Result<()> {
+    let have: Vec<String> = c.prepare("PRAGMA table_info(pending)")?.query_map([], |r| r.get(1))?.collect::<rusqlite::Result<_>>()?;
+    if !have.iter().any(|h| h == "queued_ms") {
+        c.execute_batch(&format!(
+            "ALTER TABLE pending ADD COLUMN queued_ms INTEGER NOT NULL DEFAULT 0; ALTER TABLE pending ADD COLUMN tries INTEGER NOT NULL DEFAULT 0; ALTER TABLE pending ADD COLUMN tried_ms INTEGER NOT NULL DEFAULT 0; UPDATE pending SET queued_ms={};",
+            now_ms()
+        ))?;
     }
     Ok(())
 }
@@ -349,6 +362,18 @@ mod tests {
         assert!(cols.iter().any(|c| c == "outro_grid_source"));
         let rows: i64 = c.query_row("SELECT count(*) FROM track_analysis", [], |r| r.get(0)).unwrap();
         assert_eq!(rows, 0);
+
+        // Queued writes from before the replay bookkeeping count as queued now, untried.
+        let dir = nori_testdir::TempDir::new("db-pending");
+        let path = dir.join("pending.db").to_string_lossy().into_owned();
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch("CREATE TABLE pending(rowid INTEGER PRIMARY KEY, server TEXT NOT NULL, endpoint TEXT NOT NULL, params TEXT NOT NULL); INSERT INTO pending VALUES(1,'s','star','[]');").unwrap();
+        }
+        let before = now_ms();
+        let c = open(&path, "s").unwrap();
+        let (queued, tries): (i64, i64) = c.query_row("SELECT queued_ms, tries FROM pending", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert!(queued >= before && tries == 0);
 
         // Old lyrics keys are dropped for this server only.
         let dir = nori_testdir::TempDir::new("db-lyrics");

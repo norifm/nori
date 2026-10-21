@@ -105,14 +105,26 @@ impl Server {
         u.push_str(endpoint);
         u.push('?');
         u.push_str(&self.auth);
-        for (k, v) in params {
+        if !params.is_empty() {
             u.push('&');
-            u.push_str(k);
-            u.push('=');
-            encode(&mut u, v);
+            u.push_str(&form(params));
         }
         u
     }
+}
+
+/// `params` encoded as a query string or form body.
+pub fn form(params: &[(String, String)]) -> String {
+    let mut f = String::new();
+    for (k, v) in params {
+        if !f.is_empty() {
+            f.push('&');
+        }
+        f.push_str(k);
+        f.push('=');
+        encode(&mut f, v);
+    }
+    f
 }
 
 #[cfg(test)]

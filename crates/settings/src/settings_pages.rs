@@ -158,6 +158,8 @@ pub enum RowItem {
     LyricsSource { index: u32 },
     /// The compressor's gain reduction, read from the player while the page is on screen.
     CompressionMeter,
+    /// Changes made here the server has not taken: queued, and dropped since the profile opened.
+    Unsent { waiting: u32, dropped: u32 },
 }
 
 /// One row: what it is, whether it is on the page now, whether it acts now, and its depth under the
@@ -199,6 +201,9 @@ pub struct PageFacts {
     pub download_songs: u32,
     /// A cache is being cleared.
     pub storage_busy: bool,
+    /// Changes waiting for the server, and dropped unsent since the profile opened.
+    pub unsent_waiting: u32,
+    pub unsent_dropped: u32,
 }
 
 /// The pages `client` has, in the order the root lists them; those the profile opens.
@@ -480,6 +485,7 @@ impl Page<'_> {
         // What is kept and what clears it, no settings: the cache's size is streaming's.
         let mut storage = vec![
             row(RowItem::Stored),
+            row(RowItem::Unsent { waiting: f.unsent_waiting, dropped: f.unsent_dropped }).shown(f.unsent_waiting > 0 || f.unsent_dropped > 0),
             clear(SettingsAction::ClearStream, f.stream_bytes),
             clear(SettingsAction::ClearCovers, f.cover_bytes),
             clear(SettingsAction::ClearLyrics, f.lyrics_bytes),
@@ -690,6 +696,19 @@ mod tests {
             let streaming = data.iter().find(|s| s.id == SectionId::Streaming).unwrap();
             assert!(streaming.rows.iter().any(|r| matches!(&r.item, RowItem::Setting { spec, .. } if spec.name == "cacheMb")), "{client:?}");
         }
+    }
+
+    #[test]
+    fn unsent_changes_show_when_there_are_some() {
+        let d = StoredPrefs::default();
+        let s = state(&d, Output::default(), &model());
+        let unsent = |f: PageFacts| {
+            let data = page(SettingsPage::Data, SettingsClient::Phone, &d, &s, &f);
+            data.into_iter().flat_map(|s| s.rows).find(|r| matches!(r.item, RowItem::Unsent { .. })).map(|r| (r.shown, r.item))
+        };
+        assert_eq!(unsent(facts()).map(|r| r.0), Some(false));
+        assert_eq!(unsent(PageFacts { unsent_waiting: 3, ..facts() }), Some((true, RowItem::Unsent { waiting: 3, dropped: 0 })));
+        assert_eq!(unsent(PageFacts { unsent_dropped: 1, ..facts() }), Some((true, RowItem::Unsent { waiting: 0, dropped: 1 })));
     }
 
     #[test]
