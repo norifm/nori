@@ -80,7 +80,7 @@ internal fun SongListPage(
         queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
         actions = {
             pageActions()
-            if (any) MoreCircle(songsMore(songs, done, actions))
+            if (any) MoreButton(songsMore(songs, done, actions))
         },
         content = content,
     )
@@ -204,7 +204,7 @@ private fun LateMore(shown: Boolean, entries: @Composable () -> List<Pair<String
             visible = shown,
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 220)),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 120)),
-        ) { MoreCircle(entries()) }
+        ) { MoreButton(entries()) }
     }
 }
 
@@ -270,7 +270,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
         actions = {
             if (account) {
                 val albumStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ALBUM, album.id, album.starred)
-                FavoriteCircle(albumStarred) { actions.starAlbum(album.id, !albumStarred); Unit }
+                FavoriteButton(albumStarred) { actions.starAlbum(album.id, !albumStarred) }
             }
             LateMore(detail != null) {
                 listOfNotNull(
@@ -350,7 +350,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         actions = {
             if (account) {
                 val artistStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ARTIST, artist.id, artist.starred)
-                FavoriteCircle(artistStarred) { actions.starArtist(artist.id, !artistStarred); Unit }
+                FavoriteButton(artistStarred) { actions.starArtist(artist.id, !artistStarred) }
             }
             LateMore(ui != null) {
                 listOfNotNull(
@@ -476,7 +476,7 @@ private fun PlaylistPage(
             // The home page that shows them is the account's.
             val account = LocalRules.current.account
     val downloads = LocalRules.current.downloads
-            if (account) FavoriteCircle(pinned) { settings.pin(id, !pinned); Unit }
+            if (account) FavoriteButton(pinned) { settings.pin(id, !pinned) }
             LateMore(detail != null) {
                 listOfNotNull(
                     say.addToQueue to { actions.enqueue(detail!!.songs) },

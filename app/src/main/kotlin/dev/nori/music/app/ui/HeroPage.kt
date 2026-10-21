@@ -258,7 +258,7 @@ fun HeroPage(
                         dev.nori.music.ffi.library.HeroPress.SHUFFLE_OFF -> player.toggleShuffle()
                     }
                 }
-                CircleButton(
+                GlyphButton(
                     Icons.Filled.Shuffle, say.shuffle,
                     enabled = buttons.shuffleEnabled, lit = buttons.shuffleLit,
                     onClick = { press(buttons.shufflePress, onShuffle) },

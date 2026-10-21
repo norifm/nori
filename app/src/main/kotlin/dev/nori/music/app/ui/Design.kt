@@ -542,7 +542,7 @@ fun Caption(text: String, modifier: Modifier = Modifier, align: TextAlign = Text
     )
 }
 
-/** How tall a page's action buttons stand, round ([CircleButton]) or a pill ([PillButton]), so a row of them lines up. */
+/** How tall a page's [PillButton] stands. */
 private val ACTION_SIDE = 46.dp
 
 /**
@@ -907,37 +907,25 @@ fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Bo
 }
 
 /**
- * A round, softly filled button: the small actions either side of a page's Play pill.
- *
- * [lit] fills the whole disc with the page's accent and its glyph with the accent's own ink - that is
- * Shuffle while shuffle is on, and it has to read as pressed at a glance. A stronger plate was not
- * enough: on a paper-white page it came out as a few percent more grey. [selected] is the quieter
- * plate, under a heart that is on, where the filled glyph already says it. Plate strength tracks page
- * lightness continuously (same reason as [PillButton]) so a swipe onto white does not snap.
- *
- * [iconModifier] reaches the glyph alone, for an animation that must leave the disc it sits in still.
+ * A bare glyph that does something: the small actions either side of a page's Play pill. No plate: the
+ * glyph is in the page's ink, and in its accent while [lit] (Shuffle while shuffle is on, a stamped seal).
+ * It keeps its full strength while disabled: a washed-out Shuffle looked absent while Play was not yet
+ * tappable. [iconModifier] reaches the glyph alone, for an animation of it.
  */
 @Composable
-fun CircleButton(
+fun GlyphButton(
     icon: ImageVector, description: String, modifier: Modifier = Modifier,
-    enabled: Boolean = true, selected: Boolean = false, lit: Boolean = false,
-    iconModifier: Modifier = Modifier, iconTint: Color = Color.Unspecified, onClick: () -> Unit,
+    enabled: Boolean = true, lit: Boolean = false, iconModifier: Modifier = Modifier, onClick: () -> Unit,
 ) {
-    // Keep the plate and icon at full strength while disabled: washing them out made Shuffle look
-    // absent on a dark page, so the row still "popped" when Play became tappable. The plates are the
-    // look's (nori_look::dress): lighter on paper than on a dark page, not heavier - at 16 % black the
-    // heart and "..." discs read as grey slabs on a white page.
     val look = LocalLook.current
-    val plate = look.color(when { lit -> CoverLook.ACCENT; selected -> CoverLook.CIRCLE_SELECTED; else -> CoverLook.CIRCLE_PLATE })
-    Surface(
-        onClick = onClick, enabled = enabled, shape = androidx.compose.foundation.shape.CircleShape,
-        color = plate,
-        contentColor = look.color(if (lit) CoverLook.ON_PRIMARY else CoverLook.TINT_INK),
-        modifier = modifier.size(ACTION_SIDE),
+    Box(
+        modifier.size(GLYPH_TARGET).clickable(
+            enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, interactionSource = null,
+            indication = androidx.compose.material3.ripple(bounded = false, radius = GLYPH_TARGET / 2), onClick = onClick,
+        ),
+        Alignment.Center,
     ) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) {
-            Icon(icon, description, Modifier.size(20.dp).then(iconModifier), tint = if (iconTint.isSpecified) iconTint else LocalContentColor.current)
-        }
+        LookIcon(icon, description, Modifier.size(24.dp).then(iconModifier)) { look.color(if (lit) CoverLook.ACCENT else CoverLook.ON) }
     }
 }
 
@@ -989,31 +977,27 @@ fun FavoriteSeal(
     }
 }
 
-/** Favorite as a [CircleButton], the seal in the page's accent when it is one, stamped as [FavoriteSeal] is. */
+/** Favorite as a [GlyphButton], the seal in the page's accent when it is one, stamped as [FavoriteSeal] is. */
 @Composable
-fun FavoriteCircle(starred: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun FavoriteButton(starred: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val stamp = rememberStamp()
-    // Only the seal moves; the plate holds its place.
-    CircleButton(
+    GlyphButton(
         if (starred) Kanji.Sealed else Kanji.Seal,
         if (starred) say.removeFromFavourites else say.favourite,
-        modifier,
+        modifier, lit = starred,
         iconModifier = Modifier.graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value },
-        iconTint = if (starred) LocalLook.current.color(CoverLook.ACCENT) else Color.Unspecified,
         onClick = { if (!starred) stamp.down(); onClick() },
     )
 }
 
-/** The circle that holds whatever did not fit beside a page's Play button. */
+/** The ⋯ that holds whatever did not fit beside a page's Play button. */
 @Composable
-fun MoreCircle(items: List<Pair<String, () -> Unit>>, modifier: Modifier = Modifier) {
-    val open = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+fun MoreButton(items: List<Pair<String, () -> Unit>>, modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
     Box(modifier) {
-        CircleButton(Icons.Filled.MoreHoriz, say.more) { open.value = true }
-        androidx.compose.material3.DropdownMenu(open.value, { open.value = false }) {
-            items.forEach { (label, action) ->
-                androidx.compose.material3.DropdownMenuItem({ Text(label) }, { action(); open.value = false })
-            }
+        GlyphButton(Icons.Filled.MoreHoriz, say.more) { open = true }
+        NoriPopover(open, { open = false }) {
+            items.forEach { (label, action) -> PopoverItem(label) { action(); open = false } }
         }
     }
 }
@@ -1035,6 +1019,9 @@ fun reduceMotion(): Boolean {
  * or pause, a seek, a touch), so its seek bar, lyrics and playing bars do not run on their own.
  */
 val LocalEinkScreen = androidx.compose.runtime.compositionLocalOf { false }
+
+/** How much room a [GlyphButton] takes for a finger. */
+private val GLYPH_TARGET = 48.dp
 
 /**
  * How fast every animation in the app runs. Compose scales each one by whatever MotionDurationScale is

@@ -142,9 +142,9 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
             // What was played and what is kept on the phone: places rather than kinds of music, so buttons
             // in the corner rather than rows of the list.
             LargeTitle(say.library) {
-                Row(Modifier.padding(end = Space.gutter - Space.tight), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row {
                     for (s in listOf(LibrarySection.DOWNLOADS, LibrarySection.HISTORY)) {
-                        if (s in rules.sections) OutlineCircleButton(sectionIcon(s), say.librarySection(s)) { nav.librarySection(s) }
+                        if (s in rules.sections) GlyphButton(sectionIcon(s), say.librarySection(s)) { nav.librarySection(s) }
                     }
                 }
             }
@@ -195,14 +195,6 @@ private val ALBUM_GAP = 12.dp
  */
 private fun albumColumns(wide: Boolean, width: androidx.compose.ui.unit.Dp): Int =
     if (!wide) 2 else (((width - Space.gutter * 2 + ALBUM_GAP) / (ALBUM_MIN + ALBUM_GAP)).toInt()).coerceAtLeast(1)
-
-/** A round button drawn as its outline alone: the page's own places, quieter than the plates on a record's page. */
-@Composable
-private fun OutlineCircleButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) =
-    androidx.compose.material3.Surface(
-        onClick = onClick, shape = androidx.compose.foundation.shape.CircleShape, color = androidx.compose.ui.graphics.Color.Transparent,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.size(38.dp),
-    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, description, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface) } }
 
 /** What each section is drawn with. */
 @Composable

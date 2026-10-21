@@ -157,8 +157,8 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             mosaic = m.covers,
             art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp, large = true) },
             actions = {
-                if (m.refreshable) CircleButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
-                MoreCircle(songsMore(m.songs, list.downloaded, actions))
+                if (m.refreshable) GlyphButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
+                MoreButton(songsMore(m.songs, list.downloaded, actions))
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {
@@ -206,7 +206,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
             remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist },
             remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) },
             page.songs, list.downloaded, from, actions,
-            pageActions = { CircleButton(Icons.Filled.Edit, say.edit) { nav.smartEdit(id) } },
+            pageActions = { GlyphButton(Icons.Filled.Edit, say.edit) { nav.smartEdit(id) } },
         ) {
             songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }

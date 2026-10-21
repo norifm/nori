@@ -296,9 +296,8 @@ private fun Request(p: Pending, coverUrl: String?, decides: Boolean, ink: ColorP
             if (p.provider && decides) LookText(words(R.string.jam_will_download), quiet, style = MaterialTheme.typography.bodySmall, maxLines = 2)
         }
         if (decides) {
-            CircleButton(Icons.Filled.Close, words(R.string.jam_decline), Modifier.size(36.dp)) { vm.accept(p.request, false) }
-            Spacer(Modifier.width(10.dp))
-            CircleButton(Icons.Filled.Check, words(R.string.jam_accept), Modifier.size(36.dp), lit = true) { vm.accept(p.request, true) }
+            GlyphButton(Icons.Filled.Close, words(R.string.jam_decline)) { vm.accept(p.request, false) }
+            GlyphButton(Icons.Filled.Check, words(R.string.jam_accept)) { vm.accept(p.request, true) }
         }
     }
 }
