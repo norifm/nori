@@ -68,9 +68,9 @@ sealed interface SettingRow {
     /** [level]: dragged through the core's in-place level edit instead of by [name]. */
     data class Slider(val name: String, val label: String, val value: Float, val min: Float, val max: Float, val centred: Boolean, val level: EqLevel?) : SettingRow
     /**
-     * The four seasons' themes as tiles, each in its own colors, and following the calendar as a switch
-     * under them: [chosen] is the core's value, [following] the value that follows, [now] the season the
-     * calendar is in (as [tiles] index), and [follow] what following says.
+     * The four seasons' themes as tiles, each with its paper, accent and on dots, and following the calendar
+     * as a switch under them: [chosen] is the core's value, [following] the value that follows, [now] the
+     * season the calendar is in (as [tiles] index), and [follow] the next change while following.
      */
     data class Seasons(
         val key: String, val name: String, val title: String, val tiles: List<SeasonTile>, val chosen: String,
@@ -94,7 +94,7 @@ sealed interface SettingRow {
 }
 
 /** One season's tile: its value, its name, and the colors of its theme in the mode the app is in (ARGB). */
-data class SeasonTile(val season: dev.nori.music.ffi.look.Season, val value: String, val label: String, val page: Int, val accent: Int)
+data class SeasonTile(val season: dev.nori.music.ffi.look.Season, val value: String, val label: String, val page: Int, val accent: Int, val on: Int)
 
 data class SettingsSection(val title: String, val rows: List<SettingRow>)
 
@@ -579,15 +579,14 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             val season = dev.nori.music.ffi.settings.seasonOf(dev.nori.music.ffi.settings.ThemeSeason.valueOf(o.value)) ?: return@mapNotNull null
             // Its dark palette rather than black: on black every tile would be the same.
             val c = dev.nori.music.ffi.look.palette(season, 1u, 1u, false, dark, false)
-            SeasonTile(season, o.value, o.label, c.page.toInt(), c.accent.toInt())
+            SeasonTile(season, o.value, o.label, c.page.toInt(), c.accent.toInt(), c.on.toInt())
         }
         val now = dev.nori.music.ffi.look.seasonNow(today.monthValue.toUInt(), today.dayOfMonth.toUInt(), southern)
         val following = value == options.first().value
-        val follow = if (!following) str(R.string.settings_season_fixed) else {
+        val follow = if (!following) "" else {
             val next = java.time.MonthDay.of(now.nextMonth.toInt(), now.nextDay.toInt())
             val date = java.time.format.DateTimeFormatter.ofPattern(android.text.format.DateFormat.getBestDateTimePattern(java.util.Locale.getDefault(), "dMMMM"))
-            val label = { s: dev.nori.music.ffi.look.Season -> tiles.first { it.season == s }.label }
-            str(R.string.settings_season_now, label(now.season), label(now.next), next.atYear(today.year).format(date))
+            str(R.string.settings_season_next, tiles.first { it.season == now.next }.label, next.atYear(today.year).format(date))
         }
         return SettingRow.Seasons(key, "season", title, tiles, value, options.first().value, tiles.indexOfFirst { it.season == now.season }, options.first().label, follow)
     }

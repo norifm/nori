@@ -174,14 +174,13 @@
     <string name="settings_theme_dark">Dark</string>
     <string name="settings_amoled">Pure black</string>
     <string name="settings_season">Season</string>
-    <string name="settings_season_follow">Follow the seasons</string>
+    <string name="settings_season_follow">Follow the calendar</string>
     <string name="settings_season_spring">Spring</string>
     <string name="settings_season_summer">Summer</string>
     <string name="settings_season_autumn">Autumn</string>
     <string name="settings_season_winter">Winter</string>
-    <!-- Following the seasons: "Autumn now · Winter from November 7". -->
-    <string name="settings_season_now">%1$s now · %2$s from %3$s</string>
-    <string name="settings_season_fixed">Changes with the calendar</string>
+    <!-- Following the calendar: "Winter comes in on 7 November". -->
+    <string name="settings_season_next">%1$s comes in on %2$s</string>
     <string name="settings_cover_colours">Colors from the cover</string>
     <string name="settings_cover_colours_pages">Pages</string>
     <string name="settings_cover_colours_player">Player</string>

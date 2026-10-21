@@ -4,7 +4,8 @@ import android.content.Intent
 import android.media.audiofx.AudioEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -105,21 +106,12 @@ private fun Modifier.spotlight(key: String?): Modifier {
 }
 
 @Composable
-fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = true, key: String? = null, onChange: (Boolean) -> Unit) {
-    Column {
-    Row(
-        Modifier.fillMaxWidth().spotlight(key).clickable(enabled) { onChange(!value) }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f).padding(end = 14.dp).alpha(if (enabled) 1f else DIMMED)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        NoriSwitch(value, onChange, enabled = enabled)
-    }
-    Hairline(startIndent = 16.dp)
-    }
+fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = true, key: String? = null, divider: Boolean = true, onChange: (Boolean) -> Unit) {
+    GroupRow(
+        title, if (enabled) ({ onChange(!value) }) else null, Modifier.spotlight(key).alpha(if (enabled) 1f else DIMMED),
+        subtitle = detail, divider = divider,
+        trailing = { NoriSwitch(value, if (enabled) onChange else null) },
+    )
 }
 
 /** One setting with a few values as chips, the one it has lit; a tap chooses another. */
@@ -163,47 +155,50 @@ private fun Flags(row: SettingRow.Flags, onChange: (String) -> Unit) {
 }
 
 /**
- * The four themes as tiles, each its season's page with its kanji in its accent, the one worn ringed in
- * that accent; under them, following the calendar as a switch. Picking a tile stops following; following
- * again lets the calendar choose.
+ * The four seasons as tiles on the page: each its kanji over three dots (its paper, accent and "on"), the one
+ * worn raised on the surface. Picking a tile stops following; following again lets the calendar choose.
+ * The names are for TalkBack and search, not drawn.
  */
 @Composable
 private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     val following = row.chosen == row.following
     val worn = if (following) row.now else row.tiles.indexOfFirst { it.value == row.chosen }
-    // Across a wide window four upright tiles would fill the screen's height; there they lie on their side.
-    val tileRatio = if (LocalWide.current) WIDE_TILE else UPRIGHT_TILE
     Column(Modifier.spotlight(row.key)) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp), Arrangement.spacedBy(10.dp)) {
+        GroupLabel(row.title)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), Arrangement.spacedBy(10.dp)) {
             row.tiles.forEachIndexed { i, t ->
-                val accent = androidx.compose.ui.graphics.Color(t.accent)
-                val ring by androidx.compose.animation.core.animateDpAsState(if (i == worn) 2.dp else androidx.compose.ui.unit.Dp.Hairline, label = "season ring")
-                val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    androidx.compose.foundation.layout.Box(
-                        Modifier.fillMaxWidth().aspectRatio(tileRatio).clip(shape)
-                            .background(androidx.compose.ui.graphics.Color(t.page))
-                            .border(ring, if (i == worn) accent else MaterialTheme.colorScheme.outlineVariant, shape)
-                            .clickable { if (t.value != row.chosen) onChange(t.value) }
-                            .semantics { contentDescription = t.label; selected = i == worn },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(Kanji.seasons[t.season.ordinal], null, Modifier.size(34.dp), tint = accent)
+                val chosen = i == worn
+                Surface(
+                    onClick = { if (t.value != row.chosen) onChange(t.value) }, shape = TileShape,
+                    color = if (chosen) scheme.surfaceContainer else Color.Transparent,
+                    border = if (chosen) hairlineBorder() else null,
+                    modifier = Modifier.weight(1f).height(88.dp).semantics { contentDescription = t.label; selected = chosen },
+                ) {
+                    Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
+                        Icon(Kanji.seasons[t.season.ordinal], null, Modifier.size(30.dp), tint = if (chosen) scheme.onSurface else scheme.onSurfaceVariant)
+                        Row(Modifier.padding(top = 8.dp), Arrangement.spacedBy(5.dp)) {
+                            SeasonDot(t.page, hairline = true)
+                            SeasonDot(t.accent)
+                            SeasonDot(t.on)
+                        }
                     }
-                    Text(
-                        t.label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium,
-                        color = if (i == worn) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
                 }
             }
         }
-        Toggle(row.followTitle, row.follow, following) { on -> onChange(if (on) row.following else row.tiles[row.now].value) }
+        GroupCard(Modifier.padding(top = 10.dp)) {
+            Toggle(row.followTitle, row.follow, following, divider = false) { on -> onChange(if (on) row.following else row.tiles[row.now].value) }
+        }
     }
 }
 
-private const val UPRIGHT_TILE = 0.84f
-private const val WIDE_TILE = 2f
+@Composable
+private fun SeasonDot(argb: Int, hairline: Boolean = false) {
+    Box(
+        Modifier.size(8.dp).clip(CircleShape).background(Color(argb))
+            .then(if (hairline) Modifier.border(hairlineBorder(), CircleShape) else Modifier),
+    )
+}
 
 /** What a setting the app is going to ignore looks like: still there, still readable, plainly not live. */
 private const val DIMMED = 0.38f
@@ -222,21 +217,6 @@ private fun Choice(row: SettingRow.Choice, onChange: (String) -> Unit) {
     }
 }
 
-/**
- * The rounded plate the rows of a group sit on. The content colour is spelled out: Material resolves
- * it to Unspecified for any colour it does not recognise as one of its own roles, and text inside then
- * renders almost black - which is why every setting's title was dimmer than its own description.
- */
-@Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        shape = CardShape,
-        color = LocalLook.current.color(dev.nori.music.look.CoverLook.FORM),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-    ) { Column(content = content) }
-}
-
 /** Each group's icon; the groups themselves, their order and their words are SettingsPages.kt's. */
 private fun groupIcon(id: String): ImageVector = when (id) {
     "servers" -> Icons.Outlined.Dns
@@ -250,19 +230,11 @@ private fun groupIcon(id: String): ImageVector = when (id) {
     else -> Icons.Outlined.AutoAwesome
 }
 
-/**
- * A titled block of rows on its own plate. A group page used to be one plate of twenty rows, which is
- * where things got lost; a few short, named sections are what make a page scannable.
- */
+/** A titled group: small-caps label over a card of rows. */
 @Composable
 private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Text(
-        title.uppercase(),
-        Modifier.padding(start = 30.dp, end = 30.dp, top = 16.dp, bottom = 2.dp),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    SettingsCard(content)
+    GroupLabel(title)
+    GroupCard(content = content)
 }
 
 /** A row with a line of text and a button at its end: a count, an action. */
@@ -485,11 +457,11 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     drag?.let { d -> if (!d.active && d.shown == order) androidx.compose.runtime.SideEffect { drag = null } }
     var keying by remember { mutableStateOf<SettingRow.Ranked?>(null) }
     NoriDialog(keying, { keying = null }) { row -> KeyDialog(row, { keying = null }) { v -> vm.set(row.keyName, v); keying = null } }
-    Section(section.title) {
-        // Each row under a key of its own, so a ranked row moved in the core's order is the same row, its
-        // glide and lift carried with it: keyed inside the `when` instead, a moved row began again from
-        // nothing and was drawn at its new place in one frame.
-        section.rows.forEachIndexed { at, row -> androidx.compose.runtime.key((row as? SettingRow.Ranked)?.id ?: "#$at") {
+    // Each row under a key of its own, so a ranked row moved in the core's order is the same row, its
+    // glide and lift carried with it: keyed inside the `when` instead, a moved row began again from
+    // nothing and was drawn at its new place in one frame.
+    @Composable
+    fun RowOf(at: Int, row: SettingRow, divider: Boolean) = androidx.compose.runtime.key((row as? SettingRow.Ranked)?.id ?: "#$at") {
             when (row) {
                 is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on -> vm.set(row.name, on.toString()) }
                 is SettingRow.Choice -> Choice(row) { v -> vm.set(row.name, v) }
@@ -646,8 +618,11 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     }
                 }
             }
-        } }
     }
+    // The season picker stands on the page above the group's card.
+    val (seasons, rows) = section.rows.partition { it is SettingRow.Seasons }
+    seasons.forEachIndexed { at, row -> RowOf(at, row, divider = false) }
+    if (rows.isNotEmpty()) Section(section.title) { rows.forEachIndexed { at, row -> RowOf(at, row, divider = at < rows.lastIndex) } }
 }
 
 /** A ranked row held: [id], the order when it was picked up ([from]), the place it would go ([to]), and whether the finger is still on it. */
