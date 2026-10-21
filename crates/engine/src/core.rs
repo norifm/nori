@@ -320,6 +320,10 @@ impl ByteSource for Resolving {
     fn forget(&self, url: &str) -> bool {
         self.bytes.forget(url)
     }
+
+    fn files(&self, url: &str) -> Option<Vec<std::path::PathBuf>> {
+        self.bytes.files(url)
+    }
 }
 
 impl Resolving {

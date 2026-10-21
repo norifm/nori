@@ -87,6 +87,7 @@ struct Java {
     cancel: JMethodID,
     open_live: JMethodID,
     downloaded: JMethodID,
+    streamed: JMethodID,
     kept: JMethodID,
     busy: JMethodID,
     disk: JMethodID,
@@ -175,6 +176,7 @@ fn look_up(env: &mut JNIEnv) -> jni::errors::Result<Java> {
         cancel: env.get_method_id(&bridge, "cancel", "(J)V")?,
         open_live: env.get_method_id(&bridge, "openLive", "(Ljava/lang/String;)Ldev/nori/music/playback/RustBody;")?,
         downloaded: env.get_method_id(&bridge, "downloaded", "(Ljava/lang/String;)[Ljava/lang/String;")?,
+        streamed: env.get_method_id(&bridge, "streamed", "(Ljava/lang/String;)[Ljava/lang/String;")?,
         kept: env.get_method_id(&bridge, "kept", "(Ljava/lang/String;)Z")?,
         busy: env.get_method_id(&bridge, "busy", "(Ljava/lang/String;)Z")?,
         disk: env.get_method_id(&bridge, "disk", "(Ljava/lang/String;)Ljava/lang/String;")?,
@@ -937,6 +939,13 @@ impl ByteSource for JavaBytes {
         log(&format!("{}: the copy is cut short and fetched anew ({said})", self.key));
         true
     }
+
+    fn files(&self, _url: &str) -> Option<Vec<PathBuf>> {
+        if self.key.is_empty() {
+            return None;
+        }
+        cache_files(&self.bridge, &self.key, |j| j.streamed)
+    }
 }
 
 /// `RustBridge.open` from byte `from` (download, then stream cache, then network; what is read is cached
@@ -1061,15 +1070,14 @@ impl Entry for Counted {
     }
 }
 
-/// `RustBridge.disk(key)` / `forget(key)`: Kotlin's description of the stream cache entry (and, for
-/// `forget`, removes it). None when Kotlin could not be asked.
-/// The files that hold all of download `key`, in order; None while any of it is missing.
-fn downloaded(bridge: &Bridge, key: &str) -> Option<Vec<PathBuf>> {
+/// `RustBridge.downloaded(key)` / `streamed(key)`: the files that hold all of `key` in the download or
+/// stream cache, in order; None while any of it is missing.
+fn cache_files(bridge: &Bridge, key: &str, method: fn(&Java) -> JMethodID) -> Option<Vec<PathBuf>> {
     let (java, mut env) = env()?;
     let files = env.with_local_frame(4, |env| -> jni::errors::Result<Option<Vec<PathBuf>>> {
         let key = env.new_string(key)?;
-        // SAFETY: RustBridge.downloaded(String): String[], looked up with this signature.
-        let files = unsafe { env.call_method_unchecked(bridge.obj(), java.downloaded, ReturnType::Array, &[JValue::Object(&key).as_jni()]) }?.l()?;
+        // SAFETY: RustBridge.downloaded(String) / streamed(String): String[], looked up with this signature.
+        let files = unsafe { env.call_method_unchecked(bridge.obj(), method(java), ReturnType::Array, &[JValue::Object(&key).as_jni()]) }?.l()?;
         if files.is_null() {
             return Ok(None);
         }
@@ -1086,6 +1094,8 @@ fn downloaded(bridge: &Bridge, key: &str) -> Option<Vec<PathBuf>> {
     files.ok().flatten()
 }
 
+/// `RustBridge.disk(key)` / `forget(key)`: Kotlin's description of the stream cache entry (and, for
+/// `forget`, removes it). None when Kotlin could not be asked.
 fn cache_words(bridge: &Bridge, key: &str, method: fn(&Java) -> JMethodID) -> Option<String> {
     let (java, mut env) = env()?;
     let words = env.with_local_frame(4, |env| -> jni::errors::Result<String> {
@@ -1220,7 +1230,7 @@ impl Library for AndroidLibrary {
         let target = client.resolve_now(id);
         let download = target.key == nori_core::stream::download_key(id.to_string());
         // A finished download is read from its files, not copied into memory.
-        if let Some(files) = download.then(|| downloaded(&self.bridge, &target.key)).flatten() {
+        if let Some(files) = download.then(|| cache_files(&self.bridge, &target.key, |j| j.downloaded)).flatten() {
             log(&format!("{id} opens from its download's {} files", files.len()));
             return Ok(Located { source: Source::File(files), hint: None, duration_ms, estimated: false, from_second: None });
         }

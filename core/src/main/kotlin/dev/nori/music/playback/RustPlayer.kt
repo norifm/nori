@@ -24,6 +24,7 @@ import androidx.media3.common.Timeline
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.cache.Cache
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dalvik.annotation.optimization.CriticalNative
@@ -135,6 +136,8 @@ internal class RustBridge(private val player: EnginePlayer) {
     fun openLive(url: String): RustBody? = player.openLive(url)
     /** The files that hold every byte of download [key], in order, for the engine to read in place; null while any is missing. */
     fun downloaded(key: String): Array<String>? = player.downloaded(key)
+    /** The same over the stream cache: asked once a song has arrived whole, to play it from disk, not memory. */
+    fun streamed(key: String): Array<String>? = player.streamed(key)
     /**
      * For the songs fetched ahead (nori-engine's one fetcher, through [open]): whether all of [key] is in the
      * stream cache, and whether the player is writing it now. Asked once per song.
@@ -1071,8 +1074,10 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         return RustBody(source, if (length == C.LENGTH_UNSET.toLong()) -1 else length) { tickets.end(ticket); loaded(-1) }
     }
 
-    internal fun downloaded(key: String): Array<String>? =
-        runCatching { AutoMixPrefetch.files(nori.sources.downloadCache, key, tail = 0) }.getOrNull()?.let { it.copyOfRange(1, it.size) }
+    internal fun downloaded(key: String): Array<String>? = wholeFiles(nori.sources.downloadCache, key)
+    internal fun streamed(key: String): Array<String>? = wholeFiles(nori.sources.streamCache, key)
+    private fun wholeFiles(cache: Cache, key: String): Array<String>? =
+        runCatching { AutoMixPrefetch.files(cache, key, tail = 0) }.getOrNull()?.let { it.copyOfRange(1, it.size) }
     internal fun kept(key: String): Boolean = runCatching { MediaSources.isWhole(nori.sources.streamCache, key) }.getOrDefault(true)
     internal fun busy(key: String): Boolean = nori.sources.beingWritten(key)
     internal fun disk(key: String): String = nori.sources.cacheWords(key)
