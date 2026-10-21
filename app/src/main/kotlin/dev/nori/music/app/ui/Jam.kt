@@ -460,19 +460,6 @@ private fun Person(m: JamMember, line: String, actions: @Composable androidx.com
     }
 }
 
-/**
- * "Start a Jam" for a page's ⋯ ([play] plays the page first), or null where none can start: jams off,
- * a server without the relay, or one already on.
- */
-@Composable
-internal fun jamStartEntry(play: () -> Unit): Pair<String, () -> Unit>? {
-    val vm: RemoteViewModel = viewModel()
-    val can by vm.canStartJam.collectAsStateWithLifecycle()
-    if (!can) return null
-    val nav = LocalNav.current
-    return words(R.string.jam_start) to { play(); vm.jamStart(); nav.player(Panel.QUEUE) }
-}
-
 /** Says a jam that could not start, wherever one was started from. */
 @Composable
 internal fun JamFailures(actions: dev.nori.music.app.vm.ActionsViewModel) {
