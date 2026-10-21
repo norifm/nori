@@ -82,6 +82,7 @@ import dev.nori.music.downloads.DownloadLines
 import androidx.compose.ui.platform.LocalContext
 import dev.nori.music.downloads.DownloadState
 import dev.nori.music.ffi.model.Song
+import dev.nori.music.ffi.transfers.DownloadSections
 import kotlinx.coroutines.flow.StateFlow
 import kotlin.math.roundToInt
 
@@ -242,6 +243,27 @@ private fun DrawScope.arc(color: Color, stroke: Dp, start: Float, sweep: Float) 
 
 // ---- the downloads screen ----
 
+/** The line under the title; its own scope, so the 1 s beat recomposes only this line. */
+@Composable
+private fun DownloadsSummary(s: DownloadSections?, plain: Boolean) {
+    // Speed and time left move every second while something downloads; the words are the core's,
+    // asked again on this beat only while the screen is seen and something is running.
+    val running = (s?.active?.size ?: 0) > 0
+    val seen = seen()
+    val beat by androidx.compose.runtime.produceState(0, running, seen) {
+        while (running && seen) { kotlinx.coroutines.delay(1_000); value++ }
+    }
+    val res = LocalContext.current.resources
+    val summary = s?.let { beat.let { _ -> DownloadLines.summary(res, it.active.size, it.queued.size, it.failed.size) } }.orEmpty()
+    AnimatedContent(
+        summary, Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = 6.dp),
+        transitionSpec = { fadeIn(tween(if (plain) 0 else 180)) togetherWith fadeOut(tween(if (plain) 0 else 120)) },
+        label = "summary",
+    ) { text ->
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+    }
+}
+
 /**
  * What is downloading, waiting, failed and finished lately, with a way to stop or retry each. The
  * rows are keyed by song, so a song moving from waiting to downloading to finished slides between the
@@ -251,13 +273,6 @@ private fun DrawScope.arc(color: Color, stroke: Dp, start: Float, sweep: Float) 
 fun DownloadsScreen(actions: ActionsViewModel) {
     val nav = LocalNav.current
     val sections by actions.downloadSections.collectAsStateWithLifecycle()
-    // Speed and time left move every second while something downloads; the words are the core's,
-    // asked again on this beat only while the screen is seen and something is running.
-    val running = (sections?.active?.size ?: 0) > 0
-    val seen = seen()
-    val beat by androidx.compose.runtime.produceState(0, running, seen) {
-        while (running && seen) { kotlinx.coroutines.delay(1_000); value++ }
-    }
     val plain = reduceMotion()
     val cover = { id: String? -> actions.cover(id, CoverSize.ROW) }
     var confirm by remember { mutableStateOf(false) }
@@ -286,15 +301,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
             }
         }
         LargeTitle(say.downloads)
-        val res = LocalContext.current.resources
-        val summary = s?.let { beat.let { _ -> DownloadLines.summary(res, it.active.size, it.queued.size, it.failed.size) } }.orEmpty()
-        AnimatedContent(
-            summary, Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = 6.dp),
-            transitionSpec = { fadeIn(tween(if (plain) 0 else 180)) togetherWith fadeOut(tween(if (plain) 0 else 120)) },
-            label = "summary",
-        ) { text ->
-            Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        }
+        DownloadsSummary(s, plain)
         // Until the lists are worked out there is nothing to say, not "no downloads" for a frame.
         if (s == null) return@Column
         LazyColumn(contentPadding = PaddingValues(bottom = Space.section + LocalChromeInset.current)) {
