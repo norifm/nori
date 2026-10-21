@@ -14,6 +14,9 @@ fn analysis_stored_or_missing() {
     let bytes: Vec<u8> = s.render().iter().flat_map(|v| v.to_le_bytes()).collect();
     let t = core.analysis_run("a".into(), bytes, s.rate as i32, 1, Encoding::Float).unwrap();
     assert_eq!(core.analysis_get("a".into()).unwrap(), Some(t.clone()));
+    assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["a".to_string(), "b".to_string()], "no vocal curve yet");
+    let curve = nori_player::automix::vocal::VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3] };
+    nori_automix::store::put_voice(&core.db.lock(), "a", &curve).unwrap();
     assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["b".to_string()]);
     core.analysis_store(TrackAnalysis { song_id: "b".into(), analysis_version: ANALYSIS_VERSION - 1, ..t.clone() }).unwrap();
     assert_eq!(core.analysis_missing(vec!["a".into(), "b".into()]).unwrap(), vec!["b".to_string()], "old version");

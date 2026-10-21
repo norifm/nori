@@ -95,13 +95,14 @@ pub fn neural_missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<St
     Ok(out)
 }
 
-/// The `ids` with no row or a row from an older analysis version, in order.
+/// The `ids` with no row, a row from an older analysis version, or no vocal curve this version reads,
+/// in order.
 pub fn missing(c: &Connection, ids: &[String]) -> rusqlite::Result<Vec<String>> {
     let mut st = c.prepare_cached("SELECT analysis_version FROM track_analysis WHERE server=sid() AND song_id=?1")?;
     let mut out = Vec::new();
     for id in ids {
         let v: Option<i32> = st.query_row([id], |r| r.get(0)).optional()?;
-        if v.is_none_or(|v| v < ANALYSIS_VERSION) {
+        if v.is_none_or(|v| v < ANALYSIS_VERSION) || get_voice(c, id)?.is_none() {
             out.push(id.clone());
         }
     }
@@ -151,5 +152,19 @@ mod tests {
             c.query_row(&format!("SELECT {} FROM track_analysis WHERE song_id=?1", names.join(" || ',' || ")), [id], |r| r.get(0)).unwrap()
         };
         assert_eq!(stored("a"), stored("b"), "written back as read");
+    }
+
+    /// A song measured before the vocal curve's format changed is measured again, so its lyrics can be
+    /// checked against its voice.
+    #[test]
+    fn an_unreadable_curve_is_measured_again() {
+        let c = nori_db::open("", "s").unwrap();
+        put(&c, &TrackAnalysis { song_id: "a".into(), analysis_version: ANALYSIS_VERSION, ..Default::default() }).unwrap();
+        let ids = ["a".to_string()];
+        assert_eq!(missing(&c, &ids).unwrap(), ids, "no curve");
+        c.execute("INSERT INTO vocal_curve(server, song_id, curve) VALUES('s', 'a', ?1)", [vec![0u8; 16]]).unwrap();
+        assert_eq!(missing(&c, &ids).unwrap(), ids, "a curve of an older format");
+        put_voice(&c, "a", &VocalCurve { fps: 10.0, t0: 0.0, level: vec![1, 2, 3] }).unwrap();
+        assert!(missing(&c, &ids).unwrap().is_empty());
     }
 }
