@@ -1,7 +1,7 @@
 //! Gradient stops that dissolve artwork into its page, as fractions of the artwork's box. Colours come
 //! from `dress`; the stops were tuned by eye against Apple Music's player.
 
-use crate::cover::MELT;
+use crate::cover::SAMPLE_SHARE;
 
 /// A gradient stop: position and alpha, both 0..1.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -15,15 +15,16 @@ const fn s(at: f32, alpha: f32) -> Stop {
     Stop { at, alpha }
 }
 
-/// Fade-out of the sleeve over its bottom band (the last [`MELT`]): eased, complete by 70 % so sharp
+/// Fade-out of the sleeve over its bottom band (the last [`crate::cover::FADE_SHARE`]): eased, complete by 70 % so sharp
 /// lines in the artwork near the bottom do not show through the blur below.
 pub const RUB_OUT: [Stop; 7] = [s(0.0, 0.0), s(0.12, 0.31), s(0.25, 0.60), s(0.40, 0.86), s(0.55, 0.97), s(0.70, 1.0), s(1.0, 1.0)];
 
 /// Opacity of the blurred copy over the sharp artwork, spanning [`SOFT_FROM`]..[`SOFT_TO`].
 pub const SOFT: [Stop; 5] = [s(0.0, 0.0), s(0.3, 0.10), s(0.6, 0.50), s(0.85, 0.92), s(1.0, 1.0)];
-/// Span of [`SOFT`] as fractions of the sleeve height.
-pub const SOFT_FROM: f32 = 1.0 - MELT * 2.2;
-pub const SOFT_TO: f32 = 1.0 - MELT * 0.55;
+/// Span of [`SOFT`] as fractions of the sleeve height, placed by [`SAMPLE_SHARE`] rather than the fade:
+/// the seam model that picks the page colours draws the blurred copy there.
+pub const SOFT_FROM: f32 = 1.0 - SAMPLE_SHARE * 2.2;
+pub const SOFT_TO: f32 = 1.0 - SAMPLE_SHARE * 0.55;
 
 /// Black shade under the status bar (alpha at the top), gone at [`STATUS_SHADE_TO`] of the height, so
 /// white icons read on pale covers.
