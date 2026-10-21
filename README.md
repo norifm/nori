@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://github.com/norifm/nori/releases/latest"><img alt="latest release" src="https://img.shields.io/github/v/release/norifm/nori?style=flat-square&label=release&color=3d6b52"></a>
   <img alt="Android · Linux · macOS · terminal · iPod" src="https://img.shields.io/badge/Android%20%C2%B7%20Linux%20%C2%B7%20macOS%20%C2%B7%20terminal%20%C2%B7%20iPod-555?style=flat-square">
-  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-555?style=flat-square"></a>
+  <a href="LICENSE"><img alt="AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-555?style=flat-square"></a>
 </p>
 
 <p align="center">
@@ -53,4 +53,4 @@ the optional native Bazel backend is described there too. Run Cargo with at most
 
 ## License
 
-MIT. See [LICENSE](LICENSE); third-party licenses are in [NOTICE](NOTICE) and in the app under Settings, About, Licenses.
+AGPL-3.0-or-later: you may use, change and sell nori, but whatever ships it or serves it over a network must publish its source under the same license. See [LICENSE](LICENSE); third-party licenses are in [NOTICE](NOTICE) and in the app under Settings, About, Licenses.
