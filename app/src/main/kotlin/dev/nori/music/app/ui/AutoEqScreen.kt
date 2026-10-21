@@ -33,10 +33,7 @@ fun AutoEqScreen(vm: SettingsViewModel) {
     val prefs by vm.prefs.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-            Text(say.headphonePresets, style = MaterialTheme.typography.headlineSmall)
-        }
+        BackTitle(say.headphonePresets)
         if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
         ui.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
         ui.applied?.let { Text(androidx.compose.runtime.remember(it) { say.autoeqApplied(it) }, Modifier.padding(16.dp)) }
@@ -56,10 +53,9 @@ fun AutoEqScreen(vm: SettingsViewModel) {
         }
         SearchField(ui.query, vm::searchAutoEq, ui.searchWords, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp))
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            items(ui.hits, key = { it.entry.path }) { e ->
-                Column(Modifier.fillMaxWidth().clickable { vm.applyAutoEq(e.entry) }.padding(horizontal = Space.gutter, vertical = 11.dp)) {
-                    Text(e.entry.name)
-                    Text(e.caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (ui.hits.isNotEmpty()) item {
+                GroupCard {
+                    ui.hits.forEachIndexed { i, e -> GroupRow(e.entry.name, { vm.applyAutoEq(e.entry) }, subtitle = e.caption, divider = i < ui.hits.lastIndex) }
                 }
             }
             if (!ui.tooShort && ui.hits.isEmpty()) item { Text(say.nothingMatches, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }

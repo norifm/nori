@@ -59,7 +59,7 @@ sealed interface SettingRow {
     /** A line of explanation among the rows. */
     data class Note(val text: String) : SettingRow
     /** A row that opens something ([action]), with a status at its end; [dimmed]: it is not reaching the sound now. */
-    data class Link(val key: String, val title: String, val status: String, val dimmed: Boolean, val action: String, val divider: Boolean, val enabled: Boolean = true) : SettingRow
+    data class Link(val key: String, val title: String, val status: String, val dimmed: Boolean, val action: String, val enabled: Boolean = true) : SettingRow
     /** A line of text and a button at its end; [error]: the line is a failure. */
     data class Action(val key: String, val title: String, val detail: String, val button: String, val enabled: Boolean, val error: Boolean, val action: String) : SettingRow
     data class Info(val key: String, val title: String, val detail: String) : SettingRow
@@ -617,15 +617,15 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             // The chain is taken out of the path by the same rule the transitions are, so the row says so
             // rather than reading "On" over sound it is not touching.
             val status = str(if (s.untouched) R.string.settings_equalizer_off_now else if (s.soundChainOn) R.string.settings_on else R.string.settings_off)
-            linkRow(R.string.settings_equalizer, status, s.untouched, "equalizer", divider = true)
+            linkRow(R.string.settings_equalizer, status, s.untouched, "equalizer")
         }
-        SettingsLink.SYSTEM_EFFECTS -> linkRow(R.string.settings_system_effects, "", false, "system-effects", divider = false)
-        SettingsLink.HOME_ROWS -> linkRow(R.string.settings_home_rows, "", false, "home-rows", divider = true)
-        SettingsLink.LIBRARY_SECTIONS -> linkRow(R.string.settings_library_sections, "", false, "library-sections", divider = false)
+        SettingsLink.SYSTEM_EFFECTS -> linkRow(R.string.settings_system_effects, "", false, "system-effects")
+        SettingsLink.HOME_ROWS -> linkRow(R.string.settings_home_rows, "", false, "home-rows")
+        SettingsLink.LIBRARY_SECTIONS -> linkRow(R.string.settings_library_sections, "", false, "library-sections")
         SettingsLink.LYRICS_SOURCES -> {
             val n = s.lyricsSources.count { it.on }
             val status = if (n == 0) str(R.string.settings_lyrics_sources_none) else res.getQuantityString(R.plurals.settings_lyrics_sources_on, n, n)
-            linkRow(R.string.settings_lyrics_sources, status, n == 0, "page:lyrics-sources", divider = false)
+            linkRow(R.string.settings_lyrics_sources, status, n == 0, "page:lyrics-sources")
         }
         SettingsLink.DOWNLOADS -> actionRow(R.string.settings_downloads, str(R.string.settings_downloads_detail), str(R.string.settings_show), true, "downloads")
     }
@@ -677,9 +677,9 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         return SettingRow.Action(settingKey(t), t, detail, button, enabled, false, act)
     }
 
-    fun linkRow(title: Int, status: String, dimmed: Boolean, act: String, divider: Boolean): SettingRow.Link {
+    fun linkRow(title: Int, status: String, dimmed: Boolean, act: String): SettingRow.Link {
         val t = str(title)
-        return SettingRow.Link(settingKey(t), t, status, dimmed, act, divider)
+        return SettingRow.Link(settingKey(t), t, status, dimmed, act)
     }
 
     /** The bit-perfect switch's second line: what the DAC is doing, why it cannot, or what the switch is for. */

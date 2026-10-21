@@ -56,7 +56,7 @@ private fun AccountPart(vm: SettingsViewModel, info: ProviderInfo, signed: (Stri
     var pasting by remember { mutableStateOf(!page) }
     LaunchedEffect(Unit) { vm.lookAtAccount() }
     LaunchedEffect(name) { signed(name) }
-    SectionTitle(say.account)
+    Caption(say.account)
     when (ui.account) {
         AccountState.SIGNED_IN -> {
             Text(say.signedInAs(name), Modifier.testTag("signed-in"))
@@ -151,7 +151,7 @@ fun LoginScreen(vm: SettingsViewModel, initial: SavedServer? = null, onClose: ((
         Column(Modifier.systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), Arrangement.spacedBy(12.dp)) {
             Text(
                 if (initial == null) "nori" else say.server,
-                style = MaterialTheme.typography.displaySmall, modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
+                style = titled(MaterialTheme.typography.displaySmall), modifier = Modifier.padding(top = 16.dp, bottom = 2.dp),
             )
             if (adding && vm.providers.size > 1) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 vm.providers.forEach { k -> Chip(say.word(providerStrings(k.kind).name), p.kind == k.kind, Modifier.testTag("kind-${k.kind.name.lowercase()}")) { p = p.copy(kind = k.kind) } }

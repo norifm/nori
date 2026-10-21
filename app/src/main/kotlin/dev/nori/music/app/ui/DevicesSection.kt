@@ -56,13 +56,11 @@ fun DevicesSection(vm: SettingsViewModel) {
     var picking by remember { mutableStateOf<String?>(null) }
     NoriSheet(rows.firstOrNull { it.output == picking }, { picking = null }, skipPartiallyExpanded = false) { d -> DeviceSheet(vm, d) { picking = null } }
 
-    SectionTitle(say.devices)
-    AnimatedRows(rows, { it.output }) { d -> DeviceItem(d) { vm.clearAssignError(); picking = d.output } }
-    Toggle(
-        say.autoeqAuto,
-        say.autoeqAutoDetail,
-        p.autoEqAuto,
-    ) { on -> vm.update { it.copy(autoEqAuto = on) } }
+    GroupLabel(say.devices)
+    GroupCard {
+        AnimatedRows(rows, { it.output }) { d -> DeviceItem(d) { vm.clearAssignError(); picking = d.output } }
+        Toggle(say.autoeqAuto, say.autoeqAutoDetail, p.autoEqAuto, divider = false) { on -> vm.update { it.copy(autoEqAuto = on) } }
+    }
     AnimatedVisibility(!p.profilePerOutput, enter = fadeIn(tween(motion())) + expandVertically(tween(motion())), exit = fadeOut(tween(motion())) + shrinkVertically(tween(motion()))) {
         Text(
             say.devicesNote,
@@ -80,7 +78,7 @@ private fun DeviceItem(d: DeviceRow, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Column {
         Row(
-            Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = Space.gutter, end = 10.dp, top = 11.dp, bottom = 11.dp),
+            Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 14.dp, end = 10.dp, top = 11.dp, bottom = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
@@ -99,7 +97,7 @@ private fun DeviceItem(d: DeviceRow, onClick: () -> Unit) {
             }
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f))
         }
-        Hairline()
+        Hairline(startIndent = 14.dp)
     }
 }
 
@@ -173,20 +171,18 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
                 )
             }
         }
-        item("auto") {
-            Option(
-                say.automatic,
-                automatic,
-                d.choice == DeviceSound.Choice.Automatic,
-            ) { pick(DeviceSound.Choice.Automatic) }
+        item("choices") {
+            GroupCard(Modifier.padding(top = 8.dp)) {
+                Option(say.automatic, automatic, d.choice == DeviceSound.Choice.Automatic) { pick(DeviceSound.Choice.Automatic) }
+                Option(say.flat, say.flatDetail, d.choice == DeviceSound.Choice.Flat) { pick(DeviceSound.Choice.Flat) }
+                Option(say.noProcessing, say.noProcessingDetail, d.choice == DeviceSound.Choice.Bypass) { pick(DeviceSound.Choice.Bypass) }
+                Option(say.leaveAsIs, say.leaveAsIsDetail, d.choice == DeviceSound.Choice.Quiet, divider = sheet.profiles.isNotEmpty()) { pick(DeviceSound.Choice.Quiet) }
+                sheet.profiles.forEachIndexed { i, name ->
+                    Option(name, say.savedProfile, d.choice == DeviceSound.Choice.Profile(name), divider = i < sheet.profiles.lastIndex) { pick(DeviceSound.Choice.Profile(name)) }
+                }
+            }
         }
-        item("flat") { Option(say.flat, say.flatDetail, d.choice == DeviceSound.Choice.Flat) { pick(DeviceSound.Choice.Flat) } }
-        item("bypass") { Option(say.noProcessing, say.noProcessingDetail, d.choice == DeviceSound.Choice.Bypass) { pick(DeviceSound.Choice.Bypass) } }
-        item("quiet") { Option(say.leaveAsIs, say.leaveAsIsDetail, d.choice == DeviceSound.Choice.Quiet) { pick(DeviceSound.Choice.Quiet) } }
-        items(sheet.profiles, key = { "p:$it" }) { name ->
-            Option(name, say.savedProfile, d.choice == DeviceSound.Choice.Profile(name), Modifier.animateItem()) { pick(DeviceSound.Choice.Profile(name)) }
-        }
-        item("curves") { SectionHeader(say.autoeqCurves) }
+        item("curves") { GroupLabel(say.autoeqCurves) }
         if (eq.count == 0) item("download") {
             Column(Modifier.padding(horizontal = Space.gutter)) {
                 Text(
@@ -201,8 +197,12 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
         } else item("search") {
             SearchField(query, { q -> query = q; vm.searchAutoEq(q) }, eq.searchWords, Modifier.padding(horizontal = Space.gutter, vertical = 6.dp))
         }
-        items(curves, key = { "c:" + it.entry.path }) { e ->
-            Option(e.entry.name, e.short, false, Modifier.animateItem()) { pick(DeviceSound.Choice.Curve(e.entry)) }
+        if (curves.isNotEmpty()) item("curve-list") {
+            GroupCard {
+                curves.forEachIndexed { i, e ->
+                    Option(e.entry.name, e.short, false, divider = i < curves.lastIndex) { pick(DeviceSound.Choice.Curve(e.entry)) }
+                }
+            }
         }
         item("status") {
             Column {
@@ -215,27 +215,21 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
             }
         }
         if (sheet.canForget) item("forget") {
-            Column(Modifier.padding(top = 12.dp)) {
-                Hairline()
-                ActionRow(say.forgetDevice, Icons.Outlined.Delete, { vm.forgetDevice(d.output); onDone() }, divider = false)
+            GroupCard(Modifier.padding(top = 16.dp)) {
+                GroupRow(say.forgetDevice, { vm.forgetDevice(d.output); onDone() }, icon = Icons.Outlined.Delete, divider = false)
             }
         }
     }
 }
 
 @Composable
-private fun Option(title: String, subtitle: String?, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Column(modifier) {
-        Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = Space.gutter, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (!subtitle.isNullOrEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+private fun Option(title: String, subtitle: String?, selected: Boolean, divider: Boolean = true, onClick: () -> Unit) {
+    GroupRow(
+        title, onClick, subtitle = subtitle, divider = divider,
+        trailing = {
             AnimatedVisibility(selected, enter = fadeIn(tween(motion())), exit = fadeOut(tween(motion()))) {
-                Icon(Icons.Filled.Check, say.chosen, Modifier.size(20.dp), tint = scheme.onSurface)
+                Icon(Icons.Filled.Check, say.chosen, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
             }
-        }
-        Hairline()
-    }
+        },
+    )
 }

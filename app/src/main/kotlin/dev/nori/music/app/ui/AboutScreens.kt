@@ -20,8 +20,8 @@ import dev.nori.music.ffi.settings.Credit
 
 /** A row that says something: a title, all of the line under it, and optionally something at its end or a tap. */
 @Composable
-internal fun InfoRow(title: String, detail: String, end: String? = null, onClick: (() -> Unit)? = null) =
-    NavRow(title, onClick, subtitle = detail, trailing = end, subtitleLines = Int.MAX_VALUE)
+internal fun InfoRow(title: String, detail: String, end: String? = null, divider: Boolean = true, onClick: (() -> Unit)? = null) =
+    GroupRow(title, onClick, subtitle = detail, value = end, divider = divider)
 
 /**
  * What this is and what it is built out of. Most of a bug report is answered here - which build, which
@@ -44,7 +44,7 @@ internal fun AboutContent(
     }
     section("nori") {
         InfoRow(facts.title, facts.build, end = say.copyIt) { clipboard.setText(AnnotatedString(facts.report)) }
-        InfoRow(say.reportProblem, say.reportProblemDetail) {
+        InfoRow(say.reportProblem, say.reportProblemDetail, divider = false) {
             report(facts.report) { uri ->
                 if (uri == null) tell(say.reportFailed)
                 else context.startActivity(
@@ -62,11 +62,11 @@ internal fun AboutContent(
         InfoRow(say.playback, facts.playback)
         InfoRow(say.libraryAndSearch, facts.library)
         InfoRow(say.automix, facts.automix)
-        InfoRow(say.interfaceTitle, facts.ui)
+        InfoRow(say.interfaceTitle, facts.ui, divider = false)
     }
     section(say.openSource) {
         InfoRow(say.freeSoftware, say.licenceLine, end = "AGPL-3.0")
-        InfoRow(say.licences, say.licencesDetail, onClick = openLicences)
+        InfoRow(say.licences, say.licencesDetail, divider = false, onClick = openLicences)
     }
 }
 
@@ -93,7 +93,7 @@ internal fun LicencesContent(section: @Composable (String, @Composable ColumnSco
     var open by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Credit?>(null) }
     CREDITS.forEach { (heading, credits) ->
         section(heading) {
-            credits.forEach { c -> InfoRow(c.name, c.what, end = c.licence) { open = c } }
+            credits.forEachIndexed { i, c -> InfoRow(c.name, c.what, end = c.licence, divider = i < credits.lastIndex) { open = c } }
         }
     }
     NoriDialog(open, { open = null }) { c -> LicenceText(c) { open = null } }

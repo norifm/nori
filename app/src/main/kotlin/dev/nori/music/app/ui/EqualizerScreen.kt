@@ -74,7 +74,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
             IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
-            Text(say.equalizer, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+            Text(say.equalizer, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall))
             NoriSwitch(p.eqEnabled, { on -> vm.update { it.copy(eqEnabled = on) } })
         }
         val graphic = p.eqMode == EqMode.GRAPHIC
@@ -124,7 +124,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
             item { Chip(say.headphonePresets, false, onClick = nav::autoEq) }
             item { Chip(say.reset, false, onClick = vm::resetBands) }
         }
-        SectionTitle(say.presets)
+        GroupLabel(say.presets)
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(vm.presets) { preset -> Chip(say.preset(preset.kind), false) { vm.applyPreset(preset) } }
         }
@@ -138,14 +138,16 @@ fun EqualizerScreen(vm: SettingsViewModel) {
         }
         p.eqPreampDb?.let { v -> NoriSlider(v, ranges.preamp.min..ranges.preamp.max, { x -> vm.setLevel(EqLevel.PREAMP, x) }, Modifier.padding(horizontal = Space.gutter), enabled = p.eqEnabled) }
 
-        SectionTitle(say.output)
+        GroupLabel(say.output)
         Row(Modifier.padding(horizontal = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
             Text(say.balance, Modifier.width(80.dp))
             NoriSlider(p.balance, ranges.balance.min..ranges.balance.max, { v -> vm.setLevel(EqLevel.BALANCE, v) }, Modifier.weight(1f), centred = true)
             Text(remember(p.balance) { say.balance(p.balance) }, Modifier.width(72.dp), style = MaterialTheme.typography.labelMedium)
         }
-        Toggle(say.mono, say.monoDetail, p.mono) { on -> vm.update { it.copy(mono = on) } }
-        Toggle(say.limiter, say.limiterDetail, p.limiter) { on -> vm.update { it.copy(limiter = on) } }
+        GroupCard {
+            Toggle(say.mono, say.monoDetail, p.mono) { on -> vm.update { it.copy(mono = on) } }
+            Toggle(say.limiter, say.limiterDetail, p.limiter, divider = false) { on -> vm.update { it.copy(limiter = on) } }
+        }
         if (p.limiter) {
             Row(Modifier.padding(horizontal = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
                 Text(remember(p.limiterThresholdDb) { say.ceiling(p.limiterThresholdDb) }, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -156,7 +158,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
 
         DevicesSection(vm)
 
-        SectionTitle(say.profiles)
+        GroupLabel(say.profiles)
         val profiles by vm.profiles.collectAsStateWithLifecycle()
         var naming by remember { mutableStateOf(false) }
         var newName by remember { mutableStateOf("") }
@@ -169,15 +171,16 @@ fun EqualizerScreen(vm: SettingsViewModel) {
             )
         }
         val rows by vm.deviceRows.collectAsStateWithLifecycle()
-        AnimatedRows(profiles, { it.name }) { profile ->
-            val used = remember(rows, profile) { say.profileUse(rows.filter { it.output in profile.outputs }.map { it.name }) }
-            NavRow(
-                profile.name, { vm.applyProfile(profile) },
-                subtitle = used,
-                action = { IconButton({ vm.deleteProfile(profile.name) }) { Icon(Icons.Outlined.Delete, remember(profile.name) { say.deleteNamed(profile.name) }, tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
-            )
+        GroupCard {
+            AnimatedRows(profiles, { it.name }) { profile ->
+                val used = remember(rows, profile) { say.profileUse(rows.filter { it.output in profile.outputs }.map { it.name }) }
+                GroupRow(
+                    profile.name, { vm.applyProfile(profile) }, subtitle = used,
+                    trailing = { IconButton({ vm.deleteProfile(profile.name) }) { Icon(Icons.Outlined.Delete, remember(profile.name) { say.deleteNamed(profile.name) }, tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                )
+            }
+            GroupRow(say.saveAsProfile, { newName = ""; naming = true }, icon = Icons.Filled.Add, divider = false)
         }
-        ActionRow(say.saveAsProfile, Icons.Filled.Add, { newName = ""; naming = true }, divider = false)
     }
 }
 

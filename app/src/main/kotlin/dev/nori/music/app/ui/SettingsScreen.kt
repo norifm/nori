@@ -117,9 +117,9 @@ fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = tru
 /** One setting with a few values as chips, the one it has lit; a tap chooses another. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun ChipChoice(row: SettingRow.ChipChoice, onChange: (String) -> Unit) {
+private fun ChipChoice(row: SettingRow.ChipChoice, divider: Boolean, onChange: (String) -> Unit) {
     Column {
-        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
+        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = ROW_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             androidx.compose.foundation.layout.FlowRow(
@@ -127,16 +127,16 @@ private fun ChipChoice(row: SettingRow.ChipChoice, onChange: (String) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
             ) { row.options.forEach { o -> Chip(o.label, o.value == row.chosen) { if (row.enabled && o.value != row.chosen) onChange(o.value) } } }
         }
-        Hairline(startIndent = 16.dp)
+        if (divider) Hairline(startIndent = ROW_INSET)
     }
 }
 
 /** Conditions that each count on their own, as chips: a tap turns one on or off, any number may be lit. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun Flags(row: SettingRow.Flags, onChange: (String) -> Unit) {
+private fun Flags(row: SettingRow.Flags, divider: Boolean, onChange: (String) -> Unit) {
     Column {
-        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
+        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = ROW_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             androidx.compose.foundation.layout.FlowRow(
@@ -150,7 +150,7 @@ private fun Flags(row: SettingRow.Flags, onChange: (String) -> Unit) {
                 }
             }
         }
-        Hairline(startIndent = 16.dp)
+        if (divider) Hairline(startIndent = ROW_INSET)
     }
 }
 
@@ -200,21 +200,20 @@ private fun SeasonDot(argb: Int, hairline: Boolean = false) {
     )
 }
 
+/** How far a settings row's content stands in from its card's sides (a [GroupRow]'s). */
+private val ROW_INSET = 14.dp
+
 /** What a setting the app is going to ignore looks like: still there, still readable, plainly not live. */
 private const val DIMMED = 0.38f
 
 @Composable
-private fun Choice(row: SettingRow.Choice, onChange: (String) -> Unit) {
+private fun Choice(row: SettingRow.Choice, divider: Boolean, onChange: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    val dim = if (row.enabled) 1f else DIMMED
-    Column {
-    Row(Modifier.fillMaxWidth().spotlight(row.key).clickable(row.enabled) { open = true }.padding(horizontal = 16.dp, vertical = 15.dp)) {
-        Text(row.title, Modifier.weight(1f).alpha(dim), style = MaterialTheme.typography.bodyLarge)
-        Text(row.shown, Modifier.alpha(dim), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        NoriPopover(open, { open = false }) { row.options.forEach { o -> PopoverItem(o.label, chosen = o.label == row.shown) { onChange(o.value); open = false } } }
-    }
-    Hairline(startIndent = 16.dp)
-    }
+    GroupRow(
+        row.title, if (row.enabled) ({ open = true }) else null, Modifier.spotlight(row.key).alpha(if (row.enabled) 1f else DIMMED),
+        value = row.shown, chevron = true, divider = divider,
+        trailing = { NoriPopover(open, { open = false }) { row.options.forEach { o -> PopoverItem(o.label, chosen = o.label == row.shown) { onChange(o.value); open = false } } } },
+    )
 }
 
 /** Each group's icon; the groups themselves, their order and their words are SettingsPages.kt's. */
@@ -244,11 +243,11 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
  * not: nothing ticks with the screen off. Its own scope, so a reading redraws only this row.
  */
 @Composable
-private fun CompressionMeter(enabled: Boolean) {
+private fun CompressionMeter(enabled: Boolean, divider: Boolean) {
     val db = meterReading(viewModel<SettingsViewModel>().compressionDb)
     val active = db > 0.05f
     val scheme = MaterialTheme.colorScheme
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).alpha(if (enabled) 1f else DIMMED)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = ROW_INSET, vertical = 8.dp).alpha(if (enabled) 1f else DIMMED)) {
         // The words change only with the tenth of a dB they show; the bar moves far more finely.
         Text(
             remember(kotlin.math.round(db * 10f)) { say.compression(db) },
@@ -267,18 +266,19 @@ private fun CompressionMeter(enabled: Boolean) {
             },
         )
     }
+    if (divider) Hairline(startIndent = ROW_INSET)
 }
 
 @Composable
-private fun ActionRowSetting(row: SettingRow.Action, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().spotlight(row.key).padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun ActionRowSetting(row: SettingRow.Action, divider: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().spotlight(row.key).padding(start = ROW_INSET, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             Text(row.detail, style = MaterialTheme.typography.bodySmall, color = if (row.error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
         TextAction(row.button, onClick, enabled = row.enabled)
     }
-    Hairline(startIndent = 16.dp)
+    if (divider) Hairline(startIndent = ROW_INSET)
 }
 
 @Composable
@@ -291,6 +291,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
     // asked once per change of the query (or of the language).
     val hits = remember(query, config) { if (query.isBlank()) emptyList() else vm.searchSettings(query, res) }
     val groups = remember(config) { vm.settingsGroups(res) }
+    val perf = dev.nori.music.app.PerfHooks.recorder != null
     Column {
         LargeTitle(say.settings)
         SearchField(query, { query = it }, stringResource(R.string.settings_search), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp))
@@ -314,32 +315,14 @@ fun SettingsScreen(vm: SettingsViewModel) {
             }
             return@Column
         }
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            items(groups, key = { it.id }) { g ->
-                Column(Modifier.clickable { nav.settingsGroup(g.id) }) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(groupIcon(g.id), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface)
-                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                            Text(g.title, style = MaterialTheme.typography.bodyLarge)
-                            Text(g.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = LocalChromeInset.current)) {
+            item(key = "groups") {
+                GroupCard {
+                    groups.forEachIndexed { i, g ->
+                        // Only the perf build has a recorder, and with it the last row (docs/site/developers/building.md).
+                        GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
                     }
-                    Hairline(startIndent = Space.gutter + 36.dp)
-                }
-            }
-            // Only the perf build has a recorder, and with it this page (docs/site/developers/building.md).
-            if (dev.nori.music.app.PerfHooks.recorder != null) item(key = "perf") {
-                Column(Modifier.clickable { nav.go("perf") }) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Speed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface)
-                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                            Text(say.performance, style = MaterialTheme.typography.bodyLarge)
-                            Text(say.performanceDetail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Hairline(startIndent = Space.gutter + 36.dp)
+                    if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Icons.Outlined.Speed, chevron = true, divider = false)
                 }
             }
         }
@@ -464,39 +447,28 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     fun RowOf(at: Int, row: SettingRow, divider: Boolean) = androidx.compose.runtime.key((row as? SettingRow.Ranked)?.id ?: "#$at") {
             when (row) {
                 is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on -> vm.set(row.name, on.toString()) }
-                is SettingRow.Choice -> Choice(row) { v -> vm.set(row.name, v) }
-                is SettingRow.ChipChoice -> ChipChoice(row) { v -> vm.set(row.name, v) }
-                is SettingRow.Flags -> Flags(row) { v -> vm.set(row.name, v) }
-                is SettingRow.Note -> Text(row.text, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                is SettingRow.Link -> {
-                    val dim = if (row.dimmed || !row.enabled) DIMMED else 1f
-                    Row(Modifier.fillMaxWidth().spotlight(row.key).clickable(row.enabled) { act(row.action) }.padding(horizontal = 16.dp, vertical = 15.dp)) {
-                        Text(row.title, Modifier.weight(1f).alpha(dim), style = MaterialTheme.typography.bodyLarge)
-                        if (row.status.isNotEmpty()) Text(row.status, Modifier.alpha(dim), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    if (row.divider) Hairline(startIndent = 16.dp)
-                }
-                is SettingRow.Action -> ActionRowSetting(row) { act(row.action) }
-                is SettingRow.Usage -> {
-                    UsageBar(row)
-                    Hairline(startIndent = 16.dp)
-                }
-                is SettingRow.Info -> {
-                    Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        Text(row.title, style = MaterialTheme.typography.bodyLarge)
-                        Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Hairline(startIndent = 16.dp)
-                }
+                is SettingRow.Choice -> Choice(row, divider) { v -> vm.set(row.name, v) }
+                is SettingRow.ChipChoice -> ChipChoice(row, divider) { v -> vm.set(row.name, v) }
+                is SettingRow.Flags -> Flags(row, divider) { v -> vm.set(row.name, v) }
+                is SettingRow.Note -> Text(row.text, Modifier.padding(horizontal = ROW_INSET, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                is SettingRow.Link -> GroupRow(
+                    row.title, if (row.enabled) ({ act(row.action) }) else null,
+                    Modifier.spotlight(row.key).alpha(if (row.dimmed || !row.enabled) DIMMED else 1f),
+                    value = row.status, chevron = true, divider = divider,
+                )
+                is SettingRow.Action -> ActionRowSetting(row, divider) { act(row.action) }
+                is SettingRow.Usage -> UsageBar(row, divider)
+                is SettingRow.Info -> GroupRow(row.title, modifier = Modifier.spotlight(row.key), subtitle = row.detail, divider = divider)
                 is SettingRow.Slider -> {
-                    Text(row.label, Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp), style = MaterialTheme.typography.bodySmall)
+                    Text(row.label, Modifier.padding(start = ROW_INSET, end = ROW_INSET, top = 10.dp), style = MaterialTheme.typography.bodySmall)
                     // A slider with a level is edited in place on every step, like the equalizer's.
-                    NoriSlider(row.value, row.min..row.max, { v -> row.level?.let { vm.setLevel(it, v) } ?: vm.set(row.name, v.toString()) }, Modifier.padding(horizontal = 16.dp), centred = row.centred)
+                    NoriSlider(row.value, row.min..row.max, { v -> row.level?.let { vm.setLevel(it, v) } ?: vm.set(row.name, v.toString()) }, Modifier.padding(horizontal = ROW_INSET), centred = row.centred)
+                    if (divider) Hairline(startIndent = ROW_INSET)
                 }
-                is SettingRow.CompressionMeter -> CompressionMeter(row.enabled)
+                is SettingRow.CompressionMeter -> CompressionMeter(row.enabled, divider)
                 is SettingRow.Seasons -> SeasonPicker(row) { v -> vm.set(row.name, v) }
                 is SettingRow.Server -> {
-                    Row(Modifier.fillMaxWidth().clickable(enabled = !row.active) { p.servers.firstOrNull { it.id == row.id }?.let(vm::switchServer) }.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().clickable(enabled = !row.active) { p.servers.firstOrNull { it.id == row.id }?.let(vm::switchServer) }.padding(start = ROW_INSET), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(row.label, color = if (row.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                             Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -508,14 +480,14 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                         }
                     }
                     // The server's own libraries, under it: which of them the app shows.
-                    if (row.libraries.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp)) {
+                    if (row.libraries.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(start = ROW_INSET, end = ROW_INSET, bottom = 12.dp)) {
                         Text(row.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         androidx.compose.foundation.layout.FlowRow(
                             Modifier.padding(top = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) { row.libraries.forEach { l -> Chip(l.label, l.on) { vm.set(l.name, l.tapped) } } }
                     }
-                    Hairline(startIndent = 16.dp)
+                    if (divider) Hairline(startIndent = ROW_INSET)
                 }
                 is SettingRow.Button -> TextAction(row.title, { act(row.action) }, Modifier.padding(horizontal = 8.dp))
                 // Each row is drawn at its place in the order shown, gliding there, while it is laid out in the
@@ -524,7 +496,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                 is SettingRow.Ranked -> {
                     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
                     // The held row is lifted over its neighbours, so it needs the plate's own colour behind its words.
-                    val plate = LocalLook.current.color(dev.nori.music.look.CoverLook.FORM)
+                    val plate = MaterialTheme.colorScheme.surfaceContainer
                     val scope = androidx.compose.runtime.rememberCoroutineScope()
                     val mine = drag?.id == row.id
                     val following = mine && drag?.active == true
@@ -599,7 +571,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                     }
                                 }
-                            }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 16.dp),
+                            }.padding(start = ROW_INSET, top = 12.dp, bottom = 12.dp, end = ROW_INSET),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f).padding(end = 14.dp)) {
@@ -614,7 +586,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                             }
                             NoriSwitch(row.on, { on -> if (on && row.keyed && !row.keySet) keying = row else vm.set(row.name, on.toString()) })
                         }
-                        Hairline(startIndent = 16.dp)
+                        if (divider) Hairline(startIndent = ROW_INSET)
                     }
                 }
             }
@@ -636,9 +608,9 @@ private val USAGE_COLORS = listOf(Color(0xFF2D9CDB), Color(0xFF27AE60), Color(0x
 
 /** What is stored on this device: the total, one bar split by kind, and a line per kind with its dot. */
 @Composable
-private fun UsageBar(row: SettingRow.Usage) {
+private fun UsageBar(row: SettingRow.Usage, divider: Boolean) {
     val total = row.parts.sumOf { it.bytes }.coerceAtLeast(1)
-    Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = ROW_INSET, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(row.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
             Text(row.total, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -660,4 +632,5 @@ private fun UsageBar(row: SettingRow.Usage) {
             }
         }
     }
+    if (divider) Hairline(startIndent = ROW_INSET)
 }
