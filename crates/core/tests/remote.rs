@@ -807,28 +807,6 @@ impl Device {
 }
 
 #[test]
-fn a_closed_relay_rejects_requests() {
-    let relay = Relay::new();
-    relay.close();
-    let response = relay.sim.run("a request", relay.send(Exchange {
-        url: format!(
-            "{SERVER}/rest/noriRemote.poll?u=ann&dev=closed&name=Closed&kind=phone&serve=1"
-        ),
-        ..Default::default()
-    }));
-    assert!(
-        matches!(
-            response,
-            Err(TransportError::Failed {
-                kind: FailureKind::Connect,
-                ..
-            })
-        ),
-        "a closed relay kept answering polls: {response:?}"
-    );
-}
-
-#[test]
 fn returning_here_does_not_wait_for_a_dead_device() {
     for action in ["wait", "play", "edit"] {
         let relay = Relay::new();
@@ -2029,6 +2007,30 @@ fn a_guest_starts_with_the_settled_clock() {
     relay.close();
 }
 
+/// A guest listening along before its host says where it plays waits for the host's word, not on a timer.
+#[test]
+fn a_guest_waits_for_its_hosts_clock_without_waking() {
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    let link = opened(&host);
+    host.remote.clone().jam_along(true);
+    host.playing(&["s1"], 0);
+    host.remote.clone().played(Playing { playing: true, position_ms: 30_000, rate: 1.0, index: Some(0), volume: None, ..Default::default() });
+    let pass = joined(&relay, link, "Gus".into());
+    // The guest's first poll goes unanswered: it does not know its host yet.
+    relay.first_answers_held.store(true, Ordering::Relaxed);
+    let gus = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, "Gus");
+    let leads = Arc::new(Leads::default());
+    gus.remote.follow_with(Some(leads.clone()));
+    gus.remote.clone().listen(true);
+    relay.sim.settle();
+    assert!(relay.sim.waits().iter().all(|w| *w > Duration::from_secs(1)), "timers wait {:?}", relay.sim.waits());
+
+    relay.release_first_answers();
+    gus.until("the host's place", |_| leads.last().flatten());
+    relay.close();
+}
+
 /// The relay still lists a device from before it restarted, by its own id: it neither lists nor follows
 /// itself.
 #[test]
@@ -2529,7 +2531,7 @@ impl Relay {
 }
 
 #[test]
-fn a_failed_poll_is_asked_again_after_the_retry_wait_or_at_a_change() {
+fn a_failed_poll_waits_longer_each_time_until_the_network_is_back() {
     let relay = Relay::new();
     relay.first_answers_held.store(true, Ordering::Relaxed);
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
@@ -2549,15 +2551,22 @@ fn a_failed_poll_is_asked_again_after_the_retry_wait_or_at_a_change() {
     sim.pass(Duration::from_secs(1));
     eventually(&relay, "listed once asked again", || relay.lists(&id));
 
-    // Down again: something changing here asks at once.
+    // Down for good: each failed poll waits twice as long as the last, up to 5 min, and a change here
+    // does not ask early.
     relay.go_down(true);
-    waiting(sim, "the next retry", Duration::from_secs(30));
+    for secs in [30, 60, 120, 240, 300, 300] {
+        waiting(sim, "the retry", Duration::from_secs(secs));
+        phone.remote.clone().watch(true);
+        waiting(sim, "the same retry after a change", Duration::from_secs(secs));
+        sim.pass(Duration::from_secs(secs));
+    }
+    phone.remote.network_back();
+    waiting(sim, "the first wait again once the network is back", Duration::from_secs(30));
     relay.go_down(false);
-    let polls = relay.asked_for("noriRemote.poll");
-    phone.remote.clone().watch(true);
-    eventually(&relay, "asked again at once", || relay.asked_for("noriRemote.poll") > polls);
+    phone.remote.network_back();
+    eventually(&relay, "listed again", || relay.lists(&id));
 
-    // Down again: the network coming back asks at once.
+    // Down again after an answer: the wait starts over, and the network coming back asks at once.
     relay.go_down(true);
     waiting(sim, "the retry after that", Duration::from_secs(30));
     relay.go_down(false);

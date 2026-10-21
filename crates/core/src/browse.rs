@@ -67,8 +67,8 @@ impl Core {
     /// Decades with indexed songs, newest first, with song counts.
     pub fn browse_decades(&self) -> Result<Vec<Decade>> {
         let c = self.db.lock();
-        let mut st = c.prepare_cached("SELECT (json_extract(json, '$.year') / 10) * 10 AS d, count(*) FROM items WHERE server=sid() AND kind=?1 AND json_extract(json, '$.year') > 0 GROUP BY d ORDER BY d DESC")?;
-        let rows = st.query_map([db::ItemKind::Song], |r| {
+        let mut st = c.prepare_cached(&decades_sql())?;
+        let rows = st.query_map([], |r| {
             let start: u32 = r.get(0)?;
             Ok(Decade { start, song_count: r.get(1)? })
         })?;
@@ -140,6 +140,11 @@ pub(crate) fn songs_sql(sort: &str, descending: bool, starred_only: bool, years:
     sql
 }
 
+/// The song kind written out, so the partial year index (db.rs `items_year`) serves the count.
+fn decades_sql() -> String {
+    format!("SELECT (json_extract(json, '$.year') / 10) * 10 AS d, count(*) FROM items WHERE server=sid() AND kind={} AND json_extract(json, '$.year') > 0 GROUP BY d ORDER BY d DESC", db::ItemKind::Song as i64)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -172,6 +177,8 @@ pub(crate) mod tests {
             assert!(all.contains("USING INDEX items_") && !all.contains("TEMP B-TREE"), "{key}: {all}");
             assert!(plan(true).contains("USING INDEX items_starred"), "{key} starred");
         }
+        let decades: String = c.prepare(&format!("EXPLAIN QUERY PLAN {}", decades_sql())).unwrap().query_map([], |r| r.get::<_, String>(3)).unwrap().map(|r| r.unwrap()).collect::<Vec<_>>().join("; ");
+        assert!(decades.contains("USING INDEX items_year"), "decades: {decades}");
     }
 
     #[test]

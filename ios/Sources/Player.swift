@@ -214,6 +214,8 @@ final class PlayerCard: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .noriNow, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(paintHeart), name: .noriFavorites, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .noriJam, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(changed), name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(stopTicking), name: UIApplication.didEnterBackgroundNotification, object: nil)
         changed()
     }
 
@@ -226,6 +228,10 @@ final class PlayerCard: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopTicking()
+    }
+
+    @objc private func stopTicking() {
         ticker?.invalidate()
         ticker = nil
     }
@@ -291,14 +297,13 @@ final class PlayerCard: UIViewController {
             }
         }
         paintTime()
-        if now.playing && view.window != nil {
+        if now.playing && view.window != nil && UIApplication.shared.applicationState == .active {
             if ticker == nil {
                 ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.paintTime() }
                 ticker?.tolerance = 0.1
             }
         } else {
-            ticker?.invalidate()
-            ticker = nil
+            stopTicking()
         }
     }
 
@@ -683,7 +688,7 @@ final class LyricCell: UITableViewCell {
 
 /// The song's lyrics; the sung line lit and, with word times, filled word by word. Paced by the core's
 /// clock: a display link only while a word fills, a one-shot timer between, nothing while paused,
-/// waiting for bytes or out of sight. A line tapped seeks there.
+/// waiting for bytes, out of sight or locked. A line tapped seeks there.
 final class LyricsCard: UITableViewController {
     private let song: String
     private var lines: [String] = []
@@ -715,6 +720,8 @@ final class LyricsCard: UITableViewController {
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(arrived(_:)), name: .noriLyrics, object: nil)
         center.addObserver(self, selector: #selector(moved), name: .noriNow, object: nil)
+        center.addObserver(self, selector: #selector(moved), name: UIApplication.didBecomeActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(stop), name: UIApplication.didEnterBackgroundNotification, object: nil)
         load()
         song.withCString { nori_ios_lyrics($0) }
     }
@@ -772,7 +779,7 @@ final class LyricsCard: UITableViewController {
         tableView.reloadData()
     }
 
-    private func stop() {
+    @objc private func stop() {
         pacer?.invalidate()
         pacer = nil
         link?.invalidate()
@@ -782,7 +789,7 @@ final class LyricsCard: UITableViewController {
     @objc private func frame() { tick(force: false) }
 
     private func tick(force: Bool) {
-        guard let clock, view.window != nil else { return stop() }
+        guard let clock, view.window != nil, UIApplication.shared.applicationState == .active else { return stop() }
         let now = Core.shared.now
         var step = NoriLyricStep()
         nori_ios_lyric_advance(clock, Int64(now.position), 1, force ? 1 : 0, &step)

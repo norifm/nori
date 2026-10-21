@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleStartEffect
 import dev.nori.music.app.vm.SettingsViewModel
 
 /**
@@ -31,6 +32,7 @@ import dev.nori.music.app.vm.SettingsViewModel
 fun AutoEqScreen(vm: SettingsViewModel) {
     val ui by vm.autoEq.collectAsStateWithLifecycle()
     val prefs by vm.prefs.collectAsStateWithLifecycle()
+    LifecycleStartEffect(vm) { vm.soundPageShown(true); onStopOrDispose { vm.soundPageShown(false) } }
     val nav = LocalNav.current
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {

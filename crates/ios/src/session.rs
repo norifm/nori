@@ -713,21 +713,14 @@ pub extern "C" fn nori_ios_move(from: i32, to: i32) {
 pub extern "C" fn nori_ios_background() {
     with_session(|s| {
         s.keep(QueueMoment::Closing);
-        if let Some(remote) = s.remote() {
-            remote.sight(nori_core::remote::Sight::Nothing);
-        }
+        s.in_sight(false);
     });
 }
 
 /// Restores foreground discovery and the mirrored player clock.
 #[no_mangle]
 pub extern "C" fn nori_ios_foreground() {
-    with_session(|s| {
-        if let Some(remote) = s.remote() {
-            remote.clone().sight(nori_core::remote::Sight::Screen);
-            remote.discover_active(true);
-        }
-    });
+    with_session(|s| s.in_sight(true));
 }
 
 /// Drops decoded covers.

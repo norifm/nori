@@ -105,6 +105,7 @@ private fun glow(w: LyricWord, ms: Long): Float {
 
 @Composable
 fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean) {
+    androidx.lifecycle.compose.LifecycleStartEffect(vm) { vm.lyricsView(true); onStopOrDispose { vm.lyricsView(false) } }
     val loaded by vm.lyrics.collectAsStateWithLifecycle()
     val playerState by vm.state.collectAsStateWithLifecycle()
     // Only the words of the song on the page: an answer for any other song (the one before, handed over

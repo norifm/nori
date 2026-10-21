@@ -9,7 +9,7 @@
 //! volume since seconds sit in the track), two clock readings after a start ([`SETTLE_MS`]), and the end
 //! of the music.
 //!
-//! With the app in sight (`AudioOutput::shallow`) the same track holds a fraction of a second, sized for
+//! While a sound page is tuned (`AudioOutput::shallow`) the same track holds a fraction of a second, sized for
 //! the route ([`shallow_marks`]: latency, min buffer, wake lateness) and grown when the writer sees more
 //! latency or underruns ([`Needs`]), so a sound change the engine makes in its ring is heard soon. The
 //! track is resized in place with `setBufferSizeInFrames` ([`Sink::resize`]), never reopened or emptied:
@@ -41,7 +41,7 @@ pub(crate) const LOW_US: i64 = 1_000_000;
 /// the ring below its own low mark, waking the engine (`AudioOutput::bursts`).
 pub(crate) const TRACK_US: i64 = BUFFER_US + LOW_US + 500_000;
 /// Shallow track size on the speaker: 80-120 ms (its latency included) is how soon a change made with the
-/// app in sight is heard.
+/// sound page tuned is heard.
 pub(crate) const SHALLOW_TRACK_US: i64 = 120_000;
 /// What a shallow track takes per top-up.
 const SHALLOW_TOP_US: i64 = 40_000;
@@ -2868,49 +2868,6 @@ mod tests {
         }
         fn about(&self, id: &str) -> nori_player::transitions::WindowSong {
             nori_player::transitions::WindowSong { id: id.to_string(), title: id.to_string(), duration_ms: self.0.ms, ..Default::default() }
-        }
-    }
-
-    /// Host perf report for the phone's side: a long song on a phone-like track with the engine, per
-    /// minute of music the engine's wakes, the writer's turns and the process's CPU time. Not a check.
-    ///
-    ///   cargo test --release -p nori-android writer_perf_report -- --ignored --nocapture
-    #[test]
-    #[ignore]
-    fn writer_perf_report() {
-        const SECS: u32 = 600;
-        let files = Arc::new(Files { dir: nori_testdir::TempDir::new("nori-android-perf"), ms: SECS as i64 * 1000 });
-        std::fs::write(files.dir.join("a.wav"), wav(&tone(SECS, 330.0))).expect("a song on the disk");
-        let cpu_ms = || {
-            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-            // SAFETY: getrusage fills the struct it is handed.
-            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-            let ms = |t: libc::timeval| t.tv_sec as f64 * 1000.0 + t.tv_usec as f64 / 1000.0;
-            ms(u.ru_utime) + ms(u.ru_stime)
-        };
-        let loud = nori_engine::Sound { bands: vec![nori_player::dsp::Band { kind: nori_player::types::EqKind::Peaking, freq: 1000.0, gain_db: 6.0, q: 1.0, channel: 0 }], ..Default::default() };
-        for (name, settings) in [("plain", nori_engine::Settings::default()), ("equalizer", nori_engine::Settings { sound: loud, ..Default::default() })] {
-            let queue = nori_engine::SharedQueue::default();
-            queue.0.lock().set(vec!["a".into()], Some(0), false, 0);
-            let mut app = nori_player::sim::App::new();
-            app.prefs = nori_player::sim::prefs_off();
-            let config = nori_engine::Config { settings, ..Default::default() };
-            let phone_like = |ticks| Live { bounded: true, threshold: RATE as u64 / 4, ..Live::new(ticks) };
-            let (engine, time, live) = on_a_phone(OnDisk(files.clone()), app, queue, config, phone_like);
-            engine.queue_changed();
-            engine.play_at(0, 0);
-            assert!(time.until(Duration::from_secs(10), || live.lock().played() > RATE as u64), "it plays");
-            let (wakes, turns, cpu, played) = (time.clock.sleeps(), time.device.lock().turns, cpu_ms(), live.lock().played());
-            time.run(Duration::from_secs(SECS as u64 - 30));
-            let minutes = (live.lock().played() - played) as f64 / RATE as f64 / 60.0;
-            let per = |v: f64| v / minutes.max(1e-9);
-            println!(
-                "perf: writer {name:<10} music {minutes:5.2} min | engine wakes/min {:6.1} | writer turns/min {:6.1} | cpu ms/min {:7.1}",
-                per((time.clock.sleeps() - wakes) as f64),
-                per((time.device.lock().turns - turns) as f64),
-                per(cpu_ms() - cpu),
-            );
-            engine.stop();
         }
     }
 

@@ -2,7 +2,7 @@
 //! shuffle order are nori-queue's.
 
 use crate::autofill::seed_now;
-use futures_util::future::join_all;
+use futures_util::StreamExt;
 use crate::cache_policy::{Page, Read};
 use crate::client::{Client, NetResult};
 use crate::{m3u, Album, Core, Result, Song};
@@ -96,7 +96,9 @@ impl Client {
     /// The library songs of `albums` in order, skipping provider and unreadable albums.
     pub async fn artist_songs(&self, albums: Vec<Album>) -> Vec<Song> {
         let reads = albums.into_iter().filter(|a| !a.is_provider()).map(|a| self.cached_or_fetched(Read::AlbumById { id: a.id }));
-        let mut songs: Vec<Song> = join_all(reads).await.into_iter().filter_map(|p| p.ok().flatten()).flat_map(Page::songs).collect();
+        // A few at a time: an artist can have dozens of albums.
+        let pages: Vec<_> = futures_util::stream::iter(reads).buffered(4).collect().await;
+        let mut songs: Vec<Song> = pages.into_iter().filter_map(|p| p.ok().flatten()).flat_map(Page::songs).collect();
         songs.retain(|s| !s.is_provider());
         songs
     }
@@ -188,6 +190,22 @@ pub(crate) mod tests {
         c.core.db.lock().execute("UPDATE cache SET ts = 0", []).unwrap();
         fake.fail(crate::transport::FailureKind::Connect);
         assert_eq!(play(), 2);
+    }
+
+    #[test]
+    fn artist_albums_read_four_at_a_time_in_order() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        let albums: Vec<Album> = (0..10).map(|i| Album { id: format!("a{i}"), ..Default::default() }).collect();
+        for i in 0..10 {
+            fake.answer(&format!(r#"{{"subsonic-response":{{"status":"ok","album":{{"id":"a{i}","name":"a{i}","song":[{{"id":"{i}","title":"{i}","isDir":false}}]}}}}}}"#));
+        }
+        *fake.pends.lock() = true;
+        let mut play = std::pin::pin!(c.artist_songs(albums));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(std::future::Future::poll(play.as_mut(), &mut cx).is_pending());
+        assert!(fake.asked().len() <= 4, "{} asked at once", fake.asked().len());
+        let got = block(play);
+        assert_eq!(got.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
     }
 
     /// An artist without albums plays the songs its page shows; one with albums plays those.

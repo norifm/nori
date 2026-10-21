@@ -36,6 +36,8 @@ pub struct Client {
     pub(crate) car: parking_lot::Mutex<crate::car::Shown>,
     /// An AutoEQ index fetch is running; another asked meanwhile is dropped (profiles.rs).
     pub(crate) autoeq_fetching: AtomicBool,
+    /// When the last AutoEQ index fetch failed (profiles.rs).
+    pub(crate) autoeq_failed_ms: parking_lot::Mutex<Option<i64>>,
     /// Told the profile's second address, so covers are keyed alike through both.
     covers: Arc<crate::covers::CoverNet>,
     /// Where the queue this device last handed the server stood, and the server's queue last offered
@@ -105,7 +107,7 @@ impl Client {
 impl Client {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(core: Arc<Core>, transport: Arc<dyn Transport>, covers: Arc<crate::covers::CoverNet>) -> Arc<Self> {
-        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), queue_pushed: Default::default(), queue_seen: Default::default() })
+        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), autoeq_failed_ms: Default::default(), queue_pushed: Default::default(), queue_seen: Default::default() })
     }
 
     /// Sets the profile's addresses, folder and bitrate cap.

@@ -10,6 +10,8 @@ pub const INDEX_URL: &str = "https://raw.githubusercontent.com/jaakkopasanen/Aut
 const RAW: &str = "https://raw.githubusercontent.com/jaakkopasanen/AutoEq/master/results";
 /// Age after which the index is refetched on an unmetered network.
 pub(crate) const INDEX_STALE_MS: i64 = 30 * 24 * 3_600_000;
+/// How long a failed index fetch holds back the next automatic one.
+const RETRY_MS: i64 = 3_600_000;
 /// `app_kv` keys for the index's fetch time and fingerprint.
 const FETCHED_KEY: &str = "autoeq.fetched";
 const DIGEST_KEY: &str = "autoeq.digest";
@@ -123,9 +125,11 @@ pub fn fetched_ms(c: &Connection) -> rusqlite::Result<Option<i64>> {
 }
 
 /// Whether to fetch the index automatically: download on, unmetered, and the index missing or
-/// [`INDEX_STALE_MS`] old (a clock that went backwards counts as old).
-pub fn index_due(auto: bool, metered: bool, stored: u32, fetched_ms: Option<i64>, now_ms: i64) -> bool {
-    auto && !metered && (stored == 0 || fetched_ms.is_none_or(|t| now_ms < t || now_ms - t >= INDEX_STALE_MS))
+/// [`INDEX_STALE_MS`] old, and no fetch failed in the last [`RETRY_MS`] (a clock that went backwards
+/// counts as old).
+pub fn index_due(auto: bool, metered: bool, stored: u32, fetched_ms: Option<i64>, failed_ms: Option<i64>, now_ms: i64) -> bool {
+    let recent = |t: i64, ms: i64| now_ms >= t && now_ms - t < ms;
+    auto && !metered && (stored == 0 || fetched_ms.is_none_or(|t| !recent(t, INDEX_STALE_MS))) && failed_ms.is_none_or(|t| !recent(t, RETRY_MS))
 }
 
 /// Hides the entry at `path`, which has no usable curve.
@@ -332,14 +336,18 @@ mod tests {
         // Index due rules.
         let day = 24 * 3_600_000;
         let now = 100 * day;
-        assert!(index_due(true, false, 0, None, now), "never fetched");
-        assert!(index_due(true, false, 0, Some(now), now), "fetched but empty");
-        assert!(index_due(true, false, 8000, None, now), "kept before its time was noted");
-        assert!(!index_due(true, false, 8000, Some(now - 29 * day), now));
-        assert!(index_due(true, false, 8000, Some(now - 30 * day), now));
-        assert!(index_due(true, false, 8000, Some(now + day), now), "a clock that went backwards");
-        assert!(!index_due(true, true, 0, None, now), "never on a metered network");
-        assert!(!index_due(false, false, 0, None, now), "never with the download switched off");
+        let hour = 3_600_000;
+        assert!(index_due(true, false, 0, None, None, now), "never fetched");
+        assert!(index_due(true, false, 0, Some(now), None, now), "fetched but empty");
+        assert!(index_due(true, false, 8000, None, None, now), "kept before its time was noted");
+        assert!(!index_due(true, false, 8000, Some(now - 29 * day), None, now));
+        assert!(index_due(true, false, 8000, Some(now - 30 * day), None, now));
+        assert!(index_due(true, false, 8000, Some(now + day), None, now), "a clock that went backwards");
+        assert!(!index_due(true, true, 0, None, None, now), "never on a metered network");
+        assert!(!index_due(false, false, 0, None, None, now), "never with the download switched off");
+        assert!(!index_due(true, false, 0, None, Some(now - hour + 1), now), "failed within the hour");
+        assert!(index_due(true, false, 0, None, Some(now - hour), now), "failed an hour ago");
+        assert!(index_due(true, false, 0, None, Some(now + day), now), "failed in the future");
     }
 
     #[test]

@@ -394,6 +394,10 @@ pub struct App {
     tickets: VecDeque<(CoverKey, Ticket)>,
     tick: Timer,
     tick_ms: u64,
+    /// The window is off screen (minimized, covered): the seek bar, lyrics and playing bars stand still.
+    hidden: bool,
+    /// Lyrics are on screen (Now Playing's lyrics or the side sheet): only then are they fetched.
+    lyrics_viewed: bool,
     lists: Lists,
     find: String,
     facts: crate::settings::Facts,
@@ -594,6 +598,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             tickets: VecDeque::new(),
             tick: Timer::default(),
             tick_ms: 0,
+            hidden: false,
+            lyrics_viewed: false,
             facts: crate::settings::Facts::default(),
             lists: Lists::default(),
             find: String::new(),
@@ -642,6 +648,14 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
                 if let Some(top) = weak.upgrade() { top.invoke_end_search(); }
             });
         }
+        let me = a.me.clone();
+        a.compositor.on_shown(move |shown| me.with(|a| {
+            a.hidden = !shown;
+            if let Some(s) = &a.session {
+                s.in_sight(shown);
+            }
+            a.follow();
+        }));
         #[cfg(target_os = "linux")]
         {
             let weak = ui.as_weak();
@@ -821,6 +835,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_player_changed, h, |a| {
         a.repaint();
         position_shown(&a.ui(), a.player.as_ref(), a.position_now() as i32);
+        a.lyrics_seen();
         a.lyrics_step(true);
         a.mirror();
         a.place_player();
@@ -916,6 +931,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_settings_tab_chosen, h, |a, t| {
         a.ui().set_settings_tab(t);
+        a.untune(SETTINGS);
         a.settings_shown();
     });
     on!(ui.on_setting_toggled, h, |a, name, on| {
@@ -1051,6 +1067,8 @@ impl App {
                 self.session = Some(s);
                 self.heard = None;
                 self.song = None;
+                // The new profile's core has no lyrics view open yet.
+                self.lyrics_viewed = false;
                 self.queue = None;
                 self.home_rows.clear();
                 self.shelves.set_vec(Vec::new());
@@ -1097,10 +1115,7 @@ impl App {
             self.ui().set_find_text("".into());
             self.narrowed();
         }
-        if self.tuning && view != EQUALIZER {
-            self.tuning = false;
-            self.on_session(|s| s.engine.set_shallow(false));
-        }
+        self.untune(view);
         let ui = self.ui();
         ui.set_failed("".into());
         ui.set_loading(false);
@@ -2429,7 +2444,7 @@ impl App {
         ui.set_lyric_now(now.now.into());
         ui.set_lyric_mix(now.mix);
         ui.set_lyric_rest(now.rest.into());
-        match now.wait.filter(|_| playing) {
+        match now.wait.filter(|_| playing && !self.hidden) {
             Some(ms) => {
                 let me = self.me.clone();
                 self.lyrics_timer.start(TimerMode::SingleShot, Duration::from_millis(ms), move || me.with(|a| a.lyrics_step(false)));
@@ -2592,6 +2607,8 @@ impl App {
         let Some(s) = &self.session else { return };
         if s.setting(name, value).is_none() {
             self.say(&format!("{name}: not a setting"), true);
+        } else {
+            self.tune();
         }
         self.settings_shown();
         self.jam_shown();
@@ -2680,12 +2697,26 @@ impl App {
         }
     }
 
-    /// Enters the engine's shallow buffer while the equalizer page is open.
+    /// Enters the engine's shallow buffer after a change on a sound page (`rules::sound_tuning`).
     fn tune(&mut self) {
-        if !self.tuning && self.ui().get_view() == EQUALIZER {
+        if !self.tuning && nori_core::rules::sound_tuning(self.sound_page(self.ui().get_view()), true) {
             self.tuning = true;
             self.on_session(|s| s.engine.set_shallow(true));
         }
+    }
+
+    /// Gives the deep buffer back unless `view` is a sound page.
+    fn untune(&mut self, view: i32) {
+        if self.tuning && !self.sound_page(view) {
+            self.tuning = false;
+            self.on_session(|s| s.engine.set_shallow(false));
+        }
+    }
+
+    /// The equalizer page, or Settings on its Sound tab: where a sound change is heard at once.
+    fn sound_page(&self, view: i32) -> bool {
+        view == EQUALIZER
+            || view == SETTINGS && crate::settings::tabs(&self.facts.rules.settings).get(self.ui().get_settings_tab() as usize) == Some(&nori_core::settings_pages::SettingsPage::Sound)
     }
 
     /// Edits a level in place; redraws the page when the slider is released.
@@ -2901,7 +2932,23 @@ impl App {
         ui.set_lyrics_active(-1);
         ui.set_lyrics_note(if self.song.is_some() { "Looking for lyrics…".into() } else { "".into() });
         ui.set_lyrics_waiting(self.song.is_some());
-        if let (Some(s), Some(id)) = (&self.session, &self.heard) {
+        if let (Some(s), Some(id), true) = (&self.session, &self.heard, self.lyrics_viewed) {
+            s.lyrics(id.clone());
+        }
+    }
+
+    /// Fetches lyrics only while they are on screen: the song's as they come in sight, and the core warms
+    /// the songs ahead meanwhile.
+    fn lyrics_seen(&mut self) {
+        let ui = self.ui();
+        let viewed = !self.hidden && (ui.get_full_player() && ui.get_full_panel() == 2 || ui.get_inspector() == 2);
+        if viewed == self.lyrics_viewed {
+            return;
+        }
+        self.lyrics_viewed = viewed;
+        let Some(s) = &self.session else { return };
+        s.lyrics_view(viewed);
+        if let (true, None, Some(id)) = (viewed, &self.lyrics, &self.heard) {
             s.lyrics(id.clone());
         }
     }
@@ -2921,7 +2968,7 @@ impl App {
     /// Whether the music moves now, for the playing bars: playing and not waiting for bytes.
     fn advancing(&self) {
         let ui = self.ui();
-        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering());
+        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering() && !self.hidden);
     }
 
     /// Syncs the window with what the player shows: this computer's playback and queue, the device's
@@ -2936,6 +2983,7 @@ impl App {
         ui.set_playing(playing);
         ui.set_mixing(now.mixing && now.state == State::Playing);
         position_shown(&ui, self.player.as_ref(), now.position_now() as i32);
+        self.lyrics_seen();
         if now.song.as_ref().map(|s| &s.id) != self.heard.as_ref() {
             self.song_shown(now.song.clone());
         }
@@ -2963,7 +3011,8 @@ impl App {
         }
         // Seek bar timer: only while playing, quarter-pixel steps of the widest bar.
         let step = pixel_ms(ui.get_duration_ms() as i64);
-        if playing && (!self.tick.running() || self.tick_ms != step) {
+        let ticks = playing && !self.hidden;
+        if ticks && (!self.tick.running() || self.tick_ms != step) {
             self.tick_ms = step;
             let me = self.me.clone();
             self.tick.start(TimerMode::Repeated, Duration::from_millis(step), move || {
@@ -2972,7 +3021,7 @@ impl App {
                     position_shown(&ui, a.player.as_ref(), a.position_now() as i32);
                 });
             });
-        } else if !playing {
+        } else if !ticks {
             self.tick.stop();
         }
         self.lyrics_step(true);

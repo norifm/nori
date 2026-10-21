@@ -16,7 +16,7 @@ use nori_core::settings_store::SoundTool;
 use nori_core::stars::StarMarks;
 use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, OriginKind, PageOrigin, Playlist, PlaylistDetail, Song};
 use nori_engine::{Event, State};
-use nori_core::rules::equalizer_tuning;
+use nori_core::rules::sound_tuning;
 use nori_look::cover::CoverColours;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
@@ -876,6 +876,8 @@ pub struct App {
     pub hits: Vec<(Rect, Hit)>,
     pub cmds: Vec<Cmd>,
     pub dirty: bool,
+    /// The terminal has focus; true until it says otherwise, as terminals without focus events never do.
+    pub in_sight: bool,
     pub quit: bool,
     /// Whether the engine holds the equalizer's low-latency buffer ([`App::sound_edited`]); released
     /// when the equalizer closes or is switched off.
@@ -902,6 +904,7 @@ impl App {
             card_covers: true,
             protocol: "none",
             dirty: true,
+            in_sight: true,
             ..App::default()
         }
         .themed()
@@ -921,8 +924,6 @@ impl App {
     /// Takes the stored settings and updates what depends on them.
     pub fn prefs_changed(&mut self, prefs: StoredPrefs) {
         self.prefs = prefs;
-        // Releases the low-latency buffer if the equalizer was switched off.
-        self.tune();
         self.retheme();
         self.settings.invalidate();
         self.dirty = true;
@@ -1178,7 +1179,10 @@ impl App {
             Msg::Paste(text) => self.paste(&text),
             Msg::Resize => {}
             // Regaining focus redraws; the runner decides whether fully.
-            Msg::Focus(on) => self.dirty = on,
+            Msg::Focus(on) => {
+                self.in_sight = on;
+                self.dirty = on;
+            }
             Msg::Engine(e) => self.engine(e),
             Msg::Data(req, r) => self.data(req, r),
             Msg::Cover { art, colours, .. } => {
@@ -1376,12 +1380,12 @@ impl App {
 
     // ---- time ----
 
-    /// When the loop must next wake on its own: the next second of playback, a lyrics change, a pending
-    /// search, a note expiring, a downloads refresh. None when idle.
+    /// When the loop must next wake on its own: the next second of playback and a lyrics change (both
+    /// only in sight), a pending search, a note expiring, a downloads refresh. None when idle.
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         let mut at: Option<Instant> = None;
         let mut sooner = |t: Instant| at = Some(at.map_or(t, |a| a.min(t)));
-        if self.now.state == State::Playing && !self.now.buffering {
+        if self.in_sight && self.now.state == State::Playing && !self.now.buffering {
             let pos = self.now.position(now).max(0);
             let left = 1000 - pos % 1000;
             sooner(now + Duration::from_millis((left as f32 / self.now.speed.max(0.1)) as u64 + 5));
@@ -2507,16 +2511,16 @@ impl App {
     }
 
     /// A sound change was stored. Returns true when the engine should now take the low-latency buffer
-    /// (first real edit on an enabled equalizer; `rules::equalizer_tuning`), so later edits are heard
+    /// (first real edit on the equalizer; `rules::sound_tuning`), so later edits are heard
     /// at once. Merely opening the equalizer does not.
     pub fn sound_edited(&mut self) -> bool {
-        self.touched |= equalizer_tuning(self.view == View::Equalizer, true, self.prefs.eq_enabled);
+        self.touched |= sound_tuning(self.view == View::Equalizer, true);
         self.tune()
     }
 
-    /// Updates `tuning` from `rules::equalizer_tuning`; pushes the release command, returns true on take.
+    /// Updates `tuning` from `rules::sound_tuning`; pushes the release command, returns true on take.
     fn tune(&mut self) -> bool {
-        let want = equalizer_tuning(self.view == View::Equalizer, self.touched, self.prefs.eq_enabled);
+        let want = sound_tuning(self.view == View::Equalizer, self.touched);
         if want == self.tuning {
             return false;
         }

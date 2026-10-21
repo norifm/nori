@@ -417,7 +417,7 @@ impl Rig {
         self.wake();
     }
 
-    /// The app came in sight (`Engine::set_shallow`) or left it.
+    /// A sound page started tuning (`Engine::set_shallow`) or stopped.
     fn in_sight(&mut self, on: bool) {
         self.control.shallow = on;
         self.wake();
@@ -608,7 +608,7 @@ fn in_sight_changes_are_heard_soon() {
 
 #[test]
 fn coming_in_sight_drains_the_track() {
-    // The app comes in sight with seconds in the track: it takes no more until it has played down to
+    // Tuning starts with seconds in the track: it takes no more until it has played down to
     // shallow, waking no more than for its bursts, and is never emptied. A change meanwhile is made in
     // the ring and heard where the track runs out of what it held; one after that, soon.
     for out in OUTPUTS {

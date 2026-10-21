@@ -219,7 +219,7 @@ with the I/O buffer as long as the session allows:
   holds under 100 ms. `flush` is a no-op for the same reason. `bursts` false: the ring's low mark wakes the
   engine from the pull itself (`WAKE_LOW_US`), no timer either way.
 - `shallow(on)` (equalizer screen in sight): `setPreferredIOBufferDuration(0.010)` → ~100 wakes/s while the
-  screen is open, a band moved heard in ~30 ms. The `rules::equalizer_tuning` in the core already says when;
+  screen is open, a band moved heard in ~30 ms. The `rules::sound_tuning` in the core already says when;
   the client only reports in-sight/touched. Back to 93 ms when the screen goes.
 - `watch`: `AVAudioSessionRouteChangeNotification` → `Device { kind, name }` from the current route's output
   port type (`BuiltInSpeaker` → Speaker, `Headphones` → Wired, `BluetoothA2DP` → Bluetooth with the port
@@ -710,8 +710,8 @@ something goes wrong (play downloads when offline).
 The curated settings pages for this client (what a phone-only setting is, is hidden: metered network,
 offload, bit-perfect, USB, AMOLED), each row from `settings_model::specs` and `state`, changes through
 `setting_set` → `SettingChange::effect` → `Session::apply`; the equalizer screen with the bands as
-sliders, `edit_band`, presets, the shallow mode through `rules::equalizer_tuning` (in sight, touched,
-eq on) → `set_shallow`; the per-output sound page over `nori-devices` (speaker, wired, each Bluetooth
+sliders, `edit_band`, presets, the shallow mode through `rules::sound_tuning` (in sight,
+touched) → `set_shallow`; the per-output sound page over `nori-devices` (speaker, wired, each Bluetooth
 device by name) and the AutoEQ offer for a named headphone; the about and credits pages (`core_credits`,
 a new `ios_credits` list for the Swift side's few third parties - expected none). Check: a band moved is
 heard within 50 ms on the jack with the screen open; the settings' `tests/stored_format.rs` untouched.

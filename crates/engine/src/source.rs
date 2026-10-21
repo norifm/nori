@@ -12,6 +12,7 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::task::{Context, Poll, Waker};
@@ -506,6 +507,12 @@ pub trait ByteSource: Send + Sync {
         false
     }
 
+    /// The files, in order, in which the client's own cache (media3's on Android) holds all of `url`;
+    /// None when it does not. Asked once a song has arrived whole, to read it from there.
+    fn files(&self, _url: &str) -> Option<Vec<PathBuf>> {
+        None
+    }
+
     /// Takes a loader's fetching to run on the platform's own events, where nothing may block (the
     /// web's fetch). Given back, the loader reads [`ByteSource::open`]'s bodies on a thread of its own.
     fn push(&self, fill: Filling) -> Option<Filling> {
@@ -585,8 +592,8 @@ struct State {
     /// without moving the rest.
     base: u64,
     data: VecDeque<u8>,
-    /// The whole song's cache entry, read instead of `data` (then empty).
-    disk: Option<Arc<File>>,
+    /// The whole song on disk, in pieces read in order, read instead of `data` (then empty).
+    disk: Option<Arc<[(File, u64)]>>,
     len: Option<u64>,
     /// Loaded to the end.
     done: bool,
@@ -750,6 +757,11 @@ impl State {
 
     fn at_end(&self) -> bool {
         self.done || self.len.is_some_and(|l| self.end() >= l)
+    }
+
+    /// Every byte of the song, as long as its length says, is in `data`.
+    fn whole_in_memory(&self) -> bool {
+        self.disk.is_none() && self.base == 0 && self.at_end() && self.error.is_none() && self.len == Some(self.data.len() as u64)
     }
 
     /// No bytes are coming in: all are here, the fetch failed, or it holds its window's high mark until
@@ -1375,6 +1387,17 @@ impl Loaded {
         self.cv.wait(s);
     }
 
+    /// Reads the song from the source's files instead of memory when they hold exactly the bytes in
+    /// memory; else the memory copy stays (the files were evicted, or a write failed).
+    fn onto_disk(&self, source: &dyn ByteSource, url: &str) {
+        let Some(parts) = source.files(url).and_then(|f| crate::pieces::open_all(&f).ok()) else { return };
+        let mut s = self.state.lock();
+        if s.whole_in_memory() && parts.iter().map(|(_, len)| len).sum::<u64>() == s.data.len() as u64 {
+            s.data = VecDeque::new();
+            s.disk = Some(parts.into());
+        }
+    }
+
     /// The loader's thread ends.
     fn ended(&self) {
         let mut s = self.state.lock();
@@ -1423,7 +1446,7 @@ impl Loaded {
                 let whole = s.base == 0 && s.data.len() as u64 == len;
                 if let Some(file) = k.finish_open(len).filter(|_| whole) {
                     s.data = VecDeque::new();
-                    s.disk = Some(Arc::new(file));
+                    s.disk = Some(Arc::new([(file, len)]));
                 }
             }
             if let Some(t) = run.taker.take() {
@@ -1584,6 +1607,7 @@ impl Loaded {
         fill.begin();
         let mut body: Option<Box<dyn Read + Send>> = None;
         let mut chunk = vec![0u8; CHUNK];
+        let mut asked_files = false;
         loop {
             let next = {
                 let mut s = self.state.lock();
@@ -1596,6 +1620,13 @@ impl Loaded {
                         self.working(&mut s);
                         break next;
                     }
+                    // Asked once its body is closed, so the client's cache has written all of it.
+                    let whole = s.whole_in_memory();
+                    if whole && body.is_none() && !std::mem::replace(&mut asked_files, true) {
+                        parking_lot::MutexGuard::unlocked(&mut s, || self.onto_disk(source, &fill.url));
+                        continue;
+                    }
+                    asked_files &= whole;
                     self.wait_idle(&mut s);
                 }
             };
@@ -1756,14 +1787,14 @@ impl Read for LoadedReader {
                 return Err(io::Error::other("the song is no longer wanted"));
             }
             let end = s.end();
-            if let Some(file) = s.disk.clone() {
+            if let Some(parts) = s.disk.clone() {
                 if self.pos >= end {
                     return Ok(0);
                 }
                 s.reader_at = self.pos;
                 drop(s);
                 let want = buf.len().min((end - self.pos) as usize);
-                let n = read_at(&file, &mut buf[..want], self.pos)?;
+                let n = read_parts_at(&parts, &mut buf[..want], self.pos)?;
                 self.pos += n as u64;
                 return Ok(n);
             }
@@ -1841,6 +1872,18 @@ impl Read for LoadedReader {
             }
         }
     }
+}
+
+/// Reads from byte `at` of the pieces, within the piece holding it.
+fn read_parts_at(parts: &[(File, u64)], buf: &mut [u8], mut at: u64) -> io::Result<usize> {
+    for (file, len) in parts {
+        if at < *len {
+            let n = buf.len().min((len - at) as usize);
+            return read_at(file, &mut buf[..n], at);
+        }
+        at -= len;
+    }
+    Ok(0)
 }
 
 /// Reads at `at` without moving a file position: several readers share one entry.

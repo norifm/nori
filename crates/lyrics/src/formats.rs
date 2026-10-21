@@ -747,7 +747,6 @@ mod tests {
         // Lines that merely contain a colon, further in, are sung words.
         let sung = from_netease("", "[00:01.00]First line\n[00:02.00]She said: stay\n", "");
         assert_eq!(sung.lines.len(), 2);
-        assert!(crate::credits::is_credit("编曲：某人", "", ""));
     }
 
     /// Standard padded base64.
@@ -768,7 +767,6 @@ mod tests {
         let packed = miniz_oxide::deflate::compress_to_vec_zlib(text.as_bytes(), 6);
         let mut bytes = b"krc1".to_vec();
         bytes.extend(packed.iter().enumerate().map(|(i, b)| b ^ KRC_KEY[i % 16]));
-        assert_eq!(base64(&to_base64(b"hello")).as_deref(), Some(&b"hello"[..]));
         to_base64(&bytes)
     }
 

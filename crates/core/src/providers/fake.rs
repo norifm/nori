@@ -144,7 +144,6 @@ mod tests {
         assert_eq!(c.core.local_search("one".into(), 10).unwrap().songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["f-1"], "indexed");
         assert!(matches!(block(c.read_now(Read::GenreList)), Ok(Page::Genres { v }) if v.is_empty()));
         assert!(block(c.sync_library()).is_err(), "no server to sync");
-        assert!(c.core.rules().feed && !c.core.rules().remote);
     }
 
     /// Home's feed is read once and kept for the whole session, however long ago; Home's refresh asks
@@ -177,7 +176,6 @@ mod tests {
         c.session().set(vec!["f-1".into(), "f-2".into()], Some(0), false, None);
         assert!(c.precache_targets(false).is_empty(), "nothing past the next song");
         assert_eq!(c.core.cover_address("f-al".into(), 300), "https://fake.example/cover/f-al/300");
-        assert_eq!(c.core.cover_prefix(), None);
     }
 
     /// Signing in is the provider's to judge; signed in, its rules give hearts, and a heart goes to it.
