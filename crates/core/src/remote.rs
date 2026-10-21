@@ -54,8 +54,10 @@ const PAGE_MAX: u32 = 200;
 /// (as the player's own rule does, before the device's next state says what it did).
 const PREVIOUS_RESTARTS_MS: i64 = 3_000;
 
-/// After a failed poll, the relay is asked again this much later (or when something changes here).
+/// After a failed poll, the relay is asked again this much later, twice as late after each further
+/// failure up to [`RETRY_MAX_MS`] (or at once when the network is back).
 const RETRY_MS: u64 = 30_000;
+const RETRY_MAX_MS: u64 = 300_000;
 
 /// The longest [`Remote::stop`] waits for the sends queued before it (leaving the relay among them).
 #[cfg(not(target_arch = "wasm32"))]
@@ -2628,8 +2630,9 @@ impl Remote {
                 start_peers.push((p.service.clone(), generation));
             }
         }
-        self.retry.notify();
         if let Some(generation) = start_relay {
+            // An older poller resting after a failure ends now.
+            self.retry.notify();
             self.spawn(self.clone().poll_relay(generation));
         }
         for (service, generation) in start_peers {
@@ -2650,6 +2653,7 @@ impl Remote {
     async fn relay_polls(self: Arc<Self>, generation: u64) -> bool {
         let mut first_poll = true;
         let mut said_serving = false;
+        let mut retry_ms = RETRY_MS;
         loop {
             let (url, probes) = {
                 let mut i = self.inner.lock();
@@ -2697,6 +2701,7 @@ impl Remote {
             match (found, got) {
                 (Some(RelaySupport::Supported), Ok(body)) => {
                     self.inner.lock().relay = RelaySupport::Supported;
+                    retry_ms = RETRY_MS;
                     self.took(answer(&body).unwrap_or_default(), received);
                 }
                 // Asked again while this answer was on its way: the server may have gained the relay since.
@@ -2712,7 +2717,10 @@ impl Remote {
                     }
                     let retry = self.retry.notified();
                     if self.inner.lock().generation == generation {
-                        select(self.tasks.sleep(Duration::from_millis(RETRY_MS)), retry).await;
+                        retry_ms = match select(self.tasks.sleep(Duration::from_millis(retry_ms)), retry).await {
+                            Either::Left(_) => (retry_ms * 2).min(RETRY_MAX_MS),
+                            Either::Right(_) => RETRY_MS,
+                        };
                     }
                 }
             }

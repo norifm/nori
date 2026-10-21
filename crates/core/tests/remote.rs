@@ -2507,7 +2507,7 @@ impl Relay {
 }
 
 #[test]
-fn a_failed_poll_is_asked_again_after_the_retry_wait_or_at_a_change() {
+fn a_failed_poll_waits_longer_each_time_until_the_network_is_back() {
     let relay = Relay::new();
     relay.first_answers_held.store(true, Ordering::Relaxed);
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
@@ -2527,15 +2527,22 @@ fn a_failed_poll_is_asked_again_after_the_retry_wait_or_at_a_change() {
     sim.pass(Duration::from_secs(1));
     eventually(&relay, "listed once asked again", || relay.lists(&id));
 
-    // Down again: something changing here asks at once.
+    // Down for good: each failed poll waits twice as long as the last, up to 5 min, and a change here
+    // does not ask early.
     relay.go_down(true);
-    waiting(sim, "the next retry", Duration::from_secs(30));
+    for secs in [30, 60, 120, 240, 300, 300] {
+        waiting(sim, "the retry", Duration::from_secs(secs));
+        phone.remote.clone().watch(true);
+        waiting(sim, "the same retry after a change", Duration::from_secs(secs));
+        sim.pass(Duration::from_secs(secs));
+    }
+    phone.remote.network_back();
+    waiting(sim, "the first wait again once the network is back", Duration::from_secs(30));
     relay.go_down(false);
-    let polls = relay.asked_for("noriRemote.poll");
-    phone.remote.clone().watch(true);
-    eventually(&relay, "asked again at once", || relay.asked_for("noriRemote.poll") > polls);
+    phone.remote.network_back();
+    eventually(&relay, "listed again", || relay.lists(&id));
 
-    // Down again: the network coming back asks at once.
+    // Down again after an answer: the wait starts over, and the network coming back asks at once.
     relay.go_down(true);
     waiting(sim, "the retry after that", Duration::from_secs(30));
     relay.go_down(false);
