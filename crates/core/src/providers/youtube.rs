@@ -558,7 +558,7 @@ mod tests {
     }
 
     fn fixture(name: &str) -> String {
-        std::fs::read_to_string(format!("{}/../youtube/tests/fixtures/{name}.json", env!("CARGO_MANIFEST_DIR"))).unwrap()
+        std::fs::read_to_string(format!("{}/{name}.json", yt::FIXTURES)).unwrap()
     }
 
     /// An answer of `status` with fixture `body` (or `{}`) and `set_cookies`.
@@ -910,7 +910,7 @@ mod tests {
     /// expired one), the stream is asked again and the same piece asked anew.
     #[test]
     fn a_live_stream_is_read_piece_by_piece() {
-        let piece = std::fs::read(format!("{}/../youtube/tests/fixtures/live_piece.mp4", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let piece = std::fs::read(format!("{}/live_piece.mp4", yt::FIXTURES)).unwrap();
         let numbered = |n: &str| {
             let at = piece.windows(19).position(|w| w == b"Sequence-Number: 41").unwrap() + 17;
             let mut p = piece.clone();

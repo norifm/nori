@@ -256,7 +256,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | Google's sign-in page opens; Cancel closes it and leaves the WebView no cookies (3) | - | feature-e2e `youtube-music` (WebView, CookieManager) |
 | Home's feed is kept for the visit: scrolled away and back, its shelves show the same | a | crates/core providers/fake.rs `home_feed_is_kept_until_refreshed`; feature-e2e `youtube-music` (the LazyColumn's rows leaving and coming back) |
 | YouTube WebM songs mix, keep the vocal curve, download and play offline | a | engine `webm_pair_plays_through_its_mix`, `webm_arrivals_keep_analysis_and_voice`; feature-e2e `youtube-music` checks the AudioTrack, media3 resolver, download cache and downloaded-file bridge |
-| a sign-in page is done only back on music.youtube.com with a session | a | crates/youtube auth.rs |
+| a sign-in page is done only back on music.youtube.com with a session | a | innertube-music auth.rs |
 | a radio from the song playing goes on with it | a | crates/host refill_tests.rs `a_radio_from_the_song_playing_keeps_it_playing`; feature-e2e `youtube-music` (the song menu's Kotlin path to media3) |
 | no video player while off; let go when put away (2) | b | feature-e2e `motion` (ExoPlayer, Kotlin) |
 | starring reaches the server | a | client.rs |

@@ -79,7 +79,7 @@ The only per-provider code a client has is its words, one entry per kind:
 1. A variant of `ServerKind` (`crates/settings`) and the name its profiles are stored under
    (`ServerKind::id`, `ServerKind::ALL`).
 2. Its `Provider` implementation, one module under `crates/core/src/providers/` (the wire format, if
-   any, in a crate of its own with no nori dependencies, as `crates/youtube` is), behind a feature of
+   any, in a crate of its own with no nori dependencies, as innertube-music is, in its own repository), behind a feature of
    nori-core when not every client builds it, and its line in `providers::provider`.
 3. Its words in each client's table above.
 
