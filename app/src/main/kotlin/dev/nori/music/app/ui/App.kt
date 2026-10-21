@@ -547,7 +547,11 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     page("equalizer") { EqualizerScreen(settings) }
                     page("home-rows") { HomeRows(settings) }
                     page("library-sections") { LibrarySections(settings) }
-                    page("library/{section}") { LibrarySectionScreen(dev.nori.music.ffi.settings.LibrarySection.valueOf(it.arguments!!.getString("section")!!), actions) }
+                    page("library/{section}") {
+                        // A section with a chip is shown on the Library page; the places and smart playlists have a page.
+                        val section = dev.nori.music.ffi.settings.LibrarySection.valueOf(it.arguments!!.getString("section")!!)
+                        if (section.onLibraryPage()) LibraryScreen(actions, initial = section) else LibrarySectionScreen(section, actions)
+                    }
                     page("autoeq") { AutoEqScreen(settings) }
                     page("album/{id}", inset = false) { AlbumScreen(it.arguments!!.getString("id")!!, actions) }
                     page("downloaded/{id}", inset = false) {
