@@ -6,6 +6,7 @@
 
 use crate::color::{calculate_contrast, color_to_hsl, luminance, WHITE};
 use crate::compose::{blend, lerp, veil, with_alpha};
+use crate::theme::Dye;
 
 // Page colours from `cover::derive`.
 pub const EDGE: usize = 0;
@@ -240,6 +241,30 @@ pub fn accented(t: &[u32; LEN], light: u32, dark: u32) -> [u32; LEN] {
     out
 }
 
+/// `t`, a cover's page ([`page`]), on the season's paper dyed with the cover's edge: `dye` is
+/// [`Dye::new`] of `t[EDGE]`. The roles are laid out over that paper as the theme's are
+/// ([`crate::theme::roles`]); the edge stays, for the artwork's dissolve.
+pub fn dyed(t: &[u32; LEN], dye: &Dye) -> [u32; LEN] {
+    let r = crate::theme::roles(dye.palette());
+    let s = Scheme {
+        background: r.background,
+        on: r.on_background,
+        on_variant: r.on_surface_variant,
+        primary: r.primary,
+        on_primary: r.on_primary,
+        surface_variant: r.surface_variant,
+        surface_container: r.container,
+        surface_container_high: r.container_high,
+        secondary_container: r.secondary_container,
+        outline_variant: r.outline_variant,
+    };
+    let mut out = [0u32; LEN];
+    out[EDGE] = t[EDGE];
+    out[MELT] = dye.wash(t[MELT]);
+    dress(&s, None, &mut out);
+    out
+}
+
 /// Cross-fade from `a` to `b` into `out` (no allocation): colours via Compose `lerp`, numbers linearly,
 /// status bar icons switching at half way.
 pub fn mix(a: &[u32; LEN], b: &[u32; LEN], t: f32, out: &mut [u32; LEN]) {
@@ -319,6 +344,78 @@ mod tests {
         // The dark theme's accent on a dark cover, the light one's on a pale one, as they are where they read.
         assert_eq!(accented(&page(0xFF10_1010, 0xFF10_1010, WHITE, 0xFF30_C0F0, 0xFF10_1010), light, dark)[ACCENT], dark);
         assert_eq!(accented(&page(WHITE, WHITE, 0xFF11_1111, 0xFF30_C0F0, WHITE), light, dark)[ACCENT], light);
+    }
+
+    use crate::theme::{palette, Palette, Season};
+
+    const SEASONS: [Season; 4] = [Season::Spring, Season::Summer, Season::Autumn, Season::Winter];
+
+    /// `season`'s light and dark palettes as the app wears them with or without `amoled`.
+    fn worn(season: Season, amoled: bool) -> (Palette, Palette) {
+        (palette(Some(season), 1, 1, false, false, amoled), palette(Some(season), 1, 1, false, true, amoled))
+    }
+
+    /// A cover's page ending in `edge`, dyed.
+    fn dyed_page(edge: u32, season: Season, dark: bool, amoled: bool) -> ([u32; LEN], Dye) {
+        let (light, dark_palette) = worn(season, amoled);
+        let dye = Dye::new(edge, light, dark_palette, dark);
+        let text = if luminance(edge) < 0.5 { WHITE } else { 0xFF11_1111 };
+        (dyed(&page(edge, edge, text, 0xFF30_C0F0, edge), &dye), dye)
+    }
+
+    /// Dark, deep red, near-black, cream, white, saturated, a pale and a mid grey.
+    const EDGES: [u32; 11] =
+        [0xFF10_1418, 0xFF3A_1210, 0xFF1C_1C1E, 0xFFF0_E8D8, WHITE, 0xFFE0_2040, 0xFF20_C040, 0xFF20_40E0, 0xFFF0_D020, 0xFFC8_C8C8, 0xFF77_7777];
+
+    #[test]
+    fn every_dyed_page_reads() {
+        for season in SEASONS {
+            for (dark, amoled) in [(false, false), (false, true), (true, false), (true, true)] {
+                for edge in EDGES {
+                    let (t, dye) = dyed_page(edge, season, dark, amoled);
+                    let at = format!("{season:?} dark {dark} amoled {amoled}, edge {edge:08x}");
+                    for (what, fg) in [("ink", t[ON]), ("quiet ink", t[ON_VARIANT]), ("accent", t[ACCENT])] {
+                        let c = calculate_contrast(fg, t[BACKGROUND]);
+                        assert!(c >= 4.5, "{at}: {what} {fg:08x} on {:08x} reads at {c:.2}", t[BACKGROUND]);
+                    }
+                    // The wash, dyed as the page is, reads under the same text whatever its colours.
+                    for wash in EDGES.map(|w| dye.wash(w)) {
+                        for (what, fg) in [("ink", t[ON]), ("quiet ink", t[ON_VARIANT])] {
+                            let c = calculate_contrast(fg, wash);
+                            assert!(c >= 4.5, "{at}: {what} on the wash {wash:08x} reads at {c:.2}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_dyed_page_takes_its_depth_and_hue_from_the_cover() {
+        let (night, cream, red, grey) = (0xFF3A_1210u32, 0xFFF0_E8D8u32, 0xFFE8_5060u32, 0xFFC8_C8C8u32);
+        for season in SEASONS {
+            for (edge, dark, want_dark) in [(night, false, true), (cream, true, true), (cream, false, false), (red, false, false), (red, true, true)] {
+                let (t, _) = dyed_page(edge, season, dark, false);
+                assert_eq!(luminance(t[BACKGROUND]) < 0.5, want_dark, "{season:?} dark {dark}, edge {edge:08x}: page {:08x}", t[BACKGROUND]);
+                assert_eq!(luminance(t[ON]) > 0.5, want_dark, "{season:?}: the text follows the page");
+            }
+            let hue = |c: u32| color_to_hsl(c)[0];
+            let (paper, _) = worn(season, false);
+            for dark in [false, true] {
+                let (t, dye) = dyed_page(red, season, dark, false);
+                let off = (hue(t[BACKGROUND]) - hue(red)).abs();
+                assert!(off.min(360.0 - off) < 20.0, "{season:?} dark {dark}: {:08x} is not dyed red", t[BACKGROUND]);
+                assert_ne!(dye.wash(0xFF30_9050), t[BACKGROUND], "{season:?} dark {dark}: the wash keeps the cover's other colors");
+            }
+            // A grey cover gives the paper no hue of its own.
+            let (t, _) = dyed_page(grey, season, false, false);
+            let ok = crate::color::Oklab::new();
+            assert!(ok.lightness_chroma(t[BACKGROUND]).1 <= ok.lightness_chroma(paper.page).1 + 0.003, "{season:?}: grey dyed {:08x}", t[BACKGROUND]);
+            // On AMOLED the dark paper is black-based.
+            let (black, _) = dyed_page(night, season, true, true);
+            let (dark, _) = dyed_page(night, season, true, false);
+            assert!(luminance(black[BACKGROUND]) < luminance(dark[BACKGROUND]), "{season:?}");
+        }
     }
 
     #[test]

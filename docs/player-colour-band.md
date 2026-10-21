@@ -18,6 +18,9 @@ screen whether a record is flat, lifted, sliding or flying in, so it neither tra
 record, needs no fade with the lift, and two records side by side share one band with no seam. Layers
 5 and 6 below no longer exist; the rest of this file is the history of how that was found out.
 
+A cover's page is the season's paper dyed with the cover (`theme::Dye`, through `dress::dyed`), and
+its wash is dyed the same way, so the blur the band shows is the dyed page's own.
+
 ## What was drawn there
 
 Six things are stacked where the sleeve meets the page, all of them taken from the cover:

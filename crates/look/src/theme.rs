@@ -1,7 +1,7 @@
 //! The app's four themes, one per season, each a small palette of traditional Japanese colors in light
 //! and dark, and the rule that follows the calendar from one to the next.
 
-use crate::color::{luminance, BLACK};
+use crate::color::{calculate_contrast, color_to_hsl, hsl_to_color, luminance, Oklab, BLACK};
 use crate::compose::{blend, veil};
 use crate::dress::ink_on;
 
@@ -206,6 +206,73 @@ pub fn accents(season: Option<Season>, month: u32, day: u32, southern: bool) -> 
 pub fn accent_on(page: u32, ink: u32, light: u32, dark: u32) -> u32 {
     let accent = if luminance(page) < crate::cover::DARK_PAGE { dark } else { light };
     crate::cover::text_either_way(accent, page, ink)
+}
+
+/// How much of a cover's toned color the paper of its page takes.
+const DYE: f32 = 0.6;
+/// A cover darker than this (luminance) dyes the dark paper, in the light theme too.
+const DEEP: f32 = 0.18;
+/// Below this contrast on a dyed page (or its quiet share below 4.5) the season's ink gives way to
+/// [`NEAR_WHITE`] or [`NEAR_BLACK`].
+const INK_CONTRAST: f64 = 9.0;
+const NEAR_WHITE: u32 = 0xFFF5_F3F0;
+const NEAR_BLACK: u32 = 0xFF14_1210;
+
+/// The season's paper dyed with a cover's color: the page of a cover (an album, an artist, a playlist,
+/// the player) or of a mix's card. The paper takes its depth from the cover, so a dark sleeve gets the
+/// dark paper even in the light theme; ink and accent stay the season's.
+pub struct Dye {
+    palette: Palette,
+    /// The paper dyed: the theme's page, or the dark one for a dark cover.
+    paper: u32,
+    dark: bool,
+    quiet: u32,
+    ok: Oklab,
+}
+
+impl Dye {
+    /// The dye of a cover whose sleeve ends in `end`, in the season's `light` and `dark` palettes as the
+    /// app wears them ([`palette`]; with AMOLED the dark one is black-based), the theme `dark_theme`.
+    /// The page's surface is halfway to the season's, its ink the season's where it reads at
+    /// [`INK_CONTRAST`] and as [`QUIET`] text, and its accent moved until it reads ([`accent_on`]).
+    pub fn new(end: u32, light: Palette, dark: Palette, dark_theme: bool) -> Dye {
+        let deep = dark_theme || luminance(end) < DEEP;
+        let season = if deep { dark } else { light };
+        let ok = Oklab::new();
+        let page = dyed(end, season.page, deep, &ok);
+        let reads = |ink: u32| calculate_contrast(ink, page) >= INK_CONTRAST && calculate_contrast(veil(ink, QUIET, page), page) >= 4.5;
+        let ink = if reads(season.ink) {
+            season.ink
+        } else if luminance(page) < 0.3 {
+            NEAR_WHITE
+        } else {
+            NEAR_BLACK
+        };
+        let accent = accent_on(page, ink, light.accent, dark.accent);
+        let palette = Palette { page, surface: blend(page, season.surface, 0.5), ink, accent, on: season.on };
+        Dye { palette, paper: season.page, dark: deep, quiet: veil(ink, QUIET, page), ok }
+    }
+
+    /// The page's palette.
+    pub fn palette(&self) -> Palette {
+        self.palette
+    }
+
+    /// A color of the cover's wash dyed as the page is ([`dyed`]), or the page where its quiet text would
+    /// not read on it.
+    pub fn wash(&self, c: u32) -> u32 {
+        let w = dyed(c, self.paper, self.dark, &self.ok);
+        if calculate_contrast(self.quiet, w) >= 4.5 { w } else { self.palette.page }
+    }
+}
+
+/// `c` brought to the depth of the `paper` (`dark` or light), keeping its hue and some of its saturation,
+/// and mixed into it. A grey's hue is noise, so it gives no saturation ([`crate::cover::own_tint`]).
+fn dyed(c: u32, paper: u32, dark: bool, ok: &Oklab) -> u32 {
+    let [h, s, _] = color_to_hsl(c);
+    let own = crate::cover::own_tint(ok.lightness_chroma(c).1);
+    let toned = if dark { [h, (s * own).min(0.45), 0.11] } else { [h, (s * own).clamp(0.2 * own, 0.5), 0.86] };
+    blend(paper, hsl_to_color(toned), DYE)
 }
 
 /// How much of the ink secondary text is over the page: the least that reads at 4.5:1 in every palette.

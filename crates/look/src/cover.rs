@@ -95,6 +95,12 @@ fn page_of(colour: u32) -> u32 {
     if hsl[2] - color_to_hsl(darker)[2] <= color_to_hsl(lighter)[2] - hsl[2] { darker } else { lighter }
 }
 
+/// How much of a colour's HSL saturation is its own rather than noise, by its Oklab `chroma`: none under
+/// 0.006, all from 0.016, so JPEG noise or a scanner cast tints nothing while real creams stay.
+pub(crate) fn own_tint(chroma: f32) -> f32 {
+    ((chroma - 0.006) / 0.010).clamp(0.0, 1.0)
+}
+
 /// Derives page colours from `w` x `h` ARGB pixels (at least 1 x 1: every decoder rejects empty images).
 /// The page is a colour of the cover, whatever the app's theme: the one it dissolves into most softly
 /// ([`Seam`]). With `amoled` it is black, without a wash.
@@ -106,13 +112,12 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, amoled: bool) -> CoverColours 
     let body_grey = ok.lightness_chroma(body).1 < GREY;
     let source = seam.frame.unwrap_or(seam.colour);
     let (source_light, source_colour) = ok.lightness_chroma(source);
-    // Paper and ink: a near-neutral page, light or dark. Their tint fades out below 0.016 chroma and is
-    // gone under 0.006, so JPEG noise or a scanner cast does not tint the page while real creams stay.
+    // Paper and ink: a near-neutral page, light or dark; noise does not tint it ([`own_tint`]).
     let neutral = source_colour < PAPER_CHROMA;
     let paper = neutral && source_light >= 0.79;
     let ink = source_colour < GREY && source_light < 0.21;
     let mut source_hsl = color_to_hsl(source);
-    source_hsl[1] *= ((source_colour - 0.006) / 0.010).clamp(0.0, 1.0);
+    source_hsl[1] *= own_tint(source_colour);
     let background = if amoled { BLACK } else { page_of(hsl_to_color(source_hsl)) };
     let on = text_on(background);
     // A monochrome sleeve's accent is its own tint, unless a vivid colour covers 1 % of it (Parachutes'
