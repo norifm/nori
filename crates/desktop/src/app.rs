@@ -924,6 +924,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     });
     on!(ui.on_settings_tab_chosen, h, |a, t| {
         a.ui().set_settings_tab(t);
+        a.untune(SETTINGS);
         a.settings_shown();
     });
     on!(ui.on_setting_toggled, h, |a, name, on| {
@@ -1105,10 +1106,7 @@ impl App {
             self.ui().set_find_text("".into());
             self.narrowed();
         }
-        if self.tuning && view != EQUALIZER {
-            self.tuning = false;
-            self.on_session(|s| s.engine.set_shallow(false));
-        }
+        self.untune(view);
         let ui = self.ui();
         ui.set_failed("".into());
         ui.set_loading(false);
@@ -2600,6 +2598,8 @@ impl App {
         let Some(s) = &self.session else { return };
         if s.setting(name, value).is_none() {
             self.say(&format!("{name}: not a setting"), true);
+        } else {
+            self.tune();
         }
         self.settings_shown();
         self.jam_shown();
@@ -2688,12 +2688,26 @@ impl App {
         }
     }
 
-    /// Enters the engine's shallow buffer while the equalizer page is open.
+    /// Enters the engine's shallow buffer after a change on a sound page (`rules::sound_tuning`).
     fn tune(&mut self) {
-        if !self.tuning && self.ui().get_view() == EQUALIZER {
+        if !self.tuning && nori_core::rules::sound_tuning(self.sound_page(self.ui().get_view()), true) {
             self.tuning = true;
             self.on_session(|s| s.engine.set_shallow(true));
         }
+    }
+
+    /// Gives the deep buffer back unless `view` is a sound page.
+    fn untune(&mut self, view: i32) {
+        if self.tuning && !self.sound_page(view) {
+            self.tuning = false;
+            self.on_session(|s| s.engine.set_shallow(false));
+        }
+    }
+
+    /// The equalizer page, or Settings on its Sound tab: where a sound change is heard at once.
+    fn sound_page(&self, view: i32) -> bool {
+        view == EQUALIZER
+            || view == SETTINGS && crate::settings::tabs(&self.facts.rules.settings).get(self.ui().get_settings_tab() as usize) == Some(&nori_core::settings_pages::SettingsPage::Sound)
     }
 
     /// Edits a level in place; redraws the page when the slider is released.

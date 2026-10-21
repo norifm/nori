@@ -16,7 +16,7 @@ use nori_core::settings_store::SoundTool;
 use nori_core::stars::StarMarks;
 use nori_core::{Album, AlbumDetail, Artist, ArtistDetail, OriginKind, PageOrigin, Playlist, PlaylistDetail, Song};
 use nori_engine::{Event, State};
-use nori_core::rules::equalizer_tuning;
+use nori_core::rules::sound_tuning;
 use nori_look::cover::CoverColours;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Position, Rect};
@@ -921,8 +921,6 @@ impl App {
     /// Takes the stored settings and updates what depends on them.
     pub fn prefs_changed(&mut self, prefs: StoredPrefs) {
         self.prefs = prefs;
-        // Releases the low-latency buffer if the equalizer was switched off.
-        self.tune();
         self.retheme();
         self.settings.invalidate();
         self.dirty = true;
@@ -2507,16 +2505,16 @@ impl App {
     }
 
     /// A sound change was stored. Returns true when the engine should now take the low-latency buffer
-    /// (first real edit on an enabled equalizer; `rules::equalizer_tuning`), so later edits are heard
+    /// (first real edit on the equalizer; `rules::sound_tuning`), so later edits are heard
     /// at once. Merely opening the equalizer does not.
     pub fn sound_edited(&mut self) -> bool {
-        self.touched |= equalizer_tuning(self.view == View::Equalizer, true, self.prefs.eq_enabled);
+        self.touched |= sound_tuning(self.view == View::Equalizer, true);
         self.tune()
     }
 
-    /// Updates `tuning` from `rules::equalizer_tuning`; pushes the release command, returns true on take.
+    /// Updates `tuning` from `rules::sound_tuning`; pushes the release command, returns true on take.
     fn tune(&mut self) -> bool {
-        let want = equalizer_tuning(self.view == View::Equalizer, self.touched, self.prefs.eq_enabled);
+        let want = sound_tuning(self.view == View::Equalizer, self.touched);
         if want == self.tuning {
             return false;
         }

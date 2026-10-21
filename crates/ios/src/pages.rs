@@ -1377,14 +1377,7 @@ pub extern "C" fn nori_ios_equalizer_band(index: u32, gain_db: f32) -> f32 {
 /// the core's rule.
 #[no_mangle]
 pub extern "C" fn nori_ios_tuning(in_sight: i32, touched: i32) {
-    with_session(|s| {
-        let on = s.core.session.settings.prefs(|p| p.eq_enabled);
-        s.engine.set_shallow(nori_core::rules::equalizer_tuning(
-            in_sight != 0,
-            touched != 0,
-            on,
-        ));
-    });
+    with_session(|s| s.engine.set_shallow(nori_core::rules::sound_tuning(in_sight != 0, touched != 0)));
 }
 
 /// Keeps `query` in the recent searches: the user picked a result or pressed search.

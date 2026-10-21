@@ -717,17 +717,12 @@ fn equalizer_screen() {
     a.go(View::Equalizer);
     a.go(View::Home);
     assert!(!a.cmds.iter().any(|c| matches!(c, Cmd::Tuning(_))), "{:?}", a.cmds);
-    // With the equalizer off nothing changed on it is heard: the output is left alone.
+    // With the equalizer off its page's limiter and balance are still heard: the same.
     a.prefs.eq_enabled = false;
     a.go(View::Equalizer);
-    assert!(!a.sound_edited());
-    // Switched off while the shallow buffer was held: given back.
-    a.prefs.eq_enabled = true;
     assert!(a.sound_edited());
-    a.cmds.clear();
-    let off = StoredPrefs { eq_enabled: false, ..a.prefs.clone() };
-    a.prefs_changed(off);
-    assert_eq!(a.cmds, [Cmd::Tuning(false)]);
+    a.go(View::Home);
+    assert!(a.cmds.contains(&Cmd::Tuning(false)));
     // The parametric one draws its own bands, and d takes the one chosen out.
     let mut p = StoredPrefs { eq_enabled: true, eq_mode: nori_core::settings::EqMode::Parametric, ..StoredPrefs::default() };
     p.eq_bands = nori_core::settings::graphic();

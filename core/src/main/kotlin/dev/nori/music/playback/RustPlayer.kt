@@ -58,7 +58,7 @@ internal object RustPlayerJni {
     @JvmStatic @CriticalNative external fun setRepeat(h: Long, mode: Int)
     @JvmStatic @CriticalNative external fun replan(h: Long)
     @JvmStatic @CriticalNative external fun gainChanged(h: Long)
-    @JvmStatic @CriticalNative external fun setForeground(h: Long, on: Boolean)
+    @JvmStatic @CriticalNative external fun setShallow(h: Long, on: Boolean)
     /** The sound and the controls' fades as the core's settings are now. */
     @JvmStatic @CriticalNative external fun applySettings(h: Long)
     /** Where the ear is in it now (the engine's `status().position_now()`), read when asked, never ticked. */
@@ -331,8 +331,8 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         if (p != parameters) { parameters = p; invalidateState() }
     }
     fun gainChanged() = RustPlayerJni.gainChanged(h)
-    /** The app is in sight: the engine trades its deep buffer for a shallow one until the next boundary after it leaves. */
-    fun setForeground(on: Boolean) = RustPlayerJni.setForeground(h, on)
+    /** A sound page is tuned: the engine trades its deep buffer for a shallow one until it stops. */
+    fun setShallow(on: Boolean) = RustPlayerJni.setShallow(h, on)
     fun replan() = RustPlayerJni.replan(h)
     val mixing: Boolean get() = RustPlayerJni.mixing(h)
     /** A song the network would not bring is held, playing still, and tried again by the engine. */
@@ -958,7 +958,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         // The DAC's mixer attributes are read by the framework when the track is built: set for this format first.
         nori.dac.onFormat(rate, encoding)
         val bitPerfect = nori.dac.state.value.bitPerfect
-        // Always opened deep, in power saving mode: the shallow buffer while the app is in sight is the same
+        // Always opened deep, in power saving mode: a sound page's shallow buffer is the same
         // track made smaller in place (setBufferSizeInFrames, crates/android/src/track.rs), not another one.
         val mode = if (bitPerfect) AudioTrack.PERFORMANCE_MODE_NONE else AudioTrack.PERFORMANCE_MODE_POWER_SAVING
         val track = AudioTrack.Builder()

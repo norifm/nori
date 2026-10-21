@@ -316,11 +316,11 @@ pub struct SongSteps {
     pub pause_at_end: bool,
 }
 
-/// Whether the equalizer screen switches to the shallow buffer (`set_shallow`): screen visible, sound
-/// changed on it, equalizer on.
+/// Whether a sound page (the equalizer, AutoEQ, the sound settings) switches to the shallow buffer
+/// (`set_shallow`): the page in sight and a setting changed on it.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn equalizer_tuning(in_sight: bool, touched: bool, eq_on: bool) -> bool {
-    in_sight && touched && eq_on
+pub fn sound_tuning(in_sight: bool, touched: bool) -> bool {
+    in_sight && touched
 }
 
 /// The volume step for slider `fraction` on an output with steps 0..=`max`, rounded half to even like

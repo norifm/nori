@@ -48,7 +48,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"setRepeat", c"(JI)V", set_repeat),
         native!(c"replan", c"(J)V", replan),
         native!(c"gainChanged", c"(J)V", gain_changed),
-        native!(c"setForeground", c"(JZ)V", set_foreground),
+        native!(c"setShallow", c"(JZ)V", set_shallow),
         native!(c"applySettings", c"(J)V", apply_settings),
         native!(c"positionMs", c"(J)J", position_ms),
         native!(c"shownMs", c"(JI)J", shown_ms),
@@ -1526,8 +1526,8 @@ extern "system" fn gain_changed(h: jlong) {
     }
 }
 
-/// The app came in sight (its screen or a car's) or left it: the track is kept shallow while it is.
-extern "system" fn set_foreground(h: jlong, on: jboolean) {
+/// A sound page is being tuned (`rules::sound_tuning`) or no longer: the track is kept shallow while it is.
+extern "system" fn set_shallow(h: jlong, on: jboolean) {
     if let Some(p) = player(h) {
         p.engine.set_shallow(on != 0);
     }

@@ -82,7 +82,7 @@ pub trait AudioOutput: Send {
     fn bursts(&self) -> bool {
         false
     }
-    /// Hold only a fraction of a second (the app in sight), so a sound change is heard soon without the
+    /// Hold only a fraction of a second (a sound page tuned), so a sound change is heard soon without the
     /// device dropping what it holds, or the deep buffer again. Also told before starting.
     fn shallow(&mut self, _on: bool) {}
     /// The device stopped and could not reopen (a dead sound server); the engine checks after

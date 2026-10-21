@@ -152,8 +152,8 @@ only what touches the hardware:
   through the core's `playlist_*` calls and tell the engine (`queue_changed`); the controls are
   `play_at`, `play`, `pause`, `next`, `previous`, `seek`, `go_to`, `set_settings`, `replan`,
   `set_repeat`, `gain_changed`, `set_shallow` (the device is told through `AudioOutput::shallow` to hold only
-  a fraction of a second, so a band moved is heard at once, in place: on Android while the app is in sight,
-  on the desktop while the equalizer page is open; nothing it holds is dropped) and `pause_at_end`
+  a fraction of a second, so a band moved is heard at once, in place: while a sound page is tuned,
+  `rules::sound_tuning`; nothing it holds is dropped) and `pause_at_end`
   (the sleep timer's "end of this song"). The player's own rules come with them: a seek or a `go_to`
   while paused is held until play and fetches nothing, and a skip button while paused is a request for
   music (`nori_player::transport::skip_plays`). A screen follows `Event`s (state, the song heard -
@@ -180,9 +180,9 @@ still replace, runs the chain again up to it (the same music) and on with the ne
 5 ms (a change made where the one before it was, nothing taken by the device between them, blends from
 what was there before both). Nothing is decoded again and no position guessed. Android's track is deep
 out of sight (it holds seconds: a change is made past them, heard once they have played, 1 to 11.5 s) and
-shallow with the app in sight (`set_shallow`, a fraction of a second sized for the output: a change is
-heard after the output's own latency and a little more). Coming in sight, the track takes no more until it
-has played down to shallow, and a change meanwhile is heard where it runs out; leaving, it is written
+shallow while a sound page is tuned (`set_shallow`, a fraction of a second sized for the output: a
+change is heard after the output's own latency and a little more). Going shallow, the track takes no more
+until it has played down, and a change meanwhile is heard where it runs out; going deep, it is written
 further. One track, resized in place, never emptied for either (crates/android/src/track.rs). A new
 ending (the queue changed) on a device holding more than a quarter second not yet mixed drops what it
 holds and plays on, after a gap, from exactly where it was (`Feed::rewind`). Changes that come quickly are
@@ -540,9 +540,9 @@ answers; the rule itself is never written again in a client. Android and nori-cl
 - **A download's covers**: `Core::download_cover_urls(cover ids)` gives the addresses to fetch onto the
   disk (both sizes, no provider's, at most 500), for the client's cover loader to `warm`.
   `Core::cover_address` builds any cover's address the same way.
-- **The equalizer screen's shallow buffer** (the terminal client): `rules::equalizer_tuning(in_sight,
-  touched, eq_on)`; a change counts as touching it when that is true with `touched` true. Whether the
-  screen is in sight is the client's. Android keeps its track shallow whenever the app is in sight.
+- **A sound page's shallow buffer** (the equalizer, AutoEQ, the sound settings):
+  `rules::sound_tuning(in_sight, touched)`. Whether such a page is in sight and a sound was changed on
+  it is the client's.
 - **Sizes**: how much each read asks for is `browse::library_sizes` (the sync's page, local search).
 
 ## Calling the core cheaply

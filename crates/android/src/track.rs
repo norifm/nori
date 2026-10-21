@@ -9,7 +9,7 @@
 //! volume since seconds sit in the track), two clock readings after a start ([`SETTLE_MS`]), and the end
 //! of the music.
 //!
-//! With the app in sight (`AudioOutput::shallow`) the same track holds a fraction of a second, sized for
+//! While a sound page is tuned (`AudioOutput::shallow`) the same track holds a fraction of a second, sized for
 //! the route ([`shallow_marks`]: latency, min buffer, wake lateness) and grown when the writer sees more
 //! latency or underruns ([`Needs`]), so a sound change the engine makes in its ring is heard soon. The
 //! track is resized in place with `setBufferSizeInFrames` ([`Sink::resize`]), never reopened or emptied:
@@ -41,7 +41,7 @@ pub(crate) const LOW_US: i64 = 1_000_000;
 /// the ring below its own low mark, waking the engine (`AudioOutput::bursts`).
 pub(crate) const TRACK_US: i64 = BUFFER_US + LOW_US + 500_000;
 /// Shallow track size on the speaker: 80-120 ms (its latency included) is how soon a change made with the
-/// app in sight is heard.
+/// sound page tuned is heard.
 pub(crate) const SHALLOW_TRACK_US: i64 = 120_000;
 /// What a shallow track takes per top-up.
 const SHALLOW_TOP_US: i64 = 40_000;

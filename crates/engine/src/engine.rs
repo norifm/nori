@@ -556,8 +556,8 @@ impl Engine {
         self.send(Command::Gain);
     }
 
-    /// The device holds only a fraction of a second (`true`: the app in sight on a phone, the
-    /// equalizer page on the desktop), so a sound change is heard soon, or its deep buffer again.
+    /// The device holds only a fraction of a second (`true`: a sound page being
+    /// tuned, `rules::sound_tuning`), so a sound change is heard soon, or its deep buffer again.
     /// Nothing it holds is dropped: going shallow it plays out first.
     pub fn set_shallow(&self, on: bool) {
         self.send(Command::Shallow(on));

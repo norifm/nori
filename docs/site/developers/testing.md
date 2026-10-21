@@ -229,7 +229,7 @@ is Android glue and stays on the device. 50 moved, 60 stay.
 | taking the EQ out is heard at once, no swap deferred | a | engine.rs |
 | still playing after the EQ leaves | b | audio-e2e `eq`, smoke `eq` |
 | still playing across the boundary | a | engine.rs |
-| out of sight, deep buffer back in place; in sight, shallow buffer in place; a change made in place; track never reopened or emptied; still playing (5) | b | audio-e2e `tuning`, smoke `eq` (crates/android track.rs resizes the real AudioTrack) |
+| a change off the sound pages keeps the deep buffer; tuned on the equalizer or the sound settings, shallow buffer in place; out of sight or off them, deep buffer back in place; track never reopened or emptied; still playing (5) | b | audio-e2e `tuning`, smoke `eq` (crates/android track.rs resizes the real AudioTrack) |
 | the deep buffer came back without waiting for a boundary | a | engine.rs |
 | measuring starts when AutoMix is switched on; the songs coming up are measured (2) | b | audio-e2e `automix` (read out of the media3 cache through measure.rs's JNI) |
 | the mix is planned from what was measured | a | automix.rs, core.rs |
