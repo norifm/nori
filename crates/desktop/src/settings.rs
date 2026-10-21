@@ -97,6 +97,8 @@ pub struct Facts {
     pub devices: Vec<String>,
     pub device: String,
     pub syncing: bool,
+    /// Changes waiting for the server, and dropped unsent.
+    pub unsent: (u32, u32),
     /// What the open profile offers: a jam guest's settings are this computer's own.
     pub rules: nori_core::browse::ProfileRules,
 }
@@ -452,6 +454,10 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                 ..Default::default()
             }
         }
+        RowItem::Unsent { waiting, dropped } => {
+            let parts = [(waiting, "waiting for the server"), (dropped, "the server would not take")];
+            info("Changes not sent", parts.iter().filter(|p| p.0 > 0).map(|(n, what)| format!("{n} {what}")).collect::<Vec<_>>().join(" · "))
+        }
         RowItem::Link { .. } | RowItem::CompressionMeter => return None,
         RowItem::Action { action: a } => {
             let n = f.analysed;
@@ -541,6 +547,8 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
         cover_bytes: f.cover_bytes as i64,
         lyrics_bytes: f.lyrics_bytes as i64,
         download_songs: f.download_songs,
+        unsent_waiting: f.unsent.0,
+        unsent_dropped: f.unsent.1,
         ..PageFacts::default()
     };
     let mut groups: Vec<(&'static str, Vec<Row>)> = Vec::new();

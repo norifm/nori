@@ -17,9 +17,14 @@ fn failed(kind: FailureKind, e: JsValue) -> TransportError {
 /// The bytes at `url` as the worker's `fetch` answers them.
 pub async fn fetch(x: Exchange) -> Result<TransportResponse, TransportError> {
     let init = RequestInit::new();
-    if let Some(json) = &x.json {
+    let body = match (&x.json, &x.form) {
+        (Some(json), _) => Some((json, "application/json")),
+        (None, Some(form)) => Some((form, "application/x-www-form-urlencoded")),
+        (None, None) => None,
+    };
+    if let Some((body, _)) = body {
         init.set_method("POST");
-        init.set_body(&JsValue::from_str(json));
+        init.set_body(&JsValue::from_str(body));
     }
     if x.timeout_ms > 0 {
         init.set_signal(Some(&web_sys::AbortSignal::timeout_with_u32(x.timeout_ms)));
@@ -28,8 +33,8 @@ pub async fn fetch(x: Exchange) -> Result<TransportResponse, TransportError> {
     for (k, v) in &x.headers {
         let _ = req.headers().set(k, v);
     }
-    if x.json.is_some() {
-        let _ = req.headers().set("Content-Type", "application/json");
+    if let Some((_, kind)) = body {
+        let _ = req.headers().set("Content-Type", kind);
     }
     let scope: WorkerGlobalScope = js_sys::global().unchecked_into();
     let answer = JsFuture::from(scope.fetch_with_request(&req)).await.map_err(|e| failed(FailureKind::Connect, e))?;
@@ -43,7 +48,7 @@ pub async fn fetch(x: Exchange) -> Result<TransportResponse, TransportError> {
 #[async_trait::async_trait]
 impl<W: Send + Sync> Transport for Fetch<W> {
     async fn get(&self, url: String, timeout_ms: u32) -> Result<TransportResponse, TransportError> {
-        OneThread(fetch(Exchange { url, headers: Default::default(), json: None, timeout_ms })).await
+        OneThread(fetch(Exchange { url, timeout_ms, ..Default::default() })).await
     }
 
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {

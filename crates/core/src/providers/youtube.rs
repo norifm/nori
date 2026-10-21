@@ -82,7 +82,7 @@ impl yt::Http for Wire<'_> {
     type Error = NetError;
 
     fn send(&self, r: yt::Request) -> impl std::future::Future<Output = Result<yt::Response, NetError>> + Send {
-        let exchange = Exchange { url: r.url, headers: r.headers.into_iter().collect(), json: r.body, timeout_ms: 0 };
+        let exchange = Exchange { url: r.url, headers: r.headers.into_iter().collect(), json: r.body, ..Default::default() };
         async move {
             let a = self.0.send(exchange).await?;
             Ok(yt::Response { status: a.status, body: a.body, set_cookies: a.set_cookies })

@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::browse::{HistoryAfter, ServerHistory};
 use crate::client::{Client, NetResult};
-use crate::transport::{Exchange, TransportResponse};
+use crate::transport::{Exchange, Outcome, TransportResponse};
 use crate::{model::*, Core, Result};
 
 pub use nori_library::history::*;
@@ -44,7 +44,7 @@ impl Client {
         match self.fetch_server_plays().await {
             Ok(true) => ServerHistory::Current,
             Ok(false) => ServerHistory::Unavailable,
-            Err(e) if e.is_io() => ServerHistory::Unreached,
+            Err(e) if e.outcome() == Outcome::Offline => ServerHistory::Unreached,
             Err(_) => ServerHistory::Unavailable,
         }
     }

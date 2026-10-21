@@ -29,13 +29,6 @@ pub enum FailureKind {
     Other,
 }
 
-impl FailureKind {
-    /// Whether the network, not the request, failed (such requests are queued and retried).
-    pub fn is_io(self) -> bool {
-        self != FailureKind::Other
-    }
-}
-
 /// One link of the platform's exception chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -105,6 +98,9 @@ pub struct Exchange {
     pub headers: std::collections::HashMap<String, String>,
     /// POSTed as `application/json` when set; a GET otherwise.
     pub json: Option<String>,
+    /// POSTed as `application/x-www-form-urlencoded` when set and `json` is not.
+    #[cfg_attr(feature = "ffi", uniffi(default))]
+    pub form: Option<String>,
     /// As in [`Transport::get`].
     pub timeout_ms: u32,
 }
@@ -143,8 +139,7 @@ pub use nori_tasks::block_on;
 pub enum NetError {
     /// The request did not come back.
     Transport { kind: FailureKind, detail: Option<String> },
-    /// An error status without a Subsonic body (e.g. a proxy's page). Treated as a network failure,
-    /// unless it refuses the request as it stands ([`NetError::is_io`]).
+    /// An error status without a Subsonic body (e.g. a proxy's page); see [`NetError::outcome`].
     Http { status: u16 },
     /// A Subsonic error response.
     Api { code: i32, reason: String },
@@ -153,15 +148,30 @@ pub enum NetError {
     Db { reason: String },
 }
 
+/// What a failed request to the server means for a change sent with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// No answer came back (the network is down, or the request never left): kept, tried later.
+    Offline,
+    /// The server or a proxy rejected the request as it stands: sent again it is rejected again.
+    Refused,
+    /// Something answered without taking it (a server error, a proxy asking to sign in or to wait, a
+    /// captive portal's page): kept, tried later.
+    Later,
+}
+
 impl NetError {
-    /// The network failed, not the request: writes are kept for later and the other address is tried.
-    /// A 4xx refusing the request itself (too long, not found) is not: sent again it is refused again.
-    /// Signed out at a proxy, a timeout or too many requests passes.
-    pub fn is_io(&self) -> bool {
+    /// Signed out at a proxy, a timeout or too many requests passes; any other 4xx refuses the request
+    /// itself (too long, not found).
+    pub fn outcome(&self) -> Outcome {
         match self {
-            NetError::Http { status } => !(400..500).contains(status) || matches!(status, 401 | 403 | 407 | 408 | 429),
-            NetError::Transport { kind, .. } => kind.is_io(),
-            _ => false,
+            // Not signed in or not allowed (or a generic error) says nothing about the change: it waits
+            // until the user signs in again.
+            NetError::Api { code: 0 | 40..=44 | 50, .. } => Outcome::Later,
+            NetError::Transport { kind: FailureKind::Other, .. } | NetError::Api { .. } => Outcome::Refused,
+            NetError::Transport { .. } => Outcome::Offline,
+            NetError::Http { status } if (400..500).contains(status) && !matches!(status, 401 | 403 | 407 | 408 | 429) => Outcome::Refused,
+            NetError::Http { .. } | NetError::Parse { .. } | NetError::Db { .. } => Outcome::Later,
         }
     }
 
@@ -213,7 +223,15 @@ impl From<TransportError> for NetError {
 /// One GET through the platform. An error status still returns its body when it is a Subsonic answer
 /// (octo-fiesta sends auth failures as 401 with a Subsonic error body); otherwise it is [`NetError::Http`].
 pub async fn get(transport: &dyn Transport, url: String, timeout_ms: u32) -> Result<Vec<u8>, NetError> {
-    let r = transport.get(url, timeout_ms).await?;
+    subsonic_answer(transport.get(url, timeout_ms).await?)
+}
+
+/// [`get`] with `form` POSTed rather than in the URL.
+pub async fn post_form(transport: &dyn Transport, url: String, form: String) -> Result<Vec<u8>, NetError> {
+    subsonic_answer(transport.send(Exchange { url, form: Some(form), ..Default::default() }).await?)
+}
+
+fn subsonic_answer(r: TransportResponse) -> Result<Vec<u8>, NetError> {
     if !(200..300).contains(&r.status) && (r.body.is_empty() || !subsonic_body(&r.body)) {
         return Err(NetError::Http { status: r.status });
     }
@@ -414,6 +432,41 @@ mod tests {
         assert!(!get_failed(401, false));
         assert!(get_failed(404, true));
         assert!(get_failed(301, true));
+    }
+
+    #[test]
+    fn outcomes() {
+        use Outcome::*;
+        let http = |status| NetError::Http { status };
+        let transport = |kind| NetError::Transport { kind, detail: None };
+        let cases = [
+            (transport(FailureKind::Connect), Offline),
+            (transport(FailureKind::Timeout), Offline),
+            (transport(FailureKind::Metered), Offline),
+            (transport(FailureKind::Other), Refused),
+            (NetError::Api { code: 70, reason: String::new() }, Refused),
+            (NetError::Api { code: 10, reason: String::new() }, Refused),
+            (NetError::Api { code: 0, reason: String::new() }, Later),
+            (NetError::Api { code: 40, reason: String::new() }, Later),
+            (NetError::Api { code: 41, reason: String::new() }, Later),
+            (NetError::Api { code: 44, reason: String::new() }, Later),
+            (NetError::Api { code: 50, reason: String::new() }, Later),
+            (http(400), Refused),
+            (http(404), Refused),
+            (http(414), Refused),
+            (http(401), Later),
+            (http(403), Later),
+            (http(407), Later),
+            (http(408), Later),
+            (http(429), Later),
+            (http(500), Later),
+            (http(503), Later),
+            (http(302), Later),
+            (NetError::Parse { reason: String::new() }, Later),
+        ];
+        for (e, outcome) in cases {
+            assert_eq!(e.outcome(), outcome, "{e:?}");
+        }
     }
 
 }

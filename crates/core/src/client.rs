@@ -2,7 +2,7 @@
 //! profile's addresses, per-client state) and its writes. Reads and their store are in cache_policy.rs,
 //! the source's own protocol in providers/.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -30,6 +30,8 @@ pub struct Client {
     /// A replay of the queued writes is running; a second one would send them twice. Queuing a write and
     /// a replay finding nothing left happen under it, so a write queued as a replay ends is never left.
     pub(crate) replaying: parking_lot::Mutex<bool>,
+    /// Queued writes dropped unsent since this client opened.
+    pub(crate) dropped: AtomicU32,
     /// The car's folders last listed, for their later pages and the list a picked row plays (car.rs).
     pub(crate) car: parking_lot::Mutex<crate::car::Shown>,
     /// An AutoEQ index fetch is running; another asked meanwhile is dropped (profiles.rs).
@@ -40,6 +42,16 @@ pub struct Client {
     /// here: neither is offered (`queue_offer`).
     pub(crate) queue_pushed: parking_lot::Mutex<Option<crate::library::QueuePlace>>,
     pub(crate) queue_seen: parking_lot::Mutex<Option<crate::library::QueuePlace>>,
+}
+
+/// Changes made here the server has not taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Unsent {
+    /// Queued until the server takes them.
+    pub waiting: u32,
+    /// Dropped since this profile opened: refused by the server, or put off for good.
+    pub dropped: u32,
 }
 
 /// The client of the server profile in use, as the platform switches profiles: where what outlives one
@@ -93,7 +105,7 @@ impl Client {
 impl Client {
     #[cfg_attr(feature = "ffi", uniffi::constructor)]
     pub fn new(core: Arc<Core>, transport: Arc<dyn Transport>, covers: Arc<crate::covers::CoverNet>) -> Arc<Self> {
-        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), queue_pushed: Default::default(), queue_seen: Default::default() })
+        Arc::new(Client { core, transport, covers, profile: RwLock::new(NetProfile::default()), second: AtomicBool::new(false), lyrics: Default::default(), prefetch: Default::default(), motion: Default::default(), replaying: Default::default(), dropped: Default::default(), car: Default::default(), autoeq_fetching: AtomicBool::new(false), queue_pushed: Default::default(), queue_seen: Default::default() })
     }
 
     /// Sets the profile's addresses, folder and bitrate cap.

@@ -321,6 +321,15 @@
         <item quantity="one">%1$d download</item>
         <item quantity="other">%1$d downloads</item>
     </plurals>
+    <string name="settings_unsent">Changes not sent</string>
+    <plurals name="settings_unsent_waiting">
+        <item quantity="one">%1$d waiting for the server</item>
+        <item quantity="other">%1$d waiting for the server</item>
+    </plurals>
+    <plurals name="settings_unsent_dropped">
+        <item quantity="one">%1$d the server would not take</item>
+        <item quantity="other">%1$d the server would not take</item>
+    </plurals>
     <!-- The offline index, as a part of what is stored. -->
     <string name="settings_stored_library">Library index</string>
     <string name="settings_streamed">Streamed music</string>
