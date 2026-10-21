@@ -10,6 +10,7 @@ second thing to keep in step by hand.
     tools/changelog.py --update            # write that into CHANGELOG.md's Unreleased
     tools/changelog.py --release 0.2.0     # close Unreleased as a dated version
     tools/changelog.py --notes 0.2.0       # print one version's section, for release notes
+    tools/changelog.py --beta 0.2.0-beta.2 # a beta's notes: what changed since the tag before it
 
 What is left out is as deliberate as what is kept: `test`, `chore` and `wip`
 describe the work, not the app, and a changelog nobody can skim is one nobody
@@ -60,6 +61,32 @@ def last_tag() -> str | None:
     # there rather than at the first commit ever made.
     found = run("log", "-1", "--format=%H", "--extended-regexp", r"--grep=^build: release [0-9]+\.[0-9]+\.[0-9]+$").strip()
     return found or None
+
+
+def previous_tag(version: str) -> str | None:
+    """The newest tag before this version's own, beta or not."""
+    try:
+        return run("describe", "--tags", "--abbrev=0", "--exclude", f"v{version}").strip() or None
+    except subprocess.CalledProcessError:
+        return None
+
+
+def repo_url() -> str | None:
+    remote = run("remote", "get-url", "origin").strip()
+    m = re.match(r"^(?:git@github\.com:|https://github\.com/)(?P<repo>[^/]+/[^/]+?)(?:\.git)?$", remote)
+    return f"https://github.com/{m.group('repo')}" if m else None
+
+
+def beta_notes(version: str) -> str:
+    """A beta lists only what is new since the build before it, pointing back to that one."""
+    since = previous_tag(version)
+    body = render(since)
+    if not since or "-beta." not in since:
+        return body
+    name = f"nori {since.removeprefix('v')}"
+    url = repo_url()
+    link = f"[{name}]({url}/releases/tag/{since})" if url else name
+    return f"Everything in {link}, plus:\n\n{body}"
 
 
 def commits(since: str | None):
@@ -215,6 +242,7 @@ def main() -> int:
     p.add_argument("--update", action="store_true", help="write into CHANGELOG.md's Unreleased section")
     p.add_argument("--release", metavar="VERSION", help="close Unreleased as this dated version")
     p.add_argument("--notes", metavar="VERSION", help="print one version's section")
+    p.add_argument("--beta", metavar="VERSION", help="print a beta's notes: the changes since the tag before it")
     p.add_argument("--retitle", nargs=2, metavar=("OLD", "NEW"), help="renumber an unreleased version's section")
     a = p.parse_args()
 
@@ -230,6 +258,9 @@ def main() -> int:
             print(f"no section for {a.notes} in CHANGELOG.md", file=sys.stderr)
             return 1
         print(text, end="")
+        return 0
+    if a.beta:
+        print(beta_notes(a.beta), end="")
         return 0
     if a.release:
         release(a.release)

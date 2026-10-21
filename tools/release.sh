@@ -14,8 +14,9 @@
 #   tools/release.sh --no-ipod          the APK alone, without the iPod app (built in Docker)
 #   tools/release.sh --beta             a beta (0.5.2-beta.1): a GitHub prerelease, offered in the app only to
 #                                       those who turned on Beta updates. Its notes are the changes since the
-#                                       last release, written by tools/changelog.py; CHANGELOG.md is left alone,
-#                                       so the release after it lists everything its betas had.
+#                                       previous beta (or release), linking that beta, written by
+#                                       tools/changelog.py; CHANGELOG.md is left alone, so the release after it
+#                                       lists everything its betas had.
 #
 # The guided release shows the latest version on GitHub and the one in the code, asks for the new
 # version, then does every step itself: tools/bump-version.sh, tools/changelog.py --update and
@@ -182,8 +183,8 @@ if [ "$GUIDED" = 1 ]; then
   fi
   if is_beta "$new"; then
     echo
-    echo "---- beta notes for $new (the changes since the last release) ----"
-    tools/changelog.py
+    echo "---- beta notes for $new (the changes since the previous beta or release) ----"
+    tools/changelog.py --beta "$new"
     echo "--------------------------------"
   else
     if ! tools/changelog.py --notes "$new" >/dev/null 2>&1; then
@@ -422,7 +423,7 @@ fi
 notes=$(mktemp)
 trap 'rm -f "$notes"' EXIT
 if is_beta "$version"; then
-  ./tools/changelog.py > "$notes"
+  ./tools/changelog.py --beta "$version" > "$notes"
 else
   ./tools/changelog.py --notes "$version" > "$notes"
 fi
