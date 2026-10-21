@@ -486,12 +486,8 @@ private fun PlaylistPage(
         queue = rememberPageQueue(from, detail?.queue),
         actions = {
             val pinned = id in prefs.pinnedPlaylists
-            // A favourite, drawn and named as every other favourite in the app is: a heart, filled
-            // when it is one. The server has no way to star a playlist, so it is kept on this phone,
-            // and the home page's shelf of them reads it.
-            // The home page that shows them is the account's.
-            val account = LocalRules.current.account
-            if (account) FavoriteButton(pinned) { settings.pin(id, !pinned) }
+            // Kept on this phone (the server cannot star a playlist); the home page's shelf of them is the account's.
+            if (LocalRules.current.account) FavoriteButton(pinned) { settings.pin(id, !pinned) }
         },
         headLabel = head,
         headActions = {

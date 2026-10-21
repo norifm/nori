@@ -126,7 +126,7 @@ private fun ShuffleLink(onClick: () -> Unit) {
 }
 
 /**
- * The library: its title, a strip of the user's sections (Settings, Appearance, Library sections) and the one
+ * The library: its title, a strip of chips for the sections kept in Library sections and the one
  * chosen shown below it, with the places (Favorites, Downloads, History) at the top of each. The chosen
  * section is remembered; a deep link ([initial]) chooses one. Smart playlists are under Playlists.
  */
@@ -138,7 +138,7 @@ fun LibraryScreen(actions: ActionsViewModel, initial: LibrarySection? = null, vm
     val sections = remember(prefs.librarySections, rules.sections) { dev.nori.music.ffi.library.librarySectionsShown(prefs.librarySections, rules.sections) }
     val chips = remember(sections) { sections.filter { it.onLibraryPage() } }
     var picked by rememberSaveable { mutableStateOf(initial?.name) }
-    val shown = picked?.let(LibrarySection::valueOf) ?: chips.firstOrNull()
+    val shown = picked?.let(LibrarySection::valueOf)?.takeIf { it in chips } ?: chips.firstOrNull()
     // Only the shown section's view model is made, so only it loads anything.
     val albums = if (shown == LibrarySection.ALBUMS) viewModel<AlbumsViewModel>() else null
     var sorting by remember { mutableStateOf(false) }

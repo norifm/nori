@@ -357,8 +357,8 @@ pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -
     out
 }
 
-/// The positions of `songs` not yet `done`: what [`DownloadAct::Missing`] fetches. Twin of Android's
-/// `downloadEntry` (DetailScreens.kt).
+/// The positions of `songs` not yet `done`: what [`DownloadAct::Missing`] fetches, for the page glyphs'
+/// download action.
 pub fn download_missing<'a>(songs: impl IntoIterator<Item = &'a str>, done: impl Fn(&str) -> bool) -> Vec<usize> {
     songs.into_iter().enumerate().filter(|(_, id)| !done(id)).map(|(i, _)| i).collect()
 }
