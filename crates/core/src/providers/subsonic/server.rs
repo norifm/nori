@@ -7,8 +7,8 @@ use rusqlite::params;
 
 use super::wire;
 use crate::client::{blank, pairs, Client, NetResult, Starrable, Write};
-use crate::transport::{self, FailureKind, NetError, Transport};
-use crate::{api, browse, settings, Core, CoreError, IngestStats, Result, ServerConfig, ServerInfo};
+use crate::transport::{self, FailureKind, NetError, Outcome, Transport};
+use crate::{api, browse, settings, Core, IngestStats, Result, ServerConfig, ServerInfo};
 
 /// Ping timeout for the first address before falling back to the second.
 const ADDRESS_PROBE_MS: u32 = 2_500;
@@ -233,7 +233,7 @@ impl Client {
     async fn send(&self, endpoint: &str, params: Vec<(String, String)>, repeatable: bool) -> NetResult<Vec<u8>> {
         let p = self.scoped(endpoint, params);
         match self.get(endpoint, &p).await {
-            Err(e) if e.is_io() && (repeatable || e.nothing_sent()) && !matches!(e, NetError::Transport { kind: FailureKind::Metered, .. }) => {
+            Err(e) if e.outcome() != Outcome::Refused && (repeatable || e.nothing_sent()) && !matches!(e, NetError::Transport { kind: FailureKind::Metered, .. }) => {
                 if !self.choose_address().await {
                     return Err(e);
                 }
@@ -256,11 +256,9 @@ impl Client {
             }
             self.flush_pending().await?;
         } else {
-            match self.send(endpoint, params.clone(), repeatable).await {
-                Ok(body) => {
-                    self.core.parse_status(body)?;
-                }
-                Err(e) if e.nothing_sent() || (repeatable && e.is_io()) => self.core.pending_add(endpoint, &params)?,
+            match self.send(endpoint, params.clone(), repeatable).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
+                Ok(_) => {}
+                Err(e) if e.nothing_sent() || (repeatable && e.outcome() != Outcome::Refused) => self.core.pending_add(endpoint, &params)?,
                 Err(e) => return Err(e),
             }
         }
@@ -290,9 +288,9 @@ impl Client {
         changed
     }
 
-    /// Replays queued writes in order until none are left, stopping at the first network failure or an
-    /// answer that is not the server's (a captive portal's page); writes the server rejects are dropped. While one replay runs, another returns at once: the running one sends what was
-    /// queued meanwhile too.
+    /// Replays queued writes in order until none are left, stopping at the first that is not
+    /// [`Outcome::Refused`]; refused writes are dropped. While one replay runs, another returns at once:
+    /// the running one sends what was queued meanwhile too.
     pub async fn flush_pending(&self) -> NetResult<()> {
         if std::mem::replace(&mut *self.replaying.lock(), true) {
             return Ok(());
@@ -318,10 +316,10 @@ impl Client {
                 queued
             };
             for p in queued {
-                match self.get(&p.endpoint, &p.params).await.map(|body| self.core.parse_status(body)) {
-                    Err(e) if e.is_io() => return Ok(()),
-                    Ok(Err(CoreError::Parse { .. })) => return Ok(()),
-                    _ => {}
+                if let Err(e) = self.get(&p.endpoint, &p.params).await.and_then(|body| Ok(self.core.parse_status(body)?)) {
+                    if e.outcome() != Outcome::Refused {
+                        return Ok(());
+                    }
                 }
                 self.core.pending_done(p.row_id)?;
             }
@@ -500,8 +498,8 @@ mod tests {
         // Rejected write errors and is not queued.
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         c.core.cache_put("page:starred".into(), b"x".to_vec()).unwrap();
-        fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":50,"message":"no"}}}"#);
-        assert!(matches!(block(c.write(Write::Star { kind: Starrable::Song, id: "1".into(), on: false })), Err(NetError::Api { code: 50, .. })));
+        fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"no"}}}"#);
+        assert!(matches!(block(c.write(Write::Star { kind: Starrable::Song, id: "1".into(), on: false })), Err(NetError::Api { code: 70, .. })));
         assert!(c.core.pending_list().unwrap().is_empty());
         assert!(c.core.cache_get("page:starred".into()).unwrap().is_some());
     }
@@ -534,6 +532,12 @@ mod tests {
         c.core.pending_add("star", &[]).unwrap();
         fake.answer("<html>sign in</html>");
         block(c.flush_pending()).unwrap();
+        assert_eq!(c.core.pending_list().unwrap().len(), 1);
+
+        // Sent now, a write the portal answers is queued, not lost.
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        fake.answer("<html>sign in</html>");
+        block(c.write(Write::Star { kind: Starrable::Song, id: "s".into(), on: true })).unwrap();
         assert_eq!(c.core.pending_list().unwrap().len(), 1);
     }
 
