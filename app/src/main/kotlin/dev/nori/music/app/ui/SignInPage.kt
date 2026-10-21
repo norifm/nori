@@ -7,9 +7,11 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import dev.nori.music.app.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -52,11 +54,16 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
     NoriDialog(ui.offer, vm::skipSignIn) {
         AlertCard(
             confirmButton = { TextButton(vm::openSignInPage, Modifier.testTag("offer-sign-in")) { Text(say.word(words.pageButton)) } },
-            dismissButton = { TextButton(vm::skipSignIn, Modifier.testTag("offer-skip")) { Text(say.notNow) } },
+            dismissButton = {
+                Row {
+                    if (ui.ended) TextButton(vm::stopReminding, Modifier.testTag("offer-quiet")) { Text(say.word(R.string.dont_show_again)) }
+                    TextButton(vm::skipSignIn, Modifier.testTag("offer-skip")) { Text(say.notNow) }
+                }
+            },
             title = { Text(say.word(words.offerTitle)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(say.word(words.offerText))
+                    Text(say.word(if (ui.ended) words.signedOutAgain else words.offerText))
                     Text(say.word(words.risk), style = MaterialTheme.typography.bodySmall)
                 }
             },

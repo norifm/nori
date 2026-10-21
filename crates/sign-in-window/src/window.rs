@@ -1,11 +1,10 @@
-//! `nori-desktop --sign-in <title> <address>`: a window showing a provider's own sign-in page in the
-//! system's web view. After every page it writes the page's address, a tab and its cookies (a `Cookie`
-//! header's value) as one line to stdout; the app decides from those when the account is signed in
-//! (`sign_in_done`) and ends this process. A process of its own: the web view's event loop (tao, GTK on
-//! Linux) and the app's (winit) would each want the main thread.
+//! The sign-in window: a provider's own sign-in page in the system's web view. After every page it writes
+//! the page's address, a tab and its cookies (a `Cookie` header's value) as one line to stdout; the client
+//! decides from those when the account is signed in (`sign_in_done`) and ends this process. A process of
+//! its own: the web view's event loop (tao, GTK on Linux) wants the main thread, as a client's own does.
 //!
 //! The session is the web view's private one (incognito): nothing is kept after the window closes, so it
-//! cannot rotate the account's cookies behind the app's back.
+//! cannot rotate the account's cookies behind the client's back.
 
 use std::io::Write;
 
@@ -15,7 +14,7 @@ use tao::window::WindowBuilder;
 use wry::{PageLoadEvent, WebViewBuilder};
 
 /// Runs the window for `title`, starting at `start`, until it is closed or the app ends it.
-pub fn run(title: String, start: String) -> ! {
+pub(crate) fn run(title: String, start: String) -> ! {
     let event_loop = EventLoopBuilder::<String>::with_user_event().build();
     let window = match WindowBuilder::new().with_title(title).with_inner_size(tao::dpi::LogicalSize::new(480.0, 720.0)).build(&event_loop) {
         Ok(w) => w,

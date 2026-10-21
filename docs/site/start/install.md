@@ -25,9 +25,11 @@ Choose `nori-desktop` for the window or `nori-cli` for the terminal. Linux archi
 packages, and AppImages use Ubuntu 22.04 and need glibc 2.35 or later. Linux `.deb` packages install with
 `sudo apt install ./nori-desktop_<version>_<architecture>.deb` (or the CLI package). Extract a
 Linux archive and run its binary on other distributions. For AppImage, download the desktop
-`.AppImage` for your processor, make it executable with `chmod +x`, and open it. The desktop archive and
-AppImage use the system's WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk4.1` on
-Fedora) for its sign-in window; most desktops have it, and the `.deb` and Flatpak bring it.
+`.AppImage` for your processor, make it executable with `chmod +x`, and open it. The desktop and terminal
+archives and the AppImage use the system's WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` on Debian and Ubuntu,
+`webkit2gtk4.1` on Fedora) for the sign-in window; most desktops have it, and the `.deb` packages and
+Flatpak bring it. For a machine without a desktop, build the terminal client without the window
+(`cargo build --release -p nori-cli --no-default-features`); it then signs in with pasted cookies.
 For Flatpak, install the desktop `.flatpak` with `flatpak install --user ./nori-desktop-<version>-linux-<architecture>.flatpak`
 and run `flatpak run dev.nori.desktop`. The bundle also includes the terminal client:
 `flatpak run --command=nori-cli dev.nori.desktop`. Flatpak installs its GNOME runtime

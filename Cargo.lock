@@ -4489,6 +4489,7 @@ dependencies = [
  "nori-mpris",
  "nori-output-cpal",
  "nori-player",
+ "nori-sign-in-window",
  "nori-testdir",
  "parking_lot",
  "ratatui",
@@ -4582,6 +4583,7 @@ dependencies = [
  "nori-look",
  "nori-mpris",
  "nori-output-cpal",
+ "nori-sign-in-window",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
@@ -4591,10 +4593,8 @@ dependencies = [
  "serde_json",
  "skia-safe",
  "slint",
- "tao",
  "wgpu",
  "winit",
- "wry",
  "x11rb",
 ]
 
@@ -4881,6 +4881,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "nori-sign-in-window"
+version = "0.7.0-beta.4"
+dependencies = [
+ "nori-core",
+ "tao",
+ "wry",
 ]
 
 [[package]]

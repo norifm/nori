@@ -367,7 +367,7 @@ pub struct App {
     feed_songs: Vec<Vec<Song>>,
     profiles: Vec<nori_core::SoundProfile>,
     /// The sign-in window's process while it is open (nori-sign-in).
-    sign_in_window: Option<std::process::Child>,
+    sign_in_window: Option<nori_sign_in_window::SignInWindow>,
     /// The read the shown page waits for.
     want: Option<Req>,
     shelves: Rc<VecModel<Shelf>>,
@@ -2037,41 +2037,23 @@ impl App {
     /// The provider's own sign-in page in a window of its own (this program again, `--sign-in`: the system's
     /// web view); where that cannot start, the sheet unfolds pasting with why.
     fn sign_in_window(&mut self) {
-        use nori_core::providers::SignIn;
         let Some(s) = &self.session else { return };
         let Some(kind) = crate::session::app().settings.current().and_then(|p| p.active_server().map(|sv| sv.kind)) else { return };
-        let start = nori_core::providers::providers().into_iter().find(|i| i.kind == kind).and_then(|i| {
-            i.sign_in.into_iter().find_map(|s| match s { SignIn::WebPage { start_url } => Some(start_url), SignIn::Paste => None })
-        });
-        let ui = self.ui();
-        let Some(start) = start else { return ui.set_signin_pasting(true) };
-        if self.sign_in_window.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) {
+        if self.sign_in_window.as_mut().is_some_and(|w| w.open_now()) {
             return;
         }
-        let child = std::env::current_exe().ok().and_then(|me| {
-            std::process::Command::new(me).arg("--sign-in").arg(format!("Sign in to {}", words::provider(kind).name)).arg(start)
-                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).spawn().ok()
+        let (h, tx) = ((***s).clone(), self.tx.clone());
+        let window = nori_sign_in_window::SignInWindow::open(kind, format!("Sign in to {}", words::provider(kind).name), move |id, cookies| {
+            tx.send(Msg::SignInWindowDone(id, h.sign_in(cookies)))
         });
-        let Some(mut child) = child else {
+        let ui = self.ui();
+        let Some(window) = window else {
             ui.set_signin_pasting(true);
             ui.set_signin_error(words::SIGN_IN_WINDOW_FAILED.into());
             return;
         };
-        let Some(out) = child.stdout.take() else { return };
-        let (h, tx) = ((***s).clone(), self.tx.clone());
-        let pid = child.id();
-        nori_host::spawn("nori-sign-in-window", move || {
-            use std::io::BufRead;
-            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
-                let Some((address, cookies)) = line.split_once('\t') else { continue };
-                if nori_core::providers::sign_in_done(kind, address.to_string(), cookies.to_string()) {
-                    tx.send(Msg::SignInWindowDone(pid, h.sign_in(cookies.to_string())));
-                    return;
-                }
-            }
-        });
         ui.set_signin_busy(true);
-        self.sign_in_window = Some(child);
+        self.sign_in_window = Some(window);
     }
 
     fn sign_out(&mut self) {
@@ -2269,10 +2251,7 @@ impl App {
                 self.settings_shown();
             }
             Msg::SignInWindowDone(pid, r) => {
-                if let Some(mut c) = self.sign_in_window.take_if(|c| c.id() == pid) {
-                    let _ = c.kill();
-                    let _ = c.wait();
-                }
+                self.sign_in_window.take_if(|w| w.id() == pid);
                 let ui = self.ui();
                 ui.set_signin_busy(false);
                 match r {

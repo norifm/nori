@@ -6,7 +6,7 @@ sidebar:
 ---
 
 Applies to the nori release after 0.6.2, on Android, the desktop, the terminal and the iPod touch. Not on
-the web client. Signing in is on Android and the terminal.
+the web client. Signing in is on Android, the desktop and the terminal.
 
 Besides your own server, nori can add a **YouTube Music** profile. It needs no server: nori asks YouTube
 directly, the way its own apps do. An account is optional.
@@ -45,6 +45,9 @@ with an account's password or a code.
 - **Desktop** (from 0.7.0): Settings, Accounts, **Edit** on the YouTube Music profile in use, then
   **Sign in with Google**. The page opens in a small window of its own (the system's web view; on
   Linux, WebKitGTK).
+- **Terminal** (from 0.7.0): Settings, Server, Enter on the YouTube Music profile in use, then Enter
+  again. The same window opens, from the terminal's own program. Where no window can open (over SSH,
+  say), the sheet turns to pasting cookies.
 
 Google's own sign-in page opens inside nori. Sign in as you would in a browser. Once the page reaches
 YouTube Music, nori keeps that session's cookies, wipes everything the sign-in page stored (its
@@ -55,7 +58,7 @@ music never plays through it.
 ### Pasting cookies (the fallback)
 
 **Paste cookies instead** under **Sign in with Google** opens the field for this, on Android and the
-desktop.
+desktop; in the terminal's sheet it is **p**.
 
 1. Open a **private** (incognito) browser window and sign in at music.youtube.com.
 2. Open the browser's developer tools, Network, click any request to music.youtube.com, and copy the
@@ -66,14 +69,18 @@ desktop.
    - **Android**: Settings, Servers, tap the YouTube Music profile (it must be the one in use),
      **Paste cookies instead**, paste into **Cookies**, **Sign In**.
    - **Desktop**: Settings, Accounts, **Edit**, **Paste cookies instead**, then **Sign in**.
-   - **Terminal**: save it to a file and run
+   - **Terminal**: in the sheet, **p**, paste, Enter. Or save it to a file and run
      `nori-cli --script --provider youtubeMusic --sign-in cookies.txt --home`.
 
 nori keeps the session fresh by itself from then on: it renews it whenever the profile is used and it
-is more than ten minutes old, and keeps every change YouTube makes to it at once. A network failure never
-signs you out. If YouTube does end the session (you signed out everywhere, changed your password, or
-YouTube decided so), the profile says **YouTube signed you out** and goes on as a signed-out one until
-you sign in again. **Sign Out** forgets the cookies on this device.
+is more than ten minutes old, and keeps every change YouTube makes to it at once. A network failure, or
+YouTube answering oddly while it cannot be renewed, never signs you out; nori on the desktop and in the
+terminal share one session, and take up each other's renewals. Only YouTube refusing a renewed session
+ends it (you signed out everywhere, changed your password, or YouTube decided so). Then nori says
+**YouTube signed you out** at once, offers to sign in again, and goes on as a signed-out profile. It asks
+YouTube once each time it starts whether the session works again, and offers to sign in each time it
+starts until you sign in or choose **Don't Show Again** (which lasts until a session ends again).
+**Sign Out** forgets the cookies on this device.
 
 Music always plays without the account: only Home, Library and likes use it.
 

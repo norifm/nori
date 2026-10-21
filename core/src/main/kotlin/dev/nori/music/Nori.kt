@@ -77,6 +77,11 @@ class Nori private constructor(private val context: Context) {
             opened?.takeIf { it.key == key } ?: settings.value.server.let { p ->
                 val id = dev.nori.music.ffi.settings.serverDb(key)
                 val core = open(id, p)
+                // The account can change under the profile (its source ends the session): the core says so.
+                core.watchRules(object : dev.nori.music.ffi.RulesShown {
+                    override fun rules(rules: dev.nori.music.ffi.library.ProfileRules) { _reportedRules.value = key to rules }
+                })
+                _reportedRules.value = key to core.rules()
                 dev.nori.music.downloads.DownloadsJni.use(core)
                 Opened(key, id, core, Client(core, transport, coverNet).also { c -> p?.let { c.setProfile(it.net()) }; currentClient.set(c) })
             }.also { opened = it }
@@ -112,11 +117,19 @@ class Nori private constructor(private val context: Context) {
     /** Remote control and jams; nothing runs unless they are switched on (or this is a jam guest). */
     val remotes = dev.nori.music.remote.Remotes(context, this)
 
+    private val _reportedRules = kotlinx.coroutines.flow.MutableStateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?>(null)
+
+    /** The rules the open profile's core last reported, by profile key: they change with the account. */
+    val reportedRules: kotlinx.coroutines.flow.StateFlow<Pair<String, dev.nori.music.ffi.library.ProfileRules>?> = _reportedRules
+
     /**
-     * What the app offers over the profile in use (the core's `rules_of`, its provider's): a jam guest's
-     * browses its host's library and asks for songs, and does none of the account's work.
+     * What the app offers over the profile in use: as its core has them once it is open (an account whose
+     * session ended offers what a signed-out one does), else the core's `rules_of` over the saved profile.
+     * A jam guest's browses its host's library and asks for songs, and does none of the account's work.
      */
-    val rules: dev.nori.music.ffi.library.ProfileRules get() = dev.nori.music.ffi.rulesOf(settings.value.server ?: dev.nori.music.settings.newServer(""), remotes.isGuest())
+    val rules: dev.nori.music.ffi.library.ProfileRules get() =
+        _reportedRules.value?.takeIf { it.first == settings.value.activeServerId }?.second
+            ?: dev.nori.music.ffi.rulesOf(settings.value.server ?: dev.nori.music.settings.newServer(""), remotes.isGuest())
     val player = PlayerConnection(context, this)
 
     /**
@@ -274,6 +287,11 @@ class Nori private constructor(private val context: Context) {
     }
 
     suspend fun account(): dev.nori.music.ffi.AccountState = withContext(Dispatchers.IO) { client.account() }
+
+    /** The account's session ended and it is to be said at start (the core's `reminds_to_sign_in`). */
+    suspend fun remindsToSignIn(): Boolean = withContext(Dispatchers.IO) { client.remindsToSignIn() }
+
+    suspend fun stopReminding() = withContext(Dispatchers.IO) { client.stopReminding() }
 
     companion object {
         @Volatile private var instance: Nori? = null

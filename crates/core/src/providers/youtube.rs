@@ -1055,10 +1055,19 @@ mod tests {
     fn a_refused_session_ends_but_is_not_wiped() {
         let (c, t) = signed_in(601, vec![answer(401, "", &[]), answer(200, "home", &[]), answer(200, "home_more", &[]), answer(200, "queue", &[]), answer(401, "", &[]), answer(401, "", &[])]);
         c.core.set_rules(rules(true));
+        struct Told(parking_lot::Mutex<Vec<crate::browse::ProfileRules>>);
+        impl crate::browse::RulesShown for Told {
+            fn rules(&self, rules: crate::browse::ProfileRules) {
+                self.0.lock().push(rules);
+            }
+        }
+        let told = Arc::new(Told(Default::default()));
+        c.core.watch_rules(Some(told.clone()));
         let Page::Feed { v } = block(c.read_now(Read::HomeFeed)).unwrap() else { panic!() };
         assert_eq!(v.len(), 4, "everyone's feed");
         assert_eq!(c.account(), AccountState::Ended);
         assert_eq!(c.core.rules(), rules(false), "shown signed out at once");
+        assert_eq!(*told.0.lock(), [rules(false)], "and told once");
         let kept = account::tests::stored(&c).unwrap();
         assert!(kept.ended() && kept.cookies() == SESSION);
         assert!(!t.asked.lock()[1].headers.contains_key("Cookie"), "asked as a visitor");

@@ -48,11 +48,12 @@ data class LoginUi(val busy: Boolean = false, val error: String? = null, val don
 /**
  * The account of the profile in use, for a provider that signs it in apart from its form
  * (`ProviderInfo.sign_in`): where it stands (null until asked), a sign-in on its way, why the last one
- * failed, whether the provider's sign-in page is open, and whether a profile just added offers it.
+ * failed, whether the provider's sign-in page is open, and whether a profile just added, or a session the
+ * provider ended ([ended]), offers it.
  */
 data class AccountUi(
     val account: dev.nori.music.ffi.AccountState? = null, val busy: Boolean = false, val failed: dev.nori.music.ffi.SignInResult? = null,
-    val page: Boolean = false, val offer: Boolean = false,
+    val page: Boolean = false, val offer: Boolean = false, val ended: Boolean = false,
 )
 /**
  * The AutoEQ list: how many headphones it holds ([countWords] and [searchWords] say so), the query and
@@ -308,6 +309,27 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     private val _account = MutableStateFlow(AccountUi())
     val account: StateFlow<AccountUi> = _account
 
+    /** The open profile's rules as its core reports them; [rules] reads them. */
+    val reportedRules = nori.reportedRules
+
+    fun rules() = nori.rules
+
+    // Each time the open profile's rules change (it opened, or its account changed under it), a session the
+    // provider ended offers to sign in again, until told not to.
+    init {
+        viewModelScope.launch {
+            nori.reportedRules.collect { reported ->
+                if (reported != null && nori.remindsToSignIn()) _account.update { it.copy(offer = true, ended = true) }
+            }
+        }
+    }
+
+    /** The ended session's offer no longer comes back at start. */
+    fun stopReminding() {
+        _account.update { it.copy(offer = false) }
+        viewModelScope.launch { nori.stopReminding() }
+    }
+
     fun lookAtAccount() {
         viewModelScope.launch { _account.update { it.copy(account = runCatching { nori.account() }.getOrNull()) } }
     }
@@ -341,7 +363,10 @@ class SettingsViewModel(app: Application) : NoriViewModel(app) {
     fun skipSignIn() = _account.update { it.copy(offer = false) }
 
     /** Offers signing in, as a seal tapped while signed out does. */
-    fun offerSignIn() = _account.update { it.copy(offer = true) }
+    fun offerSignIn() = viewModelScope.launch {
+        val ended = nori.account() == dev.nori.music.ffi.AccountState.ENDED
+        _account.update { it.copy(offer = true, ended = ended) }
+    }
 
     fun login(profile: SavedServer) {
         if (_login.value.busy) return

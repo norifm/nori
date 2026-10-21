@@ -226,6 +226,7 @@
     <string name="youtube_offer_title">Sign in to YouTube Music?</string>
     <string name="youtube_offer_text">See your own Home, your saved albums, your liked songs and your playlists. Music plays without it too.</string>
     <string name="not_now">Not Now</string>
+    <string name="dont_show_again">Don’t Show Again</string>
     <string name="youtube_cookies">Cookies</string>
     <string name="sign_in_action">Sign In</string>
     <string name="youtube_account_risk">Unofficial apps are against YouTube’s terms, and YouTube may flag an account that uses one. Music still plays without signing in.</string>

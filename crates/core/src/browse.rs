@@ -6,11 +6,22 @@ use crate::{db, history, Core, Result};
 
 pub use nori_library::browse::*;
 
+/// Receives a profile's rules whenever they change: its source ended the account's session, or took it
+/// up again.
+#[cfg_attr(feature = "ffi", uniffi::export(with_foreign))]
+pub trait RulesShown: Send + Sync {
+    fn rules(&self, rules: ProfileRules);
+}
+
 impl Core {
     /// Sets what the app offers over this profile; its songs are measured only where the rules say.
     pub(crate) fn set_rules(&self, rules: ProfileRules) {
         self.session.planner.set_measures(rules.measures);
-        *self.rules.write() = rules;
+        let changed = std::mem::replace(&mut *self.rules.write(), rules.clone()) != rules;
+        let shown = self.rules_shown.read().clone();
+        if let Some(shown) = shown.filter(|_| changed) {
+            shown.rules(rules);
+        }
     }
 }
 
@@ -19,6 +30,11 @@ impl Core {
     /// What the app offers over this profile, as configured: a jam guest's or the account's.
     pub fn rules(&self) -> ProfileRules {
         self.rules.read().clone()
+    }
+
+    /// `shown` is told the rules whenever they change from now on; None stops it.
+    pub fn watch_rules(&self, shown: Option<std::sync::Arc<dyn RulesShown>>) {
+        *self.rules_shown.write() = shown;
     }
 
     /// A page of the local song list at `offset`, sorted by the [song_sorts] entry `sort` (unknown: index

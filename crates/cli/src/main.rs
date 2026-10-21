@@ -66,6 +66,9 @@ fn data_dir() -> PathBuf {
 }
 
 fn main() {
+    // The sign-in window, started by the terminal as a process of its own (runner.rs `SignInWindow`).
+    #[cfg(feature = "sign-in-window")]
+    nori_sign_in_window::serve_if_asked();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let script = args.iter().any(|a| matches!(a.as_str(), "--script" | "--search" | "--play" | "--wav" | "--devices" | "--songs" | "--download"));
     if script {

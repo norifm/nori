@@ -162,6 +162,14 @@ pub enum Cmd {
     JamDecide(u64, bool),
     /// Joins the jam this invite link is to.
     JoinJam(String),
+    /// The account sheet, as the session has the account.
+    OfferSignIn,
+    /// The provider's sign-in page in a window, or the pasted cookies.
+    SignInWindow,
+    SignIn(String),
+    SignOut,
+    /// No reminder at start until the account is signed in, and its session ends, again.
+    StopReminding,
     Pair(String),
     ResetPairing,
     LeaveJam,
@@ -203,6 +211,11 @@ impl Cmd {
             Cmd::JamEnd => "end the jam".into(),
             Cmd::JamDecide(r, yes) => format!("jam request {r} accepted={yes}"),
             Cmd::JoinJam(_) => "join a jam".into(),
+            Cmd::OfferSignIn => "offer to sign in".into(),
+            Cmd::SignInWindow => "sign-in window".into(),
+            Cmd::SignIn(_) => "sign in with pasted cookies".into(),
+            Cmd::SignOut => "sign out".into(),
+            Cmd::StopReminding => "stop the sign-in reminder".into(),
             Cmd::Pair(_) => "pair devices".into(),
             Cmd::ResetPairing => "forget paired devices".into(),
             Cmd::LeaveJam => "leave the jam".into(),
@@ -662,6 +675,9 @@ pub enum Overlay {
     JamSettings,
     /// An invite link pasted to join someone's jam, and why joining failed.
     Join { text: String, error: Option<String>, busy: bool },
+    /// The profile's account with a provider: who is signed in (empty: no one), whether the provider
+    /// ended the session, cookies being pasted, why signing in failed, and a sign-in under way.
+    Account { kind: nori_core::settings::ServerKind, user: String, ended: bool, pasting: bool, text: String, error: Option<String>, busy: bool },
 }
 
 /// What a picker sets.
@@ -1213,6 +1229,14 @@ impl App {
                 _ => self.say(e.clone(), true),
             },
             // The runner opens these, and the profiles a jam is joined and left with.
+            Msg::SignedIn(nori_core::providers::SignInResult::SignedIn { .. }) => self.overlay = None,
+            Msg::SignedIn(r) => match &mut self.overlay {
+                Some(Overlay::Account { kind, error, busy, .. }) => {
+                    *error = Some(crate::text::sign_in(*kind, &r));
+                    *busy = false;
+                }
+                _ => self.say(crate::text::sign_in(nori_core::settings::ServerKind::YouTubeMusic, &r), true),
+            },
             Msg::From(..) | Msg::Joined(Ok(_)) | Msg::Left(_) => {}
         }
     }
@@ -1467,7 +1491,7 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
-        if let Some(Overlay::Input { text: t, .. } | Overlay::Join { text: t, .. }) = &mut self.overlay {
+        if let Some(Overlay::Input { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, busy: false, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
             self.login.fields[self.login.focus].push_str(&text);
@@ -1618,7 +1642,43 @@ impl App {
                 KeyCode::Char('q') => self.overlay = None,
                 _ => {}
             },
-            Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Account { busy: true, .. } | Overlay::Join { busy: true, .. } if k.code != KeyCode::Esc => self.dirty = false,
+            Overlay::Account { pasting: true, text, error, busy, .. } => match k.code {
+                KeyCode::Enter if !text.trim().is_empty() => {
+                    *busy = true;
+                    *error = None;
+                    self.cmds.push(Cmd::SignIn(text.trim().to_string()));
+                }
+                KeyCode::Esc => {
+                    if let Some(Overlay::Account { pasting, .. }) = &mut self.overlay {
+                        *pasting = false;
+                    }
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                }
+                KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => text.clear(),
+                KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
+                _ => {}
+            },
+            Overlay::Account { user, ended, pasting, error, busy, .. } => match k.code {
+                KeyCode::Enter if !user.is_empty() => {
+                    self.cmds.push(Cmd::SignOut);
+                    self.overlay = None;
+                }
+                KeyCode::Enter => {
+                    *busy = true;
+                    *error = None;
+                    self.cmds.push(Cmd::SignInWindow);
+                }
+                KeyCode::Char('p') if user.is_empty() => *pasting = true,
+                KeyCode::Char('d') if *ended => {
+                    self.cmds.push(Cmd::StopReminding);
+                    self.overlay = None;
+                }
+                KeyCode::Esc | KeyCode::Char('q') => self.overlay = None,
+                _ => {}
+            },
             Overlay::Join { text, error, busy } => match k.code {
                 KeyCode::Enter if nori_core::remote::pairing_valid(text.clone()) => {
                     self.cmds.push(Cmd::Pair(text.clone()));
@@ -2100,6 +2160,7 @@ impl App {
                 }
             }
             // Hearts are where songs carry them, downloads the account's.
+            (Action::Star, _) if !self.rules.stars && self.rules.stars_after_sign_in => self.cmds.push(Cmd::OfferSignIn),
             (Action::Star, _) if !self.rules.stars => self.dirty = false,
             (Action::Download, _) if !self.rules.downloads => self.dirty = false,
             (Action::Download, item) => match item {

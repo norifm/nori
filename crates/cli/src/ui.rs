@@ -1962,6 +1962,41 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
             ];
             put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner });
         }
+        Overlay::Account { kind, user, ended, pasting, text: typed, error, busy } => {
+            let w = 76.min(area.width);
+            let iw = w.saturating_sub(4).max(1) as usize;
+            let name = crate::text::provider(*kind).name;
+            let title = if user.is_empty() { format!(" Sign in to {name} ") } else { format!(" {name} ") };
+            let mut said: Vec<(String, Style)> = Vec::new();
+            if !user.is_empty() {
+                said.push((format!("Signed in as {user}"), Style::default().fg(t.ink)));
+                said.push((crate::text::SIGNED_IN_KEYS.into(), t.dim()));
+            } else if *pasting {
+                said.push((crate::text::PASTE_COOKIES.into(), t.dim()));
+                // Cookies are a secret: their length shows, not them.
+                let dots = "•".repeat(typed.chars().count().min(iw.saturating_sub(1)));
+                said.push((format!("{dots}▏"), Style::default().fg(t.ink)));
+            } else {
+                let why = if *busy { crate::text::SIGNING_IN } else if *ended { crate::text::SIGNED_OUT_AGAIN } else { crate::text::SIGN_IN_WHY };
+                said.push((why.into(), Style::default().fg(t.ink)));
+                said.push(((if *ended { crate::text::SIGN_IN_KEYS_ENDED } else { crate::text::SIGN_IN_KEYS }).into(), t.dim()));
+            }
+            if let Some(e) = error {
+                said.push((e.clone(), Style::default().fg(Color::LightRed)));
+            }
+            said.push((crate::text::RISK.into(), t.dim()));
+            let rows: usize = said.iter().map(|(l, _)| l.chars().count().div_ceil(iw).max(1)).sum::<usize>() + said.len() - 1;
+            let r = centred(area, w, rows as u16 + 3);
+            let inner = popup(f, r, Span::styled(title, bold().fg(t.ink)), t);
+            let mut lines = Vec::new();
+            for (i, (l, style)) in said.into_iter().enumerate() {
+                if i > 0 {
+                    lines.push(Line::from(""));
+                }
+                lines.push(Line::from(Span::styled(l, style)));
+            }
+            put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) });
+        }
         Overlay::Input { title, text: typed, secret, .. } => {
             let r = centred(area, 60, 3);
             let inner = popup(f, r, Span::styled(format!(" {title} · enter keeps, esc drops "), bold().fg(t.ink)), t);
