@@ -86,20 +86,6 @@ fn song_at(token: u64, index: i32) -> Option<Song> {
     list(token)?.0.into_iter().nth(i)
 }
 
-pub(crate) fn download_of(s: &Session, id: &str) -> SongDownload {
-    if s.core.download_song(id).is_some() {
-        return SongDownload::Done;
-    }
-    let pending = s.core.download_sections().is_ok_and(|d| {
-        d.active.iter().chain(d.queued.iter()).any(|song| song.id == id)
-    });
-    if pending {
-        SongDownload::Pending
-    } else {
-        SongDownload::None
-    }
-}
-
 /// Plays a radio (`radio`) or an instant mix seeded by `song`: the songs played, or -1 when the
 /// server could not be asked.
 fn play_mix(s: &Session, song: &Song, radio: bool) -> i32 {
@@ -147,7 +133,7 @@ pub extern "C" fn nori_ios_song_menu(token: u64, index: i32, starred: i32, playe
     let Some(song) = song_at(token, index) else {
         return std::ptr::null_mut();
     };
-    with_session(|s| owned(&menu_json(&song, starred != 0, download_of(s, &song.id), player != 0, &s.rules)))
+    with_session(|s| owned(&menu_json(&song, starred != 0, s.download_state(&song.id), player != 0, &s.rules)))
         .unwrap_or(std::ptr::null_mut())
 }
 

@@ -859,7 +859,7 @@ fn act_code(a: DownloadAct) -> i32 {
 fn download_states(s: &nori_host::session::Session, songs: &[Song]) -> Vec<(bool, bool)> {
     songs
         .iter()
-        .map(|song| match crate::menu::download_of(s, &song.id) {
+        .map(|song| match s.download_state(&song.id) {
             SongDownload::Done => (true, true),
             SongDownload::Pending => (true, false),
             SongDownload::None => (false, false),

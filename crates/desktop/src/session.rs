@@ -75,6 +75,8 @@ pub enum Msg {
     Volume(f32),
     /// A heart changed, here or on another device.
     Starred,
+    /// A link to a song from the server, to copy; None when it made none.
+    Shared(Option<String>),
     /// A message from the session with this id; dropped once another session is open.
     From(u64, Box<Msg>),
 }

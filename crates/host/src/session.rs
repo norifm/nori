@@ -808,6 +808,16 @@ impl Handle {
         self.fetched(what, |me, songs| me.download(songs));
     }
 
+    /// Where song `id`'s download stands.
+    pub fn download_state(&self, id: &str) -> nori_core::menus::SongDownload {
+        use nori_core::menus::SongDownload;
+        if self.core.download_song(id).is_some() {
+            return SongDownload::Done;
+        }
+        let pending = self.core.download_sections().is_ok_and(|d| d.active.iter().chain(d.queued.iter()).any(|song| song.id == id));
+        if pending { SongDownload::Pending } else { SongDownload::None }
+    }
+
     /// Deletes a download from disk.
     pub fn download_remove(&self, id: &str) {
         let _ = self.core.download_remove(id.to_string());

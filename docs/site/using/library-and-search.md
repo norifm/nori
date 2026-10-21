@@ -37,3 +37,6 @@ On Android, a song row reacts to a tap and to a swipe in each direction. All thr
 
 Hold a row to open its song menu, the same as tapping its three-dot button. To select several songs
 and act on them together, set the tap action to Select.
+
+On the desktop, right-click a song row for the same menu: playlists, downloads, radio and instant mix,
+leaving a song out of mixes, its link and its details (from nori 0.7).
