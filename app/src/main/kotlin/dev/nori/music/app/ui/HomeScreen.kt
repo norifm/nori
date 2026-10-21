@@ -353,32 +353,6 @@ private val PRINT = 128.dp
 /** The home row key of the mix cards (the library rows' are their [HomeRow] names). */
 internal const val MIXES_ROW = "mixes"
 
-/** The narrowest a print is in the full view on a wide screen, and the gap between prints. */
-private val GRID_MIN = 170.dp
-private val GRID_GAP = 12.dp
-
-/** The season's light and dark papers and whether the theme is dark: what a dyed card is dyed on (`Dye`). */
-@androidx.compose.runtime.Immutable
-internal data class Papers(val light: dev.nori.music.ffi.look.Palette, val dark: dev.nori.music.ffi.look.Palette, val darkTheme: Boolean) {
-    /** Light then dark, each page, surface, ink, accent, on: how `CoverLook.dyed` takes them. */
-    val table = intArrayOf(
-        light.page.toInt(), light.surface.toInt(), light.ink.toInt(), light.accent.toInt(), light.on.toInt(),
-        dark.page.toInt(), dark.surface.toInt(), dark.ink.toInt(), dark.accent.toInt(), dark.on.toInt(),
-    )
-}
-
-@Composable
-internal fun rememberPapers(): Papers {
-    val settings: dev.nori.music.app.vm.SettingsViewModel = viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val system = androidx.compose.foundation.isSystemInDarkTheme()
-    val dark = remember(prefs.theme, system) { dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system) }
-    return remember(prefs.season, prefs.amoled, dark) {
-        val today = Today.now()
-        Papers(paletteOf(prefs, false, today), paletteOf(prefs, true, today), dark)
-    }
-}
-
 /** A feed's playlist is not counted until opened: its own line (who is in it) instead. */
 private fun playlistLine(p: dev.nori.music.ffi.model.Playlist) = if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty()
 
@@ -391,9 +365,8 @@ private fun playlistLine(p: dev.nori.music.ffi.model.Playlist) = if (p.songCount
 private fun QueueOfferCard(offer: dev.nori.music.ffi.library.QueueOffer, actions: ActionsViewModel, onPlay: () -> Unit, onDismiss: () -> Unit) {
     val song = offer.songs.getOrNull(offer.index.toInt()) ?: return
     val url = actions.cover(song.coverArt, CoverSize.CARD)
-    val papers = rememberPapers()
-    val cover = rememberCoverPalette(url, false)
-    val look = remember(cover, papers) { cover?.let { dev.nori.music.look.CoverLook.dyed(it.look, papers.table, papers.darkTheme) } }
+    val papers = LocalPapers.current
+    val look = rememberCoverPalette(url, false)?.look
     val scheme = MaterialTheme.colorScheme
     val page = look?.let { androidx.compose.ui.graphics.Color(it[dev.nori.music.look.CoverLook.BACKGROUND]) } ?: scheme.surfaceContainerHigh
     val ink = look?.let { androidx.compose.ui.graphics.Color(it[dev.nori.music.look.CoverLook.ON]) } ?: scheme.onSurface
@@ -465,7 +438,7 @@ private fun PrintGrid(onEnd: () -> Unit, content: androidx.compose.foundation.la
 @Composable
 private fun MixesFull(vm: dev.nori.music.app.vm.MixesViewModel = viewModel()) {
     val cards by vm.cards.collectAsStateWithLifecycle()
-    val papers = rememberPapers()
+    val papers = LocalPapers.current
     val nav = LocalNav.current
     Column {
         BackTitle(say.forYou)

@@ -204,9 +204,9 @@ private fun Places(vm: LibraryHomeViewModel, favorites: Boolean) {
     }
 }
 
-/** The narrowest an album's card is on its side, and the gap between cards: the Albums page's grid. */
-private val ALBUM_MIN = 170.dp
-private val ALBUM_GAP = 12.dp
+/** The narrowest a card is on a wide screen, and the gap between cards: the grid of the Albums page and of a home row's full view. */
+internal val GRID_MIN = 170.dp
+internal val GRID_GAP = 12.dp
 
 /** What each section is drawn with. */
 @Composable
@@ -286,7 +286,7 @@ private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel, header: @Comp
         // On its side the cards keep about the size they have upright (a little larger than Home's shelves,
         // which is the point of a grid of covers) and the row takes as many as fit.
         val wide = LocalWide.current
-        LazyVerticalGrid(if (wide) GridCells.Adaptive(ALBUM_MIN) else GridCells.Fixed(2), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(ALBUM_GAP), verticalArrangement = Arrangement.spacedBy(ALBUM_GAP)) {
+        LazyVerticalGrid(if (wide) GridCells.Adaptive(GRID_MIN) else GridCells.Fixed(2), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP)) {
             item(span = { GridItemSpan(maxLineSpan) }, key = "header") { Box(Modifier.insideGutters()) { header() } }
             itemsIndexed(albums, key = { _, a -> a.id }, contentType = { _, _ -> "album" }) { i, a ->
                 if (i >= albums.size - 12) vm.loadMore()

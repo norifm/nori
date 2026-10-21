@@ -102,6 +102,13 @@ object CoverLook {
      */
     fun dyed(look: IntArray, palettes: IntArray, dark: Boolean): IntArray = IntArray(LEN).also { dyed(look, palettes, dark, it, null) }
 
+    /** [dyed] with the cover's [wash], if any, dyed too: a copy, the original is left as it is. */
+    fun dyed(look: IntArray, palettes: IntArray, dark: Boolean, wash: android.graphics.Bitmap?): Colours {
+        val out = IntArray(LEN)
+        val copy = wash?.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+        return Colours(out, copy.takeIf { dyed(look, palettes, dark, out, copy) == 2 })
+    }
+
     /**
      * One step of the seek bar towards where the song is (`nori_look::motion::seek_step`): the new place,
      * and the milliseconds to wait before the next step (0 the next frame, -1 stop). Primitives only.

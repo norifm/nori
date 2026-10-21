@@ -95,6 +95,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.role
 import dev.nori.music.app.R
 import dev.nori.music.look.CoverLook
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import dev.nori.music.data.of
 
 /**
@@ -211,14 +213,15 @@ class PagePalette(val look: IntArray, val wash: androidx.compose.ui.graphics.Ima
     val edge: Color get() = Color(look[CoverLook.EDGE])
     /** The page under it. */
     val background: Color get() = Color(look[CoverLook.BACKGROUND])
-    // The last accents asked for and the page wearing them, so each composition gets the same one back.
-    private var accentedFor: Accents? = null
-    private var accentedPage: PagePalette? = null
+    // The last papers asked for and the page dyed on them, so each composition gets the same one back.
+    private var dyedOn: Papers? = null
+    private var dyedPage: PagePalette? = null
 
-    /** This page wearing the theme's [accents] instead of its cover's (nori_look::dress::accented). */
-    fun accented(accents: Accents): PagePalette {
-        accentedPage?.let { if (accentedFor == accents) return it }
-        return PagePalette(dev.nori.music.look.CoverLook.accented(look, accents.light, accents.dark), wash).also { accentedFor = accents; accentedPage = it }
+    /** This page on the season's [papers] dyed with its cover (nori_look::dress::dyed), wash included. */
+    fun dyed(papers: Papers): PagePalette {
+        dyedPage?.let { if (dyedOn == papers) return it }
+        return CoverLook.dyed(look, papers.table, papers.darkTheme, wash?.asAndroidBitmap())
+            .let { PagePalette(it.look, it.wash?.asImageBitmap()) }.also { dyedOn = papers; dyedPage = it }
     }
     override fun equals(other: Any?): Boolean = other is PagePalette && other.wash == wash && other.look.contentEquals(look)
     override fun hashCode(): Int = look.contentHashCode() * 31 + (wash?.hashCode() ?: 0)
@@ -549,7 +552,7 @@ fun GroupCard(modifier: Modifier = Modifier, content: @Composable androidx.compo
 /** How far a [GroupCard] stands in from the page's sides. */
 private val GROUP_MARGIN = 16.dp
 /** How far a [GroupRow]'s content stands in from the card's sides, and the gap after its icon. */
-private val GROUP_INSET = 14.dp
+internal val GROUP_INSET = 14.dp
 private val GROUP_ICON = 24.dp
 
 /**
@@ -683,10 +686,10 @@ fun MessagePill(
 ) {
     val ink = ColorProducer { look.color(CoverLook.CHROME_CONTENT) }
     Box(
-        modifier.shadow(12.dp, PillShape).drawBehind {
+        modifier.drawBehind {
             val round = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
-            drawRoundRect(look.color(CoverLook.CHROME_SLAB), cornerRadius = round)
-            drawRoundRect(look.color(CoverLook.CHROME_EDGE), cornerRadius = round, style = androidx.compose.ui.graphics.drawscope.Stroke(1f))
+            drawRoundRect(look.color(CoverLook.SURFACE_CONTAINER), cornerRadius = round)
+            drawRoundRect(look.color(CoverLook.OUTLINE_VARIANT), cornerRadius = round, style = androidx.compose.ui.graphics.drawscope.Stroke(0.5.dp.toPx()))
         },
     ) {
         behind()
@@ -1002,13 +1005,13 @@ fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Bo
 /**
  * A bare glyph that does something: the small actions either side of a page's Play pill. No plate: the
  * glyph is in the page's ink, and in its accent while [lit] (Shuffle while shuffle is on, a stamped seal).
- * It keeps its full strength while disabled: a washed-out Shuffle looked absent while Play was not yet
+ * [quiet] draws it in the page's quieter ink. It keeps its full strength while disabled: a washed-out Shuffle looked absent while Play was not yet
  * tappable. [iconModifier] reaches the glyph alone, for an animation of it.
  */
 @Composable
 fun GlyphButton(
     icon: ImageVector, description: String, modifier: Modifier = Modifier,
-    enabled: Boolean = true, lit: Boolean = false, iconModifier: Modifier = Modifier, onClick: () -> Unit,
+    enabled: Boolean = true, lit: Boolean = false, quiet: Boolean = false, iconModifier: Modifier = Modifier, onClick: () -> Unit,
 ) {
     val look = LocalLook.current
     Box(
@@ -1018,7 +1021,7 @@ fun GlyphButton(
         ),
         Alignment.Center,
     ) {
-        LookIcon(icon, description, Modifier.size(24.dp).then(iconModifier)) { look.color(if (lit) CoverLook.ACCENT else CoverLook.ON) }
+        LookIcon(icon, description, Modifier.size(24.dp).then(iconModifier)) { look.color(if (lit) CoverLook.ACCENT else if (quiet) CoverLook.ON_VARIANT else CoverLook.ON) }
     }
 }
 

@@ -283,7 +283,7 @@ private val TAB_FADE = androidx.compose.animation.core.tween<Float>(220)
  * The chrome's colors, all of them the page's: its ink, the idle tabs' quieter ink, the outline and the
  * fainter hairline between the mini player and the tabs, the page itself and a little see-through inside the outline,
  * and the accent the one current thing wears, which the page's look has already made read on it
- * (nori_look::dress::accented on a cover's page).
+ * (nori_look::dress::dyed on a cover's page).
  */
 @androidx.compose.runtime.Immutable
 private class ChromeColours(look: Look) {

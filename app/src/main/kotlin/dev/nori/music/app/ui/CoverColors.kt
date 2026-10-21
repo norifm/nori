@@ -114,8 +114,8 @@ fun rememberCoverTint(url: String?, amoled: Boolean): CoverTint {
         if (url == null || ready != null) return@LaunchedEffect
         measured = paletteOf(context, url, amoled)
     }
-    // The cover dresses the page; the accent on it is the theme's.
-    return CoverTint(url, (ready ?: measured)?.accented(LocalAccents.current))
+    // The cover dyes the season's paper; the accent on it is the theme's.
+    return CoverTint(url, (ready ?: measured)?.dyed(LocalPapers.current))
 }
 
 @Composable
