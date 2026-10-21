@@ -67,13 +67,15 @@ class OfflineBridge(
     /**
      * A song arrived, and the core said what it means for the bridge (rules.rs song_arrived): with none
      * playing nothing is watched; once the bridge has played up to the parked song, the queue comes back
-     * if the server is, or more downloads go in before it if it is not (`Client::bridge_parked`).
+     * if the server is, or more downloads go in before it if it is not (`Client::bridge_parked`); skipped
+     * out of the bridge, its songs go if the server is back (`Client::bridge_left`).
      */
     fun onSong(step: BridgeStep) {
         when (step) {
             BridgeStep.OFF, BridgeStep.BRIDGING -> {}
             BridgeStep.IDLE -> stopWatching()
             BridgeStep.PARKED -> edited { client().bridgeParked() }
+            BridgeStep.LEFT -> edited { client().bridgeLeft() }
         }
     }
 

@@ -137,11 +137,11 @@ impl Session {
     /// taken here, so ask once per song and never on a repeat-one loop.
     pub fn song_arrived(&self) -> SongSteps {
         let on = self.settings.prefs(|p| p.bridge_offline);
-        let (bridging, parked) = self.playlist(|p| (p.bridging(), p.next_is_parked()));
+        let (bridging, parked, left) = self.playlist(|p| (p.bridging(), p.next_is_parked(), p.left_bridge()));
         SongSteps {
             save_after_ms: queue_keep(QueueMoment::Song).save_after_ms,
             fill: self.autofill_start(),
-            bridge: bridge_step(on, bridging, parked),
+            bridge: bridge_step(on, bridging, parked, left),
             precache_after_ms: t::PRECACHE_AFTER_MS,
             pause_at_end: self.sleep_song_changed(),
         }
@@ -284,14 +284,18 @@ pub enum BridgeStep {
     Bridging,
     /// The parked song is next: resume the queue if online, else add downloads (`Core::bridge_parked`).
     Parked,
+    /// The user skipped out of the bridge to a song of their own: the bridge's songs go if online
+    /// (`Client::bridge_left`).
+    Left,
 }
 
-fn bridge_step(on: bool, bridging: bool, next_is_parked: bool) -> BridgeStep {
-    match (on, bridging, next_is_parked) {
+fn bridge_step(on: bool, bridging: bool, next_is_parked: bool, left: bool) -> BridgeStep {
+    match (on, bridging, next_is_parked, left) {
         (false, ..) => BridgeStep::Off,
-        (true, false, _) => BridgeStep::Idle,
-        (true, true, false) => BridgeStep::Bridging,
-        (true, true, true) => BridgeStep::Parked,
+        (true, false, ..) => BridgeStep::Idle,
+        (true, true, _, true) => BridgeStep::Left,
+        (true, true, false, false) => BridgeStep::Bridging,
+        (true, true, true, false) => BridgeStep::Parked,
     }
 }
 
