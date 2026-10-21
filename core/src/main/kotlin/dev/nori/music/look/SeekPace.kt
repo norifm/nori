@@ -34,8 +34,5 @@ class SeekPace(reduced: Boolean) : AutoCloseable {
     /** The times fading out, packed as [times]; -1 with none. */
     val fadingFrom: Long get() = view.buffer.getLong(16)
 
-    override fun close() {
-        CoverLook.seekPaceFree(h)
-        h = 0
-    }
+    override fun close() { val was = h; h = 0; CoverLook.seekPaceFree(was) }
 }
