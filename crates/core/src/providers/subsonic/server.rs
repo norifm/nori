@@ -506,6 +506,28 @@ mod tests {
         assert!(c.core.cache_get("page:starred".into()).unwrap().is_some());
     }
 
+    /// A request a proxy refuses as it stands (too long, not there) is refused again however often it is
+    /// sent: it is dropped from the queue rather than holding every later scrobble and star behind it.
+    /// Refusals that pass (signed out at the proxy, too many requests) and server errors keep it.
+    #[test]
+    fn a_refused_write_does_not_hold_the_queue() {
+        for (status, kept) in [(414, false), (404, false), (413, false), (401, true), (403, true), (429, true), (502, true)] {
+            let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+            c.core.pending_add("savePlayQueue", &[]).unwrap();
+            c.core.pending_add("scrobble", &[]).unwrap();
+            fake.answers.lock().push_back(Ok((status, b"<html>refused</html>".to_vec())));
+            fake.answer(OK);
+            block(c.flush_pending()).unwrap();
+            let left: Vec<String> = c.core.pending_list().unwrap().into_iter().map(|p| p.endpoint).collect();
+            assert_eq!(left, if kept { vec!["savePlayQueue", "scrobble"] } else { vec![] }, "HTTP {status}");
+        }
+        // Sent now, a refused write says so and is not queued.
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        fake.answers.lock().push_back(Ok((414, b"<html>too long</html>".to_vec())));
+        assert!(matches!(block(c.write(Write::Star { kind: Starrable::Song, id: "s".into(), on: true })), Err(NetError::Http { status: 414 })));
+        assert!(c.core.pending_list().unwrap().is_empty());
+    }
+
     #[test]
     fn a_portal_page_keeps_the_queue() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
