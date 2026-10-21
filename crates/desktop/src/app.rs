@@ -394,6 +394,8 @@ pub struct App {
     tickets: VecDeque<(CoverKey, Ticket)>,
     tick: Timer,
     tick_ms: u64,
+    /// The window is off screen (minimized, covered): the seek bar, lyrics and playing bars stand still.
+    hidden: bool,
     lists: Lists,
     find: String,
     facts: crate::settings::Facts,
@@ -594,6 +596,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             tickets: VecDeque::new(),
             tick: Timer::default(),
             tick_ms: 0,
+            hidden: false,
             facts: crate::settings::Facts::default(),
             lists: Lists::default(),
             find: String::new(),
@@ -642,6 +645,11 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
                 if let Some(top) = weak.upgrade() { top.invoke_end_search(); }
             });
         }
+        let me = a.me.clone();
+        a.compositor.on_shown(move |shown| me.with(|a| {
+            a.hidden = !shown;
+            a.follow();
+        }));
         #[cfg(target_os = "linux")]
         {
             let weak = ui.as_weak();
@@ -2429,7 +2437,7 @@ impl App {
         ui.set_lyric_now(now.now.into());
         ui.set_lyric_mix(now.mix);
         ui.set_lyric_rest(now.rest.into());
-        match now.wait.filter(|_| playing) {
+        match now.wait.filter(|_| playing && !self.hidden) {
             Some(ms) => {
                 let me = self.me.clone();
                 self.lyrics_timer.start(TimerMode::SingleShot, Duration::from_millis(ms), move || me.with(|a| a.lyrics_step(false)));
@@ -2921,7 +2929,7 @@ impl App {
     /// Whether the music moves now, for the playing bars: playing and not waiting for bytes.
     fn advancing(&self) {
         let ui = self.ui();
-        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering());
+        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering() && !self.hidden);
     }
 
     /// Syncs the window with what the player shows: this computer's playback and queue, the device's
@@ -2963,7 +2971,8 @@ impl App {
         }
         // Seek bar timer: only while playing, quarter-pixel steps of the widest bar.
         let step = pixel_ms(ui.get_duration_ms() as i64);
-        if playing && (!self.tick.running() || self.tick_ms != step) {
+        let ticks = playing && !self.hidden;
+        if ticks && (!self.tick.running() || self.tick_ms != step) {
             self.tick_ms = step;
             let me = self.me.clone();
             self.tick.start(TimerMode::Repeated, Duration::from_millis(step), move || {
@@ -2972,7 +2981,7 @@ impl App {
                     position_shown(&ui, a.player.as_ref(), a.position_now() as i32);
                 });
             });
-        } else if !playing {
+        } else if !ticks {
             self.tick.stop();
         }
         self.lyrics_step(true);

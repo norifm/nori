@@ -201,6 +201,8 @@ struct Shared {
     typing: Cell<bool>,
     /// Run when a press lands off the top pill while it has the keys: the app takes them back.
     on_press_away: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Run when the window comes on screen (true) or leaves it (false).
+    on_shown: RefCell<Option<ShownChanged>>,
 }
 
 type FocusSource = Box<dyn Fn() -> Option<Focus>>;
@@ -349,6 +351,7 @@ pub fn install() -> Result<Compositor, String> {
         on_wake: RefCell::new(None),
         typing: Cell::new(false),
         on_press_away: RefCell::new(None),
+        on_shown: RefCell::new(None),
     });
     slint::platform::set_platform(Box::new(Platform { shared: shared.clone(), event_loop: RefCell::new(Some(event_loop)) })).map_err(|e| format!("the platform: {e}"))?;
     Ok(Compositor(shared))
@@ -470,6 +473,21 @@ impl Compositor {
     pub fn on_press_away(&self, f: impl Fn() + 'static) {
         *self.0.on_press_away.borrow_mut() = Some(Rc::new(f));
     }
+
+    pub fn on_shown(&self, f: impl Fn(bool) + 'static) {
+        *self.0.on_shown.borrow_mut() = Some(Rc::new(f));
+    }
+}
+
+type ShownChanged = Rc<dyn Fn(bool)>;
+
+/// Notes whether the window is off screen, telling `on_shown` when that changes.
+fn set_occluded(s: &Shared, occluded: bool) {
+    if s.occluded.replace(occluded) == occluded {
+        return;
+    }
+    let f = s.on_shown.borrow().clone();
+    if let Some(f) = f { f(!occluded); }
 }
 
 fn wake(s: &Shared) {
@@ -774,7 +792,7 @@ impl ApplicationHandler<Wake> for Runner {
         match event {
             E::CloseRequested => el.exit(),
             E::Occluded(o) => {
-                self.shared.occluded.set(o);
+                set_occluded(&self.shared, o);
                 redraw(&self.shared);
             }
             E::Resized(size) => {
@@ -1050,7 +1068,7 @@ impl Draw {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             // Also when the window was hidden before it was ever shown, so winit sends no Occluded.
             wgpu::CurrentSurfaceTexture::Occluded => {
-                s.occluded.set(true);
+                set_occluded(s, true);
                 return;
             }
             wgpu::CurrentSurfaceTexture::Outdated => {
