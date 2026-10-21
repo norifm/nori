@@ -1117,13 +1117,17 @@ impl Handle {
         if steps.fill {
             self.refill();
         }
-        if matches!(steps.bridge, BridgeStep::Parked | BridgeStep::Left) {
-            // Parked: back to the parked song if the server answers, else bridged further. Left: the
-            // bridge's songs go if it answers.
+        if matches!(steps.bridge, BridgeStep::Bridging | BridgeStep::Parked | BridgeStep::Left) {
+            // Each asks whether the server answers. Bridging: the bridge's songs ahead go. Parked: back
+            // to the parked song, else bridged further. Left: the bridge's songs go.
             let me = self.clone();
             let step = steps.bridge;
             self.run(async move {
-                let edit = if step == BridgeStep::Parked { me.client.bridge_parked().await } else { me.client.bridge_left().await };
+                let edit = match step {
+                    BridgeStep::Bridging => me.client.bridge_ahead().await,
+                    BridgeStep::Parked => me.client.bridge_parked().await,
+                    _ => me.client.bridge_left().await,
+                };
                 if let Some(edit) = edit {
                     me.apply_edit(&edit);
                 }

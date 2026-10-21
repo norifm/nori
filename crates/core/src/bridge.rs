@@ -29,8 +29,8 @@ impl Core {
     }
 }
 
-/// Whether the server is back is the server's answer to a ping, asked when the parked song comes up, when
-/// the user skips out of the bridge and when the platform reports another network; never on a timer.
+/// Whether the server is back is the server's answer to a ping, asked at each song of the bridge, when the
+/// user skips out of it and when the platform reports another network; never on a timer.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Client {
     /// The parked song is next (`BridgeStep::Parked`): the parked queue comes back if the server answers,
@@ -41,6 +41,15 @@ impl Client {
         } else {
             self.core.bridge_start().ok().flatten()
         }
+    }
+
+    /// A bridge song began with more before the parked song (`BridgeStep::Bridging`): if the server
+    /// answers, those go and the parked song comes after this one. None when nothing changes.
+    pub async fn bridge_ahead(&self) -> Option<QueueEdit> {
+        if !self.server_answers().await {
+            return None;
+        }
+        self.core.session.shorten_bridge()
     }
 
     /// The user skipped out of the bridge (`BridgeStep::Left`): the bridge's songs go if the server
@@ -186,6 +195,19 @@ pub(crate) mod tests {
             let edit = block(c.bridge_parked()).expect("the queue changes either way");
             assert_eq!(c.core.session.bridge_state().bridging, !up, "parked, server up {up}");
             assert_eq!(edit.remove.is_empty(), !up, "back: the bridge's songs go; still gone: more go in");
+        }
+
+        for up in [false, true] {
+            let (c, fake) = bridged();
+            c.core.session.settings.open("").unwrap();
+            c.core.session.settings.put(crate::settings::StoredPrefs { bridge_offline: true, ..Default::default() });
+            assert_eq!(c.core.session.song_arrived().bridge, crate::rules::BridgeStep::Bridging);
+            let before = c.core.session.playlist(|p| p.len());
+            ping(&fake, up);
+            let edit = block(c.bridge_ahead());
+            assert_eq!(edit.is_some(), up, "a bridge song, server up {up}");
+            let now = c.core.session.playlist(|p| (p.len(), p.next_is_parked()));
+            assert_eq!(now, if up { (3, true) } else { (before, false) }, "back: the song playing, then the parked queue");
         }
 
         for up in [false, true] {

@@ -50,7 +50,7 @@ you do meanwhile (favorites, plays, playlist edits) is queued and sent when the 
 
 **Play downloads when offline** (off by default): if the server drops mid-queue, nori jumps to a
 download further on in the queue, or plays from your downloads, and comes back to your queue when the
-server does.
+server does: after the download playing then, from nori 0.7.
 
 With it off, from nori 0.7, the song stays playing and says "Waiting for the server…"; it goes on from
 where it stopped once the server answers, tried again every 30 seconds and whenever the device joins a

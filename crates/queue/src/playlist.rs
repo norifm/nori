@@ -185,6 +185,12 @@ impl Session {
         self.edit_splice(|p| p.leave_bridge(), Vec::new())
     }
 
+    /// The server is back while a bridge song plays: the bridge's other songs go, so the parked song is
+    /// next. None when there are none.
+    pub fn shorten_bridge(&self) -> Option<QueueEdit> {
+        self.edit_splice(|p| p.shorten_bridge(), Vec::new())
+    }
+
     /// Whether shuffle is shown as on (`Playlist::lit`).
     pub fn shuffle_shown(&self) -> bool {
         self.playlist(|p| p.lit())
