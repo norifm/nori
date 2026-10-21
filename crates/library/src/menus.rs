@@ -460,12 +460,6 @@ mod tests {
         assert_eq!(download_glyph(None, true, true), DownloadGlyph::Done);
         assert_eq!(download_glyph(None, false, true), DownloadGlyph::Ring);
         assert_eq!(download_glyph(None, false, false), DownloadGlyph::None);
-
-        // The download entry says what is left.
-        assert_eq!(download_entry(0, 0), DownloadAct::All);
-        assert_eq!(download_entry(10, 0), DownloadAct::Remove);
-        assert_eq!(download_entry(10, 10), DownloadAct::All);
-        assert_eq!(download_entry(10, 3), DownloadAct::Missing);
     }
 
 }

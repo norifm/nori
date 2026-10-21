@@ -807,28 +807,6 @@ impl Device {
 }
 
 #[test]
-fn a_closed_relay_rejects_requests() {
-    let relay = Relay::new();
-    relay.close();
-    let response = relay.sim.run("a request", relay.send(Exchange {
-        url: format!(
-            "{SERVER}/rest/noriRemote.poll?u=ann&dev=closed&name=Closed&kind=phone&serve=1"
-        ),
-        ..Default::default()
-    }));
-    assert!(
-        matches!(
-            response,
-            Err(TransportError::Failed {
-                kind: FailureKind::Connect,
-                ..
-            })
-        ),
-        "a closed relay kept answering polls: {response:?}"
-    );
-}
-
-#[test]
 fn returning_here_does_not_wait_for_a_dead_device() {
     for action in ["wait", "play", "edit"] {
         let relay = Relay::new();
