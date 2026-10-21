@@ -281,7 +281,8 @@ pub enum BridgeStep {
     Off,
     /// Not bridging: stop watching the network.
     Idle,
-    /// Bridging, with bridge songs left before the parked one.
+    /// Bridging, with bridge songs left before the parked one: they go if the server is back
+    /// (`Client::bridge_ahead`).
     Bridging,
     /// The parked song is next: resume the queue if online, else add downloads (`Core::bridge_parked`).
     Parked,

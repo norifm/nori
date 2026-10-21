@@ -72,7 +72,8 @@ class OfflineBridge(
      */
     fun onSong(step: BridgeStep) {
         when (step) {
-            BridgeStep.OFF, BridgeStep.BRIDGING -> {}
+            BridgeStep.OFF -> {}
+            BridgeStep.BRIDGING -> edited { client().bridgeAhead() }
             BridgeStep.IDLE -> stopWatching()
             BridgeStep.PARKED -> edited { client().bridgeParked() }
             BridgeStep.LEFT -> edited { client().bridgeLeft() }

@@ -545,13 +545,26 @@ impl Playlist {
         self.end_bridge(false)
     }
 
-    fn end_bridge(&mut self, resume_parked: bool) -> Option<Splice> {
-        if !self.bridging() {
+    /// Server back while a bridge song plays: the bridge's other songs go, so the parked song is next.
+    /// That one ends the bridge as a song of the user's does ([`Playlist::left_bridge`]).
+    pub fn shorten_bridge(&mut self) -> Option<Splice> {
+        let c = self.cur.filter(|&c| self.hand[c] == Hand::Bridge)?;
+        let runs = self.bridge_runs(Some(c));
+        if runs.is_empty() {
             return None;
         }
+        for &(from, to) in &runs {
+            self.remove(from, to);
+        }
+        self.rev += 1;
+        Some(Splice { remove: runs, at: 0, count: 0, seek: None })
+    }
+
+    /// The runs of the bridge's songs but `except`, last first, for removing in turn.
+    fn bridge_runs(&self, except: Option<usize>) -> Vec<(usize, usize)> {
         let mut runs: Vec<(usize, usize)> = Vec::new();
         for (i, h) in self.hand.iter().enumerate() {
-            if *h == Hand::Bridge {
+            if *h == Hand::Bridge && Some(i) != except {
                 match runs.last_mut() {
                     Some((_, to)) if *to == i => *to = i + 1,
                     _ => runs.push((i, i + 1)),
@@ -559,6 +572,14 @@ impl Playlist {
             }
         }
         runs.reverse();
+        runs
+    }
+
+    fn end_bridge(&mut self, resume_parked: bool) -> Option<Splice> {
+        if !self.bridging() {
+            return None;
+        }
+        let runs = self.bridge_runs(None);
         // Make the parked song current first so removing the bridge does not move it.
         if let Some(h) = self.parked.filter(|_| resume_parked) {
             self.cur = Some(h);
@@ -906,6 +927,19 @@ mod tests {
         assert!(p.left_bridge());
         assert_eq!(p.leave_bridge(), Some(Splice { remove: vec![(1, 3)], at: 0, count: 0, seek: None }));
         assert_eq!((list(&p), p.current_id(), p.bridging(), p.left_bridge()), (vec!["a", "b", "c", "d"], Some("c"), false, false));
+
+        // Server back during the bridge: the song playing ends into the parked one, which ends the bridge.
+        let mut p = Playlist::default();
+        p.set(ids(&["a", "b", "c"]), Some(1), false, 0);
+        p.bridge(ids(&["x", "y", "z"]));
+        p.moved_to(2);
+        assert_eq!(p.shorten_bridge(), Some(Splice { remove: vec![(3, 4), (1, 2)], at: 0, count: 0, seek: None }));
+        assert_eq!((list(&p), p.current_id(), p.next_is_parked()), (vec!["a", "y", "b", "c"], Some("y"), true));
+        assert_eq!(p.shorten_bridge(), None, "nothing more to drop");
+        p.moved_to(2);
+        assert!(p.left_bridge());
+        assert_eq!(p.leave_bridge(), Some(Splice { remove: vec![(1, 2)], at: 0, count: 0, seek: None }));
+        assert_eq!((list(&p), p.current_id(), p.bridging()), (vec!["a", "b", "c"], Some("b"), false));
 
         // Removed parked song resumes at the next.
         let mut p = Playlist::default();
