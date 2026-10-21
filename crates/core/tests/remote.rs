@@ -2007,6 +2007,30 @@ fn a_guest_starts_with_the_settled_clock() {
     relay.close();
 }
 
+/// A guest listening along before its host says where it plays waits for the host's word, not on a timer.
+#[test]
+fn a_guest_waits_for_its_hosts_clock_without_waking() {
+    let relay = Relay::new();
+    let host = Device::account(&relay, DeviceKind::Phone, "Host");
+    let link = opened(&host);
+    host.remote.clone().jam_along(true);
+    host.playing(&["s1"], 0);
+    host.remote.clone().played(Playing { playing: true, position_ms: 30_000, rate: 1.0, index: Some(0), volume: None, ..Default::default() });
+    let pass = joined(&relay, link, "Gus".into());
+    // The guest's first poll goes unanswered: it does not know its host yet.
+    relay.first_answers_held.store(true, Ordering::Relaxed);
+    let gus = Device::new(&relay, ServerConfig { url: pass.url, api_key: Some(pass.api_key), ..Default::default() }, DeviceKind::Guest, "Gus");
+    let leads = Arc::new(Leads::default());
+    gus.remote.follow_with(Some(leads.clone()));
+    gus.remote.clone().listen(true);
+    relay.sim.settle();
+    assert!(relay.sim.waits().iter().all(|w| *w > Duration::from_secs(1)), "timers wait {:?}", relay.sim.waits());
+
+    relay.release_first_answers();
+    gus.until("the host's place", |_| leads.last().flatten());
+    relay.close();
+}
+
 /// The relay still lists a device from before it restarted, by its own id: it neither lists nor follows
 /// itself.
 #[test]

@@ -2969,37 +2969,29 @@ impl Remote {
                 let gap = if sent < clock::BURST { Duration::from_millis(BURST_GAP_MS) } else { Duration::from_micros(clock::EVERY_US as u64) };
                 self.wait_timing(gap, |i| i.timing != generation || i.timed() != last).await;
             }
-            loop {
+            let (target, link) = loop {
                 let timing = self.timing.notified();
                 {
                     let i = self.inner.lock();
-                    if i.timing != generation || i.wants_time() {
-                        break;
+                    if i.timing != generation {
+                        return;
+                    }
+                    if i.wants_time() {
+                        // A jam's host is known once the relay has answered: a guest listening along waits.
+                        match i.timed() {
+                            None if i.listen.is_none() => return,
+                            None => {}
+                            Some(target) => {
+                                let door = match &target {
+                                    Timed::Device { id, room: None } => i.peers.iter().find(|p| p.member.id == *id).map(|p| Link::Lan(p.base())),
+                                    _ => None,
+                                };
+                                break (target, door.or((i.relay != RelaySupport::Unsupported).then_some(Link::Relay)));
+                            }
+                        }
                     }
                 }
                 timing.await;
-            }
-            let next = {
-                let i = self.inner.lock();
-                if i.timing != generation {
-                    return;
-                }
-                // A jam's host is known once the relay has answered.
-                match i.timed() {
-                    None if i.listen.is_none() => return,
-                    None => None,
-                    Some(target) => {
-                        let door = match &target {
-                            Timed::Device { id, room: None } => i.peers.iter().find(|p| p.member.id == *id).map(|p| Link::Lan(p.base())),
-                            _ => None,
-                        };
-                        Some((target, door.or((i.relay != RelaySupport::Unsupported).then_some(Link::Relay))))
-                    }
-                }
-            };
-            let Some((target, link)) = next else {
-                self.wait_timing(Duration::from_millis(BURST_GAP_MS), |i| i.timing != generation).await;
-                continue;
             };
             // Another clock: its burst again.
             if last.as_ref() != Some(&target) {
