@@ -173,6 +173,40 @@ pub fn song_action(a: &nori_core::menus::SongAction) -> String {
     }
 }
 
+/// One of the sleep timer's choices: "30 minutes", "End of track", "After 3 songs", or "Off" (all zeros).
+pub fn sleep_choice(c: &nori_core::menus::SleepChoice) -> String {
+    match c {
+        c if c.end_of_track => "End of track".into(),
+        c if c.songs > 0 => format!("After {} songs", c.songs),
+        c if c.minutes > 0 => format!("{} minutes", c.minutes),
+        _ => "Off".into(),
+    }
+}
+
+/// Where lyrics came from and how finely they are timed: "From LRCLIB · timed line by line".
+pub fn lyrics_from(origin: nori_core::lyrics_sources::LyricsOrigin, synced: bool, word_timed: bool) -> String {
+    let timed = if !synced { "not timed" } else if word_timed { "timed word by word" } else { "timed line by line" };
+    format!("From {} · {timed}", lyrics_origin(origin))
+}
+
+/// Who moved the lyrics' timing, and by how much.
+pub fn lyrics_timing(t: nori_core::LyricsTiming) -> String {
+    use nori_core::LyricsTiming as T;
+    match t {
+        T::NotChecked => "Not checked against the singing yet".into(),
+        T::DoesNotFit => "Checked against the singing: does not fit".into(),
+        T::Unsure => "Checked against the singing: can't tell".into(),
+        T::Automatic { ms: 0 } => "Checked against the singing: on time".into(),
+        T::Automatic { ms } => format!("Adjusted automatically by {ms:+} ms"),
+        T::Yours { ms, .. } => format!("Adjusted by you: {ms:+} ms"),
+    }
+}
+
+/// The lyrics' shift, "+0.25 s".
+pub fn lyrics_shift(ms: i64) -> String {
+    format!("{:+.2} s", ms as f64 / 1000.0)
+}
+
 pub const EXCLUDED_FROM_MIXES: &str = "Left out of mixes";
 pub const SHARE_FAILED: &str = "The server made no link";
 

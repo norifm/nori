@@ -30,6 +30,10 @@ impl SongLyrics {
         ModelRc::new(VecModel::from(self.pick.lyrics.lines.iter().map(|l| SharedString::from(l.text.as_str())).collect::<Vec<_>>()))
     }
 
+    pub fn pick(&self) -> &LyricsPick {
+        &self.pick
+    }
+
     pub fn synced(&self) -> bool {
         self.pick.lyrics.synced
     }
