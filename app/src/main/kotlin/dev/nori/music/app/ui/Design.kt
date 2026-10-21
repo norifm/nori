@@ -42,6 +42,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreHoriz
@@ -88,6 +89,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.role
@@ -118,6 +120,8 @@ object Space {
     val tight = 8.dp
     val row = 12.dp
     val section = 26.dp
+    /** How far the title block of the player, album and artist pages rises into the sleeve's melt. */
+    val titleRise = 34.dp
 }
 
 val CardShape = RoundedCornerShape(Radius.card)
@@ -488,19 +492,109 @@ fun Hairline(startIndent: Dp = Space.gutter) {
     Box(Modifier.fillMaxWidth().padding(start = startIndent).height(1.dp).background(color))
 }
 
-/** A section heading: big, bold, sitting on the gutter, with an optional action on the right. */
+/**
+ * A section heading sitting on the gutter, with an optional [action] on the right. With [onMore] the whole
+ * header opens the section's full view, and a quiet chevron ends it.
+ */
 @Composable
-fun SectionHeader(title: String, modifier: Modifier = Modifier, action: @Composable (RowScope.() -> Unit)? = null) {
+fun SectionHeader(
+    title: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null,
+    action: @Composable (RowScope.() -> Unit)? = null,
+) {
     Row(
-        modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.tight, top = Space.section - 12.dp, bottom = 10.dp),
+        modifier.fillMaxWidth()
+            .then(if (onMore != null) Modifier.clickable(onClick = onMore) else Modifier)
+            .padding(start = Space.gutter, end = if (action != null) Space.tight else Space.gutter, top = Space.section, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             title, Modifier.weight(1f),
-            style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         action?.invoke(this)
+        if (onMore != null) Icon(
+            Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** The small capitals over a [GroupCard]: "PLAYBACK". */
+@Composable
+fun GroupLabel(text: String, modifier: Modifier = Modifier) {
+    Text(
+        remember(text) { text.uppercase() },
+        modifier.padding(start = 32.dp, end = 32.dp, top = 22.dp, bottom = 8.dp),
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.06.em),
+        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/**
+ * Rows grouped on one raised plate: the surface, a hairline edge, the tile's corners, inset from the page's
+ * sides. Rows inside are [GroupRow]s, or anything that ends in a [Hairline] starting where its text does,
+ * the last without one.
+ */
+@Composable
+fun GroupCard(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    // The content color spelled out: Material resolves it to Unspecified for a color that is not one of
+    // its roles, and text inside then drew almost black.
+    Surface(
+        modifier.fillMaxWidth().padding(horizontal = GROUP_MARGIN),
+        shape = TileShape, color = scheme.surfaceContainer, contentColor = scheme.onSurface, border = hairlineBorder(),
+    ) { Column(content = content) }
+}
+
+/** How far a [GroupCard] stands in from the page's sides. */
+private val GROUP_MARGIN = 16.dp
+/** How far a [GroupRow]'s content stands in from the card's sides, and the gap after its icon. */
+private val GROUP_INSET = 14.dp
+private val GROUP_ICON = 24.dp
+
+/**
+ * A row of a [GroupCard]: an optional [icon] in ink, a title and maybe a quiet line under it, a quiet [value],
+ * then [trailing] (a switch) or a [chevron]. Its [divider] is the hairline under it, starting where the text
+ * does; the last row of a card goes without.
+ */
+@Composable
+fun GroupRow(
+    title: String,
+    onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    value: String? = null,
+    icon: ImageVector? = null,
+    chevron: Boolean = false,
+    divider: Boolean = true,
+    trailing: (@Composable RowScope.() -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .padding(horizontal = GROUP_INSET, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                Icon(icon, null, Modifier.size(GROUP_ICON), tint = scheme.onSurface)
+                Spacer(Modifier.width(GROUP_INSET))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!subtitle.isNullOrEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+            }
+            if (!value.isNullOrEmpty()) Text(
+                value, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp),
+                color = scheme.onSurfaceVariant, maxLines = 1,
+            )
+            trailing?.invoke(this)
+            if (chevron) Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.padding(start = 4.dp).size(20.dp), tint = scheme.onSurfaceVariant,
+            )
+        }
+        if (divider) Hairline(startIndent = if (icon != null) GROUP_INSET * 2 + GROUP_ICON else GROUP_INSET)
     }
 }
 
