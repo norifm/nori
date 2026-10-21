@@ -651,6 +651,9 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
         let me = a.me.clone();
         a.compositor.on_shown(move |shown| me.with(|a| {
             a.hidden = !shown;
+            if let Some(s) = &a.session {
+                s.in_sight(shown);
+            }
             a.follow();
         }));
         #[cfg(target_os = "linux")]

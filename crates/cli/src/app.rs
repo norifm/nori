@@ -876,6 +876,8 @@ pub struct App {
     pub hits: Vec<(Rect, Hit)>,
     pub cmds: Vec<Cmd>,
     pub dirty: bool,
+    /// The terminal has focus; true until it says otherwise, as terminals without focus events never do.
+    pub in_sight: bool,
     pub quit: bool,
     /// Whether the engine holds the equalizer's low-latency buffer ([`App::sound_edited`]); released
     /// when the equalizer closes or is switched off.
@@ -902,6 +904,7 @@ impl App {
             card_covers: true,
             protocol: "none",
             dirty: true,
+            in_sight: true,
             ..App::default()
         }
         .themed()
@@ -1176,7 +1179,10 @@ impl App {
             Msg::Paste(text) => self.paste(&text),
             Msg::Resize => {}
             // Regaining focus redraws; the runner decides whether fully.
-            Msg::Focus(on) => self.dirty = on,
+            Msg::Focus(on) => {
+                self.in_sight = on;
+                self.dirty = on;
+            }
             Msg::Engine(e) => self.engine(e),
             Msg::Data(req, r) => self.data(req, r),
             Msg::Cover { art, colours, .. } => {
@@ -1374,12 +1380,12 @@ impl App {
 
     // ---- time ----
 
-    /// When the loop must next wake on its own: the next second of playback, a lyrics change, a pending
-    /// search, a note expiring, a downloads refresh. None when idle.
+    /// When the loop must next wake on its own: the next second of playback and a lyrics change (both
+    /// only in sight), a pending search, a note expiring, a downloads refresh. None when idle.
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         let mut at: Option<Instant> = None;
         let mut sooner = |t: Instant| at = Some(at.map_or(t, |a| a.min(t)));
-        if self.now.state == State::Playing && !self.now.buffering {
+        if self.in_sight && self.now.state == State::Playing && !self.now.buffering {
             let pos = self.now.position(now).max(0);
             let left = 1000 - pos % 1000;
             sooner(now + Duration::from_millis((left as f32 / self.now.speed.max(0.1)) as u64 + 5));

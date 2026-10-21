@@ -133,8 +133,6 @@ struct Runner {
     heard: Option<String>,
     /// Rewrite the whole screen, pictures included, at the next draw.
     repaint: bool,
-    /// Terminal (or tmux pane) focus, from focus reports.
-    focused: bool,
     /// A cover arrived while unfocused: repaint when focus returns.
     unseen_cover: bool,
     /// Whose playback the player shows, as last read: this computer's, the device playing while it is
@@ -202,7 +200,7 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, focused: true, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => app.view = View::Login,
@@ -350,10 +348,12 @@ impl Runner {
                 if let Some(a) = &mut self.art {
                     a.put(art.clone(), image);
                 }
-                self.unseen_cover |= !self.focused;
+                self.unseen_cover |= !app.in_sight;
             }
             Msg::Focus(on) => {
-                self.focused = *on;
+                if let Some(s) = &self.session {
+                    s.in_sight(*on);
+                }
                 // Under tmux, pictures sent while the pane was hidden were lost.
                 if *on && (std::mem::take(&mut self.unseen_cover) || crate::term::in_tmux()) {
                     self.repaint = true;

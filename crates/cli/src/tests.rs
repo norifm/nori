@@ -1056,6 +1056,13 @@ fn idle() {
     assert!((690..=710).contains(&ms), "the next whole second of the song: {ms}");
     a.now.buffering = true;
     assert_eq!(a.next_wake(now), None, "waiting for the network: the clock stands still");
+    a.now.buffering = false;
+    a.lyrics_wake = Some(now + Duration::from_millis(50));
+    a.handle(Msg::Focus(false));
+    assert_eq!(a.next_wake(now), None, "out of sight: neither the clock nor the lyrics wake");
+    a.dirty = false;
+    a.handle(Msg::Focus(true));
+    assert!(a.dirty && a.next_wake(now).is_some(), "back in sight: drawn at once, the clock running again");
 
     // Pause freezes clock.
     let mut a = app();

@@ -692,6 +692,16 @@ impl Handle {
         self.remotes.get()
     }
 
+    /// The app came into sight or left it: a mirrored device's clock and the search for a playing
+    /// device follow only while it is seen.
+    pub fn in_sight(&self, seen: bool) {
+        let Some(remote) = self.remote() else { return };
+        remote.clone().sight(if seen { nori_core::remote::Sight::Screen } else { nori_core::remote::Sight::Nothing });
+        if seen {
+            remote.discover_active(true);
+        }
+    }
+
     /// Makes or drops the remote as the settings say, and serves while remote control is on.
     fn follow_remote(&self) {
         let prefs = self.core.session.settings.current().unwrap_or_default();
