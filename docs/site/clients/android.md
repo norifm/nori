@@ -29,8 +29,8 @@ system's media controls, notification and lock screen.
   Burn-in pixel shifting and idle dimming are off by default from 0.7.0. Upgrading resets the old
   automatic pixel shifting and one-minute dimming once; other dimming intervals are kept.
 - **Motion** (from 0.7.0): Full, Reduced (short fades instead of slides and zooms) or E-ink (nothing
-  animates, and the player redraws only when something changes; the seek bar and times step every
-  30 seconds while music plays). nori's choice holds whatever Android's own
+  animates, and the player redraws only when something changes; the seek bar fills in blocks of at
+  least 30 seconds, with the minutes played and the song's length under it). nori's choice holds whatever Android's own
   animation setting says; the playing bars move in every mode but E-ink.
 - **Battery**: music plays from a deep buffer, or through the phone's audio chip when nothing needs the
   samples. See [Offload and processing](../sound/offload.md).

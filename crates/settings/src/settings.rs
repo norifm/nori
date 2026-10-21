@@ -164,8 +164,8 @@ pub enum Motion {
     Full,
     /// Short fades instead of slides and zooms.
     Reduced,
-    /// Nothing moves: the player redraws only when something changes, its seek bar steps every 30 s
-    /// rather than ticking, and the lyrics do not step.
+    /// Nothing moves: the player redraws only when something changes, its seek bar fills in blocks of
+    /// at least 30 s and counts whole minutes rather than ticking, and the lyrics do not step.
     Eink,
 }
 

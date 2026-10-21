@@ -107,6 +107,13 @@ object CoverLook {
      */
     @JvmStatic @CriticalNative external fun seekTimes(dragging: Boolean, drag: Float, heldMs: Long, positionMs: Long, durationMs: Long): Long
 
+    /**
+     * The seek bar on an e-ink screen (`nori_look::eink::EinkSeek`), packed: bits 56+ how many blocks
+     * (0 for an unknown length), 48-55 how many are played, 32-47 whole minutes played, the low 32 the
+     * song milliseconds until either changes.
+     */
+    @JvmStatic @CriticalNative external fun einkSeek(positionMs: Long, durationMs: Long): Long
+
     @JvmStatic @CriticalNative external fun seekStep(bar: Float, target: Float, dtS: Float, widthPx: Float, speed: Float): Long
 
     // The seek bar's pace (nori_look::motion::SeekPace), through [SeekPace]: a handle and primitives in,

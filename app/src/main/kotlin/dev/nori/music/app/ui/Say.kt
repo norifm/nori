@@ -179,6 +179,8 @@ class Say(private val r: Resources) {
     val later: String = r.getString(R.string.later)
     val sooner: String = r.getString(R.string.sooner)
     val mixing: String = r.getString(R.string.mixing)
+    /** Whole minutes of the song played, under an e-ink seek bar. */
+    fun minutesPlayed(minutes: Int): String = r.getString(R.string.seek_minutes_played, minutes)
     val newMix: String = r.getString(R.string.new_mix)
     val newSmartPlaylist: String = r.getString(R.string.new_smart_playlist)
     val readyMade: String = r.getString(R.string.ready_made)

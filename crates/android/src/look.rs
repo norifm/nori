@@ -18,6 +18,7 @@ pub(crate) static COVER: Class = Class {
     methods: &[
         native!(c"mix", c"([I[IF[I)V", mix),
         native!(c"seekTimes", c"(ZFJJJ)J", seek_times),
+        native!(c"einkSeek", c"(JJ)J", eink_seek),
         native!(c"seekStep", c"(FFFFF)J", seek_step),
         native!(c"seekPaceNew", c"(J)J", seek_pace_new),
         native!(c"seekPaceFree", c"(J)V", seek_pace_free),
@@ -229,6 +230,12 @@ extern "system" fn seek_times(dragging: jboolean, drag: jfloat, held_ms: jlong, 
     ((t.at_s.clamp(0, u32::MAX as i64)) << 32) | t.left_s.clamp(0, u32::MAX as i64)
 }
 
+/// [`nori_look::eink::EinkSeek`], packed `blocks << 56 | filled << 48 | minutes << 32 | next_ms`.
+extern "system" fn eink_seek(position_ms: jlong, duration_ms: jlong) -> jlong {
+    let s = nori_look::eink::EinkSeek::at(position_ms, duration_ms);
+    ((s.blocks as i64) << 56) | ((s.filled as i64) << 48) | ((s.minutes.min(0xFFFF) as i64) << 32) | s.next_ms.clamp(0, u32::MAX as i64)
+}
+
 /// `stage::transport_glyph` as its `TransportGlyph` ordinal.
 extern "system" fn transport_glyph(playing: jboolean, buffering: jboolean, waited: jboolean) -> jint {
     use nori_core::stage::TransportGlyph;
@@ -415,6 +422,8 @@ mod tests {
         assert_eq!(halves(seek_times(0, 0.0, 30_000, 61_500, 180_000)), (30, 150), "at the held place");
         assert_eq!(halves(seek_times(1, 0.5, 30_000, 61_500, 180_000)), (90, 90), "at the drag");
         assert_eq!(halves(pack_times((5, 7))), (5, 7));
+        let e = eink_seek(135_000, 240_000);
+        assert_eq!((e >> 56, (e >> 48) & 0xFF, (e >> 32) & 0xFFFF, e & 0xFFFF_FFFF), (8, 4, 2, 15_100));
 
         let step = seek_step(0.2, 0.8, 0.016, 400.0, 1.0);
         let (bar, wait) = nori_look::motion::seek_step(0.2, 0.8, 0.016, 400.0, 1.0);
