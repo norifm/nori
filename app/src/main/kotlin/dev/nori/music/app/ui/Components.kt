@@ -425,7 +425,7 @@ fun SongRow(
                     if (number > 0) "$number" else "", textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
                 )
-            } else Cover(coverUrl, 46.dp, radius = 6.dp)
+            } else Cover(coverUrl, 44.dp, radius = Radius.cover)
             Column(Modifier.weight(1f).padding(start = if (number != null) 14.dp else 12.dp, end = 8.dp)) {
                 // With no second line (an album's own tracks) the cloud leads the title rather than standing alone under it.
                 RemoteLine(
@@ -458,7 +458,7 @@ fun SongRow(
             IconButton(onMenu, Modifier.size(40.dp)) { Icon(Icons.Filled.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
         }
       }
-        if (divider) Hairline(startIndent = if (number != null) Space.gutter + 40.dp else Space.gutter + 58.dp)
+        if (divider) Hairline(startIndent = if (number != null) Space.gutter + 40.dp else Space.gutter + 56.dp)
     }
 }
 
