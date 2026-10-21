@@ -199,7 +199,7 @@ private fun PairingBody(link: String, vm: RemoteViewModel, onPaired: () -> Unit)
     val tell = LocalMessages.current
     val paired = words(R.string.pair_done)
     val failed = words(R.string.pair_failed)
-    LinkCode(link, words(R.string.pair_devices), words(R.string.pair_hint))
+    LinkCode(link, words(R.string.pair_hint))
     Column(Modifier.padding(horizontal = Space.gutter), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         FormField(entered, { entered = it }, Modifier.fillMaxWidth(), label = { Text(words(R.string.pair_link)) }, singleLine = true)
         PillButton(words(R.string.pair_action), Icons.Filled.PhoneAndroid, {

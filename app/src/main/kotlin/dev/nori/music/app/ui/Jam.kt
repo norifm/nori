@@ -304,11 +304,11 @@ private fun Request(p: Pending, coverUrl: String?, decides: Boolean, ink: ColorP
 @Composable
 internal fun InviteBody(link: String) {
     val vm: RemoteViewModel = viewModel()
-    LinkCode(link, words(R.string.jam_invite_title), words(R.string.jam_invite), remember(vm) { vm.homeOnly() })
+    LinkCode(link, words(R.string.jam_invite), remember(vm) { vm.homeOnly() })
 }
 
 @Composable
-internal fun LinkCode(link: String, title: String, hint: String, homeOnly: String? = null) {
+internal fun LinkCode(link: String, hint: String, homeOnly: String? = null) {
     val vm: RemoteViewModel = viewModel()
     val qr by produceState<dev.nori.music.ffi.remote.QrCode?>(null, link) { value = vm.qr(link) }
     val context = LocalContext.current
@@ -317,9 +317,8 @@ internal fun LinkCode(link: String, title: String, hint: String, homeOnly: Strin
         Modifier.fillMaxWidth().windowInsetsPadding(gestureBarRoom).padding(start = Space.gutter, end = Space.gutter, bottom = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(title, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold))
         // White under the code whatever the theme, as a scanner wants it; the room is kept while it is made.
-        Box(Modifier.padding(top = 20.dp).clip(RoundedCornerShape(20.dp)).background(Color.White).padding(18.dp).size(232.dp)) {
+        Box(Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White).padding(18.dp).size(232.dp)) {
             qr?.let { code ->
                 Spacer(Modifier.fillMaxSize().drawWithCache {
                     val n = code.size.toInt()
@@ -422,7 +421,6 @@ internal fun JamControls(j: JamView, onInvite: () -> Unit = {}, onSettings: () -
 @Composable
 internal fun JamSettings(j: JamView) {
     val vm: RemoteViewModel = viewModel()
-    SectionHeader(words(R.string.settings))
     Row(Modifier.fillMaxWidth().clickable { vm.jamAlong(!j.along) }.padding(horizontal = Space.gutter, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(words(R.string.jam_let_listen), style = MaterialTheme.typography.bodyLarge)

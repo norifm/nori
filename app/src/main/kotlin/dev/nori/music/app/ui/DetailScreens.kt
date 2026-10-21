@@ -114,13 +114,13 @@ internal fun PageActionGlyphs(
     for (a in offered) when (a) {
         is PageAction.Download -> GlyphButton(
             if (a.act == DownloadAct.REMOVE) Icons.Filled.DownloadDone else Icons.Filled.Download,
-            say.downloadEntry(a.act, missing.size), onClick = downloadAction(a.act, songs, missing, actions),
+            say.downloadEntry(a.act, missing.size), quiet = true, onClick = downloadAction(a.act, songs, missing, actions),
         )
-        PageAction.DownloadEverything -> GlyphButton(Icons.Filled.Download, say.downloadEverything) { artistId?.let { actions.downloadArtist(it) } }
-        PageAction.AddToQueue -> GlyphButton(Icons.AutoMirrored.Filled.QueueMusic, say.addToQueue) {
+        PageAction.DownloadEverything -> GlyphButton(Icons.Filled.Download, say.downloadEverything, quiet = true) { artistId?.let { actions.downloadArtist(it) } }
+        PageAction.AddToQueue -> GlyphButton(Icons.AutoMirrored.Filled.QueueMusic, say.addToQueue, quiet = true) {
             if (artistId != null) actions.queueArtist(artistId) else actions.enqueue(songs)
         }
-        PageAction.Export -> own(a)?.let { GlyphButton(Icons.Filled.IosShare, say.exportPlaylistFile, onClick = it) }
+        PageAction.Export -> own(a)?.let { GlyphButton(Icons.Filled.IosShare, say.exportPlaylistFile, quiet = true, onClick = it) }
         PageAction.Refresh -> own(a)?.let { GlyphButton(Icons.Filled.Refresh, say.newMix, onClick = it) }
         PageAction.Edit -> own(a)?.let { GlyphButton(Icons.Filled.Edit, say.edit, onClick = it) }
     }
@@ -203,20 +203,6 @@ private fun albumYear(song: Song): String = listOfNotNull(song.album.takeIf { it
 private fun groupsOf(d: dev.nori.music.ffi.library.ArtistDetail): List<Pair<String, List<Album>>> =
     d.groups.map { g -> say.releaseShelf(g) to g.albums.map { d.albums[it.toInt()] } }
 
-
-/**
- * "Download" is the wrong word once the songs are already here, and so is offering all of them when
- * only a few are missing. This says what is actually left to do - and offers to give the space back
- * when there is nothing left.
- */
-@Composable
-internal fun downloadEntry(songs: List<Song>, done: Set<String>, actions: ActionsViewModel): Pair<String, () -> Unit> {
-    val missing = remember(songs, done) { songs.filterNot { it.id in done } }
-    // What it does is the core's (`menus::download_entry`); what it says, Say's.
-    val act = remember(songs.size, missing.size) { dev.nori.music.ffi.library.downloadEntry(songs.size.toUInt(), missing.size.toUInt()) }
-    val label = remember(act, missing.size) { say.downloadEntry(act, missing.size) }
-    return label to downloadAction(act, songs, missing, actions)
-}
 
 /**
  * A page's own queue before its songs are read, from what it shows (a queue started from it carries
