@@ -768,6 +768,16 @@ impl Mirrored {
         all
     }
 
+    /// Song `id`'s star as [`Mirrored::rows`] has it, without copying them; None when it is not there.
+    fn starred(&self, id: &str) -> Option<bool> {
+        let st = self.shown.as_ref()?;
+        if self.pages.is_empty() || self.pages.iter().any(Option::is_none) {
+            return st.entries.iter().find(|e| e.id == id).map(|e| e.starred);
+        }
+        let newer = |turn: usize, page: &Entry| st.entries.iter().find(|e| e.turn as usize == turn && e.index == page.index);
+        self.pages.iter().flatten().enumerate().map(|(turn, e)| newer(turn, e).unwrap_or(e)).find(|e| e.id == id).map(|e| e.starred)
+    }
+
     /// Command `id`, `op`, as expected: until the player reports it, it is refused, or an unanswered
     /// command expires.
     fn foresee(&mut self, id: u64, op: &Op, here: i64) {
@@ -2211,6 +2221,15 @@ async fn deliver(client: &Client, who: &[(String, String)], o: Out) {
 }
 
 impl Remote {
+    /// Song `id`'s star in the queue of the device [`Remote::active`] shows, without copying that queue;
+    /// None while nothing is mirrored or the song is not in it.
+    pub fn mirrored_starred(&self, id: &str) -> Option<bool> {
+        let i = self.inner.lock();
+        let m = i.mirror.as_ref()?;
+        i.who(&m.id)?;
+        m.starred(id)
+    }
+
     /// Hands this device's queue and position to device `to`, which plays on; this one pauses.
     pub fn hand_over(self: Arc<Self>, to: String) {
         let me = self.id.clone();
@@ -3706,6 +3725,26 @@ mod tests {
         let fast = DeviceState { rate: Some(1.25), ..last.clone() };
         assert!(same_but_time(&fast, &DeviceState { position_ms: 16_250, ..DeviceState { at_us: Some(6_000_000), ..fast.clone() } }));
         assert!(!same_but_time(&fast, &DeviceState { rate: Some(1.0), position_ms: 16_250, at_us: Some(6_000_000), ..fast.clone() }), "the speed changed");
+    }
+
+    #[test]
+    fn a_songs_star_is_read_as_the_mirrored_rows_have_it() {
+        let entry = |index: u32, turn: u32, id: &str, starred: bool| Entry { index, turn, id: id.into(), starred, duration: 300, ..Default::default() };
+        let window = vec![entry(1, 1, "b", true), entry(2, 2, "c", false)];
+        let st = DeviceState { seq: 1, rev: 7, index: Some(1), len: 4, entries: window, ..Default::default() };
+        let mut m = Mirrored::new("desk".into(), clock::now_us());
+        m.heard(&st, 0, "me");
+        let from_rows = |m: &Mirrored, id: &str| m.view("Desk".into(), DeviceKind::Desktop, None).unwrap().rows.iter().find(|r| r.song.id == id).map(|r| r.song.starred);
+        let ids = ["a", "b", "c", "d", "e"];
+        for id in ids {
+            assert_eq!(m.starred(id), from_rows(&m, id), "{id}, the window only");
+        }
+        m.page(7, 0, vec![entry(0, 0, "a", true), entry(1, 1, "b", false), entry(2, 2, "c", true), entry(3, 3, "d", true)]);
+        m.foresee(1, &Op::Star { id: "c".into(), on: true }, clock::now_us());
+        for id in ids {
+            assert_eq!(m.starred(id), from_rows(&m, id), "{id}, every page in, the window over them");
+        }
+        assert_eq!((m.starred("a"), m.starred("b"), m.starred("c")), (Some(true), Some(true), Some(true)));
     }
 
     #[test]

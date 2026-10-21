@@ -1057,6 +1057,12 @@ impl Handle {
         there.and_then(|e| e.starred(&song.id)).unwrap_or_else(|| self.core.starred(Starrable::Song, &song.id, song.starred))
     }
 
+    /// Whether song `id` shows starred, its record saying `listed`, as [`Handle::starred`] does with the
+    /// device playing elsewhere, without copying that device's queue.
+    pub fn song_starred(&self, id: &str, listed: bool) -> bool {
+        self.remotes.get().and_then(|r| r.mirrored_starred(id)).unwrap_or_else(|| self.core.starred(Starrable::Song, id, listed))
+    }
+
     /// Stars or unstars a song once: through `there` while the song is in its queue (that device tells
     /// the server and shows it), else from here.
     pub fn star_song(&self, id: String, on: bool, there: Option<&crate::remote::Elsewhere>) {

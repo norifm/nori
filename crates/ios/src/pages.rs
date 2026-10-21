@@ -1034,7 +1034,7 @@ pub unsafe extern "C" fn nori_ios_star(kind: i32, id: *const c_char, on: i32) {
 pub unsafe extern "C" fn nori_ios_starred(kind: i32, id: *const c_char, listed: i32) -> i32 {
     let (Some(kind), id, listed) = (starrable(kind), c_text(id), listed != 0) else { return listed };
     let shown = with_session(|s| match kind {
-        Starrable::Song => s.starred(&Song { id: id.clone(), starred: listed, ..Song::default() }, s.elsewhere().as_ref()),
+        Starrable::Song => s.song_starred(&id, listed),
         _ => s.core.starred(kind, &id, listed),
     });
     i32::from(shown.unwrap_or(listed))
