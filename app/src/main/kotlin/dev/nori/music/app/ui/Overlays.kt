@@ -17,7 +17,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.AlertDialogDefaults
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -195,9 +207,9 @@ fun <T : Any> NoriDialog(
 }
 
 /**
- * The card of a Material alert dialog, drawn in place inside a [NoriDialog] rather than in a window of
- * its own (Material 1.4 keeps its own card behind its window). Same measures as Material's: 280 to 560
- * dp wide, 24 dp in, the title over the text over the buttons at the end.
+ * The card of an alert dialog, drawn in place inside a [NoriDialog] rather than in a window of its own:
+ * raised on the surface with a hairline edge and the sheet's corners, no shadow. Material's measures: 280
+ * to 560 dp wide, 24 dp in, the title over the text over the buttons ([TextAction]s) at the end.
  */
 @Composable
 fun AlertCard(
@@ -207,20 +219,20 @@ fun AlertCard(
     title: (@Composable () -> Unit)? = null,
     text: (@Composable () -> Unit)? = null,
 ) {
+    val scheme = MaterialTheme.colorScheme
     Surface(
         modifier.sizeIn(minWidth = 280.dp, maxWidth = 560.dp),
-        shape = AlertDialogDefaults.shape,
-        color = AlertDialogDefaults.containerColor,
-        tonalElevation = AlertDialogDefaults.TonalElevation,
+        shape = RoundedCornerShape(Radius.sheet), color = scheme.surfaceContainer, contentColor = scheme.onSurface,
+        border = hairlineBorder(),
     ) {
         Column(Modifier.padding(24.dp)) {
             title?.let {
-                CompositionLocalProvider(LocalContentColor provides AlertDialogDefaults.titleContentColor) {
-                    ProvideTextStyle(MaterialTheme.typography.headlineSmall) { Box(Modifier.padding(bottom = 16.dp)) { it() } }
+                ProvideTextStyle(MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, fontWeight = FontWeight.SemiBold)) {
+                    Box(Modifier.padding(bottom = 16.dp)) { it() }
                 }
             }
             text?.let {
-                CompositionLocalProvider(LocalContentColor provides AlertDialogDefaults.textContentColor) {
+                CompositionLocalProvider(LocalContentColor provides scheme.onSurfaceVariant) {
                     ProvideTextStyle(MaterialTheme.typography.bodyMedium) { Box(Modifier.weight(1f, fill = false).padding(bottom = 24.dp)) { it() } }
                 }
             }
