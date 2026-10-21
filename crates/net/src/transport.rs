@@ -143,7 +143,8 @@ pub use nori_tasks::block_on;
 pub enum NetError {
     /// The request did not come back.
     Transport { kind: FailureKind, detail: Option<String> },
-    /// An error status without a Subsonic body (e.g. a proxy's page). Treated as a network failure.
+    /// An error status without a Subsonic body (e.g. a proxy's page). Treated as a network failure,
+    /// unless it refuses the request as it stands ([`NetError::is_io`]).
     Http { status: u16 },
     /// A Subsonic error response.
     Api { code: i32, reason: String },
@@ -154,8 +155,14 @@ pub enum NetError {
 
 impl NetError {
     /// The network failed, not the request: writes are kept for later and the other address is tried.
+    /// A 4xx refusing the request itself (too long, not found) is not: sent again it is refused again.
+    /// Signed out at a proxy, a timeout or too many requests passes.
     pub fn is_io(&self) -> bool {
-        matches!(self, NetError::Http { .. }) || matches!(self, NetError::Transport { kind, .. } if kind.is_io())
+        match self {
+            NetError::Http { status } => !(400..500).contains(status) || matches!(status, 401 | 403 | 407 | 408 | 429),
+            NetError::Transport { kind, .. } => kind.is_io(),
+            _ => false,
+        }
     }
 
     /// The request never left: the next try cannot be a repeat.
