@@ -120,6 +120,8 @@ struct Runner {
     http: Arc<Http>,
     tx: Sender<Msg>,
     session: Option<Session>,
+    /// The lyrics panel was shown when last told to the session ([`Session::lyrics_view`]).
+    lyrics_viewed: bool,
     /// Media controls for the process; each session drives them while open.
     mpris: Option<Arc<nori_mpris::Mpris>>,
     art: Option<Art>,
@@ -200,7 +202,7 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, focused: true, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, focused: true, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => app.view = View::Login,
@@ -240,6 +242,7 @@ impl Runner {
                 app.server = name;
                 app.unreachable = None;
                 self.session = Some(s);
+                self.lyrics_viewed = false;
                 self.heard = None;
                 // Fresh screens for the new server, keeping client-wide state.
                 let prefs = app.prefs.clone();
@@ -512,6 +515,12 @@ impl Runner {
         let cmds = std::mem::take(&mut app.cmds);
         for c in cmds {
             self.carry(app, c);
+        }
+        // The core warms the songs ahead's lyrics only while the panel is shown.
+        let viewed = app.lyrics_shown();
+        if let (Some(s), true) = (&self.session, viewed != self.lyrics_viewed) {
+            s.lyrics_view(viewed);
+            self.lyrics_viewed = viewed;
         }
     }
 

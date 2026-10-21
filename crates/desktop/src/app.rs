@@ -396,6 +396,8 @@ pub struct App {
     tick_ms: u64,
     /// The window is off screen (minimized, covered): the seek bar, lyrics and playing bars stand still.
     hidden: bool,
+    /// Lyrics are on screen (Now Playing's lyrics or the side sheet): only then are they fetched.
+    lyrics_viewed: bool,
     lists: Lists,
     find: String,
     facts: crate::settings::Facts,
@@ -597,6 +599,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             tick: Timer::default(),
             tick_ms: 0,
             hidden: false,
+            lyrics_viewed: false,
             facts: crate::settings::Facts::default(),
             lists: Lists::default(),
             find: String::new(),
@@ -829,6 +832,7 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_player_changed, h, |a| {
         a.repaint();
         position_shown(&a.ui(), a.player.as_ref(), a.position_now() as i32);
+        a.lyrics_seen();
         a.lyrics_step(true);
         a.mirror();
         a.place_player();
@@ -1060,6 +1064,8 @@ impl App {
                 self.session = Some(s);
                 self.heard = None;
                 self.song = None;
+                // The new profile's core has no lyrics view open yet.
+                self.lyrics_viewed = false;
                 self.queue = None;
                 self.home_rows.clear();
                 self.shelves.set_vec(Vec::new());
@@ -2923,7 +2929,23 @@ impl App {
         ui.set_lyrics_active(-1);
         ui.set_lyrics_note(if self.song.is_some() { "Looking for lyrics…".into() } else { "".into() });
         ui.set_lyrics_waiting(self.song.is_some());
-        if let (Some(s), Some(id)) = (&self.session, &self.heard) {
+        if let (Some(s), Some(id), true) = (&self.session, &self.heard, self.lyrics_viewed) {
+            s.lyrics(id.clone());
+        }
+    }
+
+    /// Fetches lyrics only while they are on screen: the song's as they come in sight, and the core warms
+    /// the songs ahead meanwhile.
+    fn lyrics_seen(&mut self) {
+        let ui = self.ui();
+        let viewed = !self.hidden && (ui.get_full_player() && ui.get_full_panel() == 2 || ui.get_inspector() == 2);
+        if viewed == self.lyrics_viewed {
+            return;
+        }
+        self.lyrics_viewed = viewed;
+        let Some(s) = &self.session else { return };
+        s.lyrics_view(viewed);
+        if let (true, None, Some(id)) = (viewed, &self.lyrics, &self.heard) {
             s.lyrics(id.clone());
         }
     }
@@ -2958,6 +2980,7 @@ impl App {
         ui.set_playing(playing);
         ui.set_mixing(now.mixing && now.state == State::Playing);
         position_shown(&ui, self.player.as_ref(), now.position_now() as i32);
+        self.lyrics_seen();
         if now.song.as_ref().map(|s| &s.id) != self.heard.as_ref() {
             self.song_shown(now.song.clone());
         }

@@ -834,10 +834,6 @@ impl Handle {
     pub fn setting(&self, name: &str, value: &str) -> Option<SettingChange> {
         let change = self.core.session.settings.edit_by_name(name, value)?;
         self.apply(change.effect, &change.prefs);
-        if name == "lyricsPrefetch" {
-            let client = self.client.clone();
-            self.run(async move { client.lyrics_prefetch().await });
-        }
         if matches!(name, "remoteControl" | "jam") {
             self.follow_remote();
         }
@@ -943,6 +939,15 @@ impl Handle {
     pub fn applied(&self, effect: u32) {
         if let Some(p) = self.core.session.settings.current() {
             self.apply(effect, &p);
+        }
+    }
+
+    /// A lyrics view opened or closed: the core warms the songs ahead's lyrics only while one is open.
+    pub fn lyrics_view(&self, open: bool) {
+        self.client.lyrics_view(open);
+        if open {
+            let client = self.client.clone();
+            self.run(async move { client.lyrics_prefetch().await });
         }
     }
 

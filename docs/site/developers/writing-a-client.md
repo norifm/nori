@@ -238,7 +238,7 @@ The engine also plays what the Android player plays around the sound chain, each
 - **Fetching ahead**: as each song starts (and at a queue edit) the engine fetches the next one and the
   core's `Client::precache_targets` names the ones after it (how many for this network: the
   `songsAheadWifi`/`songsAheadMobile` settings, none past the next on a metered one by default - never a
-  provider's song or a download; `Client::lyrics_prefetch` warms the lyrics of as many), which nori-engine's one fetcher of the songs
+  provider's song or a download; `Client::lyrics_prefetch` warms the lyrics of as many while a lyrics view is open, `Client::lyrics_view`), which nori-engine's one fetcher of the songs
   coming up (`ahead.rs`) fetches whole onto the disk one after another, each in one go, and then leaves the
   network alone until the next song starts: `Store::fetch_ahead` into the engine's own store, or
   `Ahead::ask` over a client's cache (`Keeping`; Android's is media3's stream cache). A song the queue no

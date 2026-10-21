@@ -142,9 +142,12 @@ if want lyrics; then section lyrics
     }
     "$app" do "undownload song:$next_id" >/dev/null
     check "the upcoming fixture has no download" wait_until 10 downloaded_song 0
+    # The songs ahead are warmed only while the lyrics are open (Client::lyrics_view).
+    "$app" open lyrics >/dev/null
     watch_from_now
     "$app" do "enqueue song:$next_id" >/dev/null
-    check "the upcoming lyrics finish preparing before playback or download" waitfor_log "lyrics: prefetched $next_id" 20
+    check "with the lyrics open, the upcoming lyrics finish preparing" waitfor_log "lyrics: prefetched $next_id" 20
+    "$app" open home >/dev/null
     offline
     "$app" do "lyrics song:$next_id" >/dev/null
     check "the upcoming words are cached before downloading" wait_for lyricsAnswerSong "$next_id" 10
