@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -33,7 +32,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Box
@@ -48,6 +46,13 @@ import androidx.compose.animation.core.tween
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.ActionsViewModel
@@ -125,7 +130,7 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                 Text(say.searchIsTheWayIn, Modifier.padding(horizontal = Space.gutter, vertical = 12.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             // Favourites are always here; the mixes join them when the taste model is on (MixesViewModel).
-            if (mixes) item(key = "mixes") { Column(Modifier.arriving(arrival, 1, rise)) { SectionTitle(say.forYou); MixTiles() } }
+            if (mixes) item(key = "mixes") { Column(Modifier.arriving(arrival, 1, rise)) { SectionTitle(say.forYou, onMore = { nav.homeRow(MIXES_ROW) }); MixTiles() } }
             // The shelves carry on the count the sections above started, so each one arrives a moment
             // after the one over it; an empty shelf is not drawn and does not take a place in the order.
             var place = 2
@@ -144,9 +149,9 @@ fun HomeScreen(actions: ActionsViewModel, vm: HomeViewModel = viewModel()) {
                 val s = if (shelf.row == dev.nori.music.ffi.settings.HomeRow.PINNED) dev.nori.music.app.vm.Shelf.Playlists(shelf.row, ui.pinned) else shelf
                 if (s.isEmpty) return@forEach
                 when (s) {
-                    is dev.nori.music.app.vm.Shelf.Albums -> shelf(say.homeRow(s.row), s.albums, vm, arrival, place++, rise)
-                    is dev.nori.music.app.vm.Shelf.Playlists -> playlistShelf(say.homeRow(s.row), s.playlists, vm, arrival, place++, rise)
-                    is dev.nori.music.app.vm.Shelf.Songs -> songShelf(say.homeRow(s.row), s.songs, vm, actions, arrival, place++, rise, s.origin)
+                    is dev.nori.music.app.vm.Shelf.Albums -> shelf(say.homeRow(s.row), s.albums, vm, arrival, place++, rise, s.row.name)
+                    is dev.nori.music.app.vm.Shelf.Playlists -> playlistShelf(say.homeRow(s.row), s.playlists, vm, arrival, place++, rise, s.row.name)
+                    is dev.nori.music.app.vm.Shelf.Songs -> songShelf(say.homeRow(s.row), s.songs, vm, actions, arrival, place++, rise, s.origin, s.row.name)
                 }
             }
         }
@@ -199,14 +204,14 @@ private fun androidx.compose.foundation.lazy.LazyListScope.shelf(
     arrival: State<Float>,
     place: Int,
     rise: Float,
-    key: String = title,
+    route: String,
 ) {
-    item(key = key, contentType = "shelf") {
+    item(key = route, contentType = "shelf") {
         val nav = LocalNav.current
         Column(Modifier.arriving(arrival, place, rise)) {
-            SectionTitle(title)
+            SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(albums.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(albums, key = { it.id }, contentType = { "album" }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 150.dp, { nav.album(a.id, a) }) }
+                items(albums, key = { it.id }, contentType = { "album" }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }) }
             }
         }
     }
@@ -220,17 +225,16 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistShelf(
     arrival: State<Float>,
     place: Int,
     rise: Float,
-    key: String = title,
+    route: String,
 ) {
-    item(key = key, contentType = "shelf") {
+    item(key = route, contentType = "shelf") {
         val nav = LocalNav.current
         Column(Modifier.arriving(arrival, place, rise)) {
-            SectionTitle(title)
+            SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(playlists.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(playlists, key = { it.id }, contentType = { "playlist" }) { p ->
-                    // A feed's playlist is not counted until opened: its own line (who is in it) instead.
-                    val line = remember(p.songCount, p.comment) { if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty() }
-                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 150.dp, { nav.playlist(p.id, p) })
+                    val line = remember(p.songCount, p.comment) { playlistLine(p) }
+                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), PRINT, { nav.playlist(p.id, p) })
                 }
             }
         }
@@ -264,16 +268,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.songShelf(
     rise: Float,
     /** The shelf: the songs played from it are its queue. */
     from: dev.nori.music.ffi.model.PageOrigin,
-    key: String = title,
+    route: String,
 ) {
-    item(key = key, contentType = "shelf") {
+    item(key = route, contentType = "shelf") {
         // A long press opens the song's menu, as it does on a row of a list.
         val menu = LocalSongMenu.current
+        val nav = LocalNav.current
         Column(Modifier.arriving(arrival, place, rise)) {
-            SectionTitle(title)
+            SectionTitle(title, onMore = { nav.homeRow(route) })
             LazyRow(Modifier.bleedsToEdges(), rememberShelfState(songs.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(songs, key = { _, s -> s.id }, contentType = { _, _ -> "song" }) { i, s ->
-                    CoverCard(s.title, s.artist, vm.cover(s.coverArt, CoverSize.CARD), 150.dp, { actions.play(songs, i, from) }, onLongClick = { menu(s) })
+                    CoverCard(s.title, s.artist, vm.cover(s.coverArt, CoverSize.CARD), PRINT, { actions.play(songs, i, from) }, onLongClick = { menu(s) })
                 }
             }
         }
@@ -342,32 +347,167 @@ private fun Modifier.arriving(arrival: State<Float>, place: Int, rise: Float) = 
 }
 
 
+/** An album, playlist or song print on a shelf. */
+private val PRINT = 128.dp
+
+/** The home row key of the mix cards (the library rows' are their [HomeRow] names). */
+internal const val MIXES_ROW = "mixes"
+
+/** The narrowest a print is in the full view on a wide screen, and the gap between prints. */
+private val GRID_MIN = 170.dp
+private val GRID_GAP = 12.dp
+
+/** The season's light and dark papers and whether the theme is dark: what a dyed card is dyed on (`Dye`). */
+@androidx.compose.runtime.Immutable
+internal data class Papers(val light: dev.nori.music.ffi.look.Palette, val dark: dev.nori.music.ffi.look.Palette, val darkTheme: Boolean) {
+    /** Light then dark, each page, surface, ink, accent, on: how `CoverLook.dyed` takes them. */
+    val table = intArrayOf(
+        light.page.toInt(), light.surface.toInt(), light.ink.toInt(), light.accent.toInt(), light.on.toInt(),
+        dark.page.toInt(), dark.surface.toInt(), dark.ink.toInt(), dark.accent.toInt(), dark.on.toInt(),
+    )
+}
+
+@Composable
+internal fun rememberPapers(): Papers {
+    val settings: dev.nori.music.app.vm.SettingsViewModel = viewModel()
+    val prefs by settings.prefs.collectAsStateWithLifecycle()
+    val system = androidx.compose.foundation.isSystemInDarkTheme()
+    val dark = remember(prefs.theme, system) { dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system) }
+    return remember(prefs.season, prefs.amoled, dark) {
+        val today = Today.now()
+        Papers(paletteOf(prefs, false, today), paletteOf(prefs, true, today), dark)
+    }
+}
+
+/** A feed's playlist is not counted until opened: its own line (who is in it) instead. */
+private fun playlistLine(p: dev.nori.music.ffi.model.Playlist) = if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty()
+
 /**
  * The queue another device or app left on the server, offered at the top of Home the way Spotify offers
- * to carry on here: who left it, the song it stands on, play and dismiss.
+ * to carry on here: a card on the paper dyed with the song's cover, the song, where it stands, Resume and
+ * dismiss.
  */
 @Composable
 private fun QueueOfferCard(offer: dev.nori.music.ffi.library.QueueOffer, actions: ActionsViewModel, onPlay: () -> Unit, onDismiss: () -> Unit) {
     val song = offer.songs.getOrNull(offer.index.toInt()) ?: return
-    androidx.compose.material3.Surface(
-        onClick = onPlay, shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-        // Halfway between the large title's letters and the next heading's: with 4 dp of room above it and only what
-        // the next heading keeps above itself below, the letters stood 15 and 21 dp off it, so it is drawn 3 dp
-        // lower than its place; the page under it does not move.
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 4.dp).offset(y = 3.dp),
+    val url = actions.cover(song.coverArt, CoverSize.CARD)
+    val papers = rememberPapers()
+    val cover = rememberCoverPalette(url, false)
+    val look = remember(cover, papers) { cover?.let { dev.nori.music.look.CoverLook.dyed(it.look, papers.table, papers.darkTheme) } }
+    val scheme = MaterialTheme.colorScheme
+    val page = look?.let { androidx.compose.ui.graphics.Color(it[dev.nori.music.look.CoverLook.BACKGROUND]) } ?: scheme.surfaceContainerHigh
+    val ink = look?.let { androidx.compose.ui.graphics.Color(it[dev.nori.music.look.CoverLook.ON]) } ?: scheme.onSurface
+    Box(
+        Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 16.dp).height(CONTINUE_HEIGHT)
+            .clip(TileShape).background(page).clickable(onClick = onPlay),
     ) {
-        Row(Modifier.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Cover(actions.cover(song.coverArt, CoverSize.ROW), 48.dp, radius = 8.dp)
-            Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                Text(say.continueFrom(offer.by), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                Text(
-                    remember(song) { say.songLine(song.title, song.artist) }, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
+        Row {
+            Box(Modifier.size(CONTINUE_HEIGHT)) {
+                Cover(url, CONTINUE_HEIGHT, radius = 0.dp, plate = false)
+                Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.horizontalGradient(0.55f to androidx.compose.ui.graphics.Color.Transparent, 1f to page)))
             }
-            IconButton(onPlay) { Icon(androidx.compose.material.icons.Icons.Rounded.PlayArrow, say.play, Modifier.size(28.dp)) }
-            IconButton(onDismiss) { Icon(androidx.compose.material.icons.Icons.Rounded.Close, say.close, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Column(Modifier.weight(1f).fillMaxHeight().padding(start = 6.dp, top = 16.dp, end = 16.dp, bottom = 14.dp), Arrangement.SpaceBetween) {
+                Column {
+                    Text(
+                        remember { say.continueLabel.uppercase() }, style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp, letterSpacing = 0.7.sp),
+                        color = ink.copy(alpha = 0.65f),
+                    )
+                    Text(
+                        song.title, Modifier.padding(top = 6.dp),
+                        style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 21.sp, lineHeight = 24.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)),
+                        color = ink, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        remember(song, offer) { say.offerPlace(song.artist, offer.index.toInt() + 1, offer.songs.size) }, Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), color = ink.copy(alpha = 0.7f),
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+                Row(
+                    Modifier.height(38.dp).clip(PillShape).background(ink).clickable(onClick = onPlay).padding(horizontal = 14.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Icon(androidx.compose.material.icons.Icons.Rounded.PlayArrow, null, Modifier.size(18.dp), tint = page)
+                    Text(say.resume, Modifier.padding(start = 6.dp), style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp), color = page)
+                }
+            }
+        }
+        Box(Modifier.align(androidx.compose.ui.Alignment.TopEnd).size(40.dp).clickable(onClick = onDismiss), androidx.compose.ui.Alignment.Center) {
+            Icon(androidx.compose.material.icons.Icons.Rounded.Close, say.close, Modifier.size(18.dp), tint = ink.copy(alpha = 0.6f))
+        }
+    }
+}
+
+private val CONTINUE_HEIGHT = 178.dp
+
+/** A bigger view of one home row: its prints in a grid, paged as it scrolls; songs as rows. */
+@Composable
+fun HomeRowScreen(key: String, actions: ActionsViewModel) {
+    if (key == MIXES_ROW) MixesFull() else RowFull(key, actions)
+}
+
+/** The prints of a full view: two across, as many as fit on a wide screen, [onEnd] when the last row nears. */
+@Composable
+private fun PrintGrid(onEnd: () -> Unit, content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit) {
+    val list = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    LaunchedEffect(list) {
+        androidx.compose.runtime.snapshotFlow { list.layoutInfo.let { it.totalItemsCount - (it.visibleItemsInfo.lastOrNull()?.index ?: 0) <= 12 } }.collect { if (it) onEnd() }
+    }
+    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+        if (LocalWide.current) androidx.compose.foundation.lazy.grid.GridCells.Adaptive(GRID_MIN) else androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+        state = list,
+        contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, top = Space.gutter, bottom = Space.gutter + LocalChromeInset.current),
+        horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP),
+        content = content,
+    )
+}
+
+@Composable
+private fun MixesFull(vm: dev.nori.music.app.vm.MixesViewModel = viewModel()) {
+    val cards by vm.cards.collectAsStateWithLifecycle()
+    val papers = rememberPapers()
+    val nav = LocalNav.current
+    Column {
+        BackTitle(say.forYou)
+        PrintGrid(onEnd = {}) {
+            gridItems(cards, key = { it.id }, contentType = { "mix" }) { c ->
+                Box(Modifier.fillMaxWidth(), androidx.compose.ui.Alignment.TopCenter) { MixCardView(c, papers) { nav.mix(c.id) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowFull(key: String, actions: ActionsViewModel, vm: dev.nori.music.app.vm.HomeRowViewModel = viewModel()) {
+    LaunchedEffect(key) { vm.open(key) }
+    val entries by vm.entries.collectAsStateWithLifecycle()
+    val feedTitle by vm.title.collectAsStateWithLifecycle()
+    val nav = LocalNav.current
+    val title = remember(key, feedTitle) { HomeRow.entries.firstOrNull { it.name == key }?.let(say::homeRow) ?: feedTitle.orEmpty() }
+    Column {
+        BackTitle(title)
+        when (val e = entries) {
+            null -> {}
+            is dev.nori.music.app.vm.RowEntries.Albums -> PrintGrid(vm::loadMore) {
+                gridItems(e.albums, key = { it.id }, contentType = { "album" }) { a ->
+                    AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
+                }
+            }
+            is dev.nori.music.app.vm.RowEntries.Playlists -> PrintGrid(vm::loadMore) {
+                gridItems(e.playlists, key = { it.id }, contentType = { "playlist" }) { p ->
+                    CoverCard(p.name, remember(p.songCount, p.comment) { playlistLine(p) }, vm.cover(p.coverArt, CoverSize.CARD), PRINT, { nav.playlist(p.id, p) }, Modifier.fillMaxWidth(), fill = true)
+                }
+            }
+            is dev.nori.music.app.vm.RowEntries.Songs -> {
+                val rows = rememberSongListState(actions)
+                val list = rememberLazyListState()
+                LaunchedEffect(list, e.songs.size) {
+                    androidx.compose.runtime.snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= e.songs.size - 20 }.collect { if (it) vm.loadMore() }
+                }
+                LazyColumn(state = list, contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
+                    songRows(e.songs, actions, rows, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = e.origin)
+                }
+            }
         }
     }
 }

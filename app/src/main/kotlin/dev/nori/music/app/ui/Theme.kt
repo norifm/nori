@@ -65,7 +65,7 @@ data class Today(val month: Int, val day: Int, val southern: Boolean) {
 }
 
 /** The season's palette on [today], the calendar's when following (nori_look::theme::palette). */
-private fun paletteOf(prefs: StoredPrefs, dark: Boolean, today: Today): Palette =
+internal fun paletteOf(prefs: StoredPrefs, dark: Boolean, today: Today): Palette =
     dev.nori.music.ffi.look.palette(dev.nori.music.ffi.settings.seasonOf(prefs.season), today.month.toUInt(), today.day.toUInt(), today.southern, dark, prefs.amoled)
 
 /**

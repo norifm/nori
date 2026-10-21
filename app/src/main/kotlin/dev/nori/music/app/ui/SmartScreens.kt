@@ -26,7 +26,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -42,6 +41,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.ActionsViewModel
@@ -50,7 +51,6 @@ import dev.nori.music.app.vm.MixesViewModel
 import dev.nori.music.app.vm.MixViewModel
 import dev.nori.music.app.vm.MixCard
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.layout.fillMaxSize
 
 import dev.nori.music.ffi.library.SmartEditRule
@@ -64,81 +64,106 @@ private fun <T> Pick(value: T, options: List<T>, modifier: Modifier = Modifier, 
     NoriPopover(open, { open = false }) { options.forEach { o -> PopoverItem(label(o), chosen = o == value) { onPick(o); open = false } } }
 }
 
-/**
- * A mix's artwork: four covers of what is in it, the mix's colour rising from the bottom under its
- * name. Before there is anything in it, the colour alone. The covers cross-fade in and out, so a tile
- * never changes in one frame. Nothing here moves on its own: it is drawn once and then only redrawn
- * when its covers change.
- */
 /** Mix tiles' colours by mix id, kept across scrolling so a tile scrolled back into view does not ask the core again. */
 private val tileColours = android.util.LruCache<String, List<androidx.compose.ui.graphics.Color>>(64)
 
+/** Mix cards' dyed paper by mix and season, kept for the same reason. */
+private val cardColours = android.util.LruCache<Pair<String, Papers>, dev.nori.music.ffi.look.Palette>(64)
+
+private fun tileColours(id: String) =
+    tileColours[id] ?: dev.nori.music.ffi.library.mixTileColours(id).map { androidx.compose.ui.graphics.Color(it.toInt()) }.also { tileColours.put(id, it) }
+
+/**
+ * The covers of what is in a mix as a square: four in a mosaic, one alone, or nothing. They cross-fade
+ * in and out, so a tile never changes in one frame.
+ */
 @Composable
-private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp, onClick: (() -> Unit)? = null, large: Boolean = false) {
-    // The tile's colour, the deeper one it runs to and the band under its name (nori-core's
-    // `mix_tile_colours`), once per mix.
-    val c = remember(card.id) {
-        tileColours[card.id] ?: dev.nori.music.ffi.library.mixTileColours(card.id).map { androidx.compose.ui.graphics.Color(it.toInt()) }.also { tileColours.put(card.id, it) }
-    }
-    val seed = c[0]
-    val deep = c[1]
-    val white = androidx.compose.ui.graphics.Color.White
-    Box(
-        Modifier.size(size).clip(if (large) TileShape else CardShape)
-            .background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(seed, deep)))
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-    ) {
-        androidx.compose.animation.Crossfade(
-            card.covers, Modifier.matchParentSize(),
-            animationSpec = androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 320), label = "mix art",
-        ) { urls ->
-            val half = size / 2
-            when {
-                urls.size >= 4 -> Column {
-                    Row { Cover(urls[0], half, radius = 0.dp, plate = false); Cover(urls[1], half, radius = 0.dp, plate = false) }
-                    Row { Cover(urls[2], half, radius = 0.dp, plate = false); Cover(urls[3], half, radius = 0.dp, plate = false) }
-                }
-                urls.isNotEmpty() -> Cover(urls[0], size, radius = 0.dp, plate = false)
-                else -> Box(Modifier.fillMaxSize())
+private fun MixCovers(urls: List<String>, size: androidx.compose.ui.unit.Dp) {
+    androidx.compose.animation.Crossfade(
+        urls, Modifier.size(size),
+        animationSpec = androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 320), label = "mix art",
+    ) { covers ->
+        val half = size / 2
+        when {
+            covers.size >= 4 -> Column {
+                Row { Cover(covers[0], half, radius = 0.dp, plate = false); Cover(covers[1], half, radius = 0.dp, plate = false) }
+                Row { Cover(covers[2], half, radius = 0.dp, plate = false); Cover(covers[3], half, radius = 0.dp, plate = false) }
             }
+            covers.isNotEmpty() -> Cover(covers[0], size, radius = 0.dp, plate = false)
+            else -> Box(Modifier.fillMaxSize())
         }
-        // The mix's colour rising under its name, so the name reads on any artwork. Always drawn: on the
-        // bare colour it only deepens the bottom a little, and nothing appears when the covers do.
-        Box(
-            Modifier.matchParentSize().background(
-                androidx.compose.ui.graphics.Brush.verticalGradient(
-                    0.38f to c[2], 0.72f to c[3], 1f to c[4],
-                ),
-            ),
-        )
-        Column(Modifier.align(Alignment.BottomStart).padding(if (large) 18.dp else 12.dp)) {
-            Icon(
-                if (card.favourites) Kanji.Sealed else Icons.Filled.AutoAwesome, null,
-                Modifier.size(if (large) 22.dp else 16.dp), tint = white.copy(alpha = 0.9f),
-            )
+    }
+}
+
+/**
+ * A mix's artwork on its page: its covers, the mix's colour rising from the bottom under its name.
+ * Before there is anything in it, the colour alone.
+ */
+@Composable
+private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp) {
+    val c = remember(card.id) { tileColours(card.id) }
+    val white = androidx.compose.ui.graphics.Color.White
+    Box(Modifier.size(size).clip(TileShape).background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(c[0], c[1])))) {
+        MixCovers(card.covers, size)
+        Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.38f to c[2], 0.72f to c[3], 1f to c[4])))
+        Column(Modifier.align(Alignment.BottomStart).padding(18.dp)) {
+            Icon(if (card.favourites) Kanji.Sealed else Icons.Filled.AutoAwesome, null, Modifier.size(22.dp), tint = white.copy(alpha = 0.9f))
             Text(
-                card.title, Modifier.padding(top = 4.dp),
-                style = if (large) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium, color = white,
+                card.title, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.headlineSmall, color = white,
                 maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
     }
 }
 
-/** "For you": favourites first, then the mixes. Each tile opens a page that shows what is in it. */
+private val MIX_CARD_WIDTH = 150.dp
+private val MIX_CARD_HEIGHT = 206.dp
+
+/**
+ * A mix on Home: a portrait card on the season's paper dyed with the mix's colour, its art a square on
+ * top running into that paper, the name and a line under it in the card's own ink.
+ */
+@Composable
+internal fun MixCardView(card: MixCard, papers: Papers, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val dyed = remember(card.id, papers) {
+        cardColours[card.id to papers] ?: dev.nori.music.ffi.library.mixCardColours(card.id, papers.light, papers.dark, papers.darkTheme).also { cardColours.put(card.id to papers, it) }
+    }
+    val page = androidx.compose.ui.graphics.Color(dyed.page.toInt())
+    val ink = androidx.compose.ui.graphics.Color(dyed.ink.toInt())
+    val seed = remember(card.id) { tileColours(card.id)[0] }
+    Column(modifier.size(MIX_CARD_WIDTH, MIX_CARD_HEIGHT).clip(TileShape).background(page).clickable(onClick = onClick)) {
+        Box(Modifier.size(MIX_CARD_WIDTH).background(seed)) {
+            MixCovers(card.covers, MIX_CARD_WIDTH)
+            Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Transparent, 1f to page)))
+        }
+        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), Arrangement.Center) {
+            Text(
+                card.title, style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold)),
+                color = ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            Text(
+                if (card.favourites) say.mixLineFavourites else say.mixLineMade, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                color = ink.copy(alpha = 0.7f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** "For you": favourites first, then the mixes. Each card opens a page that shows what is in it. */
 @Composable
 fun MixTiles(vm: MixesViewModel = viewModel()) {
     val cards by vm.cards.collectAsStateWithLifecycle()
     val nav = LocalNav.current
+    val papers = rememberPapers()
     LazyRow(Modifier.bleedsToEdges(), rememberShelfState(cards.firstOrNull()?.id), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(cards, key = { it.id }) { c -> MixArt(c, 150.dp, onClick = { nav.mix(c.id) }) }
+        items(cards, key = { it.id }) { c -> MixCardView(c, papers) { nav.mix(c.id) } }
     }
 }
 
 /**
  * A mix as a page, laid out like a playlist: the mix's artwork, its name, Play and Shuffle, then the
  * songs. What is listed is exactly what plays - a tap on a row starts the mix at that row - and it
- * stays put while the page is open; the circular arrow asks for a new draw.
+ * stays put while the page is open; Refresh in the list head asks for a new draw.
  */
 @Composable
 fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewModel()) {
@@ -149,16 +174,18 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
         HeroPage(
             coverUrl = null,
             title = m.title,
-            caption = m.caption,
             onPlay = { if (m.songs.isNotEmpty()) actions.play(m.songs, from = m.origin) },
             onShuffle = { if (m.songs.isNotEmpty()) actions.shuffle(m.songs, m.origin) },
             queue = m.queue,
             // Its covers as the page's picture, as a cover heads an album's; a mix with none yet keeps its tile.
             mosaic = m.covers,
-            art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp, large = true) },
-            actions = {
-                if (m.refreshable) GlyphButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
-                MoreButton(songsMore(m.songs, list.downloaded, actions))
+            art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp) },
+            headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }, true),
+            headActions = {
+                PageActionGlyphs(
+                    dev.nori.music.ffi.library.PageKind.Mix(m.refreshable), m.songs, list.downloaded, actions,
+                    own = { if (it == dev.nori.music.ffi.library.PageAction.Refresh) ({ vm.refresh() }) else null },
+                )
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {
@@ -202,11 +229,20 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
     val list = rememberSongListState(actions)
     val from = remember(id) { dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SMART, id) }
     LoadBox(load) { page ->
-        SongListPage(
-            remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist },
-            remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) },
-            page.songs, list.downloaded, from, actions,
-            pageActions = { GlyphButton(Icons.Filled.Edit, say.edit) { nav.smartEdit(id) } },
+        val any = page.songs.isNotEmpty()
+        HeroPage(
+            coverUrl = null,
+            title = remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist },
+            onPlay = if (any) { { actions.play(page.songs, from = from) } } else null,
+            onShuffle = if (any) { { actions.shuffle(page.songs, from) } } else null,
+            queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
+            headLabel = if (any) remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) } else "",
+            headActions = {
+                PageActionGlyphs(
+                    dev.nori.music.ffi.library.PageKind.Smart, page.songs, list.downloaded, actions,
+                    own = { if (it == dev.nori.music.ffi.library.PageAction.Edit) ({ nav.smartEdit(id) }) else null },
+                )
+            },
         ) {
             songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }

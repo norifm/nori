@@ -147,6 +147,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
     fun decade(year: Int) = go("decade/$year")
     fun smart(id: String) = go("smart/${Uri.encode(id)}")
     fun mix(id: String) = go("mix/${Uri.encode(id)}")
+    /** The bigger view of a home row: a [HomeRow] name, `feed-<place>-<kind>` or the mixes. */
+    fun homeRow(key: String) = go("home/${Uri.encode(key)}")
     fun smartEdit(id: String) = go("smartEdit/${Uri.encode(id.ifEmpty { "new" })}")
     fun stats() = go("stats")
     /** The download queue. Asked for again while it is showing (the notification tapped), it only puts the player away. */
@@ -538,6 +540,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                     predictivePopExitTransition = { edge -> PageMotion.held(this, plain, edge) },
                 ) {
                     page("home") { HomeScreen(actions) }
+                    page("home/{row}") { HomeRowScreen(it.arguments!!.getString("row")!!, actions) }
                     page("search") { SearchScreen(actions) }
                     page("library") { LibraryScreen(actions) }
                     page("settings") { SettingsScreen(settings) }

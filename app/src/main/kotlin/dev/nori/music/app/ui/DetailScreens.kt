@@ -133,11 +133,6 @@ private fun downloadAction(act: DownloadAct, songs: List<Song>, missing: List<So
     DownloadAct.REMOVE -> { { actions.undownload(songs) } }
 }
 
-/** The ⋯ entries of a page of [songs]: add them to the queue, and download what is missing or give it back. */
-@Composable
-internal fun songsMore(songs: List<Song>, done: Set<String>, actions: ActionsViewModel): List<Pair<String, () -> Unit>> =
-    listOf(say.addToQueue to { actions.enqueue(songs) }, downloadEntry(songs, done, actions))
-
 /**
  * The places in [songs] a filter keeps, by title or artist in either case (nori-core's `TextIndex`); null
  * with no filter, for all of them. The index takes the list's text once, and only when a filter is first

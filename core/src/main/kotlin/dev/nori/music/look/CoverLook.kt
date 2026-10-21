@@ -97,6 +97,12 @@ object CoverLook {
     fun accented(look: IntArray, light: Int, dark: Int): IntArray = IntArray(LEN).also { accented(look, light, dark, it) }
 
     /**
+     * [look] (a cover's page) on the season's paper dyed with its edge (`nori_look::dress::dyed`). [palettes]
+     * is the light then the dark palette the app wears, each page, surface, ink, accent, on; [dark] the theme.
+     */
+    fun dyed(look: IntArray, palettes: IntArray, dark: Boolean): IntArray = IntArray(LEN).also { dyed(look, palettes, dark, it, null) }
+
+    /**
      * One step of the seek bar towards where the song is (`nori_look::motion::seek_step`): the new place,
      * and the milliseconds to wait before the next step (0 the next frame, -1 stop). Primitives only.
      */
@@ -129,4 +135,6 @@ object CoverLook {
 
     @JvmStatic @FastNative private external fun plain(roles: IntArray, out: IntArray)
     @JvmStatic @FastNative private external fun accented(look: IntArray, light: Int, dark: Int, out: IntArray)
+    /** Returns 0 nothing written, 1 the look, 2 the look and [wash], a mutable ARGB_8888 copy dyed in place. */
+    @JvmStatic @FastNative private external fun dyed(look: IntArray, palettes: IntArray, dark: Boolean, out: IntArray, wash: android.graphics.Bitmap?): Int
 }

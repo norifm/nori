@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.nori.music.ffi.settings.HomeRow
@@ -187,6 +188,98 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
                 if (nori.rules.indexed) runCatching { nori.library.sync() }
             } finally {
                 _refreshing.value = false
+            }
+        }
+    }
+}
+
+/** What a home row's full view holds: entries of one kind, as many as are read so far. */
+sealed interface RowEntries {
+    data class Albums(val albums: List<Album>) : RowEntries
+    data class Playlists(val playlists: List<Playlist>) : RowEntries
+    data class Songs(val songs: List<Song>, val origin: dev.nori.music.ffi.model.PageOrigin) : RowEntries
+}
+
+/**
+ * The bigger view of one home row. A library row is read a page at a time as the core's `home_row_page`
+ * lays it out; a source's feed shelf (`feed-<place>-<kind>`) shows the items it already has. This only
+ * makes the requests.
+ */
+class HomeRowViewModel(app: Application) : NoriViewModel(app) {
+    private val _entries = MutableStateFlow<RowEntries?>(null)
+    val entries: StateFlow<RowEntries?> = _entries
+
+    private val _title = MutableStateFlow<String?>(null)
+    /** A feed shelf's own title; a library row is worded by the page. */
+    val title: StateFlow<String?> = _title
+
+    private var key: String? = null
+    private var row: HomeRow? = null
+    private var albums = Grown.empty<Album>()
+    private var songs = Grown.empty<Song>()
+    private var loading = false
+    private var exhausted = false
+
+    fun open(key: String) {
+        if (key == this.key) return
+        this.key = key
+        val feed = key.split('-').takeIf { it.size == 3 && it[0] == "feed" }
+        if (feed != null) readFeed(feed[1].toInt(), feed[2]) else { row = HomeRow.valueOf(key); loadMore() }
+    }
+
+    private fun readFeed(place: Int, kind: String) {
+        viewModelScope.launch {
+            val shelf = runCatching { nori.library.homeFeed().first().getOrNull(place) }.getOrNull() ?: return@launch
+            _title.value = shelf.title
+            _entries.value = when (kind) {
+                "songs" -> RowEntries.Songs(shelf.songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, shelf.title))
+                "albums" -> RowEntries.Albums(shelf.albums)
+                else -> RowEntries.Playlists(shelf.playlists)
+            }
+        }
+    }
+
+    fun loadMore() {
+        val row = row ?: return
+        if (loading || exhausted) return
+        loading = true
+        val offset = when (val e = _entries.value) {
+            is RowEntries.Albums -> e.albums.size
+            is RowEntries.Songs -> e.songs.size
+            is RowEntries.Playlists -> e.playlists.size
+            null -> 0
+        }
+        viewModelScope.launch {
+            try {
+                val shelf = dev.nori.music.ffi.library.homeRowPage(row, offset.toUInt())
+                if (shelf == null) { exhausted = true; return@launch }
+                when (shelf) {
+                    is HomeShelf.Albums -> {
+                        val size = shelf.size.toInt()
+                        val read = if (shelf.followsStars && offset == 0) nori.library.favouriteAlbums(size) else nori.library.albums(shelf.sort, size, offset)
+                        val got = runCatching { read.first() }.getOrDefault(emptyList())
+                        albums = albums.from(offset, got)
+                        _entries.value = RowEntries.Albums(albums)
+                        exhausted = got.size < size
+                    }
+                    is HomeShelf.Songs -> {
+                        val limit = shelf.limit.toInt()
+                        val got = runCatching { nori.library.browseSongs(shelf.sort, shelf.descending, false, null, offset, limit) }.getOrDefault(emptyList())
+                        songs = songs.from(offset, got)
+                        _entries.value = RowEntries.Songs(songs, dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.SHELF, row.name))
+                        exhausted = got.size < limit
+                    }
+                    is HomeShelf.Playlists -> {
+                        val all = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
+                        _entries.value = RowEntries.Playlists(all.take(shelf.take.toInt()))
+                    }
+                    HomeShelf.Pinned -> {
+                        val all = runCatching { nori.library.playlists().first() }.getOrDefault(emptyList())
+                        _entries.value = RowEntries.Playlists(homePinned(all, nori.settings.value.pinnedPlaylists))
+                    }
+                }
+            } finally {
+                loading = false
             }
         }
     }

@@ -694,4 +694,10 @@
     <string name="jam_too_many">You have as many songs waiting as a Jam allows</string>
     <string name="jam_unsupported">Your server doesn’t support Jams yet. They need octo-fiesta with nori support in front of it.</string>
     <string name="devices_nearby_only">Devices on this network show up here. To reach them from anywhere, your server needs octo-fiesta with nori support.</string>
+    <!-- Home: the Continue card and the mix cards. -->
+    <string name="continue_label">Continue</string>
+    <string name="resume">Resume</string>
+    <string name="offer_place">%1$s · %2$d of %3$d</string>
+    <string name="mix_line_made">Made for you</string>
+    <string name="mix_line_favourites">Your favorites</string>
 </resources>
