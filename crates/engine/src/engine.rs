@@ -724,8 +724,6 @@ const PLACE_DUE_MS: i64 = 4;
 const READY_US: i64 = 100_000;
 /// After a start, how far its place is from the leader's is looked at this much later, µs.
 const LOOK_AFTER_START_US: i64 = 500_000;
-/// While a start waits for its song's bytes, it looks this often, ms.
-const WAIT_FOR_START_MS: i64 = 250;
 /// A start this late (the thread woke late) still plays, its gap slipped away; later, it starts again, µs.
 const START_LATE_US: i64 = 15_000;
 /// A start's fades, ms.
@@ -1702,8 +1700,8 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
     fn wake_to_start(&self) -> Option<i64> {
         let f = self.following.as_ref()?;
         let at = match f.starting {
-            // Waiting for the song's bytes, looked at again now and then.
-            Some(st) if st.jump.is_none() && self.clock.now_us() >= st.at_us => return Some(WAIT_FOR_START_MS),
+            // Waiting for the song's bytes: the loader wakes the thread; this is a fallback.
+            Some(st) if st.jump.is_none() && self.clock.now_us() >= st.at_us => return Some(1_000),
             Some(st) => st.jump.map_or(st.at_us, |j| j.2),
             None => f.look_at?,
         };

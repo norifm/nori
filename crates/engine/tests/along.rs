@@ -1014,8 +1014,11 @@ fn a_stalled_guest_catches_up() {
     let g = &jam.guests[0].rig;
     g.net.stalled_until.store(g.now_ns() + 3_000_000_000, Ordering::Relaxed);
     jam.join(0);
+    let sleeps = jam.guests[0].rig.time.clock.sleeps();
     jam.run(2_000);
     assert!(jam.guests[0].rig.card.0.lock().heard.is_empty(), "nothing heard while stalled");
+    let wakes = jam.guests[0].rig.time.clock.sleeps() - sleeps;
+    assert!(wakes <= 4, "the start woke {wakes} times waiting for its bytes");
     in_step(&mut jam, 2_000, 8_000, 2.5, 5.0);
 }
 
