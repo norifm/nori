@@ -3,8 +3,6 @@ package dev.nori.music.app.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.draw.clip
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.foundation.layout.Box
@@ -96,15 +94,15 @@ private fun <T> SortMenu(options: List<Pair<T, String>>, value: T, onChange: (T)
             Modifier.clip(PillShape).clickable { open = true }.padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.SwapVert, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+            Icon(Icons.Filled.SwapVert, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
                 options.firstOrNull { it.first == value }?.second ?: say.sort,
                 Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        DropdownMenu(open, { open = false }) {
-            options.forEach { (v, label) -> DropdownMenuItem({ Text(label) }, { onChange(v); open = false }) }
+        NoriPopover(open, { open = false }) {
+            options.forEach { (v, label) -> PopoverItem(label, chosen = v == value) { onChange(v); open = false } }
         }
     }
 }

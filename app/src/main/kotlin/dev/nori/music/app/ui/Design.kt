@@ -33,6 +33,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.ColorProducer
 import androidx.compose.foundation.layout.padding
@@ -41,6 +42,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Search
@@ -120,6 +122,16 @@ object Space {
 val CardShape = RoundedCornerShape(Radius.card)
 val TileShape = RoundedCornerShape(Radius.tile)
 val PillShape = RoundedCornerShape(Radius.pill)
+
+/** How thick the edge of a raised surface is: a chip, a card, a sheet, a popover, a dialog. */
+val HAIRLINE = 0.5.dp
+
+/** The edge of a raised surface, in the page's hairline color. */
+@Composable
+fun hairlineBorder(): androidx.compose.foundation.BorderStroke {
+    val color = MaterialTheme.colorScheme.outlineVariant
+    return remember(color) { androidx.compose.foundation.BorderStroke(HAIRLINE, color) }
+}
 
 /**
  * Inter, as a variable font, standing in for the system face an iPhone would use. It is the single
@@ -1090,6 +1102,36 @@ fun NoriSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier
 
 /** A decibel figure with its sign, one decimal, never "-0.0" (nori-core's `fmt::signed_db`). */
 fun signedDb(db: Float): String = dev.nori.music.text.Fmt.signedDb(db)
+
+/**
+ * A menu dropped from what opened it: raised on the surface with a hairline edge and the tile's corners,
+ * no shadow. Its rows are [PopoverItem]s.
+ */
+@Composable
+fun NoriPopover(
+    expanded: Boolean, onDismissRequest: () -> Unit, modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    androidx.compose.material3.DropdownMenu(
+        expanded, onDismissRequest, modifier,
+        shape = TileShape, containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 0.dp, shadowElevation = 0.dp, border = hairlineBorder(), content = content,
+    )
+}
+
+/** A row of a [NoriPopover]; the [chosen] one is marked with a quiet check. */
+@Composable
+fun PopoverItem(label: String, chosen: Boolean = false, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().widthIn(min = 160.dp, max = 280.dp).heightIn(min = 44.dp)
+            .clickable(onClick = onClick).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (chosen) Icon(Icons.Filled.Check, say.chosen, Modifier.padding(start = 12.dp).size(18.dp), tint = scheme.onSurfaceVariant)
+    }
+}
 
 
 /**

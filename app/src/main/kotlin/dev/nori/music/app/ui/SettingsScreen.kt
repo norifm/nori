@@ -40,8 +40,6 @@ import androidx.compose.material.icons.outlined.Lyrics
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Speed
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -218,8 +216,8 @@ private fun Choice(row: SettingRow.Choice, onChange: (String) -> Unit) {
     Column {
     Row(Modifier.fillMaxWidth().spotlight(row.key).clickable(row.enabled) { open = true }.padding(horizontal = 16.dp, vertical = 15.dp)) {
         Text(row.title, Modifier.weight(1f).alpha(dim), style = MaterialTheme.typography.bodyLarge)
-        Text(row.shown, Modifier.alpha(dim), color = MaterialTheme.colorScheme.primary)
-        DropdownMenu(open, { open = false }) { row.options.forEach { o -> DropdownMenuItem({ Text(o.label) }, { onChange(o.value); open = false }) } }
+        Text(row.shown, Modifier.alpha(dim), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        NoriPopover(open, { open = false }) { row.options.forEach { o -> PopoverItem(o.label, chosen = o.label == row.shown) { onChange(o.value); open = false } } }
     }
     Hairline(startIndent = 16.dp)
     }
