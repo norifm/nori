@@ -353,12 +353,15 @@ impl Client {
                     match e.outcome() {
                         Outcome::Offline => return Ok(()),
                         Outcome::Later => {
-                            if self.core.pending_put_off(p.row_id, crate::db::now_ms())? {
+                            let dropped = self.core.pending_put_off(p.row_id, crate::db::now_ms())?;
+                            crate::alog::info(&format!("pending: {} put off ({e}){}", p.endpoint, if dropped { ", dropped" } else { "" }));
+                            if dropped {
                                 self.dropped.fetch_add(1, Ordering::Relaxed);
                             }
                             return Ok(());
                         }
                         Outcome::Refused => {
+                            crate::alog::info(&format!("pending: {} refused ({e}), dropped", p.endpoint));
                             self.dropped.fetch_add(1, Ordering::Relaxed);
                         }
                     }

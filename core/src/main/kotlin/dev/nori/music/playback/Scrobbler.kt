@@ -25,8 +25,8 @@ class Scrobbler(private val nori: Nori, private val scope: CoroutineScope) {
         if ((send.submitId == null && send.nowPlayingId == null) || !nori.rules.scrobbles) return
         scope.launch(Dispatchers.IO) {
             // Both are writes: made offline, they wait in the pending queue and keep their original time.
-            send.submitId?.let { runCatching { nori.library.scrobble(it, submission = true, timeMs = send.submitAt) } }
-            send.nowPlayingId?.let { runCatching { nori.library.nowPlaying(it) } }
+            send.submitId?.let { runCatching { nori.library.scrobble(it, submission = true, timeMs = send.submitAt) }.onFailure { e -> dev.nori.music.NoriLog.w("scrobble: ${e.message}") } }
+            send.nowPlayingId?.let { runCatching { nori.library.nowPlaying(it) }.onFailure { e -> dev.nori.music.NoriLog.w("now playing: ${e.message}") } }
         }
     }
 }
