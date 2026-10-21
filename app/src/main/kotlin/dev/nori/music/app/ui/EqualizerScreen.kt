@@ -17,7 +17,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
@@ -25,7 +24,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -106,7 +104,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
             Row(Modifier.padding(horizontal = Space.gutter), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 // Once per band shape, not on every frame of a gain drag.
                 val label = remember(b.freq, b.channel, b.kind) { bandLabel(b) }
-                Text(label, Modifier.width(56.dp).clickable { editing = i }, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(label, Modifier.width(56.dp).clickable { editing = i }, style = MaterialTheme.typography.labelLarge)
                 if (b.kind.usesGain) {
                     NoriSlider(b.gainDb, ranges.gain.min..ranges.gain.max, { v -> vm.setBand(i, b.copy(gainDb = v)) }, Modifier.weight(1f), enabled = p.eqEnabled, centred = true)
                     Text(
@@ -234,7 +232,7 @@ private fun ResponseCurve(sliders: List<Float>, target: List<Float>, enabled: Bo
     val aim = remember(target, response) {
         if (target.isEmpty()) emptyList() else { val shift = response.average().toFloat() - target.average().toFloat(); target.map { it + shift } }
     }
-    val line = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val line = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
     val faint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
     val grid = MaterialTheme.colorScheme.outlineVariant
     androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp).height(96.dp)) {
@@ -267,7 +265,7 @@ private fun LimiterReduction() {
     Text(
         remember(kotlin.math.round(reduction * 10f)) { say.reduction(reduction) },
         style = MaterialTheme.typography.labelMedium,
-        color = if (reduction > 0.05f) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (reduction > 0.05f) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -299,14 +297,10 @@ private fun BandDialog(band: SoundBand, onChange: (SoundBand) -> Unit, onRemove:
         text = {
             Column {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    items(EqKind.entries) { k ->
-                        TextButton({ onChange(band.copy(kind = k)) }) { Text(say.bandKind(k), color = if (band.kind == k) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
+                    items(EqKind.entries) { k -> Chip(say.bandKind(k), band.kind == k) { onChange(band.copy(kind = k)) } }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    BandChannel.entries.forEach { c ->
-                        TextButton({ onChange(band.copy(channel = c)) }) { Text(say.bandChannel(c), color = if (band.channel == c) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
+                Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    BandChannel.entries.forEach { c -> Chip(say.bandChannel(c), band.channel == c) { onChange(band.copy(channel = c)) } }
                 }
                 Text(say.frequency, style = MaterialTheme.typography.labelMedium)
                 // Logarithmic: the slider position is the exponent, 20 Hz to 20 kHz.
@@ -316,6 +310,6 @@ private fun BandDialog(band: SoundBand, onChange: (SoundBand) -> Unit, onRemove:
             }
         },
         confirmButton = { TextAction(say.done, onDone) },
-        dismissButton = { TextButton(onRemove) { Icon(Icons.Filled.Close, null); Text(say.removeBand) } },
+        dismissButton = { TextAction(say.removeBand, onRemove, destructive = true) },
     )
 }

@@ -3,8 +3,6 @@ package dev.nori.music.app.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.draw.clip
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.foundation.layout.Box
@@ -96,15 +94,15 @@ private fun <T> SortMenu(options: List<Pair<T, String>>, value: T, onChange: (T)
             Modifier.clip(PillShape).clickable { open = true }.padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.SwapVert, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+            Icon(Icons.Filled.SwapVert, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
                 options.firstOrNull { it.first == value }?.second ?: say.sort,
                 Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        DropdownMenu(open, { open = false }) {
-            options.forEach { (v, label) -> DropdownMenuItem({ Text(label) }, { onChange(v); open = false }) }
+        NoriPopover(open, { open = false }) {
+            options.forEach { (v, label) -> PopoverItem(label, chosen = v == value) { onChange(v); open = false } }
         }
     }
 }
@@ -116,8 +114,8 @@ private fun ShuffleLink(onClick: () -> Unit) {
         Modifier.padding(end = Space.gutter - 4.dp, top = 2.dp).clip(PillShape).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Rounded.Shuffle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(say.shuffle, Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Icon(Icons.Rounded.Shuffle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(say.shuffle, Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -144,9 +142,9 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
             // What was played and what is kept on the phone: places rather than kinds of music, so buttons
             // in the corner rather than rows of the list.
             LargeTitle(say.library) {
-                Row(Modifier.padding(end = Space.gutter - Space.tight), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row {
                     for (s in listOf(LibrarySection.DOWNLOADS, LibrarySection.HISTORY)) {
-                        if (s in rules.sections) OutlineCircleButton(sectionIcon(s), say.librarySection(s)) { nav.librarySection(s) }
+                        if (s in rules.sections) GlyphButton(sectionIcon(s), say.librarySection(s)) { nav.librarySection(s) }
                     }
                 }
             }
@@ -158,7 +156,7 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
         items(sections, key = { it.name }) { s ->
             NavRow(
                 say.librarySection(s), { nav.librarySection(s) }, chevron = true,
-                leading = { Icon(sectionIcon(s), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary) },
+                leading = { Icon(sectionIcon(s), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) },
             )
         }
         // Without an offline index the albums are the account's saved ones, in the source's order.
@@ -197,14 +195,6 @@ private val ALBUM_GAP = 12.dp
  */
 private fun albumColumns(wide: Boolean, width: androidx.compose.ui.unit.Dp): Int =
     if (!wide) 2 else (((width - Space.gutter * 2 + ALBUM_GAP) / (ALBUM_MIN + ALBUM_GAP)).toInt()).coerceAtLeast(1)
-
-/** A round button drawn as its outline alone: the page's own places, quieter than the plates on a record's page. */
-@Composable
-private fun OutlineCircleButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) =
-    androidx.compose.material3.Surface(
-        onClick = onClick, shape = androidx.compose.foundation.shape.CircleShape, color = androidx.compose.ui.graphics.Color.Transparent,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.size(38.dp),
-    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, description, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface) } }
 
 /** What each section is drawn with. */
 @Composable
@@ -355,7 +345,7 @@ private fun Artists(vm: ArtistsViewModel = viewModel()) {
                     }
                 }
                 if (view.showLetters) Column(Modifier.padding(end = 2.dp).verticalScroll(rememberScrollState())) {
-                    letters.forEach { l -> Text(l.letter, Modifier.clickable { scope.launch { list.scrollToItem(l.row.toInt()) } }.padding(horizontal = 8.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
+                    letters.forEach { l -> Text(l.letter, Modifier.clickable { scope.launch { list.scrollToItem(l.row.toInt()) } }.padding(horizontal = 8.dp, vertical = 1.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
             }
         }
@@ -413,7 +403,7 @@ private fun Folders(vm: FoldersViewModel = viewModel()) {
             items(roots, key = { it.id }) { f ->
                 NavRow(
                     f.name, { nav.folder(f.id) }, chevron = true,
-                    leading = { Icon(Icons.Filled.Folder, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                    leading = { Icon(Icons.Filled.Folder, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
                 )
             }
         }
@@ -444,7 +434,7 @@ private fun Playlists(actions: ActionsViewModel, vm: PlaylistsViewModel = viewMo
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
             if (smart) item {
-                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.primary) })
+                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) })
             }
             item { ActionRow(say.newPlaylist, Icons.Filled.Add, { name = ""; creating = true }) }
             item { ActionRow(say.importPlaylistFile, Icons.Filled.FileDownload, { pickM3u.launch(arrayOf("*/*")) }) }
@@ -473,7 +463,7 @@ private fun Favourites(actions: ActionsViewModel, vm: StarredViewModel = viewMod
                 NavRow(
                     say.favouriteSongs, { nav.mix(dev.nori.music.app.vm.FAVOURITES_MIX) }, chevron = true,
                     subtitle = remember(s.librarySongs) { say.songs(s.librarySongs.toInt()) },
-                    leading = { Icon(Kanji.Sealed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                    leading = { Icon(Kanji.Sealed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
                 )
             }
             if (s.albums.isNotEmpty()) item(key = "albums") {
@@ -525,7 +515,7 @@ private fun Radio(vm: RadioViewModel = viewModel()) {
             items(stations, key = { it.id }) { s ->
                 NavRow(
                     s.name, { vm.play(s) },
-                    leading = { Icon(Icons.Filled.Radio, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                    leading = { Icon(Icons.Filled.Radio, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
                     action = { IconButton({ vm.delete(s.id) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Delete, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
@@ -555,7 +545,7 @@ private fun Downloads(actions: ActionsViewModel) {
             NavRow(
                 say.downloadQueue, nav::downloads, chevron = true,
                 subtitle = remember(c) { say.downloadQueue((c?.waiting ?: 0u).toInt(), (c?.failed ?: 0u).toInt()) },
-                leading = { Icon(Icons.Filled.Downloading, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) },
+                leading = { Icon(Icons.Filled.Downloading, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
             )
         }
         // Until the songs are read there is nothing to say, not "nothing downloaded" for a frame.

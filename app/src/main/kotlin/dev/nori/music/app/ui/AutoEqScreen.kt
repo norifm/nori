@@ -37,9 +37,9 @@ fun AutoEqScreen(vm: SettingsViewModel) {
             IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
             Text(say.headphonePresets, style = MaterialTheme.typography.headlineSmall)
         }
-        if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        if (ui.busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant)
         ui.error?.let { Text(it, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
-        ui.applied?.let { Text(androidx.compose.runtime.remember(it) { say.autoeqApplied(it) }, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.primary) }
+        ui.applied?.let { Text(androidx.compose.runtime.remember(it) { say.autoeqApplied(it) }, Modifier.padding(16.dp)) }
 
         if (ui.count == 0) {
             Text(

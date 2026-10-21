@@ -28,8 +28,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,8 +60,8 @@ import dev.nori.music.app.vm.SmartViewModel
 @Composable
 private fun <T> Pick(value: T, options: List<T>, modifier: Modifier = Modifier, label: (T) -> String = { it.toString() }, onPick: (T) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Text(label(value), modifier.clickable { open = true }.padding(8.dp), color = MaterialTheme.colorScheme.primary)
-    DropdownMenu(open, { open = false }) { options.forEach { o -> DropdownMenuItem({ Text(label(o)) }, { onPick(o); open = false }) } }
+    Text(label(value), modifier.clickable { open = true }.padding(8.dp), color = MaterialTheme.colorScheme.onSurface)
+    NoriPopover(open, { open = false }) { options.forEach { o -> PopoverItem(label(o), chosen = o == value) { onPick(o); open = false } } }
 }
 
 /**
@@ -159,8 +157,8 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             mosaic = m.covers,
             art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp, large = true) },
             actions = {
-                if (m.refreshable) CircleButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
-                MoreCircle(songsMore(m.songs, list.downloaded, actions))
+                if (m.refreshable) GlyphButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() }
+                MoreButton(songsMore(m.songs, list.downloaded, actions))
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {
@@ -208,7 +206,7 @@ fun SmartScreen(id: String, actions: ActionsViewModel, vm: SmartViewModel = view
             remember(playlist) { playlist?.let(say::smartName) ?: say.smartPlaylist },
             remember(page) { say.listCaption(page.songs.size, page.seconds.toLong(), true) },
             page.songs, list.downloaded, from, actions,
-            pageActions = { CircleButton(Icons.Filled.Edit, say.edit) { nav.smartEdit(id) } },
+            pageActions = { GlyphButton(Icons.Filled.Edit, say.edit) { nav.smartEdit(id) } },
         ) {
             songRows(page.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
@@ -326,7 +324,7 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
 
         // The headline: two numbers worth reading from across the room, the rest as a grid of tiles.
         Column(Modifier.padding(horizontal = Space.gutter, vertical = 14.dp)) {
-            Text("${st.plays}", style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.primary)
+            Text("${st.plays}", style = MaterialTheme.typography.displaySmall)
             Text(headline, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (fromServer) Text(
                 say.statsServerNote(server), Modifier.padding(top = 6.dp),
@@ -381,7 +379,7 @@ private val HOUR_TICKS = listOf("00", "06", "12", "18", "23")
 /** Twenty-four bars, drawn: the shape of a listening day says more than "most around 20:00" alone. */
 @Composable
 private fun HourChart(perHour: List<Float>) {
-    val bar = MaterialTheme.colorScheme.primary
+    val bar = MaterialTheme.colorScheme.onSurface
     val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
     Column(Modifier.padding(horizontal = Space.gutter)) {
         androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(96.dp)) {
@@ -406,4 +404,4 @@ private fun HourChart(perHour: List<Float>) {
 /** A place in a chart: rank, what it is, and how often. */
 @Composable
 private fun RankRow(rank: Int, title: String, subtitle: String, count: String) =
-    NavRow(title, subtitle = subtitle, trailing = count, leadingText = "$rank", trailingAccent = true)
+    NavRow(title, subtitle = subtitle, trailing = count, leadingText = "$rank")

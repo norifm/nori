@@ -40,14 +40,11 @@ import androidx.compose.material.icons.outlined.Lyrics
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Speed
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -101,10 +98,10 @@ private fun Modifier.spotlight(key: String?): Modifier {
         kotlinx.coroutines.delay(900)
         fade.animateTo(0f, androidx.compose.animation.core.tween(1400))
     }
-    val colour = MaterialTheme.colorScheme.primary
+    val colour = MaterialTheme.colorScheme.onSurface
     return this
         .onGloballyPositioned { spot.onPlaced(it.positionInWindow().y.toInt()) }
-        .drawBehind { drawRect(colour.copy(alpha = 0.22f * fade.value)) }
+        .drawBehind { drawRect(colour.copy(alpha = 0.10f * fade.value)) }
 }
 
 @Composable
@@ -218,8 +215,8 @@ private fun Choice(row: SettingRow.Choice, onChange: (String) -> Unit) {
     Column {
     Row(Modifier.fillMaxWidth().spotlight(row.key).clickable(row.enabled) { open = true }.padding(horizontal = 16.dp, vertical = 15.dp)) {
         Text(row.title, Modifier.weight(1f).alpha(dim), style = MaterialTheme.typography.bodyLarge)
-        Text(row.shown, Modifier.alpha(dim), color = MaterialTheme.colorScheme.primary)
-        DropdownMenu(open, { open = false }) { row.options.forEach { o -> DropdownMenuItem({ Text(o.label) }, { onChange(o.value); open = false }) } }
+        Text(row.shown, Modifier.alpha(dim), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        NoriPopover(open, { open = false }) { row.options.forEach { o -> PopoverItem(o.label, chosen = o.label == row.shown) { onChange(o.value); open = false } } }
     }
     Hairline(startIndent = 16.dp)
     }
@@ -284,10 +281,10 @@ private fun CompressionMeter(enabled: Boolean) {
         Text(
             remember(kotlin.math.round(db * 10f)) { say.compression(db) },
             style = MaterialTheme.typography.labelMedium,
-            color = if (active) scheme.primary else scheme.onSurfaceVariant,
+            color = if (active) scheme.onSurface else scheme.onSurfaceVariant,
         )
         val track = scheme.surfaceVariant
-        val fill = scheme.primary
+        val fill = scheme.onSurface
         // Full width is 20 dB of reduction, more than any preset takes off music.
         Spacer(
             Modifier.padding(top = 6.dp).fillMaxWidth().height(4.dp).drawBehind {
@@ -307,7 +304,7 @@ private fun ActionRowSetting(row: SettingRow.Action, onClick: () -> Unit) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             Text(row.detail, style = MaterialTheme.typography.bodySmall, color = if (row.error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        TextButton(onClick, enabled = row.enabled) { Text(row.button) }
+        TextAction(row.button, onClick, enabled = row.enabled)
     }
     Hairline(startIndent = 16.dp)
 }
@@ -349,7 +346,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
             items(groups, key = { it.id }) { g ->
                 Column(Modifier.clickable { nav.settingsGroup(g.id) }) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(groupIcon(g.id), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(groupIcon(g.id), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface)
                         Column(Modifier.weight(1f).padding(start = 14.dp)) {
                             Text(g.title, style = MaterialTheme.typography.bodyLarge)
                             Text(g.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -363,7 +360,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
             if (dev.nori.music.app.PerfHooks.recorder != null) item(key = "perf") {
                 Column(Modifier.clickable { nav.go("perf") }) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Speed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Outlined.Speed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface)
                         Column(Modifier.weight(1f).padding(start = 14.dp)) {
                             Text(say.performance, style = MaterialTheme.typography.bodyLarge)
                             Text(say.performanceDetail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -424,8 +421,8 @@ private fun KeyDialog(row: SettingRow.Ranked, onDismiss: () -> Unit, onSave: (St
                 FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
             }
         },
-        confirmButton = { TextButton({ onSave(text) }, enabled = !row.keyed || row.keySet || text.isNotBlank()) { Text(say.save) } },
-        dismissButton = { TextButton(onDismiss) { Text(say.cancel) } },
+        confirmButton = { TextAction(say.save, { onSave(text) }, enabled = !row.keyed || row.keySet || text.isNotBlank()) },
+        dismissButton = { TextAction(say.cancel, onDismiss) },
     )
 }
 
@@ -465,8 +462,8 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
         AlertCard(
             title = { Text(ask.title) },
             text = { Text(ask.text) },
-            confirmButton = { TextButton({ vm.act(action); asking = null }) { Text(ask.confirm) } },
-            dismissButton = { TextButton({ asking = null }) { Text(say.cancel) } },
+            confirmButton = { TextAction(ask.confirm, { vm.act(action); asking = null }) },
+            dismissButton = { TextAction(say.cancel, { asking = null }) },
         )
     }
     // A ranked row held and dragged (the lyrics services, one list whether on or off): which one, in
@@ -503,7 +500,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     val dim = if (row.dimmed || !row.enabled) DIMMED else 1f
                     Row(Modifier.fillMaxWidth().spotlight(row.key).clickable(row.enabled) { act(row.action) }.padding(horizontal = 16.dp, vertical = 15.dp)) {
                         Text(row.title, Modifier.weight(1f).alpha(dim), style = MaterialTheme.typography.bodyLarge)
-                        if (row.status.isNotEmpty()) Text(row.status, Modifier.alpha(dim), color = MaterialTheme.colorScheme.primary)
+                        if (row.status.isNotEmpty()) Text(row.status, Modifier.alpha(dim), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (row.divider) Hairline(startIndent = 16.dp)
                 }
@@ -534,8 +531,8 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                         }
                         // A jam guest switches between the profiles; changing them is not its to do.
                         if (dev.nori.music.ffi.settings.SettingsPart.SERVER_OPTIONS in LocalRules.current.settings) {
-                            TextButton({ editing = p.servers.firstOrNull { it.id == row.id } }) { Text(say.edit) }
-                            TextButton({ vm.removeServer(row.id) }) { Text(say.remove) }
+                            TextAction(say.edit, { editing = p.servers.firstOrNull { it.id == row.id } })
+                            TextAction(say.remove, { vm.removeServer(row.id) }, destructive = true)
                         }
                     }
                     // The server's own libraries, under it: which of them the app shows.
@@ -548,7 +545,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                     }
                     Hairline(startIndent = 16.dp)
                 }
-                is SettingRow.Button -> TextButton({ act(row.action) }, Modifier.padding(horizontal = 8.dp)) { Text(row.title) }
+                is SettingRow.Button -> TextAction(row.title, { act(row.action) }, Modifier.padding(horizontal = 8.dp))
                 // Each row is drawn at its place in the order shown, gliding there, while it is laid out in the
                 // core's: the neighbours make way as the held row passes them, and when it is let go it settles
                 // into its place as the core's order catches up, with nothing jumping at either end.
@@ -640,7 +637,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                                 val keyLabel = if (row.keySet) say.changeKey else if (row.takesKey && !row.keyed) say.addKey else null
                                 if (keyLabel != null) Text(
                                     keyLabel, Modifier.padding(top = 6.dp).clickable { keying = row },
-                                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelLarge,
                                 )
                             }
                             NoriSwitch(row.on, { on -> if (on && row.keyed && !row.keySet) keying = row else vm.set(row.name, on.toString()) })

@@ -75,7 +75,7 @@ fun HeroPage(
     title: String,
     /** The same cover at the sizes lists ask for: drawn at once while [coverUrl] loads. */
     coverStandIns: List<String?> = emptyList(),
-    /** The artist line under the title, in the cover's accent colour; tapping it opens [onSubtitle]. */
+    /** The artist line under the title, in ink; tapping it opens [onSubtitle]. */
     subtitle: String? = null,
     /** A quiet line under that, in sentence case: year, song count, length, quality. */
     caption: String = "",
@@ -235,7 +235,7 @@ fun HeroPage(
                 if (!subtitle.isNullOrEmpty()) Text(
                     subtitle,
                     Modifier.padding(top = 2.dp).then(if (onSubtitle != null) Modifier.clickable(onClick = onSubtitle) else Modifier),
-                    style = MaterialTheme.typography.titleMedium, color = scheme.primary,
+                    style = MaterialTheme.typography.titleMedium,
                     textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 // Sentence case, as Apple writes it ("25 songs, 1 hour 42 minutes"). Small
@@ -258,7 +258,7 @@ fun HeroPage(
                         dev.nori.music.ffi.library.HeroPress.SHUFFLE_OFF -> player.toggleShuffle()
                     }
                 }
-                CircleButton(
+                GlyphButton(
                     Icons.Filled.Shuffle, say.shuffle,
                     enabled = buttons.shuffleEnabled, lit = buttons.shuffleLit,
                     onClick = { press(buttons.shufflePress, onShuffle) },

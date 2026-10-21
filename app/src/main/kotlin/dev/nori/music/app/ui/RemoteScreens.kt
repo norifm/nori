@@ -7,8 +7,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.IconButton
@@ -40,7 +37,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -196,7 +192,7 @@ private fun PairingBody(link: String, vm: RemoteViewModel, onPaired: () -> Unit)
     NoriDialog(resetting, { resetting = false }) {
         AlertCard(
             title = { Text(words(R.string.pair_reset)) }, text = { Text(words(R.string.pair_reset_hint)) },
-            confirmButton = { TextAction(words(R.string.pair_reset), { vm.resetPairing(); resetting = false }) },
+            confirmButton = { TextAction(words(R.string.pair_reset), { vm.resetPairing(); resetting = false }, destructive = true) },
             dismissButton = { TextAction(words(R.string.cancel), { resetting = false }) },
         )
     }
@@ -218,13 +214,9 @@ fun DevicesHost(open: Boolean, onDismiss: () -> Unit) {
 private fun YourJam(listening: Int, onOpen: () -> Unit, onEnd: () -> Unit) {
     NavRow(
         words(R.string.jam_yours), onOpen, subtitle = words(R.string.jam_strip, jamListening(listening)), divider = false,
-        leading = {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.Groups, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onPrimary)
-            }
-        },
+        leading = { Icon(Icons.Filled.Groups, null, tint = MaterialTheme.colorScheme.primary) },
         action = {
-            IconButton(onEnd) { Icon(Icons.AutoMirrored.Filled.Logout, words(R.string.jam_end_short), Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary) }
+            IconButton(onEnd) { Icon(Icons.AutoMirrored.Filled.Logout, words(R.string.jam_end_short), Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) }
         },
     )
 }

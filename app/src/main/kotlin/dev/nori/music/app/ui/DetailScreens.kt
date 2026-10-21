@@ -80,7 +80,7 @@ internal fun SongListPage(
         queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
         actions = {
             pageActions()
-            if (any) MoreCircle(songsMore(songs, done, actions))
+            if (any) MoreButton(songsMore(songs, done, actions))
         },
         content = content,
     )
@@ -104,18 +104,18 @@ private fun rememberMatching(songs: List<Song>, q: String): List<UInt>? {
 
 /**
  * An artist's biography: four lines, and all of it on a tap when there is more, the way Apple's opens.
- * Cut, the fourth line ends "… More", the word in the accent: the text is shortened until that fits, found
+ * Cut, the fourth line ends "… More", the word in ink: the text is shortened until that fits, found
  * by measuring (a dozen measures, once per text and width). Tapped again, it folds back.
  */
 @Composable
 private fun Biography(text: String, modifier: Modifier) {
     var open by androidx.compose.runtime.saveable.rememberSaveable(text) { mutableStateOf(false) }
     val style = MaterialTheme.typography.bodyMedium
-    val accent = MaterialTheme.colorScheme.primary
+    val link = MaterialTheme.colorScheme.onSurface
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     androidx.compose.foundation.layout.BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = Space.gutter)) {
         val width = constraints.maxWidth
-        val folded = remember(text, width, style, accent) { foldedBiography(text, width, style, accent, say.more, measurer) }
+        val folded = remember(text, width, style, link) { foldedBiography(text, width, style, link, say.more, measurer) }
         Text(
             if (open || folded == null) androidx.compose.ui.text.AnnotatedString(text) else folded,
             Modifier.fillMaxWidth().clickable(enabled = folded != null) { open = !open }.animateContentSize(),
@@ -126,7 +126,7 @@ private fun Biography(text: String, modifier: Modifier) {
 
 /** [text] cut to four lines ending "… [more]" at [width], or null when all of it fits. */
 private fun foldedBiography(
-    text: String, width: Int, style: androidx.compose.ui.text.TextStyle, accent: androidx.compose.ui.graphics.Color, more: String,
+    text: String, width: Int, style: androidx.compose.ui.text.TextStyle, link: androidx.compose.ui.graphics.Color, more: String,
     measurer: androidx.compose.ui.text.TextMeasurer,
 ): androidx.compose.ui.text.AnnotatedString? {
     val limit = androidx.compose.ui.unit.Constraints(maxWidth = width)
@@ -135,7 +135,7 @@ private fun foldedBiography(
     fun cutAt(n: Int) = androidx.compose.ui.text.buildAnnotatedString {
         append(text.take(n).trimEnd())
         append("… ")
-        withStyle(androidx.compose.ui.text.SpanStyle(color = accent)) { append(more) }
+        withStyle(androidx.compose.ui.text.SpanStyle(color = link)) { append(more) }
     }
     // The longest start of the text that still leaves room for "… More" on the fourth line.
     var lo = 0
@@ -204,7 +204,7 @@ private fun LateMore(shown: Boolean, entries: @Composable () -> List<Pair<String
             visible = shown,
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 220)),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 120)),
-        ) { MoreCircle(entries()) }
+        ) { MoreButton(entries()) }
     }
 }
 
@@ -270,7 +270,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
         actions = {
             if (account) {
                 val albumStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ALBUM, album.id, album.starred)
-                FavoriteCircle(albumStarred) { actions.starAlbum(album.id, !albumStarred); Unit }
+                FavoriteButton(albumStarred) { actions.starAlbum(album.id, !albumStarred) }
             }
             LateMore(detail != null) {
                 listOfNotNull(
@@ -350,7 +350,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
         actions = {
             if (account) {
                 val artistStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ARTIST, artist.id, artist.starred)
-                FavoriteCircle(artistStarred) { actions.starArtist(artist.id, !artistStarred); Unit }
+                FavoriteButton(artistStarred) { actions.starArtist(artist.id, !artistStarred) }
             }
             LateMore(ui != null) {
                 listOfNotNull(
@@ -407,7 +407,7 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                         SectionTitle(say.similarArtists)
                         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             items(similar, key = { it.id }) { a ->
-                                Text(a.name, Modifier.clickable { nav.artist(a.id, a) }.padding(8.dp), color = MaterialTheme.colorScheme.primary)
+                                Text(a.name, Modifier.clickable { nav.artist(a.id, a) }.padding(8.dp))
                             }
                         }
                     }
@@ -476,7 +476,7 @@ private fun PlaylistPage(
             // The home page that shows them is the account's.
             val account = LocalRules.current.account
     val downloads = LocalRules.current.downloads
-            if (account) FavoriteCircle(pinned) { settings.pin(id, !pinned); Unit }
+            if (account) FavoriteButton(pinned) { settings.pin(id, !pinned) }
             LateMore(detail != null) {
                 listOfNotNull(
                     say.addToQueue to { actions.enqueue(detail!!.songs) },

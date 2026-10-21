@@ -33,6 +33,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.ColorProducer
 import androidx.compose.foundation.layout.padding
@@ -41,6 +42,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Search
@@ -56,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -85,6 +89,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.role
@@ -115,11 +120,23 @@ object Space {
     val tight = 8.dp
     val row = 12.dp
     val section = 26.dp
+    /** How far the title block of the player, album and artist pages rises into the sleeve's melt. */
+    val titleRise = 34.dp
 }
 
 val CardShape = RoundedCornerShape(Radius.card)
 val TileShape = RoundedCornerShape(Radius.tile)
 val PillShape = RoundedCornerShape(Radius.pill)
+
+/** How thick the edge of a raised surface is: a chip, a card, a sheet, a popover, a dialog. */
+val HAIRLINE = 0.5.dp
+
+/** The edge of a raised surface, in the page's hairline color. */
+@Composable
+fun hairlineBorder(): androidx.compose.foundation.BorderStroke {
+    val color = MaterialTheme.colorScheme.outlineVariant
+    return remember(color) { androidx.compose.foundation.BorderStroke(HAIRLINE, color) }
+}
 
 /**
  * Inter, as a variable font, standing in for the system face an iPhone would use. It is the single
@@ -475,19 +492,109 @@ fun Hairline(startIndent: Dp = Space.gutter) {
     Box(Modifier.fillMaxWidth().padding(start = startIndent).height(1.dp).background(color))
 }
 
-/** A section heading: big, bold, sitting on the gutter, with an optional action on the right. */
+/**
+ * A section heading sitting on the gutter, with an optional [action] on the right. With [onMore] the whole
+ * header opens the section's full view, and a quiet chevron ends it.
+ */
 @Composable
-fun SectionHeader(title: String, modifier: Modifier = Modifier, action: @Composable (RowScope.() -> Unit)? = null) {
+fun SectionHeader(
+    title: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null,
+    action: @Composable (RowScope.() -> Unit)? = null,
+) {
     Row(
-        modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.tight, top = Space.section - 12.dp, bottom = 10.dp),
+        modifier.fillMaxWidth()
+            .then(if (onMore != null) Modifier.clickable(onClick = onMore) else Modifier)
+            .padding(start = Space.gutter, end = if (action != null) Space.tight else Space.gutter, top = Space.section, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             title, Modifier.weight(1f),
-            style = MaterialTheme.typography.titleLarge.copy(fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
+            style = MaterialTheme.typography.titleLarge.copy(fontSize = 19.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         action?.invoke(this)
+        if (onMore != null) Icon(
+            Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** The small capitals over a [GroupCard]: "PLAYBACK". */
+@Composable
+fun GroupLabel(text: String, modifier: Modifier = Modifier) {
+    Text(
+        remember(text) { text.uppercase() },
+        modifier.padding(start = 32.dp, end = 32.dp, top = 22.dp, bottom = 8.dp),
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.06.em),
+        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/**
+ * Rows grouped on one raised plate: the surface, a hairline edge, the tile's corners, inset from the page's
+ * sides. Rows inside are [GroupRow]s, or anything that ends in a [Hairline] starting where its text does,
+ * the last without one.
+ */
+@Composable
+fun GroupCard(modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    // The content color spelled out: Material resolves it to Unspecified for a color that is not one of
+    // its roles, and text inside then drew almost black.
+    Surface(
+        modifier.fillMaxWidth().padding(horizontal = GROUP_MARGIN),
+        shape = TileShape, color = scheme.surfaceContainer, contentColor = scheme.onSurface, border = hairlineBorder(),
+    ) { Column(content = content) }
+}
+
+/** How far a [GroupCard] stands in from the page's sides. */
+private val GROUP_MARGIN = 16.dp
+/** How far a [GroupRow]'s content stands in from the card's sides, and the gap after its icon. */
+private val GROUP_INSET = 14.dp
+private val GROUP_ICON = 24.dp
+
+/**
+ * A row of a [GroupCard]: an optional [icon] in ink, a title and maybe a quiet line under it, a quiet [value],
+ * then [trailing] (a switch) or a [chevron]. Its [divider] is the hairline under it, starting where the text
+ * does; the last row of a card goes without.
+ */
+@Composable
+fun GroupRow(
+    title: String,
+    onClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    value: String? = null,
+    icon: ImageVector? = null,
+    chevron: Boolean = false,
+    divider: Boolean = true,
+    trailing: (@Composable RowScope.() -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .padding(horizontal = GROUP_INSET, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (icon != null) {
+                Icon(icon, null, Modifier.size(GROUP_ICON), tint = scheme.onSurface)
+                Spacer(Modifier.width(GROUP_INSET))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (!subtitle.isNullOrEmpty()) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+            }
+            if (!value.isNullOrEmpty()) Text(
+                value, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp),
+                color = scheme.onSurfaceVariant, maxLines = 1,
+            )
+            trailing?.invoke(this)
+            if (chevron) Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.padding(start = 4.dp).size(20.dp), tint = scheme.onSurfaceVariant,
+            )
+        }
+        if (divider) Hairline(startIndent = if (icon != null) GROUP_INSET * 2 + GROUP_ICON else GROUP_INSET)
     }
 }
 
@@ -529,7 +636,7 @@ fun Caption(text: String, modifier: Modifier = Modifier, align: TextAlign = Text
     )
 }
 
-/** How tall a page's action buttons stand, round ([CircleButton]) or a pill ([PillButton]), so a row of them lines up. */
+/** How tall a page's [PillButton] stands. */
 private val ACTION_SIDE = 46.dp
 
 /**
@@ -564,7 +671,7 @@ fun PillButton(
 
 /**
  * A short message on a pill lifted off the page (the chrome's slab, edge and shadow: it floats over
- * whatever is under it), its action and its optional × in the accent: the app's messages at the top and
+ * whatever is under it), its action in ink and its optional × quiet: the app's messages at the top and
  * the queue's undo at its foot. Colors are read while drawing, so a look cross-fading under it redraws it
  * without recomposing. [behind] sits under the words.
  */
@@ -574,7 +681,7 @@ fun MessagePill(
     maxLines: Int = 1, action: String? = null, actionEnabled: Boolean = true, onAction: () -> Unit = {},
     onDismiss: (() -> Unit)? = null, behind: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {},
 ) {
-    val accent = ColorProducer { look.color(CoverLook.ACCENT) }
+    val ink = ColorProducer { look.color(CoverLook.CHROME_CONTENT) }
     Box(
         modifier.shadow(12.dp, PillShape).drawBehind {
             val round = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
@@ -585,16 +692,16 @@ fun MessagePill(
         behind()
         Row(Modifier.padding(start = 18.dp, end = 4.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
             LookText(
-                text, { look.color(CoverLook.CHROME_CONTENT) }, Modifier.weight(1f, fill = false).padding(vertical = 10.dp),
+                text, ink, Modifier.weight(1f, fill = false).padding(vertical = 10.dp),
                 style = MaterialTheme.typography.bodyMedium, maxLines = maxLines, overflow = TextOverflow.Ellipsis,
             )
             if (action != null) {
                 androidx.compose.material3.TextButton(onAction, enabled = actionEnabled) {
-                    LookText(action, accent, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
+                    LookText(action, ink, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
                 }
             }
             if (onDismiss != null) {
-                IconButton(onDismiss) { LookIcon(Icons.Filled.Clear, words(R.string.close), Modifier.size(20.dp), accent) }
+                IconButton(onDismiss) { LookIcon(Icons.Filled.Clear, words(R.string.close), Modifier.size(20.dp)) { look.color(CoverLook.CHROME_CONTENT_75) } }
             } else if (action == null) {
                 Spacer(Modifier.width(14.dp))
             }
@@ -662,8 +769,8 @@ fun SystemBarIcons(look: Look) {
 }
 
 /**
- * A search or filter field as a soft rounded capsule rather than an outlined box: one tinted surface,
- * an icon, and a clear button that only exists when there is something to clear.
+ * A search or filter field as a capsule raised on the surface with a hairline edge, outlined in the accent
+ * while it has the focus: an icon, and a clear button that only exists when there is something to clear.
  */
 @Composable
 fun SearchField(
@@ -676,6 +783,7 @@ fun SearchField(
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     // A focus request needs the field's node attached, which it is once the field is placed.
     var placed by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     LaunchedEffect(focus, focusKey, placed) {
         if (focus == null || !placed) return@LaunchedEffect
         focus.requestFocus()
@@ -683,8 +791,8 @@ fun SearchField(
         keyboard?.show()
     }
     Surface(
-        shape = PillShape, color = LocalLook.current.color(CoverLook.FIELD),
-        contentColor = scheme.onSurface, modifier = modifier.fillMaxWidth(),
+        shape = PillShape, color = scheme.surfaceContainer, contentColor = scheme.onSurface, modifier = modifier.fillMaxWidth(),
+        border = if (focused) androidx.compose.foundation.BorderStroke(HAIRLINE * 2, scheme.primary) else hairlineBorder(),
     ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Search, null, Modifier.size(19.dp), tint = scheme.onSurfaceVariant)
@@ -696,7 +804,7 @@ fun SearchField(
                     value, onValue, singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
                         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
                         .then(if (focus != null) Modifier.focusRequester(focus).onPlaced { placed = true } else Modifier),
                 )
@@ -708,20 +816,20 @@ fun SearchField(
     }
 }
 
-/** A choice chip: a pill that fills with the accent when it is the one selected. */
+/** A choice chip: the selected one raised on the surface with a hairline edge and in ink, the others quiet words. */
 @Composable
 fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Surface(
         onClick = onClick, shape = PillShape,
-        color = if (selected) scheme.primary else LocalLook.current.color(CoverLook.FIELD),
-        contentColor = if (selected) scheme.onPrimary else scheme.onSurface,
+        color = if (selected) scheme.surfaceContainer else Color.Transparent,
+        contentColor = if (selected) scheme.onSurface else scheme.onSurfaceVariant,
+        border = if (selected) hairlineBorder() else null,
         modifier = modifier,
     ) {
-        Text(
-            label, Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.5f.sp), maxLines = 1,
-        )
+        Box(Modifier.height(34.dp).padding(horizontal = 14.dp), Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium), maxLines = 1)
+        }
     }
 }
 
@@ -742,7 +850,7 @@ fun NoriSlider(
 ) {
     val scheme = MaterialTheme.colorScheme
     val track = scheme.onSurface.copy(alpha = if (enabled) 0.16f else 0.07f)
-    val fill = if (enabled) scheme.primary else scheme.onSurface.copy(alpha = 0.25f)
+    val fill = if (enabled) scheme.onSurface else scheme.onSurface.copy(alpha = 0.25f)
     val knob = if (enabled) Color.White else Color(0xFFBDBDBD)
     val span = (range.endInclusive - range.start).takeIf { it > 0f } ?: 1f
     val fraction = ((value - range.start) / span).coerceIn(0f, 1f)
@@ -831,8 +939,6 @@ fun NavRow(
     divider: Boolean = true,
     /** How many lines the subtitle may take. */
     subtitleLines: Int = 1,
-    /** [trailing] in the accent, as a count or a tap's word. */
-    trailingAccent: Boolean = false,
     action: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -853,7 +959,7 @@ fun NavRow(
             }
             if (!trailing.isNullOrEmpty()) Text(
                 trailing, Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodyMedium,
-                color = if (trailingAccent) scheme.primary else scheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
             )
             action?.invoke(this)
             if (chevron) Icon(
@@ -868,10 +974,14 @@ fun NavRow(
 /** The width a row's leading characters (a rank) stand in. */
 private val LEADING_TEXT = 28.dp
 
-/** A word in the accent that does something when tapped: a dialog's buttons, a row's "Edit". */
+/** A word in ink that does something when tapped: a dialog's buttons, a row's "Edit". [destructive] is in the error color. */
 @Composable
-fun TextAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
-    androidx.compose.material3.TextButton(onClick, modifier, enabled = enabled) { Text(label) }
+fun TextAction(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, destructive: Boolean = false) {
+    val scheme = MaterialTheme.colorScheme
+    androidx.compose.material3.TextButton(
+        onClick, modifier, enabled = enabled,
+        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = if (destructive) scheme.error else scheme.onSurface),
+    ) { Text(label) }
 }
 
 /** A row that does something rather than going somewhere: "New playlist", "Import M3U…". */
@@ -882,48 +992,33 @@ fun ActionRow(title: String, icon: ImageVector, onClick: () -> Unit, divider: Bo
             Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = Space.gutter, vertical = 13.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-            Text(
-                title, Modifier.padding(start = 12.dp),
-                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary,
-            )
+            Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
+            Text(title, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
         }
         if (divider) Hairline(startIndent = Space.gutter + 32.dp)
     }
 }
 
 /**
- * A round, softly filled button: the small actions either side of a page's Play pill.
- *
- * [lit] fills the whole disc with the page's accent and its glyph with the accent's own ink - that is
- * Shuffle while shuffle is on, and it has to read as pressed at a glance. A stronger plate was not
- * enough: on a paper-white page it came out as a few percent more grey. [selected] is the quieter
- * plate, under a heart that is on, where the filled glyph already says it. Plate strength tracks page
- * lightness continuously (same reason as [PillButton]) so a swipe onto white does not snap.
- *
- * [iconModifier] reaches the glyph alone, for an animation that must leave the disc it sits in still.
+ * A bare glyph that does something: the small actions either side of a page's Play pill. No plate: the
+ * glyph is in the page's ink, and in its accent while [lit] (Shuffle while shuffle is on, a stamped seal).
+ * It keeps its full strength while disabled: a washed-out Shuffle looked absent while Play was not yet
+ * tappable. [iconModifier] reaches the glyph alone, for an animation of it.
  */
 @Composable
-fun CircleButton(
+fun GlyphButton(
     icon: ImageVector, description: String, modifier: Modifier = Modifier,
-    enabled: Boolean = true, selected: Boolean = false, lit: Boolean = false,
-    iconModifier: Modifier = Modifier, iconTint: Color = Color.Unspecified, onClick: () -> Unit,
+    enabled: Boolean = true, lit: Boolean = false, iconModifier: Modifier = Modifier, onClick: () -> Unit,
 ) {
-    // Keep the plate and icon at full strength while disabled: washing them out made Shuffle look
-    // absent on a dark page, so the row still "popped" when Play became tappable. The plates are the
-    // look's (nori_look::dress): lighter on paper than on a dark page, not heavier - at 16 % black the
-    // heart and "..." discs read as grey slabs on a white page.
     val look = LocalLook.current
-    val plate = look.color(when { lit -> CoverLook.ACCENT; selected -> CoverLook.CIRCLE_SELECTED; else -> CoverLook.CIRCLE_PLATE })
-    Surface(
-        onClick = onClick, enabled = enabled, shape = androidx.compose.foundation.shape.CircleShape,
-        color = plate,
-        contentColor = look.color(if (lit) CoverLook.ON_PRIMARY else CoverLook.TINT_INK),
-        modifier = modifier.size(ACTION_SIDE),
+    Box(
+        modifier.size(GLYPH_TARGET).clickable(
+            enabled = enabled, role = androidx.compose.ui.semantics.Role.Button, interactionSource = null,
+            indication = androidx.compose.material3.ripple(bounded = false, radius = GLYPH_TARGET / 2), onClick = onClick,
+        ),
+        Alignment.Center,
     ) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) {
-            Icon(icon, description, Modifier.size(20.dp).then(iconModifier), tint = if (iconTint.isSpecified) iconTint else LocalContentColor.current)
-        }
+        LookIcon(icon, description, Modifier.size(24.dp).then(iconModifier)) { look.color(if (lit) CoverLook.ACCENT else CoverLook.ON) }
     }
 }
 
@@ -975,31 +1070,27 @@ fun FavoriteSeal(
     }
 }
 
-/** Favorite as a [CircleButton], the seal in the page's accent when it is one, stamped as [FavoriteSeal] is. */
+/** Favorite as a [GlyphButton], the seal in the page's accent when it is one, stamped as [FavoriteSeal] is. */
 @Composable
-fun FavoriteCircle(starred: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun FavoriteButton(starred: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val stamp = rememberStamp()
-    // Only the seal moves; the plate holds its place.
-    CircleButton(
+    GlyphButton(
         if (starred) Kanji.Sealed else Kanji.Seal,
         if (starred) say.removeFromFavourites else say.favourite,
-        modifier,
+        modifier, lit = starred,
         iconModifier = Modifier.graphicsLayer { scaleX = stamp.scale.value; scaleY = stamp.scale.value },
-        iconTint = if (starred) LocalLook.current.color(CoverLook.ACCENT) else Color.Unspecified,
         onClick = { if (!starred) stamp.down(); onClick() },
     )
 }
 
-/** The circle that holds whatever did not fit beside a page's Play button. */
+/** The ⋯ that holds whatever did not fit beside a page's Play button. */
 @Composable
-fun MoreCircle(items: List<Pair<String, () -> Unit>>, modifier: Modifier = Modifier) {
-    val open = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+fun MoreButton(items: List<Pair<String, () -> Unit>>, modifier: Modifier = Modifier) {
+    var open by remember { mutableStateOf(false) }
     Box(modifier) {
-        CircleButton(Icons.Filled.MoreHoriz, say.more) { open.value = true }
-        androidx.compose.material3.DropdownMenu(open.value, { open.value = false }) {
-            items.forEach { (label, action) ->
-                androidx.compose.material3.DropdownMenuItem({ Text(label) }, { action(); open.value = false })
-            }
+        GlyphButton(Icons.Filled.MoreHoriz, say.more) { open = true }
+        NoriPopover(open, { open = false }) {
+            items.forEach { (label, action) -> PopoverItem(label) { action(); open = false } }
         }
     }
 }
@@ -1021,6 +1112,9 @@ fun reduceMotion(): Boolean {
  * or pause, a seek, a touch), so its seek bar, lyrics and playing bars do not run on their own.
  */
 val LocalEinkScreen = androidx.compose.runtime.compositionLocalOf { false }
+
+/** How much room a [GlyphButton] takes for a finger. */
+private val GLYPH_TARGET = 48.dp
 
 /**
  * How fast every animation in the app runs. Compose scales each one by whatever MotionDurationScale is
@@ -1090,6 +1184,36 @@ fun NoriSwitch(checked: Boolean, onCheckedChange: ((Boolean) -> Unit)?, modifier
 
 /** A decibel figure with its sign, one decimal, never "-0.0" (nori-core's `fmt::signed_db`). */
 fun signedDb(db: Float): String = dev.nori.music.text.Fmt.signedDb(db)
+
+/**
+ * A menu dropped from what opened it: raised on the surface with a hairline edge and the tile's corners,
+ * no shadow. Its rows are [PopoverItem]s.
+ */
+@Composable
+fun NoriPopover(
+    expanded: Boolean, onDismissRequest: () -> Unit, modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    androidx.compose.material3.DropdownMenu(
+        expanded, onDismissRequest, modifier,
+        shape = TileShape, containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        tonalElevation = 0.dp, shadowElevation = 0.dp, border = hairlineBorder(), content = content,
+    )
+}
+
+/** A row of a [NoriPopover]; the [chosen] one is marked with a quiet check. */
+@Composable
+fun PopoverItem(label: String, chosen: Boolean = false, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().widthIn(min = 160.dp, max = 280.dp).heightIn(min = 44.dp)
+            .clickable(onClick = onClick).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (chosen) Icon(Icons.Filled.Check, say.chosen, Modifier.padding(start = 12.dp).size(18.dp), tint = scheme.onSurfaceVariant)
+    }
+}
 
 
 /**

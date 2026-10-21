@@ -223,7 +223,7 @@ private const val SWIPE_ARM = TURN
 
 /**
  * Sideways drag on a row. Only a direction with an action moves at all. Past [SWIPE_ARM] of the width
- * the row goes heavier (it follows at 40%), the strip underneath takes the accent colour and the phone
+ * the row goes heavier (it follows at 40%), the strip underneath turns to ink and the phone
  * ticks, so the finger knows before it lifts; letting go then acts and the row springs back. The row
  * paints [fill] under itself only while it is off its place, so the strip never shows through it.
  */
@@ -339,7 +339,7 @@ internal suspend fun androidx.compose.ui.input.pointer.PointerInputScope.sideway
 
 /**
  * The strip a swiped row uncovers: the action's icon and words at the edge the row left, fading in over
- * the first 64 dp. Neutral until the drag is far enough to act, then the accent, with the icon giving
+ * the first 64 dp. Neutral until the drag is far enough to act, then in ink, with the icon giving
  * a small pop. Composed only while the row is off its place, so a list at rest carries none of it.
  */
 @Composable
@@ -357,7 +357,7 @@ internal fun SwipeBackdrop(
     val face = (if (side > 0f) right else left) ?: return
     val scheme = MaterialTheme.colorScheme
     val c = colours ?: remember(scheme) {
-        SwipeColours({ scheme.surfaceContainerHighest }, { scheme.primary }, { scheme.onSurfaceVariant }, { scheme.onPrimary })
+        SwipeColours({ scheme.surfaceContainerHighest }, { scheme.onSurface }, { scheme.onSurfaceVariant }, { scheme.background })
     }
     val armed by animateFloatAsState(if (s.armed) 1f else 0f, tween(140), label = "swipe armed")
     val fill = { androidx.compose.ui.graphics.lerp(c.fill(), c.armedFill(), armed) }
@@ -453,7 +453,7 @@ fun SongRow(
             Text(
                 if (asked) words(R.string.jam_asked_mark) else if (song.duration > 0u) duration(song.duration.toLong()) else "",
                 Modifier.widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
-                style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.primary else tint, maxLines = 1, softWrap = false,
+                style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.onSurface else tint, maxLines = 1, softWrap = false,
             )
             IconButton(onMenu, Modifier.size(40.dp)) { Icon(Icons.Filled.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
         }
@@ -698,7 +698,7 @@ fun AlbumCard(album: Album, coverUrl: String?, size: Dp, onClick: () -> Unit, mo
     )
 
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) = SectionHeader(text, modifier)
+fun SectionTitle(text: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null) = SectionHeader(text, modifier, onMore)
 
 /**
  * Content that was not on the page at first (the songs under a hero hint) fades and rises once, as one

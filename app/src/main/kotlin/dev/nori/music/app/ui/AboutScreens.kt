@@ -21,7 +21,7 @@ import dev.nori.music.ffi.settings.Credit
 /** A row that says something: a title, all of the line under it, and optionally something at its end or a tap. */
 @Composable
 internal fun InfoRow(title: String, detail: String, end: String? = null, onClick: (() -> Unit)? = null) =
-    NavRow(title, onClick, subtitle = detail, trailing = end, subtitleLines = Int.MAX_VALUE, trailingAccent = onClick != null)
+    NavRow(title, onClick, subtitle = detail, trailing = end, subtitleLines = Int.MAX_VALUE)
 
 /**
  * What this is and what it is built out of. Most of a bug report is answered here - which build, which
@@ -111,7 +111,7 @@ private fun LicenceText(c: Credit, dismiss: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 Text(c.copyright, style = MaterialTheme.typography.bodyMedium)
-                Text(c.licence, Modifier.padding(top = 4.dp, bottom = 12.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(c.licence, Modifier.padding(top = 4.dp, bottom = 12.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     text ?: if (c.file == null) say.noLicenceText else say.licenceUnreadable,
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
