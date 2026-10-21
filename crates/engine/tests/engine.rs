@@ -1544,35 +1544,54 @@ fn failed_songs() {
     let (a, b) = (music(10.0, 11), music(6.0, 12));
     let songs: [(&str, &[i16]); 2] = [("a", &a), ("b", &b)];
     let extra = Extra::default();
-    // Four seconds of a come, then the connection breaks for good.
+    // Four seconds of a come, then the connection breaks.
     extra.server.cut.lock().push(("a".into(), 44 + RATE as u64 * 4 * 4));
     let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), extra);
     rig.engine.play_at(0, 0);
-    assert!(rig.wait_for(40, |r| r.engine.status().state == State::Paused), "{:?}", rig.events.lock());
+    assert!(rig.wait_for(40, |r| r.engine.status().waiting), "{:?}", rig.events.lock());
     let events = rig.events.lock().clone();
     assert!(events.iter().any(|e| matches!(e, Event::Error { id, .. } if id == "a")), "{events:?}");
-    let heard = rig.heard.lock().clone();
-    // All but the packet being read when the bytes stopped.
-    let four = RATE as usize * 2 * 39 / 10;
-    assert!(heard[..four] == a[..four], "what came of a played: {} heard, {:?}", heard.len(), heard.iter().zip(&a).position(|(h, s)| h != s));
+    assert!(!events.iter().any(|e| matches!(e, Event::Stopped { .. })), "it waits, not stops: {events:?}");
+    let st = rig.engine.status();
+    assert_eq!((st.state, st.buffering, st.index), (State::Playing, true, Some(0)), "still playing a, as far as anyone can tell");
+    let heard = rig.heard.lock().len();
     // b needs the same network: the player stays on a rather than skip to fail again.
-    assert!(heard.len() < a.len(), "nothing of b: {} heard", heard.len());
-    assert_eq!(rig.engine.status().index, Some(0), "still on a");
+    assert!(heard < a.len(), "nothing of b: {heard} heard");
+    // The network comes back: a goes on from where it broke, at the next try.
+    rig.server.cut.lock().clear();
+    assert!(rig.wait_for(40, Rig::ended), "{:?}", rig.events.lock());
+    let after = rig.heard.lock().clone();
+    assert!(after[..heard] == a[..heard], "what came of a first");
+    let tail = &after[heard..];
+    assert!(tail.len() >= b.len() && tail[tail.len() - b.len()..] == b[..], "then b, whole");
+    let resumed = tail.len() - b.len();
+    assert!(resumed <= a.len() - heard + RATE as usize / 5 && a[a.len() - resumed.min(a.len() - heard)..] == tail[resumed - resumed.min(a.len() - heard)..resumed], "a went on near where it broke, not from its start: {resumed} samples");
+    assert!(rig.events.lock().contains(&Event::Waiting(false)));
 
-    // Play retries failed song.
+    // A pause ends the wait; play tries the song at once.
     let a = music(3.0, 21);
     let songs: [(&str, &[i16]); 1] = [("a", &a)];
     let extra = Extra::default();
     extra.server.cut.lock().push(("a".into(), 0));
     let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), extra);
     rig.engine.play_at(0, 0);
-    assert!(rig.wait_for(30, |r| r.events.lock().iter().any(|e| matches!(e, Event::Error { id, .. } if id == "a"))), "{:?}", rig.events.lock());
-    assert!(rig.wait_for(10, |r| r.engine.status().state == State::Paused), "stopped there: {:?}", rig.events.lock());
-    assert!(rig.events.lock().iter().any(|e| matches!(e, Event::Stopped { .. })), "and says it stopped by itself: {:?}", rig.events.lock());
+    assert!(rig.wait_for(30, |r| r.engine.status().waiting), "{:?}", rig.events.lock());
+    rig.engine.pause();
+    assert!(rig.wait_for(10, |r| r.engine.status().state == State::Paused && !r.engine.status().waiting), "{:?}", rig.events.lock());
     rig.server.cut.lock().clear();
     rig.engine.play();
     assert!(rig.wait_for(20, Rig::ended), "{:?}", rig.events.lock());
     assert!(*rig.heard.lock() == a, "a, whole, not the clock run over nothing");
+
+    // Told the network is back, the song is tried before its time.
+    let extra = Extra::default();
+    extra.server.cut.lock().push(("a".into(), 0));
+    let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 0);
+    assert!(rig.wait_for(30, |r| r.engine.status().waiting), "{:?}", rig.events.lock());
+    rig.server.cut.lock().clear();
+    rig.engine.network_back();
+    assert!(rig.wait_for(4, Rig::ended), "played well before the first try at 5 s: {:?}", rig.events.lock());
 }
 
 #[test]
@@ -1740,25 +1759,22 @@ fn id3_tag_is_skipped() {
     assert!(out == a, "the song after the tag, sample for sample: {} of {} samples", out.len(), a.len());
 }
 
-/// A stop from before a later play is superseded, and that play retries the song. Regression: a client
+/// A stop from before a later play is superseded, and that play plays on. Regression: a client
 /// honouring the stale stop showed paused over playing music.
 #[test]
 fn stop_before_play_superseded() {
-    let (a, b) = (music(20.0, 23), music(6.0, 24));
+    let (a, b) = (music(8.0, 23), music(6.0, 24));
     let songs: [(&str, &[i16]); 2] = [("a", &a), ("b", &b)];
-    let extra = Extra::default();
-    extra.server.cut.lock().push(("b".into(), 0));
-    let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), extra);
+    let rig = Rig::build(files(&songs), sim::App::new(), Settings::default(), Extra::default());
     rig.engine.play_at(0, 0);
     assert!(rig.wait_for(10, |r| r.heard.lock().len() > RATE as usize * 2 * 2));
-    rig.engine.go_to(1, 0);
+    // The sleep timer stops at a's end.
+    rig.engine.pause_at_end(true);
     let first = rig.engine.play();
     assert!(rig.wait_for(30, |r| r.events.lock().iter().any(|e| matches!(e, Event::Stopped { .. }))), "{:?}", rig.events.lock());
     let stop = rig.events.lock().iter().find(|e| matches!(e, Event::Stopped { .. })).cloned().expect("said");
     assert_eq!(stop, Event::Stopped { plays: first }, "said after the tap's play was taken");
     assert!(!rig.engine.superseded(&stop), "no play asked for since: the stop stands");
-    // A second play sent before the stop was read; the network is back.
-    rig.server.cut.lock().clear();
     let second = rig.engine.play();
     assert!(second > first);
     assert!(rig.engine.superseded(&stop), "a play was asked for after it: the stop is over");

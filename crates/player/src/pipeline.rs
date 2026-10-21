@@ -269,8 +269,8 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     pub errors: ErrorRun,
     /// A failure found while reading ahead (or mid-song), raised when playback reaches it.
     failed: Option<(usize, PlaybackError, String)>,
-    /// Playback stopped at this failed song; nothing is read until a jump.
-    stopped: Option<usize>,
+    /// Playback stopped at this failed song, and where in it, ms; nothing is read until a jump.
+    stopped: Option<(usize, i64)>,
     /// Stop at the end of this song ([`Player::pause_at_end`]).
     stop_after: Option<usize>,
     /// The last turn hit [`BUFFERS_PER_TURN`] with the output still taking.
@@ -284,6 +284,8 @@ pub struct Player<S: Songs, T: Track, A: App, Q: Queue> {
     pub loops: u32,
     /// A song failed for lack of network and the offline bridge takes over.
     pub bridge: bool,
+    /// A song failed for lack of network with no bridge: the player waits on it for the network.
+    pub waiting: bool,
     /// Queue entries as last seen, to map indexes across edits.
     seqs: Vec<u64>,
     /// Music is made while paused, ready for a start at a set moment.
@@ -330,6 +332,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             serials: 0,
             loops: 0,
             bridge: false,
+            waiting: false,
             seqs: Vec::new(),
             priming: false,
         };
@@ -779,7 +782,9 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             _ => {
                 self.app.log(&format!("{id} will not play: stopped"));
                 self.bridge = decided == OnError::Bridge;
-                self.stopped = Some(i);
+                self.waiting = decided == OnError::Wait;
+                let ms = if self.current == Some(i) { self.position_ms() } else { 0 };
+                self.stopped = Some((i, ms));
                 self.call(|e, _, a| e.reset(a));
                 self.sink.flush();
                 self.sink.pause();
@@ -938,6 +943,11 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
 
     /// The failed song playback stopped at, until the next jump.
     pub fn stopped_at(&self) -> Option<usize> {
+        self.stopped.map(|(i, _)| i)
+    }
+
+    /// [`Player::stopped_at`], and the place in it heard last, ms.
+    pub fn stopped_place(&self) -> Option<(usize, i64)> {
         self.stopped
     }
 
@@ -1106,7 +1116,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
         if let Some((n, _, why)) = &self.failed {
             w.push_str(&format!("; {n} ({}) failed: {why}", id(*n)));
         }
-        if let Some(n) = self.stopped {
+        if let Some((n, _)) = self.stopped {
             w.push_str(&format!("; stopped at {n}"));
         }
         if let Some(n) = self.stop_after {

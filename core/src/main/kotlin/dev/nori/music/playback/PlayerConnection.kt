@@ -66,6 +66,8 @@ data class PlayerState(
      * bridge block and comes back when the network does.
      */
     val bridging: Boolean = false,
+    /** The server could not be reached: the song is held and tried again. */
+    val waiting: Boolean = false,
     /**
      * Moves whenever a new queue is set (nori-queue `playlist_origin_gen`), so a page asks whether the
      * queue is its own (`playlist_from`) only then.
@@ -427,6 +429,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             durationMs = PlayheadJni.durationMs(heardIndex?.let { queue[it].duration.toLong() } ?: -1, p.duration, item?.mediaMetadata?.durationMs ?: 0),
             error = if (p.playerError == null) null else old.error,
             bridging = view?.bridging ?: old.bridging,
+            waiting = p.playWhenReady && PlaybackService.rustPlayer?.waiting == true,
             origin = PlaylistJni.origin(nori.sessionHandle), playingOn = null,
         )
     }

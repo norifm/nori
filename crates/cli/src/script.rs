@@ -404,6 +404,7 @@ pub fn main(argv: Vec<String>) {
                 Event::Title(t) => println!("on air: {t}"),
                 // No offline bridge here: the error rules stop playback.
                 Event::Bridge { .. } => println!("stopped: the network is gone"),
+                Event::Waiting(on) => println!("{}", if on { "waiting for the network" } else { "trying again" }),
                 Event::Mixing(on) => println!("{}", if on { "mixing" } else { "mixed" }),
                 Event::Placed { index, ms } => println!("  {} at {} (another path)", shown(index), clock(ms)),
                 Event::Awake(_) | Event::Following(_) => {}

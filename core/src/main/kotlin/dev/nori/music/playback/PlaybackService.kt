@@ -188,6 +188,7 @@ class PlaybackService : MediaLibraryService() {
     }
     private fun networkBack() {
         nori.remotes.networkBack()
+        rustPlayer?.networkBack()
         if (nori.session.networkBack()) fetchFill()
     }
     private fun meteredNow(now: Boolean) {

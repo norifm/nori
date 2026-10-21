@@ -469,6 +469,7 @@ class Say(private val r: Resources) {
     /** What the player's title says with no song: the station playing, or that nothing is. */
     fun playerIdle(radio: String?): String = radio ?: r.getString(R.string.nothing_playing)
     val bridging: String get() = r.getString(R.string.bridging)
+    val waitingForServer: String get() = r.getString(R.string.waiting_for_server)
     val upNext: String get() = r.getString(R.string.up_next)
     /** The now playing bar's second line: what went wrong, else the artist, else (a station) "Radio". */
     fun barLine(error: String?, artist: String?): String = error ?: artist ?: radio

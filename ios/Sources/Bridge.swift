@@ -423,6 +423,8 @@ final class Core {
             systemVolume?.set(Float(ms) / 1000)
         case 5:
             Toast.show(Say.playbackError(text))
+        case 24 where flag != 0:
+            Toast.show(Say.waitingForServer)
         case 7 where now.device == nil:
             setBuffering(flag != 0)
         case 9:

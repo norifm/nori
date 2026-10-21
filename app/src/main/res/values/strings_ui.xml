@@ -321,6 +321,7 @@
     <!-- The player. -->
     <string name="nothing_playing">Nothing playing</string>
     <string name="bridging">Playing downloads until you’re online</string>
+    <string name="waiting_for_server">Waiting for the server…</string>
     <string name="up_next">Playing next</string>
     <string name="sleep_end_of_track">Sleep · end of track</string>
     <string name="sleep_minutes">Sleep · %1$d min</string>
