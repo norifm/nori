@@ -58,6 +58,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -674,8 +675,8 @@ fun SystemBarIcons(look: Look) {
 }
 
 /**
- * A search or filter field as a soft rounded capsule rather than an outlined box: one tinted surface,
- * an icon, and a clear button that only exists when there is something to clear.
+ * A search or filter field as a capsule raised on the surface with a hairline edge, outlined in the accent
+ * while it has the focus: an icon, and a clear button that only exists when there is something to clear.
  */
 @Composable
 fun SearchField(
@@ -688,6 +689,7 @@ fun SearchField(
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     // A focus request needs the field's node attached, which it is once the field is placed.
     var placed by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
     LaunchedEffect(focus, focusKey, placed) {
         if (focus == null || !placed) return@LaunchedEffect
         focus.requestFocus()
@@ -695,8 +697,8 @@ fun SearchField(
         keyboard?.show()
     }
     Surface(
-        shape = PillShape, color = LocalLook.current.color(CoverLook.FIELD),
-        contentColor = scheme.onSurface, modifier = modifier.fillMaxWidth(),
+        shape = PillShape, color = scheme.surfaceContainer, contentColor = scheme.onSurface, modifier = modifier.fillMaxWidth(),
+        border = if (focused) androidx.compose.foundation.BorderStroke(HAIRLINE * 2, scheme.primary) else hairlineBorder(),
     ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Search, null, Modifier.size(19.dp), tint = scheme.onSurfaceVariant)
@@ -708,7 +710,7 @@ fun SearchField(
                     value, onValue, singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
                     cursorBrush = androidx.compose.ui.graphics.SolidColor(scheme.primary),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
                         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
                         .then(if (focus != null) Modifier.focusRequester(focus).onPlaced { placed = true } else Modifier),
                 )
@@ -720,20 +722,20 @@ fun SearchField(
     }
 }
 
-/** A choice chip: a pill that fills with the accent when it is the one selected. */
+/** A choice chip: the selected one raised on the surface with a hairline edge and in ink, the others quiet words. */
 @Composable
 fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Surface(
         onClick = onClick, shape = PillShape,
-        color = if (selected) scheme.primary else LocalLook.current.color(CoverLook.FIELD),
-        contentColor = if (selected) scheme.onPrimary else scheme.onSurface,
+        color = if (selected) scheme.surfaceContainer else Color.Transparent,
+        contentColor = if (selected) scheme.onSurface else scheme.onSurfaceVariant,
+        border = if (selected) hairlineBorder() else null,
         modifier = modifier,
     ) {
-        Text(
-            label, Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.5f.sp), maxLines = 1,
-        )
+        Box(Modifier.height(34.dp).padding(horizontal = 14.dp), Alignment.Center) {
+            Text(label, style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium), maxLines = 1)
+        }
     }
 }
 
