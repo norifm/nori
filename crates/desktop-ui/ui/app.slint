@@ -88,7 +88,7 @@ export struct Credits {
 // A line of a song's menu beyond playing it (menus.rs's `song_menu`): 0 its seal, 1 its album, 2 one of
 // its artists (`id` the page), 3 download, 4 radio, 5 play next, 6 add to queue, 7 add to a playlist,
 // 8 remove the download, 9 stop it, 10 add to the library, 11 instant mix, 12 leave out of mixes,
-// 13 share, 14 details, 15 start a jam. `rule`: a rule above it, where the lines reached for less begin.
+// 13 share, 14 details, 15 start a jam, 16 the lyrics sheet, 17 the sleep timer. `rule`: a rule above it, where the lines reached for less begin.
 export struct SongGo {
     title: string,
     kind: int,
@@ -1272,6 +1272,30 @@ component PickCard inherits Rectangle {
 
 // A song in a list, as Music lists them: the number (or the small artwork), the title, the artist and
 // album, and the length, over a hairline. Double click plays; a right click offers the rest.
+// A song menu line's icon, by its kind (`SongGo`).
+global SongIcons {
+    public pure function song-icon(kind: int) -> string {
+        if kind == 0 { return Icons.seal-outline; }
+        if kind == 1 { return Icons.albums; }
+        if kind == 2 { return Icons.artists; }
+        if kind == 3 { return Icons.download; }
+        if kind == 4 { return Icons.radio; }
+        if kind == 5 { return Icons.next; }
+        if kind == 6 { return Icons.queue; }
+        if kind == 7 { return Icons.plus; }
+        if kind == 8 { return Icons.delete; }
+        if kind == 9 { return Icons.close; }
+        if kind == 10 { return Icons.library; }
+        if kind == 11 { return Icons.infinity; }
+        if kind == 12 { return Icons.close; }
+        if kind == 13 { return Icons.link; }
+        if kind == 15 { return Icons.people; }
+        if kind == 16 { return Icons.lyrics; }
+        if kind == 17 { return Icons.history; }
+        return Icons.info;
+    }
+}
+
 component SongLine inherits Rectangle {
     in property <SongRow> song;
     in property <int> number;
@@ -1288,24 +1312,6 @@ component SongLine inherits Rectangle {
     callback menu() -> [SongGo];
     callback act(int, string);
     property <[SongGo]> lines;
-    pure function song-icon(kind: int) -> string {
-        if kind == 0 { return Icons.seal-outline; }
-        if kind == 1 { return Icons.albums; }
-        if kind == 2 { return Icons.artists; }
-        if kind == 3 { return Icons.download; }
-        if kind == 4 { return Icons.radio; }
-        if kind == 5 { return Icons.next; }
-        if kind == 6 { return Icons.queue; }
-        if kind == 7 { return Icons.plus; }
-        if kind == 8 { return Icons.delete; }
-        if kind == 9 { return Icons.close; }
-        if kind == 10 { return Icons.library; }
-        if kind == 11 { return Icons.infinity; }
-        if kind == 12 { return Icons.close; }
-        if kind == 13 { return Icons.link; }
-        if kind == 15 { return Icons.people; }
-        return Icons.info;
-    }
     height: root.thumb ? 56px : 44px;
     border-radius: 7px;
     background: touch.has-hover ? Theme.hover : transparent;
@@ -1353,7 +1359,7 @@ component SongLine inherits Rectangle {
                         }
                     }
                     MenuRow {
-                        icon: song-icon(m.kind);
+                        icon: SongIcons.song-icon(m.kind);
                         text: m.title;
                         // The menu closes after: closed, it can no longer reach the row.
                         clicked => {
@@ -1664,6 +1670,8 @@ component PlayerControls inherits Rectangle {
     callback cycle-repeat();
     callback set-inspector(int);
     callback open-full();
+    // The song playing's menu, which opens in the main window.
+    callback open-song-menu();
 
     // The pill's width, which decides what it can show.
     in property <length> room;
@@ -1908,6 +1916,12 @@ component PlayerControls inherits Rectangle {
                 track: Theme.chosen;
                 moved(v) => { root.set-volume(v); }
                 done(v) => { root.set-volume(v); }
+            }
+            if root.has-song && !root.guest: IconButton {
+                y: (parent.height - self.height) / 2;
+                path: Icons.more;
+                size: 34px;
+                clicked => { root.open-song-menu(); }
             }
         }
     }
@@ -4570,6 +4584,26 @@ export component AppWindow inherits Window {
     // Where the queue's songs come from.
     in property <string> queue-from;
     callback clear-queue();
+    // The player's "…": the playing song's menu with the player's own lines, and one chosen.
+    callback player-menu() -> [SongGo];
+    callback player-act(int, string);
+    property <[SongGo]> player-lines;
+    public function show-player-menu() {
+        root.player-lines = root.player-menu();
+        player-pop.show();
+    }
+    // The sleep timer's choices, "Off" first while one runs, and one chosen.
+    in property <[string]> sleep-choices;
+    callback sleep(int);
+    public function show-sleep() { sleep-pop.show(); }
+    // The lyrics' sheet: where they came from and how they are timed, the shift, whether it is the
+    // listener's, and a step sooner (1), later (-1) or back (0).
+    in-out property <bool> lyrics-sheet-open;
+    in property <string> lyrics-from;
+    in property <string> lyrics-timing;
+    in property <string> lyrics-shift;
+    in property <bool> lyrics-yours;
+    callback lyrics-nudge(int);
     // A song's details, in a sheet.
     in-out property <bool> details-open;
     in property <[Detail]> details;
@@ -5933,6 +5967,62 @@ export component AppWindow inherits Window {
 
         }
 
+        // The player pill's menus, which open above it: the song playing's, and the sleep timer's.
+        player-pop := PopupWindow {
+            x: Chrome.player-x + Chrome.player-w - self.width;
+            y: root.height - Chrome.bottom-room - self.height;
+            width: 260px;
+            close-policy: close-on-click-outside;
+            Popover {
+                VerticalLayout {
+                    padding: 6px;
+                    for m in root.player-lines: VerticalLayout {
+                        if m.rule: Rectangle {
+                            height: 9px;
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.hairline;
+                            }
+                        }
+                        MenuRow {
+                            icon: SongIcons.song-icon(m.kind);
+                            text: m.title;
+                            // The menu closes after: closed, it can no longer reach the window.
+                            clicked => {
+                                if m.kind == 1 {
+                                    Go.album(m.id);
+                                } else if m.kind == 2 {
+                                    Go.artist(m.id);
+                                } else {
+                                    root.player-act(m.kind, m.id);
+                                }
+                                player-pop.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        sleep-pop := PopupWindow {
+            x: Chrome.player-x + Chrome.player-w - self.width;
+            y: root.height - Chrome.bottom-room - self.height;
+            width: 220px;
+            close-policy: close-on-click-outside;
+            Popover {
+                VerticalLayout {
+                    padding: 6px;
+                    for c[i] in root.sleep-choices: MenuRow {
+                        icon: Icons.history;
+                        text: c;
+                        clicked => {
+                            root.sleep(i);
+                            sleep-pop.close();
+                        }
+                    }
+                }
+            }
+        }
+
         // The top pill's menus, which open under it: the settings', and the playlists'.
         gear := PopupWindow {
             x: Chrome.top-x + Chrome.top-w - self.width;
@@ -6534,6 +6624,79 @@ export component AppWindow inherits Window {
             }
         }
 
+        if root.lyrics-sheet-open: Rectangle {
+            background: Theme.ground.with-alpha(0.6);
+            TouchArea {
+                clicked => { root.lyrics-sheet-open = false; }
+            }
+            Popover {
+                x: (parent.width - self.width) / 2;
+                y: 80px;
+                width: 380px;
+                height: timing-sheet.preferred-height;
+                TouchArea {}
+                timing-sheet := VerticalLayout {
+                    padding: 22px;
+                    spacing: 12px;
+                    Text {
+                        text: "Lyrics";
+                        color: Theme.text;
+                        font-size: 17px;
+                        font-weight: 700;
+                    }
+                    Text {
+                        text: root.lyrics-from;
+                        color: Theme.text;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+                    if root.lyrics-synced: Text {
+                        text: root.lyrics-timing;
+                        color: Theme.dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    // The shift in a slot of its own width, so − and + stay put as it changes.
+                    if root.lyrics-synced: HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "−";
+                            clicked => { root.lyrics-nudge(-1); }
+                        }
+                        Text {
+                            width: 96px;
+                            text: root.lyrics-shift;
+                            color: Theme.text;
+                            font-size: 15px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "+";
+                            clicked => { root.lyrics-nudge(1); }
+                        }
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        if root.lyrics-yours: SmallButton {
+                            y: (parent.height - self.height) / 2;
+                            text: "Reset";
+                            clicked => { root.lyrics-nudge(0); }
+                        }
+                        Capsule {
+                            text: "Close";
+                            clicked => { root.lyrics-sheet-open = false; }
+                        }
+                    }
+                }
+            }
+        }
+
         if root.details-open: Rectangle {
             background: Theme.ground.with-alpha(0.6);
             TouchArea {
@@ -6968,6 +7131,8 @@ export component PlayerBar inherits Window {
     callback cycle-repeat();
     callback set-inspector(int);
     callback open-full();
+    // The song playing's menu, which opens in the main window.
+    callback open-song-menu();
     // The pill: the page's colour over the blur the compositor draws behind (55 %), and the chrome's outline.
     Rectangle {
         border-radius: Chrome.player-radius;
@@ -7016,6 +7181,7 @@ export component PlayerBar inherits Window {
         cycle-repeat => { root.cycle-repeat(); }
         set-inspector(i) => { root.set-inspector(i); }
         open-full => { root.open-full(); }
+        open-song-menu => { root.open-song-menu(); }
     }
 }
 

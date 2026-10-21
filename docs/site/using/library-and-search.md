@@ -39,4 +39,5 @@ Hold a row to open its song menu, the same as tapping its three-dot button. To s
 and act on them together, set the tap action to Select.
 
 On the desktop, right-click a song row for the same menu: playlists, downloads, radio and instant mix,
-leaving a song out of mixes, its link and its details (from nori 0.7).
+leaving a song out of mixes, its link and its details (from nori 0.7). The player's "…" opens the
+playing song's menu, with the sleep timer and the lyrics' source and timing, a step earlier or later.

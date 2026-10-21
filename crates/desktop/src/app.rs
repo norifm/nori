@@ -417,6 +417,10 @@ pub struct App {
     jam_hosting: bool,
     /// The song whose menu opened the playlist picker.
     menu_song: Option<Song>,
+    /// The sleep timer's choices as offered, its time, and whether one runs.
+    sleep_choices: Vec<nori_core::menus::SleepChoice>,
+    sleep_timer: Timer,
+    sleeping: bool,
     /// Whose playback the player shows and controls, as last read.
     playback: Playback,
     /// A jam guest's controls by its role: what the player offers, and whether it paused here.
@@ -462,6 +466,7 @@ fn player(ui: &AppWindow, art: impl Fn(SharedString, i32) -> Image + 'static) ->
     }));
     bar.on_seek(to_main_with(ui, |m, v| m.invoke_seek(v)));
     bar.on_set_volume(to_main_with(ui, |m, v| m.invoke_set_volume(v)));
+    bar.on_open_song_menu(to_main(ui, |m| m.invoke_show_player_menu()));
     let go = bar.global::<crate::Go>();
     go.on_artist(to_main_with(ui, |m, id| m.global::<crate::Go>().invoke_artist(id)));
     go.on_album(to_main_with(ui, |m, id| m.global::<crate::Go>().invoke_album(id)));
@@ -606,6 +611,9 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             jam_link: String::new(),
             jam_hosting: false,
             menu_song: None,
+            sleep_choices: Vec::new(),
+            sleep_timer: Timer::default(),
+            sleeping: false,
             playback: Playback::Here,
             jam_controls: None,
             asked: HashSet::new(),
@@ -748,6 +756,15 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
         menu.with(|a| lines = a.song_menu(list, i as usize));
         lines
     });
+    let menu = h.clone();
+    ui.on_player_menu(move || {
+        let mut lines = ModelRc::default();
+        menu.with(|a| lines = a.player_menu());
+        lines
+    });
+    on!(ui.on_player_act, h, |a, kind, _id| a.player_act(kind));
+    on!(ui.on_sleep, h, |a, i| a.sleep(i as usize));
+    on!(ui.on_lyrics_nudge, h, |a, dir| a.lyrics_nudge(dir));
     on!(ui.on_add_to_playlist, h, |a, id| a.add_to_playlist(Ok(id.into())));
     on!(ui.on_add_to_new_playlist, h, |a, name| a.add_to_playlist(Err(name.into())));
     on!(ui.on_play_page, h, |a, shuffle| a.play_page(shuffle));
@@ -1641,18 +1658,29 @@ impl App {
         .cloned()
     }
 
-    /// Song `i` of `list`'s menu, as the core lists it (menus.rs's `song_menu`), made as it opens.
+    /// Song `i` of `list`'s menu, made as it opens.
     fn song_menu(&self, list: i32, i: usize) -> ModelRc<SongGo> {
+        self.list_song(list, i).map_or_else(ModelRc::default, |one| self.menu_lines(one, false))
+    }
+
+    /// The menu of the song playing, with the player's lines.
+    fn player_menu(&self) -> ModelRc<SongGo> {
+        self.song.clone().map_or_else(ModelRc::default, |one| self.menu_lines(one, true))
+    }
+
+    /// `one`'s menu as the core lists it (menus.rs's `song_menu`); `player`: opened from the player.
+    fn menu_lines(&self, one: Song, player: bool) -> ModelRc<SongGo> {
         use nori_core::menus::{song_menu, JamOffer, SongAction as A, SongDownload};
-        let (Some(one), Some(s)) = (self.list_song(list, i), self.session.as_ref()) else { return ModelRc::default() };
+        let Some(s) = self.session.as_ref() else { return ModelRc::default() };
         let ui = self.ui();
         let jam = ui.global::<crate::Jam>();
         let offer = if s.rules.asks { Some(JamOffer::Guest) } else { (jam.get_on() && !jam.get_hosting()).then_some(JamOffer::Start) };
         let starred = self.heart(&one);
         let download = if s.rules.downloads { s.download_state(&one.id) } else { SongDownload::None };
-        let items = song_menu(one, starred.unwrap_or_default(), download, false, false, starred.is_some(), s.rules.account, s.rules.downloads, s.rules.radio, offer);
+        let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
+        let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules.account, s.rules.downloads, s.rules.radio, offer);
         let first_more = items.iter().position(|m| m.more);
-        let lines = items.into_iter().enumerate().filter_map(|(n, m)| {
+        let lines = items.into_iter().enumerate().filter(|(_, m)| m.enabled).map(|(n, m)| {
             let (kind, id) = match &m.action {
                 A::Favourite { .. } => (0, String::new()),
                 A::GoToAlbum { id } => (1, id.clone()),
@@ -1670,10 +1698,10 @@ impl App {
                 A::Share => (13, String::new()),
                 A::Details => (14, String::new()),
                 A::StartJam => (15, String::new()),
-                // The player's own lines; a row's menu has none.
-                A::Lyrics | A::SleepTimer => return None,
+                A::Lyrics => (16, String::new()),
+                A::SleepTimer => (17, String::new()),
             };
-            Some(SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), rule: Some(n) == first_more })
+            SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), rule: Some(n) == first_more }
         });
         ModelRc::new(VecModel::from(lines.collect::<Vec<_>>()))
     }
@@ -1681,15 +1709,43 @@ impl App {
     /// Plays song `i` of `list` (`how` -1), or does its menu's line `how` (`SongGo::kind`).
     fn song(&mut self, list: i32, i: usize, how: i32) {
         let Some(one) = self.list_song(list, i) else { return };
+        let (songs, origin) = match list {
+            0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
+            1 => (self.songs.clone(), None),
+            _ => (self.search_songs.clone(), None),
+        };
         match how {
-            -1 => {
-                let (songs, origin) = match list {
-                    0 => (self.page_songs.clone(), self.page_fetch.as_ref().map(Fetch::origin)),
-                    1 => (self.songs.clone(), None),
-                    _ => (self.search_songs.clone(), None),
-                };
-                self.on_session(|s| s.play(songs, i, false, origin));
+            -1 => self.on_session(|s| s.play(songs, i, false, origin)),
+            15 => self.on_session(|s| {
+                s.play(songs, i, false, None);
+                s.jam_open();
+            }),
+            _ => self.song_act(one, how),
+        }
+    }
+
+    /// The player's menu line `how` (`SongGo::kind`), for the song playing.
+    fn player_act(&mut self, how: i32) {
+        match how {
+            15 => self.on_session(|s| s.jam_open()),
+            16 => self.lyrics_sheet(true),
+            17 => {
+                self.sleep_choices = nori_core::menus::sleep_choices(self.sleeping);
+                let ui = self.ui();
+                ui.set_sleep_choices(ModelRc::new(VecModel::from(self.sleep_choices.iter().map(|c| SharedString::from(words::sleep_choice(c))).collect::<Vec<_>>())));
+                ui.invoke_show_sleep();
             }
+            _ => {
+                if let Some(one) = self.song.clone() {
+                    self.song_act(one, how);
+                }
+            }
+        }
+    }
+
+    /// Menu line `how` (`SongGo::kind`) for `one`, wherever its menu opened.
+    fn song_act(&mut self, one: Song, how: i32) {
+        match how {
             0 => self.star(&one),
             3 => self.on_session(|s| s.download(vec![one])),
             4 => self.on_session(|s| s.play_later(Fetch::Radio(one.id), false)),
@@ -1717,19 +1773,62 @@ impl App {
                 ui.set_details(ModelRc::new(VecModel::from(rows.collect::<Vec<_>>())));
                 ui.set_details_open(true);
             }
-            15 => {
-                let songs = match list {
-                    0 => self.page_songs.clone(),
-                    1 => self.songs.clone(),
-                    _ => self.search_songs.clone(),
-                };
-                self.on_session(|s| {
-                    s.play(songs, i, false, None);
-                    s.jam_open();
-                });
-            }
             _ => {}
         }
+    }
+
+    /// The sleep timer's choice `i`: a time counts down here; a number of songs, or this one's end, is
+    /// the queue's to count (`sleep_set`).
+    fn sleep(&mut self, i: usize) {
+        let Some(c) = self.sleep_choices.get(i).copied() else { return };
+        self.sleep_timer.stop();
+        let pause = self.session.as_ref().is_some_and(|s| s.core.session.sleep_set(c.songs, c.end_of_track));
+        self.on_session(|s| s.engine.pause_at_end(pause));
+        self.sleeping = c.minutes > 0 || c.songs > 0 || c.end_of_track;
+        if c.minutes > 0 {
+            let delay = nori_core::rules::sleep_delay(c.minutes)[0];
+            let weak = self.me.clone();
+            self.sleep_timer.start(TimerMode::SingleShot, Duration::from_millis(delay.max(0) as u64), move || {
+                weak.with(|a| {
+                    a.sleeping = false;
+                    a.on_session(|s| s.engine.pause());
+                })
+            });
+        }
+    }
+
+    /// Fills the lyrics' sheet from the lyrics shown, opening it when `open`.
+    fn lyrics_sheet(&self, open: bool) {
+        let Some(l) = &self.lyrics else { return };
+        let pick = l.pick();
+        let ui = self.ui();
+        ui.set_lyrics_from(words::lyrics_from(pick.origin, pick.lyrics.synced, pick.lyrics.word_timed).into());
+        ui.set_lyrics_timing(words::lyrics_timing(pick.lyrics.timing).into());
+        ui.set_lyrics_shift(words::lyrics_shift(pick.lyrics.timing.offset_ms()).into());
+        ui.set_lyrics_yours(matches!(pick.lyrics.timing, nori_core::LyricsTiming::Yours { .. }));
+        if open {
+            ui.set_lyrics_sheet_open(true);
+        }
+    }
+
+    /// The lyrics shown a step sooner (`dir` > 0), later (< 0) or back to the check's timing (0).
+    fn lyrics_nudge(&mut self, dir: i32) {
+        let (Some(l), Some(s), Some(id)) = (&self.lyrics, &self.session, self.heard.clone()) else { return };
+        let pick = s.core.lyrics_nudge(id, l.pick().clone(), dir);
+        self.show_lyrics(pick);
+        self.lyrics_sheet(false);
+    }
+
+    /// Shows `pick` as the song playing's lyrics.
+    fn show_lyrics(&mut self, pick: nori_core::race::LyricsPick) {
+        let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_face.clone());
+        let ui = self.ui();
+        ui.set_lyrics_lines(l.lines());
+        ui.set_lyrics_synced(l.synced());
+        ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit().into() });
+        ui.set_lyrics_waiting(false);
+        self.lyrics = Some(l);
+        self.lyrics_step(true);
     }
 
     /// Asks the server for a link to song `id`, copied when it comes.
@@ -2037,6 +2136,8 @@ impl App {
                     }
                     Event::Error { message, .. } => self.say(&format!("Could not play: {message}"), true),
                     Event::Waiting(true) => self.say("Waiting for the server…", true),
+                    // A sleep timer of songs, or this one's end, stops playback by itself.
+                    Event::Stopped { .. } if self.sleeping && !self.sleep_timer.running() => self.sleeping = false,
                     _ => {}
                 }
                 self.follow();
@@ -2053,14 +2154,7 @@ impl App {
             }
             Msg::Lyrics { song, pick } => {
                 if self.heard.as_deref() == Some(song.as_str()) && self.lyrics.as_ref().is_none_or(|l| l.replaced_by(&pick)) {
-                    let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_face.clone());
-                    let ui = self.ui();
-                    ui.set_lyrics_lines(l.lines());
-                    ui.set_lyrics_synced(l.synced());
-                    ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit().into() });
-                    ui.set_lyrics_waiting(false);
-                    self.lyrics = Some(l);
-                    self.lyrics_step(true);
+                    self.show_lyrics(pick);
                 }
             }
             Msg::Facts(f) => {
@@ -3297,6 +3391,40 @@ mod tests {
         press(row.0, row.1, Right);
         press(row.0 + 40.0, entry(2.0) + 9.0, Left);
         assert_eq!(*did.borrow(), ["album al", "song 0 0 0", "song 0 0 -1", "song 0 0 14"]);
+    }
+
+    /// The player's menu opens above the pill with the lines it is given, and a line reaches the app by
+    /// its kind.
+    #[test]
+    fn the_players_menu_acts() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.global::<crate::Chrome>().set_player_x(140.0);
+        ui.global::<crate::Chrome>().set_player_w(1000.0);
+        ui.on_player_menu(|| ModelRc::new(VecModel::from(vec![crate::SongGo { kind: 17, title: "Sleep timer…".into(), ..Default::default() }])));
+        let did = Rc::new(RefCell::new(Vec::new()));
+        let seen = did.clone();
+        ui.on_player_act(move |kind, _| seen.borrow_mut().push(kind));
+        ui.show().unwrap();
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            ui.window().take_snapshot().unwrap();
+        };
+        settle();
+        ui.invoke_show_player_menu();
+        settle();
+        // One line: the popover is 6 + 40 + 6 tall, its foot on the pill's room, its right edge the pill's.
+        let at = slint::LogicalPosition::new(1140.0 - 200.0, 820.0 - 96.0 - 52.0 + 26.0);
+        use slint::platform::PointerEventButton::Left;
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Left });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: Left });
+        settle();
+        assert_eq!(*did.borrow(), [17]);
     }
 
     /// A queue song dragged two rows down glides into its slot, then is moved once; on the frame the list
