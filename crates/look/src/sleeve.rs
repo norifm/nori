@@ -19,6 +19,15 @@ const fn s(at: f32, alpha: f32) -> Stop {
 /// cover still shows behind the title and is gone only at the band's end.
 pub const RUB_OUT: [Stop; 3] = [s(0.0, 0.0), s(0.5, 0.42), s(1.0, 1.0)];
 
+/// On its side the sleeve's right edge goes soft instead: a band this share of its width, short so the
+/// cover stays clear of the controls beside it.
+pub const ACROSS_MELT: f32 = 0.3;
+/// Fade-out over that band: smoothstep, so the edge has no visible start or end.
+pub const ACROSS_RUB_OUT: [Stop; 6] = [s(0.0, 0.0), s(0.2, 0.104), s(0.4, 0.352), s(0.6, 0.648), s(0.8, 0.896), s(1.0, 1.0)];
+/// Opacity of the blurred copy over the sharp cover across that band: smoothstep, full by 70 % of the band,
+/// before the fade has hidden the cover.
+pub const ACROSS_SOFT: [Stop; 7] = [s(0.0, 0.0), s(0.14, 0.104), s(0.28, 0.352), s(0.42, 0.648), s(0.56, 0.896), s(0.7, 1.0), s(1.0, 1.0)];
+
 /// Opacity of the blurred copy over the sharp artwork, spanning [`SOFT_FROM`]..[`SOFT_TO`].
 pub const SOFT: [Stop; 5] = [s(0.0, 0.0), s(0.3, 0.10), s(0.6, 0.50), s(0.85, 0.92), s(1.0, 1.0)];
 /// Span of [`SOFT`] as fractions of the sleeve height, placed by [`SAMPLE_SHARE`] rather than the fade:
@@ -76,6 +85,21 @@ pub fn band_matrix(strength: f32, kr: f32, kg: f32, kb: f32) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn across_curves_rise_smoothly_from_nothing_to_all() {
+        for stops in [&ACROSS_RUB_OUT[..], &ACROSS_SOFT[..]] {
+            assert_eq!((alpha_at(stops, 0.0), alpha_at(stops, 1.0)), (0.0, 1.0));
+            let mut last = 0.0;
+            for i in 1..=100 {
+                let a = alpha_at(stops, i as f32 / 100.0);
+                // Never falls and never jumps: no visible step in the edge.
+                assert!(a >= last && a - last < 0.04, "step at {i}: {last} -> {a}");
+                last = a;
+            }
+        }
+        assert!(ACROSS_MELT < crate::cover::FADE_SHARE);
+    }
 
     #[test]
     fn band_matrix_mixes_luminance_tint() {

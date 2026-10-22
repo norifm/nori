@@ -330,7 +330,7 @@ fun HeroPage(
                             Box(
                                 Modifier.fillMaxSize().graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (atEnd) scaleX = -1f }.drawWithCache {
                                     val shade = Brush.verticalGradient(0f to Color.Black.copy(alpha = stage.statusShade), stage.statusShadeTo to Color.Transparent)
-                                    val right = alphaGradient(stage.rubOut, Color.Black, size.width * (1f - MELT * ACROSS_MELT), size.width, across = true)
+                                    val right = alphaGradient(stage.acrossRubOut, Color.Black, size.width * (1f - stage.acrossMelt), size.width, across = true)
                                     onDrawBehind {
                                         drawRect(shade)
                                         drawRect(right, blendMode = androidx.compose.ui.graphics.BlendMode.DstOut)
