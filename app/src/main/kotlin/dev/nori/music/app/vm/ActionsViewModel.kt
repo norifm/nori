@@ -8,6 +8,7 @@ import dev.nori.music.downloads.DownloadMark
 import dev.nori.music.ffi.transfers.DownloadQueueCounts
 import dev.nori.music.ffi.transfers.DownloadSections
 import dev.nori.music.net.said
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
@@ -220,14 +221,17 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
     /** What each download this session touched is doing; see [dev.nori.music.downloads.Downloads.marks]. */
     val downloadMarks: StateFlow<Map<String, DownloadMark>> = nori.downloads.marks
 
+    /** The table or any song's phase changed. */
+    private val phaseChanges = combine(nori.downloads.state, nori.downloads.marks) { _, _ -> }
+
     /**
-     * [read] from the core, asked again when the index or a phase changes, and only while watched. Null
+     * [read] from the core, asked again whenever [changes] emits, and only while watched. Null
      * until the first answer, which is not the same as empty.
      */
-    private fun <T : Any> readOnDownloadChange(read: () -> T): StateFlow<T?> =
+    private fun <T : Any> readOnDownloadChange(changes: Flow<*>, read: () -> T): StateFlow<T?> =
         // A song finishing changes the table and its mark together: the changes are only the signal, and
         // the ones that arrive while it is being read are asked for once, not once each.
-        combine(nori.downloads.state, nori.downloads.marks) { _, _ -> }
+        changes
             .conflate()
             .map { runCatching(read).getOrNull() }
             .flowOn(kotlinx.coroutines.Dispatchers.IO)
@@ -237,14 +241,14 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
      * The downloads screen's lists: downloading, waiting (in the order they will run), failed, and
      * finished this session, split in the core.
      */
-    val downloadSections: StateFlow<DownloadSections?> = readOnDownloadChange { nori.core.downloadSections() }
+    val downloadSections: StateFlow<DownloadSections?> = readOnDownloadChange(phaseChanges) { nori.core.downloadSections() }
 
     /** How many of [downloadSections]' songs are on their way and how many failed, without the songs. */
-    val downloadQueueCounts: StateFlow<DownloadQueueCounts?> = readOnDownloadChange { nori.core.downloadQueueCounts() }
+    val downloadQueueCounts: StateFlow<DownloadQueueCounts?> = readOnDownloadChange(phaseChanges) { nori.core.downloadQueueCounts() }
 
-    /** Finished albums and unfiled songs, read only while the downloads page is watching. */
+    /** Finished albums and unfiled songs, read only while the downloads page is watching; only the table changes them, not a phase. */
     val downloadedLibrary: StateFlow<dev.nori.music.ffi.library.DownloadedLibrary?> =
-        readOnDownloadChange { nori.core.downloadedLibrary() }
+        readOnDownloadChange(nori.downloads.state) { nori.core.downloadedLibrary() }
 
     fun retryDownloads(songs: List<Song>) = nori.downloads.retry(songs)
     fun cancelDownloads(songs: List<Song>) = nori.downloads.cancel(songs.map { it.id })

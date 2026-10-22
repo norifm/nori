@@ -275,6 +275,7 @@ struct Seen {
     at: Instant,
     pace: f32,
     playing: bool,
+    buffering: bool,
 }
 
 /// A place this far from where the last look ran on to has jumped.
@@ -290,9 +291,9 @@ impl PlaceSeen {
             self.0 = None;
             return false;
         };
-        let seen = Seen { index, id: s.id.clone(), ms: s.position_ms, at: s.at, pace: s.pace, playing: s.state == State::Playing };
+        let seen = Seen { index, id: s.id.clone(), ms: s.position_ms, at: s.at, pace: s.pace, playing: s.state == State::Playing, buffering: s.buffering };
         let ran_to = match self.0.replace(seen) {
-            Some(p) if p.index == index && p.id == s.id && p.playing => p.ms + (s.at.saturating_duration_since(p.at).as_secs_f64() * 1000.0 * p.pace as f64) as i64,
+            Some(p) if p.index == index && p.id == s.id && p.playing && !p.buffering => p.ms + (s.at.saturating_duration_since(p.at).as_secs_f64() * 1000.0 * p.pace as f64) as i64,
             Some(p) if p.index == index && p.id == s.id => p.ms,
             _ => 0,
         };
@@ -394,35 +395,38 @@ mod tests {
     }
 
     /// Seeked's rule: a jump within the song, or a song coming in past its start, but not the music
-    /// moving on at its pace, a pause, or a resume.
+    /// moving on at its pace, a pause, a stall, or a resume.
     #[cfg(feature = "desktop")]
     #[test]
     fn a_place_jumps_only_off_its_run() {
         let start = Instant::now();
         let mut seen = PlaceSeen::default();
-        // (seconds since start, index, id, ms, playing, pace, jumped)
+        // (seconds since start, index, id, ms, playing, buffering, pace, jumped)
         let looks = [
-            (0.0, Some(0), "a", 0, true, 1.0, false),
-            (10.0, Some(0), "a", 10_000, true, 1.0, false),
-            (11.0, Some(0), "a", 11_040, true, 1.0, false),
-            (12.0, Some(0), "a", 60_000, true, 1.0, true),
-            (13.0, Some(0), "a", 61_000, false, 1.0, false),
-            (40.0, Some(0), "a", 61_000, false, 1.0, false),
-            (41.0, Some(0), "a", 20_000, false, 1.0, true),
-            (90.0, Some(0), "a", 20_000, true, 1.0, false),
-            (93.0, Some(0), "a", 0, true, 1.0, true),
-            (94.0, Some(1), "b", 120, true, 1.0, false),
-            (100.0, Some(2), "c", 15_000, true, 1.5, true),
-            (102.0, Some(2), "c", 18_000, true, 1.0, false),
-            (104.0, Some(2), "c", 0, true, 1.0, true),
-            (105.0, Some(2), "d", 30_000, true, 1.0, true),
-            (106.0, None, "", 0, false, 1.0, false),
-            (107.0, Some(2), "d", 0, true, 1.0, false),
+            (0.0, Some(0), "a", 0, true, false, 1.0, false),
+            (10.0, Some(0), "a", 10_000, true, false, 1.0, false),
+            (11.0, Some(0), "a", 11_040, true, false, 1.0, false),
+            (12.0, Some(0), "a", 60_000, true, false, 1.0, true),
+            (13.0, Some(0), "a", 61_000, false, false, 1.0, false),
+            (40.0, Some(0), "a", 61_000, false, false, 1.0, false),
+            (41.0, Some(0), "a", 20_000, false, false, 1.0, true),
+            (90.0, Some(0), "a", 20_000, true, false, 1.0, false),
+            (93.0, Some(0), "a", 0, true, false, 1.0, true),
+            (94.0, Some(1), "b", 120, true, false, 1.0, false),
+            (100.0, Some(2), "c", 15_000, true, false, 1.5, true),
+            (102.0, Some(2), "c", 18_000, true, false, 1.0, false),
+            (104.0, Some(2), "c", 0, true, false, 1.0, true),
+            (105.0, Some(2), "d", 30_000, true, false, 1.0, true),
+            (106.0, None, "", 0, false, false, 1.0, false),
+            (107.0, Some(2), "d", 0, true, false, 1.0, false),
+            (108.0, Some(2), "d", 1_000, true, true, 1.0, false),
+            (110.0, Some(2), "d", 1_000, true, false, 1.0, false),
+            (111.0, Some(2), "d", 2_000, true, false, 1.0, false),
         ];
-        for (n, (t, index, id, ms, playing, pace, jumped)) in looks.into_iter().enumerate() {
+        for (n, (t, index, id, ms, playing, buffering, pace, jumped)) in looks.into_iter().enumerate() {
             let state = if playing { State::Playing } else { State::Paused };
             let at = start + Duration::from_secs_f64(t);
-            let status = Status { state, index, id: index.map(|_| id.to_string()), position_ms: ms, at, pace, ..Status::default() };
+            let status = Status { state, index, id: index.map(|_| id.to_string()), position_ms: ms, at, buffering, pace, ..Status::default() };
             assert_eq!(seen.jumped(&status), jumped, "look {n}");
         }
     }

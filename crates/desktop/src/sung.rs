@@ -12,7 +12,7 @@ use crate::LyricPiece;
 
 /// A laid-out piece: a timed word (`word` is its index) or the text between words.
 struct Placed {
-    text: String,
+    text: slint::SharedString,
     /// Span in the line's text, UTF-16 units.
     start: u32,
     end: u32,
@@ -131,7 +131,7 @@ pub fn lay(face: &Typeface, index: usize, line: &LyricLine, size: f32, width: f3
         }
         for (t, s, e, k) in run {
             let w = measure(&t);
-            pieces.push(Placed { text: t, start: s, end: e, x, row, w, word: k });
+            pieces.push(Placed { text: t.into(), start: s, end: e, x, row, w, word: k });
             x += w;
         }
         i = j + 1;
@@ -195,7 +195,7 @@ pub fn frame(laid: &Laid, line: &LyricLine, sung: f32, ms: i64, lit: f32, dim: f
             let b = ((x_s + feather / 2.0 - p.x) / w).clamp(0.0, 1.0);
             let word = p.word.and_then(|k| line.words.get(k));
             LyricPiece {
-                text: p.text.as_str().into(),
+                text: p.text.clone(),
                 x: p.x,
                 y: p.row as f32 * laid.row_h,
                 w: p.w,
@@ -286,6 +286,14 @@ mod tests {
         assert!(starts.len() > 1);
         assert_eq!(row_starts, starts, "each row starts where the layout starts one");
         assert_eq!(rows.replace('\n', " "), line.text);
+    }
+
+    #[test]
+    fn frames_share_the_piece_text() {
+        let line = line();
+        let l = lay(&face(), 0, &line, 20.0, 1000.0);
+        let (a, b) = (frame(&l, &line, 1.0, 100, 1.0, 0.3, 4.0), frame(&l, &line, 6.0, 900, 1.0, 0.3, 4.0));
+        assert!(a.iter().zip(&b).all(|(x, y)| x.text.as_ptr() == y.text.as_ptr()), "a frame reuses the laid-out text");
     }
 
     #[test]

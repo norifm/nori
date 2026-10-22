@@ -155,6 +155,12 @@ pub fn albums_exhausted(got: u32) -> bool {
     got < ALBUM_PAGE
 }
 
+/// Where the album list's next page starts, after a page from `offset` asked `asked` albums long brought
+/// `got`: none once a page comes short, and a random order is one page.
+pub fn next_album_page(sort: AlbumSort, offset: u32, asked: u32, got: u32) -> Option<u32> {
+    (got >= asked && sort != AlbumSort::Random).then_some(offset + got)
+}
+
 // ---- album orders -------------------------------------------------------------
 
 /// The album grid's orders: those `getAlbumList2` knows, and ByArtist drawn as a row per artist.
@@ -514,6 +520,12 @@ pub struct Decade {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn album_pages_go_on_while_full() {
+        let next = |sort, got| next_album_page(sort, 1000, 500, got);
+        assert_eq!([next(AlbumSort::Newest, 500), next(AlbumSort::Newest, 100), next(AlbumSort::Newest, 0), next(AlbumSort::Random, 500)], [Some(1500), None, None, None]);
+    }
 
     #[test]
     fn long_song_lists_show_a_few() {

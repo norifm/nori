@@ -554,6 +554,11 @@ fn held() -> Option<Arc<Hold>> {
     SESSION.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
+/// The open session's server and core, for a request made without holding the session.
+pub(crate) fn server() -> Option<(Arc<nori_core::client::Client>, Arc<nori_core::Core>)> {
+    with_session(|s| (s.client.clone(), s.core.clone()))
+}
+
 pub(crate) fn with_session<R>(f: impl FnOnce(&Session) -> R) -> Option<R> {
     held().map(|h| {
         let s = h.session.lock().unwrap_or_else(|p| p.into_inner());
@@ -1364,5 +1369,56 @@ mod tests {
         phone.clone().stop();
         stop.store(true, Ordering::Relaxed);
         unit.join().unwrap();
+    }
+
+    /// A request the server holds leaves the session free for the doors the main thread calls.
+    #[test]
+    fn a_slow_server_never_holds_the_session() {
+        use std::io::Read;
+        use std::sync::mpsc::channel;
+        let _one = one_session();
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        let (asked, share_asked) = channel();
+        /// The connections the server holds unanswered; dropping it closes them.
+        struct Held(std::sync::Arc<Mutex<Vec<std::net::TcpStream>>>);
+        impl Drop for Held {
+            fn drop(&mut self) {
+                self.0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+            }
+        }
+        let held = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let holds = held.clone();
+        std::thread::spawn(move || {
+            for mut conn in server.incoming().flatten() {
+                let mut head = [0u8; 512];
+                let n = conn.read(&mut head).unwrap_or(0);
+                if String::from_utf8_lossy(&head[..n]).contains("createShare") {
+                    let _ = asked.send(());
+                }
+                holds.lock().unwrap_or_else(|p| p.into_inner()).push(conn);
+            }
+        });
+        let dir = nori_testdir::TempDir::new("ios-slow-server");
+        let _close = Close;
+        let _held = Held(held);
+        super::start(
+            dir.path(),
+            SavedServer { url, ..profile() },
+            Box::new(WavOutput::new(dir.path().join("heard.wav"), 2.0)),
+            false,
+            None,
+        )
+        .unwrap();
+        crate::pages::keep_list(81, vec![song("a")], None);
+        std::thread::spawn(|| unsafe { crate::nori_ios_free(crate::menu::nori_ios_song_share(81, 0)) });
+        share_asked.recv_timeout(Duration::from_secs(10)).expect("the share request reached the server");
+        let (now, got_now) = channel();
+        std::thread::spawn(move || {
+            let raw = crate::pages::nori_ios_now();
+            unsafe { crate::nori_ios_free(raw) };
+            let _ = now.send(());
+        });
+        assert!(got_now.recv_timeout(Duration::from_secs(5)).is_ok(), "the main thread waited for the server");
     }
 }

@@ -142,3 +142,12 @@ fn an_empty_share_is_no_share() {
     client.set_profile(NetProfile { url: "http://h".into(), ..Default::default() });
     assert!(block_on(client.read_now(Read::ShareLink { id: "s".into() })).is_err());
 }
+
+#[test]
+fn playing_an_artist_skips_provider_albums_and_songs() {
+    let core = Core::new(String::new(), "reads".into(), Default::default()).unwrap();
+    let client = Client::new(core, Arc::new(Answer(everything())), Default::default());
+    client.set_profile(NetProfile { url: "http://h".into(), ..Default::default() });
+    let songs = block_on(client.artist_songs_of("ar1".into())).unwrap();
+    assert_eq!(ids(&songs, |s| &s.id), "s1");
+}

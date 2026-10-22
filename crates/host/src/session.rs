@@ -556,6 +556,14 @@ impl Handle {
         self.play_kept(songs, start, shuffle, from, false);
     }
 
+    /// Starts a jam around `songs[start]`: they play here, then the jam opens. Its invite link (None when
+    /// one is open or opening already); nothing while remote control is off.
+    pub async fn start_jam(&self, songs: Vec<Song>, start: usize, from: Option<PageOrigin>) -> Option<Result<Option<String>, NetError>> {
+        let remote = self.remote()?;
+        self.play(songs, start, false, from);
+        Some(remote.jam_open().await)
+    }
+
     /// `songs` as the queue around the song playing, `songs[at]`: it goes on where it is, playing or
     /// paused, rather than starting again (a tap on it in a list). Any other song plays as [`Handle::play`]
     /// would. True when it went on.
@@ -675,13 +683,13 @@ impl Handle {
     fn there(&self, press: Press) -> bool {
         if self.guest {
             let jam = self.jam_playing();
-            return match jam.as_ref().and_then(|j| Some((j, j.mirror.op(press)?))) {
+            return match jam.as_ref().and_then(|j| Some((j, j.op(press)?))) {
                 Some((j, op)) => j.jam_press(op) != Reach::Here,
                 None => !matches!(press, Press::Volume { .. }),
             };
         }
         let Some(e) = self.elsewhere() else { return false };
-        if let Some(op) = e.mirror.op(press) {
+        if let Some(op) = e.op(press) {
             e.send(op);
         }
         true
@@ -783,6 +791,19 @@ impl Handle {
         if !self.there(Press::Shuffle { on }) {
             self.shuffle_here(on);
         }
+    }
+
+    /// A page's Shuffle (`pages::hero_buttons`): while the queue is the one `page` started, turns its
+    /// shuffle off or on, the song playing going on. False when it is not: the page's songs start shuffled.
+    pub fn shuffle_page(&self, page: &PageOrigin) -> bool {
+        let q = &self.core.session;
+        let here = q.origin().as_ref() == Some(page);
+        match nori_core::pages::hero_buttons(here, q.shuffle_shown(), false, false, true, true).shuffle_press {
+            nori_core::pages::HeroPress::ShuffleOff => self.shuffle(false),
+            nori_core::pages::HeroPress::ShuffleOn => self.shuffle(true),
+            nori_core::pages::HeroPress::Start | nori_core::pages::HeroPress::Toggle => return false,
+        }
+        true
     }
 
     pub fn repeat(&self, mode: u8) {
@@ -971,12 +992,16 @@ impl Handle {
 
     /// Requests cover `id` at `px` square: the core's rendition for that size is fetched
     /// ([`nori_core::covers::cover_rendition`]) and decoded to `px`. `done` gets the image or failure and,
-    /// when `colours`, its page colors derived on the loader thread. None without a cover loader.
+    /// when `colours`, its page colors, derived off the caller's thread (a memory hit answers at once). None
+    /// without a cover loader.
     pub fn cover(&self, id: String, px: u32, colours: bool, done: impl FnOnce(Result<Arc<Image>, nori_covers::Error>, Option<Box<CoverColours>>) + Send + 'static) -> Option<Ticket> {
         let url = self.core.cover_address(id, nori_core::covers::cover_rendition(px));
-        Some(self.covers.as_ref()?.request(&url, px, px, move |r| {
-            let colours = r.as_ref().ok().filter(|_| colours).map(|image| Box::new(derive(image)));
-            done(r, colours);
+        Some(self.covers.as_ref()?.request(&url, px, px, move |r| match r {
+            Ok(image) if colours => crate::spawn("nori-colours", move || {
+                let colours = Box::new(derive(&image));
+                done(Ok(image), Some(colours));
+            }),
+            r => done(r, None),
         }))
     }
 
@@ -1575,6 +1600,58 @@ mod tests {
             let _ = sent.send(matches!(r, Ok(crate::pages::HomePart::Mixes(_))));
         });
         assert!(parts.recv_timeout(Duration::from_secs(5)).unwrap(), "the first part is \"For you\"");
+        s.close();
+    }
+
+    #[test]
+    fn a_page_shuffle_turns_its_own_queue_off_and_on() {
+        let dir = nori_testdir::TempDir::new("host-page-shuffle");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        prefs.remote_control = false;
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings));
+        let profile = SavedServer { id: "t".into(), user: "Ann".into(), ..Default::default() };
+        let s = Session::open(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let (album, other) = (PageOrigin::new(nori_core::OriginKind::Album, "al"), PageOrigin::new(nori_core::OriginKind::Album, "other"));
+        let songs: Vec<Song> = ["a", "b", "c", "d"].map(|id| Song { id: id.into(), ..Default::default() }).into();
+        s.play(songs, 0, true, Some(album.clone()));
+        let playing = || s.core.session.playlist(|p| p.current_id().map(str::to_string));
+        let started = playing();
+        assert!(!s.shuffle_page(&other), "another page's Shuffle starts its own songs");
+        assert!(s.shuffle_page(&album));
+        assert!(!s.core.session.shuffle_shown());
+        assert_eq!(playing(), started, "the song playing goes on");
+        assert_eq!(s.core.session.playlist(|p| p.play_order().collect::<Vec<_>>()), [0, 1, 2, 3]);
+        assert!(s.shuffle_page(&album));
+        assert!(s.core.session.shuffle_shown());
+        assert_eq!(playing(), started);
+        s.close();
+    }
+
+    struct NoDiscovery;
+    impl nori_core::remote::Discovery for NoDiscovery {
+        fn announce(&self, _: Option<nori_core::remote::Announcement>) {}
+        fn browse(&self, _: bool) {}
+    }
+
+    #[test]
+    fn a_jam_started_on_a_song_plays_it_and_opens() {
+        let dir = nori_testdir::TempDir::new("host-start-jam");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        prefs.remote_control = true;
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings));
+        // A YouTube Music profile hosts its jam on this computer, so no relay is needed.
+        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
+        let discovery: Option<Arc<dyn nori_core::remote::Discovery>> = Some(Arc::new(NoDiscovery));
+        let s = Session::open(Open { discovery, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let songs: Vec<Song> = ["a", "b"].map(|id| Song { id: id.into(), ..Default::default() }).into();
+        let link = block_on(s.start_jam(songs, 1, None)).expect("remote control is on").expect("the jam opens");
+        assert!(link.is_some(), "an invite link");
+        assert_eq!(s.core.session.playlist(|p| p.current_id().map(str::to_string)).as_deref(), Some("b"));
+        assert!(s.remote().and_then(|r| r.jam_view()).is_some_and(|v| v.hosting));
         s.close();
     }
 

@@ -108,7 +108,9 @@ This opt-in check uses fixture songs and restores the scrobbling settings.
 download cards and Android Auto's media browser against a partially downloaded fixture album. It
 opens the saved tracks, taps one offline, checks Favorites through the browser, and removes the
 album. Grouping, disc order, partial albums, and songs without an album are Rust tests; media3
-browser callbacks, Compose navigation, and offline AudioTrack playback require Android.
+browser callbacks, Compose navigation, and offline AudioTrack playback require Android. It also
+empties the downloaded album's open page and checks the app survives: a Compose exit animation
+composing a page's content one frame after its data went away cannot be reached from Rust.
 
 `tools/feature-e2e.sh --only car-art` opens four-cover mosaics through Android’s content
 provider, then repeats with one unavailable cover. It compares decoded pixels in the three

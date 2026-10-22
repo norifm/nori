@@ -342,6 +342,7 @@ const FADE: [f32; 2] = [0.66, 0.33];
 #[allow(clippy::needless_option_as_deref)]
 pub fn draw(f: &mut Frame, app: &mut App, mut art: Option<&mut Art>) {
     app.hits.clear();
+    app.shown.clock = false;
     let area = f.area();
     let t = app.look;
     put(f, Block::default().style(t.ground()), area);
@@ -971,24 +972,19 @@ fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
         Load::Ready(_) => {}
         _ => return loading(f, body, t),
     }
-    let rows = app.download_rows();
+    let App { downloads, downloads_sel, hits, .. } = app;
+    let rows = downloads.ready().map(|d| d.rows()).unwrap_or_default();
     if rows.is_empty() {
         return empty(f, body, t, "Nothing downloaded yet");
     }
-    let lines: Vec<Line> = rows
-        .iter()
-        .map(|row| match row {
-            crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.ink))),
-            crate::app::DownloadRow::Album(a) => Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(a.name.clone()), Span::styled(format!("  {} · {} songs", a.artist, a.song_count), t.dim())]),
-            crate::app::DownloadRow::Song(list, i) => {
-                let s = &list[*i];
-                Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(s.title.clone()), Span::styled(format!("  {}", s.artist), t.dim())])
-            }
-        })
-        .collect();
-    let len = lines.len();
-    let App { downloads_sel, hits, .. } = app;
-    list(f, body, downloads_sel, len, ListRef::Downloads, hits, t, focused, &|i, _| lines[i].clone());
+    list(f, body, downloads_sel, rows.len(), ListRef::Downloads, hits, t, focused, &|i, _| match &rows[i] {
+        crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.ink))),
+        crate::app::DownloadRow::Album(a) => Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(a.name.as_str()), Span::styled(format!("  {} · {} songs", a.artist, a.song_count), t.dim())]),
+        crate::app::DownloadRow::Song(list, i) => {
+            let s = &list[*i];
+            Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(s.title.as_str()), Span::styled(format!("  {}", s.artist), t.dim())])
+        }
+    });
 }
 
 /// The equalizer: toolbar chips, band faders, then the rest of the chain as chips. ← → walk them in
@@ -1801,6 +1797,7 @@ fn seek_line(f: &mut Frame, app: &mut App, t: &Theme, [a, track, b]: [Rect; 3]) 
         Some(crate::app::Drag::Seek(share)) => (share * len as f32) as i64,
         _ => app.now.position(Instant::now()).clamp(0, len.max(0)),
     };
+    app.shown.clock = true;
     text(f, a, &clock(pos), t.dim());
     text(f, b, &clock(len), t.dim());
     track_bar(f, track, if len > 0 { pos as f32 / len as f32 } else { 0.0 }, t);

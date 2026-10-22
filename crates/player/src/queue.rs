@@ -52,7 +52,7 @@ pub(crate) fn shuffle_around(n: usize, cur: usize, hand: &[bool], seed: u64) -> 
         kept.push(i);
         i += 1;
     }
-    let mut rest: Vec<usize> = (0..n).filter(|x| !kept.contains(x)).collect();
+    let mut rest: Vec<usize> = (0..cur).chain(i..n).collect();
     shuffle(&mut rest, seed);
     kept.extend(rest);
     kept

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use nori_core::remote::wire::Op;
-use nori_core::remote::RelaySupport;
+use nori_core::remote::JamStart;
 use nori_core::settings::SavedServer;
 use nori_host::player::{Playback, QueueShown};
 use nori_host::remote::Elsewhere;
@@ -412,14 +412,13 @@ impl Runner {
         let remote = s.remote();
         let guest = s.guest;
         let jams = guest || crate::backend::app().settings.prefs(|p| p.remote_control);
-        let unsupported = remote.as_ref().is_some_and(|r| r.relay() == RelaySupport::Unsupported);
         let d = &mut app.devices;
         // A guest's music is the jam's: it moves to no other device.
         d.on = remote.is_some() && !guest;
         d.pairing = remote.as_ref().and_then(|r| r.pairing_link());
-        let offered = remote.as_ref().is_some_and(|r| r.jam_start() == nori_core::remote::JamStart::Offered);
-        d.jams = jams && d.on && (offered || remote.as_ref().is_some_and(|r| r.jam_view().is_some()));
-        d.jams_unsupported = jams && d.on && unsupported && d.pairing.is_none();
+        let start = remote.as_ref().map(|r| r.jam_start());
+        d.jams = jams && d.on && (start == Some(JamStart::Offered) || remote.as_ref().is_some_and(|r| r.jam_view().is_some()));
+        d.jams_unsupported = d.on && start == Some(JamStart::Unsupported);
         d.list = remote.as_ref().filter(|_| d.on).map(|r| r.devices()).unwrap_or_default();
         if let Some(r) = &remote {
             let names = nori_core::remote::device_names(d.list.clone(), r.me(), crate::text::kind_words());
@@ -661,7 +660,9 @@ impl Runner {
         let Some(s) = &self.session else { return };
         match c {
             Cmd::Load(req) => s.load(req),
+            Cmd::Play { from: Some(page), shuffle: true, .. } if s.shuffle_page(&page) => {}
             Cmd::Play { songs, start, shuffle, from } => s.play(songs, start, shuffle, from),
+            Cmd::PlayFetch(what, true) if s.shuffle_page(&what.origin()) => {}
             Cmd::PlayFetch(what, shuffle) => s.play_later(what, shuffle),
             Cmd::Enqueue(songs, next) => s.enqueue(songs, next),
             Cmd::EnqueueFetch(what, next) => s.enqueue_later(what, next),

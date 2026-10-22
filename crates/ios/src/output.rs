@@ -10,6 +10,7 @@ use std::sync::atomic::{
     AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, AtomicU8, Ordering,
 };
 use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::Thread;
 use std::time::Instant;
 
 use nori_engine::{AudioOutput, Device, DeviceWatch, Feed, Heard, OutputFormat, OutputKind};
@@ -76,6 +77,8 @@ pub(crate) struct Render {
     port: AtomicI32,
     /// On [`HostClock`] (a test's own clock for its output).
     heard: Heard,
+    /// The engine thread of the published feed, for the reset door, which runs off the engine's thread.
+    engine: Mutex<Option<Thread>>,
 }
 
 impl Render {
@@ -87,6 +90,7 @@ impl Render {
             latency_us: AtomicU64::new(0),
             port: AtomicI32::new(0),
             heard: Heard::default(),
+            engine: Mutex::new(None),
         }
     }
 
@@ -189,10 +193,8 @@ pub unsafe extern "C" fn nori_ios_audio_log(line: *const c_char) {
 #[no_mangle]
 pub extern "C" fn nori_ios_media_reset() {
     RESET.store(true, Ordering::Release);
-    let feed = device_render().feed.load(Ordering::Acquire);
-    if !feed.is_null() {
-        // SAFETY: the same promise as [`nori_ios_render`]: published only while the feed is alive.
-        unsafe { (*feed).wake_engine() };
+    if let Some(engine) = &*device_render().engine.lock().unwrap_or_else(|p| p.into_inner()) {
+        engine.unpark();
     }
 }
 
@@ -309,6 +311,7 @@ impl<C: Clock> IosOutput<C> {
 
     fn clear_feed(&mut self) {
         self.render.feed.store(std::ptr::null_mut(), Ordering::Release);
+        *self.render.engine.lock().unwrap_or_else(|p| p.into_inner()) = None;
         self.feed = None;
     }
 
@@ -403,6 +406,7 @@ impl<C: Clock> AudioOutput for IosOutput<C> {
         self.sink.stop();
         self.clear_feed();
         self.render.heard.follow(feed.pulled());
+        *self.render.engine.lock().unwrap_or_else(|p| p.into_inner()) = Some(feed.waker());
         let mut feed = Box::new(feed);
         self.render
             .feed
@@ -1014,6 +1018,31 @@ mod tests {
             self.next_ns = now_ns + self.sim.period_us(&self.render) as i64 * 1_000;
             self.sim.callback(&self.render, (now_ns / 1_000) as u64)
         }
+    }
+
+    #[test]
+    fn a_media_reset_reopens_the_card() {
+        let clock = nori_engine::testing::Virtual::default();
+        let sim = Sim::new();
+        let mut out = IosOutput::new(Box::new(sim.clone()), Ticks(clock.clone()));
+        out.render = device_render().clone();
+        out.device = true;
+        let wavs = Arc::new(Wavs(vec![("a".into(), Arc::new(sim::wav(60)))]));
+        let queue = nori_engine::SharedQueue::default();
+        queue.0.lock().set(vec!["a".into()], Some(0), false, 0);
+        let mut app = nori_player::sim::App::new();
+        app.prefs = nori_player::sim::prefs_off();
+        let engine = nori_engine::Engine::start_on(Songs(wavs), app, queue, Box::new(out), None, nori_engine::Config::default(), clock.clone(), |_| {});
+        let unit = Unit { sim: sim.clone(), render: device_render().clone(), next_ns: 0 };
+        let time = nori_engine::testing::Stepper::new(clock.clone(), Arc::new(parking_lot::Mutex::new(unit)));
+        engine.queue_changed();
+        engine.play_at(0, 0);
+        assert!(time.until(Duration::from_secs(20), || engine.status().position_ms > 1_000), "it plays");
+        assert_eq!(sim.lock().opens.len(), 1);
+        nori_ios_media_reset();
+        clock.woke_engine();
+        assert!(time.until(Duration::from_secs(5), || sim.lock().opens.len() == 2), "reopened after the reset");
+        engine.stop();
     }
 
     /// Behind the deep I/O buffer (each buffer leaves the unit 93 ms after its callback, heard 12 ms after

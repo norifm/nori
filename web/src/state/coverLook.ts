@@ -1,5 +1,5 @@
 // Now Playing in its cover's colors, as Android's player: the page decodes a small copy of the cover and
-// the core picks the colors and the wash (`cover_look`). Worked out once per cover.
+// the core picks the colors and the wash (`cover_look`). Worked out when the cover changes.
 import { ask } from "../rpc";
 
 const SIDE = 64;

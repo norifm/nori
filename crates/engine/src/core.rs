@@ -173,7 +173,7 @@ impl App for CoreApp {
     }
 
     /// The core keeps the window itself.
-    fn window(&mut self, _window: Vec<WindowSong>, _shuffling: bool) {
+    fn window<S: nori_player::pipeline::Songs>(&mut self, _songs: &S, _ids: &[String], _shuffling: bool) {
         self.session.window();
     }
 

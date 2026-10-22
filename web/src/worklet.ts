@@ -21,9 +21,30 @@ type Chunk = { pcm: Float32Array; channels: number };
 /** From the engine's output: stop where it is keeping the music held, go on from there, drop the music
  * held (answered with the frames dropped), or fade to `to` over `ms` (from `from`, or where it is). */
 type Order = { do: "pause" } | { do: "resume" } | { do: "flush" } | { do: "ramp"; from: number | null; to: number; ms: number };
-/** From the worker: music, an order, or whether the player is holding (paused or stopped: running out
- * is no fault). */
-type Message = Chunk | Order | { held: boolean };
+/** From the worker: music, an order, whether the player is holding (paused or stopped: running out is
+ * no fault), or a request for the diagnostics. */
+type Message = Chunk | Order | { held: boolean } | { diagnose: true };
+
+/** What the page's check reads: the dry spells, the peak, the silences and the sound card's clock at
+ * the moments that matter. */
+type Diagnostics = {
+  /** Times the music ran out while playing, and the seconds played at the first of them. */
+  dry: number;
+  dryAt: number[];
+  peak: number;
+  /** Silent frames in a row now, and the last silences over 20 ms as [seconds played at their start, ms
+   * long]: a gap between songs shows. */
+  quiet: number;
+  silences: [number, number][];
+  /** On the sound card's clock: the last frame with sound, the first after more than 10 ms without, and
+   * the first frame played after the last flush. */
+  lastLoud: number;
+  soundAt: number;
+  freshAt: number;
+  fresh: boolean;
+};
+
+const noDiagnostics = (): Diagnostics => ({ dry: 0, dryAt: [], peak: 0, quiet: 0, silences: [], lastLoud: 0, soundAt: 0, freshAt: 0, fresh: false });
 
 class Out extends AudioWorkletProcessor {
   private chunks: Chunk[] = [];
@@ -44,20 +65,7 @@ class Out extends AudioWorkletProcessor {
   private level = 1;
   private levelTo = 1;
   private levelStep = 0;
-  /** Times the music ran out while playing, and the seconds played at the first of them. */
-  private dry = 0;
-  private dryAt: number[] = [];
-  private peak = 0;
-  /** Silent frames in a row now, and the last silences over 20 ms as [seconds played at their start, ms
-   * long]: a gap between songs shows. */
-  private quiet = 0;
-  private silences: [number, number][] = [];
-  /** On the sound card's clock: the last frame with sound, the first after more than 10 ms without, and
-   * the first frame played after the last flush. */
-  private lastLoud = 0;
-  private soundAt = 0;
-  private freshAt = 0;
-  private fresh = false;
+  private diag = noDiagnostics();
   private worker?: MessagePort;
 
   constructor() {
@@ -72,6 +80,8 @@ class Out extends AudioWorkletProcessor {
       this.played = 0;
       this.reported = 0;
       this.running = false;
+      this.held = true;
+      this.diag = noDiagnostics();
       this.paused = true;
       this.flushes = 0;
       this.edge = 0;
@@ -83,6 +93,7 @@ class Out extends AudioWorkletProcessor {
 
   private take(m: Message) {
     if ("held" in m) this.held = m.held;
+    else if ("diagnose" in m) this.worker?.postMessage({ heard: { played: this.played, ...this.diag } });
     else if ("pcm" in m) {
       this.chunks.push(m);
       this.queued += m.pcm.length / m.channels;
@@ -98,6 +109,7 @@ class Out extends AudioWorkletProcessor {
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const out = outputs[0];
+    const d = this.diag;
     const frames = out[0].length;
     if (!this.running && (this.queued >= START || (this.held && this.queued > 0))) this.running = true;
     const closing = this.paused || this.flushes > 0;
@@ -115,29 +127,29 @@ class Out extends AudioWorkletProcessor {
         }
         const gain = this.level * this.edge;
         const t = currentTime + (made + f) / sampleRate;
-        if (this.fresh) {
-          this.fresh = false;
-          this.freshAt = t;
+        if (d.fresh) {
+          d.fresh = false;
+          d.freshAt = t;
         }
         let loud = false;
         for (let c = 0; c < out.length; c++) {
           const v = pcm[(this.at + f) * channels + Math.min(c, channels - 1)] * gain;
           out[c][made + f] = v;
-          if (v > this.peak) this.peak = v;
+          if (v > d.peak) d.peak = v;
           if (v > 1e-4 || v < -1e-4) loud = true;
         }
         if (loud) {
-          if (t - this.lastLoud > 0.01) this.soundAt = t;
-          this.lastLoud = t;
+          if (t - d.lastLoud > 0.01) d.soundAt = t;
+          d.lastLoud = t;
         }
-        if (!loud) this.quiet++;
-        else if (this.quiet > 0) {
-          if (this.quiet > sampleRate / 50) {
-            const at = this.played + made + f - this.quiet;
-            this.silences.push([Math.round((at / sampleRate) * 1000) / 1000, Math.round((this.quiet / sampleRate) * 1000)]);
-            if (this.silences.length > 32) this.silences.shift();
+        if (!loud) d.quiet++;
+        else if (d.quiet > 0) {
+          if (d.quiet > sampleRate / 50) {
+            const at = this.played + made + f - d.quiet;
+            d.silences.push([Math.round((at / sampleRate) * 1000) / 1000, Math.round((d.quiet / sampleRate) * 1000)]);
+            if (d.silences.length > 32) d.silences.shift();
           }
-          this.quiet = 0;
+          d.quiet = 0;
         }
       }
       made += f;
@@ -152,8 +164,8 @@ class Out extends AudioWorkletProcessor {
     if (this.running && made < frames && !closing) {
       this.running = false;
       if (!this.held) {
-        this.dry++;
-        if (this.dryAt.length < 32) this.dryAt.push(Math.round((this.played / sampleRate) * 1000) / 1000);
+        d.dry++;
+        if (d.dryAt.length < 32) d.dryAt.push(Math.round((this.played / sampleRate) * 1000) / 1000);
       }
     }
     // Closed, or nothing sounding to close: the music held goes, and what follows fades in.
@@ -164,18 +176,19 @@ class Out extends AudioWorkletProcessor {
       this.at = 0;
       this.running = false;
       this.edge = 0;
-      this.fresh = true;
+      d.fresh = true;
       this.flushes = 0;
       this.report({ dropped, flushes });
     } else if (this.played - this.reported >= REPORT || (made < frames && this.played > this.reported)) this.report();
     return true;
   }
 
-  /** Tells the worker what was played, and with `flushed` the flushes done and the frames they dropped. */
+  /** Tells the worker what was played, and with `flushed` the flushes done and the frames they dropped.
+   * The diagnostics wait until it asks for them. */
   private report(flushed?: { dropped: number; flushes: number }) {
     if (!this.worker) return;
     this.reported = this.played;
-    this.worker.postMessage({ played: this.played, flushed, dry: this.dry, dryAt: this.dryAt, peak: this.peak, silences: this.silences, lastLoud: this.lastLoud, soundAt: this.soundAt, freshAt: this.freshAt });
+    this.worker.postMessage({ played: this.played, flushed });
   }
 }
 

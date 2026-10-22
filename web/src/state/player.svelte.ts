@@ -59,7 +59,7 @@ class Player {
       node.connect(ctx.destination);
       facts.rate = ctx.sampleRate;
       // The sound card's clock, which the worklet's times are on.
-      Object.defineProperty(facts, "audioTime", { get: () => ctx.currentTime, enumerable: true });
+      Object.defineProperty(facts, "audioTime", { get: () => ctx.currentTime, enumerable: true, configurable: true });
       if (!rpc.player) ui.say(W.loadingPlayer);
       // A new line each time the player worker starts (again, after a crash).
       await rpc.soundTo(() => {
@@ -68,7 +68,12 @@ class Player {
         return { port: line.port2, rate: ctx.sampleRate, ear: ctx.baseLatency + (ctx.outputLatency || 0) };
       });
       if (ui.toast === W.loadingPlayer) ui.say("");
-    })();
+    })().catch((e) => {
+      // A failed setup is made again by the next Play.
+      this.audio = this.made = undefined;
+      void ctx.close();
+      throw e;
+    });
     return this.made;
   }
 
@@ -94,6 +99,13 @@ class Player {
   async mix(song: Song, radio: boolean) {
     await this.soundCard();
     if ((await ask<number>("mix", song.id, radio)) === 0) ui.say(W.mixEmpty);
+    await this.refresh();
+  }
+
+  /** Everything `artist` has in the library. */
+  async playArtist(artist: string, shuffle: boolean) {
+    await this.soundCard();
+    if ((await ask<number>("play_artist", artist, shuffle)) === 0) ui.say(W.nothingToPlay);
     await this.refresh();
   }
 
@@ -130,7 +142,7 @@ class Player {
     this.held = this.audio?.state === "suspended" && n?.state === "Playing";
     if (n?.id !== before) this.songChanged();
     // Music handed over from another device plays here: the sound card is made for it.
-    if (n?.state === "Playing" && !n.device && !n.jam && !this.audio) void this.soundCard();
+    if (n?.state === "Playing" && !n.device && !n.jam && !this.audio) void this.soundCard().catch(() => {});
   }
 
   private songChanged() {
@@ -197,9 +209,11 @@ class Player {
         else if (n.what === "songsFailed") ui.say(W.songsFailed);
       } else if (s.kind === "reachable" && !s.ok) ui.say(W.offline);
     });
-    rpc.onHeard((heard) => {
-      facts.heard = { seconds: heard.played / (this.audio?.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
-    });
+    // What the sound card heard, asked for when read (the headless check's), so nothing is sent while playing.
+    facts.heard = async () => {
+      const heard = rpc.player ? await ask<rpc.Heard | null>("heard") : null;
+      return heard && { seconds: heard.played / (this.audio?.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
+    };
     if ("mediaSession" in navigator) {
       const m = navigator.mediaSession;
       m.setActionHandler("play", () => void this.control("toggle"));

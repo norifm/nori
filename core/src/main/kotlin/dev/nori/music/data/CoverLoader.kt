@@ -9,7 +9,6 @@ import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.res.Configuration
 import android.graphics.Bitmap
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -44,7 +43,7 @@ class CoverLoader private constructor(context: Context) {
     private val main = Handler(Looper.getMainLooper())
 
     /** Cheap to open: the core reads its directory on the loader's first thread, not here. */
-    private val loader = CoverPixels.open(dev.nori.music.Nori.get(app).coverNet.uniffiCloneHandle(), File(app.cacheDir, DIR).path, Covers.rules.diskBytes.toLong(), Build.VERSION.SDK_INT >= 28, true)
+    private val loader = CoverPixels.open(dev.nori.music.Nori.get(app).coverNet.uniffiCloneHandle(), File(app.cacheDir, DIR).path, Covers.rules.diskBytes.toLong(), CoverPixels.hardware, true)
 
     /** By [key], so a cover asked for through the server's other address is the one already kept. */
     private val memory = object : LruCache<Long, Kept>(memoryBytes(app)) {

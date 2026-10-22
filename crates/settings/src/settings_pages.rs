@@ -427,11 +427,9 @@ impl Page<'_> {
         let mut out = vec![(SectionId::Display, display)];
         if self.phone() {
             sources.push(row(RowItem::Link { to: SettingsLink::LyricsSources }).enabled(online));
-            out.push((SectionId::Sources, sources));
-        } else if self.web() {
-            out.push((SectionId::Sources, sources));
-        } else {
-            out.push((SectionId::Sources, sources));
+        }
+        out.push((SectionId::Sources, sources));
+        if !self.phone() && !self.web() {
             out.extend(self.lyrics_sources().into_iter().map(|(id, rows)| (id, rows.into_iter().map(|r| SettingsRow { enabled: r.enabled && online, ..r }).collect())));
         }
         out

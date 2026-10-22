@@ -37,17 +37,13 @@
 //!
 //! Evaluation. The tree becomes one SQL condition over `items` joined with `song_stats`, and the
 //! statement returns rowids only, in order, so neither the sorter nor Rust ever holds 100k JSON
-//! documents; the JSON of the requested page is then fetched by rowid. Two things SQL cannot do are
-//! finished in Rust while streaming those rowids: text rules with a non-ASCII value (SQLite folds
-//! case for ASCII only; such a rule is relaxed to "true" in SQL and every candidate re-checked here),
-//! and the `limitMs` running total.
-
-use std::collections::HashSet;
+//! documents; the JSON of the requested page is then fetched by rowid. Non-ASCII text values are
+//! lowered on both sides by the `lower_text` SQL function (SQLite folds ASCII only). Only the `limitMs`
+//! running total is kept in Rust while streaming the rowids.
 
 use nori_model::model::*;
 use nori_model::{CoreError, Result, SmartProblem};
 use rusqlite::{types::Value as Sql, Connection, OptionalExtension};
-use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use crate::browse::DAY_MS;
@@ -481,9 +477,6 @@ pub struct Compiler<'a> {
     pub downloaded: &'a [String],
     pub downloaded_arg: Option<usize>,
     pub now_ms: i64,
-    /// A rule was relaxed to "true": SQL yields a superset (there is no NOT node, so relaxing a leaf can
-    /// only add rows) and `matches` has the last word.
-    pub needs_rust: bool,
 }
 
 impl Compiler<'_> {
@@ -508,24 +501,25 @@ impl Compiler<'_> {
         let x = r.field.stats_column().filter(|_| r.needs_stats()).unwrap_or(x);
         match (&r.value, kind) {
             (Val::Text(v), _) => {
-                if !v.is_ascii() {
-                    self.needs_rust = true;
-                    return "1".into();
-                }
+                // SQLite folds ASCII only: other text is lowered on both sides by `lower_text` (nori-db).
+                let ascii = v.is_ascii();
+                let (have, v) = if ascii { (format!("coalesce({x},'')"), v.clone()) } else { (format!("lower_text(coalesce({x},''))"), v.to_lowercase()) };
+                let nocase = if ascii { " COLLATE NOCASE" } else { "" };
                 let like = |v: &str| v.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
                 match r.op {
+                    Op::Is if v.is_empty() => format!("{have}=''"),
                     // The bare expression so that the genre index applies; NULL can only equal the empty string.
-                    Op::Is if !v.is_empty() => format!("{x}={} COLLATE NOCASE", self.arg(Sql::Text(v.clone()))),
-                    Op::Is => format!("coalesce({x},'')=''"),
-                    Op::IsNot => format!("coalesce({x},'')<>{} COLLATE NOCASE", self.arg(Sql::Text(v.clone()))),
+                    Op::Is if ascii => format!("{x}={} COLLATE NOCASE", self.arg(Sql::Text(v))),
+                    Op::Is => format!("{have}={}", self.arg(Sql::Text(v))),
+                    Op::IsNot => format!("{have}<>{}{nocase}", self.arg(Sql::Text(v))),
                     op => {
                         let pattern = match op {
-                            Op::StartsWith => format!("{}%", like(v)),
-                            Op::EndsWith => format!("%{}", like(v)),
-                            _ => format!("%{}%", like(v)),
+                            Op::StartsWith => format!("{}%", like(&v)),
+                            Op::EndsWith => format!("%{}", like(&v)),
+                            _ => format!("%{}%", like(&v)),
                         };
                         let not = if op == Op::NotContains { "NOT " } else { "" };
-                        format!("coalesce({x},'') {not}LIKE {} ESCAPE '\\'", self.arg(Sql::Text(pattern)))
+                        format!("{have} {not}LIKE {} ESCAPE '\\'", self.arg(Sql::Text(pattern)))
                     }
                 }
             }
@@ -579,133 +573,12 @@ impl Compiler<'_> {
     }
 }
 
-// ---- the same rules in Rust, for what SQL was told to let through -----------
-
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
-struct Extra {
-    created: Option<String>,
-    play_count: Option<i64>,
-}
-
-pub struct Row {
-    pub song: Song,
-    extra: Extra,
-    plays: i64,
-    skips: i64,
-    last_played_ms: i64,
-    excluded: bool,
-}
-
-/// What a rule is evaluated against besides the song: the downloaded songs and the clock.
-pub struct Env<'a> {
-    pub downloaded: HashSet<&'a str>,
-    pub now_ms: i64,
-}
-
-fn number(f: Field, r: &Row) -> i64 {
-    let s = &r.song;
-    match f {
-        Year => s.year as i64,
-        Duration => s.duration as i64,
-        Track => s.track as i64,
-        DiscNumber => s.disc_number as i64,
-        BitRate => s.bit_rate as i64,
-        SampleRate => s.sampling_rate as i64,
-        BitDepth => s.bit_depth as i64,
-        Size => s.size as i64,
-        UserRating => s.user_rating as i64,
-        PlayCount => r.plays,
-        SkipCount => r.skips,
-        ServerPlayCount => r.extra.play_count.unwrap_or(0),
-        LastPlayed => r.last_played_ms,
-        _ => 0,
-    }
-}
-
-fn string(f: Field, r: &Row) -> &str {
-    let s = &r.song;
-    match f {
-        Title => &s.title,
-        Album => &s.album,
-        Artist => &s.artist,
-        Genre => s.genre.as_deref().unwrap_or(""),
-        Suffix => &s.suffix,
-        Added => r.extra.created.as_deref().unwrap_or(""),
-        _ => "",
-    }
-}
-
-/// Whether `row` passes the tree `n`: the last word where SQL was relaxed.
-pub fn matches(n: &Node, row: &Row, env: &Env) -> bool {
-    let r = match n {
-        Node::Group { all: true, rules } => return rules.iter().all(|n| matches(n, row, env)),
-        Node::Group { all: false, rules } => return rules.iter().any(|n| matches(n, row, env)),
-        Node::Rule(r) => r,
-    };
-    let iso = r.field.kind() == Kind::DateIso;
-    match &r.value {
-        Val::Text(v) => {
-            let (have, want) = (string(r.field, row).to_lowercase(), v.to_lowercase());
-            match r.op {
-                Op::Is => have == want,
-                Op::IsNot => have != want,
-                Op::Contains => have.contains(&want),
-                Op::NotContains => !have.contains(&want),
-                Op::StartsWith => have.starts_with(&want),
-                _ => have.ends_with(&want),
-            }
-        }
-        Val::Num(days) if matches!(r.op, Op::WithinDays | Op::NotWithinDays) => {
-            let cutoff = env.now_ms - days * DAY_MS;
-            let within = if iso { string(r.field, row) >= iso_from_ms(cutoff).as_str() } else { number(r.field, row) >= cutoff.max(1) };
-            within == (r.op == Op::WithinDays)
-        }
-        Val::Num(v) => {
-            let have = number(r.field, row);
-            match r.op {
-                Op::Is => have == *v,
-                Op::IsNot => have != *v,
-                Op::Greater => have > *v,
-                _ => have < *v,
-            }
-        }
-        Val::Range(a, b) => (*a..=*b).contains(&number(r.field, row)),
-        Val::Date(text, ms) => {
-            let ord = if iso { string(r.field, row).cmp(text.as_str()) } else { number(r.field, row).cmp(ms) };
-            ord == if r.op == Op::Greater { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }
-        }
-        Val::DateRange(a, b) => {
-            if iso {
-                let have = string(r.field, row);
-                have >= a.0.as_str() && have <= b.0.as_str()
-            } else {
-                (a.1..=b.1).contains(&number(r.field, row))
-            }
-        }
-        Val::None => {
-            let have = match r.field {
-                IsDownloaded => env.downloaded.contains(row.song.id.as_str()),
-                ExcludedFromMixes => row.excluded,
-                _ => row.song.starred,
-            };
-            have == (r.op == Op::IsTrue)
-        }
-    }
-}
-
 // ---- evaluation --------------------------------------------------------------
 
-/// The index row `rowid` with its play statistics, as the rules read it.
-pub fn load(c: &Connection, rowid: i64) -> rusqlite::Result<Option<Row>> {
-    let mut st = c.prepare_cached(
-        "SELECT i.json, coalesce(s.plays,0), coalesce(s.skips,0), coalesce(s.last_played_ms,0), EXISTS(SELECT 1 FROM mix_excluded e WHERE e.server=i.server AND e.song_id=i.id)
-         FROM items i LEFT JOIN song_stats s ON s.server=i.server AND s.song_id=i.id WHERE i.rowid=?1",
-    )?;
-    let row = st.query_row([rowid], |r| Ok((r.get::<_, String>(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))).optional()?;
-    Ok(row.and_then(|(json, plays, skips, last_played_ms, excluded)| {
-        Some(Row { song: serde_json::from_str(&json).ok()?, extra: serde_json::from_str(&json).unwrap_or_default(), plays, skips, last_played_ms, excluded })
-    }))
+/// The song of the index row `rowid`.
+fn song(c: &Connection, rowid: i64) -> rusqlite::Result<Option<Song>> {
+    let json: Option<String> = c.prepare_cached("SELECT json FROM items WHERE rowid=?1")?.query_row([rowid], |r| r.get(0)).optional()?;
+    Ok(json.and_then(|json| serde_json::from_str(&json).ok()))
 }
 
 /// CROSS JOIN pins the join order: without ANALYZE data the planner would still start from the index.
@@ -720,13 +593,14 @@ pub fn tables(root: &Node) -> &'static str {
 /// The songs of the playlist at positions `offset..offset+limit`, and how many positions were walked.
 /// With `count_all` the walk does not stop at the end of the page, so the second number is the playlist's length.
 pub fn run(c: &Connection, def: &Def, downloaded: &[String], offset: usize, limit: usize, count_all: bool, now_ms: i64) -> rusqlite::Result<(Vec<Song>, usize)> {
-    let mut cp = Compiler { args: Vec::new(), downloaded, downloaded_arg: None, now_ms, needs_rust: false };
+    let mut cp = Compiler { args: Vec::new(), downloaded, downloaded_arg: None, now_ms };
     let cond = cp.node(&def.root);
     let from = format!("{} WHERE {} AND {cond}", tables(&def.root), mixes::SONGS);
     let cap = def.limit.map(|l| l as usize);
-    let sql_is_exact = !cp.needs_rust && def.limit_ms.is_none();
+    // A time budget needs the walk from the start; otherwise SQL skips to the page.
+    let windowed = def.limit_ms.is_none();
 
-    if sql_is_exact && count_all {
+    if windowed && count_all {
         let n: i64 = c.prepare_cached(&format!("SELECT count(*) {from}"))?.query_row(rusqlite::params_from_iter(cp.args), |r| r.get(0))?;
         return Ok((Vec::new(), cap.map_or(n as usize, |cap| (n as usize).min(cap))));
     }
@@ -742,12 +616,12 @@ pub fn run(c: &Connection, def: &Def, downloaded: &[String], offset: usize, limi
         }
     };
     // A LIMIT lets SQLite keep a top-N heap instead of sorting every match.
-    let window = if sql_is_exact {
+    let window = if windowed {
         let take = cap.map_or(limit, |cap| limit.min(cap.saturating_sub(offset)));
         cp.args.push(Sql::Integer(take as i64));
         cp.args.push(Sql::Integer(offset as i64));
         format!(" LIMIT ?{} OFFSET ?{}", cp.args.len() - 1, cp.args.len())
-    } else if let Some(cap) = cap.filter(|_| !cp.needs_rust) {
+    } else if let Some(cap) = cap {
         cp.args.push(Sql::Integer(cap as i64));
         format!(" LIMIT ?{}", cp.args.len())
     } else {
@@ -757,31 +631,19 @@ pub fn run(c: &Connection, def: &Def, downloaded: &[String], offset: usize, limi
     let mut st = c.prepare_cached(&format!("SELECT i.rowid, {duration} {from} ORDER BY {order}{window}"))?;
     let mut rows = st.query(rusqlite::params_from_iter(cp.args))?;
 
-    let env = Env { downloaded: if cp.needs_rust { downloaded.iter().map(String::as_str).collect() } else { HashSet::new() }, now_ms };
     let budget = def.limit_ms.unwrap_or(i64::MAX);
-    let (mut page, mut position, mut total_ms) = (Vec::new(), if sql_is_exact { offset } else { 0 }, 0i64);
+    let (mut page, mut position, mut total_ms) = (Vec::new(), if windowed { offset } else { 0 }, 0i64);
     while let Some(r) = rows.next()? {
         if cap.is_some_and(|cap| position >= cap) || (!count_all && page.len() >= limit) {
             break;
         }
         let (rowid, duration_s): (i64, Option<i64>) = (r.get(0)?, r.get(1)?);
-        let mut row = None;
-        if cp.needs_rust {
-            match load(c, rowid)? {
-                Some(l) if matches(&def.root, &l, &env) => row = Some(l),
-                _ => continue,
-            }
-        }
         total_ms = total_ms.saturating_add(duration_s.unwrap_or(0) * 1000);
         if total_ms > budget {
             break;
         }
         if position >= offset && page.len() < limit {
-            let row = match row {
-                Some(r) => Some(r),
-                None => load(c, rowid)?,
-            };
-            page.extend(row.map(|r| r.song));
+            page.extend(song(c, rowid)?);
         }
         position += 1;
     }

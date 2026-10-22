@@ -8,10 +8,15 @@
   const sheet = $derived(ui.sheet!);
   $effect(() => dialog?.showModal());
   const close = () => (ui.sheet = null);
+  /** A click on the backdrop, not on the sheet's own padding (both target the dialog). */
+  function backdrop(e: MouseEvent) {
+    const r = dialog!.getBoundingClientRect();
+    if (e.target === dialog && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) close();
+  }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-<dialog class="menu" bind:this={dialog} onclose={close} onclick={(e) => e.target === dialog && close()}>
+<dialog class="menu" bind:this={dialog} onclose={close} onclick={backdrop}>
   <p class="menu-title">{sheet.title}</p>
   {#each sheet.items as it, i (i)}
     <button

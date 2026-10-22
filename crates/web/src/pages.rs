@@ -92,13 +92,27 @@ pub async fn change(client: &Client, change: &str) -> Result<(), String> {
     client.write(w).await.map_err(|e| e.to_string())
 }
 
-/// Reads what `ask` (JSON) names: the stored copy, then the server's if it differs; the last as JSON.
+/// Reads what `ask` (JSON) names: the stored copy, then the server's if it differs; the last as JSON. An
+/// album list's answer says where its `next` page starts, or null.
 pub async fn read(client: &Client, ask: &str) -> Result<String, String> {
     let read = serde_json::from_str::<Ask>(ask).map_err(|e| e.to_string())?.read()?;
+    let paged = match &read {
+        Read::AlbumList { kind, size, offset, .. } => Some((*kind, *offset as u32, *size as u32)),
+        _ => None,
+    };
     let mut last = None;
     client.read_each(read, |p| last = Some(p)).await.map_err(|e| e.to_string())?;
     let core = client.core();
-    Ok(last.map_or(Value::Null, |p| page(core, p)).to_string())
+    let Some(p) = last else { return Ok(Value::Null.to_string()) };
+    let got = match &p {
+        Page::Albums { v } => v.len() as u32,
+        _ => 0,
+    };
+    let mut v = page(core, p);
+    if let (Some((sort, offset, asked)), Value::Object(m)) = (paged, &mut v) {
+        m.insert("next".into(), json!(nori_core::browse::next_album_page(sort, offset, asked, got)));
+    }
+    Ok(v.to_string())
 }
 
 /// A cover's address for `px` square.

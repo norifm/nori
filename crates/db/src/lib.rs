@@ -88,6 +88,10 @@ pub fn open(path: &str, server: &str) -> rusqlite::Result<Connection> {
     c.create_scalar_function("sid", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC, move |_| {
         Ok(sid.clone())
     })?;
+    // Unicode lower-casing as Rust does it; SQLite's own `lower` and LIKE fold ASCII only.
+    c.create_scalar_function("lower_text", 1, rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
+        Ok(ctx.get::<String>(0)?.to_lowercase())
+    })?;
     drop_old_analysis(&c)?;
     c.execute_batch(APP_SCHEMA)?;
     c.execute_batch(SCHEMA)?;

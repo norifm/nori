@@ -447,7 +447,13 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     private fun request(id: String): DownloadRequest =
         DownloadRequest.Builder(id, Uri.parse(sources.downloadUrl(id))).setCustomCacheKey(sources.downloadKey(id)).build()
 
-    fun remove(ids: List<String>) = ids.forEach { DownloadService.sendRemoveDownload(context, DownloadWorker::class.java, it, false) }
+    fun remove(ids: List<String>) {
+        if (ids.isEmpty()) return
+        runCatching {
+            DownloadService.start(context, DownloadWorker::class.java)
+            for (id in ids) manager.removeDownload(id)
+        }.onFailure { Log.w(TAG, "could not remove ${ids.size} downloads", it) }
+    }
 
     /**
      * Stops downloads that have not finished and forgets them. The index entry goes at once as well as
@@ -765,9 +771,9 @@ object DownloadLines {
         if (facts[0] == 0L) return artist
         out.setLength(0)
         out.append(artist)
-        if (facts[1] >= 0) out.append(" · ").append(facts[1]).append('%')
-        dotted { it.append(Fmt.speed(facts[2])) }
-        dotted { appendEta(res, it, facts[3]) }
+        if (facts[1] >= 0) out.part { it.append(facts[1]).append('%') }
+        out.part { it.append(Fmt.speed(facts[2])) }
+        out.part { appendEta(res, it, facts[3]) }
         return out.toString()
     }
 
@@ -785,20 +791,8 @@ object DownloadLines {
         if (out.isEmpty()) return res.getString(R.string.downloads_nothing)
         return out.toString()
     }
-
-    /** Adds `" · "` and what [f] writes, or nothing when it writes nothing. */
-    private inline fun dotted(f: (StringBuilder) -> Unit) {
-        val start = out.length
-        out.append(" · ")
-        val mark = out.length
-        f(out)
-        if (out.length == mark) out.setLength(start)
-    }
-
-
 }
 
-/** "45 s left", "12:34 left", "2:05:00 left" onto [out]; nothing when it cannot be said (negative). */
 /** Adds `" · "` and what [f] writes, or nothing when it writes nothing (the first part has no dot). */
 internal inline fun StringBuilder.part(f: (StringBuilder) -> Unit) {
     val start = length
@@ -808,6 +802,7 @@ internal inline fun StringBuilder.part(f: (StringBuilder) -> Unit) {
     if (length == mark) setLength(start)
 }
 
+/** "45 s left", "12:34 left", "2:05:00 left" onto [out]; nothing when it cannot be said (negative). */
 internal fun appendEta(res: Resources, out: StringBuilder, sec: Long) {
     when {
         sec < 0 -> Unit

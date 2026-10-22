@@ -74,6 +74,8 @@ pub enum Action {
     // Previous or next settings group
     GroupBack,
     GroupOn,
+    /// Adds or changes the selected lyrics service's key.
+    Key,
 }
 
 /// Where a binding applies. Lookup goes from the focused part's scope to List to Global.
@@ -194,6 +196,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(Eq, "", Action::Decrease, "", [(Down, N), (Char('j'), N)]),
     b!(Eq, "enter", Action::Open, "Switch, choose presets, add a band, back to flat", [(Enter, N)]),
     b!(Eq, "d / delete", Action::Remove, "Remove the band (parametric)", [(Char('d'), N), (Delete, N)]),
+    b!(Values, "e", Action::Key, "Add or change a lyrics service's key", [(Char('e'), N)]),
     b!(Values, "[ ]", Action::GroupBack, "The group before or after", [(Char('['), N)]),
     b!(Values, "", Action::GroupOn, "", [(Char(']'), N)]),
     b!(Values, "← → / h l", Action::Decrease, "Change the value (seek with , and . here)", [(Left, N), (Char('h'), N)]),

@@ -113,10 +113,12 @@ impl Session {
         let song = next.as_deref().and_then(|id| self.song(id));
         let (done, heard, at) = self.scrobbler.lock().switch(song, playing, now_ms, wall_ms);
         // The profile playing now, not the one open when the write runs.
-        if let (Some(song), true, Some(db)) = (done.clone(), taste_model, self.db.get()) {
-            background::run(move || {
-                let _ = nori_library::history::record(&mut db.lock(), &song, at, heard, tz_offset_ms, db::now_ms());
-            });
+        if taste_model {
+            if let (Some(song), Some(db)) = (done.clone(), self.db.get()) {
+                background::run(move || {
+                    let _ = nori_library::history::record(&mut db.lock(), &song, at, heard, tz_offset_ms, db::now_ms());
+                });
+            }
         }
         if !scrobble {
             return ScrobbleSend { submit_id: None, submit_at: 0, now_playing_id: None };

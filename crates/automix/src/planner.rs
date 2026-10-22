@@ -288,7 +288,8 @@ impl Planner {
             alog::info(&format!("analysed {}: not stored: no database", f.song_id));
             return;
         };
-        let stored = super::store::put_finished(&db.lock(), &f.song_id, &features);
+        let (track, curve) = super::store::measure(&f.song_id, &features);
+        let stored = super::store::put_finished(&db.lock(), track, &curve);
         let a = match stored {
             Ok(a) => a,
             Err(e) => {

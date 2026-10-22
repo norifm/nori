@@ -24,11 +24,13 @@
   function typed() {
     clearTimeout(timer);
     const q = query.trim();
+    // A read still out when the box is cleared is no longer wanted.
+    const mine = ++asked;
     if (!q) {
       found = null;
+      open = false;
       return;
     }
-    const mine = ++asked;
     timer = setTimeout(async () => {
       const p = await read<Found>({ kind: "search", query: q }).catch(() => null);
       if (mine === asked) found = p;

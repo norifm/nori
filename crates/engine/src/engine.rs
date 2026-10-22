@@ -1737,15 +1737,15 @@ impl<L: Library, A: App, Q: Queue, E: FnMut(Event), C: Clock> Worker<L, A, Q, E,
             }
         }
         self.h.probe = None;
-        let Worker { p, off, .. } = self;
+        let Worker { p, off, seqs, .. } = self;
         let Some(off) = off.as_mut().filter(|o| o.active()) else { return };
         let heard = off.heard().map(|(i, ms, _)| (old.get(i).copied(), i, ms));
-        if !off.queue_changed(&old, &mut p.tracks, &p.queue) {
+        if !off.queue_changed(&old, seqs, &mut p.tracks, &p.queue) {
             return;
         }
         // The song heard goes on where it is; taken out, the one now in its place plays from its start.
-        let n = self.seqs.len();
-        match heard.map(|(seq, i, ms)| (seq.and_then(|s| self.seqs.iter().position(|&n| n == s)), i, ms)) {
+        let n = seqs.len();
+        match heard.map(|(seq, i, ms)| (seq.and_then(|s| seqs.iter().position(|&n| n == s)), i, ms)) {
             Some((Some(k), _, ms)) => self.jump(k, ms),
             Some((None, i, _)) if n > 0 => self.jump(i.min(n - 1), 0),
             _ => {}

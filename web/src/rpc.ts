@@ -23,15 +23,10 @@ export let player = false;
 
 const listeners: ((s: Said) => void)[] = [];
 const up: (() => void)[] = [];
-const hearers: ((h: Heard) => void)[] = [];
 const restarted: (() => void)[] = [];
 
 export function onSaid(f: (s: Said) => void) {
   listeners.push(f);
-}
-
-export function onHeard(f: (h: Heard) => void) {
-  hearers.push(f);
 }
 
 /** `f` runs once the player worker answers (the first time, and after a crash). */
@@ -74,8 +69,6 @@ function start(b: Build): Promise<void> {
         ready();
       } else if (m.crashed) {
         crashed(w, m.crashed);
-      } else if (m.heard) {
-        hearers.forEach((h) => h(m.heard));
       } else if (m.said) {
         listeners.forEach((l) => l(m.said));
       } else if (m.id) {

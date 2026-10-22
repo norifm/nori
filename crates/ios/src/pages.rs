@@ -22,7 +22,7 @@ use nori_host::Fetch;
 use nori_core::settings::HomeRow;
 use serde_json::{json, Value};
 
-use crate::session::{c_text, with_session};
+use crate::session::{c_text, server, with_session};
 
 pub const PAGE_HOME: i32 = 1;
 pub const PAGE_ALBUMS: i32 = 2;
@@ -127,6 +127,22 @@ pub(crate) fn list(token: u64) -> Option<(Vec<Song>, Option<PageOrigin>)> {
         .iter()
         .find(|l| l.token == token)
         .map(|l| (l.songs.clone(), l.origin.clone()))
+}
+
+/// Song `i` of list `token`, copying only that song.
+pub(crate) fn list_song(token: u64, i: usize) -> Option<Song> {
+    lock(&LISTS).iter().find(|l| l.token == token)?.songs.get(i).cloned()
+}
+
+/// Appends a page to list `token`, now the newest list. Its length before, or None when it is not kept.
+pub(crate) fn extend_list(token: u64, more: &[Song]) -> Option<usize> {
+    let mut lists = lock(&LISTS);
+    let at = lists.iter().position(|l| l.token == token)?;
+    let mut l = lists.remove(at)?;
+    let from = l.songs.len();
+    l.songs.extend_from_slice(more);
+    lists.push_back(l);
+    Some(from)
 }
 
 fn send(token: u64, v: &Value) {
@@ -428,7 +444,7 @@ fn pages(
 }
 
 fn read(token: u64, kind: i32, arg: String) {
-    let Some((client, core)) = with_session(|s| (s.client.clone(), s.core.clone())) else {
+    let Some((client, core)) = server() else {
         send(token, &json!({ "closed": true }));
         return;
     };
@@ -580,13 +596,8 @@ fn read(token: u64, kind: i32, arg: String) {
             let sort = song_sort_saved(list_prefs());
             match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, 0, 0, offset)) {
                 Ok(p) => {
-                    let mut songs = if offset == 0 {
-                        Vec::new()
-                    } else {
-                        list(token).map(|l| l.0).unwrap_or_default()
-                    };
-                    let from = songs.len();
-                    songs.extend(p.songs.iter().cloned());
+                    let kept = if offset == 0 { None } else { extend_list(token, &p.songs) };
+                    let from = kept.unwrap_or(0);
                     let mut rows = songs_section("songs", &p.songs, from);
                     rows["items"] = json!(lettered(
                         rows["items"].as_array().cloned().unwrap_or_default(),
@@ -596,7 +607,9 @@ fn read(token: u64, kind: i32, arg: String) {
                         "more": !p.exhausted, "next": offset as usize + p.songs.len(),
                         "from": from, "letters": song_letters(&sort).is_some(), "sections": [rows],
                     });
-                    keep_list(token, songs, None);
+                    if kept.is_none() {
+                        keep_list(token, p.songs, None);
+                    }
                     send(token, &v);
                 }
                 Err(e) => send_error(token, &e),
@@ -823,27 +836,22 @@ pub extern "C" fn nori_ios_tap_song(token: u64, index: i32) -> i32 {
 /// Adds song `index` of list `token` (or all of them for -1) next or at the end.
 #[no_mangle]
 pub extern "C" fn nori_ios_enqueue_list(token: u64, index: i32, next: i32) {
-    let Some((songs, _)) = list(token) else { return };
-    let songs = if index < 0 {
-        songs
-    } else {
-        match songs.get(index as usize) {
-            Some(s) => vec![s.clone()],
-            None => return,
-        }
+    let songs = match usize::try_from(index) {
+        Ok(i) => list_song(token, i).map(|s| vec![s]),
+        Err(_) => list(token).map(|l| l.0),
     };
+    let Some(songs) = songs else { return };
     with_session(|s| s.enqueue(songs, next != 0));
 }
 
 /// Downloads song `index` of list `token`, or all of them for -1.
 #[no_mangle]
 pub extern "C" fn nori_ios_download_list(token: u64, index: i32) {
-    let Some((songs, _)) = list(token) else { return };
-    let songs = if index < 0 {
-        songs
-    } else {
-        songs.get(index as usize).cloned().into_iter().collect()
+    let songs = match usize::try_from(index) {
+        Ok(i) => list_song(token, i).map(|s| vec![s]),
+        Err(_) => list(token).map(|l| l.0),
     };
+    let Some(songs) = songs else { return };
     with_session(|s| s.download(songs));
 }
 
@@ -960,7 +968,9 @@ pub extern "C" fn nori_ios_download_act(token: u64, act: i32) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_collection_download_entries(kind: i32, id: *const c_char) -> *mut c_char {
     let id = c_text(id);
-    with_session(|s| owned(&entries_of(s, &collection_songs(&s.core, &s.client, kind, id)))).unwrap_or(std::ptr::null_mut())
+    let Some((client, core)) = server() else { return std::ptr::null_mut() };
+    let songs = collection_songs(&core, &client, kind, id);
+    with_session(|s| owned(&entries_of(s, &songs))).unwrap_or(std::ptr::null_mut())
 }
 
 /// [`nori_ios_download_act`] for an album, playlist or artist by id. Blocks.
@@ -970,7 +980,9 @@ pub unsafe extern "C" fn nori_ios_collection_download_entries(kind: i32, id: *co
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_collection_download_act(kind: i32, id: *const c_char, act: i32) -> i32 {
     let id = c_text(id);
-    with_session(|s| act_on(s, collection_songs(&s.core, &s.client, kind, id), act)).unwrap_or(0)
+    let Some((client, core)) = server() else { return 0 };
+    let songs = collection_songs(&core, &client, kind, id);
+    with_session(|s| act_on(s, songs, act)).unwrap_or(0)
 }
 
 fn fetch(kind: i32, id: String) -> Option<Fetch> {
@@ -1114,7 +1126,7 @@ fn page_origin(kind: i32, id: &str) -> Option<PageOrigin> {
 
 /// A headed page's Play and Shuffle as they stand (`pages::hero_buttons`), packed as
 /// `HeroButtons::pack` says: while the queue playing was started from this page, Play pauses and
-/// resumes it and Shuffle turns its shuffle off. `playing` and `buffering` are what the app shows.
+/// resumes it and Shuffle turns its shuffle off or on. `playing` and `buffering` are what the app shows.
 fn hero(origin: Option<&PageOrigin>, page: &PageOrigin, shuffled: bool, playing: bool, buffering: bool) -> i32 {
     let here = origin == Some(page);
     nori_core::pages::hero_buttons(here, shuffled, playing, buffering, true, true).pack()
@@ -1498,6 +1510,23 @@ mod tests {
         assert_eq!(list(1000 + KEPT_LISTS as u64 + 1).unwrap().0[0].id, (KEPT_LISTS + 1).to_string());
         keep_list(1001 + KEPT_LISTS as u64, vec![song("again")], None);
         assert_eq!(list(1001 + KEPT_LISTS as u64).unwrap().0[0].id, "again");
+    }
+
+    #[test]
+    fn a_page_extends_its_kept_list_in_place() {
+        let _turn = lock(&ABI_IN_USE);
+        forget_lists();
+        keep_list(90, vec![song("a"), song("b")], None);
+        keep_list(91, vec![song("other")], None);
+        assert_eq!(extend_list(90, &[song("c")]), Some(2));
+        assert_eq!(list_song(90, 2).map(|s| s.id), Some("c".into()));
+        assert_eq!(list_song(90, 3), None);
+        assert_eq!(extend_list(92, &[song("c")]), None, "a list not kept is not made");
+        for t in 0..(KEPT_LISTS as u64 - 1) {
+            keep_list(2000 + t, vec![], None);
+        }
+        assert!(list(90).is_some(), "an extended list is the newest");
+        assert!(list(91).is_none());
     }
 
     #[test]

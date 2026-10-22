@@ -536,6 +536,21 @@ mod tests {
         asked: parking_lot::Mutex<Vec<Exchange>>,
     }
 
+    /// Pends once, as a network call does, so that calls started together interleave.
+    struct YieldOnce(bool);
+
+    impl std::future::Future for YieldOnce {
+        type Output = ();
+        fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+            if self.0 {
+                return std::task::Poll::Ready(());
+            }
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+
     impl InnerTube {
         fn urls(&self) -> Vec<String> {
             self.asked.lock().iter().map(|e| e.url.split('?').next().unwrap_or_default().to_string()).collect()
@@ -549,6 +564,7 @@ mod tests {
         }
         async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
             self.asked.lock().push(request);
+            YieldOnce(false).await;
             self.answers.lock().pop().ok_or(TransportError::Failed { kind: FailureKind::Connect, detail: None })
         }
         fn address_changed(&self) {}
@@ -1020,6 +1036,16 @@ mod tests {
         let Page::Playlists { v } = block(c.read_now(Read::PlaylistList)).unwrap() else { panic!() };
         assert_eq!(v.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["yt-VLLM", "yt-VLOLAK5uy_lNVBcjNtiCwq-n95uoxJ-Gd4vsfMkyZNs"]);
         assert_eq!(t.urls(), [BROWSE], "rotated 30 s ago: not again");
+    }
+
+    /// Calls started together on a due session share one rotation, and the cookies it gave are the ones kept.
+    #[test]
+    fn calls_together_rotate_the_session_once() {
+        let (c, t) = signed_in(601, vec![answer(200, "", &["__Secure-1PSIDTS=ts2; Domain=.youtube.com; Secure"]), answer(200, "library_playlists", &[]), answer(200, "library_playlists", &[])]);
+        let (a, b) = block(futures_util::future::join(c.read_now(Read::PlaylistList), c.read_now(Read::PlaylistList)));
+        assert!(a.is_ok() && b.is_ok());
+        assert_eq!(t.urls(), [ROTATE, BROWSE, BROWSE]);
+        assert!(account::tests::stored(&c).unwrap().cookies().contains("ts2"));
     }
 
     /// Cookies an answer changes are kept the moment it comes, not only a rotation's.

@@ -63,6 +63,7 @@ export const W = {
   instantMix: "Instant mix",
   startJam: "Start a Jam here",
   mixEmpty: "The server has nothing like it.",
+  nothingToPlay: "Nothing to play.",
   lyrics: "Lyrics",
   queue: "Playing next",
   history: "History",

@@ -77,7 +77,11 @@ fn be64(b: &[u8], at: usize) -> u64 {
 /// A `mvhd` or `mdhd` box's timescale and duration.
 fn header_times(r: &mut (impl Read + Seek), a: &Atom) -> io::Result<(u64, u64)> {
     let b = read_at(r, a.body, (a.end - a.body).min(32) as usize)?;
-    Ok(if b.first() == Some(&1) { (be32(&b, 20), be64(&b, 24)) } else { (be32(&b, 12), be32(&b, 16)) })
+    let v1 = b.first() == Some(&1);
+    if b.len() < if v1 { 32 } else { 20 } {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    Ok(if v1 { (be32(&b, 20), be64(&b, 24)) } else { (be32(&b, 12), be32(&b, 16)) })
 }
 
 /// The single edit (segment duration in movie timescale, media time in track timescale); None unless
@@ -232,4 +236,17 @@ mod tests {
         assert_eq!(smpb(" 00000000 00000840 000001CA 0000000000059E36"), Some((2112, 458)));
     }
 
+    #[test]
+    fn a_short_header_box_is_an_error() {
+        // (version, body length, fails): version 0 needs 20 bytes, version 1 needs 32.
+        for (version, len, fails) in [(0u8, 19, true), (0, 20, false), (1, 31, true), (1, 32, false), (0, 0, true)] {
+            let mut body = vec![0u8; len];
+            if let Some(v) = body.first_mut() {
+                *v = version;
+            }
+            let a = Atom { kind: *b"mdhd", body: 0, end: len as u64 };
+            let got = header_times(&mut Cursor::new(body), &a);
+            assert_eq!(got.is_err(), fails, "version {version}, {len} bytes: {got:?}");
+        }
+    }
 }

@@ -14,6 +14,8 @@ restarting, with its place in the current song. Add a song to the end or to play
 handle, swipe it away (with Undo), or clear what is coming.
 
 - **Shuffle** spreads artists and albums apart, so the same artist rarely plays twice in a row.
+  Turned off, the song playing goes on and the rest play in their own order again (from nori 0.7.0).
+  On an album, playlist or artist page whose songs are playing, its Shuffle turns shuffle off or on.
 - **Repeat** goes off, all, one.
 - **Skip explicit songs** leaves out songs the server marks explicit.
 - A song that won't play is skipped, up to three in a row (from nori 0.7.0 always; before, a switch). A song

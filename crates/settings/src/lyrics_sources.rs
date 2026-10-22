@@ -348,7 +348,7 @@ mod tests {
         assert!(cleared.better_lyrics_key.is_empty() && cleared.lyrics_on == [LyricsService::BetterLyrics], "no key, still on");
         let state = |p: &StoredPrefs| crate::settings_model::state(p, crate::settings_model::Output::default(), &nori_automix::beat_model::ModelFile::default());
         let row = |p: &StoredPrefs| state(p).lyrics_sources.into_iter().find(|s| s.id == "BETTER_LYRICS").unwrap();
-        assert!(row(&keyed).takes_key && !row(&keyed).needs_key && row(&keyed).key_set);
+        assert!(!row(&keyed).needs_key && row(&keyed).key_set);
         assert!(!row(&cleared).key_set);
         assert!(!state(&keyed).values.contains_key("betterLyricsKey"), "the key is never a value shown or reported");
     }

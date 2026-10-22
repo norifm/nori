@@ -137,7 +137,7 @@ pub(crate) fn from_lyricsfile(text: &str) -> Lyrics {
     if version != "1.0" || doc["metadata"]["instrumental"].as_bool() == Some(true) {
         return Lyrics::default();
     }
-    let ms = |y: &Yaml| y.as_i64().filter(|v| *v >= 0);
+    let ms = |y: &Yaml| y.as_i64().filter(|v| (0..=LONGEST_MS).contains(v));
     let mut lines = Vec::new();
     for l in doc["lines"].as_vec().map(Vec::as_slice).unwrap_or_default() {
         let (Some(text), Some(start)) = (l["text"].as_str(), ms(&l["start_ms"])) else { continue };

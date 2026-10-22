@@ -29,6 +29,8 @@ impl Http {
         let config = Agent::config_builder()
             .http_status_as_error(false)
             .user_agent(USER_AGENT)
+            // Covers, API, audio and held polls share one host.
+            .max_idle_connections_per_host(8)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
             .build();

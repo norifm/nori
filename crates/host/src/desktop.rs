@@ -15,6 +15,33 @@ use nori_output_cpal::CpalOutput;
 use crate::session::{Open, Out, Session};
 use crate::Level;
 
+/// A calendar date, and whether the zone it is in lies south of the equator (the seasons turn half a year
+/// later there).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Today {
+    pub month: u32,
+    pub day: u32,
+    pub southern: bool,
+}
+
+impl Today {
+    /// The local date now, in the local time zone.
+    pub fn now() -> Today {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        let (month, day) = nori_look::theme::utc_date(now + nori_core::library::local_offset_s(now));
+        let link = std::fs::read_link("/etc/localtime").map(|p| p.to_string_lossy().into_owned()).ok();
+        Today { month, day, southern: zone(std::env::var("TZ").ok(), link).is_some_and(|z| nori_look::theme::southern(&z)) }
+    }
+}
+
+/// The IANA time zone: `tz` (the `TZ` variable), else where `link` (`/etc/localtime`) points.
+fn zone(tz: Option<String>, link: Option<String>) -> Option<String> {
+    if let Some(tz) = tz.filter(|z| !z.is_empty()) {
+        return Some(tz.trim_start_matches(':').to_string());
+    }
+    link?.split_once("zoneinfo/").map(|(_, z)| z.to_string())
+}
+
 /// The app's queue session over its settings: the client's object graph root, which every view reads.
 /// Global: the root of the client's own object graph (as Kotlin's `Nori`), made once a process.
 pub fn app() -> &'static Arc<nori_core::queue::Session> {
@@ -95,4 +122,18 @@ pub fn open(o: DesktopOpen) -> Result<Session, String> {
         decoders: Default::default(),
         out: o.out,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_zone_is_tz_else_the_localtime_link() {
+        let link = || Some("/usr/share/zoneinfo/Australia/Sydney".to_string());
+        assert_eq!(zone(None, link()).as_deref(), Some("Australia/Sydney"));
+        assert_eq!(zone(Some(":Europe/Berlin".into()), link()).as_deref(), Some("Europe/Berlin"));
+        assert_eq!(zone(Some(String::new()), link()).as_deref(), Some("Australia/Sydney"), "an empty TZ is unset");
+        assert_eq!(zone(None, Some("/etc/UTC".into())), None);
+    }
 }

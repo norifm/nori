@@ -9,11 +9,10 @@ use nori_core::client::{Starrable, Write};
 use nori_core::menus::{row_swipe, sleep_choices, song_menu, JamOffer, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
 use nori_core::browse::ProfileRules;
 use nori_core::Song;
-use nori_host::session::Session;
 use serde_json::{json, Value};
 
-use crate::pages::{keep_list, list, owned};
-use crate::session::{c_text, with_session};
+use crate::pages::{keep_list, list_song, owned};
+use crate::session::{c_text, server, with_session};
 
 fn action_code(a: &SongAction) -> i32 {
     match a {
@@ -82,32 +81,30 @@ fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, r
 }
 
 fn song_at(token: u64, index: i32) -> Option<Song> {
-    let i = usize::try_from(index).ok()?;
-    list(token)?.0.into_iter().nth(i)
+    list_song(token, usize::try_from(index).ok()?)
 }
 
 /// Plays a radio (`radio`) or an instant mix seeded by `song`: the songs played, or -1 when the
 /// server could not be asked.
-fn play_mix(s: &Session, song: &Song, radio: bool) -> i32 {
-    let id = song.id.clone();
+fn play_mix(song: Song, radio: bool) -> i32 {
+    let Some((client, _)) = server() else { return 0 };
     let asked = if radio {
-        nori_core::transport::block_on(s.client.radio(id))
+        nori_core::transport::block_on(client.radio(song.id))
     } else {
-        nori_core::transport::block_on(s.client.instant_mix(id))
+        nori_core::transport::block_on(client.instant_mix(song.id))
     };
     match asked {
         Ok(songs) if songs.is_empty() => 0,
         Ok(songs) => {
             let n = i32::try_from(songs.len()).unwrap_or(i32::MAX);
-            s.play(songs, 0, false, None);
-            n
+            with_session(|s| s.play(songs, 0, false, None)).map_or(0, |()| n)
         }
         Err(_) => -1,
     }
 }
 
-fn wrote(s: &Session, w: Write) -> i32 {
-    i32::from(nori_core::transport::block_on(s.client.write(w)).is_ok())
+fn wrote(w: Write) -> i32 {
+    server().map_or(0, |(client, _)| i32::from(nori_core::transport::block_on(client.write(w)).is_ok()))
 }
 
 /// Keeps the playing song (here, or on the device this one mirrors) as a one-song list under `token`, for
@@ -143,6 +140,9 @@ pub extern "C" fn nori_ios_song_menu(token: u64, index: i32, starred: i32, playe
 #[no_mangle]
 pub extern "C" fn nori_ios_song_act(token: u64, index: i32, action: i32, on: i32) -> i32 {
     let Some(song) = song_at(token, index) else { return 0 };
+    if let 11 | 12 = action {
+        return play_mix(song, action == 11);
+    }
     with_session(|s| match action {
         0 => {
             s.star(Starrable::Song, song.id.clone(), on != 0);
@@ -164,7 +164,6 @@ pub extern "C" fn nori_ios_song_act(token: u64, index: i32, action: i32, on: i32
             s.star(Starrable::Song, song.id.clone(), true);
             1
         }
-        11 | 12 => play_mix(s, &song, action == 11),
         13 => i32::from(s.core.mix_excluded_set(song.id.clone(), true).is_ok()),
         _ => 0,
     })
@@ -178,11 +177,11 @@ pub extern "C" fn nori_ios_song_share(token: u64, index: i32) -> *mut c_char {
     let Some(song) = song_at(token, index) else {
         return std::ptr::null_mut();
     };
-    with_session(|s| match nori_core::transport::block_on(s.client.read_now(Read::ShareLink { id: song.id })) {
+    let Some((client, _)) = server() else { return std::ptr::null_mut() };
+    match nori_core::transport::block_on(client.read_now(Read::ShareLink { id: song.id })) {
         Ok(Page::ShareUrl { v }) => CString::new(v).map_or(std::ptr::null_mut(), CString::into_raw),
         _ => std::ptr::null_mut(),
-    })
-    .unwrap_or(std::ptr::null_mut())
+    }
 }
 
 /// Adds song `index` of list `token` to playlist `playlist`. Blocks; 1 when the server took it (or it
@@ -194,7 +193,7 @@ pub extern "C" fn nori_ios_song_share(token: u64, index: i32) -> *mut c_char {
 pub unsafe extern "C" fn nori_ios_playlist_add(token: u64, index: i32, playlist: *const c_char) -> i32 {
     let Some(song) = song_at(token, index) else { return 0 };
     let id = c_text(playlist);
-    with_session(|s| wrote(s, Write::AddToPlaylist { id, song_ids: vec![song.id] })).unwrap_or(0)
+    wrote(Write::AddToPlaylist { id, song_ids: vec![song.id] })
 }
 
 /// Makes playlist `name` holding song `index` of list `token`. Blocks; 1 when done.
@@ -208,8 +207,7 @@ pub unsafe extern "C" fn nori_ios_playlist_create(token: u64, index: i32, name: 
     if name.trim().is_empty() {
         return 0;
     }
-    with_session(|s| wrote(s, Write::CreatePlaylist { name: name.trim().to_string(), song_ids: vec![song.id] }))
-        .unwrap_or(0)
+    wrote(Write::CreatePlaylist { name: name.trim().to_string(), song_ids: vec![song.id] })
 }
 
 /// What swiping a song row does, to the left when `left` and else to the right, on a song whose heart is
@@ -237,7 +235,7 @@ pub unsafe extern "C" fn nori_ios_playlist_remove(playlist: *const c_char, index
         return 0;
     }
     let id = c_text(playlist);
-    with_session(|s| wrote(s, Write::RemoveFromPlaylist { id, index })).unwrap_or(0)
+    wrote(Write::RemoveFromPlaylist { id, index })
 }
 
 /// Deletes playlist `playlist`. Blocks; 1 when done.
@@ -247,7 +245,7 @@ pub unsafe extern "C" fn nori_ios_playlist_remove(playlist: *const c_char, index
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_playlist_delete(playlist: *const c_char) -> i32 {
     let id = c_text(playlist);
-    with_session(|s| wrote(s, Write::DeletePlaylist { id })).unwrap_or(0)
+    wrote(Write::DeletePlaylist { id })
 }
 
 /// The sleep timer's choices as JSON to free: `[{minutes, end, songs}]`, all zeros for "Off" (first,

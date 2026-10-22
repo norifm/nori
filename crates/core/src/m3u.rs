@@ -7,8 +7,7 @@ pub use nori_library::m3u::*;
 impl Core {
     /// The indexed song for each entry (exact artist and title first, then full text); None if unmatched.
     pub(crate) fn m3u_match(&self, entries: Vec<M3uEntry>) -> Result<Vec<Option<Song>>> {
-        let c = self.db.lock();
-        Ok(entries.iter().map(|e| resolve(&c, e)).collect::<rusqlite::Result<_>>()?)
+        Ok(entries.iter().map(|e| resolve(&self.db.lock(), e)).collect::<rusqlite::Result<_>>()?)
     }
 }
 

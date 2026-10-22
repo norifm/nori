@@ -83,9 +83,9 @@
       {/each}
     </ul>
   {:else if !j.guest}
-    {#if j.start === "Unavailable"}
+    {#if j.start === "Unsupported"}
       <p class="sub">{W.jamUnavailable}</p>
-    {:else}
+    {:else if j.start !== "Unavailable"}
       <button class="pill solid" id="jam-start" disabled={j.start === "Starting"} onclick={act(() => ask("jam_open"))}><Icon name="jam" />{j.start === "Starting" ? W.jamStarting : W.jamStart}</button>
     {/if}
     <h4>{W.jamJoin}</h4>

@@ -74,8 +74,9 @@ pub trait App: Host {
     fn clock(&mut self, now_ms: i64);
     /// AutoMix is on (upcoming songs are measured).
     fn auto_mix(&self) -> bool;
-    /// The planner's window: the previous song, then the current and following in play order.
-    fn window(&mut self, window: Vec<WindowSong>, shuffling: bool);
+    /// The planner's window: the ids of the previous song, then the current and following in play
+    /// order. `songs` describes them.
+    fn window<S: Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool);
     /// Measures the unmeasured songs among `ids`.
     fn measure_ahead<S: Songs>(&mut self, _songs: &mut S, _ids: &[String]) {}
     /// Output moved to a device: its key and its bound sound, if any. `None` when the app does not
@@ -884,7 +885,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
     /// `Session::window`).
     fn sync_queue(&mut self) {
         let current = self.current;
-        let (window, shuffling) = self.queue.read(|q| {
+        let (ids, shuffling) = self.queue.read(|q| {
             let repeat = q.repeat();
             let mut window = Vec::new();
             if let Some(c) = current.or(q.current()) {
@@ -899,8 +900,7 @@ impl<S: Songs, T: Track, A: App, Q: Queue> Player<S, T, A, Q> {
             let ids: Vec<String> = window.into_iter().map(|i| q.ids()[i].clone()).collect();
             (ids, q.shuffling())
         });
-        let window = window.iter().map(|id| self.tracks.about(id)).collect();
-        self.app.window(window, shuffling);
+        self.app.window(&self.tracks, &ids, shuffling);
     }
 
     fn set_current(&mut self, i: usize) {

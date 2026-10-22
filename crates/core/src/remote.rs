@@ -199,20 +199,31 @@ pub struct Mirror {
     pub at_us: i64,
     pub shuffle: bool,
     pub repeat: u8,
+    /// The rows the next and previous buttons go to; None when they go nowhere.
+    pub next: Option<u32>,
+    pub previous: Option<u32>,
     /// The device's volume, 0 to 100, when it can be set.
     pub volume: Option<u8>,
     /// Its answer to the last command sent to it, when it refused.
     pub refused: Option<Refusal>,
 }
 
+/// [`Mirror::next`] and [`Mirror::previous`] from row `at` of `rows` known, of `len` songs: repeat-one
+/// skips like repeat-all (`Playlist::next`), and they wrap only once every row is known.
+fn skips(at: Option<u32>, rows: u32, len: u32, repeat: u8) -> (Option<u32>, Option<u32>) {
+    let Some(at) = at else { return (None, None) };
+    let wraps = repeat != nori_player::playlist::REPEAT_OFF && rows == len;
+    let next = (at + 1 < rows).then_some(at + 1).or(wraps.then_some(0));
+    let previous = at.checked_sub(1).or(wraps.then(|| rows - 1));
+    (next, previous)
+}
+
 impl Mirror {
     /// Where the song is at `now_us` on this device's clock, within the song.
     pub fn position_at(&self, now_us: i64) -> i64 {
-        if !self.playing {
-            return self.position_ms;
-        }
-        let length = self.at.and_then(|a| self.rows.get(a as usize)).filter(|r| r.song.duration > 0).map_or(i64::MAX, |r| r.song.duration as i64 * 1000);
-        (self.position_ms + ((now_us - self.at_us) as f64 / 1000.0 * self.rate) as i64).clamp(0, length)
+        let pace = if self.playing { self.rate } else { 0.0 };
+        let duration = self.at.and_then(|a| self.rows.get(a as usize)).map_or(0, |r| r.song.duration);
+        nori_remote::run_on(self.position_ms, (now_us - self.at_us) as f64 / 1000.0, pace, duration)
     }
 
     /// Where the song is now: what the device's listener hears at this moment.
@@ -354,7 +365,9 @@ pub enum JamStart {
     Starting,
     /// This device hosts one.
     Hosting,
-    /// Jams are off, the server has no relay, or this is a guest's profile.
+    /// The server has no relay for jams (and no nearby jam stands in for it).
+    Unsupported,
+    /// Jams are off, or this is a guest's profile.
     Unavailable,
 }
 
@@ -814,11 +827,15 @@ impl Mirrored {
     fn view(&self, name: String, kind: DeviceKind, refused: Option<Refusal>) -> Option<Mirror> {
         let st = self.shown.as_ref()?;
         let rows = self.rows();
+        let at = rows.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32);
+        let (next, previous) = skips(at, rows.len() as u32, st.len, st.repeat);
         Some(Mirror {
             id: self.id.clone(),
             name,
             kind,
-            at: rows.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32),
+            at,
+            next,
+            previous,
             rows: rows.iter().map(|e| MirrorRow { index: e.index, song: e.song() }).collect(),
             len: st.len,
             rev: st.rev,
@@ -984,10 +1001,14 @@ impl Inner {
         self.plays(id) || (has_song && self.heard_playing.get(id).copied() >= self.played_last)
     }
 
+    /// Device `id` as it is listed.
+    fn member(&self, id: &str) -> Option<&Member> {
+        self.peers.iter().map(|p| &p.member).chain(self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members)).find(|m| m.id == id)
+    }
+
     /// Device `id`'s name and kind, as it is listed.
     fn who(&self, id: &str) -> Option<(String, DeviceKind)> {
-        let m = self.peers.iter().map(|p| &p.member).chain(self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members)).find(|m| m.id == id)?;
-        Some((m.name.clone(), m.kind))
+        self.member(id).map(|m| (m.name.clone(), m.kind))
     }
 
     fn jam_room(&self) -> Option<&str> {
@@ -1469,6 +1490,12 @@ impl Remote {
         m.view(name, kind, i.refused.get(&m.id).copied())
     }
 
+    /// Whether [`Remote::active`] has a device, without building its mirror.
+    pub fn mirroring(&self) -> bool {
+        let i = self.inner.lock();
+        i.mirror.as_ref().is_some_and(|m| m.shown.is_some() && i.member(&m.id).is_some())
+    }
+
     /// Moves the playback to `device`, or here (None): the active device hands its queue over and
     /// pauses. A device that is the active one already (it plays, or played since this one did) is only
     /// followed, as is any device while nothing is queued here.
@@ -1805,15 +1832,17 @@ impl Remote {
     /// Where starting a jam here stands, as every screen that offers it shows it.
     pub fn jam_start(&self) -> JamStart {
         let i = self.inner.lock();
-        let on = self.client.core.session.settings.current().is_some_and(|p| p.remote_control);
+        let on = self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false);
         if i.hosted.is_some() {
             JamStart::Hosting
         } else if i.opening.is_some() {
             JamStart::Starting
-        } else if on && self.me.kind != DeviceKind::Guest && (i.relay != RelaySupport::Unsupported || self.client.core.kind() == crate::settings::ServerKind::YouTubeMusic) {
-            JamStart::Offered
-        } else {
+        } else if !on || self.me.kind == DeviceKind::Guest {
             JamStart::Unavailable
+        } else if i.relay == RelaySupport::Unsupported && self.client.core.kind() != crate::settings::ServerKind::YouTubeMusic {
+            JamStart::Unsupported
+        } else {
+            JamStart::Offered
         }
     }
 
@@ -1915,12 +1944,17 @@ impl Remote {
         }
         let host = i.joined()?.1?;
         let st = host.state.as_ref()?;
+        let at = st.entries.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32);
+        let skip = i.jam_controls().is_none_or(|c| c.controls.skip != Reach::Nowhere);
+        let (next, previous) = if skip { skips(at, st.entries.len() as u32, st.len, st.repeat) } else { (None, None) };
         Some(Mirror {
             id: host.id.clone(),
             name: host.name.clone(),
             kind: host.kind,
             rows: st.entries.iter().map(|e| MirrorRow { index: e.index, song: e.song() }).collect(),
-            at: st.entries.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32),
+            at,
+            next,
+            previous,
             len: st.len,
             rev: st.rev,
             playing: st.playing,
@@ -2367,7 +2401,7 @@ impl Remote {
     /// What guests play along by: this device's speed and pitch, and the plan out of the song heard.
     fn along(&self, index: Option<u32>, playing: Playing) -> Along {
         let session = &self.client.core.session;
-        let (speed, pitch) = session.settings.current().map_or((1.0, 1.0), |p| (p.speed, p.pitch));
+        let (speed, pitch) = session.settings.with_prefs(|p| (p.speed, p.pitch)).unwrap_or((1.0, 1.0));
         let mix = playing.mix_from.or(index).and_then(|at| {
             let id = session.playlist(|p| p.ids().get(at as usize).cloned())?;
             let mut mix = mix_of(at, &session.planner.made(&id)??)?;
@@ -2482,7 +2516,7 @@ impl Remote {
     }
 
     pub(crate) fn sync_mark(&self, kind: crate::client::Starrable, id: String) {
-        if !self.client.core.session.settings.current().is_some_and(|p| p.remote_control) {
+        if !self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false) {
             return;
         }
         let on = {
@@ -3112,7 +3146,7 @@ impl Remote {
         let body = match op {
             Op::LibraryMarks { marks } => {
                 let allowed = matches!(via, Via::Door) && !self.inner.lock().stopped
-                    && self.client.core.session.settings.current().is_some_and(|p| p.remote_control)
+                    && self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false)
                     && self.account_tag().is_some();
                 let refusal = if allowed {
                     for mark in &marks {
@@ -3136,7 +3170,10 @@ impl Remote {
             }
             Op::Clock { t1 } => Body::Clock { t1, t2: received, t3: self.now() },
             Op::Page { from: turn, count } if !matches!(via, Via::Relay(Some(_)) | Via::LanJam) => {
-                let q = self.read_queue(|_, len| turn as usize..(turn.saturating_add(count.min(PAGE_MAX)) as usize).min(len));
+                let q = self.read_queue(|_, len| {
+                    let start = (turn as usize).min(len);
+                    start..(turn.saturating_add(count.min(PAGE_MAX)) as usize).min(len)
+                });
                 Body::Page { id, rev: q.rev, from: turn, entries: q.entries }
             }
             op => Body::Ack { id, refusal: self.carry_out(&via, &from, id, op).err() },
@@ -3552,7 +3589,7 @@ mod tests {
 
     #[test]
     fn the_players_controls_become_the_devices_commands() {
-        let mut m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 3, rev: 7, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, volume: Some(40), refused: None };
+        let mut m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 3, rev: 7, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, next: None, previous: None, volume: Some(40), refused: None };
         let pressed = [
             (Press::Toggle, Some(Op::Pause)),
             (Press::Play, Some(Op::Play)),
@@ -3572,6 +3609,28 @@ mod tests {
         assert_eq!(m.op(Press::Toggle), Some(Op::Play));
         m.volume = None;
         assert_eq!(m.op(Press::Volume { level: 0.9 }), None, "a volume the device does not offer");
+    }
+
+    #[test]
+    fn a_mirrors_skips_wrap_by_its_repeat_once_every_row_is_known() {
+        let (some, none) = (Some, None::<u32>);
+        // at, rows known, len, repeat: next, previous
+        let table = [
+            (None, 3, 3, 2, none, none),
+            (some(0), 3, 3, 0, some(1), none),
+            (some(1), 3, 3, 0, some(2), some(0)),
+            (some(2), 3, 3, 0, none, some(1)),
+            (some(0), 3, 3, 1, some(1), some(2)),
+            (some(2), 3, 3, 1, some(0), some(1)),
+            (some(0), 3, 3, 2, some(1), some(2)),
+            (some(2), 3, 3, 2, some(0), some(1)),
+            (some(0), 1, 1, 2, some(0), some(0)),
+            (some(0), 3, 5, 2, some(1), none),
+            (some(2), 3, 5, 1, none, some(1)),
+        ];
+        for (at, rows, len, repeat, next, previous) in table {
+            assert_eq!(skips(at, rows, len, repeat), (next, previous), "at {at:?} of {rows}/{len}, repeat {repeat}");
+        }
     }
 
     #[test]

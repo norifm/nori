@@ -39,21 +39,22 @@ pub struct SettingSpec {
     pub default: String,
 }
 
-fn spec(name: &str, k: &K) -> SettingSpec {
+fn spec(name: &str, k: &K, defaults: &StoredPrefs) -> SettingSpec {
     let (kind, options, (min, max)): (SettingKind, Vec<String>, (f32, f32)) = match k {
         K::Switch => (SettingKind::Switch, vec!["false".into(), "true".into()], (0.0, 0.0)),
         K::Choice(o) => (SettingKind::Choice, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Flags(o) => (SettingKind::Flags, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Level(lo, hi) => (SettingKind::Level, Vec::new(), (*lo, *hi)),
     };
-    let default = value_of(&StoredPrefs::default(), name).unwrap_or_default();
+    let default = value_of(defaults, name).unwrap_or_default();
     SettingSpec { name: name.into(), kind, options, min, max, default }
 }
 
 /// Every offered setting, in a stable order: the table's, then [`SPECIAL_SPECS`].
 pub fn specs() -> Vec<SettingSpec> {
-    let table = ROWS.iter().filter_map(|r| Some(spec(r.name?, r.spec.as_ref()?)));
-    table.chain(SPECIAL_SPECS.iter().map(|(n, k)| spec(n, k))).collect()
+    let defaults = StoredPrefs::default();
+    let table = ROWS.iter().filter_map(|r| Some(spec(r.name?, r.spec.as_ref()?, &defaults)));
+    table.chain(SPECIAL_SPECS.iter().map(|(n, k)| spec(n, k, &defaults))).collect()
 }
 
 /// A setting's value in its options' form ("1", "0.75"). Lookup switches read off while the master
@@ -67,18 +68,40 @@ pub fn value_of(p: &StoredPrefs, name: &str) -> Option<String> {
 }
 
 /// One lyrics service in rank order. Changed by name with `lyricsService:<id>`, `lyricsKey:<id>` (its
-/// key, for one that `takes_key`), `lyricsPlace` (`<id>:<place>`) and `lyricsMove` (`<id>:-1`).
+/// key, for one with a [`KeyAction`] or that asks for one), `lyricsPlace` (`<id>:<place>`) and
+/// `lyricsMove` (`<id>:-1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LyricsSource {
     pub id: String,
     pub on: bool,
-    /// Takes a key, typed on its row.
-    pub takes_key: bool,
-    /// Never on without its key: switching it on asks for the key first.
+    /// Never on without its key.
     pub needs_key: bool,
     /// Its key is given.
     pub key_set: bool,
+    /// The key button beside its switch.
+    pub key: KeyAction,
+    /// Switching it on asks for its key first.
+    pub asks_key_on_enable: bool,
+}
+
+/// The key button beside a lyrics service's switch: an optional key is added there, a given one changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum KeyAction {
+    None,
+    Add,
+    Change,
+}
+
+fn lyrics_source(s: lyrics_sources::LyricsService, on: bool, p: &StoredPrefs) -> LyricsSource {
+    let key_set = !s.key(p).is_empty();
+    let key = match (key_set, s.takes_key() && !s.needs_key()) {
+        (true, _) => KeyAction::Change,
+        (false, true) => KeyAction::Add,
+        (false, false) => KeyAction::None,
+    };
+    LyricsSource { id: s.name().into(), on, needs_key: s.needs_key(), key_set, key, asks_key_on_enable: s.needs_key() && !key_set }
 }
 
 /// The beat model's download state.
@@ -103,6 +126,7 @@ pub struct SettingsState {
     /// Bit-perfect DAC output: transitions, silence skipping and the sound chain are out of the path.
     pub untouched: bool,
     pub sound_chain_on: bool,
+    pub eq_status: EqStatus,
     /// Offload is wanted but off because the sound chain is needed.
     pub offload_paused: bool,
     /// Every lyrics service in rank order.
@@ -110,6 +134,28 @@ pub struct SettingsState {
     pub beat_model: BeatModel,
     /// Approximate beat model download size, MB.
     pub beat_model_mb: u32,
+}
+
+/// What the equalizer's settings row says of the sound chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum EqStatus {
+    /// Bit-perfect output: nothing touches the sound now.
+    BitPerfect,
+    /// This output is set to no processing (`soundBypass`).
+    NoProcessing,
+    On,
+    Off,
+}
+
+/// The equalizer row's status on this output.
+pub fn eq_status(p: &StoredPrefs, bit_perfect: bool) -> EqStatus {
+    match crate::settings::eq_bypass(bit_perfect, p.sound_bypass) {
+        Some(crate::settings::EqBypass::BitPerfect) => EqStatus::BitPerfect,
+        Some(crate::settings::EqBypass::Output) => EqStatus::NoProcessing,
+        None if p.sound_chain_on() => EqStatus::On,
+        None => EqStatus::Off,
+    }
 }
 
 /// The output as the platform reports it.
@@ -153,12 +199,13 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
     let on = lyrics_sources::switched_on(p);
     let lyrics_sources = lyrics_sources::complete_order(&p.lyrics_order)
         .into_iter()
-        .map(|s| LyricsSource { id: s.name().into(), on: on.contains(&s), takes_key: s.takes_key(), needs_key: s.needs_key(), key_set: !s.key(p).is_empty() })
+        .map(|s| lyrics_source(s, on.contains(&s), p))
         .collect();
     SettingsState {
         values: specs().into_iter().filter_map(|s| Some((s.name.clone(), value_of(p, &s.name)?))).collect(),
         untouched: out.dac_bit_perfect,
         sound_chain_on: dsp,
+        eq_status: eq_status(p, out.dac_bit_perfect),
         offload_paused: !out.usb && p.offload && !policy.offload,
         lyrics_sources,
         beat_model: beat_model_now(model),
@@ -436,6 +483,39 @@ mod tests {
     }
 
     #[test]
+    fn eq_status_puts_bit_perfect_then_bypass_first() {
+        let on = StoredPrefs { mono: true, ..StoredPrefs::default() };
+        let bypass = StoredPrefs { sound_bypass: true, ..on.clone() };
+        let cases = [
+            (&on, true, EqStatus::BitPerfect),
+            (&bypass, true, EqStatus::BitPerfect),
+            (&bypass, false, EqStatus::NoProcessing),
+            (&on, false, EqStatus::On),
+            (&StoredPrefs::default(), false, EqStatus::Off),
+        ];
+        for (p, bit_perfect, want) in cases {
+            assert_eq!(eq_status(p, bit_perfect), want, "{:?} bit-perfect {bit_perfect}", (p.mono, p.sound_bypass));
+        }
+    }
+
+    #[test]
+    fn lyrics_keys_are_added_changed_or_asked_for() {
+        use lyrics_sources::LyricsService::{BetterLyrics, Lrclib, PaxsenixSpotify};
+        let keyed = StoredPrefs { paxsenix_key: "k".into(), better_lyrics_key: "b".into(), ..StoredPrefs::default() };
+        let cases = [
+            (BetterLyrics, StoredPrefs::default(), KeyAction::Add, false),
+            (BetterLyrics, keyed.clone(), KeyAction::Change, false),
+            (PaxsenixSpotify, StoredPrefs::default(), KeyAction::None, true),
+            (PaxsenixSpotify, keyed, KeyAction::Change, false),
+            (Lrclib, StoredPrefs::default(), KeyAction::None, false),
+        ];
+        for (s, p, key, asks) in cases {
+            let src = lyrics_source(s, false, &p);
+            assert_eq!((src.key, src.asks_key_on_enable), (key, asks), "{s:?} key {:?}", s.key(&p));
+        }
+    }
+
+    #[test]
     fn state_rules() {
         let d = StoredPrefs::default();
         let s = state(&d, Output::default(), &beat_model::ModelFile::default());
@@ -459,7 +539,7 @@ mod tests {
         assert_eq!(on, defaults, "the default services on");
         let off = set_by_name(&d, "lyricsService:BINILYRICS", "false").unwrap().prefs;
         let s2 = state(&off, Output::default(), &beat_model::ModelFile::default());
-        assert_eq!(s2.lyrics_sources[5], LyricsSource { id: "BINILYRICS".into(), on: false, takes_key: false, needs_key: false, key_set: false }, "switched off where it stands");
+        assert_eq!(s2.lyrics_sources[5], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false, key_set: false, key: KeyAction::None, asks_key_on_enable: false }, "switched off where it stands");
         assert!(s.lyrics_sources.iter().any(|l| l.needs_key));
         assert_eq!(s.beat_model == BeatModel::Unavailable, !beats::AVAILABLE);
     }

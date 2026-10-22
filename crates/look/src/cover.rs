@@ -570,7 +570,12 @@ impl Seam {
             }
         }
         let blurred = soften(&sharp);
-        let colour = candidates.into_iter().min_by(|&a, &b| seam_cost(&sharp, &blurred, a, ok).total_cmp(&seam_cost(&sharp, &blurred, b, ok))).expect("a candidate");
+        let colour = candidates
+            .into_iter()
+            .map(|c| (seam_cost(&sharp, &blurred, c, ok), c))
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, c)| c)
+            .expect("a candidate");
         Seam { frame, colour, mean }
     }
 }
@@ -631,7 +636,7 @@ fn seam_cost(sharp: &[u32], blurred: &[u32], page: u32, ok: &Oklab) -> f32 {
 /// The colour with the most weight near it, as the weighted mean of those near it.
 fn heaviest(px: &[(u32, f32)]) -> u32 {
     let near_weight = |c: u32| px.iter().filter(|p| near(p.0, c)).map(|p| p.1).sum::<f32>();
-    let best = px.iter().map(|p| p.0).max_by(|&a, &b| near_weight(a).total_cmp(&near_weight(b))).expect("at least one colour");
+    let best = px.iter().map(|p| (near_weight(p.0), p.0)).max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, c)| c).expect("at least one colour");
     let (mut r, mut g, mut b, mut total) = (0f32, 0f32, 0f32, 0f32);
     for &(c, wt) in px.iter().filter(|p| near(p.0, best)) {
         (r, g, b, total) = (r + red(c) as f32 * wt, g + green(c) as f32 * wt, b + blue(c) as f32 * wt, total + wt);

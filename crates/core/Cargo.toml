@@ -33,7 +33,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 parking_lot = "0.12"
-# A refill's album reads side by side rather than one after another.
+# A refill's album reads side by side rather than one after another; the YouTube session's one-at-a-time rotation.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # How music is played - the sound chain and AutoMix - lives in the shared player crate.
 nori-player = { path = "../player", features = ["serde"] }

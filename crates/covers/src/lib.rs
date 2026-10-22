@@ -16,7 +16,7 @@ pub use loader::{Config, Error, Loader, Paint, Rgba, Ticket};
 pub use memory::{Image, MemoryCache, Sized};
 pub use scale::{Alpha, Target};
 
-/// The GPU driver family a device draws with, as far as covers care.
+/// The GPU driver family a device draws with, as far as hardware bitmaps care.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gpu {
     /// Imagination's PowerVR (the Pixel 10's Tensor G5).
@@ -24,8 +24,9 @@ pub enum Gpu {
     Other,
 }
 
-/// Whether covers go to the GPU as hardware bitmaps, where the platform has them. Not over PowerVR: its
-/// gralloc writes to freed memory while a hardware bitmap uploads, which a hardened allocator aborts on.
+/// Whether the app makes hardware bitmaps (covers, pictures of pages), where the platform has them. Not
+/// over PowerVR: its gralloc writes to freed memory around a hardware bitmap, which a hardened allocator
+/// aborts on.
 pub fn hardware_bitmaps(platform_has_them: bool, gpu: Gpu) -> bool {
     platform_has_them && gpu != Gpu::PowerVr
 }

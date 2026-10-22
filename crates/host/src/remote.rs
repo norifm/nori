@@ -8,7 +8,7 @@ use std::sync::Arc;
 #[cfg(feature = "desktop")]
 use std::sync::Weak;
 
-use nori_core::remote::{JamControls, Mirror, MirrorRow, Playing, Reach, Remote, RemotePlayer, RemoteShown};
+use nori_core::remote::{JamControls, Mirror, MirrorRow, Playing, Press, Reach, Remote, RemotePlayer, RemoteShown};
 #[cfg(feature = "desktop")]
 use nori_core::remote::{Announcement, Discovery};
 use nori_core::playlist::PlaylistView;
@@ -147,7 +147,7 @@ impl RemoteShown for Shown {
     }
 
     fn changed(&self) {
-        let elsewhere = self.remotes.get().is_some_and(|r| r.active().is_some());
+        let elsewhere = self.remotes.get().is_some_and(|r| r.mirroring());
         if self.remotes.mirroring(elsewhere) {
             self.engine.release_now();
         }
@@ -192,21 +192,18 @@ impl Elsewhere {
         self.mirror.position_now()
     }
 
-    /// The device's queue as this client reads its own: each song at its list index there (left default
-    /// where it is not known here), in play order, the one playing current.
+    /// The device's queue as this client reads its own: the rows known here in play order, the one
+    /// playing current. Its indexes are positions in the rows; [`Elsewhere::op`] turns them back into
+    /// the device's list indexes.
     pub fn view(&self) -> PlaylistView {
         let m = &self.mirror;
-        let mut songs = vec![Song::default(); m.rows.iter().map(|r| r.index as usize + 1).max().unwrap_or(0)];
-        for r in &m.rows {
-            songs[r.index as usize] = r.song.clone();
-        }
         PlaylistView {
-            songs,
+            songs: m.rows.iter().map(|r| r.song.clone()).collect(),
             len: m.rows.len() as u32,
             list_rev: m.rev,
-            order: m.rows.iter().map(|r| r.index).collect(),
+            order: (0..m.rows.len() as u32).collect(),
             queued: Vec::new(),
-            index: self.row().map_or(-1, |r| r.index as i32),
+            index: m.at.filter(|&a| (a as usize) < m.rows.len()).map_or(-1, |a| a as i32),
             shuffle: m.shuffle,
             repeat: m.repeat,
             bridging: false,
@@ -241,6 +238,17 @@ impl Elsewhere {
     /// What this jam guest's controls reach, and what its play button shows; None outside a jam.
     pub fn jam_controls(&self) -> Option<JamControls> {
         self.remote.jam_controls()
+    }
+
+    /// `press`, naming rows by their place in [`Elsewhere::view`], as a command for the device.
+    pub(crate) fn op(&self, press: Press) -> Option<Op> {
+        let index = |k: u32| self.mirror.rows.get(k as usize).map(|r| r.index);
+        self.mirror.op(match press {
+            Press::Jump { index: k } => Press::Jump { index: index(k)? },
+            Press::Remove { index: k } => Press::Remove { index: index(k)? },
+            Press::Move { from, to } => Press::Move { from: index(from)?, to: index(to)? },
+            press => press,
+        })
     }
 
     pub(crate) fn send(&self, op: Op) {
@@ -515,6 +523,8 @@ pub(crate) mod tests {
             at_us: 0,
             shuffle: true,
             repeat: 0,
+            next: Some(2),
+            previous: Some(0),
             volume: Some(40),
             refused: None,
         };
@@ -530,7 +540,10 @@ pub(crate) mod tests {
         assert_eq!(e.mirror.position_at(2_500_000), 10_000, "paused");
         let v = e.view();
         let ids: Vec<&str> = v.songs.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!((ids, v.order.clone(), v.index), (vec!["b", "c", "a"], vec![2, 0, 1], 0), "each song at its list index, in play order");
+        assert_eq!((ids, v.order.clone(), v.index), (vec!["a", "b", "c"], vec![0, 1, 2], 1), "in play order");
+        assert_eq!(e.op(Press::Jump { index: 0 }), Some(Op::Jump { index: 2, rev: 7 }), "by the device's list index");
+        assert_eq!(e.op(Press::Move { from: 0, to: 2 }), Some(Op::Move { from: 2, to: 1, rev: 7 }));
+        assert_eq!(e.op(Press::Remove { index: 3 }), None, "a row not known here");
         let mut known = e.clone();
         known.mirror.rows.remove(0);
         assert_eq!(known.view().songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["b", "c"], "as far as the rows are known");
@@ -539,6 +552,13 @@ pub(crate) mod tests {
         assert_eq!(e.volume(), Some(0.4));
         e.mirror.rows[2].song.starred = true;
         assert_eq!((e.starred("c"), e.starred("a"), e.starred("x")), (Some(true), Some(false), None), "hearts of its queue only");
+    }
+
+    #[test]
+    fn a_huge_list_index_from_a_host_sizes_nothing() {
+        let mut e = desk();
+        e.mirror.rows[0].index = u32::MAX - 1;
+        assert_eq!(e.view().songs.len(), e.mirror.rows.len());
     }
 
     #[test]

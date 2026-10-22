@@ -44,7 +44,7 @@ class RemoteDevicePlayer(private val context: Context, private val nori: Nori) :
     fun show() = invalidateState()
 
     private fun rows(m: Mirror): List<MediaItemData> {
-        if (itemsOf === m.rows) return items
+        if (itemsOf == m.rows) return items
         val made = m.rows.map { it.song }.heldMediaItems { CarArt.cover(context, it.coverArt, NOTIFICATION_ART)?.toString() }
         items = m.rows.mapIndexed { k, row ->
             MediaItemData.Builder(row.index.toLong()).setMediaItem(made[k]).setDurationUs(row.song.duration.toLong() * 1_000_000).build()

@@ -1,6 +1,7 @@
 package dev.nori.music.look
 
 import android.graphics.Bitmap
+import dalvik.annotation.optimization.CriticalNative
 import dalvik.annotation.optimization.FastNative
 
 /**
@@ -44,6 +45,14 @@ object CoverPixels {
      * directory is read by the loader's first thread. 0 when it cannot be opened.
      */
     @JvmStatic external fun open(net: Long, dir: String, diskBytes: Long, hardware: Boolean, rgb565: Boolean): Long
+
+    /**
+     * Whether the app makes hardware Bitmaps here, covers and pictures of pages alike (`nori_covers::hardware_bitmaps`):
+     * from Android 9, and not over a PowerVR GPU.
+     */
+    val hardware: Boolean by lazy { hardwareBitmaps(android.os.Build.VERSION.SDK_INT >= 28) }
+
+    @JvmStatic @CriticalNative external fun hardwareBitmaps(platform: Boolean): Boolean
 
     @JvmStatic external fun close(loader: Long)
 

@@ -1844,8 +1844,8 @@ impl App for Live {
         self.0.lock().auto_mix()
     }
 
-    fn window(&mut self, window: Vec<WindowSong>, shuffling: bool) {
-        self.0.lock().window(window, shuffling);
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+        self.0.lock().window(songs, ids, shuffling);
     }
 
     fn transitions_off(&mut self, off: bool) {
@@ -2638,8 +2638,8 @@ impl App for Measuring {
         self.live.auto_mix()
     }
 
-    fn window(&mut self, window: Vec<WindowSong>, shuffling: bool) {
-        self.live.window(window, shuffling);
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+        self.live.window(songs, ids, shuffling);
     }
 
     fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _songs: &mut S, ids: &[String]) {

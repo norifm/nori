@@ -74,13 +74,15 @@ fn cookie_header(cookies: &[wry::cookie::Cookie<'static>], address: &str) -> Str
     let (host, path) = rest.split_at(rest.find(['/', '?', '#']).unwrap_or(rest.len()));
     let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
     let host = host.split(':').next().unwrap_or_default().to_ascii_lowercase();
-    let path = if path.starts_with('/') { path } else { "/" };
+    let path = path.split(['?', '#']).next().filter(|p| p.starts_with('/')).unwrap_or("/");
     cookies
         .iter()
         .filter(|c| {
             let domain = c.domain().unwrap_or_default().trim_start_matches('.').to_ascii_lowercase();
             let in_domain = host == domain || host.ends_with(&format!(".{domain}"));
-            let in_path = path.starts_with(c.path().unwrap_or("/"));
+            // RFC 6265 5.1.4: the cookie's path is the request's or a whole-segment prefix of it.
+            let above = c.path().unwrap_or("/");
+            let in_path = path.strip_prefix(above).is_some_and(|rest| rest.is_empty() || rest.starts_with('/') || above.ends_with('/'));
             in_domain && in_path && (https || !c.secure().unwrap_or(false))
         })
         .map(|c| format!("{}={}", c.name(), c.value()))
@@ -105,5 +107,17 @@ mod tests {
         assert_eq!(cookie_header(&jar, "https://music.youtube.com/?a=1"), "SID=v; SAPISID=v; x=v");
         assert_eq!(cookie_header(&jar, "http://music.youtube.com/"), "SID=v; x=v", "secure ones over https only");
         assert_eq!(cookie_header(&jar, "https://notyoutube.com/"), "");
+    }
+
+    #[test]
+    fn a_cookie_path_matches_whole_segments() {
+        let cookie = |path: &'static str| Cookie::build(("c", "v")).domain("a.com").path(path).build();
+        let sent = |path: &'static str, address: &str| !cookie_header(&[cookie(path)], address).is_empty();
+        assert!(!sent("/account", "https://a.com/accounts/x"));
+        assert!(sent("/account", "https://a.com/account/x"));
+        assert!(sent("/account", "https://a.com/account"));
+        assert!(sent("/a/", "https://a.com/a/b"));
+        assert!(!sent("/a/b", "https://a.com/a"));
+        assert!(sent("/account", "https://a.com/account?x=1"));
     }
 }

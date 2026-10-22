@@ -40,6 +40,7 @@ pub(crate) static CLASS: Class = Class {
         native!(c"decodeFile", c"(Ljava/lang/String;Landroid/graphics/Bitmap;Z)I", decode_file),
         native!(c"isProvider", c"(Ljava/lang/String;)Z", is_provider),
         native!(c"key", c"(JLjava/lang/String;)J", key),
+        native!(c"hardwareBitmaps", c"(Z)Z", hardware_bitmaps),
     ],
 };
 
@@ -341,9 +342,15 @@ fn loader<'a>(h: jlong) -> Option<&'a Covers> {
 /// Imagination's Vulkan driver, there on a device whose GPU is PowerVR.
 const POWERVR_VULKAN: &str = "/vendor/lib64/hw/vulkan.powervr.so";
 
+/// `nori_covers::hardware_bitmaps` on this device's GPU; `platform`: Android 9 or later.
+extern "system" fn hardware_bitmaps(platform: jboolean) -> jboolean {
+    let gpu = if std::path::Path::new(POWERVR_VULKAN).exists() { nori_covers::Gpu::PowerVr } else { nori_covers::Gpu::Other };
+    nori_covers::hardware_bitmaps(platform != 0, gpu) as jboolean
+}
+
 /// A loader fetching through `net` (a `CoverNet` handle from `uniffiCloneHandle()`, taken over) with a
-/// disk cache in `dir` of at most `disk_bytes`. Cheap: nothing is read until the first request. 0 when
-/// the Java side is missing.
+/// disk cache in `dir` of at most `disk_bytes`, its covers hardware Bitmaps with `hardware`
+/// ([`hardware_bitmaps`]). Cheap: nothing is read until the first request. 0 when the Java side is missing.
 extern "system" fn open(env: JNIEnv, _: JClass, net: jlong, dir: JString, disk_bytes: jlong, hardware: jboolean, rgb565: jboolean) -> jlong {
     // SAFETY: Kotlin passes `CoverNet.uniffiCloneHandle()`, once.
     let net = unsafe { crate::uniffi_object::<CoverNet>(net) };
@@ -352,9 +359,7 @@ extern "system" fn open(env: JNIEnv, _: JClass, net: jlong, dir: JString, disk_b
     }
     let Some(dir) = with_str(&env, &dir, |d| PathBuf::from(d)) else { return 0 };
     let config = Config { disk_bytes: disk_bytes.max(0) as u64, memory_bytes: 0, ..Config::new(dir) };
-    let gpu = if std::path::Path::new(POWERVR_VULKAN).exists() { nori_covers::Gpu::PowerVr } else { nori_covers::Gpu::Other };
-    let hardware = nori_covers::hardware_bitmaps(hardware != 0, gpu);
-    let paint = Bitmaps { hardware, rgb565: rgb565 != 0, idle: Mutex::new(Vec::new()), colours: Mutex::new(Vec::new()) };
+    let paint = Bitmaps { hardware: hardware != 0, rgb565: rgb565 != 0, idle: Mutex::new(Vec::new()), colours: Mutex::new(Vec::new()) };
     Box::into_raw(Box::new(Loader::with_paint(config, net, paint))) as jlong
 }
 
@@ -386,7 +391,7 @@ extern "system" fn cancel(_: JNIEnv, _: JClass, ticket: jlong) {
     }
 }
 
-/// `covers::is_provider_cover`, per list row: `@FastNative`, allocation-free.
+/// `covers::is_provider_cover`, per list row: `@FastNative`, copies the string once.
 extern "system" fn is_provider(env: JNIEnv, _: JClass, url: JString) -> jboolean {
     with_str(&env, &url, nori_core::covers::is_provider_cover).unwrap_or(false) as jboolean
 }

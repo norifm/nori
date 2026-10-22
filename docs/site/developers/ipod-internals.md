@@ -632,7 +632,7 @@ playlist or a new one, download, go to album / artist, radio, instant mix, exclu
 details, and from the player the sleep timer), removing from and deleting a playlist, Search (debounced
 by the core's `nori_ios_search_delay_ms`, recent searches, provider items marked), Downloads with the open-or-playing
 line. A headed page's Play and Shuffle are the core's `hero_buttons` (`nori_ios_hero`): while the queue
-playing was started from that page, Play is Pause and Shuffle, lit, turns its shuffle off. The queue is
+playing was started from that page, Play is Pause and Shuffle turns its shuffle off or on. The queue is
 a sheet from the player (`Queue.swift`): play order from `queue_rows`, the song
 playing on top, History above it, Playing next with Clear, a row held and dragged to move it, a swipe to
 remove with Undo, shuffle and repeat pinned (the card has only previous, play and next, as on Android).

@@ -284,13 +284,6 @@ impl Playlist {
         at
     }
 
-    /// A list already in the order it should play, shown as shuffled.
-    pub fn set_ordered(&mut self, ids: Vec<String>) -> Option<usize> {
-        let at = self.set(ids, Some(0), false, 0);
-        self.lit = true;
-        at
-    }
-
     /// Play next / Add to queue; returns the list index. An empty queue takes them as its list.
     pub fn add(&mut self, ids: Vec<String>, hand: Hand) -> usize {
         let count = ids.len();
@@ -402,12 +395,12 @@ impl Playlist {
         self.remove(from, to);
     }
 
-    /// Undoes the last [`Playlist::remove_undoably`] if it removed `id`; returns the list index.
     /// The song an undo would put back ([`Playlist::restore_taken`]), if any.
     pub fn undoable(&self) -> Option<&str> {
         self.taken.as_ref().map(|t| t.id.as_str())
     }
 
+    /// Undoes the last [`Playlist::remove_undoably`] if it removed `id`; returns the list index.
     pub fn restore_taken(&mut self, id: &str) -> Option<usize> {
         let t = self.taken.take_if(|t| t.id == id)?;
         Some(self.restore(&t))
@@ -754,8 +747,7 @@ mod tests {
     #[test]
     fn one_song_removed_by_hand_comes_back() {
         let mut p = Playlist::default();
-        p.set_ordered(ids(&["a", "b", "c"]));
-        assert!(p.lit() && !p.shuffling(), "shown shuffled, played in order");
+        p.set(ids(&["a", "b", "c"]), Some(0), false, 0);
         p.moved_to(2);
         p.remove_undoably(1, 2);
         assert_eq!((list(&p), p.current()), (vec!["a", "c"], Some(1)));
@@ -855,8 +847,8 @@ mod tests {
         p.set(ids(&["a", "b"]), Some(0), false, 0);
         p.show_shuffle(true);
         assert!(p.lit() && !p.shuffling(), "asked for before the queue changed");
-        p.set_ordered(ids(&["b", "a"]));
-        assert!(p.lit() && !p.shuffling(), "a weighted shuffle stays lit with the player's shuffle off");
+        p.set_in_order(ids(&["a", "b"]), 1, vec![1, 0], 0);
+        assert!(p.lit() && p.shuffling(), "a weighted shuffle");
         p.add(ids(&["c"]), Hand::Next);
         assert!(p.lit(), "editing the queue keeps it lit");
         p.show_shuffle(false);

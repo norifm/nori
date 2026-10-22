@@ -95,6 +95,7 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         nori_ios_remote_watch(0)
+        (presentingViewController as? PlayerCard)?.changed()
     }
 
     @objc private func close() { dismiss(animated: true) }

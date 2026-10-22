@@ -17,6 +17,8 @@ import dev.nori.music.app.ui.Note
 import dev.nori.music.app.ui.say
 import dev.nori.music.net.said
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -74,16 +76,19 @@ class HistoryViewModel(app: Application) : NoriViewModel(app) {
     /** The stats with their words and tiles, all the core's. */
     val stats: StateFlow<StatsPage?> = _stats
     private var exhausted = false
+    private var job: Job? = null
     /** Where the next page starts. */
     private var after: HistoryAfter? = null
 
     init { loadMore() }
 
     fun loadMore() {
-        if (exhausted) return
-        viewModelScope.launch {
+        if (exhausted || job?.isActive == true) return
+        job = viewModelScope.launch {
             // A page that could not be read ends the list, as an empty one would.
             val next = runCatching { withContext(Dispatchers.IO) { nori.core.historyPage(after) } }.getOrNull()
+            // runCatching also caught a cancellation: a clear while the page was being read drops it.
+            ensureActive()
             after = next?.next
             exhausted = after == null
             _entries.value = _entries.value.plus(next?.entries.orEmpty())
@@ -101,5 +106,5 @@ class HistoryViewModel(app: Application) : NoriViewModel(app) {
         _stats.value = runCatching { withContext(Dispatchers.IO) { nori.core.statsPage(days.toUInt(), source, tzOffset) } }.getOrNull()
     }
 
-    fun clear() = viewModelScope.launch { nori.library.clearHistory(); _entries.value = Grown.empty(); exhausted = true }
+    fun clear() = viewModelScope.launch { job?.cancel(); nori.library.clearHistory(); _entries.value = Grown.empty(); exhausted = true }
 }
