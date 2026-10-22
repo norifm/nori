@@ -189,7 +189,11 @@ pub fn southern(zone: &str) -> bool {
         "America/La_Paz", "Africa/Johannesburg", "Africa/Maputo", "Africa/Harare", "Africa/Lusaka", "Africa/Windhoek",
         "Africa/Gaborone", "Africa/Maseru", "Africa/Mbabane", "Africa/Blantyre", "Africa/Lubumbashi", "Africa/Luanda",
         "Africa/Dar_es_Salaam", "Indian/Antananarivo", "Indian/Mauritius", "Indian/Reunion", "Asia/Jakarta", "Asia/Makassar",
-        "Asia/Jayapura", "Asia/Dili",
+        "Asia/Jayapura", "Asia/Dili", "Asia/Pontianak", "Atlantic/Stanley", "Atlantic/South_Georgia", "Atlantic/St_Helena",
+        "Pacific/Norfolk", "Pacific/Pitcairn", "Pacific/Gambier", "Pacific/Marquesas", "Pacific/Pago_Pago", "Pacific/Guadalcanal",
+        "Pacific/Wallis", "Pacific/Funafuti", "Pacific/Galapagos", "Indian/Kerguelen", "Indian/Mayotte", "Indian/Comoro",
+        "Indian/Chagos", "America/Manaus", "America/Belem", "America/Fortaleza", "America/Noronha", "America/Santarem",
+        "America/Guayaquil", "Africa/Kinshasa", "Africa/Brazzaville", "Africa/Kigali", "Africa/Bujumbura", "Africa/Nairobi",
     ];
     SOUTH.iter().any(|s| zone.starts_with(s))
 }
@@ -265,6 +269,26 @@ pub fn roles(p: Palette) -> Roles {
 mod tests {
     use super::*;
     use crate::color::{calculate_contrast, WHITE};
+
+    #[test]
+    fn zones_south_of_the_equator() {
+        for (zone, south) in [
+            ("Australia/Sydney", true),
+            ("Atlantic/Stanley", true),
+            ("Pacific/Norfolk", true),
+            ("Pacific/Pago_Pago", true),
+            ("Indian/Mayotte", true),
+            ("America/Manaus", true),
+            ("America/Guayaquil", true),
+            ("Africa/Nairobi", true),
+            ("Asia/Pontianak", true),
+            ("Europe/Berlin", false),
+            ("America/New_York", false),
+            ("Asia/Tokyo", false),
+        ] {
+            assert_eq!(southern(zone), south, "{zone}");
+        }
+    }
 
     #[test]
     fn every_palette_reads() {
