@@ -109,6 +109,26 @@ builds:
   in plain English (`text.rs`), from the core's data. The core's are a failure's words
   (`describe_error`) and the queue saved for next time (`playlist_save`, `load_queue`).
 
+## Appearance modes
+
+The theme setting has four modes: Follow system, Day, Night and Midnight. Midnight is always dark, on true
+black, and turns cover colors off; in every other mode album, artist, playlist and mix pages and the player
+wear their cover's colors. There is no separate pure-black or cover-colors setting.
+
+What is in Rust (`nori-settings`, `nori-look`):
+
+- `ThemeMode` (`System`, `Light`, `Dark`, `Midnight`; stored and set by name as `SYSTEM`, `LIGHT`, `DARK`,
+  `MIDNIGHT`), `theme_is_dark(theme, system_dark)`, and `covers_tint_pages(theme)`, false only for Midnight.
+- `theme_palette` and `nori_look::theme::palette`, whose last argument is true for Midnight: the dark
+  palette on black.
+- The migration: settings stored with pure black on (`amoled`) and the dark theme become Midnight; pure
+  black with Follow system stays Follow system, and Day ignores it. The `amoled` and cover-color keys are
+  dropped from storage.
+
+What a client does: label the four modes in its own words, resolve Follow system from the OS (or the
+terminal's background), pass `theme_is_dark` and the Midnight flag to the palette, skip the cover colors
+when `covers_tint_pages` is false, and draw.
+
 ## What each client builds
 
 ### 1. Talking to the network
@@ -410,8 +430,7 @@ draws them.
   (disk or network), decodes the whole picture to fit 320 px in straight colors and hands the pixels to
   `nori_look::cover::derive`, writing the look into an int array and the wash into a Bitmap: no Bitmap
   of the cover in between, and no round trip through premultiplied pixels. One call works out the page
-  in the plain theme and on AMOLED black from the one decode, where the bar is black and the player
-  keeps the record's colors.
+  in the plain theme and on black from the one decode.
 
 The debug build measures the core's covers (the perf build runs the same from its Performance page,
 [the perf build](building.md#the-perf-build)):

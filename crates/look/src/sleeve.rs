@@ -54,13 +54,6 @@ pub const FLOOR_STOPS: [f32; 4] = [0.0, 0.45, 0.80, 1.0];
 /// Alpha mask fading the lyrics panel at both ends (clear before the source label).
 pub const LYRICS_MASK: [Stop; 4] = [s(0.0, 0.0), s(0.05, 1.0), s(0.66, 1.0), s(0.92, 0.0)];
 
-/// Whether a cover-tinted page renders black: the dark theme with AMOLED on, and the page not set to
-/// keep cover colours. The cover's own page does not depend on the theme; only this does.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn page_black(dark: bool, amoled: bool, cover_colours: bool) -> bool {
-    dark && amoled && !cover_colours
-}
-
 /// Android `ColorMatrix` (4x5, row-major) tinting the blurred band: Rec. 709 luminance scaled per channel
 /// by `k`, mixed in at `strength` (`dress::BAND_TINT`).
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -83,13 +76,6 @@ pub fn band_matrix(strength: f32, kr: f32, kg: f32, kb: f32) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn black_only_in_the_dark_theme_with_amoled() {
-        assert!(page_black(true, true, false));
-        assert!(!page_black(false, true, false), "AMOLED is a dark theme setting");
-        assert!(!page_black(true, true, true), "the page keeps its cover colours");
-    }
 
     #[test]
     fn band_matrix_mixes_luminance_tint() {

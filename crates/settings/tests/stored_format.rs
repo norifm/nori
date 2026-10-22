@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, CompressorPreset, ControlsSide, CoverPlace, DimIdle, DimLevel, EqMode, GainMode, HeadphoneSound, Level, Motion, HideBarWhen, HomeRow, AwakeWhen, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode, ThemeSeason};
+use nori_settings::settings::{band_from, load, save, AutoFillBasis, AutoFillKind, CompressorPreset, ControlsSide, DimIdle, DimLevel, EqMode, GainMode, HeadphoneSound, Level, Motion, HideBarWhen, HomeRow, AwakeWhen, LibrarySection, MaxRate, PrefValue, SavedQuality, SavedServer, ServerKind, StoredPrefs, SwipeAction, TapAction, ThemeMode, ThemeSeason};
 use nori_settings::settings_model::{specs, value_of};
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/stored_format.txt");
@@ -43,7 +43,6 @@ fn sample() -> StoredPrefs {
         level: Level::Loud,
         headphone: HeadphoneSound::Wide,
         compressor_preset: CompressorPreset::Night,
-        cover_colors: vec![CoverPlace::Pages],
         motion: Motion::Eink,
         playlist_notes: false,
         fade_ms: 300,
@@ -104,14 +103,13 @@ fn sample() -> StoredPrefs {
         paxsenix_key: "pax".into(),
         better_lyrics_key: "better".into(),
         season: ThemeSeason::Winter,
-        theme: ThemeMode::Dark,
+        theme: ThemeMode::Midnight,
         hide_status_bar: vec![HideBarWhen::Sideways, HideBarWhen::Upright],
         keep_awake: vec![AwakeWhen::Sideways, AwakeWhen::Charging],
         burn_in_protection: true,
         dim_when_idle: DimIdle::FiveMinutes,
         dim_level: DimLevel::Strong,
         controls_side: ControlsSide::Left,
-        amoled: true,
         tap_action: TapAction::PlayNext,
         swipe_right: SwipeAction::Download,
         swipe_left: SwipeAction::PlayNext,

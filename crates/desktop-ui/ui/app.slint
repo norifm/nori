@@ -126,7 +126,7 @@ export struct SongRow {
 
 // A row of the settings page: 0 a group's heading, 1 a switch, 2 a choice, 3 a button, 4 a fact, 5 a slider,
 // 6 a lyrics source in its ranked list, 7 a key typed in, 8 a server, 9 a note,
-// 11 a page it opens, 12 a lone button, 13 the season tiles, 14 light / dark / AMOLED. `first` and `last` round the group's corners.
+// 11 a page it opens, 12 a lone button, 13 the season tiles, 14 the four modes. `first` and `last` round the group's corners.
 export struct SettingRow {
     kind: int,
     name: string,
@@ -4409,9 +4409,8 @@ export component AppWindow inherits Window {
     // The page wears its cover's colours: the blurred cover (nori-look's wash) runs out into the page's own
     // colour, so there is no line where the picture stops.
     in property <image> page-wash;
-    // Colors from the cover, as the setting has them: on album and artist pages, in Now Playing.
-    in property <bool> pages-wear-covers: true;
-    in property <bool> player-wears-covers: true;
+    // Colors from the cover on album and artist pages and in Now Playing; off in Midnight.
+    in property <bool> covers-tint: true;
 
     // What plays.
     in property <bool> has-song;
@@ -4853,7 +4852,7 @@ export component AppWindow inherits Window {
                     y: 0;
                     width: 100%;
                     height: 440px;
-                    visible: root.pages-wear-covers;
+                    visible: root.covers-tint;
                     source: root.page-wash;
                     image-fit: fill;
                 }
@@ -6121,7 +6120,7 @@ export component AppWindow inherits Window {
                         toggled(on) => { root.setting-toggled(root.season-switch, on); }
                     }
                     Segments {
-                        options: ["System", "Light", "Dark", "AMOLED"];
+                        options: ["Follow system", "Day", "Night", "Midnight"];
                         chosen: root.appearance-pick;
                         picked(i) => { root.setting-chosen("appearance", i); }
                     }
@@ -6142,7 +6141,7 @@ export component AppWindow inherits Window {
                 height: 100%;
                 source: root.wash-a;
                 image-fit: cover;
-                visible: root.player-wears-covers;
+                visible: root.covers-tint;
                 opacity: root.wash-on-b ? 0 : 1;
                 animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
             }
@@ -6151,7 +6150,7 @@ export component AppWindow inherits Window {
                 height: 100%;
                 source: root.wash-b;
                 image-fit: cover;
-                visible: root.player-wears-covers;
+                visible: root.covers-tint;
                 opacity: root.wash-on-b ? 1 : 0;
                 animate opacity { duration: Motion.reduced ? 0ms : 800ms; easing: ease-in-out; }
             }

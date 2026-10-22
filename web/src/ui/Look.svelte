@@ -1,15 +1,15 @@
 <script lang="ts">
   // The look: the season (the four tiles marked 春 夏 秋 冬; following the calendar, its season's is
-  // marked), light or dark, and pure black. The core keeps the settings and hands out the colors (state/theme.ts).
+  // marked), Follow system, Day, Night or Midnight. The core keeps the settings and hands out the colors (state/theme.ts).
   import { ask } from "../rpc";
   import { refreshTheme, worn } from "../state/theme";
   import { W } from "../words";
 
-  type Look = { season: string; theme: string; amoled: string };
-  let look = $state<Look>({ season: "FOLLOW", theme: "SYSTEM", amoled: "false" });
+  type Look = { season: string; theme: string };
+  let look = $state<Look>({ season: "FOLLOW", theme: "SYSTEM" });
   const read = async () => {
-    const v = JSON.parse(await ask<string>("settings", "season,theme,amoled")) as Look;
-    look = { season: v.season.toUpperCase(), theme: v.theme.toUpperCase(), amoled: v.amoled };
+    const v = JSON.parse(await ask<string>("settings", "season,theme")) as Look;
+    look = { season: v.season.toUpperCase(), theme: v.theme.toUpperCase() };
   };
   void read();
 
@@ -47,12 +47,6 @@
       {/each}
     </div>
   </div>
-  {#if look.theme !== "LIGHT"}
-    <label class="row">
-      <span>{W.amoled}</span>
-      <input type="checkbox" class="switch" checked={look.amoled === "true"} onchange={(e) => void set("amoled", e.currentTarget.checked ? "true" : "false")} />
-    </label>
-  {/if}
 </div>
 
 <style>

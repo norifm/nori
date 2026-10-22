@@ -223,12 +223,13 @@ impl Settings {
 /// Whether the interface is dark for the theme setting and the system's mode.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn theme_is_dark(theme: crate::settings::ThemeMode, system_dark: bool) -> bool {
-    use crate::settings::ThemeMode;
-    match theme {
-        ThemeMode::System => system_dark,
-        ThemeMode::Light => false,
-        ThemeMode::Dark => true,
-    }
+    theme.is_dark(system_dark)
+}
+
+/// Whether album, artist, playlist and mix pages and the player take their colors from the cover; not in Midnight.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn covers_tint_pages(theme: crate::settings::ThemeMode) -> bool {
+    theme.covers_tint_pages()
 }
 
 /// Whether the turn of the phone hides a bar: `wide` is sideways.
@@ -316,7 +317,6 @@ mod tests {
             let v = flag_toggled(value_of(&p, name).unwrap(), flag.into());
             value_of(&set_by_name(&p, name, &v).unwrap().prefs, name).unwrap()
         };
-        assert_eq!(toggled("coverColors", "PAGES"), "PLAYER");
         assert_eq!(toggled("keepAwake", "CHARGING"), "CHARGING");
         assert_eq!(toggled("hideStatusBar", "PROTECTED"), "SIDEWAYS,PROTECTED");
         assert!(flag_on("SIDEWAYS,PROTECTED".into(), "PROTECTED".into()) && !flag_on("SIDEWAYS".into(), "SIDE".into()));
@@ -395,7 +395,7 @@ mod tests {
             ..StoredPrefs::default()
         };
         let all = specs();
-        assert!(all.len() > 70, "{}", all.len());
+        assert!(all.len() > 65, "{}", all.len());
         let mut names: Vec<&str> = all.iter().map(|s| s.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
