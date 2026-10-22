@@ -95,12 +95,15 @@ pub struct Seen {
     pub usb: bool,
 }
 
-/// Recomputes outputs from the attached (kind, name) list. `fake_usb` simulates an attached USB device.
-pub fn refresh(attached: &[(OutputKind, &str)], known: &[String], fake_usb: Option<&str>) -> Seen {
+/// Recomputes outputs from the attached (kind, name) list. `routed` is the device the audio system says
+/// the music goes to, which wins over the ranking while it is still attached: a headset stays attached
+/// while the speaker is chosen.
+/// `fake_usb` simulates an attached USB device.
+pub fn refresh(attached: &[(OutputKind, &str)], routed: Option<(OutputKind, &str)>, known: &[String], fake_usb: Option<&str>) -> Seen {
     let fake = fake_usb.map(|n| format!("{USB}{n}"));
     // First of the lowest rank, as Android routes.
     let best = attached.iter().reduce(|b, d| if rank(d.0) < rank(b.0) { d } else { b });
-    let current = fake.clone().or_else(|| best.map(|d| key(d.0, d.1))).unwrap_or_else(|| SPEAKER.to_string());
+    let current = fake.clone().or_else(|| routed.filter(|r| attached.contains(r)).or(best.copied()).map(|d| key(d.0, d.1))).unwrap_or_else(|| SPEAKER.to_string());
     let mut next: Vec<String> = known.to_vec();
     next.extend(attached.iter().filter(|d| rank(d.0) < rank(OutputKind::Speaker)).map(|d| key(d.0, d.1)));
     next.push(SPEAKER.to_string());
@@ -171,20 +174,30 @@ mod tests {
     #[test]
     fn current_is_best_ranked() {
         let attached = [(OutputKind::Other, "Telephony"), (OutputKind::Speaker, ""), (OutputKind::Bluetooth, "Buds"), (OutputKind::Wired, "")];
-        let seen = refresh(&attached, &[], None);
+        let seen = refresh(&attached, None, &[], None);
         assert_eq!(seen.current, "Wired headphones");
         assert!(!seen.usb);
         // Telephony ranks below the speaker, so it is neither current nor remembered.
         assert_eq!(seen.known, Some(s(&["Bluetooth: Buds", SPEAKER, "Wired headphones"])));
-        assert_eq!(refresh(&[(OutputKind::Other, "Telephony"), (OutputKind::Speaker, "")], &[], None).current, SPEAKER);
-        assert_eq!(refresh(&[], &[], None).current, SPEAKER);
+        assert_eq!(refresh(&[(OutputKind::Other, "Telephony"), (OutputKind::Speaker, "")], None, &[], None).current, SPEAKER);
+        assert_eq!(refresh(&[], None, &[], None).current, SPEAKER);
+    }
+
+    #[test]
+    fn routed_device_is_current_over_the_ranking() {
+        let attached = [(OutputKind::Speaker, ""), (OutputKind::Bluetooth, "Buds")];
+        assert_eq!(refresh(&attached, Some((OutputKind::Speaker, "")), &[], None).current, SPEAKER);
+        assert_eq!(refresh(&attached, Some((OutputKind::Bluetooth, "Buds")), &[], None).current, "Bluetooth: Buds");
+        assert_eq!(refresh(&attached, None, &[], None).current, "Bluetooth: Buds");
+        // Unplugged since: the ranking decides again.
+        assert_eq!(refresh(&[(OutputKind::Speaker, "")], Some((OutputKind::Bluetooth, "Buds")), &[], None).current, SPEAKER);
     }
 
     #[test]
     fn known_changes_only_for_new_devices() {
         let known = s(&["Bluetooth: Buds", SPEAKER]);
-        assert_eq!(refresh(&[(OutputKind::Bluetooth, "Buds")], &known, None).known, None);
-        let seen = refresh(&[(OutputKind::Usb, "K3")], &known, None);
+        assert_eq!(refresh(&[(OutputKind::Bluetooth, "Buds")], None, &known, None).known, None);
+        let seen = refresh(&[(OutputKind::Usb, "K3")], None, &known, None);
         assert_eq!(seen.current, "USB: K3");
         assert!(seen.usb);
         assert_eq!(seen.known, Some(s(&["Bluetooth: Buds", SPEAKER, "USB: K3"])));
@@ -192,13 +205,13 @@ mod tests {
 
     #[test]
     fn usb() {
-        let seen = refresh(&[(OutputKind::UsbAccessory, "Hub"), (OutputKind::Speaker, "")], &s(&[SPEAKER]), None);
+        let seen = refresh(&[(OutputKind::UsbAccessory, "Hub"), (OutputKind::Speaker, "")], None, &s(&[SPEAKER]), None);
         assert_eq!(seen.current, SPEAKER);
         assert!(seen.usb);
         assert_eq!(seen.known, None);
 
         // Fake usb is current and known.
-        let seen = refresh(&[(OutputKind::Speaker, "")], &s(&[SPEAKER]), Some("Mock DAC"));
+        let seen = refresh(&[(OutputKind::Speaker, "")], None, &s(&[SPEAKER]), Some("Mock DAC"));
         assert_eq!(seen.current, "USB: Mock DAC");
         assert!(seen.usb);
         assert_eq!(seen.known, Some(s(&[SPEAKER, "USB: Mock DAC"])));

@@ -149,7 +149,7 @@ impl App for CoreApp {
     /// its AutoEQ curve is the client's to ask for on `Event::Output` (`Client::device_curve`).
     fn output_changed(&mut self, kind: nori_player::outputs::OutputKind, name: &str) -> Option<(String, Option<Sound>)> {
         let core = self.devices.clone()?;
-        let seen = nori_player::outputs::refresh(&[(kind, name)], &self.known, None);
+        let seen = nori_player::outputs::refresh(&[(kind, name)], Some((kind, name)), &self.known, None);
         if let Some(known) = seen.known {
             self.known = known;
         }
