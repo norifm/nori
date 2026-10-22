@@ -1813,7 +1813,7 @@ impl Remote {
     /// Where starting a jam here stands, as every screen that offers it shows it.
     pub fn jam_start(&self) -> JamStart {
         let i = self.inner.lock();
-        let on = self.client.core.session.settings.current().is_some_and(|p| p.remote_control);
+        let on = self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false);
         if i.hosted.is_some() {
             JamStart::Hosting
         } else if i.opening.is_some() {
@@ -2375,7 +2375,7 @@ impl Remote {
     /// What guests play along by: this device's speed and pitch, and the plan out of the song heard.
     fn along(&self, index: Option<u32>, playing: Playing) -> Along {
         let session = &self.client.core.session;
-        let (speed, pitch) = session.settings.current().map_or((1.0, 1.0), |p| (p.speed, p.pitch));
+        let (speed, pitch) = session.settings.with_prefs(|p| (p.speed, p.pitch)).unwrap_or((1.0, 1.0));
         let mix = playing.mix_from.or(index).and_then(|at| {
             let id = session.playlist(|p| p.ids().get(at as usize).cloned())?;
             let mut mix = mix_of(at, &session.planner.made(&id)??)?;
@@ -2490,7 +2490,7 @@ impl Remote {
     }
 
     pub(crate) fn sync_mark(&self, kind: crate::client::Starrable, id: String) {
-        if !self.client.core.session.settings.current().is_some_and(|p| p.remote_control) {
+        if !self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false) {
             return;
         }
         let on = {
@@ -3120,7 +3120,7 @@ impl Remote {
         let body = match op {
             Op::LibraryMarks { marks } => {
                 let allowed = matches!(via, Via::Door) && !self.inner.lock().stopped
-                    && self.client.core.session.settings.current().is_some_and(|p| p.remote_control)
+                    && self.client.core.session.settings.with_prefs(|p| p.remote_control).unwrap_or(false)
                     && self.account_tag().is_some();
                 let refusal = if allowed {
                     for mark in &marks {
