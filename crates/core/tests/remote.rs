@@ -138,6 +138,10 @@ struct Relay {
     first_answers_held: std::sync::atomic::AtomicBool,
     /// The next poll of a device saying it serves stops on its way, sent: see [`Relay::late_poll`].
     late_poll: Mutex<Option<LatePoll>>,
+    /// A device that hears nothing the relay holds for it, as one gone without leaving.
+    deaf: Mutex<Option<String>>,
+    /// Requests to doors are refused, as by a device gone from the network; those under way still answer.
+    doors_refuse: std::sync::atomic::AtomicBool,
 }
 
 struct LatePoll {
@@ -192,7 +196,7 @@ impl Relay {
             lan: Mutex::default(),
             sim: Arc::new(Native::simulated("nori-remote-test", START_US).unwrap()),
             devices: Mutex::default(),
-            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None) })
+            hub: Mutex::default(), waiting: Mutex::default(), next: AtomicU64::new(1), absent: absent.into(), lagging: Mutex::new(None), lagged: AtomicU64::new(0), door_late: Default::default(), leave_late: Default::default(), down: Default::default(), along: std::sync::atomic::AtomicBool::new(true), time: Default::default(), first_time_delay_ms: Default::default(), answers_late: AtomicU64::new(0), lose_closes: Default::default(), opens_late: Default::default(), opens: AtomicU64::new(0), first_answers_held: Default::default(), late_poll: Mutex::new(None), deaf: Mutex::new(None), doors_refuse: Default::default() })
     }
 
     /// Device `dev`'s times read `skew_us` ahead as the relay passes them on. Its states reach the relay
@@ -426,7 +430,7 @@ impl Relay {
                     seq: hub.seq,
                     you: me.clone(),
                     rooms: rooms.iter().filter_map(|r| hub.rooms.get(r).map(|s| Room { room: r.clone(), jam: s.jam, members: s.members.clone() })).collect(),
-                    events: mine(&hub),
+                    events: if self.deaf.lock().as_ref() == Some(&me) { Vec::new() } else { mine(&hub) },
                     along: self.along.load(Ordering::Relaxed),
                     time: self.time.load(Ordering::Relaxed),
                 };
@@ -509,6 +513,9 @@ impl Transport for Relay {
     async fn send(&self, request: Exchange) -> Result<TransportResponse, TransportError> {
         if request.url.starts_with("http://127.0.0.1:") {
             self.hub.lock().asked.push(format!("lan {}", request.url));
+            if self.doors_refuse.load(Ordering::Relaxed) {
+                return Err(TransportError::Failed { kind: FailureKind::Connect, detail: Some("refused".into()) });
+            }
             let late = self.door_late.load(Ordering::Relaxed) && request.url.contains("noriRemote.poll");
             let relay = self.me.upgrade().unwrap();
             let answer = off_thread(Some(self.sim.busy()), move || relay.lan_exchange(&request)).await;
@@ -1412,6 +1419,78 @@ fn a_mirrored_device_is_timed_only_while_it_plays_on_screen() {
     desk.remote.clone().sight(Sight::Screen);
     desk.until("timed once it plays on screen", |_| (relay.clocks() > 0).then_some(()));
     relay.close();
+}
+
+/// A mirrored device gone quiet without leaving the relay shows paused once two time exchanges went
+/// unanswered, and plays again once it answers.
+#[test]
+fn a_mirrored_device_gone_quiet_stops_playing() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.state.is_some()));
+    desk.remote.clone().watch(false);
+    desk.remote.clone().pick(Some(phone_id.clone()));
+    desk.until("the phone mirrored, playing", |r| r.active().filter(|m| m.playing));
+    relay.sim.pass(Duration::from_millis(2_500));
+
+    *relay.deaf.lock() = Some(phone_id.clone());
+    let sent = relay.clocks();
+    eventually(&relay, "two exchanges unanswered", || relay.clocks() == sent + 2);
+    assert!(desk.remote.active().unwrap().playing, "still playing until the next exchange falls due");
+    let quiet = desk.until("shown paused", |r| r.active().filter(|m| !m.playing));
+    assert_eq!(relay.clocks(), sent + 3, "paused as the third falls due");
+    let at = quiet.position_at(relay.sim.now_us());
+    assert!(at > 30_000, "paused where it was last shown, not where it was last heard: {at}");
+    relay.sim.pass(Duration::from_secs(5));
+    assert_eq!(desk.remote.active().unwrap().position_at(relay.sim.now_us()), at, "the playhead stands still");
+
+    *relay.deaf.lock() = None;
+    desk.until("playing again once it answers", |r| r.active().filter(|m| m.playing));
+    relay.close();
+}
+
+/// A mirrored device whose door refuses a time exchange shows paused at once when nothing else reaches
+/// it; with the relay up, the relay's exchanges decide.
+#[test]
+fn a_mirrored_device_whose_door_refuses_stops_playing() {
+    for relayed in [false, true] {
+        let relay = if relayed { Relay::new() } else { Relay::absent() };
+        let announced = Arc::new(Announced::default());
+        let phone = Device::found(&relay, ann(), DeviceKind::Phone, "Phone", Some(announced.clone()));
+        phone.playing(&["s1", "s2"], 0);
+        phone.remote.clone().serve(true);
+        let door = announced.0.lock().clone().unwrap();
+        let phone_id = phone.remote.id();
+        let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+        desk.remote.clone().watch(true);
+        desk.remote.clone().lan_found(door.name, "127.0.0.1".into(), door.port, door.txt);
+        desk.until("the phone nearby", |r| r.devices().into_iter().find(|d| d.id == phone_id && d.nearby));
+        desk.remote.clone().watch(false);
+        desk.remote.clone().pick(Some(phone_id.clone()));
+        desk.until("the phone mirrored, playing", |r| r.active().filter(|m| m.playing));
+        relay.sim.pass(Duration::from_millis(2_500));
+
+        let times = || relay.asked().iter().filter(|a| a.starts_with("lan ") && a.contains("noriRemote.time")).count();
+        let (before, refused_at) = (times(), relay.sim.now_us());
+        relay.doors_refuse.store(true, Ordering::Relaxed);
+        if relayed {
+            for _ in 0..45 {
+                relay.sim.pass(Duration::from_secs(1));
+                assert!(desk.remote.active().unwrap().playing, "still playing while the relay reaches it");
+            }
+            assert!(times() > before, "its door was asked and refused");
+        } else {
+            desk.until("shown paused", |r| r.active().filter(|m| !m.playing));
+            assert!(relay.sim.now_us() - refused_at < clock::EVERY_US, "at once");
+            assert_eq!(times(), before + 1, "on the refused time exchange");
+        }
+        relay.close();
+    }
 }
 
 /// A device that stops serving while a poll saying it serves is on its way leaves again after it.

@@ -592,6 +592,10 @@ struct Mirrored {
     taken: Vec<(Song, u32)>,
     /// This device's commands the device has not said it carried out yet, oldest first.
     foreseen: Vec<Foreseen>,
+    /// Time exchanges sent through the relay since it was last heard from.
+    unanswered: u32,
+    /// Since when (this device's clock) it has not been there: shown paused from then.
+    unreachable: Option<i64>,
 }
 
 /// A command sent to the mirrored device, as it is expected to come out.
@@ -630,7 +634,7 @@ impl Change {
 
 impl Mirrored {
     fn new(id: String, now: i64) -> Mirrored {
-        Mirrored { id, heard: None, arrived: 0, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new() }
+        Mirrored { id, heard: None, arrived: 0, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new(), unanswered: 0, unreachable: None }
     }
 
     /// A state arrived from the device (`at`: when, on this device's clock). It ends the foresight of
@@ -679,7 +683,29 @@ impl Mirrored {
         self.heard = Some(state.clone());
         self.arrived = at;
         self.show();
+        self.reached();
         true
+    }
+
+    /// Heard from it: it is there.
+    fn reached(&mut self) {
+        self.unanswered = 0;
+        self.unreachable = None;
+    }
+
+    /// Found not there at `now`; whether that is news.
+    fn lost(&mut self, now: i64) -> bool {
+        let news = self.unreachable.is_none();
+        self.unreachable.get_or_insert(now);
+        news
+    }
+
+    /// A time exchange goes through the relay at `now`, `waited` a whole [`clock::EVERY_US`] after the one
+    /// before: with the two before it unanswered, it is not there. Whether that is news.
+    fn asked_time(&mut self, waited: bool, now: i64) -> bool {
+        let lost = waited && self.unanswered >= 2 && self.lost(now);
+        self.unanswered += 1;
+        lost
     }
 
     /// `shown`: the state heard, with the commands foreseen over it.
@@ -762,7 +788,7 @@ impl Mirrored {
 
     /// The page to ask for next: where the first song not known yet is, unless one is being asked for.
     fn wanted(&self) -> Option<u32> {
-        if self.asking.is_some() {
+        if self.asking.is_some() || self.unreachable.is_some() {
             return None;
         }
         self.pages.iter().position(Option::is_none).map(|p| p as u32)
@@ -829,7 +855,7 @@ impl Mirrored {
         let rows = self.rows();
         let at = rows.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32);
         let (next, previous) = skips(at, rows.len() as u32, st.len, st.repeat);
-        Some(Mirror {
+        let mut mirror = Mirror {
             id: self.id.clone(),
             name,
             kind,
@@ -850,7 +876,16 @@ impl Mirrored {
             repeat: st.repeat,
             volume: st.volume,
             refused,
-        })
+        };
+        if let Some(at) = self.unreachable {
+            mirror.position_ms = mirror.position_at(at);
+            mirror.at_us = at;
+            mirror.playing = false;
+            mirror.buffering = false;
+            mirror.mixing = false;
+            mirror.rate = 0.0;
+        }
+        Some(mirror)
     }
 }
 
@@ -3051,13 +3086,40 @@ impl Remote {
                     let url = format!("{base}{}", lan::signed(&secret, "GET", &format!("/rest/noriRemote.time?dev={}&t1={t1}", self.id), b"", db::now_ms()));
                     let Some(got) = self.get(url, 5_000, |_| true).await else { return };
                     let t4 = self.now();
-                    if let Some(Body::Clock { t1, t2, t3 }) = got.ok().and_then(|b| serde_json::from_slice(&b).ok()) {
-                        timed(&mut self.inner.lock(), &id, clock::Exchange { t1, t2, t3, t4 });
-                        self.follow_lead();
-                        self.shown.changed();
+                    match got {
+                        Ok(body) => {
+                            if let Ok(Body::Clock { t1, t2, t3 }) = serde_json::from_slice(&body) {
+                                let mut i = self.inner.lock();
+                                if let Some(m) = i.mirror.as_mut().filter(|m| m.id == id) {
+                                    m.reached();
+                                }
+                                timed(&mut i, &id, clock::Exchange { t1, t2, t3, t4 });
+                                drop(i);
+                                self.follow_lead();
+                                self.shown.changed();
+                            }
+                        }
+                        // Without the relay nothing else reaches it; with it, the relay's exchanges decide.
+                        Err(NetError::Transport { .. }) => {
+                            let lost = {
+                                let mut i = self.inner.lock();
+                                let alone = i.relay == RelaySupport::Unsupported;
+                                i.mirror.as_mut().filter(|m| alone && m.id == id).is_some_and(|m| m.lost(t4))
+                            };
+                            if lost {
+                                self.shown.changed();
+                            }
+                        }
+                        Err(_) => {}
                     }
                 }
                 (Timed::Device { id, room }, Some(Link::Relay)) => {
+                    let waited = sent > clock::BURST;
+                    let now = self.now();
+                    let lost = self.inner.lock().mirror.as_mut().filter(|m| m.id == id).is_some_and(|m| m.asked_time(waited, now));
+                    if lost {
+                        self.shown.changed();
+                    }
                     let command = Body::Command { id: self.next_id(), op: Box::new(Op::Clock { t1: self.now() }) };
                     self.out(Out::send(Link::Relay, Outgoing { room, to: Some(id), body: Some(command), ..Default::default() }));
                 }
@@ -3477,6 +3539,9 @@ fn plan_of(mix: &Mix, entries: &[Entry]) -> Option<(String, Plan)> {
 /// Event `body` from device `from` arrived at `received` (this device's clock): an answer, a page or a
 /// time exchange is noted in `i`; a command is handed back, to obey once `i` is let go.
 fn heard(i: &mut Inner, from: &str, body: Body, received: i64) -> Option<(u64, Op)> {
+    if let Some(m) = i.mirror.as_mut().filter(|m| m.id == from) {
+        m.reached();
+    }
     match body {
         Body::Command { id, op } => return Some((id, *op)),
         Body::Ack { id, refusal } => note(i, from, id, refusal, received),
