@@ -396,6 +396,8 @@ pub struct App {
     tick_ms: u64,
     /// The window is off screen (minimized, covered): the seek bar, lyrics and playing bars stand still.
     hidden: bool,
+    /// Motion is E-ink: the playing bars stand still.
+    still: bool,
     /// Lyrics are on screen (Now Playing's lyrics or the side sheet): only then are they fetched.
     lyrics_viewed: bool,
     lists: Lists,
@@ -599,6 +601,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             tick: Timer::default(),
             tick_ms: 0,
             hidden: false,
+            still: false,
             lyrics_viewed: false,
             facts: crate::settings::Facts::default(),
             lists: Lists::default(),
@@ -1294,11 +1297,14 @@ impl App {
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
-        let places = crate::session::app().settings.current().unwrap_or_default().cover_colors;
-        self.ui().set_pages_wear_covers(places.contains(&nori_core::settings::CoverPlace::Pages));
-        self.ui().set_player_wears_covers(places.contains(&nori_core::settings::CoverPlace::Player));
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        self.ui().set_pages_wear_covers(prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Pages));
+        self.ui().set_player_wears_covers(prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player));
         // nori's Motion setting, as on Android: animations run unless it asks for less.
-        let reduced = crate::session::app().settings.current().unwrap_or_default().motion != nori_core::settings::Motion::Full;
+        let motion = prefs.motion;
+        let reduced = motion != nori_core::settings::Motion::Full;
+        self.still = motion == nori_core::settings::Motion::Eink;
+        self.advancing();
         self.ui().global::<Motion>().set_reduced(reduced);
         if let Some(p) = &self.player {
             p.global::<Motion>().set_reduced(reduced);
@@ -2965,10 +2971,10 @@ impl App {
         }
     }
 
-    /// Whether the music moves now, for the playing bars: playing and not waiting for bytes.
+    /// Whether the playing bars move now: the music plays, not waiting for bytes, and Motion is not E-ink.
     fn advancing(&self) {
         let ui = self.ui();
-        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering() && !self.hidden);
+        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering() && !self.hidden && !self.still);
     }
 
     /// Syncs the window with what the player shows: this computer's playback and queue, the device's
