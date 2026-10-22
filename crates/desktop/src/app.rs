@@ -102,6 +102,12 @@ impl PageTrail {
     }
 }
 
+/// The view Back returns to from a page opened on `view`. Search keeps its field and answer while a page
+/// is open, so Back finds them as they were.
+fn opened_from(view: i32) -> i32 {
+    if view == LOGIN { HOME } else { view }
+}
+
 /// Weak handle to the app for callbacks and timers.
 #[derive(Clone)]
 struct AppHandle(Weak<RefCell<App>>);
@@ -1187,11 +1193,7 @@ impl App {
     }
 
     fn open_page(&mut self, ask: PageAsk) {
-        let from = match self.ui().get_view() {
-            LOGIN | SEARCH => HOME,
-            v => v,
-        };
-        self.trail.opened(ask.clone(), from);
+        self.trail.opened(ask.clone(), opened_from(self.ui().get_view()));
         self.show_page(ask);
     }
 
@@ -3211,6 +3213,8 @@ mod tests {
         assert_eq!(trail.back(), Back::Tab(FAVORITES), "then where the artist was opened from");
         trail.opened(PageAsk::Album("x".into()), HOME);
         assert_eq!(trail.back(), Back::Tab(HOME), "a page opened from a tab forgets the pages before");
+        trail.opened(PageAsk::Artist("ar".into()), opened_from(SEARCH));
+        assert_eq!(trail.back(), Back::Tab(SEARCH), "an artist found by search goes back to the search");
     }
 
     fn pill() -> crate::PlayerBar {
