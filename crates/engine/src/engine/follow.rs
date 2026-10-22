@@ -241,6 +241,7 @@ impl Following {
         // output again anyway): not a drift, judged once it settles, as a start is.
         if old.rate != new.rate {
             self.readings.clear();
+            self.odd = None;
             self.settling = Settling::Started;
             self.paced = true;
         }
@@ -255,6 +256,7 @@ impl Following {
         self.started_at = at_us;
         self.settling = Settling::Started;
         self.readings.clear();
+        self.odd = None;
         self.mixed = false;
         self.paced = false;
         Step::Start { index: self.led.index, ms: self.led.place_at(at_us + self.start_delay_us), at_us }
@@ -572,5 +574,26 @@ mod tests {
         let steps = settled(&[0.0, 0.0, 0.0, 120.0, 120.0]);
         assert_eq!(steps[3], Step::Stay);
         assert!(matches!(steps[4], Step::Slip { owed_ms, remake: false, .. } if (owed_ms - 120.0).abs() < 0.01), "{steps:?}");
+    }
+
+    #[test]
+    fn a_start_forgets_the_odd_reading_before_it() {
+        let mut f = Following::new(Led { rate: 1.0, ..led(0.0, 0) });
+        f.leapt = false;
+        let in_step = |now: i64, gap: f64| here(Some((2, gap + now as f64 / 1000.0)));
+        for k in 0..3 {
+            f.step(k * LOOK_EVERY_US, in_step(k * LOOK_EVERY_US, 0.0));
+        }
+        // A misread, then the leader jumps: started again at once.
+        let odd_at = 3 * LOOK_EVERY_US;
+        assert_eq!(f.step(odd_at, in_step(odd_at, 120.0)), Step::Stay);
+        assert!(f.odd.is_some());
+        f.leapt = true;
+        let Step::Start { ms, at_us, .. } = f.step(odd_at + 100_000, in_step(odd_at, 0.0)) else { panic!("started") };
+        let heard = |us: i64| here(Some((2, ms + (us - at_us) as f64 / 1000.0)));
+        f.step(at_us, heard(at_us));
+        f.step(at_us + SETTLE_US, heard(at_us + SETTLE_US));
+        // Settled: the first look is now, not a look period after the old odd reading.
+        assert_eq!(f.look_at, Some(at_us + SETTLE_US + LOOK_EVERY_US));
     }
 }
