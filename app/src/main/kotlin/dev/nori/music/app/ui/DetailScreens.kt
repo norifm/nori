@@ -193,18 +193,23 @@ private fun rememberOrigin(kind: OriginKind, id: String): PageOrigin = remember(
 private fun SettingsViewModel.pin(id: String, on: Boolean) =
     update { it.copy(pinnedPlaylists = dev.nori.music.ffi.library.pinsToggled(it.pinnedPlaylists, id, on)) }
 
+/** The last non-null value [LateMore] was given, kept for the menu's exit fade. */
+private class LastValue<T : Any> { var value: T? = null }
+
 /**
  * The ⋯ of a hero page, in a slot of its own 46 dp that is there from the first frame: it fades in when
- * the page's detail lands, so the Play pill beside it never shifts.
+ * the page's detail lands, so the Play pill beside it never shifts. The fade out keeps the last [value].
  */
 @Composable
-private fun LateMore(shown: Boolean, entries: @Composable () -> List<Pair<String, () -> Unit>>) {
+private fun <T : Any> LateMore(value: T?, entries: @Composable (T) -> List<Pair<String, () -> Unit>>) {
+    val last = remember { LastValue<T>() }
+    if (value != null) last.value = value
     Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
         androidx.compose.animation.AnimatedVisibility(
-            visible = shown,
+            visible = value != null,
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 220)),
             exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 120)),
-        ) { MoreCircle(entries()) }
+        ) { last.value?.let { MoreCircle(entries(it)) } }
     }
 }
 
@@ -272,11 +277,11 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
                 val albumStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ALBUM, album.id, album.starred)
                 FavoriteCircle(albumStarred) { actions.starAlbum(album.id, !albumStarred); Unit }
             }
-            LateMore(detail != null) {
+            LateMore(detail) { d ->
                 listOfNotNull(
-                    say.addToQueue to { actions.enqueue(detail!!.songs) },
-                    downloadEntry(detail!!.songs, list.downloaded, actions).takeIf { downloads },
-                    jamStartEntry { actions.play(detail!!.songs, from = from) }.takeIf { account },
+                    say.addToQueue to { actions.enqueue(d.songs) },
+                    downloadEntry(d.songs, list.downloaded, actions).takeIf { downloads },
+                    jamStartEntry { actions.play(d.songs, from = from) }.takeIf { account },
                 )
             }
         },
@@ -352,10 +357,10 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                 val artistStarred = LocalStarMarks.current.effectiveStar(dev.nori.music.data.StarKind.ARTIST, artist.id, artist.starred)
                 FavoriteCircle(artistStarred) { actions.starArtist(artist.id, !artistStarred); Unit }
             }
-            LateMore(ui != null) {
+            LateMore(ui) { ready ->
                 listOfNotNull(
-                    say.addToQueue to { actions.queueArtist(ui!!.detail.artist.id); Unit },
-                    (say.downloadEverything to { actions.downloadArtist(ui!!.detail.artist.id); Unit }).takeIf { downloads },
+                    say.addToQueue to { actions.queueArtist(ready.detail.artist.id); Unit },
+                    (say.downloadEverything to { actions.downloadArtist(ready.detail.artist.id); Unit }).takeIf { downloads },
                 )
             }
         },
@@ -477,11 +482,11 @@ private fun PlaylistPage(
             val account = LocalRules.current.account
     val downloads = LocalRules.current.downloads
             if (account) FavoriteCircle(pinned) { settings.pin(id, !pinned); Unit }
-            LateMore(detail != null) {
+            LateMore(detail) { d ->
                 listOfNotNull(
-                    say.addToQueue to { actions.enqueue(detail!!.songs) },
-                    downloadEntry(detail!!.songs, list.downloaded, actions).takeIf { downloads },
-                    jamStartEntry { actions.play(detail!!.songs, from = from) },
+                    say.addToQueue to { actions.enqueue(d.songs) },
+                    downloadEntry(d.songs, list.downloaded, actions).takeIf { downloads },
+                    jamStartEntry { actions.play(d.songs, from = from) },
                     say.exportPlaylistFile to { export(playlist.name) },
                 )
             }
