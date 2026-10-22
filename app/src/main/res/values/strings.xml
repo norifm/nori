@@ -169,7 +169,7 @@
     <string name="settings_controls_side_left">Left</string>
     <string name="settings_controls_side_right">Right</string>
     <string name="settings_mode">Appearance</string>
-    <string name="settings_theme_system">Follow system</string>
+    <string name="settings_theme_system">System</string>
     <string name="settings_theme_light">Day</string>
     <string name="settings_theme_dark">Night</string>
     <string name="settings_theme_midnight">Midnight</string>

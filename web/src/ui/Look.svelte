@@ -1,6 +1,6 @@
 <script lang="ts">
   // The look: the season (the four tiles marked 春 夏 秋 冬; following the calendar, its season's is
-  // marked), Follow system, Day, Night or Midnight. The core keeps the settings and hands out the colors (state/theme.ts).
+  // marked), System, Day, Night or Midnight. The core keeps the settings and hands out the colors (state/theme.ts).
   import { ask } from "../rpc";
   import { refreshTheme, worn } from "../state/theme";
   import { W } from "../words";

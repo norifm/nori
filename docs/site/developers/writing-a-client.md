@@ -111,7 +111,7 @@ builds:
 
 ## Appearance modes
 
-The theme setting has four modes: Follow system, Day, Night and Midnight. Midnight is always dark, on true
+The theme setting has four modes: System, Day, Night and Midnight. Midnight is always dark, on true
 black, and turns cover colors off; in every other mode album, artist, playlist and mix pages and the player
 wear their cover's colors. There is no separate pure-black or cover-colors setting.
 
@@ -122,10 +122,10 @@ What is in Rust (`nori-settings`, `nori-look`):
 - `theme_palette` and `nori_look::theme::palette`, whose last argument is true for Midnight: the dark
   palette on black.
 - The migration: settings stored with pure black on (`amoled`) and the dark theme become Midnight; pure
-  black with Follow system stays Follow system, and Day ignores it. The `amoled` and cover-color keys are
+  black with System stays System, and Day ignores it. The `amoled` and cover-color keys are
   dropped from storage.
 
-What a client does: label the four modes in its own words, resolve Follow system from the OS (or the
+What a client does: label the four modes in its own words, resolve System from the OS (or the
 terminal's background), pass `theme_is_dark` and the Midnight flag to the palette, skip the cover colors
 when `covers_tint_pages` is false, and draw.
 

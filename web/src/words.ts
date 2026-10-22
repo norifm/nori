@@ -215,7 +215,7 @@ export const W = {
   ] as [string, string, string][],
   appearance: "Appearance",
   appearances: [
-    ["SYSTEM", "Follow system"],
+    ["SYSTEM", "System"],
     ["LIGHT", "Day"],
     ["DARK", "Night"],
     ["MIDNIGHT", "Midnight"],
