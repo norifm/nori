@@ -148,6 +148,11 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         read()
     }
 
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        (presentingViewController as? PlayerCard)?.changed()
+    }
+
     @objc private func close() { dismiss(animated: true) }
 
     /// Pulled down past the first row and let go: the queue closes.
