@@ -23,6 +23,7 @@ import dev.nori.music.ffi.remote.DeviceKind
 import dev.nori.music.ffi.remote.Op
 import dev.nori.music.ffi.remote.Reach
 import dev.nori.music.ffi.remote.isGuestKey
+import dev.nori.music.playback.PlaylistJni
 import dev.nori.music.settings.server
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -101,6 +102,8 @@ class Remotes(private val context: Context, private val nori: Nori) {
         }
     /** The queue's songs the player was last given for listening along. */
     private var guestQueue: List<String>? = null
+    /** The queue's revision [guestQueue] was read at. */
+    private var guestRev = 0L
 
     /** The playback service's engine while it runs: a jam guest listening along plays there. */
     @Volatile var engine: dev.nori.music.playback.EnginePlayer? = null
@@ -170,10 +173,14 @@ class Remotes(private val context: Context, private val nori: Nori) {
         main.post { _jam.value = j; _jamAdded.value = added; _jamPlaying.value = playing; _jamControls.value = controls; _relay.value = relay; _jamStart.value = start }
         if (j?.listening == dev.nori.music.ffi.Listening.PLAYING) {
             // The queue as the follower set it in the session, not as last saved.
-            val ids = nori.session.playlistNow().songs.map { it.id }
+            val rev = PlaylistJni.rev(nori.sessionHandle)
             val began = guestQueue == null
-            val take = onGuestQueue
-            if (ids.isNotEmpty() && ids != guestQueue && take != null) { guestQueue = ids; main.post { take(began) } }
+            if (began || rev != guestRev) {
+                guestRev = rev
+                val ids = nori.session.playlistNow().songs.map { it.id }
+                val take = onGuestQueue
+                if (ids.isNotEmpty() && ids != guestQueue && take != null) { guestQueue = ids; main.post { take(began) } }
+            }
         } else {
             guestQueue = null
         }
