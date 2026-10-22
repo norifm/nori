@@ -142,7 +142,7 @@ fun DevicesSheet(open: Boolean, onDismiss: () -> Unit, onOutput: () -> Unit, jam
                     hosted != null -> {
                         YourJam(hosted.members.count { it.role != Role.HOST }, { onDismiss(); nav.player(Panel.QUEUE) }, vm::jamEnd)
                     }
-                    unsupported && start == dev.nori.music.ffi.JamStart.UNAVAILABLE -> Text(
+                    start == dev.nori.music.ffi.JamStart.UNSUPPORTED -> Text(
                         words(R.string.jam_unsupported), Modifier.padding(horizontal = Space.gutter, vertical = 12.dp),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

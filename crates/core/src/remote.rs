@@ -365,7 +365,9 @@ pub enum JamStart {
     Starting,
     /// This device hosts one.
     Hosting,
-    /// Jams are off, the server has no relay, or this is a guest's profile.
+    /// The server has no relay for jams (and no nearby jam stands in for it).
+    Unsupported,
+    /// Jams are off, or this is a guest's profile.
     Unavailable,
 }
 
@@ -1835,10 +1837,12 @@ impl Remote {
             JamStart::Hosting
         } else if i.opening.is_some() {
             JamStart::Starting
-        } else if on && self.me.kind != DeviceKind::Guest && (i.relay != RelaySupport::Unsupported || self.client.core.kind() == crate::settings::ServerKind::YouTubeMusic) {
-            JamStart::Offered
-        } else {
+        } else if !on || self.me.kind == DeviceKind::Guest {
             JamStart::Unavailable
+        } else if i.relay == RelaySupport::Unsupported && self.client.core.kind() != crate::settings::ServerKind::YouTubeMusic {
+            JamStart::Unsupported
+        } else {
+            JamStart::Offered
         }
     }
 

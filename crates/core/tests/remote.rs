@@ -1316,10 +1316,12 @@ fn nearby_devices_need_no_relay() {
 #[test]
 fn a_server_without_the_relay_is_asked_again_only_by_a_picker() {
     let relay = Relay::absent();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let dir = nori_testdir::TempDir::new("remote-no-relay");
+    let phone = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
     phone.until("the answer", |r| (r.relay() == RelaySupport::Unsupported).then_some(()));
     let asked = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.")).count();
     assert_eq!(asked(), 1, "one probe");
+    assert_eq!(phone.remote.jam_start(), JamStart::Unsupported, "every screen says the server lacks the relay");
 
     // Serving, watching and playing go on without the relay; a jam is refused before anything is asked.
     phone.playing(&["s1"], 0);
@@ -1337,7 +1339,8 @@ fn a_server_without_the_relay_is_asked_again_only_by_a_picker() {
 #[test]
 fn a_picker_opened_asks_again_whether_the_server_relays() {
     let relay = Relay::absent();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let dir = nori_testdir::TempDir::new("remote-no-relay");
+    let phone = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
     phone.until("the answer", |r| (r.relay() == RelaySupport::Unsupported).then_some(()));
     let asked = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.")).count();
 
@@ -1350,6 +1353,7 @@ fn a_picker_opened_asks_again_whether_the_server_relays() {
     relay.absent.store(false, Ordering::Relaxed);
     phone.remote.clone().watch(true);
     phone.until("the relay", |r| (r.relay() == RelaySupport::Supported).then_some(()));
+    assert_eq!(phone.remote.jam_start(), JamStart::Offered);
     phone.until("polling", |_| (phone.polls(&relay) >= 3).then_some(()));
     relay.close();
 }

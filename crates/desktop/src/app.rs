@@ -2625,9 +2625,8 @@ impl App {
         let guest = self.guest();
         let jams = guest || crate::session::app().settings.prefs(|p| p.remote_control);
         let remote = self.session.as_ref().and_then(|s| s.remote()).filter(|_| jams);
-        let unsupported = remote.as_ref().is_some_and(|r| r.relay() == nori_core::remote::RelaySupport::Unsupported);
+        let unsupported = remote.as_ref().is_some_and(|r| r.jam_start() == nori_core::remote::JamStart::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());
-        let lan = remote.as_ref().is_some_and(|r| r.pairing_link().is_some());
         let pairing = remote.as_ref().and_then(|r| r.pairing_link()).unwrap_or_default();
         if ui.get_pairing_link() != pairing.as_str() {
             ui.set_pairing_qr(if pairing.is_empty() { Image::default() } else { crate::jam::qr(&pairing) });
@@ -2636,9 +2635,9 @@ impl App {
         if pairing.is_empty() {
             ui.set_pairing_open(false);
         }
-        g.set_on(remote.is_some() && (!unsupported || lan) && !guest);
+        g.set_on(remote.is_some() && !unsupported && !guest);
         g.set_guest(guest);
-        g.set_note(if unsupported && !lan && !guest { words::JAM_UNSUPPORTED.into() } else { "".into() });
+        g.set_note(if unsupported { words::JAM_UNSUPPORTED.into() } else { "".into() });
         g.set_hosting(view.as_ref().is_some_and(|v| v.hosting));
         g.set_along(view.as_ref().is_some_and(|v| v.along));
         g.set_remote_songs(view.as_ref().is_some_and(|v| v.remote_songs));
