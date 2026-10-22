@@ -92,15 +92,27 @@ function order() {
   if (orders) for (const o of JSON.parse(orders)) worklet.postMessage(o);
 }
 
+/** Who waits for the worklet's diagnostics. */
+const diagnosing: ((h: unknown) => void)[] = [];
+
+/** What the worklet heard, asked for once (null before there is a sound card). */
+function diagnose(): Promise<unknown> {
+  if (!worklet) return Promise.resolve(null);
+  return new Promise((r) => {
+    diagnosing.push(r);
+    worklet!.postMessage({ diagnose: true });
+  });
+}
+
 /** The sound card's port, rate and latency to the ear (s), from the page on the first Play. */
 function audio(port: MessagePort, rate: number, ear: number) {
   nori!.set_card(rate, ear * 1000);
   worklet = port;
   worklet.onmessage = (w: MessageEvent) => {
+    if (w.data.heard) return diagnosing.splice(0).forEach((r) => r(w.data.heard));
     const { played, flushed } = w.data;
     if (flushed) nori!.flushed(played, flushed.dropped, flushed.flushes);
     else nori!.played(played);
-    scope.postMessage({ heard: w.data });
     pump();
   };
 }
@@ -112,6 +124,7 @@ scope.onmessage = async (e: MessageEvent) => {
   try {
     let value: unknown;
     if (call === "audio") audio(args[0] as MessagePort, args[1] as number, args[2] as number);
+    else if (call === "heard") value = await diagnose();
     else {
       const f = nori![call];
       if (typeof f !== "function") throw new Error(`no call ${call}`);

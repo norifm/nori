@@ -30,7 +30,8 @@ const logs = [];
 page.on("pageerror", (e) => logs.push(`pageerror: ${e}`));
 page.on("console", (m) => m.type() === "error" && !m.text().includes("404") && logs.push(`console: ${m.text()}`));
 page.on("workercreated", (w) => w.on("console", (m) => m.type() !== "log" && logs.push(`worker ${m.type()}: ${m.text()}`)));
-const facts = () => page.evaluate(() => JSON.parse(JSON.stringify(window.nori)));
+// What the page keeps, and what the sound card heard (null before there is one).
+const facts = () => page.evaluate(async () => ({ ...JSON.parse(JSON.stringify(window.nori)), heard: (await window.nori.heard?.()) ?? null }));
 const ask = (call, ...args) => page.evaluate((c, a) => window.ask(c, ...a), call, args);
 const now = async () => JSON.parse(await ask("now"));
 const read = async (q) => JSON.parse(await ask("read", JSON.stringify(q)));
@@ -40,7 +41,7 @@ const expect = (ok, what) => ok || failures.push(what);
 
 /** Until `p` (this page by default) has heard `s` more seconds than `from` (a `nori.heard`), 60 s at
  * most; the time is the music's, not the clock's. */
-const heardFor = (s, from, p = page) => p.waitForFunction((x, f) => (window.nori.heard?.seconds ?? 0) >= f + x, { timeout: 60000, polling: 100 }, s, from?.seconds ?? 0).catch(() => {});
+const heardFor = (s, from, p = page) => p.waitForFunction(async (x, f) => ((await window.nori.heard?.())?.seconds ?? 0) >= f + x, { timeout: 60000, polling: 100 }, s, from?.seconds ?? 0).catch(() => {});
 /** Until the queue's index is `i`, 10 s at most. */
 const atIndex = (i) => page.waitForFunction(async (x) => JSON.parse(await window.ask("now"))?.index === x, { timeout: 10000, polling: 100 }, i).catch(() => {});
 
@@ -86,7 +87,7 @@ async function playAlbum(id, at = 0) {
   const t0 = Date.now();
   await (await page.$$(".songs li .play"))[at].click();
   // The player module answers once the first Play has started it.
-  await page.waitForFunction(async (a) => window.nori.playerSwitchMs !== undefined && JSON.parse(await window.ask("now"))?.song?.albumId === a && (window.nori.heard?.seconds ?? 0) > 0, { timeout: 60000, polling: 50 }, id);
+  await page.waitForFunction(async (a) => window.nori.playerSwitchMs !== undefined && JSON.parse(await window.ask("now"))?.song?.albumId === a && ((await window.nori.heard?.())?.seconds ?? 0) > 0, { timeout: 60000, polling: 50 }, id);
   return Date.now() - t0;
 }
 
@@ -117,11 +118,11 @@ async function early(at) {
   const before = await p.evaluate(() => window.nori.playerReadyAt);
   const clicked = await p.evaluate(() => performance.now());
   await (await p.$$(".songs li .play"))[0].click();
-  await p.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 2, { timeout: 120000, polling: 50 }).catch(async (e) => {
+  await p.waitForFunction(async () => ((await window.nori.heard?.())?.seconds ?? 0) > 2, { timeout: 120000, polling: 50 }).catch(async (e) => {
     console.error("early playback", await p.evaluate(async () => {
       const n = JSON.parse(await window.ask("now"));
       const f = window.nori;
-      return { playerReadyAt: f.playerReadyAt, heard: f.heard, error: f.error, crashes: f.crashes, state: n.state, positionMs: n.positionMs, queue: n.queue.length, song: n.song?.title };
+      return { playerReadyAt: f.playerReadyAt, heard: await f.heard?.(), error: f.error, crashes: f.crashes, state: n.state, positionMs: n.positionMs, queue: n.queue.length, song: n.song?.title };
     }), logs);
     throw e;
   });
@@ -173,7 +174,7 @@ if (!only || only.includes("lyrics")) {
   }, later);
   await page.waitForFunction((k) => window.nori.lyricLine === k, { timeout: 2000, polling: "raf" }, later).catch(() => {});
   const litMs = Math.round((await page.evaluate(() => performance.now())) - tapped.at);
-  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, tapped.t).catch(() => {});
+  await page.waitForFunction(async (t) => ((await window.nori.heard?.())?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, tapped.t).catch(() => {});
   const tapHeard = (await facts()).heard.freshAt;
   await new Promise((r) => setTimeout(r, 1000));
   const [landed, at, sought] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.audioTime, window.nori.tapped?.ms]);
@@ -216,7 +217,7 @@ if (!only || only.includes("instant")) {
   const offset = async () => {
     const all = [];
     for (let i = 0; i < 5; i++) {
-      const [n, f] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.heard.seconds]);
+      const [n, f] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, (await window.nori.heard()).seconds]);
       all.push(n - f * 1000);
       await settle(120);
     }
@@ -250,7 +251,7 @@ if (!only || only.includes("instant")) {
   expect(b1.bar === b0.bar && b1.at === b0.at && Math.abs(bar.pausedOffCoreMs) < 250, "paused, the seek bar and its times stay at the core's place");
   const pauseMs = ms(p0.lastLoud - paused);
   const played = await press("#bar [aria-label=Play]");
-  await page.waitForFunction((t) => (window.nori.heard?.soundAt ?? 0) > t, { timeout: 5000, polling: 20 }, played).catch(() => {});
+  await page.waitForFunction(async (t) => ((await window.nori.heard?.())?.soundAt ?? 0) > t, { timeout: 5000, polling: 20 }, played).catch(() => {});
   const resumeMs = ms((await facts()).heard.soundAt - played);
   await heardFor(1.5, (await facts()).heard);
   const after = await offset();
@@ -266,13 +267,13 @@ if (!only || only.includes("instant")) {
   const s2 = await shown();
   bar.afterSeekMs = s2.bar - seekTo;
   expect(Math.abs(bar.afterSeekMs) < 250, "after a seek the seek bar is at once at its place");
-  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, sought).catch(() => {});
+  await page.waitForFunction(async (t) => ((await window.nori.heard?.())?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, sought).catch(() => {});
   const seekHeard = (await facts()).heard.freshAt;
   await settle(1000);
   const [landed, at] = await page.evaluate(async () => [JSON.parse(await window.ask("now")).positionMs, window.nori.audioTime]);
   const seekPlaceMs = Math.round(landed - (seekTo + (at - seekHeard) * 1000));
   const skipped = await press("#bar [aria-label=Next]");
-  await page.waitForFunction((t) => (window.nori.heard?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, skipped).catch(() => {});
+  await page.waitForFunction(async (t) => ((await window.nori.heard?.())?.freshAt ?? 0) > t, { timeout: 5000, polling: 20 }, skipped).catch(() => {});
   const nextMs = ms((await facts()).heard.freshAt - skipped);
   const index = (await now()).index;
   report.instant = { pauseMs, resumeMs, seekMs: ms(seekHeard - sought), nextMs, pausedMovedMs: held1 - held0, offsetMs: [Math.round(before), Math.round(after)], seekPlaceMs, index, seekBar: bar };
@@ -312,7 +313,7 @@ async function transition(name, settings, measured = false) {
     const t = performance.now();
     if (n.mixing) s.mixedMs += t - s.last;
     s.last = t;
-    if (n.index === 1 && !s.moved) [s.moved, s.movedHeard] = [true, window.nori.heard.seconds];
+    if (n.index === 1 && !s.moved) [s.moved, s.movedHeard] = [true, (await window.nori.heard()).seconds];
     return s.moved && !n.mixing;
   }, { timeout: 30000, polling: 250 }).catch(() => {});
   const { mixedMs, moved, movedHeard } = await page.evaluate(() => window.through);
@@ -585,11 +586,11 @@ async function slowStart(at) {
   await p.waitForSelector(".songs li .play");
   const t0 = Date.now();
   await (await p.$$(".songs li .play"))[0].click();
-  await p.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 0, { timeout: 60000, polling: 20 });
+  await p.waitForFunction(async () => ((await window.nori.heard?.())?.seconds ?? 0) > 0, { timeout: 60000, polling: 20 });
   const firstSoundMs = Date.now() - t0;
-  const before = await p.evaluate(() => JSON.parse(JSON.stringify(window.nori.heard)));
+  const before = await p.evaluate(() => window.nori.heard());
   await heardFor(20, before, p);
-  const after = await p.evaluate(() => JSON.parse(JSON.stringify(window.nori.heard)));
+  const after = await p.evaluate(() => window.nori.heard());
   const n = JSON.parse(await p.evaluate(() => window.ask("now")));
   await p.close();
   return { firstSoundMs, song: n.song?.title, heardS: Math.round(after.seconds - before.seconds), dry: after.dry - before.dry, underruns: n.underruns };

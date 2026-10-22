@@ -202,9 +202,11 @@ class Player {
         else if (n.what === "songsFailed") ui.say(W.songsFailed);
       } else if (s.kind === "reachable" && !s.ok) ui.say(W.offline);
     });
-    rpc.onHeard((heard) => {
-      facts.heard = { seconds: heard.played / (this.audio?.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
-    });
+    // What the sound card heard, asked for when read (the headless check's), so nothing is sent while playing.
+    facts.heard = async () => {
+      const heard = rpc.player ? await ask<rpc.Heard | null>("heard") : null;
+      return heard && { seconds: heard.played / (this.audio?.sampleRate ?? 48000), dry: heard.dry, dryAt: heard.dryAt, peak: heard.peak, silences: heard.silences, lastLoud: heard.lastLoud, soundAt: heard.soundAt, freshAt: heard.freshAt };
+    };
     if ("mediaSession" in navigator) {
       const m = navigator.mediaSession;
       m.setActionHandler("play", () => void this.control("toggle"));

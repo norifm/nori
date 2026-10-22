@@ -41,7 +41,7 @@ async function open(name) {
 const ask = (page, call, ...args) => page.evaluate((c, a) => window.ask(c, ...a), call, args);
 const json = async (page, call, ...args) => JSON.parse(await ask(page, call, ...args));
 const until = (page, f, arg, timeout = 30000) => page.waitForFunction(f, { timeout, polling: 250 }, arg);
-const heard = (page) => page.evaluate(() => window.nori.heard?.seconds ?? 0);
+const heard = (page) => page.evaluate(async () => (await window.nori.heard?.())?.seconds ?? 0);
 
 /** Opens pane `name` beside the page from the player bar. */
 async function pane(page, name) {
@@ -59,10 +59,10 @@ await host.bringToFront();
 await host.evaluate((id) => (location.hash = `#/album/${id}`), album);
 await host.waitForSelector(".songs li .play");
 await (await host.$$(".songs li .play"))[0].click();
-await until(host, () => (window.nori.heard?.seconds ?? 0) > 1).catch(async (e) => {
+await until(host, async () => ((await window.nori.heard?.())?.seconds ?? 0) > 1).catch(async (e) => {
   console.log("host playback", await host.evaluate(async () => {
     const n = JSON.parse(await window.ask("now"));
-    return { heard: window.nori.heard, state: n.state, positionMs: n.positionMs, song: n.song?.title };
+    return { heard: await window.nori.heard?.(), state: n.state, positionMs: n.positionMs, song: n.song?.title };
   }), logs.join("\n"));
   throw e;
 });
@@ -90,7 +90,7 @@ if (!only || only.includes("playon")) {
   const t0 = Date.now();
   await host.click(`#devices [data-device="${there}"]`);
   await until(guest, async () => JSON.parse(await window.ask("now"))?.state === "Playing", null, 30000).catch(() => {});
-  await until(guest, (h) => (window.nori.heard?.seconds ?? 0) > h + 2, guestHeard, 30000).catch(() => {});
+  await until(guest, async (h) => ((await window.nori.heard?.())?.seconds ?? 0) > h + 2, guestHeard, 30000).catch(() => {});
   const movedMs = Date.now() - t0;
   const onGuest = await json(guest, "now");
   await until(host, async () => !!JSON.parse(await window.ask("now"))?.device, null, 15000).catch(() => {});
@@ -106,7 +106,7 @@ if (!only || only.includes("playon")) {
   const back = await heard(host);
   await host.click('#devices [data-device=""]');
   await until(host, async () => { const n = JSON.parse(await window.ask("now")); return n.state === "Playing" && !n.device; }, null, 30000).catch(() => {});
-  await until(host, (h) => (window.nori.heard?.seconds ?? 0) > h + 2, back, 30000).catch(() => {});
+  await until(host, async (h) => ((await window.nori.heard?.())?.seconds ?? 0) > h + 2, back, 30000).catch(() => {});
   const home = await json(host, "now");
   // The other browser shows it playing here, and plays nothing itself.
   await until(guest, async () => !!JSON.parse(await window.ask("now"))?.device, null, 15000).catch(() => {});
@@ -166,8 +166,8 @@ if (!only || only.includes("jam")) {
   await guest.waitForSelector("#jam-listen", { timeout: 30000 });
   await guest.click("#jam-listen");
   await until(guest, async () => JSON.parse(await window.ask("jam")).listening === "Playing", null, 30000).catch(() => {});
-  await until(guest, () => (window.nori.heard?.seconds ?? 0) > 2, null, 30000).catch(() => {});
-  const along = await guest.evaluate(() => window.nori.heard);
+  await until(guest, async () => ((await window.nori.heard?.())?.seconds ?? 0) > 2, null, 30000).catch(() => {});
+  const along = await guest.evaluate(() => window.nori.heard?.());
   report.along = { listening: (await json(guest, "jam")).listening, heardS: along?.seconds ?? 0, dry: along?.dry ?? null };
   expect((along?.seconds ?? 0) > 2, "a guest listening along hears the jam");
 
