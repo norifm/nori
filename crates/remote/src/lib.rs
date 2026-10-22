@@ -147,12 +147,14 @@ pub fn qr_code(text: String) -> Option<QrCode> {
 /// Where `state`'s position is now, `elapsed_ms` after it was received, within the current song.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn position_now(state: &wire::DeviceState, elapsed_ms: i64) -> i64 {
-    let pace = pace(state);
-    if pace == 0.0 {
-        return state.position_ms;
-    }
-    let length = state.entries.iter().find(|e| Some(e.index) == state.index).map_or(i64::MAX, |e| e.duration as i64 * 1000);
-    (state.position_ms + (elapsed_ms.max(0) as f64 * pace) as i64).min(length)
+    let duration = state.entries.iter().find(|e| Some(e.index) == state.index).map_or(0, |e| e.duration);
+    run_on(state.position_ms, elapsed_ms as f64, pace(state), duration)
+}
+
+/// Where a song is `elapsed_ms` after it was at `position_ms`, at `pace`, within its length (`duration_s`; 0 unknown).
+pub fn run_on(position_ms: i64, elapsed_ms: f64, pace: f64, duration_s: u32) -> i64 {
+    let end = if duration_s > 0 { duration_s as i64 * 1000 } else { i64::MAX };
+    (position_ms + (elapsed_ms.max(0.0) * pace) as i64).clamp(0, end)
 }
 
 /// How fast the audible playhead moves; held while paused or waiting for audio.
@@ -253,6 +255,22 @@ mod tests {
         assert_eq!(position_now(&st, 60_000), 10_000, "not past the song's end");
         assert_eq!(position_now(&DeviceState { rate: Some(1.25), ..st.clone() }, 2_000), 4_500, "at the device's speed");
         assert_eq!(position_now(&DeviceState { buffering: true, ..st.clone() }, 1_500), 2_000, "waiting for audio");
-        assert_eq!(position_now(&DeviceState { playing: false, ..st }, 1_500), 2_000);
+        assert_eq!(position_now(&DeviceState { playing: false, ..st.clone() }, 1_500), 2_000);
+        let unknown = vec![Entry { index: 4, duration: 0, ..Default::default() }];
+        assert_eq!(position_now(&DeviceState { entries: unknown, ..st }, 1_500), 3_500, "a song of unknown length runs on");
+    }
+
+    #[test]
+    fn a_song_runs_on_within_its_length() {
+        // (position, elapsed, pace, duration s) -> position
+        for (position, elapsed, pace, duration, want) in [
+            (2_000, 1_500.0, 1.0, 0, 3_500),
+            (2_000, 60_000.0, 1.0, 10, 10_000),
+            (-500, 100.0, 1.0, 10, 0),
+            (2_000, -1_000.0, 1.0, 10, 2_000),
+            (2_000, 1_500.0, 0.0, 10, 2_000),
+        ] {
+            assert_eq!(run_on(position, elapsed, pace, duration), want, "{position} + {elapsed} at {pace}, {duration} s");
+        }
     }
 }

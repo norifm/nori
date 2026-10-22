@@ -65,9 +65,8 @@ impl Now {
     /// Where the song is now.
     pub fn position_now(&self) -> i64 {
         let runs = self.state == State::Playing && !self.buffering;
-        let elapsed = if runs { self.at.elapsed().as_secs_f64() * 1000.0 } else { 0.0 };
-        let length = self.song.as_ref().filter(|s| s.duration > 0).map_or(i64::MAX, |s| s.duration as i64 * 1000);
-        (self.position_ms + (elapsed * self.pace as f64) as i64).clamp(0, length)
+        let pace = if runs { self.pace as f64 } else { 0.0 };
+        nori_remote::run_on(self.position_ms, self.at.elapsed().as_secs_f64() * 1000.0, pace, self.song.as_ref().map_or(0, |s| s.duration))
     }
 
     /// The device or jam host's playback, as this player shows it.

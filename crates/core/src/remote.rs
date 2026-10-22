@@ -208,11 +208,9 @@ pub struct Mirror {
 impl Mirror {
     /// Where the song is at `now_us` on this device's clock, within the song.
     pub fn position_at(&self, now_us: i64) -> i64 {
-        if !self.playing {
-            return self.position_ms;
-        }
-        let length = self.at.and_then(|a| self.rows.get(a as usize)).filter(|r| r.song.duration > 0).map_or(i64::MAX, |r| r.song.duration as i64 * 1000);
-        (self.position_ms + ((now_us - self.at_us) as f64 / 1000.0 * self.rate) as i64).clamp(0, length)
+        let pace = if self.playing { self.rate } else { 0.0 };
+        let duration = self.at.and_then(|a| self.rows.get(a as usize)).map_or(0, |r| r.song.duration);
+        nori_remote::run_on(self.position_ms, (now_us - self.at_us) as f64 / 1000.0, pace, duration)
     }
 
     /// Where the song is now: what the device's listener hears at this moment.
