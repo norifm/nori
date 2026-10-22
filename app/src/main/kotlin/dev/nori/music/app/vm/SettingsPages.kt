@@ -8,6 +8,7 @@ import dev.nori.music.ffi.model.MusicFolder
 import dev.nori.music.ffi.settings.BeatModel
 import dev.nori.music.ffi.settings.EqLevel
 import dev.nori.music.ffi.settings.EqStatus
+import dev.nori.music.ffi.settings.KeyAction
 import dev.nori.music.ffi.settings.PageFacts
 import dev.nori.music.ffi.settings.RowItem
 import dev.nori.music.ffi.settings.SavedServer
@@ -80,11 +81,12 @@ sealed interface SettingRow {
     /** A saved server; the one in use carries its [libraries] when it has more than one, under [note]. */
     data class Server(val id: String, val label: String, val detail: String, val active: Boolean, val libraries: List<Pick> = emptyList(), val note: String = "") : SettingRow
     data class Button(val title: String, val action: String) : SettingRow
-    /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. [takesKey]: it
-     *  takes a key, typed under [keyName]; [keyed]: it is switched on only with that key; [keySet]: the key is given. */
+    /** One of a ranked list (the lyrics services), switched where it stands and picked up to move. [keyButton]: its key
+     *  button, the key typed under [keyName]; [keyed]: it is switched on only with that key; [keySet]: the key is
+     *  given; [asksKey]: switching it on asks for the key. */
     data class Ranked(
         val key: String, val name: String, val id: String, val title: String, val detail: String, val on: Boolean,
-        val takesKey: Boolean = false, val keyed: Boolean = false, val keySet: Boolean = false, val keyName: String = "",
+        val keyButton: KeyAction = KeyAction.NONE, val keyed: Boolean = false, val keySet: Boolean = false, val asksKey: Boolean = false, val keyName: String = "",
     ) : SettingRow
     /** The compressor's gain reduction, read from the player only while the page is on screen. */
     data class CompressionMeter(val key: String, val enabled: Boolean) : SettingRow
@@ -566,7 +568,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             val (title, about) = SERVICES[src.id] ?: return null
             val t = str(title)
             val detail = if (src.keySet) str(R.string.settings_lyrics_key_set, str(about)) else str(about)
-            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, detail, src.on, src.takesKey, src.needsKey, src.keySet, "lyricsKey:${src.id}")
+            SettingRow.Ranked(settingKey(t), "lyricsService:${src.id}", src.id, t, detail, src.on, src.key, src.needsKey, src.keySet, src.asksKeyOnEnable, "lyricsKey:${src.id}")
         }
         is RowItem.Unsent -> {
             val t = str(R.string.settings_unsent)

@@ -3,7 +3,7 @@
 
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{season_follow_value, season_of, EqLevel, Level, StoredPrefs, ThemeSeason};
-use nori_core::settings_model::{self, BeatModel, EqStatus, SettingKind, SettingsState};
+use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsRow};
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -513,14 +513,12 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         RowItem::LyricsSource { index } => {
             let src = s.lyrics_sources.get(index as usize)?;
             let (title, about) = service(&src.id)?;
-            // As on Android: a key that is optional has a button beside the switch, one kept can be changed
-            // there, and one needed is asked for when the service is switched on (`keyed`).
-            let button = match (src.key_set, src.takes_key && !src.needs_key) {
-                (true, _) => "Change key",
-                (false, true) => "Add key",
-                (false, false) => "",
+            let button = match src.key {
+                KeyAction::Change => "Change key",
+                KeyAction::Add => "Add key",
+                KeyAction::None => "",
             };
-            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: r.enabled, button: button.into(), rank: index as i32, keyed: src.needs_key && !src.key_set, ..Default::default() }
+            Row { kind: RANKED, name: src.id.clone(), title: title.into(), detail: about.into(), on: src.on, enabled: r.enabled, button: button.into(), rank: index as i32, keyed: src.asks_key_on_enable, ..Default::default() }
         }
     })
 }

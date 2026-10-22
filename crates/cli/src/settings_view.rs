@@ -4,7 +4,7 @@
 
 use crate::text;
 use nori_core::settings::{season_follow_value, EqLevel, Level, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
-use nori_core::settings_model::{self, BeatModel, EqStatus, LyricsSource, SettingKind, SettingsState};
+use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
 use nori_core::numbers::{self, POINT};
 use nori_core::MusicFolder;
@@ -93,9 +93,9 @@ pub enum Row {
     Slider { name: String, label: String, value: f32, min: f32, max: f32, centred: bool, level: Option<EqLevel> },
     Server { id: String, label: String, detail: String, active: bool },
     Button { title: String, action: Act },
-    /// A lyrics service in the ranked list: enter switches it, ← → move it.
-    /// `keyed`: it takes a key, asked for when it is switched on.
-    Ranked { name: String, id: String, title: String, detail: String, on: bool, keyed: bool, enabled: bool },
+    /// A lyrics service in the ranked list: enter switches it, ← → move it, `key` adds or changes its key.
+    /// `asks_key`: switching it on asks for its key.
+    Ranked { name: String, id: String, title: String, detail: String, on: bool, asks_key: bool, key: KeyAction, enabled: bool },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -272,14 +272,22 @@ impl SettingsView {
             // The profile in use: its account, where its provider signs in to one.
             Row::Server { active: true, .. } => Opened::Cmds(vec![Cmd::OfferSignIn]),
             Row::Server { id, .. } => Opened::Cmds(vec![Cmd::SwitchServer(id)]),
-            // Switched on, one that takes a key asks for it (empty: none).
             Row::Ranked { enabled: false, .. } => return None,
-            Row::Ranked { id, title, keyed: true, on: false, .. } => {
-                Opened::Overlay(Overlay::Input { title: format!("{title} key (empty: none)"), text: String::new(), secret: true, name: format!("lyricsKey:{id}") })
-            }
+            Row::Ranked { id, title, asks_key: true, on: false, .. } => key_input(&id, &title),
             Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
             _ => return None,
         })
+    }
+
+    /// The selected lyrics service's key, to add or change.
+    pub fn key(&self) -> Option<Overlay> {
+        match self.selected()? {
+            Row::Ranked { id, title, enabled: true, key: KeyAction::Add | KeyAction::Change, .. } => match key_input(id, title) {
+                Opened::Overlay(o) => Some(o),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// ← or → on the selection: previous or next option, off or on, a slider step.
@@ -512,6 +520,11 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
 }
 
 /// A setting value in words.
+/// Asks for lyrics service `id`'s key (empty: none).
+fn key_input(id: &str, title: &str) -> Opened {
+    Opened::Overlay(Overlay::Input { title: format!("{title} key (empty: none)"), text: String::new(), secret: true, name: format!("lyricsKey:{id}") })
+}
+
 /// A loudness level's target: "−18 LUFS".
 fn lufs(l: Level) -> String {
     format!("{} LUFS", numbers::fixed(l.lufs() as f64, 0, false, POINT).replace('-', "−"))
@@ -693,10 +706,10 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }
         }
         RowItem::LyricsSource { index } => {
-            let LyricsSource { id, on, takes_key, key_set, .. } = s.lyrics_sources.get(index as usize)?;
+            let LyricsSource { id, on, key_set, key, asks_key_on_enable, .. } = s.lyrics_sources.get(index as usize)?;
             let (title, detail) = service(id);
             let detail = if *key_set { format!("{detail} · key set") } else { detail.to_string() };
-            Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail, on: *on, keyed: *takes_key, enabled: r.enabled }
+            Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail, on: *on, asks_key: *asks_key_on_enable, key: *key, enabled: r.enabled }
         }
     })
 }
@@ -1129,27 +1142,34 @@ mod tests {
 
     #[test]
     fn lyrics_sources_move_and_switch() {
-        // All services default on; one is switched off to have an off row.
+        // Two are switched off: one without a key, one whose key is optional.
         let d = StoredPrefs::default();
-        let prefs = StoredPrefs { lyrics_online: true, third_party_lookups: true, lyrics_on: d.lyrics_on.iter().filter(|s| s.name() != "UNISON").copied().collect(), ..d };
+        let prefs = StoredPrefs { lyrics_online: true, third_party_lookups: true, lyrics_on: d.lyrics_on.iter().filter(|s| !["UNISON", "BETTER_LYRICS"].contains(&s.name())).copied().collect(), ..d };
         let mut v = SettingsView::default();
         let pages = v.pages(&prefs).to_vec();
         let lines = SettingsView::lines(&pages);
         let ranked: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| matches!(l, Line::Row(Row::Ranked { .. }))).map(|(i, _)| i).collect();
         assert_eq!(ranked.len(), nori_core::lyrics_sources::LyricsService::ALL.len());
         assert!(lines.iter().all(|l| !matches!(l, Line::Row(Row::Ranked { title, .. }) if title == "?")), "every service has a name");
-        let off = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { on: false, keyed: false, .. }))).unwrap();
+        let off = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { on: false, asks_key: false, key: KeyAction::None, .. }))).unwrap();
         let Line::Row(Row::Ranked { id, name, .. }) = lines[off] else { unreachable!() };
         let (id, name) = (id.clone(), name.clone());
         v.row.at = off;
         assert!(matches!(&v.step(false)[..], [Cmd::Setting(n, value)] if n == "lyricsMove" && *value == format!("{id}:-1")));
         let Some(Opened::Cmds(c)) = v.open() else { panic!() };
         assert!(matches!(&c[..], [Cmd::Setting(n, value)] if *n == name && value == "true"));
-        // A service that takes a key asks for it when switched on.
-        let keyed = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { keyed: true, on: false, .. }))).unwrap();
+        // A service that needs a key asks for it when switched on.
+        let keyed = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { asks_key: true, on: false, .. }))).unwrap();
         v.row.at = keyed;
         let Some(Opened::Overlay(Overlay::Input { name, secret: true, .. })) = v.open() else { panic!("no key asked") };
         assert!(name.starts_with("lyricsKey:"), "{name}");
+        // One whose key is optional switches on without a prompt; its key is added on its own key.
+        let optional = *ranked.iter().find(|i| matches!(lines[**i], Line::Row(Row::Ranked { key: KeyAction::Add, on: false, .. }))).unwrap();
+        v.row.at = optional;
+        assert!(matches!(v.open(), Some(Opened::Cmds(c)) if matches!(&c[..], [Cmd::Setting(n, on)] if n.starts_with("lyricsService:") && on == "true")));
+        assert!(matches!(v.key(), Some(Overlay::Input { name, .. }) if name.starts_with("lyricsKey:")));
+        v.row.at = off;
+        assert!(v.key().is_none(), "a service without a key has none to add");
         // Third-party lookups off: the sources stay listed, grayed, and take no keys.
         let quiet = StoredPrefs { third_party_lookups: false, ..prefs };
         v.invalidate();

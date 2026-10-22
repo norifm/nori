@@ -1822,6 +1822,10 @@ impl App {
                 self.settings.jump(g.clamp(0, last) as usize);
             }
             Action::GroupBack | Action::GroupOn => self.dirty = false,
+            Action::Key => match self.settings.key().filter(|_| self.view == View::Settings) {
+                Some(o) => self.overlay = Some(o),
+                None => self.dirty = false,
+            },
             Action::Decrease | Action::Increase => {
                 let up = a == Action::Increase;
                 match self.view {

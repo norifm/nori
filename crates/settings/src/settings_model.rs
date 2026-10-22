@@ -68,18 +68,40 @@ pub fn value_of(p: &StoredPrefs, name: &str) -> Option<String> {
 }
 
 /// One lyrics service in rank order. Changed by name with `lyricsService:<id>`, `lyricsKey:<id>` (its
-/// key, for one that `takes_key`), `lyricsPlace` (`<id>:<place>`) and `lyricsMove` (`<id>:-1`).
+/// key, for one with a [`KeyAction`] or that asks for one), `lyricsPlace` (`<id>:<place>`) and
+/// `lyricsMove` (`<id>:-1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct LyricsSource {
     pub id: String,
     pub on: bool,
-    /// Takes a key, typed on its row.
-    pub takes_key: bool,
-    /// Never on without its key: switching it on asks for the key first.
+    /// Never on without its key.
     pub needs_key: bool,
     /// Its key is given.
     pub key_set: bool,
+    /// The key button beside its switch.
+    pub key: KeyAction,
+    /// Switching it on asks for its key first.
+    pub asks_key_on_enable: bool,
+}
+
+/// The key button beside a lyrics service's switch: an optional key is added there, a given one changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum KeyAction {
+    None,
+    Add,
+    Change,
+}
+
+fn lyrics_source(s: lyrics_sources::LyricsService, on: bool, p: &StoredPrefs) -> LyricsSource {
+    let key_set = !s.key(p).is_empty();
+    let key = match (key_set, s.takes_key() && !s.needs_key()) {
+        (true, _) => KeyAction::Change,
+        (false, true) => KeyAction::Add,
+        (false, false) => KeyAction::None,
+    };
+    LyricsSource { id: s.name().into(), on, needs_key: s.needs_key(), key_set, key, asks_key_on_enable: s.needs_key() && !key_set }
 }
 
 /// The beat model's download state.
@@ -177,7 +199,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
     let on = lyrics_sources::switched_on(p);
     let lyrics_sources = lyrics_sources::complete_order(&p.lyrics_order)
         .into_iter()
-        .map(|s| LyricsSource { id: s.name().into(), on: on.contains(&s), takes_key: s.takes_key(), needs_key: s.needs_key(), key_set: !s.key(p).is_empty() })
+        .map(|s| lyrics_source(s, on.contains(&s), p))
         .collect();
     SettingsState {
         values: specs().into_iter().filter_map(|s| Some((s.name.clone(), value_of(p, &s.name)?))).collect(),
@@ -477,6 +499,23 @@ mod tests {
     }
 
     #[test]
+    fn lyrics_keys_are_added_changed_or_asked_for() {
+        use lyrics_sources::LyricsService::{BetterLyrics, Lrclib, PaxsenixSpotify};
+        let keyed = StoredPrefs { paxsenix_key: "k".into(), better_lyrics_key: "b".into(), ..StoredPrefs::default() };
+        let cases = [
+            (BetterLyrics, StoredPrefs::default(), KeyAction::Add, false),
+            (BetterLyrics, keyed.clone(), KeyAction::Change, false),
+            (PaxsenixSpotify, StoredPrefs::default(), KeyAction::None, true),
+            (PaxsenixSpotify, keyed, KeyAction::Change, false),
+            (Lrclib, StoredPrefs::default(), KeyAction::None, false),
+        ];
+        for (s, p, key, asks) in cases {
+            let src = lyrics_source(s, false, &p);
+            assert_eq!((src.key, src.asks_key_on_enable), (key, asks), "{s:?} key {:?}", s.key(&p));
+        }
+    }
+
+    #[test]
     fn state_rules() {
         let d = StoredPrefs::default();
         let s = state(&d, Output::default(), &beat_model::ModelFile::default());
@@ -500,7 +539,7 @@ mod tests {
         assert_eq!(on, defaults, "the default services on");
         let off = set_by_name(&d, "lyricsService:BINILYRICS", "false").unwrap().prefs;
         let s2 = state(&off, Output::default(), &beat_model::ModelFile::default());
-        assert_eq!(s2.lyrics_sources[5], LyricsSource { id: "BINILYRICS".into(), on: false, takes_key: false, needs_key: false, key_set: false }, "switched off where it stands");
+        assert_eq!(s2.lyrics_sources[5], LyricsSource { id: "BINILYRICS".into(), on: false, needs_key: false, key_set: false, key: KeyAction::None, asks_key_on_enable: false }, "switched off where it stands");
         assert!(s.lyrics_sources.iter().any(|l| l.needs_key));
         assert_eq!(s.beat_model == BeatModel::Unavailable, !beats::AVAILABLE);
     }
