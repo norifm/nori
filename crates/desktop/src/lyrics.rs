@@ -63,8 +63,9 @@ impl SongLyrics {
         // While a word fills, the clock counts 60 Hz frames.
         let wait = if shown { self.clock.wait_ms(&step, true, 16) } else { None };
         let line = usize::try_from(step.frame.active).ok().and_then(|i| self.pick.lyrics.lines.get(i));
+        // With a face the pieces draw the fill, so the split is not needed.
         let (sung, now, mix, rest) = match line {
-            Some(l) if sweeping => split(&l.text, step.frame.sung),
+            Some(l) if sweeping && self.face.is_none() => split(&l.text, step.frame.sung),
             _ => Default::default(),
         };
         Now { active: step.frame.active, sweeping, sung, now, mix, rest, wait, at: step.frame.sung, ms: self.clock.shown_ms() }
@@ -166,6 +167,17 @@ mod tests {
 
         // With no view showing the lyrics, nothing is waited for.
         assert_eq!(l.advance(2500, false, true).wait, None);
+    }
+
+    #[test]
+    fn a_face_draws_the_pieces_not_the_split_text() {
+        let word = |start_ms, end_ms, start, end| LyricWord { start_ms, end_ms, start, end };
+        let line = LyricLine { start_ms: 1000, end_ms: 3000, text: "one two".into(), words: vec![word(1000, 2000, 0, 3), word(2000, 3000, 4, 7)], ..Default::default() };
+        let lyrics = Lyrics { synced: true, word_timed: true, lines: vec![line], ..Default::default() };
+        let l = SongLyrics::new(LyricsPick { lyrics, origin: LyricsOrigin::Server }, 0, sung::bold_face());
+        let now = l.advance(2500, true, true);
+        assert!(now.sweeping);
+        assert_eq!((now.sung.as_str(), now.now.as_str(), now.rest.as_str()), ("", "", ""));
     }
 
 }
