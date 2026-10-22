@@ -980,9 +980,7 @@ impl App {
 
     fn setting_chosen(&mut self, name: &str, i: usize) {
         if name == crate::settings::APPEARANCE {
-            for (name, value) in crate::settings::appearance_settings(i) {
-                self.setting(name, value);
-            }
+            self.setting("theme", crate::settings::appearance_theme(i));
             return;
         }
         // The season tiles are the seasons alone; the core's options put Follow before them.
@@ -1262,16 +1260,15 @@ impl App {
         let ui = self.ui();
         let prefs = crate::session::app().settings.current().unwrap_or_default();
         let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
-        use nori_core::settings::CoverPlace;
         let cover = if ui.get_full_player() {
-            self.now_cover.as_ref().map(|c| (c, CoverPlace::Player))
+            self.now_cover.as_ref()
         } else if ui.get_view() == PAGE {
-            self.page_cover.as_ref().map(|c| (c, CoverPlace::Pages))
+            self.page_cover.as_ref()
         } else {
             None
         };
         match cover {
-            Some((c, place)) => crate::look::cover(&prefs, dark, today, c, place),
+            Some(c) => crate::look::cover(&prefs, dark, today, c),
             None => crate::look::plain(&prefs, dark, today),
         }
     }
@@ -1279,9 +1276,7 @@ impl App {
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
-        let places = crate::session::app().settings.current().unwrap_or_default().cover_colors;
-        self.ui().set_pages_wear_covers(places.contains(&nori_core::settings::CoverPlace::Pages));
-        self.ui().set_player_wears_covers(places.contains(&nori_core::settings::CoverPlace::Player));
+        self.ui().set_covers_tint(crate::session::app().settings.current().unwrap_or_default().theme.covers_tint_pages());
         // nori's Motion setting, as on Android: animations run unless it asks for less.
         let reduced = crate::session::app().settings.current().unwrap_or_default().motion != nori_core::settings::Motion::Full;
         self.ui().global::<Motion>().set_reduced(reduced);

@@ -215,11 +215,11 @@ export const W = {
   ] as [string, string, string][],
   appearance: "Appearance",
   appearances: [
-    ["SYSTEM", "Same as the system"],
-    ["LIGHT", "Light"],
-    ["DARK", "Dark"],
+    ["SYSTEM", "Follow system"],
+    ["LIGHT", "Day"],
+    ["DARK", "Night"],
+    ["MIDNIGHT", "Midnight"],
   ] as [string, string][],
-  amoled: "Pure black",
   // The top bar and the player bar.
   libraryMenu: "Library",
   devices: "Devices",
