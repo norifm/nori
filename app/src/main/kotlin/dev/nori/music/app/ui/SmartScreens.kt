@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -188,11 +189,10 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             mosaic = m.covers,
             art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp) },
             headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }, true),
+            // A new draw stands after Play, where a record's seal does; the head keeps download and add to queue.
+            actions = { if (m.refreshable) GlyphButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() } },
             headActions = {
-                PageActionGlyphs(
-                    dev.nori.music.ffi.library.PageKind.Mix(m.refreshable), m.songs, list.downloaded, actions,
-                    own = { if (it == dev.nori.music.ffi.library.PageAction.Refresh) ({ vm.refresh() }) else null },
-                )
+                PageActionGlyphs(dev.nori.music.ffi.library.PageKind.Mix(m.refreshable), m.songs, list.downloaded, actions)
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {
