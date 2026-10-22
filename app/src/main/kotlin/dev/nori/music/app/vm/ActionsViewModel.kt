@@ -131,8 +131,6 @@ class ActionsViewModel(app: Application) : NoriViewModel(app) {
 
     fun excludeFromMixes(song: Song) = attempt(say.excludedFromMixes) { nori.library.excludeFromMixes(song.id, true) }
 
-    fun exportM3u(name: String, songs: List<Song>): String = nori.library.m3uExport(name, songs)
-
     /** Creates a server playlist from an M3U file; tracks that are not in the index are reported, not guessed. */
     fun importM3u(name: String, text: String) = attempt(null) {
         val imported = withContext(Dispatchers.IO) { nori.core.m3uImport(text) }

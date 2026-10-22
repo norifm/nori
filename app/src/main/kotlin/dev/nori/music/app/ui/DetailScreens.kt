@@ -20,7 +20,6 @@ import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.MaterialTheme
@@ -97,9 +96,9 @@ internal fun SongListPage(
 }
 
 /**
- * The glyphs of a page's list head: what the core's `page_actions` offers [kind], in its order. Download,
- * Add to queue and Export are done here ([artistId]: the artist's own songs); [own] answers the ones only
- * the page can do (Export, Refresh, Edit) and a page without an answer shows no glyph for them.
+ * The glyphs of a page's list head: what the core's `page_actions` offers [kind], in its order. Download and
+ * Add to queue are done here ([artistId]: the artist's own songs); [own] answers the ones only
+ * the page can do (Refresh, Edit) and a page without an answer shows no glyph for them.
  */
 @Composable
 internal fun PageActionGlyphs(
@@ -120,7 +119,6 @@ internal fun PageActionGlyphs(
         PageAction.AddToQueue -> GlyphButton(Icons.AutoMirrored.Filled.QueueMusic, say.addToQueue, quiet = true) {
             if (artistId != null) actions.queueArtist(artistId) else actions.enqueue(songs)
         }
-        PageAction.Export -> own(a)?.let { GlyphButton(Icons.Filled.IosShare, say.exportPlaylistFile, quiet = true, onClick = it) }
         PageAction.Refresh -> own(a)?.let { GlyphButton(Icons.Filled.Refresh, say.newMix, onClick = it) }
         PageAction.Edit -> own(a)?.let { GlyphButton(Icons.Filled.Edit, say.edit, onClick = it) }
     }
@@ -430,18 +428,13 @@ fun PlaylistScreen(id: String, actions: ActionsViewModel, vm: PlaylistViewModel 
     LaunchedEffect(id) { vm.open(id) }
     val load by vm.ui.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf("") }
-    val context = androidx.compose.ui.platform.LocalContext.current
     val detail = (load as? Load.Ready)?.data
-    val exportM3u = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("audio/x-mpegurl")) { uri ->
-        if (uri != null && detail != null) runCatching { context.contentResolver.openOutputStream(uri)?.use { it.write(actions.exportM3u(detail.playlist.name, detail.songs).toByteArray()) } }
-    }
-    val export = { name: String -> exportM3u.launch(dev.nori.music.ffi.library.m3uFileName(name)) }
     val hint = LocalNav.current.playlistHint(id)
     if (hint == null) {
-        LoadBox(load) { d -> PlaylistPage(id, d.playlist, d, null, actions, vm, filter, { filter = it }, export) }
+        LoadBox(load) { d -> PlaylistPage(id, d.playlist, d, null, actions, vm, filter, { filter = it }) }
         return
     }
-    PlaylistPage(id, detail?.playlist ?: hint, detail, (load as? Load.Failed)?.message, actions, vm, filter, { filter = it }, export)
+    PlaylistPage(id, detail?.playlist ?: hint, detail, (load as? Load.Failed)?.message, actions, vm, filter, { filter = it })
 }
 
 /** A playlist's page: [detail] null while the songs are on the wire, [failed] when they did not come. */
@@ -455,7 +448,6 @@ private fun PlaylistPage(
     vm: PlaylistViewModel,
     filter: String,
     onFilter: (String) -> Unit,
-    export: (playlistName: String) -> Unit,
 ) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
@@ -484,7 +476,7 @@ private fun PlaylistPage(
         },
         headLabel = head,
         headActions = {
-            PageActionGlyphs(PageKind.Playlist, detail?.songs.orEmpty(), list.downloaded, actions) { if (it == PageAction.Export) ({ export(playlist.name) }) else null }
+            PageActionGlyphs(PageKind.Playlist, detail?.songs.orEmpty(), list.downloaded, actions)
         },
     ) {
         when {

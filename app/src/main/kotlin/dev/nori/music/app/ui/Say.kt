@@ -156,7 +156,6 @@ class Say(private val r: Resources) {
     val filterArtists: String = r.getString(R.string.filter_artists)
     val newPlaylist: String = r.getString(R.string.new_playlist)
     val importPlaylistFile: String = r.getString(R.string.import_playlist_file)
-    val exportPlaylistFile: String = r.getString(R.string.export_playlist_file)
     val favouriteSongs: String = r.getString(R.string.favourite_songs)
     val starredFavourites: String = r.getString(R.string.starred_favourites)
     val newStation: String = r.getString(R.string.new_station)

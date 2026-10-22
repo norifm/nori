@@ -237,8 +237,6 @@ class Library(
     suspend fun smartPage(json: String): dev.nori.music.ffi.library.SmartPage =
         withContext(Dispatchers.IO) { core.smartPage(json, sizes.smartSongs) }
 
-    fun m3uExport(name: String, songs: List<Song>): String = dev.nori.music.ffi.library.m3uExport(name, songs)
-
     /** The server's folder tree, for libraries organised by directory rather than by tags. */
     fun folders(): Flow<List<Artist>> = cached(Read.FolderIndex) { (it as Page.Artists).v }
     fun folder(id: String): Flow<dev.nori.music.ffi.model.Directory> = cached(Read.FolderById(id)) { (it as Page.DirectoryPage).v }

@@ -323,8 +323,6 @@ pub enum PageAction {
     /// Everything by the artist.
     DownloadEverything,
     AddToQueue,
-    /// The playlist as a playlist file.
-    Export,
     /// A new draw of the mix.
     Refresh,
     /// The smart playlist's rules.
@@ -349,10 +347,9 @@ pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -
         out.push(PageAction::AddToQueue);
     }
     match kind {
-        PageKind::Playlist => out.push(PageAction::Export),
         PageKind::Mix { refreshable: true } => out.push(PageAction::Refresh),
         PageKind::Smart => out.push(PageAction::Edit),
-        PageKind::Album | PageKind::Artist | PageKind::Mix { refreshable: false } => {}
+        PageKind::Album | PageKind::Playlist | PageKind::Artist | PageKind::Mix { refreshable: false } => {}
     }
     out
 }
@@ -389,9 +386,9 @@ mod tests {
             (PageKind::Album, 0, 0, true, vec![]),
             (PageKind::Artist, 0, 0, true, vec![DownloadEverything, AddToQueue]),
             (PageKind::Artist, 0, 0, false, vec![AddToQueue]),
-            (PageKind::Playlist, 12, 12, true, vec![Download { act: All }, AddToQueue, Export]),
-            (PageKind::Playlist, 12, 12, false, vec![AddToQueue, Export]),
-            (PageKind::Playlist, 0, 0, true, vec![Export]),
+            (PageKind::Playlist, 12, 12, true, vec![Download { act: All }, AddToQueue]),
+            (PageKind::Playlist, 12, 12, false, vec![AddToQueue]),
+            (PageKind::Playlist, 0, 0, true, vec![]),
             (mix(true), 50, 50, true, vec![Download { act: All }, AddToQueue, Refresh]),
             (mix(false), 50, 0, true, vec![Download { act: Remove }, AddToQueue]),
             (mix(true), 0, 0, false, vec![Refresh]),
