@@ -28,7 +28,7 @@ class LyricsWidget : NoriWidget() {
         super.onReceive(context, intent)
         if (intent.action == PlaybackService.ACTION_STATE) {
             Widgets.heard(intent)
-            LyricsLine.changed(context.applicationContext)
+            LyricsLine.heard(context.applicationContext)
         }
     }
 
@@ -46,8 +46,9 @@ class LyricsWidget : NoriWidget() {
  * Keeps the lyrics widgets on the line being sung. The song's lyrics are looked up as the app's lyrics are
  * (the server's, then the lyrics services' when the settings allow), once per song and only with the screen
  * on. Then one wake per line: the next is posted for when it starts, and only while music plays, the screen
- * is on and a lyrics widget is placed - nothing ticks between lines, and nothing at all with the screen off.
- * A line's change sends only its words; the picture behind them is sent with the song.
+ * is on and a lyrics widget is placed - nothing ticks between lines, and nothing at all with the screen off:
+ * the screen turning on draws everything. A line's change, or the same song's playing or seeking, sends
+ * only its words; the picture behind them is sent with the song.
  */
 internal object LyricsLine {
     private val main = Handler(Looper.getMainLooper())
@@ -70,10 +71,22 @@ internal object LyricsLine {
 
     private fun on(context: Context) = context.getSystemService(PowerManager::class.java).isInteractive
 
-    /** The song, its playing or the widgets changed: everything drawn again. Main thread. */
+    /** The widgets or the screen changed: everything drawn again, if the screen is on. Main thread. */
     fun changed(context: Context) {
+        if (track(context) && on(context)) full(context)
+    }
+
+    /** The service announced the song or its playing: the words alone while it is the song drawn, else everything. Main thread. */
+    fun heard(context: Context) {
+        val drawn = look != null && Widgets.now(context).id == song
+        if (!track(context) || !on(context)) return
+        if (drawn) line(context) else full(context)
+    }
+
+    /** Watches the screen and keeps the song's lyrics looked up; false when no lyrics widget is placed. */
+    private fun track(context: Context): Boolean {
         app = context
-        if (Widgets.ids(context, LyricsWidget::class.java).isEmpty()) { stop(context); return }
+        if (Widgets.ids(context, LyricsWidget::class.java).isEmpty()) { stop(context); return false }
         if (!watching) {
             watching = true
             ContextCompat.registerReceiver(context, screen, IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_SCREEN_OFF) }, ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -87,7 +100,7 @@ internal object LyricsLine {
             looking = null
         }
         if (id != null && !looked && looking == null && on(context)) looking = Widgets.scope.launch { look(context, id) }
-        full(context)
+        return true
     }
 
     private suspend fun look(context: Context, id: String) {
