@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-stretch',
  'edition': '2021',
- 'version': '0.7.0-beta.5',
+ 'version': '0.7.0-beta.6',
  'targets': [{'name': 'nori_stretch', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True},
              {'name': 'compare', 'kind': 'test', 'root': 'tests/compare.rs', 'test': True},
              {'name': 'no_alloc', 'kind': 'test', 'root': 'tests/no_alloc.rs', 'test': True}],
