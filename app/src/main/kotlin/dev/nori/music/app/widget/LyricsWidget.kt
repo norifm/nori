@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import dev.nori.music.Nori
 import dev.nori.music.app.R
 import dev.nori.music.app.widget.Widgets.tint
+import dev.nori.music.ffi.lyrics.widgetLines
 import dev.nori.music.ffi.model.Lyrics
 import dev.nori.music.look.CoverLook
 import dev.nori.music.playback.PlaybackService
@@ -117,16 +118,10 @@ internal object LyricsLine {
         val p = Widgets.now(context)
         val l = lyrics
         if (p.id == null) return Words(context.getString(R.string.nothing_playing), "", true, null)
-        if (l == null || l.lines.none { it.text.isNotBlank() }) return Words(if (looked) context.getString(R.string.note_no_lyrics) else NOTE, "", looked, null)
-        val said = l.lines.filter { it.text.isNotBlank() }
-        if (!l.synced) return Words(said[0].text, said.getOrNull(1)?.text.orEmpty(), false, null)
-        // The lines are sung by their start times, the lyrics' found offset added to the playhead (as LyricsClock does).
-        val t = p.positionNow() + dev.nori.music.ffi.lyrics.lyricsOffsetMs(l.timing)
-        val at = l.lines.indexOfLast { it.startMs <= t }
-        val now = l.lines.getOrNull(at)?.text?.takeIf { it.isNotBlank() } ?: NOTE
-        val then = l.lines.drop(at + 1).firstOrNull { it.text.isNotBlank() }?.text.orEmpty()
-        val wait = l.lines.getOrNull(at + 1)?.let { ((it.startMs - t) / p.speed.coerceAtLeast(0.1f)).toLong().coerceAtLeast(50) }
-        return Words(now, then, false, wait)
+        val shown = l?.let { widgetLines(it, p.positionNow(), p.speed) }
+        if (l == null || shown == null) return Words(if (looked) context.getString(R.string.note_no_lyrics) else NOTE, "", looked, null)
+        val said = { i: UInt? -> i?.let { l.lines[it.toInt()].text }.orEmpty() }
+        return Words(said(shown.line).ifEmpty { NOTE }, said(shown.next), false, shown.waitMs?.toLong())
     }
 
     /** Between lines, and in a song's instrumental stretches. */
