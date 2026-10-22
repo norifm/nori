@@ -1929,12 +1929,14 @@ struct Icy {
     left: usize,
     /// The last title, until the loader takes it.
     title: Option<String>,
+    /// The last title the station sent; one it repeats is not said again.
+    sent: Option<String>,
 }
 
 impl Icy {
     fn new(inner: Box<dyn Read + Send>, every: Option<usize>) -> Icy {
         let every = every.filter(|&n| n > 0);
-        Icy { inner, every, left: every.unwrap_or(0), title: None }
+        Icy { inner, every, left: every.unwrap_or(0), title: None, sent: None }
     }
 
     /// Reads one metadata block.
@@ -1948,7 +1950,10 @@ impl Icy {
         let mut text = vec![0u8; n];
         self.inner.read_exact(&mut text)?;
         if let Some(t) = stream_title(&text) {
-            self.title = Some(t);
+            if self.sent.as_ref() != Some(&t) {
+                self.sent = Some(t.clone());
+                self.title = Some(t);
+            }
         }
         Ok(())
     }
@@ -2622,6 +2627,31 @@ mod tests {
             assert!(l.error().is_some(), "failed (breaks {breaks})");
             assert_eq!(*s.0.lock(), RETRIES + 1, "asked once and again {RETRIES} times (breaks {breaks})");
         }
+    }
+
+    /// A title the station repeats in every block is said once.
+    #[test]
+    fn repeated_icy_title_is_said_once() {
+        let block = |title: &str| {
+            let text = format!("StreamTitle='{title}';");
+            let mut b = vec![(text.len().div_ceil(16)) as u8];
+            b.extend(text.bytes());
+            b.resize(1 + text.len().div_ceil(16) * 16, 0);
+            b
+        };
+        let mut bytes = Vec::new();
+        for title in ["A - One", "A - One", "B - Two", "B - Two"] {
+            bytes.extend([7u8; 4]);
+            bytes.extend(block(title));
+        }
+        bytes.extend([7u8; 4]);
+        let mut icy = Icy::new(Box::new(io::Cursor::new(bytes)), Some(4));
+        let mut said = Vec::new();
+        let mut buf = [0u8; 4];
+        while icy.read(&mut buf).is_ok_and(|n| n > 0) {
+            said.extend(icy.title.take());
+        }
+        assert_eq!(said, ["A - One", "B - Two"]);
     }
 
     #[test]
