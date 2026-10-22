@@ -414,7 +414,7 @@ private fun ListHead(label: String, actions: (@Composable RowScope.() -> Unit)?)
 private fun Modifier.raised(by: androidx.compose.ui.unit.Dp): Modifier = layout { measurable, constraints ->
     val placeable = measurable.measure(constraints)
     val up = by.roundToPx()
-    layout(placeable.width, placeable.height - up) { placeable.place(0, -up) }
+    layout(placeable.width, (placeable.height - up).coerceAtLeast(0)) { placeable.place(0, -up) }
 }
 
 /** On its side: the space above the cover and above the first song, under the status bar. */
