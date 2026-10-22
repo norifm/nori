@@ -1228,7 +1228,7 @@ impl App {
         ui.set_page_caption("".into());
         ui.set_page_art("".into());
         ui.set_page_songs(ModelRc::default());
-        ui.set_page_albums(ModelRc::default());
+        ui.set_page_shelves(ModelRc::default());
         self.page_colours(None);
         ui.set_view(PAGE);
         ui.set_failed("".into());
@@ -1463,7 +1463,9 @@ impl App {
                 let caption = if d.albums.is_empty() && !d.songs.is_empty() { words::songs(d.songs.len()) } else { words::albums(d.albums.len() as u32) };
                 ui.set_page_caption(caption.into());
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
-                ui.set_page_albums(cards(d.albums.iter().map(|a| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) })));
+                let card = |a: &nori_core::Album| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) };
+                let shelves = d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true });
+                ui.set_page_shelves(ModelRc::new(VecModel::from(shelves.collect::<Vec<_>>())));
                 self.page_songs = d.songs;
                 self.show_page_songs();
             }
@@ -1581,7 +1583,7 @@ impl App {
         ui.set_page_id(id.as_str().into());
         ui.set_page_title("".into());
         ui.set_page_caption("".into());
-        ui.set_page_albums(ModelRc::default());
+        ui.set_page_shelves(ModelRc::default());
         self.page_songs.clear();
         self.page_songs_all = false;
         self.page_fetch = Some(Fetch::Artist(id.clone()));
