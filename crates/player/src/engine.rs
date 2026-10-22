@@ -1071,7 +1071,7 @@ impl TransitionEngine {
             }
             used = bytes;
         }
-        if used < src.len() && !looping {
+        if used < src.len() {
             let rest = &src[used..];
             let at = self.stamp(first_us + out.us(used), rest.len() / fb, pace, out);
             let c = self.copy_of(rest);
@@ -1733,6 +1733,31 @@ mod tests {
         assert!(s[s.len() - 10..].iter().all(|&v| v == -8000), "b plays alone after the fade");
         assert_eq!(d.discontinuities, 1, "one resync, for the mix's timestamps");
         assert_eq!(e.heard().from, Some(b'a' as u64));
+    }
+
+    /// The incoming song's frame number as its sample on both channels, so a dropped or repeated stretch shows.
+    fn ramp(frames: usize) -> Vec<u8> {
+        (0..frames).flat_map(|f| [(f % 20_000) as i16; 2]).flat_map(i16::to_le_bytes).collect()
+    }
+
+    #[test]
+    fn outro_loop_mix_keeps_incoming_past_the_window() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        let mut p = fade("b", 1_000_000);
+        p.mixer.out_loop_ms = Some(500);
+        h.plans.insert("a".into(), p);
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        feed(&mut e, &mut d, &mut h, &tone(8000, 3.0), 0);
+        let passed = d.samples().len() / 2;
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        let incoming = 3 * RATE as usize;
+        feed(&mut e, &mut d, &mut h, &ramp(incoming), 3_000_000);
+        let s = d.samples();
+        assert_eq!(s.len() / 2, passed + incoming, "the whole incoming song plays once");
+        let window = 2 * RATE as usize;
+        let after = &s[(passed + window) * 2..];
+        assert!(after.chunks(2).enumerate().all(|(i, f)| f == [((window + i) % 20_000) as i16; 2]), "the incoming song goes on right where the window ends");
     }
 
     /// A song mixed into itself (queued twice): the second copy is a stream of its own, whose ending is
