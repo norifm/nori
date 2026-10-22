@@ -23,7 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -189,10 +189,15 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             mosaic = m.covers,
             art = { MixArt(MixCard(m.id, m.title, m.covers, m.favourites), 236.dp) },
             headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }, true),
-            // A new draw stands after Play, where a record's seal does; the head keeps download and add to queue.
-            actions = { if (m.refreshable) GlyphButton(Icons.Filled.Refresh, say.newMix) { vm.refresh() } },
+            // After Play, as a record's seal stands there: keep the mix on the account as a playlist.
+            actions = {
+                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Icons.AutoMirrored.Filled.PlaylistAdd, say.saveAsPlaylist) { actions.saveMixAsPlaylist(m.title, m.songs) }
+            },
             headActions = {
-                PageActionGlyphs(dev.nori.music.ffi.library.PageKind.Mix(m.refreshable), m.songs, list.downloaded, actions)
+                PageActionGlyphs(
+                    dev.nori.music.ffi.library.PageKind.Mix(m.refreshable), m.songs, list.downloaded, actions,
+                    own = { if (it == dev.nori.music.ffi.library.PageAction.Refresh) ({ vm.refresh() }) else null },
+                )
             },
         ) {
             if (m.songs.isEmpty()) item(key = "empty") {

@@ -335,6 +335,10 @@ pub enum PageAction {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -> Vec<PageAction> {
     let mut out = Vec::with_capacity(3);
+    match kind {
+        PageKind::Mix { refreshable: true } => out.push(PageAction::Refresh),
+        PageKind::Smart | PageKind::Album | PageKind::Playlist | PageKind::Artist | PageKind::Mix { refreshable: false } => {}
+    }
     if kind == PageKind::Artist {
         if downloads {
             out.push(PageAction::DownloadEverything);
@@ -346,12 +350,22 @@ pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -
         }
         out.push(PageAction::AddToQueue);
     }
-    match kind {
-        PageKind::Mix { refreshable: true } => out.push(PageAction::Refresh),
-        PageKind::Smart => out.push(PageAction::Edit),
-        PageKind::Album | PageKind::Playlist | PageKind::Artist | PageKind::Mix { refreshable: false } => {}
+    if kind == PageKind::Smart {
+        out.push(PageAction::Edit);
     }
     out
+}
+
+/// What a mix is called as a playlist saved to the server: "nori discover", then "nori discover 2" and on
+/// while `existing` (the account's playlist names) has the one before.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn saved_mix_name(title: String, existing: Vec<String>) -> String {
+    let base = format!("nori {}", title.trim().to_lowercase());
+    let taken = |name: &str| existing.iter().any(|e| e.trim().eq_ignore_ascii_case(name));
+    if !taken(&base) {
+        return base;
+    }
+    (2..).map(|n| format!("{base} {n}")).find(|name| !taken(name)).unwrap_or(base)
 }
 
 /// The positions of `songs` not yet `done`: what [`DownloadAct::Missing`] fetches, for the page glyphs'
@@ -373,6 +387,15 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_mix_is_named_after_itself_and_counted_when_repeated() {
+        let names = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(saved_mix_name("Discover".into(), vec![]), "nori discover");
+        assert_eq!(saved_mix_name("Discover".into(), names(&["nori discover"])), "nori discover 2");
+        assert_eq!(saved_mix_name("Discover".into(), names(&["Nori Discover", "nori discover 2", "Road trip"])), "nori discover 3");
+        assert_eq!(saved_mix_name(" Quick picks ".into(), names(&["nori discover"])), "nori quick picks");
+    }
+
+    #[test]
     fn page_heads() {
         use DownloadAct::{All, Missing, Remove};
         use PageAction::*;
@@ -389,7 +412,7 @@ mod tests {
             (PageKind::Playlist, 12, 12, true, vec![Download { act: All }, AddToQueue]),
             (PageKind::Playlist, 12, 12, false, vec![AddToQueue]),
             (PageKind::Playlist, 0, 0, true, vec![]),
-            (mix(true), 50, 50, true, vec![Download { act: All }, AddToQueue, Refresh]),
+            (mix(true), 50, 50, true, vec![Refresh, Download { act: All }, AddToQueue]),
             (mix(false), 50, 0, true, vec![Download { act: Remove }, AddToQueue]),
             (mix(true), 0, 0, false, vec![Refresh]),
             (PageKind::Smart, 30, 30, false, vec![AddToQueue, Edit]),

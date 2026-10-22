@@ -179,6 +179,7 @@ class Say(private val r: Resources) {
     val sooner: String = r.getString(R.string.sooner)
     val mixing: String = r.getString(R.string.mixing)
     val newMix: String = r.getString(R.string.new_mix)
+    val saveAsPlaylist: String = r.getString(R.string.save_as_playlist)
     val newSmartPlaylist: String = r.getString(R.string.new_smart_playlist)
     val readyMade: String = r.getString(R.string.ready_made)
     val smartPlaylist: String = r.getString(R.string.smart_playlist)
