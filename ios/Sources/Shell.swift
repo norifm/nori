@@ -374,23 +374,34 @@ final class DownloadsPage: PageController {
         note.adjustsFontForContentSizeCategory = true
         note.textAlignment = .center
         tableView.tableFooterView = note
+        NotificationCenter.default.addObserver(self, selector: #selector(stopAgain), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(resume), name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
-    /// Read again a second on while something downloads and the page is in sight.
+    /// Read again a second on while something downloads and the page is on a lit screen.
     private var again: Timer?
     /// A row is swiped open: reading again would reload the table and close it, so it waits.
     private var swiped = false
 
     override func took(_ a: PageAnswer, appending: Bool) {
         super.took(a, appending: appending)
-        again?.invalidate()
-        again = nil
-        guard a.raw["running"] as? Bool == true, view.window != nil else { return }
+        stopAgain()
+        guard a.raw["running"] as? Bool == true, view.window != nil,
+              UIApplication.shared.applicationState == .active else { return }
         again = Timer.scheduledTimer(withTimeInterval: 1, repeats: false) { [weak self] _ in
             guard let self, !self.swiped else { return }
             self.reload()
         }
         again?.tolerance = 0.2
+    }
+
+    @objc private func stopAgain() {
+        again?.invalidate()
+        again = nil
+    }
+
+    @objc private func resume() {
+        if answer?.raw["running"] as? Bool == true, view.window != nil { reload() }
     }
 
     override func tableView(_ tableView: UITableView, willBeginEditingRowAt indexPath: IndexPath) {
@@ -409,8 +420,7 @@ final class DownloadsPage: PageController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        again?.invalidate()
-        again = nil
+        stopAgain()
     }
 }
 
