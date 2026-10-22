@@ -124,7 +124,7 @@ fn downloads_open_saved_album_tracks() {
     a.handle(Msg::Data(Req::Downloads, Ok(Data::Downloads(Box::new(crate::backend::Downloads { stored, ..Default::default() })))));
     let screen = draw(&mut a, 120, 30);
     assert!(screen.contains("Saved album") && !screen.contains("Saved one"), "{screen}");
-    a.downloads_sel.at = a.download_rows().iter().position(|r| matches!(r, crate::app::DownloadRow::Album(_))).unwrap();
+    a.downloads_sel.at = a.downloads.ready().unwrap().rows().iter().position(|r| matches!(r, crate::app::DownloadRow::Album(_))).unwrap();
     key(&mut a, KeyCode::Enter);
     assert_eq!(a.cmds.last(), Some(&Cmd::Load(Req::DownloadedAlbum("saved-album".into()))));
     let detail = nori_core::library::downloaded_album(tracks).unwrap();
@@ -1086,6 +1086,30 @@ fn clock_wakes_only_where_drawn() {
     assert!(a.next_wake(now).is_some(), "the bar's clock ticks each second");
     draw(&mut a, 60, 14);
     assert_eq!(a.next_wake(now), None, "a resize back drops the tick");
+}
+
+#[test]
+fn downloads_refresh_in_sight_with_progress_only() {
+    use nori_core::transfers::DownloadSections;
+    let mut a = app();
+    let now = Instant::now();
+    a.view = View::Downloads;
+    let song = Song { id: "s".into(), title: "Song".into(), ..Default::default() };
+    a.handle(Msg::Data(Req::Downloads, Ok(Data::Downloads(Box::new(crate::backend::Downloads { active: vec![song.clone()], ..Default::default() })))));
+    a.handle(Msg::Focus(false));
+    assert_eq!(a.next_wake(now), None, "out of sight: no refresh");
+    a.handle(Msg::Focus(true));
+    let due = a.next_wake(now).expect("in sight: the refresh is due");
+    a.cmds.clear();
+    a.tick(due);
+    assert!(matches!(a.cmds.last(), Some(Cmd::Load(Req::DownloadProgress))), "a tick reads progress, not the stored library");
+
+    let sections = |finished: Vec<Song>| Box::new(DownloadSections { active: vec![song.clone()], queued: vec![], failed: vec![], finished });
+    a.cmds.clear();
+    a.handle(Msg::Data(Req::DownloadProgress, Ok(Data::DownloadProgress(sections(vec![])))));
+    assert!(a.cmds.is_empty() && a.downloads_at.is_some(), "same finished count: no library read, the next tick set");
+    a.handle(Msg::Data(Req::DownloadProgress, Ok(Data::DownloadProgress(sections(vec![song.clone()])))));
+    assert!(matches!(a.cmds.last(), Some(Cmd::Load(Req::Downloads))), "a song finished: the stored library is read again");
 }
 
 #[test]

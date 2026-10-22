@@ -972,24 +972,19 @@ fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
         Load::Ready(_) => {}
         _ => return loading(f, body, t),
     }
-    let rows = app.download_rows();
+    let App { downloads, downloads_sel, hits, .. } = app;
+    let rows = downloads.ready().map(|d| d.rows()).unwrap_or_default();
     if rows.is_empty() {
         return empty(f, body, t, "Nothing downloaded yet");
     }
-    let lines: Vec<Line> = rows
-        .iter()
-        .map(|row| match row {
-            crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.ink))),
-            crate::app::DownloadRow::Album(a) => Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(a.name.clone()), Span::styled(format!("  {} · {} songs", a.artist, a.song_count), t.dim())]),
-            crate::app::DownloadRow::Song(list, i) => {
-                let s = &list[*i];
-                Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(s.title.clone()), Span::styled(format!("  {}", s.artist), t.dim())])
-            }
-        })
-        .collect();
-    let len = lines.len();
-    let App { downloads_sel, hits, .. } = app;
-    list(f, body, downloads_sel, len, ListRef::Downloads, hits, t, focused, &|i, _| lines[i].clone());
+    list(f, body, downloads_sel, rows.len(), ListRef::Downloads, hits, t, focused, &|i, _| match &rows[i] {
+        crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.ink))),
+        crate::app::DownloadRow::Album(a) => Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(a.name.as_str()), Span::styled(format!("  {} · {} songs", a.artist, a.song_count), t.dim())]),
+        crate::app::DownloadRow::Song(list, i) => {
+            let s = &list[*i];
+            Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(s.title.as_str()), Span::styled(format!("  {}", s.artist), t.dim())])
+        }
+    });
 }
 
 /// The equalizer: toolbar chips, band faders, then the rest of the chain as chips. ← → walk them in

@@ -1347,12 +1347,18 @@ impl App {
             }
             (Req::Songs { .. }, Err(e)) => self.library.songs = Load::Failed(e),
             (Req::Downloads, Ok(Data::Downloads(d))) => {
-                // Refresh every second while downloads run (only while shown).
-                let running = !d.active.is_empty() || !d.queued.is_empty();
-                self.downloads_at = running.then(|| Instant::now() + Duration::from_secs(1));
+                self.downloads_at = d.refresh_at();
                 self.downloads = Load::Ready(d);
             }
-            (Req::Downloads, Err(e)) => self.downloads = Load::Failed(e),
+            (Req::DownloadProgress, Ok(Data::DownloadProgress(s))) => match &mut self.downloads {
+                Load::Ready(d) if d.finished == s.finished.len() => {
+                    let s = *s;
+                    (d.active, d.queued, d.failed) = (s.active, s.queued, s.failed);
+                    self.downloads_at = d.refresh_at();
+                }
+                _ => self.cmds.push(Cmd::Load(Req::Downloads)),
+            },
+            (Req::Downloads | Req::DownloadProgress, Err(e)) => self.downloads = Load::Failed(e),
             (Req::Facts, Ok(Data::Facts(f))) => self.settings.set_facts(*f),
             (Req::Facts, Err(_)) => {}
             (req, r) => {
@@ -1383,7 +1389,7 @@ impl App {
     // ---- time ----
 
     /// When the loop must next wake on its own: the next second of playback (while a clock is drawn) and a
-    /// lyrics change (both only in sight), a pending search, a note expiring, a downloads refresh. None when idle.
+    /// lyrics change (both only in sight), a pending search, a note expiring, a downloads refresh (in sight). None when idle.
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         let mut at: Option<Instant> = None;
         let mut sooner = |t: Instant| at = Some(at.map_or(t, |a| a.min(t)));
@@ -1405,7 +1411,7 @@ impl App {
         if let Some((_, _, since)) = &self.note {
             sooner(*since + NOTE_FOR);
         }
-        if let Some(t) = self.downloads_at {
+        if let Some(t) = self.downloads_at.filter(|_| self.in_sight) {
             sooner(t);
         }
         if let Some((_, since)) = self.flash {
@@ -1430,7 +1436,7 @@ impl App {
         if self.downloads_at.is_some_and(|t| t <= now) {
             self.downloads_at = None;
             if self.view == View::Downloads {
-                self.cmds.push(Cmd::Load(Req::Downloads));
+                self.cmds.push(Cmd::Load(Req::DownloadProgress));
             }
         }
     }
@@ -1975,7 +1981,7 @@ impl App {
                 (&mut self.search.sel, len)
             }
             View::Downloads => {
-                let len = self.download_rows().len();
+                let len = self.downloads.ready().map_or(0, |d| d.rows().len());
                 (&mut self.downloads_sel, len)
             }
             View::Equalizer => (&mut self.eq_sel, crate::settings_view::eq_rows(&self.prefs).len()),
@@ -2095,7 +2101,7 @@ impl App {
                 SearchRow::Title(..) => None,
             },
             View::Downloads => {
-                let rows = self.download_rows();
+                let rows = self.downloads.ready()?.rows();
                 match rows.get(self.downloads_sel.at)? {
                     DownloadRow::Album(a) => Some(Item::DownloadedAlbum((*a).clone())),
                     DownloadRow::Song(songs, i) => Some(Item::Song(songs.to_vec(), *i)),
@@ -2437,28 +2443,6 @@ impl App {
             self.cmds.extend(play);
         }
         self.jam_start();
-    }
-
-    // ---- downloads ----
-
-    /// Downloads page rows.
-    pub fn download_rows(&self) -> Vec<DownloadRow<'_>> {
-        let Some(d) = self.downloads.ready() else { return Vec::new() };
-        let mut out = Vec::new();
-        for (title, list) in [("Downloading", &d.active), ("Waiting", &d.queued), ("Failed", &d.failed), ("Songs", &d.stored.songs)] {
-            if list.is_empty() {
-                continue;
-            }
-            out.push(DownloadRow::Header(format!("{title} ({})", list.len())));
-            for i in 0..list.len() {
-                out.push(DownloadRow::Song(list.as_slice(), i));
-            }
-        }
-        if !d.stored.albums.is_empty() {
-            out.push(DownloadRow::Header(format!("Albums ({})", d.stored.albums.len())));
-            out.extend(d.stored.albums.iter().map(DownloadRow::Album));
-        }
-        out
     }
 
     // ---- lyrics ----
@@ -2813,6 +2797,32 @@ fn share(r: Rect, col: u16) -> f32 {
         return 0.0;
     }
     (col.saturating_sub(r.x) as f32 / r.width.saturating_sub(1).max(1) as f32).clamp(0.0, 1.0)
+}
+
+impl Downloads {
+    /// The next refresh: in a second while downloads run.
+    fn refresh_at(&self) -> Option<Instant> {
+        (!self.active.is_empty() || !self.queued.is_empty()).then(|| Instant::now() + Duration::from_secs(1))
+    }
+
+    /// Downloads page rows.
+    pub fn rows(&self) -> Vec<DownloadRow<'_>> {
+        let mut out = Vec::new();
+        for (title, list) in [("Downloading", &self.active), ("Waiting", &self.queued), ("Failed", &self.failed), ("Songs", &self.stored.songs)] {
+            if list.is_empty() {
+                continue;
+            }
+            out.push(DownloadRow::Header(format!("{title} ({})", list.len())));
+            for i in 0..list.len() {
+                out.push(DownloadRow::Song(list.as_slice(), i));
+            }
+        }
+        if !self.stored.albums.is_empty() {
+            out.push(DownloadRow::Header(format!("Albums ({})", self.stored.albums.len())));
+            out.extend(self.stored.albums.iter().map(DownloadRow::Album));
+        }
+        out
+    }
 }
 
 /// A downloads page row: a heading, album, or song in its list.
