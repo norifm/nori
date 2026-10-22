@@ -1184,6 +1184,10 @@ private fun SleeveShade(strength: FloatReader) {
     )
 }
 
+/** How much of the cover in flight, from its bottom, goes soft. */
+private const val FLIGHT_EDGE = 0.3f
+private val softBottom = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black)
+
 /** 0 up to [from], 1 from [to] on, and a smooth step in between. */
 private fun smooth(x: Float, from: Float, to: Float): Float {
     val t = ((x - from) / (to - from)).coerceIn(0f, 1f)
@@ -1265,6 +1269,18 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                         translationY = mix(from.center.y, size.height / 2f) - size.height * k / 2f
                         shape = shapes.of(thumbRadius * (1f - t) / k)
                         clip = true
+                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                    }
+                    // The cover's own bottom goes soft while it is away from the sleeve, so rising or sinking it has
+                    // no hard edge to show; the sleeve's band takes over from there on arrival, where this is gone.
+                    .drawWithContent {
+                        drawContent()
+                        val soft = 1f - dressed.read()
+                        if (soft > 0f) drawRect(
+                            softBottom, topLeft = Offset(0f, size.height * (1f - FLIGHT_EDGE)),
+                            size = androidx.compose.ui.geometry.Size(size.width, size.height * FLIGHT_EDGE),
+                            alpha = soft, blendMode = BlendMode.DstOut,
+                        )
                     },
             ) {
                 // The sleeve's placeholder, then the bar's small picture of this song over it while the
