@@ -293,7 +293,8 @@ class HomeRowViewModel(app: Application) : NoriViewModel(app) {
 class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     private val pageSize by lazy { browsePaging().albums.toInt() }
     // The order it was left in, and how that is kept, are the core's (`album_sort_saved`, `album_sort_kept`).
-    private val _sort = MutableStateFlow(albumSortSaved(nori.settings.value.listPrefs))
+    // A plain A-Z by artist is no longer offered: whoever kept it gets Artist.
+    private val _sort = MutableStateFlow(albumSortSaved(nori.settings.value.listPrefs).let { if (it == AlbumSort.BY_ARTIST) AlbumSort.ARTIST_ROWS else it })
     val sort: StateFlow<AlbumSort> = _sort
     private val _albums = MutableStateFlow(Grown.empty<Album>())
     val albums: StateFlow<List<Album>> = _albums

@@ -231,12 +231,12 @@ impl AlbumSort {
     }
 }
 
-/// The album grid's sort menu, in its order; the client names each.
+/// The album grid's orders offered, in their order; the client names each. Artist is [`AlbumSort::ArtistRows`]:
+/// a plain A–Z by artist is no longer offered.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn album_sorts() -> Vec<AlbumSort> {
     vec![
         AlbumSort::ByName,
-        AlbumSort::ByArtist,
         AlbumSort::ArtistRows,
         AlbumSort::Newest,
         AlbumSort::Recent,

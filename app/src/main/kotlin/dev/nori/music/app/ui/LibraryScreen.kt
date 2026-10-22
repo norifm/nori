@@ -9,7 +9,6 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
-import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -84,28 +83,16 @@ import dev.nori.music.app.vm.PlaylistsViewModel
 import dev.nori.music.app.vm.RadioViewModel
 import dev.nori.music.app.vm.StarredViewModel
 
-/**
- * One line that says how the list is ordered and opens the alternatives, instead of a second row of
- * chips under the first: two stacked chip strips made this screen read as a toolbar.
- */
+/** The gap between the library's stacked parts: the pills' own (the strip of sections, the places, the filter, the order). */
+private val LIST_GAP = 10.dp
+
+/** The album orders as pills, as the songs have theirs: one lit, a tap chooses another. */
 @Composable
-private fun <T> SortMenu(options: List<Pair<T, String>>, value: T, onChange: (T) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box(Modifier.padding(start = Space.gutter - 4.dp, top = 2.dp)) {
-        Row(
-            Modifier.clip(PillShape).clickable { open = true }.padding(horizontal = 6.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.SwapVert, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                options.firstOrNull { it.first == value }?.second ?: say.sort,
-                Modifier.padding(start = 4.dp), style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        NoriPopover(open, { open = false }) {
-            options.forEach { (v, label) -> PopoverItem(label, chosen = v == value) { onChange(v); open = false } }
-        }
+private fun AlbumSortPills(vm: AlbumsViewModel) {
+    val sort by vm.sort.collectAsStateWithLifecycle()
+    val sorts = remember { dev.nori.music.ffi.library.albumSorts().map { it to say.albumSort(it) } }
+    LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(sorts, key = { it.first.name }) { (v, label) -> Chip(label, sort == v) { vm.setSort(v) } }
     }
 }
 
@@ -125,7 +112,6 @@ fun LibraryScreen(actions: ActionsViewModel, initial: LibrarySection? = null, vm
     val shown = picked?.let(LibrarySection::valueOf)?.takeIf { it in chips } ?: chips.firstOrNull()
     // Only the shown section's view model is made, so only it loads anything.
     val albums = if (shown == LibrarySection.ALBUMS) viewModel<AlbumsViewModel>() else null
-    var sorting by remember { mutableStateOf(false) }
     val shuffle: (() -> Unit)? = when (shown) {
         LibrarySection.ALBUMS -> ({ actions.shuffleAlbums() })
         LibrarySection.SONGS -> ({ actions.shuffleAll() })
@@ -133,24 +119,14 @@ fun LibraryScreen(actions: ActionsViewModel, initial: LibrarySection? = null, vm
     }
     val places: @Composable () -> Unit = { Places(vm, favorites = LibrarySection.FAVOURITES in sections, shuffle = shuffle) }
     Column {
-        LargeTitle(say.library) {
-            if (albums != null) Box {
-                val sort by albums.sort.collectAsStateWithLifecycle()
-                GlyphButton(Icons.Filled.SwapVert, say.sort) { sorting = true }
-                NoriPopover(sorting, { sorting = false }) {
-                    for ((v, label) in remember { dev.nori.music.ffi.library.albumSorts().map { it to say.albumSort(it) } }) {
-                        PopoverItem(label, chosen = v == sort) { albums.setSort(v); sorting = false }
-                    }
-                }
-            }
-        }
-        LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        LargeTitle(say.library)
+        LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = LIST_GAP), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             items(chips, key = { it.name }) { s -> Chip(say.librarySection(s), s == shown) { picked = s.name } }
         }
         // A profile with no library (a provider's, signed out) is found through search.
         if (rules.sections.isEmpty()) EmptyNote(say.searchIsTheWayIn, icon = Icons.Rounded.Search)
         when (shown) {
-            LibrarySection.ALBUMS -> Albums(albums!!, places, sortLink = false)
+            LibrarySection.ALBUMS -> Albums(albums!!, places)
             LibrarySection.ARTISTS -> Artists(places)
             LibrarySection.SONGS -> SongsScreen(actions, null, places)
             LibrarySection.PLAYLISTS -> Playlists(actions, places)
@@ -186,7 +162,7 @@ private fun Places(vm: LibraryHomeViewModel, favorites: Boolean, shuffle: (() ->
     }
     val shuffleRow = shuffle.takeIf { rules.account }
     if (shown.isEmpty() && shuffleRow == null) return
-    Column(Modifier.padding(bottom = 22.dp)) {
+    Column(Modifier.padding(bottom = LIST_GAP)) {
         GroupCard {
             shown.forEachIndexed { i, s ->
                 GroupRow(
@@ -243,21 +219,19 @@ fun LibrarySectionScreen(section: LibrarySection, actions: ActionsViewModel) {
     }
 }
 
-/** The albums, as a grid of prints or, sorted by artist, a shelf per artist. [sortLink] is the page's own sort control. */
+/** The albums, as a grid of prints or, sorted by Artist, a shelf per artist; the orders are pills under [header]. */
 @Composable
-private fun Albums(vm: AlbumsViewModel, header: @Composable () -> Unit = {}, sortLink: Boolean = true) {
+private fun Albums(vm: AlbumsViewModel, places: @Composable () -> Unit = {}) {
     val albums by vm.albums.collectAsStateWithLifecycle()
     val sort by vm.sort.collectAsStateWithLifecycle()
     val none by vm.none.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     Column {
-        if (sortLink) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            SortMenu(remember { dev.nori.music.ffi.library.albumSorts().map { it to say.albumSort(it) } }, sort, vm::setSort)
-        }
         if (none) {
-            header()
+            places()
             return@Column EmptyNote(Note.NO_ALBUMS)
         }
+        val header: @Composable () -> Unit = { places(); AlbumSortPills(vm) }
         if (sort == dev.nori.music.ffi.library.AlbumSort.ARTIST_ROWS) {
             ArtistRows(vm, header)
             return@Column
@@ -279,7 +253,7 @@ private fun Albums(vm: AlbumsViewModel, header: @Composable () -> Unit = {}, sor
         // which is the point of a grid of covers) and the row takes as many as fit.
         val wide = LocalWide.current
         LazyVerticalGrid(if (wide) GridCells.Adaptive(GRID_MIN) else GridCells.Fixed(2), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(GRID_GAP), verticalArrangement = Arrangement.spacedBy(GRID_GAP)) {
-            item(span = { GridItemSpan(maxLineSpan) }, key = "header") { Box(Modifier.insideGutters()) { header() } }
+            item(span = { GridItemSpan(maxLineSpan) }, key = "header") { Column(Modifier.insideGutters()) { header() } }
             itemsIndexed(albums, key = { _, a -> a.id }, contentType = { _, _ -> "album" }) { i, a ->
                 if (i >= albums.size - 12) vm.loadMore()
                 AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
@@ -303,13 +277,13 @@ private val ARTIST_COVER = 112.dp
 private fun ArtistRows(vm: AlbumsViewModel, header: @Composable () -> Unit) {
     val rows by vm.rows.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    LazyColumn(contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        item(key = "header") { header() }
+    LazyColumn(contentPadding = PaddingValues(bottom = Space.gutter + LocalChromeInset.current)) {
+        item(key = "header") { Column(Modifier.padding(bottom = LIST_GAP)) { header() } }
         itemsIndexed(rows, key = { _, r -> r.first().id }, contentType = { _, _ -> "artist" }) { i, row ->
             if (i >= rows.size - 8) vm.loadMore()
             val first = row.first()
             val artist = first.artistId
-            Column {
+            Column(Modifier.padding(bottom = 22.dp)) {
                 Row(
                     Modifier.fillMaxWidth().then(if (artist != null) Modifier.clickable { nav.artist(artist) } else Modifier)
                         .padding(horizontal = Space.gutter).padding(bottom = 12.dp),
@@ -351,7 +325,7 @@ private fun Artists(header: @Composable () -> Unit = {}, vm: ArtistsViewModel = 
         if (all.isEmpty()) return@LoadBox EmptyNote(Note.NO_ARTISTS)
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
-            item { SearchField(filter, { filter = it }, say.filterArtists, Modifier.padding(horizontal = Space.gutter, vertical = 4.dp)) }
+            item { SearchField(filter, { filter = it }, say.filterArtists, Modifier.padding(start = Space.gutter, end = Space.gutter, bottom = LIST_GAP)) }
             items(artists, key = { it.id }, contentType = { "artist" }) { a ->
                 Column {
                     Row(Modifier.fillMaxWidth().clickable { nav.artist(a.id, a) }.padding(horizontal = Space.gutter, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -387,7 +361,7 @@ fun SongsScreen(actions: ActionsViewModel, decade: Int?, header: @Composable () 
         item(key = "header") { header() }
         if (decade != null) item(key = "decade") { SectionTitle(remember(decade) { say.decade(decade) }) }
         if (indexed) item(key = "sorts") {
-            LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(Modifier.bleedsToEdges().padding(bottom = LIST_GAP), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { Chip(say.starredFavourites, starred) { vm.setStarredOnly(!starred) } }
                 items(SongSort.entries) { s -> Chip(say.songSort(s.name), sort == s) { vm.setSort(s) } }
             }
