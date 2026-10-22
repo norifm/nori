@@ -855,7 +855,7 @@ mod tests {
         let (c, _) = youtube(&[&fixture("artist")]);
         let Page::About { v } = block(c.read_now(Read::ArtistAbout { id: "yt-UCRr1xG_2WIDs18a6cIiCxeA".into() })).unwrap() else { panic!() };
         assert!(v.biography.as_deref().is_some_and(|b| b.starts_with("Daft Punk were")));
-        assert!(v.image_url.as_deref().is_some_and(|u| u.ends_with("=w800-h800-l90-rj")));
+        assert!(v.image_url.as_deref().is_some_and(|u| u.ends_with("=w800-h800-p-l90-rj")));
         assert!(v.similar.len() == 3 && v.similar.iter().all(|a| a.id.starts_with("yt-UC")));
     }
 
@@ -884,7 +884,7 @@ mod tests {
         assert_eq!(target.url, "youtube:dQw4w9WgXcQ");
         assert_eq!(target.key, "dl:yt-dQw4w9WgXcQ");
         let thumbnail = "https://yt3.googleusercontent.com/abc";
-        assert_eq!(c.core.download_cover_urls(vec![thumbnail.into()]), [format!("{thumbnail}=w320-h320-l90-rj"), format!("{thumbnail}=w800-h800-l90-rj")], "its covers are YouTube's");
+        assert_eq!(c.core.download_cover_urls(vec![thumbnail.into()]), [format!("{thumbnail}=w320-h320-p-l90-rj"), format!("{thumbnail}=w800-h800-p-l90-rj")], "its covers are YouTube's");
     }
 
     #[test]
@@ -900,7 +900,7 @@ mod tests {
         c.session().set(ids, Some(0), false, None);
         assert_eq!(c.session().precache(false), ["yt-c", "yt-d"], "the songs after next would be fetched");
         assert!(c.precache_targets(false).is_empty());
-        assert_eq!(c.core.cover_address("https://yt3.googleusercontent.com/abc".into(), 320), "https://yt3.googleusercontent.com/abc=w320-h320-l90-rj");
+        assert_eq!(c.core.cover_address("https://yt3.googleusercontent.com/abc".into(), 320), "https://yt3.googleusercontent.com/abc=w320-h320-p-l90-rj");
         assert_eq!(c.core.cover_prefix(), None, "each cover's address is its own");
     }
 
