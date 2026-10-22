@@ -1230,11 +1230,21 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
         val w = constraints.maxWidth.toFloat()
         val h = w / SLEEVE
         val side = with(density) { h.toDp() }
+        // The sleeve's band stays where it is, blurred as it is, while the cover rises under it; it goes
+        // once the cover's bottom has come up past the title, over a quarter of the sleeve.
+        val band = FloatReader {
+            val t = sheet.progress.value.coerceIn(0f, 1f)
+            val from = sheet.miniCover.translate(-sheet.closed())
+            val k = (from.height + (h - from.height) * t) / h
+            val bottom = from.center.y + (h / 2f - from.center.y) * t + h * k / 2f
+            val gone = h * (1f - MELT)
+            smooth(bottom, gone - h * 0.25f, gone)
+        }
         // The sleeve's soft bottom is there before the record arrives and stays when it has gone: the same
         // rows of the sheet, rubbed out of whatever flies through them (see SoftSleeve). The cover never
         // leaves the sleeve's rows on the way - it grows from the thumbnail near the sheet's top edge into
         // the sleeve that starts there - so the layer is the sleeve's size, not the screen's.
-        SoftSleeve(Modifier.fillMaxWidth().height(side), blur = dressed) {
+        SoftSleeve(Modifier.fillMaxWidth().height(side), blur = band) {
             Box(
                 Modifier.requiredSize(side).align(Alignment.TopStart)
                     .graphicsLayer {
@@ -1275,7 +1285,7 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                     // no hard edge to show; the sleeve's band takes over from there on arrival, where this is gone.
                     .drawWithContent {
                         drawContent()
-                        val soft = 1f - dressed.read()
+                        val soft = 1f - band.read()
                         if (soft > 0f) drawRect(
                             softBottom, topLeft = Offset(0f, size.height * (1f - FLIGHT_EDGE)),
                             size = androidx.compose.ui.geometry.Size(size.width, size.height * FLIGHT_EDGE),
