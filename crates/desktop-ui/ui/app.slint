@@ -859,6 +859,41 @@ component Art inherits Rectangle {
     }
 }
 
+// What a right press on an album, playlist, song card or mix offers: play it, play it next, add it to the
+// queue, and start a jam with it while one can start. A guest's songs go to the host, so it has no Play.
+component CollectionMenu inherits PopupWindow {
+    callback play;
+    callback queue(bool);
+    callback jam;
+    width: 220px;
+    close-policy: close-on-click-outside;
+    Popover {
+        VerticalLayout {
+            padding: 6px;
+            if !Jam.guest: MenuRow {
+                icon: Icons.play;
+                text: "Play";
+                clicked => { root.play(); root.close(); }
+            }
+            MenuRow {
+                icon: Icons.next;
+                text: "Play next";
+                clicked => { root.queue(true); root.close(); }
+            }
+            MenuRow {
+                icon: Icons.queue;
+                text: "Add to queue";
+                clicked => { root.queue(false); root.close(); }
+            }
+            if Jam.on && !Jam.hosting && !Jam.guest: MenuRow {
+                icon: Icons.people;
+                text: "Start a Jam";
+                clicked => { root.jam(); root.close(); }
+            }
+        }
+    }
+}
+
 // An album, artist or playlist in a grid or on a shelf: the artwork, and the title and the artist under
 // it. The pointer over it brings a play button onto the artwork, as Music does.
 component CardView inherits Rectangle {
@@ -869,7 +904,8 @@ component CardView inherits Rectangle {
     in property <length> side: 176px;
     callback open;
     callback play;
-    // Plays it and starts a jam (its menu, while jams are on).
+    // Its menu's lines: next (true) or at the end of the queue, and play it with a jam.
+    callback queue(bool);
     callback jam;
     width: root.side;
     height: root.side + 46px;
@@ -894,11 +930,11 @@ component CardView inherits Rectangle {
         overflow: elide;
         horizontal-alignment: root.round ? center : left;
     }
-    // A click opens it; a right press, where a Jam can be started from it, opens its menu where it was pressed.
+    // A click opens it; a right press on one that plays opens its menu where it was pressed.
     touch := TouchArea {
         clicked => { root.open(); }
         pointer-event(e) => {
-            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down && root.playable && Jam.on && !Jam.hosting {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down && root.playable {
                 root.menu-x = min(self.mouse-x, root.width - 120px);
                 root.menu-y = self.mouse-y;
                 card-menu.show();
@@ -917,26 +953,12 @@ component CardView inherits Rectangle {
     }
     property <length> menu-x;
     property <length> menu-y;
-    card-menu := PopupWindow {
+    card-menu := CollectionMenu {
         x: root.menu-x;
         y: root.menu-y;
-        width: 220px;
-        close-policy: close-on-click-outside;
-        Popover {
-            VerticalLayout {
-                padding: 6px;
-                MenuRow {
-                    icon: Icons.play;
-                    text: "Play";
-                    clicked => { root.play(); card-menu.close(); }
-                }
-                MenuRow {
-                    icon: Icons.people;
-                    text: "Start a Jam";
-                    clicked => { root.jam(); card-menu.close(); }
-                }
-            }
-        }
+        play => { root.play(); }
+        queue(next) => { root.queue(next); }
+        jam => { root.jam(); }
     }
     if root.playable: Rectangle {
         x: 10px;
@@ -977,6 +999,7 @@ component Grid inherits Flickable {
     pure callback art(string, int, int) -> image;
     callback open(Card);
     callback play(Card);
+    callback queue(Card, bool);
     callback jam(Card);
     property <length> gap: 22px;
     property <int> columns: max(2, floor((self.width - root.pad * 2 + root.gap) / (176px + root.gap)));
@@ -1007,6 +1030,7 @@ component Grid inherits Flickable {
         picture: root.art(self.c.art, 0, root.rev);
         open => { root.open(self.c); }
         play => { root.play(self.c); }
+        queue(next) => { root.queue(self.c, next); }
         jam => { root.jam(self.c); }
     }
 }
@@ -1216,6 +1240,8 @@ component PickCard inherits Rectangle {
     in property <length> side;
     in property <image> picture;
     callback open;
+    callback play;
+    callback queue(bool);
     width: floor(root.side / 1phx) * 1phx;
     height: floor(root.side * 1.3 / 1phx) * 1phx;
     border-radius: 12px;
@@ -1265,6 +1291,21 @@ component PickCard inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.open(); }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                root.menu-x = min(self.mouse-x, root.width - 120px);
+                root.menu-y = self.mouse-y;
+                pick-menu.show();
+            }
+        }
+    }
+    property <length> menu-x;
+    property <length> menu-y;
+    pick-menu := CollectionMenu {
+        x: root.menu-x;
+        y: root.menu-y;
+        play => { root.play(); }
+        queue(next) => { root.queue(next); }
     }
 }
 
@@ -4672,6 +4713,9 @@ export component AppWindow inherits Window {
     callback play-page(bool);
     // Plays an album (0) or playlist (1) and starts a jam.
     callback jam-play(int, string);
+    // Card `id` (`Card::kind`, or 4 a mix) next (true) or at the end of the queue.
+    callback queue-card(int, string, bool);
+    callback play-mix(string);
     // The page's songs added at the end of the queue.
     callback page-later();
     callback page-download();
@@ -4896,6 +4940,8 @@ export component AppWindow inherits Window {
                                     pick: self.m;
                                     picture: root.pick-art(self.m.covers, root.covers-rev);
                                     open => { root.open-mix(self.m.id); }
+                                    play => { root.play-mix(self.m.id); }
+                                    queue(next) => { root.queue-card(4, self.m.id, next); }
                                 }
                             }
                             for shelf[index] in root.shelves: home-row := VerticalLayout {
@@ -4939,6 +4985,7 @@ export component AppWindow inherits Window {
                                                 root.play-album(self.c.id);
                                             }
                                         }
+                                        queue(next) => { root.queue-card(self.c.kind, self.c.id, next); }
                                         jam => { root.jam-play(self.c.kind == 2 ? 1 : 0, self.c.id); }
                                     }
                                 }
@@ -5081,6 +5128,7 @@ export component AppWindow inherits Window {
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-album(c.id); }
                                         play => { root.play-album(c.id); }
+                                        queue(next) => { root.queue-card(0, c.id, next); }
                                         jam => { root.jam-play(0, c.id); }
                                     }
                                 }
@@ -5094,6 +5142,7 @@ export component AppWindow inherits Window {
                                         picture: root.art(c.art, 0, root.covers-rev);
                                         open => { root.open-playlist(c.id); }
                                         play => { root.play-playlist(c.id); }
+                                        queue(next) => { root.queue-card(2, c.id, next); }
                                         jam => { root.jam-play(1, c.id); }
                                     }
                                 }
@@ -5168,6 +5217,7 @@ export component AppWindow inherits Window {
                                 picture: root.art(self.c.art, 0, root.covers-rev);
                                 open => { root.open-album(self.c.id); }
                                 play => { root.play-album(self.c.id); }
+                                queue(next) => { root.queue-card(0, self.c.id, next); }
                                 jam => { root.jam-play(0, self.c.id); }
                             }
                         }
@@ -5204,6 +5254,7 @@ export component AppWindow inherits Window {
                                 root.play-playlist(c.id);
                             }
                         }
+                        queue(c, next) => { root.queue-card(c.kind, c.id, next); }
                         jam(c) => { root.jam-play((root.view == 2 || root.view == 10) ? 0 : 1, c.id); }
                     }
                 }
@@ -5235,6 +5286,8 @@ export component AppWindow inherits Window {
                             pick: self.item;
                             picture: root.pick-art(self.item.covers, root.covers-rev);
                             open => { root.open-mix(self.item.id); }
+                            play => { root.play-mix(self.item.id); }
+                            queue(next) => { root.queue-card(4, self.item.id, next); }
                         }
                     }
                 }
@@ -5358,6 +5411,7 @@ export component AppWindow inherits Window {
                                 art(a, s, r) => { return root.art(a, s, r); }
                                 open(c) => { root.open-album(c.id); }
                                 play(c) => { root.play-album(c.id); }
+                                queue(c, next) => { root.queue-card(0, c.id, next); }
                                 jam(c) => { root.jam-play(0, c.id); }
                             }
                         }
@@ -5541,6 +5595,7 @@ export component AppWindow inherits Window {
                                     art(a, s, r) => { return root.art(a, s, r); }
                                     open(c) => { root.open-album(c.id); }
                                     play(c) => { root.play-album(c.id); }
+                                    queue(c, next) => { root.queue-card(0, c.id, next); }
                                     jam(c) => { root.jam-play(0, c.id); }
                                 }
                                 if root.page-kind == 1 && root.page-songs.length > 0: SectionTitle {

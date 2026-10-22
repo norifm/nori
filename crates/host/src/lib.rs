@@ -166,16 +166,8 @@ impl Fetch {
     pub async fn songs(self, client: &Client) -> Result<Vec<Song>, NetError> {
         Ok(match self {
             Fetch::DownloadedAlbum(id) => client.core().downloaded_album(id)?.map(|a| a.songs).unwrap_or_default(),
-            Fetch::Album(id) => match client.read_now(Read::AlbumSongs { id }).await? {
-                Page::Songs { v } => v,
-                Page::AlbumPage { v } => v.songs,
-                _ => Vec::new(),
-            },
-            Fetch::Playlist(id) => match client.read_now(Read::PlaylistSongs { id }).await? {
-                Page::Songs { v } => v,
-                Page::PlaylistPage { v } => v.songs,
-                _ => Vec::new(),
-            },
+            Fetch::Album(id) => client.album_songs_of(id).await?,
+            Fetch::Playlist(id) => client.playlist_songs_of(id).await?,
             Fetch::Artist(id) => match client.read_now(Read::ArtistById { id }).await? {
                 Page::ArtistPage { v } => client.artist_page_songs(v).await,
                 _ => Vec::new(),

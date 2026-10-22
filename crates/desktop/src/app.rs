@@ -763,6 +763,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_open_mix, h, |a, id| a.open_page(PageAsk::Mix(id.into())));
     on!(ui.on_play_album, h, |a, id| a.play_fetch(Fetch::Album(id.into())));
     on!(ui.on_play_playlist, h, |a, id| a.play_fetch(Fetch::Playlist(id.into())));
+    on!(ui.on_play_mix, h, |a, id| a.play_fetch(Fetch::Mix(id.into())));
+    on!(ui.on_queue_card, h, |a, kind, id, next| a.queue_card(kind, id.into(), next));
     on!(ui.on_song, h, |a, list, i, how| a.song(list, i as usize, how));
     let menu = h.clone();
     ui.on_song_menu(move |list, i| {
@@ -1666,6 +1668,24 @@ impl App {
 
     fn play_fetch(&self, what: Fetch) {
         self.on_session(|s| s.play_later(what, false));
+    }
+
+    /// Card `id` of `kind` (`Card::kind`, or 4 a mix) next or at the end of the queue; a song card, the
+    /// song alone.
+    fn queue_card(&self, kind: i32, id: String, next: bool) {
+        let what = match kind {
+            0 => Fetch::Album(id),
+            2 => Fetch::Playlist(id),
+            3 => {
+                if let Some(song) = self.feed_songs.iter().flatten().find(|s| s.id == id) {
+                    self.on_session(|s| s.enqueue(vec![song.clone()], next));
+                }
+                return;
+            }
+            4 => Fetch::Mix(id),
+            _ => return,
+        };
+        self.on_session(|s| s.enqueue_later(what, next));
     }
 
     fn list_song(&self, list: i32, i: usize) -> Option<Song> {

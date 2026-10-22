@@ -226,6 +226,8 @@ class Library(
 
     /** Every album of an artist (a provider's left out), in order, as one list of songs. */
     suspend fun artistSongs(artistId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.artistSongsOf(artistId) } }
+    suspend fun albumSongs(albumId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.albumSongsOf(albumId) } }
+    suspend fun playlistSongs(playlistId: String): List<Song> = withContext(Dispatchers.IO) { lifted { client.playlistSongsOf(playlistId) } }
 
     suspend fun shuffleAll(): List<Song> = withContext(Dispatchers.IO) { lifted { client.shuffleAll() } }
     suspend fun shuffleAlbums(): List<Song> = withContext(Dispatchers.IO) { lifted { client.shuffleAlbums() } }

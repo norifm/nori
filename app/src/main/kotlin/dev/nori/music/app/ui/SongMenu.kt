@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -57,6 +58,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import dev.nori.music.app.vm.ActionsViewModel
+import dev.nori.music.app.vm.CardItem
 import dev.nori.music.ffi.model.Artist
 import dev.nori.music.ffi.model.Playlist
 import dev.nori.music.ffi.model.Song
@@ -202,6 +204,30 @@ fun SongMenu(
             AnimatedVisibility(more, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                 Column { items.forEachIndexed { n, it -> if (it.more) line(it, labels[n]) } }
             }
+        }
+    }
+}
+
+/** An album's or playlist's card menu: play it, play it next, add it to the queue. A jam guest only asks. */
+@Composable
+fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) {
+    NoriSheet(card, onDismiss) { card ->
+        val (title, line, art) = when (card) {
+            is CardItem.OfAlbum -> Triple(card.album.name, card.album.subtitle, card.album.coverArt)
+            is CardItem.OfPlaylist -> Triple(card.playlist.name, card.playlist.owner.orEmpty(), card.playlist.coverArt)
+        }
+        Column(Modifier.verticalScroll(rememberScrollState()).windowInsetsPadding(gestureBarRoom)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Cover(actions.cover(art, CoverSize.ROW), 52.dp, radius = 8.dp)
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+            }
+            Hairline(startIndent = Space.gutter)
+            if (!LocalRules.current.asks) Item(say.play, Icons.Filled.PlayArrow) { actions.play(card); onDismiss() }
+            Item(say.menuPlayNext, Icons.AutoMirrored.Filled.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
+            Item(say.addToQueue, Icons.AutoMirrored.Filled.QueueMusic) { actions.queue(card, next = false); onDismiss() }
         }
     }
 }

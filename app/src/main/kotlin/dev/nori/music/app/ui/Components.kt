@@ -689,13 +689,17 @@ fun ArtistCard(name: String, subtitle: String, coverUrl: String?, size: Dp, onCl
     }
 }
 
+/** A long press opens its menu, unless [menu] is off (a downloaded album plays from the phone). */
 @Composable
-fun AlbumCard(album: Album, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, fill: Boolean = false) =
+fun AlbumCard(album: Album, coverUrl: String?, size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier, fill: Boolean = false, menu: Boolean = true) {
+    val open = LocalCardMenu.current
     CoverCard(
         album.name,
         album.subtitle,
         coverUrl, size, onClick, modifier, fill, remote = album.isExternal,
+        onLongClick = if (menu) { { open(dev.nori.music.app.vm.CardItem.OfAlbum(album)) } } else null,
     )
+}
 
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier) = SectionHeader(text, modifier)
