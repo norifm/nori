@@ -1351,6 +1351,7 @@ impl TransitionEngine {
             let Some(c) = self.queue.front_mut() else { return true };
             if c.resync && c.pos == 0 {
                 down.handle_discontinuity();
+                c.resync = false;
             }
             let before = if c.measure { down.position_us(false) } else { None };
             down.media_pace(c.pace);
@@ -1567,6 +1568,8 @@ mod tests {
         position: Option<i64>,
         /// Take at most this many bytes of the next offer.
         take_only: Option<usize>,
+        /// Refuse this many offers outright.
+        refuse: usize,
         /// Bytes left of a partly taken buffer, which must be offered next (as `pipeline::Sink` requires).
         owed: Option<usize>,
     }
@@ -1579,6 +1582,10 @@ mod tests {
             let key = data.len() - from;
             if let Some(owed) = self.owed {
                 assert_eq!(owed, key, "offered another buffer while one was only partly taken (pipeline::Sink panics here)");
+            }
+            if self.refuse > 0 {
+                self.refuse -= 1;
+                return (false, 0);
             }
             let n = self.take_only.take().unwrap_or(usize::MAX).min(data.len() - from);
             self.taken.push((data[from..from + n].to_vec(), pts_us));
@@ -1733,6 +1740,25 @@ mod tests {
         assert!(s[s.len() - 10..].iter().all(|&v| v == -8000), "b plays alone after the fade");
         assert_eq!(d.discontinuities, 1, "one resync, for the mix's timestamps");
         assert_eq!(e.heard().from, Some(b'a' as u64));
+    }
+
+    #[test]
+    fn refused_first_chunk_resyncs_once() {
+        let (mut e, mut d, mut h) = (TransitionEngine::new(), Down::default(), Host_::default());
+        h.plans.insert("a".into(), fade("b", 1_000_000));
+        e.configure(&mut d, &mut h, stream("a", FMT));
+        feed(&mut e, &mut d, &mut h, &tone(8000, 3.0), 0);
+        e.configure(&mut d, &mut h, stream("b", FMT));
+        e.handle_discontinuity(&mut d, &mut h);
+        d.refuse = 3;
+        let b = tone(-8000, 0.1);
+        e.handle_buffer(&mut d, &mut h, &b[..4096], 3_000_000);
+        assert!(d.refuse < 3, "the output refused the first chunk");
+        while d.refuse > 0 {
+            e.drain(&mut d);
+        }
+        assert!(e.drain(&mut d), "and takes it in the end");
+        assert_eq!(d.discontinuities, 1, "one resync for the mix, however often the first chunk was offered");
     }
 
     /// The incoming song's frame number as its sample on both channels, so a dropped or repeated stretch shows.
