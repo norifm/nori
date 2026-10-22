@@ -3,7 +3,6 @@ package dev.nori.music.app.ui
 import dev.nori.music.look.CoverLook
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,7 +59,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.PlayerViewModel
 import dev.nori.music.app.vm.SettingsViewModel
-import dev.nori.music.ffi.settings.ThemeMode
 import androidx.compose.foundation.layout.windowInsetsPadding
 
 /**
@@ -122,10 +120,8 @@ fun HeroPage(
 ) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val dark = when (prefs.theme) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.DARK -> true; ThemeMode.LIGHT -> false }
-    // Which pages wear their cover's colours, and which are black under only its accents, is the core's.
-    val black = remember(dark, prefs.amoled, prefs.coverColors) { dev.nori.music.ffi.settings.coverBlack(prefs.coverColors, false, dark, prefs.amoled) }
-    val tinted = prefs.coverColors.isNotEmpty()
+    // Pages wear their cover's colours except in Midnight (the core's rule).
+    val tinted = LocalPapers.current.coversTint
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.
     val lead = coverUrl ?: mosaic.firstOrNull()
     val picture: (@Composable (Modifier) -> Unit)? = when {
@@ -140,7 +136,7 @@ fun HeroPage(
     val measured = remember(lead, coverStandIns) {
         coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead
     }
-    val palette = if (tinted) rememberCoverPalette(measured, black) else null
+    val palette = if (tinted) rememberCoverPalette(measured) else null
     // Shuffle stays labelled Shuffle (never Pause); it lights while this page's queue is shuffling.
     val player: PlayerViewModel = viewModel()
     val playerState by player.state.collectAsStateWithLifecycle()

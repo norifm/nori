@@ -366,7 +366,7 @@ private fun QueueOfferCard(offer: dev.nori.music.ffi.library.QueueOffer, actions
     val song = offer.songs.getOrNull(offer.index.toInt()) ?: return
     val url = actions.cover(song.coverArt, CoverSize.CARD)
     val papers = LocalPapers.current
-    val look = rememberCoverPalette(url, false)?.look
+    val look = rememberCoverPalette(url)?.look
     val scheme = MaterialTheme.colorScheme
     val page = look?.let { androidx.compose.ui.graphics.Color(it[dev.nori.music.look.CoverLook.BACKGROUND]) } ?: scheme.surfaceContainerHigh
     val ink = look?.let { androidx.compose.ui.graphics.Color(it[dev.nori.music.look.CoverLook.ON]) } ?: scheme.onSurface
