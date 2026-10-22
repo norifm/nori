@@ -781,7 +781,7 @@ impl Equalizer {
             return;
         }
         if self.fade.is_none() {
-            self.was = self.now.clone();
+            self.was.clone_from(&self.now);
         }
         let lookahead = self.now.limiter.as_ref().map(|l| l.frames);
         apply(&mut self.now, self.rate);
