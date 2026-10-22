@@ -199,7 +199,8 @@ class Remotes(private val context: Context, private val nori: Nori) {
      * while serving, through the system settings the volume steps are kept in.
      */
     private val volumeKeys = object : ContentObserver(main) {
-        override fun onChange(selfChange: Boolean) {
+        override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
+            if (uri != null && uri.lastPathSegment?.startsWith("volume_") != true) return
             val r = remote ?: return
             val now = volumePercent(context)?.toUByte()
             // The core passes on only a volume that moved.
