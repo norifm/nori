@@ -1,7 +1,6 @@
 package dev.nori.music.app.vm
 
 import android.app.Application
-import android.media.AudioManager
 import dev.nori.music.ffi.model.Lyrics
 import dev.nori.music.data.FoundLyrics
 import dev.nori.music.data.followSong
@@ -227,52 +226,4 @@ class PlayerViewModel(app: Application) : NoriViewModel(app) {
     fun toggleShuffle() = player.setShuffle(!state.value.shuffle)
     fun cycleRepeat() = player.cycleRepeat()
     fun sleep(minutes: Int, endOfTrack: Boolean = false, songs: Int = 0) = player.sleep(minutes, endOfTrack, songs)
-
-    /**
-     * The phone's music-stream volume, for the player's volume slider. Read live (hardware keys can
-     * move it under us) and written without flags, so dragging it never pops a system UI over the art.
-     */
-    private val audio = app.getSystemService(AudioManager::class.java)
-    /** The music stream's volume, pushed as it changes, watched only while the screen collects it. */
-    private val systemVolume = kotlinx.coroutines.flow.callbackFlow {
-        trySend(volumeFraction())
-        val stop = dev.nori.music.playback.watchMusicVolume(getApplication()) { trySend(volumeFraction()) }
-        awaitClose(stop)
-    }
-
-    /** The slider's volume: this phone's music stream, or the volume of the device playing elsewhere. */
-    val volume: StateFlow<Float> = kotlinx.coroutines.flow.combine(systemVolume, nori.remotes.mirror.map { m -> m?.volume }) { system, remote ->
-        remote?.let { it.toFloat() / 100f } ?: system
-    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(1_000), volumeFraction())
-
-    fun volumeFraction(): Float {
-        nori.remotes.mirror.value?.volume?.let { return it.toFloat() / 100f }
-        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).takeIf { it > 0 } ?: return 0f
-        return audio.getStreamVolume(AudioManager.STREAM_MUSIC) / max.toFloat()
-    }
-
-    /** A drag's volumes for the device playing elsewhere: the newest sent at most every [REMOTE_VOLUME_MS]. */
-    private val remoteVolume = kotlinx.coroutines.channels.Channel<Float>(kotlinx.coroutines.channels.Channel.CONFLATED)
-
-    init {
-        viewModelScope.launch {
-            for (f in remoteVolume) {
-                nori.remotes.mirror.value?.let { m -> dev.nori.music.ffi.mirrorOp(m, dev.nori.music.ffi.Press.Volume(f))?.let(nori.remotes::command) }
-                kotlinx.coroutines.delay(REMOTE_VOLUME_MS)
-            }
-        }
-    }
-
-    fun setVolumeFraction(f: Float) {
-        if (nori.remotes.mirror.value != null) {
-            remoteVolume.trySend(f)
-            return
-        }
-        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).takeIf { it > 0 } ?: return
-        // Nearest step, not the one below: truncating made the bar jump back a notch every time it was let go.
-        audio.setStreamVolume(AudioManager.STREAM_MUSIC, kotlin.math.round(f.coerceIn(0f, 1f) * max).toInt().coerceIn(0, max), 0)
-    }
 }
-
-/** How often a dragged volume goes to the device playing elsewhere: each one is a request. */
-private const val REMOTE_VOLUME_MS = 200L
