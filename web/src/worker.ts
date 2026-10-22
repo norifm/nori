@@ -56,6 +56,9 @@ const ready = (async () => {
   scope.postMessage({ ready: { ms: Math.round(performance.now() - t0), stored: nori.stored, player, codecs } });
 })();
 
+/** The pull buffer, kept between passes; a transferred one is detached (length 0) and so replaced. */
+let out = new Float32Array(0);
+
 /** Runs the engine, tops the worklet up, and comes back when the engine asks to. */
 function pump() {
   if (!nori || !player) return;
@@ -65,7 +68,7 @@ function pump() {
   order();
   const channels = nori.channels() as number;
   while (worklet && channels > 0) {
-    const out = new Float32Array(CHUNK * channels);
+    if (out.length !== CHUNK * channels) out = new Float32Array(CHUNK * channels);
     const frames = nori.pull(out) as number;
     if (frames === 0) break;
     const pcm = frames === CHUNK ? out : out.slice(0, frames * channels);
