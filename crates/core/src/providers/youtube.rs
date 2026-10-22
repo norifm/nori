@@ -197,8 +197,12 @@ fn playlist_detail(p: yt::PlaylistPage) -> PlaylistDetail {
     PlaylistDetail::new(playlist(p.playlist, &songs), songs)
 }
 
-/// A feed shelf, its items sorted by kind.
-fn shelf(s: yt::Shelf) -> FeedShelf {
+/// A feed shelf, its items sorted by kind; none for a shelf of only videos ("Music videos for you"):
+/// nori plays music, not videos.
+fn shelf(s: yt::Shelf) -> Option<FeedShelf> {
+    if !s.items.is_empty() && s.items.iter().all(|i| matches!(i, yt::Item::Song(s) if s.video)) {
+        return None;
+    }
     let mut f = FeedShelf { title: s.title, ..Default::default() };
     for item in s.items {
         match item {
@@ -208,7 +212,7 @@ fn shelf(s: yt::Shelf) -> FeedShelf {
             yt::Item::Playlist(p) => f.playlists.push(playlist(p, &[])),
         }
     }
-    f
+    Some(f)
 }
 
 /// A stream is asked again this long before YouTube stops serving it, so a song opened just before
@@ -280,7 +284,7 @@ impl State {
             Read::ArtistAbout { id } => Page::About { v: artist_detail(self.after(c, api.artist(t, raw(&id)?).await)?).1 },
             Read::PlaylistById { id } => Page::PlaylistPage { v: playlist_detail(self.after(c, api.playlist(t, raw(&id)?).await)?) },
             Read::PlaylistSongs { id } => Page::Songs { v: playlist_detail(self.after(c, api.playlist(t, raw(&id)?).await)?).songs },
-            Read::HomeFeed => Page::Feed { v: self.after(c, api.home(t).await)?.into_iter().map(shelf).collect() },
+            Read::HomeFeed => Page::Feed { v: self.after(c, api.home(t).await)?.into_iter().filter_map(shelf).collect() },
             Read::PlaylistList if signed_in => Page::Playlists { v: self.after(c, api.library_playlists(t).await)?.into_iter().map(|p| playlist(p, &[])).collect() },
             Read::AlbumList { offset: 0, .. } if signed_in => Page::Albums { v: self.after(c, api.library_albums(t).await)?.into_iter().map(album).collect() },
             Read::StarredItems if signed_in => {
@@ -523,6 +527,15 @@ impl std::io::Read for LiveAudio {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_shelf_of_only_videos_is_left_out() {
+        let song = |id: &str, video: bool| yt::Item::Song(yt::Song { video_id: id.into(), video, ..Default::default() });
+        let videos = yt::Shelf { title: "Music videos for you".into(), items: vec![song("a", true), song("b", true)] };
+        assert!(shelf(videos).is_none());
+        let mixed = yt::Shelf { title: "Trending".into(), items: vec![song("a", true), song("b", false)] };
+        assert_eq!(shelf(mixed).map(|f| f.songs.len()), Some(2), "a shelf of songs keeps its videos");
+    }
     use super::*;
     use crate::client::tests::{block, client};
     use crate::client::NetProfile;
