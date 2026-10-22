@@ -235,7 +235,7 @@ fun HeroPage(
             // Upright over a picture the title block rises into the melt, overlapping the picture's last rows.
             val rise = showArt && coverSide == null && picture != null
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = Space.gutter).then(if (rise) Modifier.raised(Space.titleRise + HERO_DEEPER) else Modifier.padding(vertical = 4.dp)),
+                Modifier.fillMaxWidth().padding(horizontal = Space.gutter).then(if (rise) Modifier.raised(Space.titleRise + HERO_DEEPER - (if (subtitle.isNullOrEmpty()) ARTIST_LINE else 0.dp)) else Modifier.padding(vertical = 4.dp)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
@@ -399,6 +399,9 @@ private fun ListHead(label: String, actions: (@Composable RowScope.() -> Unit)?)
         Box(Modifier.padding(end = Space.gutter)) { Hairline() }
     }
 }
+
+/** The room the artist line takes under a title; a page with none lets the title down by it, so the buttons stay where an album's are. */
+private val ARTIST_LINE = 28.dp
 
 /** Placed [by] higher than it is laid out, so what follows moves up with it and the two overlap. */
 private fun Modifier.raised(by: androidx.compose.ui.unit.Dp): Modifier = layout { measurable, constraints ->
