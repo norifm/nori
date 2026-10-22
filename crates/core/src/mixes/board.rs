@@ -47,8 +47,10 @@ impl Core {
     /// The row's tiles with drawn covers: favourites, then the mixes when `taste`.
     pub fn mix_cards(&self, taste: bool) -> Vec<MixTile> {
         let mut tiles = mix_tiles(taste);
-        tiles[0].covers = cover_ids(self.favourites().as_deref().unwrap_or_default());
+        let marks = self.stars.lock().clone();
         self.board(|b| {
+            let favourites = b.favourites.iter().flatten().filter(|s| marks.kept(crate::client::Starrable::Song, &s.id));
+            tiles[0].covers = cover_ids(favourites);
             for (tile, spec) in tiles.iter_mut().skip(1).zip(&MIXES) {
                 tile.covers = b.drawn.get(spec.id).map(|d| cover_ids(&d.songs)).unwrap_or_default();
             }

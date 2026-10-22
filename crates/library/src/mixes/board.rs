@@ -82,9 +82,9 @@ pub fn mix_tile_colours(id: String) -> Vec<u32> {
 }
 
 /// Four different covers, for a tile's collage.
-pub fn cover_ids(songs: &[Song]) -> Vec<String> {
+pub fn cover_ids<'a>(songs: impl IntoIterator<Item = &'a Song>) -> Vec<String> {
     let mut out: Vec<String> = Vec::with_capacity(4);
-    for art in songs.iter().filter_map(|s| s.cover_art.as_deref()) {
+    for art in songs.into_iter().filter_map(|s| s.cover_art.as_deref()) {
         if out.len() == 4 {
             break;
         }
