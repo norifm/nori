@@ -17,7 +17,7 @@ import dev.nori.music.ffi.look.Palette
 import dev.nori.music.ffi.settings.StoredPrefs
 
 /**
- * The season's theme (nori_look::theme): its palette in light, dark or AMOLED black, the calendar's on the
+ * The season's theme (nori_look::theme): its palette in light, dark or Midnight black, the calendar's on the
  * day when it follows the seasons. The date is read again each time the app comes back to the front, so a
  * season comes in on its own day without anything waiting for midnight.
  */
@@ -31,8 +31,10 @@ fun NoriTheme(prefs: StoredPrefs, content: @Composable () -> Unit) {
         Today.now().let { if (it != today) today = it }
         onPauseOrDispose {}
     }
-    val scheme = remember(dark, prefs.season, prefs.amoled, today) { schemeOf(prefs, dark, today) }
-    val papers = remember(prefs.season, prefs.amoled, dark, today) { Papers(paletteOf(prefs, false, today), paletteOf(prefs, true, today), dark) }
+    val scheme = remember(dark, prefs.season, prefs.theme, today) { schemeOf(prefs, dark, today) }
+    val papers = remember(prefs.season, prefs.theme, dark, today) {
+        Papers(paletteOf(prefs, false, today), paletteOf(prefs, true, today), dark, dev.nori.music.ffi.settings.coversTintPages(prefs.theme))
+    }
     // Everything dressed in the theme's own colors - the plates behind the buttons, the chrome, the
     // status bar - worked out once per scheme in Rust (nori_look::dress) and only looked up after.
     val look = remember(scheme) { FixedLook(plainLook(scheme)) }
@@ -66,7 +68,7 @@ data class Today(val month: Int, val day: Int, val southern: Boolean) {
 
 /** The season's palette on [today], the calendar's when following (nori_look::theme::palette). */
 internal fun paletteOf(prefs: StoredPrefs, dark: Boolean, today: Today): Palette =
-    dev.nori.music.ffi.look.palette(dev.nori.music.ffi.settings.seasonOf(prefs.season), today.month.toUInt(), today.day.toUInt(), today.southern, dark, prefs.amoled)
+    dev.nori.music.ffi.look.palette(dev.nori.music.ffi.settings.seasonOf(prefs.season), today.month.toUInt(), today.day.toUInt(), today.southern, dark, prefs.theme == dev.nori.music.ffi.settings.ThemeMode.MIDNIGHT)
 
 /** The theme's accent for a light page and for a dark one, for the widgets' covers (nori_look::dress::accented). */
 @androidx.compose.runtime.Immutable
@@ -74,7 +76,7 @@ data class Accents(val light: Int, val dark: Int)
 
 /** The season's light and dark papers and whether the theme is dark: what a cover's page is dyed on (`Dye`). */
 @androidx.compose.runtime.Immutable
-data class Papers(val light: Palette, val dark: Palette, val darkTheme: Boolean) {
+data class Papers(val light: Palette, val dark: Palette, val darkTheme: Boolean, val coversTint: Boolean) {
     /** Light then dark, each page, surface, ink, accent, on: how `CoverLook.dyed` takes them. */
     val table = intArrayOf(
         light.page.toInt(), light.surface.toInt(), light.ink.toInt(), light.accent.toInt(), light.on.toInt(),

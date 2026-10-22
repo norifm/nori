@@ -25,22 +25,22 @@ const SERVER: i32 = 8;
 const NOTE: i32 = 9;
 const LINK: i32 = 11;
 const BUTTON: i32 = 12;
-/// The season tiles, and light / dark / AMOLED.
+/// The season tiles, and the four modes.
 const SEASONS: i32 = 13;
 const APPEARANCE_ROW: i32 = 14;
 /// What is stored, as a bar of its parts.
 const USAGE: i32 = 15;
 
-/// The appearance row's name: it is not one setting but two (the theme and AMOLED).
+/// The appearance row's name: the theme setting, offered as segments.
 pub const APPEARANCE: &str = "appearance";
 
-/// The appearance a pick stands for: the system's, light, dark, or AMOLED (dark on black).
-pub fn appearance_settings(pick: usize) -> [(&'static str, &'static str); 2] {
+/// The `theme` value a pick stands for: Follow system, Day, Night or Midnight.
+pub fn appearance_theme(pick: usize) -> &'static str {
     match pick {
-        1 => [("theme", "LIGHT"), ("amoled", "false")],
-        2 => [("theme", "DARK"), ("amoled", "false")],
-        3 => [("theme", "DARK"), ("amoled", "true")],
-        _ => [("theme", "SYSTEM"), ("amoled", "false")],
+        1 => "LIGHT",
+        2 => "DARK",
+        3 => "MIDNIGHT",
+        _ => "SYSTEM",
     }
 }
 
@@ -71,14 +71,14 @@ pub fn seasons(p: &StoredPrefs, today: Today) -> Seasons {
     Seasons { worn, following, switch, detail }
 }
 
-/// Which appearance the settings stand for ([`appearance_settings`]'s pick).
+/// Which appearance the settings stand for ([`appearance_theme`]'s pick).
 pub fn appearance_pick(p: &StoredPrefs) -> i32 {
     use nori_core::settings::ThemeMode;
     match p.theme {
         ThemeMode::System => 0,
         ThemeMode::Light => 1,
-        ThemeMode::Dark if p.amoled => 3,
         ThemeMode::Dark => 2,
+        ThemeMode::Midnight => 3,
     }
 }
 
@@ -298,7 +298,6 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
         "hiRes" => ("High quality output", ""),
         "maxRate" => ("Highest sample rate", ""),
         "season" => ("Season", ""),
-        "coverColors" => ("Colors from the cover", ""),
         "lyricsSweep" => ("Fill in words as they're sung", ""),
         "lyricsTranslation" => ("Show translations", ""),
         "lyricsOnline" => ("Find missing lyrics online", ""),
@@ -359,8 +358,6 @@ fn option_words(name: &str, v: &str) -> String {
         ("maxRate", "KHZ48") => "48 kHz".into(),
         ("maxRate", "KHZ96") => "96 kHz".into(),
         ("maxRate", "KHZ192") => "192 kHz".into(),
-        ("coverColors", "PAGES") => "Pages".into(),
-        ("coverColors", "PLAYER") => "Player".into(),
         ("wifi" | "download", v) => {
             let (rate, format) = v.split_once(':').unwrap_or((v, ""));
             match format {
@@ -551,11 +548,11 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
                 return vec![r];
             }
             // The four seasons' tiles, following the calendar as a switch under them, then the appearance: the
-            // theme and AMOLED have no rows on the desktop's page of the core, and it stands for both.
+            // theme has no row on the desktop's page of the core, and it stands for it.
             let s = seasons(p, today);
             let tiles = Row { options: SEASON_NAMES.map(|n| (n.to_string(), n.to_string())).to_vec(), ..r };
             let follow = Row { kind: TOGGLE, name: s.switch, title: "Follow the seasons".into(), detail: s.detail, on: s.following, enabled: true, ..Default::default() };
-            let appearance = Row { kind: APPEARANCE_ROW, name: APPEARANCE.into(), options: ["System", "Light", "Dark", "AMOLED"].map(|o| (o.to_string(), o.to_string())).to_vec(), enabled: true, ..Default::default() };
+            let appearance = Row { kind: APPEARANCE_ROW, name: APPEARANCE.into(), options: ["Follow system", "Day", "Night", "Midnight"].map(|o| (o.to_string(), o.to_string())).to_vec(), enabled: true, ..Default::default() };
             vec![tiles, follow, appearance]
         }).collect();
         let title = section_title(sec.id);
@@ -682,12 +679,9 @@ mod tests {
     }
 
     #[test]
-    fn an_appearance_sets_the_theme_and_amoled_and_reads_back() {
+    fn an_appearance_sets_the_theme_and_reads_back() {
         for pick in 0..4 {
-            let mut p = StoredPrefs::default();
-            for (name, value) in appearance_settings(pick) {
-                p = nori_core::settings::set_by_name(&p, name, value).expect("a setting").prefs;
-            }
+            let p = nori_core::settings::set_by_name(&StoredPrefs::default(), "theme", appearance_theme(pick)).expect("a setting").prefs;
             assert_eq!(appearance_pick(&p), pick as i32, "pick {pick}");
         }
     }

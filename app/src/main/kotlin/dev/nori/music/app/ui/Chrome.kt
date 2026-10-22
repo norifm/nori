@@ -376,10 +376,6 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
     androidx.compose.runtime.DisposableEffect(sheet) { onDispose { sheet.miniEdge = 0f } }
     val turn = LocalGlyphTurn.current
     val standing = Modifier.graphicsLayer { rotationZ = turn() }
-    val settings: dev.nori.music.app.vm.SettingsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val system = androidx.compose.foundation.isSystemInDarkTheme()
-    val dark = remember(prefs.theme, system) { dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system) }
     // The colours of what is playing and of the songs either side, worked out before they are reached. Their covers are
     // already fetched ahead (PlayerViewModel); this is the other half of that, and it is what stops the
     // page wearing the last song's colour for a moment after a skip. It happens here rather than in the
@@ -390,14 +386,10 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
     // worked out once per skip with the covers fetched ahead.
     val near by vm.coversNear.collectAsStateWithLifecycle()
     val around = remember(near) { near.mapNotNull { vm.cover(it, CoverSize.ROW) }.filterNot(::isProviderCover) }
-    LaunchedEffect(around, dark, prefs.coverColors, prefs.amoled) {
-        if (prefs.coverColors.isEmpty()) return@LaunchedEffect
-        val plain = !dev.nori.music.ffi.settings.coverBlack(prefs.coverColors, true, dark, prefs.amoled)
-        for (url in around) {
-            // The full-screen player keeps the record's colours where the bar goes black, so that is a
-            // second set of colours for the same cover, worked out from the same decode.
-            warmCoverPalette(context, url, dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, false), andPlain = plain)
-        }
+    val tints = LocalPapers.current.coversTint
+    LaunchedEffect(around, tints) {
+        if (!tints) return@LaunchedEffect
+        for (url in around) warmCoverPalette(context, url)
     }
     val scheme = MaterialTheme.colorScheme
     // Under the open player the bar is still composed, only covered: a title walking there redrew the

@@ -284,8 +284,8 @@ fun SettingsScreen(vm: SettingsViewModel) {
     var query by remember { mutableStateOf("") }
     val res = LocalContext.current.resources
     val config = LocalConfiguration.current
-    // Titles first, then anything whose explanation mentions it: searching "oled" finds AMOLED black,
-    // asked once per change of the query (or of the language).
+    // Titles first, then anything whose explanation mentions it, asked once per change of the query (or
+    // of the language).
     val hits = remember(query, config) { if (query.isBlank()) emptyList() else vm.searchSettings(query, res) }
     val groups = remember(config) { vm.settingsGroups(res) }
     val perf = dev.nori.music.app.PerfHooks.recorder != null
