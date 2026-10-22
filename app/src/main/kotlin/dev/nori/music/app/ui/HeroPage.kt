@@ -79,8 +79,6 @@ fun HeroPage(
     coverStandIns: List<String?> = emptyList(),
     /** The artist line under the title, in ink; tapping it opens [onSubtitle]. */
     subtitle: String? = null,
-    /** A quiet line under that, in sentence case: year, song count, length, quality. */
-    caption: String = "",
     /** The title's size: Literata 27 for a record, larger for an artist. */
     titleSize: TextUnit = 27.sp,
     onSubtitle: (() -> Unit)? = null,
@@ -101,7 +99,7 @@ fun HeroPage(
     queue: dev.nori.music.ffi.library.PageQueue? = null,
     /** The seal, bare, after the Play pill. */
     actions: @Composable RowScope.() -> Unit = {},
-    /** The list head's quiet label at the left ("8 songs · 36:28"); with [headActions] it heads the songs. */
+    /** The list head's quiet label at the left ("2019 · 8 songs · 36:28 · FLAC"; cut short at the right, so the least important part goes last); with [headActions] it heads the songs. */
     headLabel: String = "",
     /** Bare glyphs at the right of the list head: download, add to queue, or a mix's refresh (`PageActionGlyphs`). */
     headActions: (@Composable RowScope.() -> Unit)? = null,
@@ -168,7 +166,7 @@ fun HeroPage(
         // [coverSide]: on its side, the cover (or the page's own artwork) at this size, centred in the half,
         // so the half keeps the width its buttons need however short the screen is. Upright it is null and
         // the cover takes the full width, as ever.
-        // [showArt] false: the name, caption and buttons alone, for laying over a cover drawn apart (below).
+        // [showArt] false: the name and buttons alone, for laying over a cover drawn apart (below).
         val hero: @Composable (coverSide: androidx.compose.ui.unit.Dp?, showArt: Boolean) -> Unit = { coverSide, showArt ->
         Column(Modifier.fillMaxWidth()) {
             if (showArt) {
@@ -250,14 +248,6 @@ fun HeroPage(
                     style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.Medium),
                     textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                if (caption.isNotEmpty()) {
-                    val look = LocalLook.current
-                    LookText(
-                        caption, { look.color(CoverLook.ON_VARIANT) }, Modifier.padding(top = 5.dp),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), textAlign = TextAlign.Center,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
 
             // Shuffle · Play · the page's seal: bare glyphs either side of an ink pill that fills the row. The
@@ -312,7 +302,7 @@ fun HeroPage(
                 Row(Modifier.fillMaxSize()) {
                     // A cover fills its half as the player's sleeve fills its own: from the screen's very left
                     // edge - under the camera's punch hole, which the app otherwise keeps pages clear of - and top,
-                    // going soft at its right edge, blurred as the sleeve does, into the page. The name, caption and
+                    // going soft at its right edge, blurred as the sleeve does, into the page. The name and
                     // buttons stand on the right above the songs, as the player's controls stand beside its sleeve,
                     // so nothing is written over the picture. A page with no picture at all - an artist without a
                     // photo, or one whose details have not come (offline) - keeps the same layout with the plain plate a

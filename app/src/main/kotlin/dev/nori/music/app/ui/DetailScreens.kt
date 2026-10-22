@@ -71,23 +71,23 @@ private fun FilterField(count: Int, filter: String, onFilter: (String) -> Unit) 
 
 /**
  * A hero page over a list of [songs] with no cover of its own (a genre, a folder, a smart playlist): its
- * name and [caption], Play and Shuffle while there is something to play, a list head with the core's
- * queue and download glyphs then [pageActions], and [content] under it.
+ * name, Play and Shuffle while there is something to play, a list head with [headLabel] (the songs'
+ * count and length unless given), the core's queue and download glyphs then [pageActions], and [content] under it.
  */
 @Composable
 internal fun SongListPage(
-    title: String, caption: String, songs: List<Song>, done: Set<String>, from: PageOrigin, actions: ActionsViewModel,
+    title: String, songs: List<Song>, done: Set<String>, from: PageOrigin, actions: ActionsViewModel,
+    headLabel: String = if (songs.isEmpty()) "" else say.listCaption(songs.size, songs.sumOf { it.duration.toLong() }, true),
     pageActions: @Composable RowScope.() -> Unit = {}, content: LazyListScope.() -> Unit,
 ) {
     val any = songs.isNotEmpty()
     HeroPage(
         coverUrl = null,
         title = title,
-        caption = caption,
         onPlay = if (any) { { actions.play(songs, from = from) } } else null,
         onShuffle = if (any) { { actions.shuffle(songs, from) } } else null,
         queue = remember(from) { dev.nori.music.ffi.library.PageQueue(from) },
-        headLabel = if (any) say.listCaption(songs.size, songs.sumOf { it.duration.toLong() }, true) else "",
+        headLabel = headLabel,
         headActions = {
             PageActionGlyphs(PageKind.Album, songs, done, actions)
             pageActions()
@@ -258,22 +258,16 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
     val list = rememberSongListState(actions)
     val nav = LocalNav.current
     val arrival = rememberArrival(detail != null)
-    // The album's own caption once it is read; until then what the row that opened it knew.
-    val caption = remember(detail, album) { detail?.let(say::albumCaption) ?: say.albumHintCaption(album.year.toInt(), album.songCount.toInt(), album.duration.toLong()) }
+    // The list head's year, count, length and quality once the songs are read; until then what the row that opened the page knew.
+    val head = remember(detail, album) { detail?.let(say::albumCaption) ?: say.albumHintCaption(album.year.toInt(), album.songCount.toInt(), album.duration.toLong()) }
     // A queue started here - its Play, Shuffle or a row - is the album's; its song played from anywhere else is not.
     val from = remember(detail?.queue, album.id) { detail?.queue?.origin() ?: PageOrigin(OriginKind.ALBUM, album.id) }
     val queue = rememberPageQueue(from, detail?.queue)
-    // The list head's count and length, from what the row that opened the page knew until the songs come.
-    val head = remember(detail, album) {
-        val count = detail?.songs?.size ?: album.songCount.toInt()
-        if (count > 0) say.listCaption(count, detail?.seconds?.toLong() ?: album.duration.toLong(), true) else ""
-    }
     HeroPage(
         coverUrl = vm.cover(album.coverArt, CoverSize.FULL),
         coverStandIns = listOf(vm.cover(album.coverArt, CoverSize.CARD), vm.cover(album.coverArt, CoverSize.ROW)),
         title = album.name,
         subtitle = album.artist,
-        caption = caption,
         onSubtitle = album.artistId?.let { a ->
             { nav.artist(a, Artist(a, album.artist, album.coverArt, null, 0u, false, false)) }
         },
@@ -478,7 +472,6 @@ private fun PlaylistPage(
         coverStandIns = listOf(vm.cover(playlist.coverArt, CoverSize.CARD), vm.cover(playlist.coverArt, CoverSize.ROW)),
         title = playlist.name,
         subtitle = remember(playlist.comment, prefs.playlistNotes) { dev.nori.music.ffi.library.playlistDescription(playlist.comment, prefs.playlistNotes) },
-        caption = remember(detail, playlist) { detail?.let { say.listCaption(it.songs.size, it.seconds.toLong(), true) } ?: say.albumHintCaption(0, playlist.songCount.toInt(), playlist.duration.toLong()) },
         onPlay = detail?.let { d -> { actions.play(d.songs, from = from) } },
         onShuffle = detail?.let { d -> { actions.shuffle(d.songs, from) } },
         awaitingPlay = detail == null && failed == null,
@@ -516,7 +509,7 @@ fun GenreScreen(name: String, actions: ActionsViewModel, vm: GenreViewModel = vi
     val list = rememberSongListState(actions)
     val from = rememberOrigin(OriginKind.GENRE, name)
     LoadBox(load) { songs ->
-        SongListPage(name, remember(songs.size) { say.songs(songs.size) }, songs, list.downloaded, from, actions) {
+        SongListPage(name, songs, list.downloaded, from, actions) {
             songRows(songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
     }
@@ -531,7 +524,10 @@ fun FolderScreen(id: String, actions: ActionsViewModel, vm: FolderViewModel = vi
     val nav = LocalNav.current
     val from = rememberOrigin(OriginKind.FOLDER, id)
     LoadBox(load) { d ->
-        SongListPage(remember(d.name) { say.folderTitle(d.name) }, remember(d) { say.folderCaption(d.folders.size, d.songs.size) }, d.songs, list.downloaded, from, actions) {
+        SongListPage(
+            remember(d.name) { say.folderTitle(d.name) }, d.songs, list.downloaded, from, actions,
+            headLabel = remember(d) { say.folderCaption(d.folders.size, d.songs.size, d.songs.sumOf { it.duration.toLong() }) },
+        ) {
             items(d.folders, key = { "f" + it.id }) { f -> NavRow(remember(f.name) { say.folderRow(f.name) }, { nav.folder(f.id) }, chevron = true) }
             songRows(d.songs, actions, list, cover = { vm.cover(it.coverArt, CoverSize.ROW) }, from = from)
         }
