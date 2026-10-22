@@ -22,10 +22,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -71,8 +69,6 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.automirrored.filled.VolumeDown
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -125,6 +121,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.geometry.Rect
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -735,8 +732,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 )
 
                 if (page == Panel.ART && !across) Spacer(Modifier.weight(0.1f))
-                // A jam guest's volume is its own while the music plays here.
-                if (state.offersVolume) Box(kept("volume")) { VolumeRow(vm) }
+                if (state.offersVolume) Box(kept("output")) { OutputRow(vm) }
                 if (page == Panel.ART && !across) Spacer(Modifier.weight(0.25f))
             })
             }
@@ -826,6 +822,7 @@ private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?
 internal fun OutputButton(
     otherDevice: Boolean, size: androidx.compose.ui.unit.Dp,
     idle: androidx.compose.ui.graphics.ColorProducer, lit: androidx.compose.ui.graphics.ColorProducer,
+    named: Boolean = false,
 ) {
     val settings: SettingsViewModel = viewModel()
     val output by settings.currentOutput.collectAsStateWithLifecycle()
@@ -839,8 +836,21 @@ internal fun OutputButton(
     val devices = prefs.remoteControl && LocalRules.current.remote
     val openDevices = LocalDevices.current
     val tell = LocalMessages.current
-    IconButton({ if (devices) openDevices() else openOutputPicker(context, output, tell) }) {
-        LookIcon(icon, description, Modifier.size(size)) { if (otherDevice) lit() else idle() }
+    val open = { if (devices) openDevices() else openOutputPicker(context, output, tell) }
+    val color = if (otherDevice) lit else idle
+    // The device's name beside the glyph, both one target.
+    if (named) Row(
+        Modifier.clip(RoundedCornerShape(Radius.pill)).clickable(onClick = open).heightIn(min = 48.dp).padding(horizontal = 14.dp),
+        Arrangement.spacedBy(10.dp), Alignment.CenterVertically,
+    ) {
+        LookIcon(icon, description, Modifier.size(size), color)
+        LookText(
+            say.outputLabel(o.port, o.name), color, Modifier.weight(1f, fill = false),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+    } else IconButton(open) {
+        LookIcon(icon, description, Modifier.size(size), color)
     }
 }
 
@@ -901,7 +911,7 @@ private const val MIX_SLIDE = 2
  * lays its player out otherwise, so the ratio is the phone's layout and not the core's. At 0.68 the sleeve
  * is about 68 % of a 20:9 screen's height; the title block rises [Space.titleRise] into its melt.
  */
-private const val SLEEVE = 0.68f
+private const val SLEEVE = 0.66f
 
 /** A soft sleeve's own box as the sleeve: its bottom (its right edge, on its side) and its whole height (width). */
 private val SLEEVE_ALL: androidx.compose.ui.draw.CacheDrawScope.() -> Pair<Float, Float> = { size.height to size.height }
@@ -2194,73 +2204,22 @@ internal fun TitleButton(icon: ImageVector, label: String, selected: Boolean, st
 }
 
 /**
- * The phone's music-stream volume, read live so the hardware keys never leave it stale. Ticks only
- * while this screen is resumed; a drag writes straight through and updates the thumb itself.
+ * Where the music plays, as one centered row: the speaker and the device's name, a tap away from changing it.
+ * While a jam is on its button stands here instead; a jam guest's sound is its own, so it has no output to choose.
  */
 @Composable
-private fun VolumeRow(vm: PlayerViewModel) {
+private fun OutputRow(vm: PlayerViewModel) {
     val look = LocalLook.current
-    // Pushed by the system the moment it changes - no polling, nothing ticking while the screen is open.
-    val system by vm.volume.collectAsStateWithLifecycle()
-    var dragging by remember { mutableStateOf(false) }
-    // What is drawn. A change from outside - the volume keys, another app - eases over; a drag is
-    // followed exactly, written straight from the finger rather than snapped to from a coroutine per
-    // pointer event.
-    val shown = remember { mutableFloatStateOf(vm.volumeFraction()) }
-    val plain = reduceMotion()
-    LaunchedEffect(system, dragging) {
-        if (dragging) return@LaunchedEffect
-        if (plain) shown.floatValue = system
-        else androidx.compose.animation.core.animate(shown.floatValue, system, animationSpec = androidx.compose.animation.core.tween(180)) { v, _ -> shown.floatValue = v }
-    }
     val state by vm.state.collectAsStateWithLifecycle()
     val jam by vm.jamStrip.collectAsStateWithLifecycle()
-    // The glyphs' hit boxes are 48 dp, so the bar's side margin is kept less their inset.
-    Row(
-        Modifier.fillMaxWidth().padding(start = 15.dp, end = 28.dp, top = 2.dp, bottom = 2.dp),
-        Arrangement.spacedBy(0.dp), Alignment.CenterVertically,
-    ) {
-        // The output is the speaker at the start of the bar: quiet while this phone plays, ink while another
-        // device does. While a jam is on its button stands here (a jam plays on this device only); a guest's
-        // volume is its own, so it has no output to choose.
+    Row(Modifier.fillMaxWidth().padding(horizontal = PLAYER_GUTTER, vertical = 2.dp), Arrangement.Center, Alignment.CenterVertically) {
         val jamOn = jam
         if (jamOn != null) JamButton(jamOn, 22.dp) { look.color(CoverLook.ON_VARIANT) }
         else if (!state.jamGuest) OutputButton(
             state.playingOn != null, 22.dp,
             idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
-        ) else Box(Modifier.size(48.dp), Alignment.Center) {
-            LookIcon(Icons.AutoMirrored.Filled.VolumeDown, null, Modifier.size(16.dp)) { look.color(CoverLook.ON_VARIANT) }
-        }
-        val pick: (Float, Float) -> Unit = { x, w ->
-            val f = (x / w).coerceIn(0f, 1f)
-            vm.setVolumeFraction(f)
-            shown.floatValue = f
-        }
-        Box(
-            Modifier.weight(1f).height(34.dp)
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragStart = { dragging = true; pick(it.x, size.width.toFloat()) },
-                        onDragEnd = { dragging = false },
-                        onDragCancel = { dragging = false },
-                    ) { change, _ -> pick(change.position.x, size.width.toFloat()) }
-                }
-                .pointerInput(Unit) { detectTapGestures { pick(it.x, size.width.toFloat()) } }
-                .drawBehind {
-                    val track = look.color(CoverLook.ON_22)
-                    val filled = look.color(CoverLook.ON_85)
-                    val h = 7.dp.toPx()
-                    val y = (size.height - h) / 2f
-                    val r = CornerRadius(h / 2f, h / 2f)
-                    val at = shown.floatValue
-                    drawRoundRect(track, Offset(0f, y), Size(size.width, h), r)
-                    drawRoundRect(filled, Offset(0f, y), Size(size.width * at, h), r)
-                    // No knob unless a finger is on it: Apple's volume slider is a filled bar and
-                    // nothing else, and a permanent white circle is the most Material thing on the screen.
-                    if (dragging) drawCircle(filled, h * 1.15f, Offset(size.width * at, size.height / 2f))
-                },
+            named = true,
         )
-        LookIcon(Icons.AutoMirrored.Filled.VolumeUp, null, Modifier.size(20.dp)) { look.color(CoverLook.ON_VARIANT) }
     }
 }
 

@@ -15,9 +15,9 @@ const fn s(at: f32, alpha: f32) -> Stop {
     Stop { at, alpha }
 }
 
-/// Fade-out of the sleeve over its bottom band (the last [`crate::cover::FADE_SHARE`]): eased, complete by 70 % so sharp
-/// lines in the artwork near the bottom do not show through the blur below.
-pub const RUB_OUT: [Stop; 7] = [s(0.0, 0.0), s(0.12, 0.31), s(0.25, 0.60), s(0.40, 0.86), s(0.55, 0.97), s(0.70, 1.0), s(1.0, 1.0)];
+/// Fade-out of the sleeve over its bottom band (the last [`crate::cover::FADE_SHARE`]): nearly linear, so the
+/// cover still shows behind the title and is gone only at the band's end.
+pub const RUB_OUT: [Stop; 3] = [s(0.0, 0.0), s(0.5, 0.42), s(1.0, 1.0)];
 
 /// Opacity of the blurred copy over the sharp artwork, spanning [`SOFT_FROM`]..[`SOFT_TO`].
 pub const SOFT: [Stop; 5] = [s(0.0, 0.0), s(0.3, 0.10), s(0.6, 0.50), s(0.85, 0.92), s(1.0, 1.0)];
