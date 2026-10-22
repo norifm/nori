@@ -491,12 +491,12 @@ impl Offload {
     pub(crate) fn in_album<L: Library, Q: Queue>(&self, i: usize, tracks: &Sources<L>, queue: &Known<Q>) -> bool {
         let (before, song, after, shuffling) = queue.read(|q| {
             let repeat = q.repeat();
-            (q.ids().to_vec(), q.previous_of(i, repeat), q.next_of(i, repeat), q.shuffling())
+            let id = |k: Option<usize>| k.and_then(|k| q.ids().get(k).cloned());
+            let after = q.next_of(i, repeat).filter(|_| self.stop_after != Some(i));
+            (id(q.previous_of(i, repeat)), id(Some(i)), id(after), q.shuffling())
         });
-        let after = after.filter(|_| self.stop_after != Some(i));
-        let about = |k: usize| ids.get(k).map(|id| tracks.about(id));
-        let Some(song) = about(i) else { return false };
-        in_album_order(before.and_then(about).as_ref(), &song, after.and_then(about).as_ref(), shuffling)
+        let Some(song) = song.map(|id| tracks.about(&id)) else { return false };
+        in_album_order(before.map(|id| tracks.about(&id)).as_ref(), &song, after.map(|id| tracks.about(&id)).as_ref(), shuffling)
     }
 
     /// Starts queue index `i` at `from_ms`: empties the track and opens the song as packets. Whether it
@@ -1346,8 +1346,7 @@ impl Offload {
 
     /// The queue changed from the entries `old`: re-finds the written songs and re-picks the song after
     /// the last. True when a written song no longer follows: the caller restarts where the ear is.
-    pub(crate) fn queue_changed<L: Library, Q: Queue>(&mut self, old: &[u64], tracks: &mut Sources<L>, queue: &Known<Q>) -> bool {
-        let new: Vec<u64> = queue.read(|q| q.seqs().to_vec());
+    pub(crate) fn queue_changed<L: Library, Q: Queue>(&mut self, old: &[u64], new: &[u64], tracks: &mut Sources<L>, queue: &Known<Q>) -> bool {
         let moved = |i: usize| old.get(i).and_then(|s| new.iter().position(|n| n == s));
         self.stop_after = self.stop_after.and_then(moved);
         for i in self.t.placed.iter_mut().map(|p| &mut p.index).chain(self.t.starting.as_mut().map(|s| &mut s.0)) {
