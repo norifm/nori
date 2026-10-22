@@ -7,6 +7,7 @@ import dev.nori.music.ffi.library.TextIndex
 import dev.nori.music.ffi.model.MusicFolder
 import dev.nori.music.ffi.settings.BeatModel
 import dev.nori.music.ffi.settings.EqLevel
+import dev.nori.music.ffi.settings.EqStatus
 import dev.nori.music.ffi.settings.PageFacts
 import dev.nori.music.ffi.settings.RowItem
 import dev.nori.music.ffi.settings.SavedServer
@@ -624,7 +625,12 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
         SettingsLink.EQUALIZER -> {
             // The chain is taken out of the path by the same rule the transitions are, so the row says so
             // rather than reading "On" over sound it is not touching.
-            val status = str(if (s.untouched) R.string.settings_equalizer_off_now else if (s.soundChainOn) R.string.settings_on else R.string.settings_off)
+            val status = str(when (s.eqStatus) {
+                EqStatus.BIT_PERFECT -> R.string.settings_equalizer_off_now
+                EqStatus.NO_PROCESSING -> R.string.settings_equalizer_no_processing
+                EqStatus.ON -> R.string.settings_on
+                EqStatus.OFF -> R.string.settings_off
+            })
             linkRow(R.string.settings_equalizer, status, s.untouched, "equalizer", divider = true)
         }
         SettingsLink.SYSTEM_EFFECTS -> linkRow(R.string.settings_system_effects, "", false, "system-effects", divider = false)

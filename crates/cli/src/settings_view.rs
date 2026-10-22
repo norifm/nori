@@ -4,7 +4,7 @@
 
 use crate::text;
 use nori_core::settings::{season_follow_value, EqLevel, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
-use nori_core::settings_model::{self, BeatModel, LyricsSource, SettingKind, SettingsState};
+use nori_core::settings_model::{self, BeatModel, EqStatus, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
 use nori_core::numbers::{self, POINT};
 use nori_core::MusicFolder;
@@ -631,7 +631,12 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             }
         }
         RowItem::Link { to: SettingsLink::Equalizer } => {
-            let status = if p.sound_bypass { "no processing" } else if s.untouched { "bypassed" } else if s.sound_chain_on { "on" } else { "off" };
+            let status = match s.eq_status {
+                EqStatus::BitPerfect => "bypassed",
+                EqStatus::NoProcessing => "no processing",
+                EqStatus::On => "on",
+                EqStatus::Off => "off",
+            };
             Row::Link { title: "Equalizer, balance, limiter".into(), status: status.into(), action: Act::Equalizer }
         }
         RowItem::Link { to: SettingsLink::Downloads } => {

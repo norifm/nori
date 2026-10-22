@@ -95,6 +95,7 @@
     <string name="settings_section_output">Output</string>
     <string name="settings_equalizer">Equalizer and crossfeed</string>
     <string name="settings_equalizer_off_now">Off now</string>
+    <string name="settings_equalizer_no_processing">No processing</string>
     <string name="settings_autoeq_auto">AutoEQ for headphones</string>
     <string name="settings_autoeq_list">Keep the AutoEQ list</string>
     <string name="settings_per_device">Remember sound per device</string>

@@ -3,7 +3,7 @@
 
 use nori_core::numbers::{self, POINT};
 use nori_core::settings::{season_follow_value, season_of, EqLevel, StoredPrefs, ThemeSeason};
-use nori_core::settings_model::{self, BeatModel, SettingKind, SettingsState};
+use nori_core::settings_model::{self, BeatModel, EqStatus, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsRow};
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -436,7 +436,12 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
             }
         }
         RowItem::Link { to: SettingsLink::Equalizer } => {
-            let status = if s.untouched { "Off now" } else if s.sound_chain_on { "On" } else { "Off" };
+            let status = match s.eq_status {
+                EqStatus::BitPerfect => "Off now",
+                EqStatus::NoProcessing => "No processing",
+                EqStatus::On => "On",
+                EqStatus::Off => "Off",
+            };
             Row { kind: LINK, name: EQUALIZER.into(), title: "Equalizer".into(), detail: status.into(), enabled: true, ..Default::default() }
         }
         RowItem::Stored => {

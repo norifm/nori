@@ -104,6 +104,7 @@ pub struct SettingsState {
     /// Bit-perfect DAC output: transitions, silence skipping and the sound chain are out of the path.
     pub untouched: bool,
     pub sound_chain_on: bool,
+    pub eq_status: EqStatus,
     /// Offload is wanted but off because the sound chain is needed.
     pub offload_paused: bool,
     /// Every lyrics service in rank order.
@@ -111,6 +112,28 @@ pub struct SettingsState {
     pub beat_model: BeatModel,
     /// Approximate beat model download size, MB.
     pub beat_model_mb: u32,
+}
+
+/// What the equalizer's settings row says of the sound chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum EqStatus {
+    /// Bit-perfect output: nothing touches the sound now.
+    BitPerfect,
+    /// This output is set to no processing (`soundBypass`).
+    NoProcessing,
+    On,
+    Off,
+}
+
+/// The equalizer row's status on this output.
+pub fn eq_status(p: &StoredPrefs, bit_perfect: bool) -> EqStatus {
+    match crate::settings::eq_bypass(bit_perfect, p.sound_bypass) {
+        Some(crate::settings::EqBypass::BitPerfect) => EqStatus::BitPerfect,
+        Some(crate::settings::EqBypass::Output) => EqStatus::NoProcessing,
+        None if p.sound_chain_on() => EqStatus::On,
+        None => EqStatus::Off,
+    }
 }
 
 /// The output as the platform reports it.
@@ -160,6 +183,7 @@ pub fn state(p: &StoredPrefs, out: Output, model: &beat_model::ModelFile) -> Set
         values: specs().into_iter().filter_map(|s| Some((s.name.clone(), value_of(p, &s.name)?))).collect(),
         untouched: out.dac_bit_perfect,
         sound_chain_on: dsp,
+        eq_status: eq_status(p, out.dac_bit_perfect),
         offload_paused: !out.usb && p.offload && !policy.offload,
         lyrics_sources,
         beat_model: beat_model_now(model),
@@ -434,6 +458,22 @@ mod tests {
         assert_eq!(value_of(&d, "lyricsOnline").as_deref(), Some("true"));
         assert_eq!(value_of(&off, "lyricsOnline").as_deref(), Some("false"));
         assert_eq!(value_of(&off, "autoEqDownload").as_deref(), Some("false"));
+    }
+
+    #[test]
+    fn eq_status_puts_bit_perfect_then_bypass_first() {
+        let on = StoredPrefs { mono: true, ..StoredPrefs::default() };
+        let bypass = StoredPrefs { sound_bypass: true, ..on.clone() };
+        let cases = [
+            (&on, true, EqStatus::BitPerfect),
+            (&bypass, true, EqStatus::BitPerfect),
+            (&bypass, false, EqStatus::NoProcessing),
+            (&on, false, EqStatus::On),
+            (&StoredPrefs::default(), false, EqStatus::Off),
+        ];
+        for (p, bit_perfect, want) in cases {
+            assert_eq!(eq_status(p, bit_perfect), want, "{:?} bit-perfect {bit_perfect}", (p.mono, p.sound_bypass));
+        }
     }
 
     #[test]
