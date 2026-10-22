@@ -229,7 +229,7 @@ impl Nori {
 
     /// What the app offers over the profile open.
     pub(crate) fn rules(&self) -> nori_core::browse::ProfileRules {
-        self.with(|h| h.rules.clone()).unwrap_or_default()
+        self.with(|h| h.rules()).unwrap_or_default()
     }
 
     /// What a jam adds to song menus: starting one, or asking the host as its guest.
@@ -444,7 +444,7 @@ impl Nori {
                 "volume": h.volume(),
                 "device": n.device,
                 "jam": n.jam,
-                "asks": h.rules.asks,
+                "asks": h.rules().asks,
                 "underruns": status.as_ref().map_or(0, |s| s.underruns),
                 "transition": status.as_ref().and_then(|s| s.id.as_deref()).and_then(|id| h.core.session.planner.transition_note(id)).map(|t| json!({ "kind": format!("{:?}", t.kind), "into": t.incoming_id, "reason": t.reason })),
             })
