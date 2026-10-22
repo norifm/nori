@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-mpris',
  'edition': '2021',
- 'version': '0.7.0-beta.5',
+ 'version': '0.7.0-beta.6',
  'targets': [{'name': 'nori_mpris', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
  'local': [{'package': 'nori-testdir',
