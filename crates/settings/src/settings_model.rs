@@ -39,21 +39,22 @@ pub struct SettingSpec {
     pub default: String,
 }
 
-fn spec(name: &str, k: &K) -> SettingSpec {
+fn spec(name: &str, k: &K, defaults: &StoredPrefs) -> SettingSpec {
     let (kind, options, (min, max)): (SettingKind, Vec<String>, (f32, f32)) = match k {
         K::Switch => (SettingKind::Switch, vec!["false".into(), "true".into()], (0.0, 0.0)),
         K::Choice(o) => (SettingKind::Choice, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Flags(o) => (SettingKind::Flags, o.iter().map(|s| s.to_string()).collect(), (0.0, 0.0)),
         K::Level(lo, hi) => (SettingKind::Level, Vec::new(), (*lo, *hi)),
     };
-    let default = value_of(&StoredPrefs::default(), name).unwrap_or_default();
+    let default = value_of(defaults, name).unwrap_or_default();
     SettingSpec { name: name.into(), kind, options, min, max, default }
 }
 
 /// Every offered setting, in a stable order: the table's, then [`SPECIAL_SPECS`].
 pub fn specs() -> Vec<SettingSpec> {
-    let table = ROWS.iter().filter_map(|r| Some(spec(r.name?, r.spec.as_ref()?)));
-    table.chain(SPECIAL_SPECS.iter().map(|(n, k)| spec(n, k))).collect()
+    let defaults = StoredPrefs::default();
+    let table = ROWS.iter().filter_map(|r| Some(spec(r.name?, r.spec.as_ref()?, &defaults)));
+    table.chain(SPECIAL_SPECS.iter().map(|(n, k)| spec(n, k, &defaults))).collect()
 }
 
 /// A setting's value in its options' form ("1", "0.75"). Lookup switches read off while the master
