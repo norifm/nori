@@ -63,6 +63,24 @@ impl Client {
         Ok(self.artist_page_songs(v).await)
     }
 
+    /// What playing album `id` plays, asked of the server now.
+    pub async fn album_songs_of(&self, id: String) -> NetResult<Vec<Song>> {
+        Ok(match self.read_now(Read::AlbumSongs { id }).await? {
+            Page::Songs { v } => v,
+            Page::AlbumPage { v } => v.songs,
+            _ => Vec::new(),
+        })
+    }
+
+    /// What playing playlist `id` plays, asked of the server now.
+    pub async fn playlist_songs_of(&self, id: String) -> NetResult<Vec<Song>> {
+        Ok(match self.read_now(Read::PlaylistSongs { id }).await? {
+            Page::Songs { v } => v,
+            Page::PlaylistPage { v } => v.songs,
+            _ => Vec::new(),
+        })
+    }
+
     /// Draws mix `id` unless this period's draw exists (`again`: redraw), falling back to random server
     /// songs without history. True when the draw changed.
     pub async fn mix_ensure(&self, id: String, again: bool) -> bool {

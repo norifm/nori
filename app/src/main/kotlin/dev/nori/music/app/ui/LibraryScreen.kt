@@ -176,7 +176,8 @@ fun LibraryScreen(actions: ActionsViewModel, vm: LibraryHomeViewModel = viewMode
                 LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(playlists, key = { it.id }) { p ->
                         val line = remember(p.songCount, p.comment) { if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty() }
-                        CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 132.dp, { nav.playlist(p.id, p) })
+                        val cardMenu = LocalCardMenu.current
+                        CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 132.dp, { nav.playlist(p.id, p) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
                     }
                 }
             }
@@ -566,7 +567,7 @@ private fun Downloads(actions: ActionsViewModel) {
         items(library?.albums.orEmpty().chunked(2), key = { it.first().id }, contentType = { "albums" }) { row ->
             Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { album ->
-                    AlbumCard(album, actions.cover(album.coverArt, CoverSize.CARD), 132.dp, { nav.downloadedAlbum(album.id, album) }, Modifier.weight(1f), fill = true)
+                    AlbumCard(album, actions.cover(album.coverArt, CoverSize.CARD), 132.dp, { nav.downloadedAlbum(album.id, album) }, Modifier.weight(1f), fill = true, menu = false)
                 }
                 if (row.size == 1) Spacer(Modifier.weight(1f))
             }

@@ -230,7 +230,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistShelf(
                 items(playlists, key = { it.id }, contentType = { "playlist" }) { p ->
                     // A feed's playlist is not counted until opened: its own line (who is in it) instead.
                     val line = remember(p.songCount, p.comment) { if (p.songCount > 0u) say.songs(p.songCount.toInt()) else p.comment.orEmpty() }
-                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 150.dp, { nav.playlist(p.id, p) })
+                    val cardMenu = LocalCardMenu.current
+                    CoverCard(p.name, line, vm.cover(p.coverArt, CoverSize.CARD), 150.dp, { nav.playlist(p.id, p) }, onLongClick = { cardMenu(dev.nori.music.app.vm.CardItem.OfPlaylist(p)) })
                 }
             }
         }

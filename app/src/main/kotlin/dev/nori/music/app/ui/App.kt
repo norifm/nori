@@ -194,6 +194,9 @@ internal fun searchFocusKey(): Int = searchTaps.intValue
 val LocalNav = staticCompositionLocalOf<Nav> { error("no nav") }
 val LocalSongMenu = staticCompositionLocalOf<(Song) -> Unit> { {} }
 
+/** Opens an album's or playlist's card menu: play it, next or at the end of the queue. */
+val LocalCardMenu = staticCompositionLocalOf<(dev.nori.music.app.vm.CardItem) -> Unit> { {} }
+
 /** The player's own ⋯: the same song menu, with the playback-wide entries the player needs. */
 val LocalPlayerMenu = staticCompositionLocalOf<(Song) -> Unit> { {} }
 
@@ -302,6 +305,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
         val player: PlayerViewModel = viewModel()
         val snackbar = remember { SnackbarHostState() }
         var menuSong by remember { mutableStateOf<Song?>(null) }
+        var menuCard by remember { mutableStateOf<dev.nori.music.app.vm.CardItem?>(null) }
         var menuFromPlayer by remember { mutableStateOf(false) }
         var devicesOpen by remember { mutableStateOf(false) }
         // Said on the profile the phone went back to: the guest's page is fading out by then.
@@ -383,6 +387,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             LocalPlayerSheet provides sheet,
             LocalDownloadMarks provides rememberDownloadMarks(actions),
             LocalSongMenu provides { menuSong = it; menuFromPlayer = false },
+            LocalCardMenu provides { menuCard = it },
             LocalPlayerMenu provides { menuSong = it; menuFromPlayer = true },
             LocalDevices provides { devicesOpen = true },
             LocalSealTap provides { s, on -> if (rules.stars) actions.star(s, on) else settings.offerSignIn() },
@@ -638,6 +643,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
             SelectionBack(actions, sheet, controller)
             }
             SongMenu(menuSong, actions, onDismiss = { menuSong = null }, player = player.takeIf { menuFromPlayer })
+            CardMenu(menuCard, actions, onDismiss = { menuCard = null })
             DevicesHost(devicesOpen) { devicesOpen = false }
             // A jam that would not start says so, whichever menu started it.
             if (prefs.remoteControl && rules.remote) JamFailures(actions)
