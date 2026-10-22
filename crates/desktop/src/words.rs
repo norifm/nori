@@ -1,6 +1,7 @@
 //! User-facing wording for numbers and errors (mirrors the terminal's text.rs).
 
 use nori_core::numbers;
+use nori_core::pages::{ReleaseGroup, ReleaseKind};
 use nori_core::profiles::CurveNotice;
 use nori_core::settings::ServerKind;
 use nori_core::transport::{FailureKind, NetError};
@@ -102,6 +103,22 @@ pub fn songs(n: usize) -> String {
 
 pub fn albums(n: u32) -> String {
     count(n, "album", "albums")
+}
+
+/// An artist's shelf heading: "Albums", "EPs", or a type nori does not know by its tag ("Mixtapes").
+pub fn release_shelf(g: &ReleaseGroup) -> String {
+    match g.kind {
+        ReleaseKind::Album => "Albums".into(),
+        ReleaseKind::Ep => "EPs".into(),
+        ReleaseKind::Single => "Singles".into(),
+        ReleaseKind::Live => "Live".into(),
+        ReleaseKind::Compilation => "Compilations".into(),
+        ReleaseKind::Soundtrack => "Soundtracks".into(),
+        ReleaseKind::Remix => "Remixes".into(),
+        ReleaseKind::Other => "Others".into(),
+        ReleaseKind::Tagged if g.tag.ends_with('s') => g.tag.clone(),
+        ReleaseKind::Tagged => format!("{}s", g.tag),
+    }
 }
 
 /// "12 songs · 48:10".

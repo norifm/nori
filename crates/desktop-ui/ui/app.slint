@@ -1106,6 +1106,38 @@ component SectionTitle inherits HorizontalLayout {
     }
 }
 
+// An artist's releases, a grid per kind; `titled` heads each, else only the kinds after the first.
+component ReleaseShelves inherits VerticalLayout {
+    in property <[Shelf]> shelves;
+    in property <bool> titled;
+    in property <int> rev;
+    pure callback art(string, int, int) -> image;
+    callback open(Card);
+    callback play(Card);
+    callback queue(Card, bool);
+    callback jam(Card);
+    spacing: 12px;
+    for shelf[i] in root.shelves: VerticalLayout {
+        spacing: 12px;
+        if root.titled || i > 0: SectionTitle {
+            text: shelf.title;
+        }
+        Grid {
+            height: self.content-height;
+            pad: 0;
+            bottom: 0;
+            interactive: false;
+            cards: shelf.cards;
+            rev: root.rev;
+            art(a, s, r) => { return root.art(a, s, r); }
+            open(c) => { root.open(c); }
+            play(c) => { root.play(c); }
+            queue(c, next) => { root.queue(c, next); }
+            jam(c) => { root.jam(c); }
+        }
+    }
+}
+
 // A shelf of cards that scrolls sideways, under its title, as Music's: as many whole cards as fit across
 // the page (grown a little to reach both edges), paged by the arrows over its sides while the pointer is on
 // it. Until its cards are read it holds its place with plates, so the page does not shift as rows arrive.
@@ -4446,7 +4478,8 @@ export component AppWindow inherits Window {
     in property <bool> page-songs-more;
     in property <bool> search-songs-more;
     callback all-songs(int);
-    in property <[Card]> page-albums;
+    // An artist's releases, a shelf per kind (pages.rs's `release_groups`).
+    in property <[Shelf]> page-shelves;
     // The page wears its cover's colours: the blurred cover (nori-look's wash) runs out into the page's own
     // colour, so there is no line where the picture stops.
     in property <image> page-wash;
@@ -5401,12 +5434,8 @@ export component AppWindow inherits Window {
                                 height: 1px;
                                 background: Theme.hairline;
                             }
-                            if root.artist-chosen != "": Grid {
-                                height: self.content-height;
-                                pad: 0;
-                                bottom: 0;
-                                interactive: false;
-                                cards: root.page-albums;
+                            if root.artist-chosen != "": ReleaseShelves {
+                                shelves: root.page-shelves;
                                 rev: root.covers-rev;
                                 art(a, s, r) => { return root.art(a, s, r); }
                                 open(c) => { root.open-album(c.id); }
@@ -5582,15 +5611,9 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
-                                if root.page-kind == 1 && root.page-albums.length > 0: SectionTitle {
-                                    text: "Albums";
-                                }
-                                if root.page-kind == 1 && root.page-albums.length > 0: Grid {
-                                    height: self.content-height;
-                                    pad: 0;
-                                    bottom: 0;
-                                    interactive: false;
-                                    cards: root.page-albums;
+                                if root.page-kind == 1: ReleaseShelves {
+                                    shelves: root.page-shelves;
+                                    titled: true;
                                     rev: root.covers-rev;
                                     art(a, s, r) => { return root.art(a, s, r); }
                                     open(c) => { root.open-album(c.id); }
