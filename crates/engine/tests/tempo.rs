@@ -94,8 +94,8 @@ impl App for Planned {
     fn auto_mix(&self) -> bool {
         true
     }
-    fn window(&mut self, window: Vec<WindowSong>, shuffling: bool) {
-        self.0.window(window, shuffling)
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+        self.0.window(songs, ids, shuffling)
     }
     fn transitions_off(&mut self, off: bool) {
         self.0.transitions_off(off)

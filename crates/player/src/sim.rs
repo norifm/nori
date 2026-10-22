@@ -818,8 +818,8 @@ impl pipeline::App for App {
         self.prefs.auto_mix
     }
 
-    fn window(&mut self, window: Vec<WindowSong>, shuffling: bool) {
-        self.window = window;
+    fn window<S: Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+        self.window = ids.iter().map(|id| songs.about(id)).collect();
         self.shuffling = shuffling;
     }
 

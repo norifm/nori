@@ -783,8 +783,8 @@ impl App for Logged {
     fn auto_mix(&self) -> bool {
         self.0.lock().auto_mix()
     }
-    fn window(&mut self, window: Vec<WindowSong>, shuffling: bool) {
-        self.0.lock().window(window, shuffling)
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+        self.0.lock().window(songs, ids, shuffling)
     }
     fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, songs: &mut S, ids: &[String]) {
         self.0.lock().measure_ahead(songs, ids)
@@ -1424,8 +1424,8 @@ impl App for Bridging {
     fn auto_mix(&self) -> bool {
         false
     }
-    fn window(&mut self, window: Vec<WindowSong>, shuffling: bool) {
-        self.0.window(window, shuffling)
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+        self.0.window(songs, ids, shuffling)
     }
     fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _: &mut S, _: &[String]) {}
     fn on_error(&mut self, kind: PlaybackError, _: bool) -> Option<OnError> {
@@ -2108,8 +2108,8 @@ impl App for Watched {
     fn auto_mix(&self) -> bool {
         false
     }
-    fn window(&mut self, window: Vec<WindowSong>, shuffling: bool) {
-        self.0.lock().window(window, shuffling)
+    fn window<S: nori_player::pipeline::Songs>(&mut self, songs: &S, ids: &[String], shuffling: bool) {
+        self.0.lock().window(songs, ids, shuffling)
     }
     fn measure_ahead<S: nori_player::pipeline::Songs>(&mut self, _: &mut S, _: &[String]) {}
 }
