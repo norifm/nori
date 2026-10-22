@@ -2,7 +2,7 @@
 //! setting name and the picked value.
 
 use nori_core::numbers::{self, POINT};
-use nori_core::settings::{season_follow_value, season_of, EqLevel, StoredPrefs, ThemeSeason};
+use nori_core::settings::{season_follow_value, season_of, EqLevel, Level, StoredPrefs, ThemeSeason};
 use nori_core::settings_model::{self, BeatModel, EqStatus, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsRow};
 use slint::{ModelRc, SharedString, VecModel};
@@ -198,6 +198,11 @@ fn options(name: &str) -> Vec<String> {
     settings_model::specs().into_iter().find(|s| s.name == name).map(|s| s.options).unwrap_or_default()
 }
 
+/// A loudness level's target: "−18 LUFS".
+fn lufs(l: Level) -> String {
+    format!("{} LUFS", minus(&numbers::fixed(l.lufs() as f64, 0, false, POINT)))
+}
+
 fn minus(v: &str) -> String {
     v.replace('-', "−")
 }
@@ -354,9 +359,9 @@ fn option_words(name: &str, v: &str) -> String {
         ("replayGain", "TRACK") => "Per song".into(),
         ("replayGain", "ALBUM") => "Per album".into(),
         ("replayGain", "AUTO") => "Automatic".into(),
-        ("loudnessLevel", "QUIET") => format!("Quiet ({} LUFS)", minus("-23")),
-        ("loudnessLevel", "NORMAL") => format!("Normal ({} LUFS)", minus("-18")),
-        ("loudnessLevel", "LOUD") => format!("Loud ({} LUFS)", minus("-14")),
+        ("loudnessLevel", "QUIET") => format!("Quiet ({})", lufs(Level::Quiet)),
+        ("loudnessLevel", "NORMAL") => format!("Normal ({})", lufs(Level::Normal)),
+        ("loudnessLevel", "LOUD") => format!("Loud ({})", lufs(Level::Loud)),
         ("maxRate", "AUTO") => "Each song's own".into(),
         ("maxRate", "KHZ48") => "48 kHz".into(),
         ("maxRate", "KHZ96") => "96 kHz".into(),

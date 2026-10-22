@@ -3,7 +3,7 @@
 //! draws them. Rows send back a setting name and value (`setting_set`) or a level edit (`edit_level`).
 
 use crate::text;
-use nori_core::settings::{season_follow_value, EqLevel, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
+use nori_core::settings::{season_follow_value, EqLevel, Level, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
 use nori_core::settings_model::{self, BeatModel, EqStatus, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
 use nori_core::numbers::{self, POINT};
@@ -512,6 +512,11 @@ fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
 }
 
 /// A setting value in words.
+/// A loudness level's target: "−18 LUFS".
+fn lufs(l: Level) -> String {
+    format!("{} LUFS", numbers::fixed(l.lufs() as f64, 0, false, POINT).replace('-', "−"))
+}
+
 fn option_words(name: &str, v: &str) -> String {
     let off_or = |v: &str, words: &dyn Fn(&str) -> String| if v == "0" { "off".to_string() } else { words(v) };
     match (name, v) {
@@ -540,9 +545,9 @@ fn option_words(name: &str, v: &str) -> String {
         ("replayGain", "TRACK") => "per song".into(),
         ("replayGain", "ALBUM") => "per album".into(),
         ("replayGain", "AUTO") => "automatic".into(),
-        ("loudnessLevel", "QUIET") => "quiet (−23 LUFS)".into(),
-        ("loudnessLevel", "NORMAL") => "normal (−18 LUFS)".into(),
-        ("loudnessLevel", "LOUD") => "loud (−14 LUFS)".into(),
+        ("loudnessLevel", "QUIET") => format!("quiet ({})", lufs(Level::Quiet)),
+        ("loudnessLevel", "NORMAL") => format!("normal ({})", lufs(Level::Normal)),
+        ("loudnessLevel", "LOUD") => format!("loud ({})", lufs(Level::Loud)),
         ("maxRate", "AUTO") => "each song's own".into(),
         ("maxRate", "KHZ48") => "48 kHz".into(),
         ("maxRate", "KHZ96") => "96 kHz".into(),
