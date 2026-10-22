@@ -138,7 +138,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
 
     /**
      * The mirrored device's queue and playback as the page's state; its rows are in play order already. A
-     * jam [guest] skips by its role ([jam]), and its play button shows what [jam] says.
+     * jam [guest]'s play button shows what [jam] says.
      */
     private fun showMirror(m: Mirror, guest: Boolean, jam: dev.nori.music.ffi.JamControls? = null) {
         _mixing.value = m.playing && m.mixing
@@ -146,11 +146,9 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         val songs = m.rows.map { it.song }
         val queue = if (songs == old.queue) old.queue else songs
         val at = m.at?.toInt() ?: -1
-        val all = m.repeat.toInt() == Player.REPEAT_MODE_ALL && m.rows.size.toUInt() == m.len
         _state.value = old.copy(
             connected = true, queue = queue, index = at,
-            nextIndex = if (at < 0 || (guest && jam?.controls?.skip == Reach.NOWHERE)) -1 else (at + 1).takeIf { it < queue.size } ?: (if (all) 0 else -1),
-            previousIndex = if (at < 0 || (guest && jam?.controls?.skip == Reach.NOWHERE)) -1 else (at - 1).takeIf { it >= 0 } ?: (if (all) queue.lastIndex else -1),
+            nextIndex = m.next?.toInt() ?: -1, previousIndex = m.previous?.toInt() ?: -1,
             order = if (old.order.size == queue.size && old.order.withIndex().all { (k, v) -> k == v }) old.order else queue.indices.toList(),
             queued = emptySet(), radio = null, playing = jam?.playing ?: m.playing, advancing = m.playing && !m.buffering, buffering = m.buffering && m.playing, shuffle = m.shuffle,
             repeat = when (m.repeat.toInt()) { Player.REPEAT_MODE_ALL -> Repeat.ALL; Player.REPEAT_MODE_ONE -> Repeat.ONE; else -> Repeat.OFF },

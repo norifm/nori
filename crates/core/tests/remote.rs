@@ -1138,6 +1138,9 @@ fn a_jam_takes_requests_through_its_host() {
     let m = gus.until("the host's queue in Gus's player", |r| r.jam_playing().filter(|m| m.rows.len() == 3));
     assert_eq!(m.rows.iter().map(|r| r.song.id.as_str()).collect::<Vec<_>>(), ["s1", "s5", "s2"], "in play order: what was asked for plays next");
     assert_eq!((m.name.as_str(), m.at, m.playing), ("Host", Some(0), true));
+    assert_eq!((m.next, m.previous), (None, None), "a guest's skips reach nowhere");
+    let admin = dee.until("the host's queue in Dee's player", |r| r.jam_playing().filter(|m| m.rows.len() == 3));
+    assert_eq!((admin.next, admin.previous), (Some(1), None), "an admin's skip the host's queue");
     let latest = 9_000 + (relay.sim.now_us() - said_before) / 1_000;
     assert!((9_000..=latest).contains(&m.position_ms), "the published position advances from the report: {} outside 9000..={latest}", m.position_ms);
     assert_eq!(gus.remote.jam_added().get("s5").map(String::as_str), Some("Dee"));

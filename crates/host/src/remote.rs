@@ -523,6 +523,8 @@ pub(crate) mod tests {
             at_us: 0,
             shuffle: true,
             repeat: 0,
+            next: Some(2),
+            previous: Some(0),
             volume: Some(40),
             refused: None,
         };

@@ -199,10 +199,23 @@ pub struct Mirror {
     pub at_us: i64,
     pub shuffle: bool,
     pub repeat: u8,
+    /// The rows the next and previous buttons go to; None when they go nowhere.
+    pub next: Option<u32>,
+    pub previous: Option<u32>,
     /// The device's volume, 0 to 100, when it can be set.
     pub volume: Option<u8>,
     /// Its answer to the last command sent to it, when it refused.
     pub refused: Option<Refusal>,
+}
+
+/// [`Mirror::next`] and [`Mirror::previous`] from row `at` of `rows` known, of `len` songs: repeat-one
+/// skips like repeat-all (`Playlist::next`), and they wrap only once every row is known.
+fn skips(at: Option<u32>, rows: u32, len: u32, repeat: u8) -> (Option<u32>, Option<u32>) {
+    let Some(at) = at else { return (None, None) };
+    let wraps = repeat != nori_player::playlist::REPEAT_OFF && rows == len;
+    let next = (at + 1 < rows).then_some(at + 1).or(wraps.then_some(0));
+    let previous = at.checked_sub(1).or(wraps.then(|| rows - 1));
+    (next, previous)
 }
 
 impl Mirror {
@@ -812,11 +825,15 @@ impl Mirrored {
     fn view(&self, name: String, kind: DeviceKind, refused: Option<Refusal>) -> Option<Mirror> {
         let st = self.shown.as_ref()?;
         let rows = self.rows();
+        let at = rows.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32);
+        let (next, previous) = skips(at, rows.len() as u32, st.len, st.repeat);
         Some(Mirror {
             id: self.id.clone(),
             name,
             kind,
-            at: rows.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32),
+            at,
+            next,
+            previous,
             rows: rows.iter().map(|e| MirrorRow { index: e.index, song: e.song() }).collect(),
             len: st.len,
             rev: st.rev,
@@ -1923,12 +1940,17 @@ impl Remote {
         }
         let host = i.joined()?.1?;
         let st = host.state.as_ref()?;
+        let at = st.entries.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32);
+        let skip = i.jam_controls().is_none_or(|c| c.controls.skip != Reach::Nowhere);
+        let (next, previous) = if skip { skips(at, st.entries.len() as u32, st.len, st.repeat) } else { (None, None) };
         Some(Mirror {
             id: host.id.clone(),
             name: host.name.clone(),
             kind: host.kind,
             rows: st.entries.iter().map(|e| MirrorRow { index: e.index, song: e.song() }).collect(),
-            at: st.entries.iter().position(|e| Some(e.index) == st.index).map(|p| p as u32),
+            at,
+            next,
+            previous,
             len: st.len,
             rev: st.rev,
             playing: st.playing,
@@ -3563,7 +3585,7 @@ mod tests {
 
     #[test]
     fn the_players_controls_become_the_devices_commands() {
-        let mut m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 3, rev: 7, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, volume: Some(40), refused: None };
+        let mut m = Mirror { id: "desk".into(), name: "Desk".into(), kind: DeviceKind::Desktop, rows: Vec::new(), at: None, len: 3, rev: 7, playing: true, buffering: false, mixing: false, position_ms: 0, rate: 1.0, at_us: 0, shuffle: false, repeat: 0, next: None, previous: None, volume: Some(40), refused: None };
         let pressed = [
             (Press::Toggle, Some(Op::Pause)),
             (Press::Play, Some(Op::Play)),
@@ -3583,6 +3605,28 @@ mod tests {
         assert_eq!(m.op(Press::Toggle), Some(Op::Play));
         m.volume = None;
         assert_eq!(m.op(Press::Volume { level: 0.9 }), None, "a volume the device does not offer");
+    }
+
+    #[test]
+    fn a_mirrors_skips_wrap_by_its_repeat_once_every_row_is_known() {
+        let (some, none) = (Some, None::<u32>);
+        // at, rows known, len, repeat: next, previous
+        let table = [
+            (None, 3, 3, 2, none, none),
+            (some(0), 3, 3, 0, some(1), none),
+            (some(1), 3, 3, 0, some(2), some(0)),
+            (some(2), 3, 3, 0, none, some(1)),
+            (some(0), 3, 3, 1, some(1), some(2)),
+            (some(2), 3, 3, 1, some(0), some(1)),
+            (some(0), 3, 3, 2, some(1), some(2)),
+            (some(2), 3, 3, 2, some(0), some(1)),
+            (some(0), 1, 1, 2, some(0), some(0)),
+            (some(0), 3, 5, 2, some(1), none),
+            (some(2), 3, 5, 1, none, some(1)),
+        ];
+        for (at, rows, len, repeat, next, previous) in table {
+            assert_eq!(skips(at, rows, len, repeat), (next, previous), "at {at:?} of {rows}/{len}, repeat {repeat}");
+        }
     }
 
     #[test]
