@@ -2524,7 +2524,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
             // The strip is wider than the hairline it draws: a thumb is not a mouse.
             Modifier.fillMaxWidth().height(34.dp)
                 .onSizeChanged { barWidth.floatValue = it.width.toFloat() }
-                .pointerInput(seekable) {
+                .pointerInput(seekable, pace) {
                     if (!seekable) return@pointerInput
                     // Written out rather than assembled from the drag and tap detectors, because both
                     // let the gesture go: the pointer is claimed on touch-down and every move is
