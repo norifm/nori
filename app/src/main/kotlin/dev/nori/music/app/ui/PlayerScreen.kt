@@ -506,24 +506,6 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                     // flight starts, and at full strength that frame is the whole sleeve appearing for an
                     // instant before it flies.
                     Modifier.fillMaxWidth()
-                        // Away for the whole of a flight as well. `sheet.panelFlight` is written by an
-                        // effect, which runs after the frame that started the flight: on that frame the
-                        // sleeve was drawn at full size while the cover in flight was drawn too, which
-                        // is the two covers that show up together for an instant - one the whole square,
-                        // one the square cropped to the sleeve.
-                        // The panel being left keeps its sleeve until the flight is really under way:
-                        // held back from the frame the panel changed, it went out on that frame while
-                        // the flight, which is started by an effect, had not begun - one frame with no
-                        // cover on screen at all.
-                        // Back from the queue, which covers nothing (rows over the page), the sleeve comes up
-                        // under it as the rows fade: at full strength at once it would be a cut under a fade.
-                        .graphicsLayer {
-                            alpha = when {
-                                (page == panel && panel != showing) || flying -> 0f
-                                page == panel && leaving == Panel.QUEUE -> arrived.read()
-                                else -> 1f
-                            }
-                        }
                         .then(if (across) Modifier.fillMaxHeight() else Modifier.layout { measurable, constraints ->
                             val placeable = measurable.measure(constraints)
                             val takes = placeable.height - PLAYER_RISE.roundToPx()
@@ -548,6 +530,27 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                                 ?: it.positionInRoot().y
                             sleeveBottom = top + drawn
                             sleeveHeight = drawn
+                        }
+                        // Away for the whole of a flight as well. `sheet.panelFlight` is written by an
+                        // effect, which runs after the frame that started the flight: on that frame the
+                        // sleeve was drawn at full size while the cover in flight was drawn too, which
+                        // is the two covers that show up together for an instant - one the whole square,
+                        // one the square cropped to the sleeve.
+                        // The panel being left keeps its sleeve until the flight is really under way:
+                        // held back from the frame the panel changed, it went out on that frame while
+                        // the flight, which is started by an effect, had not begun - one frame with no
+                        // cover on screen at all.
+                        // Back from the queue, which covers nothing (rows over the page), the sleeve comes up
+                        // under it as the rows fade: at full strength at once it would be a cut under a fade.
+                        // After the layout above, so that its layer is the whole sleeve: the sleeve draws on past what it
+                        // takes (under the title), and a layer cut to what it takes showed the cover with a hard edge
+                        // until the fade was over.
+                        .graphicsLayer {
+                            alpha = when {
+                                (page == panel && panel != showing) || flying -> 0f
+                                page == panel && leaving == Panel.QUEUE -> arrived.read()
+                                else -> 1f
+                            }
                         },
                 ) {
                     // While the sheet moves, the cover on screen is FlyingCover's; this one takes over
