@@ -3626,6 +3626,45 @@ mod tests {
     }
 
     #[test]
+    fn a_press_on_the_sheet_stays_on_it() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        ui.set_view(ALBUMS);
+        ui.set_albums(cards((0..24).map(|i| Card { id: i.to_string().into(), title: "Album".into(), ..Default::default() })));
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        let seen = opened.clone();
+        ui.on_open_album(move |id| seen.borrow_mut().push(id.to_string()));
+        ui.show().unwrap();
+        let click = || {
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+            slint::platform::update_timers_and_animations();
+            // The last column's card in the second row.
+            let at = slint::LogicalPosition::new(1180.0, 450.0);
+            let button = slint::platform::PointerEventButton::Left;
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button });
+            ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button });
+        };
+        click();
+        assert_eq!(*opened.borrow(), ["11"], "the card is there");
+        ui.set_inspector(1);
+        click();
+        assert_eq!(*opened.borrow(), ["11"], "the queue sheet over it takes the press");
+    }
+
+    #[test]
+    fn a_menu_rises_clear_of_the_player() {
+        i_slint_backend_testing::init_no_event_loop();
+        let ui = window();
+        let chrome = ui.global::<crate::Chrome>();
+        chrome.set_window_height(820.0);
+        assert_eq!(chrome.invoke_menu_lift(200.0, 300.0), 0.0, "room below");
+        assert_eq!(chrome.invoke_menu_lift(700.0, 200.0), 176.0, "its foot meets the player pill's top");
+        assert_eq!(chrome.invoke_menu_lift(300.0, 900.0), 224.0, "taller than the room: its top meets the top pill");
+    }
+
+    #[test]
     fn playback_only_moves_the_visible_player() {
         i_slint_backend_testing::init_no_event_loop();
         let ui = window();
