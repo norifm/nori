@@ -44,17 +44,27 @@ impl Core {
         })
     }
 
-    /// The row's tiles with drawn covers: favourites, then the mixes when `taste`.
+    /// The row's tiles with drawn covers: favourites, then the mixes when `taste`. A tile whose songs are
+    /// known and none is left out; one not drawn yet stays, loading.
     pub fn mix_cards(&self, taste: bool) -> Vec<MixTile> {
         let mut tiles = mix_tiles(taste);
         let marks = self.stars.lock().clone();
+        let mut empty = vec![false; tiles.len()];
         self.board(|b| {
-            let favourites = b.favourites.iter().flatten().filter(|s| marks.kept(crate::client::Starrable::Song, &s.id));
-            tiles[0].covers = cover_ids(favourites);
-            for (tile, spec) in tiles.iter_mut().skip(1).zip(&MIXES) {
-                tile.covers = b.drawn.get(spec.id).map(|d| cover_ids(&d.songs)).unwrap_or_default();
+            if let Some(favourites) = &b.favourites {
+                let kept: Vec<&Song> = favourites.iter().filter(|s| marks.kept(crate::client::Starrable::Song, &s.id)).collect();
+                tiles[0].covers = cover_ids(kept.iter().copied());
+                empty[0] = kept.is_empty();
+            }
+            for ((tile, spec), empty) in tiles.iter_mut().skip(1).zip(&MIXES).zip(empty.iter_mut().skip(1)) {
+                if let Some(d) = b.drawn.get(spec.id) {
+                    tile.covers = cover_ids(&d.songs);
+                    *empty = d.songs.is_empty();
+                }
             }
         });
+        let mut empty = empty.into_iter();
+        tiles.retain(|_| !empty.next().unwrap_or(false));
         tiles
     }
 
@@ -175,6 +185,16 @@ pub(crate) mod tests {
         assert_eq!(cards[2].id, "discover");
         assert_eq!(cards[2].covers.len(), 4);
         assert!(cards[1].covers.is_empty());
+    }
+
+    #[test]
+    fn a_mix_with_nothing_in_it_has_no_tile() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let ids = |core: &Core| core.mix_cards(true).into_iter().map(|t| t.id).collect::<Vec<_>>();
+        assert_eq!(ids(&core).len(), 6, "not drawn yet: loading");
+        assert_eq!(core.mix_draw("discover".into(), 100, false, Some(vec![])), MixDraw::Drawn);
+        core.mix_favourites(vec![song("ext-1", "t", "a", "b", "", 0)]);
+        assert_eq!(ids(&core), ["quick-picks", "discover-weekly", "listen-again", "top"]);
     }
 
     #[test]
