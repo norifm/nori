@@ -447,7 +447,13 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
     private fun request(id: String): DownloadRequest =
         DownloadRequest.Builder(id, Uri.parse(sources.downloadUrl(id))).setCustomCacheKey(sources.downloadKey(id)).build()
 
-    fun remove(ids: List<String>) = ids.forEach { DownloadService.sendRemoveDownload(context, DownloadWorker::class.java, it, false) }
+    fun remove(ids: List<String>) {
+        if (ids.isEmpty()) return
+        runCatching {
+            DownloadService.start(context, DownloadWorker::class.java)
+            for (id in ids) manager.removeDownload(id)
+        }.onFailure { Log.w(TAG, "could not remove ${ids.size} downloads", it) }
+    }
 
     /**
      * Stops downloads that have not finished and forgets them. The index entry goes at once as well as
