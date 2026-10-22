@@ -241,7 +241,21 @@ impl Theme {
         let (page, ink) = (argb(c.background), argb(c.on));
         let accent = argb(nori_look::theme::accent_on(c.background, c.on, light, dark));
         let at = |t: f32| blend(page, ink, t);
-        Theme { page, surface: at(0.06), ink, quiet: at(nori_look::theme::QUIET), line: at(0.22), hair: at(0.14), accent, on: base.on, lift: at(0.16), painted: true, mono: false }
+        let dress = nori_look::dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
+        let role = |i: usize| argb(dress[i]);
+        Theme {
+            page,
+            surface: role(nori_look::dress::SURFACE_CONTAINER),
+            ink,
+            quiet: at(nori_look::theme::QUIET),
+            line: at(0.22),
+            hair: role(nori_look::dress::OUTLINE_VARIANT),
+            accent,
+            on: base.on,
+            lift: role(nori_look::dress::SECONDARY_CONTAINER),
+            painted: true,
+            mono: false,
+        }
     }
 
     /// Text color at `strength` (1 = full) between the page and the ink; unpainted, only full or quiet.
@@ -355,6 +369,10 @@ mod tests {
         // The theme's persimmon, not the cover's own accent, lifted to read on the red.
         let Color::Rgb(ar, ag, ab) = t.accent else { panic!("an accent") };
         assert!(ar > ab && ag > ab && (ar, ag, ab) != (0xE8, 0x74, 0x3B), "accent {ar} {ag} {ab}");
+        // The same surfaces as every other client's cover page.
+        let dress = nori_look::dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
+        let roles = [nori_look::dress::SURFACE_CONTAINER, nori_look::dress::OUTLINE_VARIANT, nori_look::dress::SECONDARY_CONTAINER].map(|i| argb(dress[i]));
+        assert_eq!([t.surface, t.hair, t.lift], roles);
 
         // Cover renders in every protocol.
         let image = Arc::new(Image { width: 8, height: 8, pixels: vec![200u8; 8 * 8 * 4].into_boxed_slice() });
