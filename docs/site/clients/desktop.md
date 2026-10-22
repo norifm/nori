@@ -31,11 +31,11 @@ nothing typed, the search page lists your recent searches.
 
 ## Look
 
-nori wears one of four seasons, Spring (春), Summer (夏), Autumn (秋) and Winter (冬), light, dark or
-AMOLED black. By default it follows the calendar and blends from one season to the next over two weeks
+nori wears one of four seasons, Spring (春), Summer (夏), Autumn (秋) and Winter (冬), in one of four modes:
+Follow system, Day, Night or Midnight (true black). By default it follows the calendar and blends from one season to the next over two weeks
 (southern-hemisphere zones turn half a year later). Choose a season and the appearance in Settings, General, or
 in the settings menu. The accent color marks only what is current: the open tab, the song playing, a lit
-shuffle or repeat, a liked seal. Album and artist pages and Now Playing wear their cover's colors; the side sheet wears the page's own.
+shuffle or repeat, a liked seal. Album and artist pages and Now Playing wear their cover's colors, except in Midnight; the side sheet wears the page's own.
 With Motion set to Reduced in nori's settings, nothing slides, stamps or fades.
 
 ## YouTube Music

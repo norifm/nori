@@ -134,8 +134,11 @@ Android is the reference; the Mac, web, terminal and iPod clients follow it, not
 system (tokens, components) is https://claude.ai/artifact/S5e9BykKpPQpgW2udkVLBw.
 
 - Paper, not white: every page is its season's paper (Spring, Summer, Autumn, Winter, marked 春 夏 秋 冬),
-  light, dark or AMOLED. Five roles carry it: page, surface, ink, accent, on; every other grey is a fixed
+  Day, Night or Midnight. Five roles carry it: page, surface, ink, accent, on; every other grey is a fixed
   share of ink. No shadows on chrome: a step of paper and a hairline set surfaces apart.
+- Appearance: four modes, Follow system / Day / Night / Midnight (`ThemeMode`). Midnight is true black and
+  turns cover colors off; cover colors are otherwise always on. There is no separate pure-black or
+  cover-colors setting.
 - One accent, only for "you, now": the current tab, the song playing, a lit shuffle or repeat, a liked
   seal, a focused field. A selected row is raised, never filled with the accent.
 - A favorite is the seal 好, never a heart. Inter for everything; Literata only for what a page is called.
