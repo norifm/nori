@@ -675,13 +675,13 @@ impl Handle {
     fn there(&self, press: Press) -> bool {
         if self.guest {
             let jam = self.jam_playing();
-            return match jam.as_ref().and_then(|j| Some((j, j.mirror.op(press)?))) {
+            return match jam.as_ref().and_then(|j| Some((j, j.op(press)?))) {
                 Some((j, op)) => j.jam_press(op) != Reach::Here,
                 None => !matches!(press, Press::Volume { .. }),
             };
         }
         let Some(e) = self.elsewhere() else { return false };
-        if let Some(op) = e.mirror.op(press) {
+        if let Some(op) = e.op(press) {
             e.send(op);
         }
         true

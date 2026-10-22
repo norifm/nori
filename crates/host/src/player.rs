@@ -81,7 +81,7 @@ impl Now {
             },
             playing,
             song: row.map(|r| r.song.clone()),
-            index: row.map(|r| r.index as usize),
+            index: row.and(m.at).map(|a| a as usize),
             position_ms: e.position_ms(),
             at: Instant::now(),
             pace: m.rate as f32,
@@ -303,8 +303,8 @@ mod tests {
         let mut e = crate::remote::tests::desk();
         let q = QueueShown::mirrored(&e, false, HashMap::new());
         let upcoming: Vec<(u32, &str)> = q.upcoming().map(|(i, s)| (i, s.id.as_str())).collect();
-        assert_eq!((q.heard(), upcoming), (Some(0), vec![(1, "c")]));
-        assert_eq!((q.rows.order.clone(), q.rows.kept.clone(), q.rows.reorderable), (vec![2, 0, 1], vec![2, 0, 1], false));
+        assert_eq!((q.heard(), upcoming), (Some(1), vec![(2, "c")]));
+        assert_eq!((q.rows.order.clone(), q.rows.kept.clone(), q.rows.reorderable), (vec![0, 1, 2], vec![0, 1, 2], false));
         e.mirror.at = None;
         let q = QueueShown::mirrored(&e, false, HashMap::new());
         assert_eq!((q.heard(), q.upcoming().count()), (None, 3));
@@ -315,7 +315,7 @@ mod tests {
     fn a_mirrored_device_plays_as_shown() {
         let mut e = crate::remote::tests::desk();
         let now = Now::mirrored(&e, false, true);
-        assert_eq!((now.state, now.index, now.song.as_ref().map(|s| s.id.as_str()), now.volume, now.device.as_deref()), (State::Playing, Some(0), Some("b"), Some(0.4), Some("Desk")));
+        assert_eq!((now.state, now.index, now.song.as_ref().map(|s| s.id.as_str()), now.volume, now.device.as_deref()), (State::Playing, Some(1), Some("b"), Some(0.4), Some("Desk")));
         e.mirror.playing = false;
         let now = Now::mirrored(&e, true, false);
         assert_eq!((now.state, now.device.as_deref(), now.jam, now.position_now()), (State::Paused, None, true, now.position_ms));
