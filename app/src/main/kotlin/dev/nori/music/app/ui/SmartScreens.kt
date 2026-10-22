@@ -121,19 +121,26 @@ private val MIX_CARD_HEIGHT = 206.dp
 
 /**
  * A mix on Home: a portrait card on the season's paper dyed with the mix's colour, its art a square on
- * top running into that paper, the name and a line under it in the card's own ink.
+ * top running into that paper, the name and a line under it in the card's own ink. [fill]: as wide as
+ * the cell it is in, the same proportions.
  */
 @Composable
-internal fun MixCardView(card: MixCard, papers: Papers, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun MixCardView(card: MixCard, papers: Papers, modifier: Modifier = Modifier, fill: Boolean = false, onClick: () -> Unit) {
+    if (fill) androidx.compose.foundation.layout.BoxWithConstraints(modifier) { MixCardBody(card, papers, maxWidth, Modifier, onClick) }
+    else MixCardBody(card, papers, MIX_CARD_WIDTH, modifier, onClick)
+}
+
+@Composable
+private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.ui.unit.Dp, modifier: Modifier, onClick: () -> Unit) {
     val dyed = remember(card.id, papers) {
         cardColours[card.id to papers] ?: dev.nori.music.ffi.library.mixCardColours(card.id, papers.light, papers.dark, papers.darkTheme).also { cardColours.put(card.id to papers, it) }
     }
     val page = androidx.compose.ui.graphics.Color(dyed.page.toInt())
     val ink = androidx.compose.ui.graphics.Color(dyed.ink.toInt())
     val seed = remember(card.id) { tileColours(card.id)[0] }
-    Column(modifier.size(MIX_CARD_WIDTH, MIX_CARD_HEIGHT).clip(TileShape).background(page).clickable(onClick = onClick)) {
-        Box(Modifier.size(MIX_CARD_WIDTH).background(seed)) {
-            MixCovers(card.covers, MIX_CARD_WIDTH)
+    Column(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).clickable(onClick = onClick)) {
+        Box(Modifier.size(width).background(seed)) {
+            MixCovers(card.covers, width)
             Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Transparent, 1f to page)))
         }
         Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), Arrangement.Center) {

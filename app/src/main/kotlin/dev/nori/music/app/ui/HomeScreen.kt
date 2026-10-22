@@ -444,7 +444,7 @@ private fun MixesFull(vm: dev.nori.music.app.vm.MixesViewModel = viewModel()) {
         BackTitle(say.forYou)
         PrintGrid(onEnd = {}) {
             gridItems(cards, key = { it.id }, contentType = { "mix" }) { c ->
-                Box(Modifier.fillMaxWidth(), androidx.compose.ui.Alignment.TopCenter) { MixCardView(c, papers) { nav.mix(c.id) } }
+                MixCardView(c, papers, Modifier.fillMaxWidth(), fill = true) { nav.mix(c.id) }
             }
         }
     }
