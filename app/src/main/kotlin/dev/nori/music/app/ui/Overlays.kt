@@ -249,7 +249,7 @@ fun AlertCard(
  * it is swiped or its scrim tapped; a sheet whose caller simply stops composing it (a menu item that
  * closes the menu) vanished instead. Here the value going null slides the sheet down first.
  *
- * Every sheet is the same paper: the surface, the page faintly through it, over a light scrim, with a
+ * Every sheet is the same paper: the surface, opaque, over a light scrim, with a
  * hairline along its top edge and a quiet bar for a handle; no shadow.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -282,7 +282,7 @@ fun <T : Any> NoriSheet(
         CompositionLocalProvider(LocalLook provides look) {
             ModalBottomSheet(
                 onDismissRequest = { if (live) dismiss() }, sheetState = state,
-                shape = SheetShape, containerColor = scheme.surfaceContainer.copy(alpha = SHEET_ALPHA), contentColor = scheme.onSurface,
+                shape = SheetShape, containerColor = scheme.surfaceContainer, contentColor = scheme.onSurface,
                 tonalElevation = 0.dp, scrimColor = Color.Black.copy(alpha = SHEET_SCRIM),
                 dragHandle = { SheetHandle(state, scheme.outlineVariant) },
             ) {
@@ -294,8 +294,7 @@ fun <T : Any> NoriSheet(
 }
 
 private val SheetShape = RoundedCornerShape(topStart = Radius.sheet, topEnd = Radius.sheet)
-/** How much of the page a sheet hides, and how much the scrim under it darkens the rest. */
-private const val SHEET_ALPHA = 0.92f
+/** How much the scrim under a sheet darkens the page. */
 private const val SHEET_SCRIM = 0.32f
 
 /**
