@@ -12,7 +12,7 @@ use nori_core::Song;
 use nori_host::session::Session;
 use serde_json::{json, Value};
 
-use crate::pages::{keep_list, list, owned};
+use crate::pages::{keep_list, list_song, owned};
 use crate::session::{c_text, with_session};
 
 fn action_code(a: &SongAction) -> i32 {
@@ -82,8 +82,7 @@ fn menu_json(song: &Song, starred: bool, download: SongDownload, player: bool, r
 }
 
 fn song_at(token: u64, index: i32) -> Option<Song> {
-    let i = usize::try_from(index).ok()?;
-    list(token)?.0.into_iter().nth(i)
+    list_song(token, usize::try_from(index).ok()?)
 }
 
 /// Plays a radio (`radio`) or an instant mix seeded by `song`: the songs played, or -1 when the

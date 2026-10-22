@@ -129,6 +129,22 @@ pub(crate) fn list(token: u64) -> Option<(Vec<Song>, Option<PageOrigin>)> {
         .map(|l| (l.songs.clone(), l.origin.clone()))
 }
 
+/// Song `i` of list `token`, copying only that song.
+pub(crate) fn list_song(token: u64, i: usize) -> Option<Song> {
+    lock(&LISTS).iter().find(|l| l.token == token)?.songs.get(i).cloned()
+}
+
+/// Appends a page to list `token`, now the newest list. Its length before, or None when it is not kept.
+pub(crate) fn extend_list(token: u64, more: &[Song]) -> Option<usize> {
+    let mut lists = lock(&LISTS);
+    let at = lists.iter().position(|l| l.token == token)?;
+    let mut l = lists.remove(at)?;
+    let from = l.songs.len();
+    l.songs.extend_from_slice(more);
+    lists.push_back(l);
+    Some(from)
+}
+
 fn send(token: u64, v: &Value) {
     let Some(cb) = *lock(&PAGE_HOOK) else { return };
     let text = CString::new(v.to_string().replace('\0', " ")).unwrap_or_default();
@@ -580,13 +596,8 @@ fn read(token: u64, kind: i32, arg: String) {
             let sort = song_sort_saved(list_prefs());
             match nori_core::transport::block_on(client.songs_listed(sort.clone(), false, 0, 0, offset)) {
                 Ok(p) => {
-                    let mut songs = if offset == 0 {
-                        Vec::new()
-                    } else {
-                        list(token).map(|l| l.0).unwrap_or_default()
-                    };
-                    let from = songs.len();
-                    songs.extend(p.songs.iter().cloned());
+                    let kept = if offset == 0 { None } else { extend_list(token, &p.songs) };
+                    let from = kept.unwrap_or(0);
                     let mut rows = songs_section("songs", &p.songs, from);
                     rows["items"] = json!(lettered(
                         rows["items"].as_array().cloned().unwrap_or_default(),
@@ -596,7 +607,9 @@ fn read(token: u64, kind: i32, arg: String) {
                         "more": !p.exhausted, "next": offset as usize + p.songs.len(),
                         "from": from, "letters": song_letters(&sort).is_some(), "sections": [rows],
                     });
-                    keep_list(token, songs, None);
+                    if kept.is_none() {
+                        keep_list(token, p.songs, None);
+                    }
                     send(token, &v);
                 }
                 Err(e) => send_error(token, &e),
@@ -823,27 +836,22 @@ pub extern "C" fn nori_ios_tap_song(token: u64, index: i32) -> i32 {
 /// Adds song `index` of list `token` (or all of them for -1) next or at the end.
 #[no_mangle]
 pub extern "C" fn nori_ios_enqueue_list(token: u64, index: i32, next: i32) {
-    let Some((songs, _)) = list(token) else { return };
-    let songs = if index < 0 {
-        songs
-    } else {
-        match songs.get(index as usize) {
-            Some(s) => vec![s.clone()],
-            None => return,
-        }
+    let songs = match usize::try_from(index) {
+        Ok(i) => list_song(token, i).map(|s| vec![s]),
+        Err(_) => list(token).map(|l| l.0),
     };
+    let Some(songs) = songs else { return };
     with_session(|s| s.enqueue(songs, next != 0));
 }
 
 /// Downloads song `index` of list `token`, or all of them for -1.
 #[no_mangle]
 pub extern "C" fn nori_ios_download_list(token: u64, index: i32) {
-    let Some((songs, _)) = list(token) else { return };
-    let songs = if index < 0 {
-        songs
-    } else {
-        songs.get(index as usize).cloned().into_iter().collect()
+    let songs = match usize::try_from(index) {
+        Ok(i) => list_song(token, i).map(|s| vec![s]),
+        Err(_) => list(token).map(|l| l.0),
     };
+    let Some(songs) = songs else { return };
     with_session(|s| s.download(songs));
 }
 
@@ -1498,6 +1506,23 @@ mod tests {
         assert_eq!(list(1000 + KEPT_LISTS as u64 + 1).unwrap().0[0].id, (KEPT_LISTS + 1).to_string());
         keep_list(1001 + KEPT_LISTS as u64, vec![song("again")], None);
         assert_eq!(list(1001 + KEPT_LISTS as u64).unwrap().0[0].id, "again");
+    }
+
+    #[test]
+    fn a_page_extends_its_kept_list_in_place() {
+        let _turn = lock(&ABI_IN_USE);
+        forget_lists();
+        keep_list(90, vec![song("a"), song("b")], None);
+        keep_list(91, vec![song("other")], None);
+        assert_eq!(extend_list(90, &[song("c")]), Some(2));
+        assert_eq!(list_song(90, 2).map(|s| s.id), Some("c".into()));
+        assert_eq!(list_song(90, 3), None);
+        assert_eq!(extend_list(92, &[song("c")]), None, "a list not kept is not made");
+        for t in 0..(KEPT_LISTS as u64 - 1) {
+            keep_list(2000 + t, vec![], None);
+        }
+        assert!(list(90).is_some(), "an extended list is the newest");
+        assert!(list(91).is_none());
     }
 
     #[test]
