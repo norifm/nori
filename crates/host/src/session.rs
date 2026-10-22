@@ -556,6 +556,14 @@ impl Handle {
         self.play_kept(songs, start, shuffle, from, false);
     }
 
+    /// Starts a jam around `songs[start]`: they play here, then the jam opens. Its invite link (None when
+    /// one is open or opening already); nothing while remote control is off.
+    pub async fn start_jam(&self, songs: Vec<Song>, start: usize, from: Option<PageOrigin>) -> Option<Result<Option<String>, NetError>> {
+        let remote = self.remote()?;
+        self.play(songs, start, false, from);
+        Some(remote.jam_open().await)
+    }
+
     /// `songs` as the queue around the song playing, `songs[at]`: it goes on where it is, playing or
     /// paused, rather than starting again (a tap on it in a list). Any other song plays as [`Handle::play`]
     /// would. True when it went on.
@@ -1618,6 +1626,32 @@ mod tests {
         assert!(s.shuffle_page(&album));
         assert!(s.core.session.shuffle_shown());
         assert_eq!(playing(), started);
+        s.close();
+    }
+
+    struct NoDiscovery;
+    impl nori_core::remote::Discovery for NoDiscovery {
+        fn announce(&self, _: Option<nori_core::remote::Announcement>) {}
+        fn browse(&self, _: bool) {}
+    }
+
+    #[test]
+    fn a_jam_started_on_a_song_plays_it_and_opens() {
+        let dir = nori_testdir::TempDir::new("host-start-jam");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        prefs.remote_control = true;
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings));
+        // A YouTube Music profile hosts its jam on this computer, so no relay is needed.
+        let profile = SavedServer { id: "yt".into(), kind: nori_core::settings::ServerKind::YouTubeMusic, user: "Ann".into(), ..Default::default() };
+        let discovery: Option<Arc<dyn nori_core::remote::Discovery>> = Some(Arc::new(NoDiscovery));
+        let s = Session::open(Open { discovery, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let songs: Vec<Song> = ["a", "b"].map(|id| Song { id: id.into(), ..Default::default() }).into();
+        let link = block_on(s.start_jam(songs, 1, None)).expect("remote control is on").expect("the jam opens");
+        assert!(link.is_some(), "an invite link");
+        assert_eq!(s.core.session.playlist(|p| p.current_id().map(str::to_string)).as_deref(), Some("b"));
+        assert!(s.remote().and_then(|r| r.jam_view()).is_some_and(|v| v.hosting));
         s.close();
     }
 

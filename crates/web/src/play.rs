@@ -576,6 +576,14 @@ impl Nori {
         .unwrap_or_else(|| "null".into())
     }
 
+    /// Starts a jam around song `start` of `songs` (JSON): they play here, then it opens. Its invite link
+    /// (null when one is open or being started already).
+    pub async fn jam_start(&self, songs: String, start: usize) -> Result<Option<String>, JsValue> {
+        let songs: Vec<Song> = serde_json::from_str(&songs).map_err(error)?;
+        let h = self.with(|h| nori_host::session::Handle::clone(h)).ok_or_else(|| error("not signed in"))?;
+        h.start_jam(songs, start, None).await.ok_or_else(|| error("remote control is off"))?.map_err(error)
+    }
+
     /// Starts hosting a jam; its invite link (null when one is being started already).
     pub async fn jam_open(&self) -> Result<Option<String>, JsValue> {
         let remote = self.with(|h| h.remote()).flatten().ok_or_else(|| error("remote control is off"))?;

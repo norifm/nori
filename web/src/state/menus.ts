@@ -53,8 +53,9 @@ function item(a: MenuAction, s: Song): Item | null {
         label: W.startJam,
         icon: "jam",
         run: async () => {
-          await player.play([s], 0);
-          await remote.act(() => ask("jam_open"));
+          await player.soundCard();
+          await remote.act(() => ask("jam_start", JSON.stringify([s]), 0));
+          await player.refresh();
           ui.show("devices");
         },
       };

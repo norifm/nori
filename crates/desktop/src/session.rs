@@ -193,6 +193,17 @@ impl Session {
         self.host.remote()
     }
 
+    /// Starts a jam around `songs[start]` ([`nori_host::session::Handle::start_jam`]); [`Msg::Jam`] says
+    /// whether it opened.
+    pub fn start_jam(&self, songs: Vec<nori_core::Song>, start: usize) {
+        let (host, send) = (nori_host::session::Handle::clone(&self.host), self.sender());
+        nori_host::spawn("nori-jam", move || {
+            if let Some(opened) = nori_core::transport::block_on(host.start_jam(songs, start, None)) {
+                send(Msg::Jam(opened.map(drop).map_err(|e| net_error(&e))));
+            }
+        });
+    }
+
     /// Starts hosting a jam on the server's relay; [`Msg::Jam`] says whether it opened.
     pub fn jam_open(&self) {
         let (Some(r), send) = (self.remote(), self.sender()) else { return };

@@ -1736,10 +1736,7 @@ impl App {
         };
         match how {
             -1 => self.on_session(|s| s.play(songs, i, false, origin)),
-            15 => self.on_session(|s| {
-                s.play(songs, i, false, None);
-                s.jam_open();
-            }),
+            15 => self.on_session(|s| s.start_jam(songs, i)),
             _ => self.song_act(one, how),
         }
     }
