@@ -2434,10 +2434,10 @@ impl App {
         let (side_w, full_w) = (320.0 - 44.0 - 2.0, width / 2.0 - 140.0 - 2.0);
         renew(&self.pieces[0], pieces(0, side, 22.0, side_w, 1.0, 0.36));
         renew(&self.pieces[1], pieces(1, full, 44.0, full_w, 1.0, 0.36));
-        if let Some(rows) = l.rows(0, 22.0, side_w) {
+        if let Some(rows) = side.then(|| l.rows(0, 22.0, side_w)).flatten() {
             ui.set_lyrics_side_rows(rows);
         }
-        if let Some(rows) = l.rows(1, 44.0, full_w) {
+        if let Some(rows) = full.then(|| l.rows(1, 44.0, full_w)).flatten() {
             ui.set_lyrics_full_rows(rows);
         }
         ui.set_lyric_sung(now.sung.into());
