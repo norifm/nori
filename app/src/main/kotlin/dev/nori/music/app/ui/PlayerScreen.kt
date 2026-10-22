@@ -400,11 +400,10 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
         Box(
             // Pull down from anywhere on the artwork page and the whole player follows the finger down;
             // the lyrics and queue need a vertical drag to scroll, so there only the handle does. On its side
-            // a pull down anywhere does it too (what scrolls takes its own drags first), and the controls' half
-            // also takes a sideways one (PlayerHalves): across the cover a sideways drag changes the song.
+            // a drag towards the mini player's edge anywhere does it (what scrolls or slides takes its own first).
             Modifier.fillMaxSize().onGloballyPositioned { player[0] = it }
                 .then(if (motion != null) Modifier.watchTouches(motion) else Modifier)
-                .dragsSheet(sheet, enabled = panel == Panel.ART || LocalWide.current, down = LocalWide.current),
+                .dragsSheet(sheet, enabled = panel == Panel.ART || LocalWide.current),
         ) {
             // The page is the cover itself, enlarged and smoothed, lined up with the sleeve. No seam
             // gradient over it: the sleeve carries its own dissolve at its bottom edge, and a gradient
@@ -482,10 +481,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
             @Composable fun kept(key: String) = Modifier.sharedElement(rememberSharedContentState(key), this@AnimatedContent)
             // The page's text colour, read while the transport draws.
             val ink = androidx.compose.ui.graphics.ColorProducer { live.color(CoverLook.ON) }
-            // On its side the controls' half has nothing of its own to drag across but its sliders, so a drag
-            // towards the mini player's edge anywhere on it puts the player away whatever the panel, while the
-            // cover beside it keeps its sideways drag for the songs either side.
-            PlayerHalves(LocalWide.current, Modifier.dragsSheet(sheet, enabled = LocalWide.current), panel = {
+            PlayerHalves(LocalWide.current, panel = {
                 // The artwork bleeds to all three edges like the sleeve it is - up under the status bar
                 // as well, which is the whole point: Apple's has no top edge, and giving it one drew a
                 // line across the screen. The handle and the close button float over it instead.
@@ -530,7 +526,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                         }
                         .then(if (across) Modifier.fillMaxHeight() else Modifier.layout { measurable, constraints ->
                             val placeable = measurable.measure(constraints)
-                            val takes = placeable.height - Space.titleRise.roundToPx()
+                            val takes = placeable.height - PLAYER_RISE.roundToPx()
                             layout(placeable.width, takes) { placeable.place(0, 0) }
                         })
                         .onGloballyPositioned {
@@ -747,11 +743,9 @@ private fun barRoom(): androidx.compose.ui.unit.Dp {
 
 /**
  * On its side: how far a cover reaches in under the words and controls beside it (the player's, a page's), and
- * how much wider its soft edge is than upright, so it goes soft over that stretch rather than ending at the
- * controls' start.
+ * its soft edge (`Stage.acrossMelt`) is short and has its own curves.
  */
-internal val UNDER_TEXT = 96.dp
-internal const val ACROSS_MELT = 1.5f
+internal val UNDER_TEXT = 28.dp
 
 /** How much of the sleeve's panel lies under the controls on its side ([PlayerHalves]): the lyrics and queue keep off it. */
 private val LocalUnderControls = androidx.compose.runtime.compositionLocalOf { 0.dp }
@@ -764,7 +758,7 @@ private val LocalUnderControls = androidx.compose.runtime.compositionLocalOf { 0
  * (the sleeve its whole square), the controls down the rest.
  */
 @Composable
-private fun PlayerHalves(wide: Boolean, controlsDrag: Modifier, panel: @Composable ColumnScope.() -> Unit, controls: @Composable ColumnScope.() -> Unit) {
+private fun PlayerHalves(wide: Boolean, panel: @Composable ColumnScope.() -> Unit, controls: @Composable ColumnScope.() -> Unit) {
     if (!wide) Column(Modifier.fillMaxSize().windowInsetsPadding(gestureBarRoom)) { panel(); controls() }
     else androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         // Wider than it is tall: the sleeve is a band across the cover, cropped above and below rather than at
@@ -781,10 +775,9 @@ private fun PlayerHalves(wide: Boolean, controlsDrag: Modifier, panel: @Composab
             }
             Column(
                 // Clear of the camera's punch hole too, which is on this side when the phone is turned the other way.
-                // The whole half, edge to edge, takes the drag that puts the player away ([controlsDrag]) before the insets are kept off.
                 // The same room kept above as below (the gesture bar's, or the status bar's if it is shown), so the
                 // controls stand in the middle of the screen's height rather than of what is above the gesture bar.
-                Modifier.padding(start = if (atEnd) 0.dp else controlsAt, end = if (atEnd) controlsAt else 0.dp).fillMaxSize().then(controlsDrag).padding(vertical = barRoom())
+                Modifier.padding(start = if (atEnd) 0.dp else controlsAt, end = if (atEnd) controlsAt else 0.dp).fillMaxSize().padding(vertical = barRoom())
                     .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.displayCutout.only(if (atEnd) androidx.compose.foundation.layout.WindowInsetsSides.Start else androidx.compose.foundation.layout.WindowInsetsSides.End))
                     .padding(start = if (atEnd) 0.dp else 8.dp, end = if (atEnd) 8.dp else 0.dp),
                 verticalArrangement = Arrangement.Center,
@@ -902,10 +895,13 @@ private const val MIX_SLIDE = 2
  * sharp as the ones above it, with a strip of red tape running across it unbroken: it is the picture,
  * not the blur behind it. That is the whole trick, and it is why their sleeve can touch the top edge
  * and still reach down behind the title, which no square can do. A phone's box: a desktop window
- * lays its player out otherwise, so the ratio is the phone's layout and not the core's. At 0.68 the sleeve
- * is about 68 % of a 20:9 screen's height; the title block rises [Space.titleRise] into its melt.
+ * lays its player out otherwise, so the ratio is the phone's layout and not the core's. At 0.56 the sleeve
+ * is about 80 % of a 20:9 screen's height; the title block rises [PLAYER_RISE] into it.
  */
-private const val SLEEVE = 0.66f
+private const val SLEEVE = 0.56f
+
+/** How far the title block rises into the sleeve: the cover runs on a good way behind the words. */
+private val PLAYER_RISE = Space.titleRise + 98.dp
 
 /** A soft sleeve's own box as the sleeve: its bottom (its right edge, on its side) and its whole height (width). */
 private val SLEEVE_ALL: androidx.compose.ui.draw.CacheDrawScope.() -> Pair<Float, Float> = { size.height to size.height }
@@ -947,7 +943,7 @@ private fun Artwork(
             Box(
                 Modifier.fillMaxWidth().fillMaxHeight(stage.statusShadeTo)
                     .then(if (across) Modifier.graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (turned) scaleX = -1f }
-                        .rubOutBottom(across = true) { (size.width - size.width * MELT * ACROSS_MELT) to size.width } else Modifier)
+                        .rubOutBottom(across = true) { (size.width - size.width * stage.acrossMelt) to size.width } else Modifier)
                     .background(remember { Brush.verticalGradient(0f to Color.Black.copy(alpha = stage.statusShade), 1f to Color.Transparent) }),
             )
             // Nothing is drawn here to soften the sleeve's bottom. There is one blurred copy of the
@@ -972,7 +968,7 @@ private fun Artwork(
  */
 private fun rubOutBrush(top: Float, bottom: Float, across: Boolean = false): Brush =
     // The melt's own easing, in stops, and why its tail finishes by 70 %: nori_look::sleeve::RUB_OUT.
-    alphaGradient(stage.rubOut, Color.Black, top, bottom, across)
+    alphaGradient(if (across) stage.acrossRubOut else stage.rubOut, Color.Black, top, bottom, across)
 
 /**
  * Rubs the band from [top] to [bottom] out of what [content] drew; the brush is made once per place.
@@ -1129,7 +1125,7 @@ internal fun SoftSleeve(
     Box(
         modifier
             .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (mirror) scaleX = -1f }
-            .rubOutBottom(across) { val (bottom, height) = edge(); (bottom - height * MELT * (if (across) ACROSS_MELT else 1f)) to bottom },
+            .rubOutBottom(across) { val (bottom, height) = edge(); (bottom - height * (if (across) stage.acrossMelt else MELT)) to bottom },
     ) {
         Unturned(mirror) { content(false) }
         if (soft && band != null) Box(
@@ -1145,7 +1141,8 @@ internal fun SoftSleeve(
                     // size and place, not one per frame.
                     val (bottom, height) = edge()
                     val top = bottom - height
-                    val mask = alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, across)
+                    val mask = if (across) alphaGradient(stage.acrossSoft, Color.Black, top + height * (1f - stage.acrossMelt), top + height, true)
+                    else alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, false)
                     onDrawWithContent {
                         drawContent()
                         drawRect(mask, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
@@ -1386,6 +1383,7 @@ private fun SleeveCarousel(
 ) {
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
+    val across = LocalWide.current
     // Where the record is, in pixels, written straight from the finger. Not an Animatable snapped to from
     // a coroutine per pointer event: on a flick several of those would still be queued when the finger
     // left, land on top of the animation already started and drag the record back.
@@ -1743,7 +1741,9 @@ private fun SleeveCarousel(
         onDispose { if (slide.run === run) slide.run = null }
     }
     Box(
-        Modifier.fillMaxSize().pointerInput(Unit) {
+        Modifier.fillMaxSize().pointerInput(across) {
+            // On its side the cover takes no drag: a sideways one puts the player away (dragsSheet).
+            if (across) return@pointerInput
             val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
             var x = 0f
             val release: (Float) -> Unit = { v ->
