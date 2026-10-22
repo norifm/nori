@@ -65,10 +65,16 @@ pub fn put_measured(c: &Connection, mut a: TrackAnalysis) -> rusqlite::Result<Tr
     Ok(a)
 }
 
-/// Stores a whole song's measurement: its analysis (keeping the beat model's grids) and vocal curve.
-pub fn put_finished(c: &Connection, song_id: &str, features: &crate::analysis::Features) -> rusqlite::Result<TrackAnalysis> {
-    let stored = put_measured(c, crate::finish(song_id, features).track)?;
-    put_voice(c, song_id, &features.voice_curve())?;
+/// A whole song's measurement turned into its analysis and vocal curve; costly, so done before taking the database.
+pub fn measure(song_id: &str, features: &crate::analysis::Features) -> (TrackAnalysis, VocalCurve) {
+    (crate::finish(song_id, features).track, features.voice_curve())
+}
+
+/// Stores a measured song: its analysis (keeping the beat model's grids) and vocal curve.
+pub fn put_finished(c: &Connection, track: TrackAnalysis, curve: &VocalCurve) -> rusqlite::Result<TrackAnalysis> {
+    let song_id = track.song_id.clone();
+    let stored = put_measured(c, track)?;
+    put_voice(c, &song_id, curve)?;
     Ok(stored)
 }
 
