@@ -122,6 +122,27 @@ pub(super) fn bar_beats(a: &TrackAnalysis) -> i64 {
     }
 }
 
+/// Index of the last downbeat at or before `t_ms` on a grid of `beat_ms` beats from `offset_ms`, whose
+/// downbeats are the beats `phase` mod `bpb`.
+fn downbeat_before(t_ms: f64, offset_ms: f64, beat_ms: f64, bpb: i64, phase: i64) -> i64 {
+    let phase = phase.rem_euclid(bpb);
+    let mut n = ((t_ms - offset_ms) / beat_ms).floor() as i64;
+    while n.rem_euclid(bpb) != phase {
+        n -= 1;
+    }
+    n
+}
+
+/// Index of the first downbeat from `t_ms` (a quarter beat early still counts) on the same grid.
+fn downbeat_from(t_ms: f64, offset_ms: f64, beat_ms: f64, bpb: i64, phase: i64) -> i64 {
+    let phase = phase.rem_euclid(bpb);
+    let mut n = (((t_ms - offset_ms) / beat_ms) - 0.25).ceil() as i64;
+    while n.rem_euclid(bpb) != phase {
+        n += 1;
+    }
+    n
+}
+
 pub(super) fn grid_ok(a: &TrackAnalysis) -> bool {
     a.bpm > 0.0 && a.bpm.is_finite() && a.bpm_confidence >= MIN_BPM_CONFIDENCE && a.stability >= MIN_STABILITY
 }
@@ -325,11 +346,7 @@ fn echo_out(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, s: &AutoMixSetting
     let ending = Ending::of(a, out_dur);
     let end_a = ending.leave(0.0);
     let bpb = bar_beats(a);
-    let phase = (a.downbeat_phase as i64).rem_euclid(bpb);
-    let mut n = ((end_a - dur as f64 - a.beat_offset_ms) / beat).floor() as i64;
-    while n.rem_euclid(bpb) != phase {
-        n -= 1;
-    }
+    let n = downbeat_before(end_a - dur as f64, a.beat_offset_ms, beat, bpb, a.downbeat_phase as i64);
     let start = (a.beat_offset_ms + n as f64 * beat).round() as i64;
     if start < a.silence_start_ms || ending.skipped((start + dur) as f64) > MAX_SKIP_MS as f64 {
         return None;
@@ -546,12 +563,8 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
     let Room { out_dur, in_dur, max_len } = room;
     let (beat, bar, ratio) = (k.beat, k.bar, k.ratio);
     let ending = Ending::of(a, out_dur);
-    let phase_a = (a.downbeat_phase as i64).rem_euclid(k.bpb);
     let downbeat_at = |t: f64| {
-        let mut n = ((t + 0.5 * beat - a.beat_offset_ms) / beat).floor() as i64;
-        while n.rem_euclid(k.bpb) != phase_a {
-            n -= 1;
-        }
+        let n = downbeat_before(t + 0.5 * beat, a.beat_offset_ms, beat, k.bpb, a.downbeat_phase as i64);
         a.beat_offset_ms + n as f64 * beat
     };
     let exit = ending.leave(4.0 * bar);
@@ -572,11 +585,7 @@ fn drop_aligned(a: &TrackAnalysis, b: &TrackAnalysis, room: Room, bpm_b: f64, k:
     // The incoming song on its native grid.
     let beat_n = 60_000.0 / bpm_b;
     let bar_in = k.bar * ratio;
-    let phase_b = (b.downbeat_phase as i64).rem_euclid(k.bpb);
-    let mut nb = (((b.silence_start_ms as f64 - b.beat_offset_ms) / beat_n) - 0.25).ceil() as i64;
-    while nb.rem_euclid(k.bpb) != phase_b {
-        nb += 1;
-    }
+    let nb = downbeat_from(b.silence_start_ms as f64, b.beat_offset_ms, beat_n, k.bpb, b.downbeat_phase as i64);
     let first = b.beat_offset_ms + nb as f64 * beat_n;
     // An analysis cue snapped to the nearest incoming downbeat.
     let snap = |t: f64| -> f64 {
@@ -848,17 +857,13 @@ fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s:
     if let Some(g) = a.filter(|x| grid_ok(x)) {
         let beat = 60_000.0 / g.bpm;
         let bpb = bar_beats(g);
-        let phase = (g.downbeat_phase as i64).rem_euclid(bpb);
         let in_start = b.map_or(0, |x| x.silence_start_ms.clamp(0, in_dur / 3));
         for bars in out_bars {
             let dur = (*bars as f64 * bpb as f64 * beat).round() as i64;
             if dur > max_len || dur < MIN_FADE_MS {
                 continue;
             }
-            let mut n = ((end_a as f64 - dur as f64 - g.beat_offset_ms) / beat).floor() as i64;
-            while n.rem_euclid(bpb) != phase {
-                n -= 1;
-            }
+            let n = downbeat_before(end_a as f64 - dur as f64, g.beat_offset_ms, beat, bpb, g.downbeat_phase as i64);
             let start = (g.beat_offset_ms + n as f64 * beat).round() as i64;
             if start < g.silence_start_ms || skipped(start + dur) > MAX_SKIP_MS as f64 {
                 continue;
@@ -875,11 +880,7 @@ fn one_grid(a: Option<&TrackAnalysis>, b: Option<&TrackAnalysis>, room: Room, s:
     if let Some(g) = b.filter(|x| grid_ok(x)) {
         let beat = 60_000.0 / g.bpm;
         let bpb = bar_beats(g);
-        let phase = (g.downbeat_phase as i64).rem_euclid(bpb);
-        let mut nb = (((g.silence_start_ms as f64 - g.beat_offset_ms) / beat) - 0.25).ceil() as i64;
-        while nb.rem_euclid(bpb) != phase {
-            nb += 1;
-        }
+        let nb = downbeat_from(g.silence_start_ms as f64, g.beat_offset_ms, beat, bpb, g.downbeat_phase as i64);
         let in_start = (g.beat_offset_ms + nb as f64 * beat).round().max(0.0) as i64;
         if in_start - g.silence_start_ms > MAX_SKIP_MS {
             return None;
