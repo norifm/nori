@@ -50,7 +50,9 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material3.Text
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
@@ -817,7 +819,8 @@ fun SearchField(
 @Composable
 fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Surface(
+    // The pill is 34 dp: Material's 48 dp touch floor would add 7 dp of air above and below it.
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) { Surface(
         onClick = onClick, shape = PillShape,
         color = if (selected) scheme.surfaceContainer else Color.Transparent,
         contentColor = if (selected) scheme.onSurface else scheme.onSurfaceVariant,
@@ -827,7 +830,7 @@ fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClic
         Box(Modifier.height(34.dp).padding(horizontal = 14.dp), Alignment.Center) {
             Text(label, style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium), maxLines = 1)
         }
-    }
+    } }
 }
 
 /**

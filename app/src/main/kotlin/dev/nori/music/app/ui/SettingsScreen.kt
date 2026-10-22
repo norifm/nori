@@ -138,7 +138,7 @@ private fun Flags(row: SettingRow.Flags, divider: Boolean, onChange: (String) ->
     Column {
         Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
-            Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             androidx.compose.foundation.layout.FlowRow(
                 Modifier.padding(top = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
