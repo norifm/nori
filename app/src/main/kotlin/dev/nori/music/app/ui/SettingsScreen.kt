@@ -600,13 +600,15 @@ private data class RankDrag(val id: String, val from: List<String>, val to: Int,
     val shown: List<String> = from.toMutableList().apply { remove(id); add(to, id) }
 }
 
-/** The usage parts' colors, in [SettingRow.Usage.parts] order. */
-private val USAGE_COLORS = listOf(Color(0xFF2D9CDB), Color(0xFF27AE60), Color(0xFFF2994A), Color(0xFF9B51E0), Color(0xFF8A8A8A))
+/** How much of the ink each usage part takes, in [SettingRow.Usage.parts] order: the biggest reads strongest, the last still clears the track. */
+private val USAGE_INK = listOf(0.92f, 0.68f, 0.5f, 0.36f, 0.26f)
 
 /** What is stored on this device: the total, one bar split by kind, and a line per kind with its dot. */
 @Composable
 private fun UsageBar(row: SettingRow.Usage, divider: Boolean) {
     val total = row.parts.sumOf { it.bytes }.coerceAtLeast(1)
+    val scheme = MaterialTheme.colorScheme
+    val colors = USAGE_INK.map { androidx.compose.ui.graphics.lerp(scheme.surfaceContainer, scheme.onSurface, it) }
     Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(row.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
@@ -618,12 +620,12 @@ private fun UsageBar(row: SettingRow.Usage, divider: Boolean) {
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             row.parts.forEachIndexed { i, p ->
-                if (p.bytes > 0) Box(Modifier.weight(p.bytes.toFloat() / total).fillMaxHeight().background(USAGE_COLORS[i % USAGE_COLORS.size]))
+                if (p.bytes > 0) Box(Modifier.weight(p.bytes.toFloat() / total).fillMaxHeight().background(colors[i % colors.size]))
             }
         }
         row.parts.forEachIndexed { i, p ->
             Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(USAGE_COLORS[i % USAGE_COLORS.size]))
+                Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(colors[i % colors.size]))
                 Text(p.label, Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(p.size, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
