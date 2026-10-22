@@ -765,9 +765,9 @@ object DownloadLines {
         if (facts[0] == 0L) return artist
         out.setLength(0)
         out.append(artist)
-        if (facts[1] >= 0) out.append(" · ").append(facts[1]).append('%')
-        dotted { it.append(Fmt.speed(facts[2])) }
-        dotted { appendEta(res, it, facts[3]) }
+        if (facts[1] >= 0) out.part { it.append(facts[1]).append('%') }
+        out.part { it.append(Fmt.speed(facts[2])) }
+        out.part { appendEta(res, it, facts[3]) }
         return out.toString()
     }
 
@@ -785,17 +785,6 @@ object DownloadLines {
         if (out.isEmpty()) return res.getString(R.string.downloads_nothing)
         return out.toString()
     }
-
-    /** Adds `" · "` and what [f] writes, or nothing when it writes nothing. */
-    private inline fun dotted(f: (StringBuilder) -> Unit) {
-        val start = out.length
-        out.append(" · ")
-        val mark = out.length
-        f(out)
-        if (out.length == mark) out.setLength(start)
-    }
-
-
 }
 
 /** "45 s left", "12:34 left", "2:05:00 left" onto [out]; nothing when it cannot be said (negative). */
