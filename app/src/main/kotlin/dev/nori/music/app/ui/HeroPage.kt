@@ -183,7 +183,11 @@ fun HeroPage(
                 Alignment.Center,
             ) { picture(Modifier.size(coverSide).clip(androidx.compose.foundation.shape.RoundedCornerShape(Radius.card))) }
             else if (picture != null) Box(
-                Modifier.fillMaxWidth().aspectRatio(1f)
+                Modifier.fillMaxWidth().layout { measurable, constraints ->
+                    val side = constraints.maxWidth
+                    val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(side, side + HERO_DEEPER.roundToPx()))
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                }
                     // Parallax and fade, read in the draw phase: scrolling never recomposes the hero.
                     .graphicsLayer {
                         val scrolled = heroScroll(size.height)
@@ -237,7 +241,7 @@ fun HeroPage(
             // Upright over a picture the title block rises into the melt, overlapping the picture's last rows.
             val rise = showArt && coverSide == null && picture != null
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = Space.gutter).then(if (rise) Modifier.raised(Space.titleRise) else Modifier.padding(vertical = 4.dp)),
+                Modifier.fillMaxWidth().padding(horizontal = Space.gutter).then(if (rise) Modifier.raised(Space.titleRise + HERO_DEEPER) else Modifier.padding(vertical = 4.dp)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
@@ -429,3 +433,6 @@ private fun heroPress(bits: Int) = when (bits and 3) {
     2 -> dev.nori.music.ffi.library.HeroPress.SHUFFLE_OFF
     else -> dev.nori.music.ffi.library.HeroPress.START
 }
+
+/** How much taller than square the picture is, with the title block rising by as much: the cover reaches further behind the title. */
+private val HERO_DEEPER = 44.dp
