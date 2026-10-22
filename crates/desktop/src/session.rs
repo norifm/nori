@@ -180,7 +180,7 @@ impl Session {
         }
     }
 
-    /// Requests a cover at `px` square; large ones also get page colours, derived on the loader thread.
+    /// Requests a cover at `px` square; large ones also get page colours, derived off this thread.
     pub fn cover(&self, key: CoverKey, px: u32) -> Option<Ticket> {
         let (send, colours) = (self.sender(), key.size != CoverSize::Card);
         self.host.cover(key.id.clone(), px, colours, move |image, colours| {

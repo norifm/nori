@@ -984,12 +984,16 @@ impl Handle {
 
     /// Requests cover `id` at `px` square: the core's rendition for that size is fetched
     /// ([`nori_core::covers::cover_rendition`]) and decoded to `px`. `done` gets the image or failure and,
-    /// when `colours`, its page colors derived on the loader thread. None without a cover loader.
+    /// when `colours`, its page colors, derived off the caller's thread (a memory hit answers at once). None
+    /// without a cover loader.
     pub fn cover(&self, id: String, px: u32, colours: bool, done: impl FnOnce(Result<Arc<Image>, nori_covers::Error>, Option<Box<CoverColours>>) + Send + 'static) -> Option<Ticket> {
         let url = self.core.cover_address(id, nori_core::covers::cover_rendition(px));
-        Some(self.covers.as_ref()?.request(&url, px, px, move |r| {
-            let colours = r.as_ref().ok().filter(|_| colours).map(|image| Box::new(derive(image)));
-            done(r, colours);
+        Some(self.covers.as_ref()?.request(&url, px, px, move |r| match r {
+            Ok(image) if colours => crate::spawn("nori-colours", move || {
+                let colours = Box::new(derive(&image));
+                done(Ok(image), Some(colours));
+            }),
+            r => done(r, None),
         }))
     }
 
