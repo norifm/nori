@@ -302,11 +302,17 @@ class Library(
         _starsVersion.update { it + 1 }
     }
 
-    suspend fun createPlaylist(name: String, songIds: List<String>) = write(Write.CreatePlaylist(name, songIds))
+    /** Bumped when a playlist is made, added to or deleted, so the lists of playlists read again (the core has dropped the stale answer). */
+    private val _playlistsVersion = MutableStateFlow(0)
+    val playlistsVersion: StateFlow<Int> = _playlistsVersion.asStateFlow()
 
-    suspend fun addToPlaylist(id: String, songIds: List<String>) = write(Write.AddToPlaylist(id, songIds))
+    private suspend fun writePlaylist(w: Write) { write(w); _playlistsVersion.update { it + 1 } }
 
-    suspend fun deletePlaylist(id: String) = write(Write.DeletePlaylist(id))
+    suspend fun createPlaylist(name: String, songIds: List<String>) = writePlaylist(Write.CreatePlaylist(name, songIds))
+
+    suspend fun addToPlaylist(id: String, songIds: List<String>) = writePlaylist(Write.AddToPlaylist(id, songIds))
+
+    suspend fun deletePlaylist(id: String) = writePlaylist(Write.DeletePlaylist(id))
 
     /** Not worth queueing: by the time it could be replayed it is no longer true. */
     suspend fun nowPlaying(id: String) { call(Read.NowPlaying(id)) { it } }

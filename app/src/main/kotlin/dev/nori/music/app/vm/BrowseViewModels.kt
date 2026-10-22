@@ -151,7 +151,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
             else refreshes.flatMapLatest { nori.library.albums(sort, size = size) }
                 .catch { failed(it); emit(emptyList()) }.onStart { emit(emptyList()) }.map { Shelf.Albums(r, it) }
         }
-        is HomeShelf.Playlists -> refreshes.flatMapLatest { nori.library.playlists() }.map { Shelf.Playlists(r, it.take(shelf.take.toInt())) }
+        is HomeShelf.Playlists -> combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }.map { Shelf.Playlists(r, it.take(shelf.take.toInt())) }
             .catch { emit(Shelf.Playlists(r, emptyList())) }.onStart { emit(Shelf.Playlists(r, emptyList())) }
         // Worth reading again after a refresh, which is the one thing that changes what the index holds.
         is HomeShelf.Songs -> refreshes.flatMapLatest {
@@ -167,7 +167,7 @@ class HomeViewModel(app: Application) : NoriViewModel(app) {
             .catch { failed(it); emit(emptyList()) }.map { HomeUi(feed = it) }
         val shown = homeRowsShown(rows, rules.account)
         val shelves = homeShelves(shown)
-        val pinned = if (HomeShelf.Pinned in shelves && pins.isNotEmpty()) refreshes.flatMapLatest { nori.library.playlists() }
+        val pinned = if (HomeShelf.Pinned in shelves && pins.isNotEmpty()) combine(refreshes, nori.library.playlistsVersion) { _, v -> v }.flatMapLatest { nori.library.playlists() }
             .map { all -> withContext(Dispatchers.Default) { homePinned(all, pins) } }.catch { emit(emptyList()) }.onStart { emit(emptyList()) } else flowOf(emptyList())
         combine(combine(shown.zip(shelves, ::source)) { it.toList() }.onStart { emit(emptyList()) }, pinned) { s, p -> HomeUi(s, p) }
     }.asLoad()
@@ -360,12 +360,11 @@ class ArtistsViewModel(app: Application) : NoriViewModel(app) {
 }
 
 class PlaylistsViewModel(app: Application) : NoriViewModel(app) {
-    private val refresh = MutableStateFlow(0)
     @OptIn(ExperimentalCoroutinesApi::class)
-    val playlists: StateFlow<Load<List<Playlist>>> = refresh.flatMapLatest { nori.library.playlists() }.asLoad()
+    val playlists: StateFlow<Load<List<Playlist>>> = nori.library.playlistsVersion.flatMapLatest { nori.library.playlists() }.asLoad()
 
-    fun create(name: String) = viewModelScope.launch { runCatching { nori.library.createPlaylist(name, emptyList()) }; refresh.value++ }
-    fun delete(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) }; refresh.value++ }
+    fun create(name: String) = viewModelScope.launch { runCatching { nori.library.createPlaylist(name, emptyList()) } }
+    fun delete(id: String) = viewModelScope.launch { runCatching { nori.library.deletePlaylist(id) } }
 }
 
 class StarredViewModel(app: Application) : NoriViewModel(app) {
