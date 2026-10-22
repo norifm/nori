@@ -348,7 +348,7 @@ private fun Modifier.arriving(arrival: State<Float>, place: Int, rise: Float) = 
 
 
 /** An album, playlist or song print on a shelf. */
-private val PRINT = 128.dp
+internal val PRINT = 128.dp
 
 /** The home row key of the mix cards (the library rows' are their [HomeRow] names). */
 internal const val MIXES_ROW = "mixes"
@@ -421,7 +421,7 @@ fun HomeRowScreen(key: String, actions: ActionsViewModel) {
 
 /** The prints of a full view: two across, as many as fit on a wide screen, [onEnd] when the last row nears. */
 @Composable
-private fun PrintGrid(onEnd: () -> Unit, content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit) {
+internal fun PrintGrid(onEnd: () -> Unit, content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit) {
     val list = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     LaunchedEffect(list) {
         androidx.compose.runtime.snapshotFlow { list.layoutInfo.let { it.totalItemsCount - (it.visibleItemsInfo.lastOrNull()?.index ?: 0) <= 12 } }.collect { if (it) onEnd() }

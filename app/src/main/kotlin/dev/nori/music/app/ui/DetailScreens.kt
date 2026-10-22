@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
@@ -325,6 +326,25 @@ fun ArtistScreen(id: String, actions: ActionsViewModel, vm: ArtistViewModel = vi
     ArtistPage(ui?.detail?.artist ?: hint, ui, (load as? Load.Failed)?.message, actions, vm) { leaving = it }
 }
 
+/** One shelf of an artist's page in full ("see all"): its releases as a grid, the size of a home row's. */
+@Composable
+fun ArtistReleasesScreen(id: String, group: Int, vm: ArtistViewModel = viewModel()) {
+    LaunchedEffect(id) { vm.open(id) }
+    val load by vm.ui.collectAsStateWithLifecycle()
+    val nav = LocalNav.current
+    LoadBox(load) { ready ->
+        val (title, albums) = remember(ready.detail) { groupsOf(ready.detail).getOrNull(group) } ?: return@LoadBox
+        Column {
+            BackTitle(title)
+            PrintGrid(onEnd = {}) {
+                gridItems(albums, key = { it.id }, contentType = { "album" }) { a ->
+                    AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
+                }
+            }
+        }
+    }
+}
+
 /** An artist's page: [ui] null while the detail is on the wire, [failed] when it did not come. */
 @Composable
 private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: ActionsViewModel, vm: ArtistViewModel, leave: (String) -> Unit) {
@@ -378,9 +398,9 @@ private fun ArtistPage(artist: Artist, ui: ArtistUi?, failed: String?, actions: 
                 groups.forEachIndexed { n, (group, albums) ->
                     item(key = "group-$n", contentType = "shelf") {
                         Column(late(arrival)) {
-                            SectionTitle(group)
-                            LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 120.dp, { nav.album(a.id, a) }) }
+                            SectionTitle(group, onMore = { nav.artistReleases(artist.id, n) })
+                            LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(albums, key = { it.id }) { a -> AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), PRINT, { nav.album(a.id, a) }) }
                             }
                         }
                     }

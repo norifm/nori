@@ -138,6 +138,8 @@ class Nav(private val c: NavHostController, private val sheet: PlayerSheet, priv
         if (hint != null) artists[id] = hint
         go("artist/${Uri.encode(id)}")
     }
+    /** One shelf of an artist's page in full: [group] is its place among the page's shelves. */
+    fun artistReleases(id: String, group: Int) = go("artist/${Uri.encode(id)}/releases/$group")
     fun playlist(id: String, hint: dev.nori.music.ffi.model.Playlist? = null) {
         if (hint != null) playlists[id] = hint
         go("playlist/${Uri.encode(id)}")
@@ -561,6 +563,7 @@ fun App(launchRoute: androidx.compose.runtime.MutableState<String?>? = null) {
                         AlbumScreen(it.arguments!!.getString("id")!!, actions, viewModel<dev.nori.music.app.vm.DownloadedAlbumViewModel>())
                     }
                     page("artist/{id}", inset = false) { ArtistScreen(it.arguments!!.getString("id")!!, actions) }
+                    page("artist/{id}/releases/{group}") { ArtistReleasesScreen(it.arguments!!.getString("id")!!, it.arguments!!.getString("group")!!.toInt()) }
                     page("playlist/{id}", inset = false) { PlaylistScreen(it.arguments!!.getString("id")!!, actions) }
                     page("mix/{id}", inset = false) { MixScreen(it.arguments!!.getString("id")!!, actions) }
                     page("genre/{id}", inset = false) { GenreScreen(it.arguments!!.getString("id")!!, actions) }
