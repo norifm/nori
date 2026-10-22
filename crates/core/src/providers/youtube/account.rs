@@ -38,6 +38,8 @@ pub(super) struct Kept {
 pub(super) struct Session {
     kept: parking_lot::Mutex<Option<Option<Kept>>>,
     rechecked: std::sync::atomic::AtomicBool,
+    /// Held across a rotation: calls that find the session due together rotate it once.
+    rotating: futures_util::lock::Mutex<()>,
 }
 
 pub(super) fn unix_now() -> u64 {
@@ -95,13 +97,15 @@ impl State {
     /// refusal leaves it for the next call. An ended session is asked about once a profile opening, and
     /// taken up again if YouTube still knows its cookies.
     pub(super) async fn fresh_session(&self, c: &Client, now: u64) {
-        let Some(mut kept) = self.kept(c) else { return };
+        let Some(kept) = self.kept(c) else { return };
         if kept.ended {
             return self.recheck(c, kept).await;
         }
         if !yt::auth::rotation_due(kept.rotated_at, now) {
             return;
         }
+        let _rotating = self.session.rotating.lock().await;
+        let Some(mut kept) = self.kept(c).filter(|k| !k.ended && yt::auth::rotation_due(k.rotated_at, now)) else { return };
         let latest = stored(&c.core.db.lock());
         if let Some(newer) = latest.filter(|l| *l != kept) {
             self.api.set_cookies((!newer.ended).then(|| yt::Cookies::parse(&newer.cookies)));
@@ -116,7 +120,8 @@ impl State {
         }
         match self.api.rotate(&Wire(&*c.transport)).await {
             Ok(_) => {
-                let cookies = self.api.take_changed().map_or(kept.cookies, |c| c.header());
+                self.api.take_changed();
+                let cookies = self.api.cookies().map_or(kept.cookies, |c| c.header());
                 self.keep(c, Some(Kept { cookies, rotated_at: now, ended: false, quiet: false }));
             }
             Err(e) => {
