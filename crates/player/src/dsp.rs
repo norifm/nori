@@ -805,7 +805,7 @@ impl Equalizer {
                 // Side bands need two channels.
                 let routable = b.channel == CH_BOTH || (s.channels >= 2 && (b.channel == CH_LEFT || b.channel == CH_RIGHT));
                 let shaped = !b.kind.uses_gain() || b.gain_db.abs() >= 0.05;
-                if routable && shaped && b.freq > 0.0 && b.freq < rate / 2.0 {
+                if routable && shaped && b.freq > 0.0 && b.freq < rate / 2.0 && b.q.is_finite() {
                     s.filters.push(Biquad::new(rate, &Band { gain_db: b.gain_db.clamp(-24.0, 24.0), ..*b }));
                 }
             }
@@ -1194,7 +1194,7 @@ mod tests {
     #[test]
     fn bad_settings_are_harmless() {
         let mut eq = Equalizer::new(48000, 2);
-        let bad = [b(EqKind::Peaking, f64::NAN, 6.0, 1.0), b(EqKind::Peaking, 30000.0, 6.0, 1.0), b(EqKind::Peaking, -100.0, 6.0, 1.0), b(EqKind::Peaking, 1000.0, f64::NAN, 1.0)];
+        let bad = [b(EqKind::Peaking, f64::NAN, 6.0, 1.0), b(EqKind::Peaking, 30000.0, 6.0, 1.0), b(EqKind::Peaking, -100.0, 6.0, 1.0), b(EqKind::Peaking, 1000.0, f64::NAN, 1.0), b(EqKind::Peaking, 1000.0, 6.0, f64::NAN)];
         eq.configure(&bad, f64::NAN, 0.0);
         assert!(eq.is_identity(), "no band survived, so the processor can be skipped");
         eq.configure_output(f64::NAN, false, f64::NAN, -5.0, f64::INFINITY);
