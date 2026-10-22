@@ -98,12 +98,12 @@ impl Client {
             saved.songs.get(saved.index as usize).map(|s| s.id.clone())
         });
         let Page::Queue { v, by } = self.read_now(Read::PullQueue).await? else { return Ok(None) };
-        Ok(queue_offer(v, &by, here.as_deref(), playing, self.queue_pushed.lock().as_ref(), self.queue_seen.lock().as_ref()))
+        Ok(queue_offer(v, &by, here.as_deref(), playing, self.queue_place(QUEUE_PUSHED).as_ref(), self.queue_place(QUEUE_SEEN).as_ref()))
     }
 
     /// `offer` was taken or turned down: that queue is not offered again.
     pub fn queue_offer_done(&self, offer: QueueOffer) {
-        *self.queue_seen.lock() = offer.place();
+        self.remember_queue_place(QUEUE_SEEN, offer.place());
     }
 }
 
@@ -175,6 +175,24 @@ impl Client {
         let Ok(random) = self.songs(Read::RandomSongs { size: MIX_FALLBACK_SONGS, genre: None }).await else { return false };
         self.core.mix_draw(id, day, again, Some(random));
         true
+    }
+}
+
+/// Where the queue this device last handed the server stood, and the server's queue last offered here
+/// ([`Client::queue_offer`]): stored, so neither comes back as an offer after a restart.
+pub(crate) const QUEUE_PUSHED: &str = "queue_pushed";
+pub(crate) const QUEUE_SEEN: &str = "queue_seen";
+
+impl Client {
+    fn queue_place(&self, key: &str) -> Option<QueuePlace> {
+        nori_db::kv_get(&self.core.db.lock(), key).ok().flatten().and_then(|j| serde_json::from_str(&j).ok())
+    }
+
+    pub(crate) fn remember_queue_place(&self, key: &str, place: Option<QueuePlace>) {
+        let Some(place) = place else { return };
+        if let Ok(json) = serde_json::to_string(&place) {
+            let _ = nori_db::kv_put(&self.core.db.lock(), key, &json);
+        }
     }
 }
 
