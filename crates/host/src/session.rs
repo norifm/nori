@@ -785,6 +785,19 @@ impl Handle {
         }
     }
 
+    /// A page's Shuffle (`pages::hero_buttons`): while the queue is the one `page` started, turns its
+    /// shuffle off or on, the song playing going on. False when it is not: the page's songs start shuffled.
+    pub fn shuffle_page(&self, page: &PageOrigin) -> bool {
+        let q = &self.core.session;
+        let here = q.origin().as_ref() == Some(page);
+        match nori_core::pages::hero_buttons(here, q.shuffle_shown(), false, false, true, true).shuffle_press {
+            nori_core::pages::HeroPress::ShuffleOff => self.shuffle(false),
+            nori_core::pages::HeroPress::ShuffleOn => self.shuffle(true),
+            nori_core::pages::HeroPress::Start | nori_core::pages::HeroPress::Toggle => return false,
+        }
+        true
+    }
+
     pub fn repeat(&self, mode: u8) {
         if !self.there(Press::Repeat { mode }) {
             self.repeat_here(mode);
@@ -1575,6 +1588,32 @@ mod tests {
             let _ = sent.send(matches!(r, Ok(crate::pages::HomePart::Mixes(_))));
         });
         assert!(parts.recv_timeout(Duration::from_secs(5)).unwrap(), "the first part is \"For you\"");
+        s.close();
+    }
+
+    #[test]
+    fn a_page_shuffle_turns_its_own_queue_off_and_on() {
+        let dir = nori_testdir::TempDir::new("host-page-shuffle");
+        let settings = nori_core::settings_store::Settings::new();
+        let mut prefs = settings.open(&db_path(dir.path())).unwrap();
+        prefs.remote_control = false;
+        settings.put(prefs);
+        let queue = Arc::new(nori_core::queue::Session::new(settings));
+        let profile = SavedServer { id: "t".into(), user: "Ann".into(), ..Default::default() };
+        let s = Session::open(Open { offline: true, ..test_open(queue, dir.path(), profile, Box::new(nori_engine::wav::WavOutput::new(dir.join("out.wav"), 1.0))) }).unwrap();
+        let (album, other) = (PageOrigin::new(nori_core::OriginKind::Album, "al"), PageOrigin::new(nori_core::OriginKind::Album, "other"));
+        let songs: Vec<Song> = ["a", "b", "c", "d"].map(|id| Song { id: id.into(), ..Default::default() }).into();
+        s.play(songs, 0, true, Some(album.clone()));
+        let playing = || s.core.session.playlist(|p| p.current_id().map(str::to_string));
+        let started = playing();
+        assert!(!s.shuffle_page(&other), "another page's Shuffle starts its own songs");
+        assert!(s.shuffle_page(&album));
+        assert!(!s.core.session.shuffle_shown());
+        assert_eq!(playing(), started, "the song playing goes on");
+        assert_eq!(s.core.session.playlist(|p| p.play_order().collect::<Vec<_>>()), [0, 1, 2, 3]);
+        assert!(s.shuffle_page(&album));
+        assert!(s.core.session.shuffle_shown());
+        assert_eq!(playing(), started);
         s.close();
     }
 

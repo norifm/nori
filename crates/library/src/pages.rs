@@ -267,8 +267,10 @@ pub enum HeroPress {
     Start,
     /// Pause or resume the queue this page started.
     Toggle,
-    /// Turn shuffle off for the queue this page started.
+    /// Turn shuffle off for the queue this page started: the song playing goes on, the rest in order.
     ShuffleOff,
+    /// Shuffle the queue this page started around the song playing.
+    ShuffleOn,
 }
 
 /// A page's Shuffle and Play as they stand.
@@ -286,14 +288,18 @@ pub struct HeroButtons {
 }
 
 /// The big buttons for the page's own queue (`here`): Play toggles it, Shuffle lights while it shuffles
-/// and turns shuffle off. Away from it, both start the page's songs when `can_play` / `can_shuffle`.
+/// and turns its shuffle off or on. Away from it, both start the page's songs when `can_play` / `can_shuffle`.
 pub fn hero_buttons(here: bool, shuffle: bool, playing: bool, buffering: bool, can_play: bool, can_shuffle: bool) -> HeroButtons {
     let lit = shuffle && here;
     let pausing = here && (playing || buffering);
     HeroButtons {
         shuffle_lit: lit,
-        shuffle_enabled: lit || can_shuffle,
-        shuffle_press: if lit { HeroPress::ShuffleOff } else { HeroPress::Start },
+        shuffle_enabled: here || can_shuffle,
+        shuffle_press: match (here, shuffle) {
+            (false, _) => HeroPress::Start,
+            (true, true) => HeroPress::ShuffleOff,
+            (true, false) => HeroPress::ShuffleOn,
+        },
         pausing,
         play_enabled: here || can_play,
         play_press: if here { HeroPress::Toggle } else { HeroPress::Start },
@@ -548,7 +554,9 @@ mod tests {
         assert_eq!(away.pack() & 0b100, 0, "Play, not Pause");
         let here = hero_buttons(true, true, false, true, true, true);
         assert_eq!((here.shuffle_lit, here.pausing, here.play_press, here.shuffle_press), (true, true, HeroPress::Toggle, HeroPress::ShuffleOff));
-        assert!(hero_buttons(true, false, true, false, true, true).pausing, "playing pauses too");
+        let unshuffled = hero_buttons(true, false, true, false, false, false);
+        assert!(unshuffled.pausing, "playing pauses too");
+        assert_eq!((unshuffled.shuffle_lit, unshuffled.shuffle_enabled, unshuffled.shuffle_press), (false, true, HeroPress::ShuffleOn), "shuffles its own queue again, not a new one");
         let waiting = hero_buttons(false, false, false, false, false, false);
         assert!(!waiting.play_enabled && !waiting.shuffle_enabled);
         assert!(hero_buttons(true, false, false, false, false, false).play_enabled, "its own queue can always be resumed");

@@ -1896,6 +1896,9 @@ impl App {
 
     fn play_page(&self, shuffle: bool) {
         let Some(fetch) = self.page_fetch.clone() else { return };
+        if shuffle && self.session.as_ref().is_some_and(|s| s.shuffle_page(&fetch.origin())) {
+            return;
+        }
         // An artist's Play is all its songs, not the few its page lists.
         if self.page_songs.is_empty() || matches!(fetch, Fetch::Artist(_)) {
             self.on_session(|s| s.play_later(fetch, shuffle));

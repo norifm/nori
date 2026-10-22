@@ -655,14 +655,12 @@ class PlaybackService : MediaLibraryService() {
             if (resetPosition) setMediaItems(mediaItems, C.INDEX_UNSET, C.TIME_UNSET) else setMediaItems(mediaItems, wrappedPlayer.currentMediaItemIndex, wrappedPlayer.currentPosition)
         override fun setMediaItems(mediaItems: List<MediaItem>, startIndex: Int, startPositionMs: Long) {
             offlineBridge?.abandon()
-            // A list already in the order it plays (a weighted shuffle) goes in as it is, shown as
-            // shuffled; the player's own shuffle, which would undo that order, goes off.
-            val ordered = mediaItems.firstOrNull()?.inOrder() == true
+            // A list shuffled ahead (a weighted shuffle) plays in its order (MediaItems.shuffled).
+            val order = mediaItems.firstOrNull()?.shuffledAs()
             // The page it was started from, if any (MediaItems.origin): a new queue replaces the last one's.
             val origin = mediaItems.firstOrNull()?.origin()
-            val c = if (ordered) nori.session.playlistSetOrdered(ids(mediaItems), origin)
+            val c = if (order != null) nori.session.playlistSetShuffled(ids(mediaItems), order.map { it.toUInt() }, origin)
             else nori.session.playlistSet(ids(mediaItems), startIndex.coerceAtMost(mediaItems.size - 1).takeIf { it >= 0 }?.toUInt(), wrappedPlayer.shuffleModeEnabled, origin)
-            if (ordered && wrappedPlayer.shuffleModeEnabled) super.setShuffleModeEnabled(false)
             super.setMediaItems(mediaItems, c.at?.toInt() ?: 0, if (startIndex == C.INDEX_UNSET) C.TIME_UNSET else startPositionMs)
             onQueueSet?.invoke()
         }

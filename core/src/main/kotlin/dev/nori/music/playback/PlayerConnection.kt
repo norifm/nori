@@ -499,8 +499,8 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     }
 
     /**
-     * Play [songs] in [order] (positions in it, the core's weighted shuffle) while keeping the Shuffle
-     * control lit. Used for weighted artist-spread shuffles: media3's own shuffle would undo the spread.
+     * Play [songs] shuffled into [order] (positions in it, the core's weighted shuffle; media3's own would
+     * undo the spread). Shuffle turned off then plays [songs] in their order from the song playing.
      */
     fun playShuffledOrder(songs: List<Song>, order: List<UInt>, from: PageOrigin? = null) = with { c ->
         if (songs.isEmpty() || order.isEmpty()) return@with
@@ -509,13 +509,12 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             return@with
         }
         nori.session.playlistShowShuffle(true)
-        // Marked as already in order: the service takes it as it is and turns the player's own shuffle off.
-        val made = items(songs)
-        val items = order.map { made[it.toInt()] }
-        c.setMediaItems(startedFrom(listOf(items.first().ordered()) + items.drop(1), from), 0, 0)
+        c.shuffleModeEnabled = true
+        val made = items(songs).toMutableList()
+        made[0] = made[0].shuffled(order.map { it.toInt() }.toIntArray())
+        c.setMediaItems(startedFrom(made, from), order.first().toInt(), 0)
         c.prepare()
         c.play()
-        _state.value = _state.value.copy(shuffle = true)
     }
 
     // Where these land is the core's (nori_player::playlist::Playlist::take): after the playing song, and

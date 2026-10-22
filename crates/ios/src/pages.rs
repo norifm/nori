@@ -1126,7 +1126,7 @@ fn page_origin(kind: i32, id: &str) -> Option<PageOrigin> {
 
 /// A headed page's Play and Shuffle as they stand (`pages::hero_buttons`), packed as
 /// `HeroButtons::pack` says: while the queue playing was started from this page, Play pauses and
-/// resumes it and Shuffle turns its shuffle off. `playing` and `buffering` are what the app shows.
+/// resumes it and Shuffle turns its shuffle off or on. `playing` and `buffering` are what the app shows.
 fn hero(origin: Option<&PageOrigin>, page: &PageOrigin, shuffled: bool, playing: bool, buffering: bool) -> i32 {
     let here = origin == Some(page);
     nori_core::pages::hero_buttons(here, shuffled, playing, buffering, true, true).pack()

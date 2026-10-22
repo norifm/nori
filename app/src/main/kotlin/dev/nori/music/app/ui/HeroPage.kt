@@ -255,7 +255,7 @@ fun HeroPage(
                     when (p) {
                         dev.nori.music.ffi.library.HeroPress.START -> start?.invoke()
                         dev.nori.music.ffi.library.HeroPress.TOGGLE -> player.toggle()
-                        dev.nori.music.ffi.library.HeroPress.SHUFFLE_OFF -> player.toggleShuffle()
+                        dev.nori.music.ffi.library.HeroPress.SHUFFLE_OFF, dev.nori.music.ffi.library.HeroPress.SHUFFLE_ON -> player.toggleShuffle()
                     }
                 }
                 CircleButton(
@@ -388,5 +388,6 @@ private val MIX_ART = 236.dp
 private fun heroPress(bits: Int) = when (bits and 3) {
     1 -> dev.nori.music.ffi.library.HeroPress.TOGGLE
     2 -> dev.nori.music.ffi.library.HeroPress.SHUFFLE_OFF
+    3 -> dev.nori.music.ffi.library.HeroPress.SHUFFLE_ON
     else -> dev.nori.music.ffi.library.HeroPress.START
 }

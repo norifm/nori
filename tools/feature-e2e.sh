@@ -598,6 +598,9 @@ text=open(sys.argv[1]).read()
 ids=re.findall(r': in\|downloaded:[^|]+\|([^ ]+) \|',text)
 assert ids == sys.argv[2:], ids
 CAR
+  # A tap on the song already current resumes it as it was and opens the player (ActionsViewModel.tap);
+  # an earlier section can leave this album's first track there, so another song is current.
+  "$app" play "$OTHER" >/dev/null; wait_for playing True 20 >/dev/null; "$app" do pause >/dev/null
   "$app" open library >/dev/null
   check "the library's Downloads button opens its page" tapnode content-desc Downloads
   check "the phone lists the saved album" wait_until 10 on_screen 'text="Long Album"'
