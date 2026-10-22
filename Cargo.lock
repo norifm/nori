@@ -1396,7 +1396,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.6",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3568,7 +3568,7 @@ dependencies = [
 [[package]]
 name = "innertube-music"
 version = "0.1.0"
-source = "git+https://github.com/filipton/innertube-music#cf0f4c52adc4a85e67435d56ab654b53332b296a"
+source = "git+https://github.com/filipton/innertube-music#68594e8ea53bbcf949dc1b1f2ead8aa075387350"
 dependencies = [
  "serde_json",
  "sha1_smol",
