@@ -59,7 +59,7 @@ class Player {
       node.connect(ctx.destination);
       facts.rate = ctx.sampleRate;
       // The sound card's clock, which the worklet's times are on.
-      Object.defineProperty(facts, "audioTime", { get: () => ctx.currentTime, enumerable: true });
+      Object.defineProperty(facts, "audioTime", { get: () => ctx.currentTime, enumerable: true, configurable: true });
       if (!rpc.player) ui.say(W.loadingPlayer);
       // A new line each time the player worker starts (again, after a crash).
       await rpc.soundTo(() => {
@@ -68,7 +68,12 @@ class Player {
         return { port: line.port2, rate: ctx.sampleRate, ear: ctx.baseLatency + (ctx.outputLatency || 0) };
       });
       if (ui.toast === W.loadingPlayer) ui.say("");
-    })();
+    })().catch((e) => {
+      // A failed setup is made again by the next Play.
+      this.audio = this.made = undefined;
+      void ctx.close();
+      throw e;
+    });
     return this.made;
   }
 
@@ -130,7 +135,7 @@ class Player {
     this.held = this.audio?.state === "suspended" && n?.state === "Playing";
     if (n?.id !== before) this.songChanged();
     // Music handed over from another device plays here: the sound card is made for it.
-    if (n?.state === "Playing" && !n.device && !n.jam && !this.audio) void this.soundCard();
+    if (n?.state === "Playing" && !n.device && !n.jam && !this.audio) void this.soundCard().catch(() => {});
   }
 
   private songChanged() {
