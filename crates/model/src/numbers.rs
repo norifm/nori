@@ -95,6 +95,19 @@ pub fn khz(rate: i32) -> String {
     format!("{:?}", rate as f64 / 1000.0)
 }
 
+/// A record's format from a song's file: "FLAC 24/96.0" (a lossless one with its depth known), else
+/// "MP3 320 kbps"; each part only if known, None when neither is.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn quality(suffix: &str, bit_depth: u32, sampling_rate: u32, bit_rate: u32) -> Option<String> {
+    let detail = if crate::model::is_lossless(suffix) && bit_depth > 0 {
+        Some(format!("{bit_depth}/{}", khz(sampling_rate as i32)))
+    } else {
+        (bit_rate > 0).then(|| format!("{bit_rate} kbps"))
+    };
+    let parts: Vec<String> = [(!suffix.is_empty()).then(|| suffix.to_uppercase()), detail].into_iter().flatten().collect();
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
 fn localised(text: String, decimal: &str) -> String {
     if decimal == POINT { text } else { text.replacen('.', decimal, 1) }
 }
@@ -120,6 +133,21 @@ fn half_up(v: f64, places: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quality_says_depth_for_lossless_else_bitrate() {
+        let cases = [
+            (("flac", 24, 96000, 2900), Some("FLAC 24/96.0")),
+            (("flac", 0, 44100, 900), Some("FLAC 900 kbps")),
+            (("mp3", 16, 44100, 320), Some("MP3 320 kbps")),
+            (("opus", 0, 48000, 0), Some("OPUS")),
+            (("", 0, 0, 128), Some("128 kbps")),
+            (("", 0, 0, 0), None),
+        ];
+        for ((suffix, depth, rate, kbps), want) in cases {
+            assert_eq!(quality(suffix, depth, rate, kbps).as_deref(), want, "{suffix} {depth} {rate} {kbps}");
+        }
+    }
 
     /// Printed by Java's `String.format` (OpenJDK 21, root locale): value bits, places, plus, result.
     const JAVA: &[(u64, u32, bool, &str)] = &[
