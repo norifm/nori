@@ -489,7 +489,7 @@ impl Offload {
 
     /// Whether song `i` joins a neighbour of its album gaplessly (`nori_player::transitions::in_album_order`).
     pub(crate) fn in_album<L: Library, Q: Queue>(&self, i: usize, tracks: &Sources<L>, queue: &Known<Q>) -> bool {
-        let (ids, before, after, shuffling) = queue.read(|q| {
+        let (before, song, after, shuffling) = queue.read(|q| {
             let repeat = q.repeat();
             (q.ids().to_vec(), q.previous_of(i, repeat), q.next_of(i, repeat), q.shuffling())
         });
