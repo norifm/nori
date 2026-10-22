@@ -165,10 +165,13 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
 
     @objc private func changed() {
         paintToggles()
+        if !table.hasActiveDrag { readIfChanged() }
+    }
+
+    private func readIfChanged() {
         let n = Core.shared.now
         let key = "\(n.index) \(n.length) \(n.shuffle) \(n.repeatMode) \(n.song?.id ?? "")"
-        guard key != seen, !table.hasActiveDrag else { return }
-        read()
+        if key != seen { read() }
     }
 
     private func paintToggles() {
@@ -378,6 +381,11 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
     func tableView(_ tableView: UITableView, itemsForBeginning session: UIDragSession, at indexPath: IndexPath) -> [UIDragItem] {
         guard reorderable, Part(rawValue: indexPath.section) == .next else { return [] }
         return [UIDragItem(itemProvider: NSItemProvider())]
+    }
+
+    /// Changes that came during the drag are read now (a cancelled drag moves nothing, so nothing else reads).
+    func tableView(_ tableView: UITableView, dragSessionDidEnd session: UIDragSession) {
+        readIfChanged()
     }
 
     func tableView(_ tableView: UITableView, dropSessionDidUpdate session: UIDropSession, withDestinationIndexPath destination: IndexPath?) -> UITableViewDropProposal {
