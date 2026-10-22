@@ -80,6 +80,7 @@ import dev.nori.music.app.vm.SettingRow
 import dev.nori.music.app.vm.SettingsSection
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
+import dev.nori.music.ffi.settings.KeyAction
 import dev.nori.music.ffi.settings.SavedServer
 
 /**
@@ -639,13 +640,13 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                                 Text(row.title, style = MaterialTheme.typography.bodyLarge, color = if (row.on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 // Under the words, in line with them: a key is set where the service is.
-                                val keyLabel = if (row.keySet) say.changeKey else if (row.takesKey && !row.keyed) say.addKey else null
+                                val keyLabel = when (row.keyButton) { KeyAction.CHANGE -> say.changeKey; KeyAction.ADD -> say.addKey; KeyAction.NONE -> null }
                                 if (keyLabel != null) Text(
                                     keyLabel, Modifier.padding(top = 6.dp).clickable { keying = row },
                                     style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
                                 )
                             }
-                            NoriSwitch(row.on, { on -> if (on && row.keyed && !row.keySet) keying = row else vm.set(row.name, on.toString()) })
+                            NoriSwitch(row.on, { on -> if (on && row.asksKey) keying = row else vm.set(row.name, on.toString()) })
                         }
                         Hairline(startIndent = 16.dp)
                     }

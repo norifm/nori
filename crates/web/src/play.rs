@@ -229,7 +229,7 @@ impl Nori {
 
     /// What the app offers over the profile open.
     pub(crate) fn rules(&self) -> nori_core::browse::ProfileRules {
-        self.with(|h| h.rules.clone()).unwrap_or_default()
+        self.with(|h| h.rules()).unwrap_or_default()
     }
 
     /// What a jam adds to song menus: starting one, or asking the host as its guest.
@@ -316,6 +316,19 @@ impl Nori {
         let n = songs.len();
         if n > 0 {
             self.with(|h| h.play(songs, 0, false, None));
+        }
+        Ok(n)
+    }
+
+    /// Plays everything artist `id` has in the library, shuffled with `shuffle`: the songs played (0: none).
+    pub async fn play_artist(&self, id: String, shuffle: bool) -> Result<usize, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let what = nori_host::Fetch::Artist(id);
+        let from = what.origin();
+        let songs = what.songs(&client).await.map_err(error)?;
+        let n = songs.len();
+        if n > 0 {
+            self.with(|h| h.play(songs, 0, shuffle, Some(from)));
         }
         Ok(n)
     }
@@ -444,7 +457,7 @@ impl Nori {
                 "volume": h.volume(),
                 "device": n.device,
                 "jam": n.jam,
-                "asks": h.rules.asks,
+                "asks": h.rules().asks,
                 "underruns": status.as_ref().map_or(0, |s| s.underruns),
                 "transition": status.as_ref().and_then(|s| s.id.as_deref()).and_then(|id| h.core.session.planner.transition_note(id)).map(|t| json!({ "kind": format!("{:?}", t.kind), "into": t.incoming_id, "reason": t.reason })),
             })
@@ -561,6 +574,14 @@ impl Nori {
             .to_string()
         })
         .unwrap_or_else(|| "null".into())
+    }
+
+    /// Starts a jam around song `start` of `songs` (JSON): they play here, then it opens. Its invite link
+    /// (null when one is open or being started already).
+    pub async fn jam_start(&self, songs: String, start: usize) -> Result<Option<String>, JsValue> {
+        let songs: Vec<Song> = serde_json::from_str(&songs).map_err(error)?;
+        let h = self.with(|h| nori_host::session::Handle::clone(h)).ok_or_else(|| error("not signed in"))?;
+        h.start_jam(songs, start, None).await.ok_or_else(|| error("remote control is off"))?.map_err(error)
     }
 
     /// Starts hosting a jam; its invite link (null when one is being started already).

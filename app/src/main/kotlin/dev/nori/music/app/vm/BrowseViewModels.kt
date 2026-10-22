@@ -20,6 +20,8 @@ import dev.nori.music.ffi.library.PlaylistDetail
 import dev.nori.music.ffi.model.RadioStation
 import dev.nori.music.ffi.model.Song
 import dev.nori.music.ffi.library.Starred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -210,13 +212,14 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
     val rows: StateFlow<List<List<Album>>> = _rows
     // Where each of [rows] starts in [albums].
     private var rowStarts: List<Int> = emptyList()
-    private var loading = false
+    private var job: Job? = null
     private var exhausted = false
 
     init { loadMore() }
 
     fun setSort(s: AlbumSort) {
         if (s == _sort.value) return
+        job?.cancel()
         _sort.value = s
         val kept = albumSortKept(s)
         nori.settings.update { it.copy(listPrefs = it.listPrefs + (kept.key to kept.value)) }
@@ -225,26 +228,21 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
         _rows.value = emptyList()
         rowStarts = emptyList()
         exhausted = false
-        loading = false
         loadMore()
     }
 
     fun loadMore() {
-        if (loading || exhausted) return
-        loading = true
+        if (exhausted || job?.isActive == true) return
         val sort = _sort.value
         val offset = _albums.value.size
-        viewModelScope.launch {
+        job = viewModelScope.launch {
             nori.library.albums(sort, pageSize, offset).catch { }.collect { page ->
-                if (sort != _sort.value) return@collect
                 val all = _albums.value.from(offset, page)
                 if (sort == AlbumSort.ARTIST_ROWS) regroup(all, offset)
-                if (sort != _sort.value) return@collect
                 _albums.value = all
                 exhausted = albumsExhausted(page.size.toUInt())
                 _none.value = offset == 0 && page.isEmpty()
             }
-            loading = false
         }
     }
 
@@ -254,7 +252,6 @@ class AlbumsViewModel(app: Application) : NoriViewModel(app) {
         val kept = rowStarts.count { it < from }
         val tail = all.subList(from, all.size).toList()
         val added = withContext(Dispatchers.Default) { artistRows(tail) }.map { it.toInt() }
-        if (_sort.value != AlbumSort.ARTIST_ROWS) return
         rowStarts = rowStarts.take(kept) + added.map { from + it }
         _rows.value = _rows.value.take(kept) + added.mapIndexed { i, s -> tail.subList(s, added.getOrElse(i + 1) { tail.size }) }
     }
@@ -377,7 +374,7 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
     private val _songs = MutableStateFlow(Grown.empty<Song>())
     val songs: StateFlow<List<Song>> = _songs
     private var years: IntRange? = null
-    private var loading = false
+    private var job: Job? = null
     private var exhausted = false
 
     init { loadMore() }
@@ -390,22 +387,23 @@ class SongsViewModel(app: Application) : NoriViewModel(app) {
         reset()
     }
     fun setStarredOnly(on: Boolean) { _starred.value = on; reset() }
-    private fun reset() { _songs.value = Grown.empty(); exhausted = false; loading = false; loadMore() }
+    private fun reset() { job?.cancel(); _songs.value = Grown.empty(); exhausted = false; loadMore() }
 
     fun loadMore() {
-        if (loading || exhausted) return
-        loading = true
+        if (exhausted || job?.isActive == true) return
         val s = _sort.value
         val st = _starred.value
         val y = years
         val offset = _songs.value.size
-        viewModelScope.launch {
+        job = viewModelScope.launch {
             // A page that could not be read ends the list, as an empty one would.
             val next = runCatching {
                 nori.library.songsListed(s.name, st, (y?.first ?: 0).toUInt(), (y?.last ?: 0).toUInt(), offset.toUInt())
             }.getOrNull()
-            if (s == _sort.value && st == _starred.value && y == years) { _songs.value = _songs.value.plus(next?.songs.orEmpty()); exhausted = next?.exhausted ?: true }
-            loading = false
+            // runCatching also caught a cancellation: a reset while the page was being read drops it.
+            ensureActive()
+            _songs.value = _songs.value.plus(next?.songs.orEmpty())
+            exhausted = next?.exhausted ?: true
         }
     }
 }

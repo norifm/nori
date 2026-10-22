@@ -16,17 +16,11 @@
   const a = $derived(page.data?.artist);
   const albums = $derived(page.data?.albums ?? []);
   const songs = $derived(page.data?.songs ?? []);
-
-  async function playAll(shuffle: boolean) {
-    const all: Song[] = albums.length ? [] : [...songs];
-    for (const al of albums) all.push(...((await read<{ songs: Song[] }>({ kind: "album", id: al.id })).songs ?? []));
-    await player.play(all, 0, shuffle, "Artist", id);
-  }
 </script>
 
 <Page back ready={!!a} error={page.error}>
   {#if a}
-    <Hero cover={a.cover} title={a.name} round fallback="artist" facts={!albums.length && songs.length ? W.songCount(songs.length) : W.albumCount(albums.length)} onplay={(s) => void playAll(s)}>
+    <Hero cover={a.cover} title={a.name} round fallback="artist" facts={!albums.length && songs.length ? W.songCount(songs.length) : W.albumCount(albums.length)} onplay={(s) => void player.playArtist(id, s)}>
       {#snippet actions()}<Seal what="artist" id={a.id} on={!!a.starred} />{/snippet}
     </Hero>
     {#if songs.length}<h2 class="section">{W.songs}</h2><SongList {songs} kind="Artist" id={a.id} shown={page.data?.few} />{/if}

@@ -9,7 +9,29 @@
   import Page from "../ui/Page.svelte";
 
   let { sort }: { sort: string } = $props();
-  const page = reading("albums", () => read<{ albums: Album[] }>({ kind: "albums", sort, size: 500, offset: 0 }).then((p) => p.albums ?? []));
+  const ask = (offset: number) => read<{ albums?: Album[]; next: number | null }>({ kind: "albums", sort, size: 500, offset });
+  const page = reading("albums", () => ask(0));
+  /** The pages after the first, read one after another once it is in. */
+  let rest = $state.raw<Album[]>([]);
+  $effect(() => {
+    const first = page.data;
+    rest = [];
+    let gone = false;
+    void (async () => {
+      // An album the server moved between two pages comes once.
+      const seen = new Set(first?.albums?.map((a) => a.id));
+      for (let next = first?.next; next != null && !gone; ) {
+        const p = await ask(next);
+        if (gone) return;
+        rest = [...rest, ...(p.albums ?? []).filter((a) => !seen.has(a.id) && !!seen.add(a.id))];
+        next = p.next;
+      }
+    })();
+    return () => {
+      gone = true;
+    };
+  });
+  const albums = $derived([...(page.data?.albums ?? []), ...rest]);
 </script>
 
 <Page title={W.albums} back ready={!!page.data} error={page.error}>
@@ -18,7 +40,7 @@
       <button class="chip" class:on={k === sort} role="radio" aria-checked={k === sort} onclick={() => go("albums", k)}>{v}</button>
     {/each}
   </div>
-  <Cards albums={page.data ?? []} />
+  <Cards {albums} />
 </Page>
 
 <style>

@@ -138,7 +138,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
 
     /**
      * The mirrored device's queue and playback as the page's state; its rows are in play order already. A
-     * jam [guest] skips by its role ([jam]), and its play button shows what [jam] says.
+     * jam [guest]'s play button shows what [jam] says.
      */
     private fun showMirror(m: Mirror, guest: Boolean, jam: dev.nori.music.ffi.JamControls? = null) {
         _mixing.value = m.playing && m.mixing
@@ -146,11 +146,9 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
         val songs = m.rows.map { it.song }
         val queue = if (songs == old.queue) old.queue else songs
         val at = m.at?.toInt() ?: -1
-        val all = m.repeat.toInt() == Player.REPEAT_MODE_ALL && m.rows.size.toUInt() == m.len
         _state.value = old.copy(
             connected = true, queue = queue, index = at,
-            nextIndex = if (at < 0 || (guest && jam?.controls?.skip == Reach.NOWHERE)) -1 else (at + 1).takeIf { it < queue.size } ?: (if (all) 0 else -1),
-            previousIndex = if (at < 0 || (guest && jam?.controls?.skip == Reach.NOWHERE)) -1 else (at - 1).takeIf { it >= 0 } ?: (if (all) queue.lastIndex else -1),
+            nextIndex = m.next?.toInt() ?: -1, previousIndex = m.previous?.toInt() ?: -1,
             order = if (old.order.size == queue.size && old.order.withIndex().all { (k, v) -> k == v }) old.order else queue.indices.toList(),
             queued = emptySet(), radio = null, playing = jam?.playing ?: m.playing, advancing = m.playing && !m.buffering, buffering = m.buffering && m.playing, shuffle = m.shuffle,
             repeat = when (m.repeat.toInt()) { Player.REPEAT_MODE_ALL -> Repeat.ALL; Player.REPEAT_MODE_ONE -> Repeat.ONE; else -> Repeat.OFF },
@@ -499,8 +497,8 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
     }
 
     /**
-     * Play [songs] in [order] (positions in it, the core's weighted shuffle) while keeping the Shuffle
-     * control lit. Used for weighted artist-spread shuffles: media3's own shuffle would undo the spread.
+     * Play [songs] shuffled into [order] (positions in it, the core's weighted shuffle; media3's own would
+     * undo the spread). Shuffle turned off then plays [songs] in their order from the song playing.
      */
     fun playShuffledOrder(songs: List<Song>, order: List<UInt>, from: PageOrigin? = null) = with { c ->
         if (songs.isEmpty() || order.isEmpty()) return@with
@@ -509,13 +507,12 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             return@with
         }
         nori.session.playlistShowShuffle(true)
-        // Marked as already in order: the service takes it as it is and turns the player's own shuffle off.
-        val made = items(songs)
-        val items = order.map { made[it.toInt()] }
-        c.setMediaItems(startedFrom(listOf(items.first().ordered()) + items.drop(1), from), 0, 0)
+        c.shuffleModeEnabled = true
+        val made = items(songs).toMutableList()
+        made[0] = made[0].shuffled(order.map { it.toInt() }.toIntArray())
+        c.setMediaItems(startedFrom(made, from), order.first().toInt(), 0)
         c.prepare()
         c.play()
-        _state.value = _state.value.copy(shuffle = true)
     }
 
     // Where these land is the core's (nori_player::playlist::Playlist::take): after the playing song, and

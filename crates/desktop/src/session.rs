@@ -180,7 +180,7 @@ impl Session {
         }
     }
 
-    /// Requests a cover at `px` square; large ones also get page colours, derived on the loader thread.
+    /// Requests a cover at `px` square; large ones also get page colours, derived off this thread.
     pub fn cover(&self, key: CoverKey, px: u32) -> Option<Ticket> {
         let (send, colours) = (self.sender(), key.size != CoverSize::Card);
         self.host.cover(key.id.clone(), px, colours, move |image, colours| {
@@ -191,6 +191,17 @@ impl Session {
     /// Remote control, while it is on: the other devices and moving the music between them.
     pub fn remote(&self) -> Option<Arc<nori_core::remote::Remote>> {
         self.host.remote()
+    }
+
+    /// Starts a jam around `songs[start]` ([`nori_host::session::Handle::start_jam`]); [`Msg::Jam`] says
+    /// whether it opened.
+    pub fn start_jam(&self, songs: Vec<nori_core::Song>, start: usize) {
+        let (host, send) = (nori_host::session::Handle::clone(&self.host), self.sender());
+        nori_host::spawn("nori-jam", move || {
+            if let Some(opened) = nori_core::transport::block_on(host.start_jam(songs, start, None)) {
+                send(Msg::Jam(opened.map(drop).map_err(|e| net_error(&e))));
+            }
+        });
     }
 
     /// Starts hosting a jam on the server's relay; [`Msg::Jam`] says whether it opened.

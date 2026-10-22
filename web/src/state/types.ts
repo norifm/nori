@@ -58,7 +58,7 @@ export type Timing = { kind: "NotChecked" | "DoesNotFit" | "Unsure" | "Automatic
 export type Shown = { song: string; lyrics: Lyrics; origin: string; timing: Timing };
 
 export type Jam = {
-  start: "Offered" | "Starting" | "Hosting" | "Unavailable";
+  start: "Offered" | "Starting" | "Hosting" | "Unsupported" | "Unavailable";
   guest: boolean;
   hosting: boolean;
   link: string | null;

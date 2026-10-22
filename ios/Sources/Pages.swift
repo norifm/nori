@@ -984,12 +984,13 @@ class PageController: UITableViewController {
     }
 
     /// Play or Shuffle pressed: start the page's songs, or (its queue playing) pause and resume it or turn
-    /// its shuffle off, as the core says.
+    /// its shuffle off or on, as the core says.
     private func heroPressed(shuffle: Bool) {
         let press = (heroBits() >> (shuffle ? 4 : 6)) & 3
         switch press {
         case 1: nori_ios_toggle()
         case 2: nori_ios_shuffle(0)
+        case 3: nori_ios_shuffle(1)
         default: play(shuffle: shuffle)
         }
     }

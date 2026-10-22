@@ -110,6 +110,8 @@ pub enum Req {
     Playlist(String),
     Favorites,
     Downloads,
+    /// The downloads screen's queue sections only, for the refresh while downloads run.
+    DownloadProgress,
     Facts,
 }
 
@@ -126,6 +128,7 @@ pub enum Data {
     Artist(Box<ArtistDetail>),
     Playlist(Box<PlaylistDetail>),
     Downloads(Box<Downloads>),
+    DownloadProgress(Box<nori_core::transfers::DownloadSections>),
     Facts(Box<Facts>),
 }
 
@@ -136,6 +139,8 @@ pub struct Downloads {
     pub queued: Vec<Song>,
     pub failed: Vec<Song>,
     pub stored: nori_core::library::DownloadedLibrary,
+    /// How many songs this session had finished when `stored` was read; more means read it again.
+    pub finished: usize,
 }
 
 /// Key prefix of album card covers in [`crate::art::Art`]: `thumb:<cover id>`.
@@ -228,7 +233,7 @@ impl Session {
             Req::Artist(id) => Some(PageAsk::Artist(id)),
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
             Req::Favorites => Some(PageAsk::Favorites),
-            Req::Home | Req::Downloads | Req::Facts => None,
+            Req::Home | Req::Downloads | Req::DownloadProgress | Req::Facts => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
@@ -259,8 +264,12 @@ impl Session {
                 let core = self.core.clone();
                 nori_host::spawn("nori-read", move || {
                     let stored = core.downloaded_library();
-                    send(stored.and_then(|stored| core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { active: s.active, queued: s.queued, failed: s.failed, stored })))).map_err(|e| e.to_string()));
+                    send(stored.and_then(|stored| core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { finished: s.finished.len(), active: s.active, queued: s.queued, failed: s.failed, stored })))).map_err(|e| e.to_string()));
                 });
+            }
+            Req::DownloadProgress => {
+                let core = self.core.clone();
+                nori_host::spawn("nori-read", move || send(core.download_sections().map(|s| Data::DownloadProgress(Box::new(s))).map_err(|e| e.to_string())));
             }
             Req::Facts => {
                 let (core, client, store, db, offline) = (self.core.clone(), self.client.clone(), self.store.clone(), self.db.clone(), self.offline);

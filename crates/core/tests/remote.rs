@@ -1138,6 +1138,9 @@ fn a_jam_takes_requests_through_its_host() {
     let m = gus.until("the host's queue in Gus's player", |r| r.jam_playing().filter(|m| m.rows.len() == 3));
     assert_eq!(m.rows.iter().map(|r| r.song.id.as_str()).collect::<Vec<_>>(), ["s1", "s5", "s2"], "in play order: what was asked for plays next");
     assert_eq!((m.name.as_str(), m.at, m.playing), ("Host", Some(0), true));
+    assert_eq!((m.next, m.previous), (None, None), "a guest's skips reach nowhere");
+    let admin = dee.until("the host's queue in Dee's player", |r| r.jam_playing().filter(|m| m.rows.len() == 3));
+    assert_eq!((admin.next, admin.previous), (Some(1), None), "an admin's skip the host's queue");
     let latest = 9_000 + (relay.sim.now_us() - said_before) / 1_000;
     assert!((9_000..=latest).contains(&m.position_ms), "the published position advances from the report: {} outside 9000..={latest}", m.position_ms);
     assert_eq!(gus.remote.jam_added().get("s5").map(String::as_str), Some("Dee"));
@@ -1313,10 +1316,12 @@ fn nearby_devices_need_no_relay() {
 #[test]
 fn a_server_without_the_relay_is_asked_again_only_by_a_picker() {
     let relay = Relay::absent();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let dir = nori_testdir::TempDir::new("remote-no-relay");
+    let phone = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
     phone.until("the answer", |r| (r.relay() == RelaySupport::Unsupported).then_some(()));
     let asked = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.")).count();
     assert_eq!(asked(), 1, "one probe");
+    assert_eq!(phone.remote.jam_start(), JamStart::Unsupported, "every screen says the server lacks the relay");
 
     // Serving, watching and playing go on without the relay; a jam is refused before anything is asked.
     phone.playing(&["s1"], 0);
@@ -1334,7 +1339,8 @@ fn a_server_without_the_relay_is_asked_again_only_by_a_picker() {
 #[test]
 fn a_picker_opened_asks_again_whether_the_server_relays() {
     let relay = Relay::absent();
-    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let dir = nori_testdir::TempDir::new("remote-no-relay");
+    let phone = Device::kept(&relay, &dir, DeviceKind::Phone, "Phone");
     phone.until("the answer", |r| (r.relay() == RelaySupport::Unsupported).then_some(()));
     let asked = || relay.asked().iter().filter(|a| a.starts_with("noriRemote.")).count();
 
@@ -1347,6 +1353,7 @@ fn a_picker_opened_asks_again_whether_the_server_relays() {
     relay.absent.store(false, Ordering::Relaxed);
     phone.remote.clone().watch(true);
     phone.until("the relay", |r| (r.relay() == RelaySupport::Supported).then_some(()));
+    assert_eq!(phone.remote.jam_start(), JamStart::Offered);
     phone.until("polling", |_| (phone.polls(&relay) >= 3).then_some(()));
     relay.close();
 }
@@ -1505,9 +1512,11 @@ fn a_device_playing_elsewhere_is_mirrored_whole() {
     desk.remote.clone().watch(true);
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
     desk.remote.clone().watch(false);
+    assert!(!desk.remote.mirroring());
     desk.remote.clone().pick(Some(phone_id.clone()));
     let order: Vec<u32> = phone.core.session.playlist(|p| p.play_order().map(|i| i as u32).collect());
     let m = desk.until("the whole queue", |r| r.active().filter(|m| m.rows.len() == 130));
+    assert!(desk.remote.mirroring());
     assert_eq!(m.rows.iter().map(|r| r.index).collect::<Vec<_>>(), order, "in play order, by list index");
     assert_eq!(m.at.map(|a| m.rows[a as usize].song.id.clone()), Some("s60".to_string()));
     assert!(m.shuffle && m.playing && m.len == 130);
@@ -1540,12 +1549,32 @@ fn a_device_playing_elsewhere_is_mirrored_whole() {
     // Gone: no longer followed, and nothing more is asked of the relay for it.
     phone.remote.clone().serve(false);
     desk.until("the phone gone", |r| r.active().is_none().then_some(()));
+    assert!(!desk.remote.mirroring());
     let asked = desk.polls(&relay);
     let other = Device::account(&relay, DeviceKind::Phone, "Other");
     other.playing(&["s1"], 0);
     other.remote.clone().serve(true);
     other.until("serving", |_| (relay.asked().iter().filter(|a| a.ends_with(&other.remote.id())).count() >= 2).then_some(()));
     assert_eq!(desk.polls(&relay), asked, "the desk stopped polling with nothing to follow");
+    relay.close();
+}
+
+#[test]
+fn a_page_past_the_end_of_a_queue_that_shrank_is_empty() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2", "s3"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
+
+    desk.remote.clone().send(phone_id, Op::Page { from: 10, count: 50 });
+    eventually(&relay, "an empty page", || {
+        let hub = relay.hub.lock();
+        hub.rooms.values().flat_map(|r| &r.events).any(|(_, _, _, b)| matches!(b, Body::Page { from: 10, entries, .. } if entries.is_empty()))
+    });
     relay.close();
 }
 

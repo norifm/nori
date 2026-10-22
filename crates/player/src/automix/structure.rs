@@ -40,15 +40,20 @@ fn z(v: &mut [f64]) {
     v.iter_mut().for_each(|x| *x = if sd > 1e-12 { (*x - mean) / sd } else { 0.0 });
 }
 
-/// Mean chroma, unit length, of the chroma frames centred in `[a, b)`.
-fn chroma_between(f: &Features, a: f64, b: f64) -> [f64; 12] {
-    let mut c = [0f64; 12];
+/// The chroma frames centred in `[a, b)`.
+fn chroma_frames(f: &Features, a: f64, b: f64) -> &[[f32; 12]] {
     if f.chroma_step <= 0.0 {
-        return c;
+        return &[];
     }
     let j0 = ((a - f.chroma_t0) / f.chroma_step).ceil().max(0.0) as usize;
     let j1 = (((b - f.chroma_t0) / f.chroma_step).ceil().max(0.0) as usize).min(f.chroma.len());
-    for frame in f.chroma.get(j0..j1.max(j0)).unwrap_or(&[]) {
+    f.chroma.get(j0..j1.max(j0)).unwrap_or(&[])
+}
+
+/// Mean chroma, unit length, of the chroma frames centred in `[a, b)`.
+fn chroma_between(f: &Features, a: f64, b: f64) -> [f64; 12] {
+    let mut c = [0f64; 12];
+    for frame in chroma_frames(f, a, b) {
         for (a, v) in c.iter_mut().zip(frame) {
             *a += *v as f64;
         }
@@ -210,9 +215,7 @@ fn frames_between<'a>(f: &Features, v: &'a [f32], a: f64, b: f64) -> &'a [f32] {
 fn bar_vector(f: &Features, a: f64, b: f64) -> [f64; 6] {
     let mean = |v: &[f32]| if v.is_empty() { 0.0 } else { v.iter().map(|x| *x as f64).sum::<f64>() / v.len() as f64 };
     let tonal = {
-        let j0 = ((a - f.chroma_t0) / f.chroma_step).ceil().max(0.0) as usize;
-        let j1 = (((b - f.chroma_t0) / f.chroma_step).ceil().max(0.0) as usize).min(f.chroma.len());
-        let frames = f.chroma.get(j0..j1.max(j0)).unwrap_or(&[]);
+        let frames = chroma_frames(f, a, b);
         let sum: f64 = frames.iter().map(|c| c.iter().map(|v| *v as f64).sum::<f64>()).sum();
         loudness::db(sum * sum / frames.len().max(1) as f64 + 1e-12)
     };
@@ -228,6 +231,11 @@ fn bar_vector(f: &Features, a: f64, b: f64) -> [f64; 6] {
 
 /// Unit length of the section search without a beat grid, seconds.
 const BLOCK_S: f64 = 2.0;
+
+/// `t` moved to the nearest of the `snap` beats within a block, else unchanged.
+fn snap_to_beat(snap: &[f64], t: f64) -> f64 {
+    snap.iter().copied().filter(|b| (b - t).abs() <= BLOCK_S).min_by(|a, b| (a - t).abs().total_cmp(&(b - t).abs())).unwrap_or(t)
+}
 
 /// Intro end and outro start among `units` (unit start times, the last one the end): Foote novelty between the 4
 /// units before and after each `step`-th boundary. The intro ends at the first early change that does not thin
@@ -261,9 +269,6 @@ fn section_changes(f: &Features, units: &[f64], step: usize, snap: &[f64], music
         (novelty, fuller)
     };
     let novelty_min = if snap.is_empty() { NOVELTY_MIN } else { NOVELTY_MIN_BLOCKS };
-    let to_beat = |t: f64| -> f64 {
-        snap.iter().copied().filter(|b| (b - t).abs() <= BLOCK_S).min_by(|a, b| (a - t).abs().total_cmp(&(b - t).abs())).unwrap_or(t)
-    };
     let len = music.1 - music.0;
     let candidates: Vec<usize> = (SECTION_SPAN..=n - 2).filter(|m| m % step == 0).collect();
     let intro = candidates
@@ -273,7 +278,7 @@ fn section_changes(f: &Features, units: &[f64], step: usize, snap: &[f64], music
             let (nov, fuller) = change(m);
             nov >= novelty_min && fuller > -FULLER_EPS
         })
-        .map(|&m| to_beat(units[m]));
+        .map(|&m| snap_to_beat(snap, units[m]));
     let outro_from = (music.0 + 0.5 * len).max(music.1 - 90.0);
     let outro = candidates
         .iter()
@@ -283,7 +288,7 @@ fn section_changes(f: &Features, units: &[f64], step: usize, snap: &[f64], music
             let (nov, fuller) = change(m);
             nov >= novelty_min && fuller < FULLER_EPS
         })
-        .map(|&m| to_beat(units[m]));
+        .map(|&m| snap_to_beat(snap, units[m]));
     (intro, outro)
 }
 
@@ -407,7 +412,7 @@ pub fn breakdown(t: &Tempo, db: &Downbeat, f: &Features, music: (f64, f64), end:
             && v[m..n].iter().all(|r| r[0] <= before[0] - BREAK_STAY_DB)
     })?;
     let at = units[m];
-    Some(snap.iter().copied().filter(|b| (b - at).abs() <= BLOCK_S).min_by(|a, b| (a - at).abs().total_cmp(&(b - at).abs())).unwrap_or(at))
+    Some(snap_to_beat(snap, at))
 }
 
 /// `cues` on the bar grid; a beatless opening is the intro.

@@ -47,7 +47,7 @@ const artist = sung.artistId ?? (await read({ kind: "artists" })).artists[0].id;
 // Something plays, with lyrics, and a jam is hosted.
 await go(`#/album/${sung.id}`, "album");
 await (await page.$$(".songs li .play"))[0].click();
-await page.waitForFunction(() => (window.nori.heard?.seconds ?? 0) > 1, { timeout: 60000 });
+await page.waitForFunction(async () => ((await window.nori.heard?.())?.seconds ?? 0) > 1, { timeout: 60000 });
 await page.click("#bar [data-pane=lyrics]");
 await page.waitForFunction(() => window.nori.lyrics, { timeout: 30000 });
 await page.click("#full [aria-label=Close]");

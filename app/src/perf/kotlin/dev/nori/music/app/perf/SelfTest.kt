@@ -783,7 +783,7 @@ internal class SelfTest(private val app: Application, private val recorder: Reco
             if (RestoreStep.REPEAT in steps) for (k in 0 until 3) if (st.repeat.ordinal != before.repeat) { player.cycleRepeat(); until(1_500) { st.repeat.ordinal == before.repeat } }
             if (RestoreStep.RESUME in steps) { player.toggle(); until(10_000) { st.playing } }
             delay(500)
-            val after = if (before.serviceRunning || before.ids.isNotEmpty()) snap() else snap().copy(serviceRunning = before.serviceRunning)
+            val after = snap()
             problems += restoreProblems(before, after)
             val m = "${before.ids.size} songs at queue place ${before.index}, ${secs(before.positionMs)}, ${if (before.playing) "playing" else "paused"}"
             return outcome(s, Judged(m, problems))

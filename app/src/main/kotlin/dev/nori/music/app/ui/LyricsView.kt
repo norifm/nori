@@ -157,18 +157,21 @@ fun LyricsView(vm: PlayerViewModel, actions: ActionsViewModel, playing: Boolean)
                 // inside it, and a song change then goes from one song's words straight to the next's
                 // instead of flashing the loader between them. They fade in, never appear.
                 LyricsPhase.LOADING -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    // Counted in frames like the fades around it, so a slow frame cannot skip it.
-                    var seen by remember { mutableFloatStateOf(0f) }
-                    LaunchedEffect(Unit) {
-                        delay(LOADER_AFTER_MS)
-                        var last = withFrameNanos { it }
-                        while (seen < 1f) {
-                            val now = withFrameNanos { it }
-                            seen = if (AppMotion.reduce) 1f else (seen + ((now - last) / 1e6f).coerceIn(0f, FADE_MAX_STEP_MS) / LOADER_FADE_MS).coerceAtMost(1f)
-                            last = now
+                    // Nothing runs while the player is put away: the frames would be nobody's.
+                    if (shown) {
+                        // Counted in frames like the fades around it, so a slow frame cannot skip it.
+                        var seen by remember { mutableFloatStateOf(0f) }
+                        LaunchedEffect(Unit) {
+                            delay(LOADER_AFTER_MS)
+                            var last = withFrameNanos { it }
+                            while (seen < 1f) {
+                                val now = withFrameNanos { it }
+                                seen = if (AppMotion.reduce) 1f else (seen + ((now - last) / 1e6f).coerceIn(0f, FADE_MAX_STEP_MS) / LOADER_FADE_MS).coerceAtMost(1f)
+                                last = now
+                            }
                         }
+                        LoadingDots(Modifier.graphicsLayer { alpha = fadeEase(seen) }, dot = 9.dp)
                     }
-                    LoadingDots(Modifier.graphicsLayer { alpha = fadeEase(seen) }, dot = 9.dp)
                 }
                 else -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     val look = LocalLook.current

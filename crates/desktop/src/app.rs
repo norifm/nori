@@ -396,6 +396,8 @@ pub struct App {
     tick_ms: u64,
     /// The window is off screen (minimized, covered): the seek bar, lyrics and playing bars stand still.
     hidden: bool,
+    /// Motion is E-ink: the playing bars stand still.
+    still: bool,
     /// Lyrics are on screen (Now Playing's lyrics or the side sheet): only then are they fetched.
     lyrics_viewed: bool,
     lists: Lists,
@@ -500,13 +502,10 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
 fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
     list.truncate(offset as usize);
     list.extend_from_slice(page);
-    let next = offset + page.len() as u32;
-    // Every page is read at once here, and a random order never runs out.
-    let more = !nori_core::browse::albums_exhausted(page.len() as u32) && sort != AlbumSort::Random && *asked < next;
-    more.then(|| {
-        *asked = next;
-        next
-    })
+    // Every page is read at once here.
+    let next = nori_core::browse::next_album_page(sort, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|&n| *asked < n)?;
+    *asked = next;
+    Some(next)
 }
 
 /// The profile the sign-in form saves from its fields (name, address, user, password) for provider `info`:
@@ -599,6 +598,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             tick: Timer::default(),
             tick_ms: 0,
             hidden: false,
+            still: false,
             lyrics_viewed: false,
             facts: crate::settings::Facts::default(),
             lists: Lists::default(),
@@ -1294,11 +1294,14 @@ impl App {
     /// Dresses every window in the page's look, cross-fading from the one worn unless motion is reduced.
     fn repaint(&mut self) {
         let want = self.page_look();
-        let places = crate::session::app().settings.current().unwrap_or_default().cover_colors;
-        self.ui().set_pages_wear_covers(places.contains(&nori_core::settings::CoverPlace::Pages));
-        self.ui().set_player_wears_covers(places.contains(&nori_core::settings::CoverPlace::Player));
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        self.ui().set_pages_wear_covers(prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Pages));
+        self.ui().set_player_wears_covers(prefs.cover_colors.contains(&nori_core::settings::CoverPlace::Player));
         // nori's Motion setting, as on Android: animations run unless it asks for less.
-        let reduced = crate::session::app().settings.current().unwrap_or_default().motion != nori_core::settings::Motion::Full;
+        let motion = prefs.motion;
+        let reduced = motion != nori_core::settings::Motion::Full;
+        self.still = motion == nori_core::settings::Motion::Eink;
+        self.advancing();
         self.ui().global::<Motion>().set_reduced(reduced);
         if let Some(p) = &self.player {
             p.global::<Motion>().set_reduced(reduced);
@@ -1511,19 +1514,17 @@ impl App {
 
     fn rows(&self, songs: &[Song]) -> ModelRc<SongRow> {
         let heard = self.heard.as_deref();
-        let find = self.find.to_lowercase();
-        let hit = |s: &Song| find.is_empty() || [&s.title, &s.artist, &s.album].iter().any(|t| t.to_lowercase().contains(&find));
+        let find = nori_core::pages::Find::new(&self.find);
         let row = |(i, s): (usize, &Song)| SongRow { by: if self.asked.contains(&s.id) { words::ASKED.into() } else { SharedString::default() }, ..row(s, i, heard == Some(s.id.as_str())) };
-        ModelRc::new(VecModel::from(songs.iter().enumerate().filter(|(_, s)| hit(s)).map(row).collect::<Vec<_>>()))
+        ModelRc::new(VecModel::from(songs.iter().enumerate().filter(|(_, s)| find.keeps_song(s)).map(row).collect::<Vec<_>>()))
     }
 
     /// Re-applies the find filter to every list.
     fn narrowed(&self) {
         let ui = self.ui();
-        let find = self.find.to_lowercase();
-        let found = |title: &str, sub: &str| find.is_empty() || title.to_lowercase().contains(&find) || sub.to_lowercase().contains(&find);
-        let pick = |v: &[Card]| cards(v.iter().filter(|c| found(&c.title, &c.sub)).cloned());
-        let albums: Vec<nori_core::Album> = self.lists.albums.iter().filter(|a| found(&a.name, &a.artist)).cloned().collect();
+        let find = nori_core::pages::Find::new(&self.find);
+        let pick = |v: &[Card]| cards(v.iter().filter(|c| find.keeps(&[c.title.as_str(), c.sub.as_str()])).cloned());
+        let albums: Vec<nori_core::Album> = self.lists.albums.iter().filter(|a| find.keeps(&[&a.name, &a.artist])).cloned().collect();
         if self.album_sort == AlbumSort::ArtistRows {
             let starts = nori_core::browse::artist_rows(albums.clone());
             let ends = starts.iter().skip(1).copied().chain([albums.len() as u32]);
@@ -1735,10 +1736,7 @@ impl App {
         };
         match how {
             -1 => self.on_session(|s| s.play(songs, i, false, origin)),
-            15 => self.on_session(|s| {
-                s.play(songs, i, false, None);
-                s.jam_open();
-            }),
+            15 => self.on_session(|s| s.start_jam(songs, i)),
             _ => self.song_act(one, how),
         }
     }
@@ -1890,6 +1888,9 @@ impl App {
 
     fn play_page(&self, shuffle: bool) {
         let Some(fetch) = self.page_fetch.clone() else { return };
+        if shuffle && self.session.as_ref().is_some_and(|s| s.shuffle_page(&fetch.origin())) {
+            return;
+        }
         // An artist's Play is all its songs, not the few its page lists.
         if self.page_songs.is_empty() || matches!(fetch, Fetch::Artist(_)) {
             self.on_session(|s| s.play_later(fetch, shuffle));
@@ -2434,10 +2435,10 @@ impl App {
         let (side_w, full_w) = (320.0 - 44.0 - 2.0, width / 2.0 - 140.0 - 2.0);
         renew(&self.pieces[0], pieces(0, side, 22.0, side_w, 1.0, 0.36));
         renew(&self.pieces[1], pieces(1, full, 44.0, full_w, 1.0, 0.36));
-        if let Some(rows) = l.rows(0, 22.0, side_w) {
+        if let Some(rows) = side.then(|| l.rows(0, 22.0, side_w)).flatten() {
             ui.set_lyrics_side_rows(rows);
         }
-        if let Some(rows) = l.rows(1, 44.0, full_w) {
+        if let Some(rows) = full.then(|| l.rows(1, 44.0, full_w)).flatten() {
             ui.set_lyrics_full_rows(rows);
         }
         ui.set_lyric_sung(now.sung.into());
@@ -2621,9 +2622,8 @@ impl App {
         let guest = self.guest();
         let jams = guest || crate::session::app().settings.prefs(|p| p.remote_control);
         let remote = self.session.as_ref().and_then(|s| s.remote()).filter(|_| jams);
-        let unsupported = remote.as_ref().is_some_and(|r| r.relay() == nori_core::remote::RelaySupport::Unsupported);
+        let unsupported = remote.as_ref().is_some_and(|r| r.jam_start() == nori_core::remote::JamStart::Unsupported);
         let view = remote.as_ref().and_then(|r| r.jam_view());
-        let lan = remote.as_ref().is_some_and(|r| r.pairing_link().is_some());
         let pairing = remote.as_ref().and_then(|r| r.pairing_link()).unwrap_or_default();
         if ui.get_pairing_link() != pairing.as_str() {
             ui.set_pairing_qr(if pairing.is_empty() { Image::default() } else { crate::jam::qr(&pairing) });
@@ -2632,9 +2632,9 @@ impl App {
         if pairing.is_empty() {
             ui.set_pairing_open(false);
         }
-        g.set_on(remote.is_some() && (!unsupported || lan) && !guest);
+        g.set_on(remote.is_some() && !unsupported && !guest);
         g.set_guest(guest);
-        g.set_note(if unsupported && !lan && !guest { words::JAM_UNSUPPORTED.into() } else { "".into() });
+        g.set_note(if unsupported { words::JAM_UNSUPPORTED.into() } else { "".into() });
         g.set_hosting(view.as_ref().is_some_and(|v| v.hosting));
         g.set_along(view.as_ref().is_some_and(|v| v.along));
         g.set_remote_songs(view.as_ref().is_some_and(|v| v.remote_songs));
@@ -2965,10 +2965,10 @@ impl App {
         }
     }
 
-    /// Whether the music moves now, for the playing bars: playing and not waiting for bytes.
+    /// Whether the playing bars move now: the music plays, not waiting for bytes, and Motion is not E-ink.
     fn advancing(&self) {
         let ui = self.ui();
-        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering() && !self.hidden);
+        ui.global::<crate::Playing>().set_advancing(ui.get_playing() && !ui.get_buffering() && !self.hidden && !self.still);
     }
 
     /// Syncs the window with what the player shows: this computer's playback and queue, the device's
@@ -3217,9 +3217,9 @@ mod tests {
         let (mut list, mut asked) = (Vec::new(), 0);
         assert_eq!(albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked), Some(full as u32));
         assert_eq!(albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(full, 3), &mut asked), None, "the last page");
-        assert_eq!(list.len(), full + 3);
-        assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 2).to_string()));
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(full, 100), &mut asked), None, "the last page");
+        assert_eq!(list.len(), full + 100);
+        assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 99).to_string()));
         let (mut list, mut asked) = (Vec::new(), 0);
         assert_eq!(albums_paged(&mut list, AlbumSort::Random, 0, &page(0, full), &mut asked), None, "a random order is one page");
     }

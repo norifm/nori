@@ -9,33 +9,7 @@ use nori_look::theme::{self, Palette, Season};
 
 use crate::Theme;
 
-/// A calendar date, and whether the zone it is in lies south of the equator (the seasons turn half a year
-/// later there).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Today {
-    pub month: u32,
-    pub day: u32,
-    pub southern: bool,
-}
-
-impl Today {
-    /// The local date now.
-    pub fn now() -> Today {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        let (month, day) = theme::utc_date(now + nori_core::library::local_offset_s(now));
-        Today { month, day, southern: zone().is_some_and(|z| theme::southern(&z)) }
-    }
-}
-
-/// The IANA id of the local time zone, from the link `/etc/localtime` is.
-fn zone() -> Option<String> {
-    let target = std::fs::read_link("/etc/localtime").ok()?;
-    zone_of(&target.to_string_lossy()).map(str::to_string)
-}
-
-fn zone_of(link: &str) -> Option<&str> {
-    link.split_once("zoneinfo/").map(|(_, zone)| zone)
-}
+pub use nori_host::desktop::Today;
 
 /// What the app wears: the colors of a page, plus the few the theme keeps whatever the page.
 #[derive(Clone, PartialEq, Debug)]
@@ -237,12 +211,5 @@ mod tests {
         let half = light.towards(&dark, 0.5).page();
         assert!(nori_look::color::luminance(half) < nori_look::color::luminance(light.page()));
         assert!(nori_look::color::luminance(half) > nori_look::color::luminance(dark.page()));
-    }
-
-    #[test]
-    fn the_zone_is_what_follows_zoneinfo_in_the_link() {
-        assert_eq!(zone_of("/var/db/timezone/zoneinfo/Australia/Sydney"), Some("Australia/Sydney"));
-        assert_eq!(zone_of("../usr/share/zoneinfo/Europe/Warsaw"), Some("Europe/Warsaw"));
-        assert_eq!(zone_of("/etc/localtime"), None);
     }
 }

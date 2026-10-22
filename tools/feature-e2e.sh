@@ -598,6 +598,9 @@ text=open(sys.argv[1]).read()
 ids=re.findall(r': in\|downloaded:[^|]+\|([^ ]+) \|',text)
 assert ids == sys.argv[2:], ids
 CAR
+  # A tap on the song already current resumes it as it was and opens the player (ActionsViewModel.tap);
+  # an earlier section can leave this album's first track there, so another song is current.
+  "$app" play "$OTHER" >/dev/null; wait_for playing True 20 >/dev/null; "$app" do pause >/dev/null
   "$app" open library >/dev/null
   check "the library's Downloads button opens its page" tapnode content-desc Downloads
   check "the phone lists the saved album" wait_until 10 on_screen 'text="Long Album"'
@@ -620,8 +623,12 @@ CAR
   check "the car's Favorites tab loads" car_read starred
   check "the favorite crosses the native media browser" grep -Fq "in|starred|$first_id |" "$car_log"
   [ "$was_starred" = True ] || "$app" do "star song:$first_id" >/dev/null
+  # The downloaded album's page is still open: removing its tracks empties it while its ⋯ menu fades out.
+  check "the downloaded album's page is still open" wait_for route "downloaded/{id}" 8
+  app_pid=$(adb shell pidof "$pkg" | tr -d '\r')
   "$app" do "undownload album:$album_id" >/dev/null
   check "removing the saved tracks removes the album folder" wait_until 20 removed_album
+  check "emptying the open downloaded album does not crash the app" test "$(adb shell pidof "$pkg" | tr -d '\r')" = "$app_pid"
   rm -f "$car_log"
 fi
 

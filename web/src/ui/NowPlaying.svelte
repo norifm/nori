@@ -19,6 +19,8 @@
 
   const s = $derived(player.song!);
   const n = $derived(player.now);
+  // `s` is new on every refresh; the cover's address compares by value.
+  const cover = $derived(s.cover);
   /** On a wide screen something is always beside the cover: the lyrics unless another was picked. */
   const pane = $derived<Pane | null>(ui.pane ?? (ui.wide ? "lyrics" : null));
   const panes: [Pane, string, string][] = [
@@ -34,7 +36,7 @@
   // The cover's colors and wash, as Android's player wears them; the page's own until they come.
   let look = $state<CoverLook | null>(null);
   $effect(() => {
-    const src = s.cover;
+    const src = cover;
     let gone = false;
     if (src) void coverLook(src).then((l) => !gone && (look = l));
     else look = null;

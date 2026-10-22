@@ -2,7 +2,7 @@
 
 use nori_automix::beats::{EndGrid, MixEnd};
 use nori_automix::analysis::Analyzer;
-use nori_automix::store::{get, get_voice, missing, neural_missing, put, put_finished, AnalysisStream};
+use nori_automix::store::{get, get_voice, measure, missing, neural_missing, put, put_finished, AnalysisStream};
 
 use crate::{Core, Result, TrackAnalysis};
 
@@ -68,7 +68,8 @@ impl Core {
         if a.samples() < (a.rate() * 30.0) as u64 {
             return Ok(None);
         }
-        let stored = put_finished(&self.db.lock(), song_id, &a.take_features())?;
+        let (track, curve) = measure(song_id, &a.take_features());
+        let stored = put_finished(&self.db.lock(), track, &curve)?;
         self.session.planner.analyses_changed();
         Ok(Some(stored))
     }

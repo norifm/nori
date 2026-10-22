@@ -56,6 +56,9 @@ const ready = (async () => {
   scope.postMessage({ ready: { ms: Math.round(performance.now() - t0), stored: nori.stored, player, codecs } });
 })();
 
+/** The pull buffer, kept between passes; a transferred one is detached (length 0) and so replaced. */
+let out = new Float32Array(0);
+
 /** Runs the engine, tops the worklet up, and comes back when the engine asks to. */
 function pump() {
   if (!nori || !player) return;
@@ -65,7 +68,7 @@ function pump() {
   order();
   const channels = nori.channels() as number;
   while (worklet && channels > 0) {
-    const out = new Float32Array(CHUNK * channels);
+    if (out.length !== CHUNK * channels) out = new Float32Array(CHUNK * channels);
     const frames = nori.pull(out) as number;
     if (frames === 0) break;
     const pcm = frames === CHUNK ? out : out.slice(0, frames * channels);
@@ -89,15 +92,27 @@ function order() {
   if (orders) for (const o of JSON.parse(orders)) worklet.postMessage(o);
 }
 
+/** Who waits for the worklet's diagnostics. */
+const diagnosing: ((h: unknown) => void)[] = [];
+
+/** What the worklet heard, asked for once (null before there is a sound card). */
+function diagnose(): Promise<unknown> {
+  if (!worklet) return Promise.resolve(null);
+  return new Promise((r) => {
+    diagnosing.push(r);
+    worklet!.postMessage({ diagnose: true });
+  });
+}
+
 /** The sound card's port, rate and latency to the ear (s), from the page on the first Play. */
 function audio(port: MessagePort, rate: number, ear: number) {
   nori!.set_card(rate, ear * 1000);
   worklet = port;
   worklet.onmessage = (w: MessageEvent) => {
+    if (w.data.heard) return diagnosing.splice(0).forEach((r) => r(w.data.heard));
     const { played, flushed } = w.data;
     if (flushed) nori!.flushed(played, flushed.dropped, flushed.flushes);
     else nori!.played(played);
-    scope.postMessage({ heard: w.data });
     pump();
   };
 }
@@ -109,6 +124,7 @@ scope.onmessage = async (e: MessageEvent) => {
   try {
     let value: unknown;
     if (call === "audio") audio(args[0] as MessagePort, args[1] as number, args[2] as number);
+    else if (call === "heard") value = await diagnose();
     else {
       const f = nori![call];
       if (typeof f !== "function") throw new Error(`no call ${call}`);

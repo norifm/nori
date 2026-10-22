@@ -86,7 +86,7 @@ pub(crate) mod tests {
         l.iter().map(|s| s.id.as_str()).collect()
     }
 
-    /// Evaluates with SQL and with the Rust matcher and asserts they agree.
+    /// Evaluates, and asserts that counting agrees with paging.
     fn eval(core: &Core, json: &str, downloaded: &[&str]) -> Vec<String> {
         let def = parse(json).unwrap();
         let downloaded: Vec<String> = downloaded.iter().map(|s| s.to_string()).collect();
@@ -94,22 +94,6 @@ pub(crate) mod tests {
         let (page, n) = run(&c, &def, &downloaded, 0, 10_000, false, NOW).unwrap();
         assert_eq!(n, page.len());
         assert_eq!(run(&c, &def, &downloaded, 0, 0, true, NOW).unwrap().1, n, "count agrees with evaluate");
-
-        let env = Env { downloaded: downloaded.iter().map(String::as_str).collect(), now_ms: NOW };
-        let mut by_rust: Vec<String> = Vec::new();
-        let mut st = c.prepare("SELECT rowid FROM items WHERE kind=2").unwrap();
-        for rowid in st.query_map([], |r| r.get::<_, i64>(0)).unwrap() {
-            let row = load(&c, rowid.unwrap()).unwrap().unwrap();
-            if matches(&def.root, &row, &env) {
-                by_rust.push(row.song.id);
-            }
-        }
-        if def.limit.is_none() && def.limit_ms.is_none() {
-            let mut by_sql: Vec<String> = page.iter().map(|s| s.id.clone()).collect();
-            by_sql.sort();
-            by_rust.sort();
-            assert_eq!(by_sql, by_rust, "SQL and Rust disagree on {json}");
-        }
         page.into_iter().map(|s| s.id).collect()
     }
 
@@ -287,7 +271,7 @@ pub(crate) mod tests {
         let c = core.db.lock();
         let plan = |json: &str| -> String {
             let def = parse(json).unwrap();
-            let mut cp = Compiler { args: Vec::new(), downloaded: &[], downloaded_arg: None, now_ms: NOW, needs_rust: false };
+            let mut cp = Compiler { args: Vec::new(), downloaded: &[], downloaded_arg: None, now_ms: NOW };
             let cond = cp.node(&def.root);
             let sql = format!("EXPLAIN QUERY PLAN SELECT i.rowid {} WHERE {} AND {cond}", tables(&def.root), mixes::SONGS);
             let mut st = c.prepare(&sql).unwrap();
@@ -387,6 +371,73 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn non_ascii_text_rules_are_exact_in_sql() {
+        let core = Core::new(String::new(), "t".into(), Default::default()).unwrap();
+        let titles = ["Été", "ÉTÉ", "été", "Summer", "100% été", "坂本の曲", "Straße"];
+        let artists = ["Björk", "BJÖRK", "björk", "坂本龍一", "Sakamoto", "Beyoncé", "STRASSE"];
+        let songs: Vec<Song> = (0..titles.len())
+            .map(|i| Song { id: format!("s{i}"), title: titles[i].into(), artist: artists[i].into(), genre: (i % 2 == 0).then(|| "Électro".into()), duration: 100, ..Default::default() })
+            .collect();
+        db::index(&mut core.db.lock(), &[], &[], &songs).unwrap();
+        let text = |s: &Song, field: &str| match field {
+            "title" => s.title.to_lowercase(),
+            "artist" => s.artist.to_lowercase(),
+            _ => s.genre.clone().unwrap_or_default().to_lowercase(),
+        };
+        let cases = [
+            ("title", "is", "été"),
+            ("title", "isNot", "ÉTÉ"),
+            ("title", "contains", "té"),
+            ("title", "notContains", "É"),
+            ("title", "startsWith", "É"),
+            ("title", "endsWith", "Été"),
+            ("title", "contains", "%é"),
+            ("title", "contains", "é_"),
+            ("title", "contains", "曲"),
+            ("title", "is", "STRASSE"),
+            ("title", "is", "straße"),
+            ("artist", "is", "BJÖRK"),
+            ("artist", "isNot", "björk"),
+            ("artist", "startsWith", "坂本"),
+            ("artist", "endsWith", "ÖRK"),
+            ("artist", "contains", "yoncé"),
+            ("genre", "is", "électro"),
+            ("genre", "isNot", "Électro"),
+            ("genre", "notContains", "é"),
+        ];
+        for (field, op, value) in cases {
+            let json = one(field, op, json!(value));
+            let def = parse(&json).unwrap();
+            let want = |s: &Song| {
+                let (have, want) = (text(s, field), value.to_lowercase());
+                match op {
+                    "is" => have == want,
+                    "isNot" => have != want,
+                    "contains" => have.contains(&want),
+                    "notContains" => !have.contains(&want),
+                    "startsWith" => have.starts_with(&want),
+                    _ => have.ends_with(&want),
+                }
+            };
+            let expected: Vec<&str> = songs.iter().filter(|s| want(s)).map(|s| s.id.as_str()).collect();
+            let mut cp = Compiler { args: Vec::new(), downloaded: &[], downloaded_arg: None, now_ms: NOW };
+            let cond = cp.node(&def.root);
+            let sql = format!("SELECT i.id {} WHERE {} AND {cond} ORDER BY i.rowid", tables(&def.root), mixes::SONGS);
+            let c = core.db.lock();
+            let by_sql: Vec<String> = c.prepare(&sql).unwrap().query_map(rusqlite::params_from_iter(cp.args), |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+            assert_eq!(by_sql, expected, "SQL alone is exact for {field} {op} {value}");
+            drop(c);
+            assert_eq!(ids(&core.smart_evaluate(json.clone(), 0, 50).unwrap()), expected, "{field} {op} {value}");
+            assert_eq!(core.smart_count(json).unwrap() as usize, expected.len(), "count of {field} {op} {value}");
+        }
+
+        // A time budget walks from the start; the rule still filters before it.
+        let budget = json!({ "match": { "rules": [{ "field": "title", "op": "contains", "value": "É" }] }, "limitMs": 250_000 }).to_string();
+        assert_eq!(ids(&core.smart_evaluate(budget.clone(), 0, 50).unwrap()), ["s0", "s1"]);
+        assert_eq!(ids(&core.smart_evaluate(budget, 1, 50).unwrap()), ["s1"]);
+    }
+
+    #[test]
     fn rule_operators() {
         let core = library();
         let def = json!({ "match": { "all": false, "rules": [
@@ -475,7 +526,7 @@ pub(crate) mod tests {
         assert_eq!(eval(&core, &one("lastPlayed", "less", json!("2026-08-01")), &[]).len(), 6);
         assert_eq!(eval(&core, &one("lastPlayed", "between", json!(["2026-01-01", "2026-03-01"])), &[]), ["so"]);
 
-        // Unicode values fall back to rust and fold case.
+        // Unicode values fold case.
         let core = library();
         assert_eq!(eval(&core, &one("artist", "is", json!("björk")), &[]), ["joga", "bach"]);
         assert_eq!(eval(&core, &one("title", "contains", json!("Ó")), &[]), ["joga"]);

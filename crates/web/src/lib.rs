@@ -208,6 +208,7 @@ impl Nori {
             values: Default::default(),
             untouched: false,
             sound_chain_on: prefs.sound_chain_on(),
+            eq_status: nori_core::settings_model::eq_status(&prefs, false),
             offload_paused: false,
             lyrics_sources: Vec::new(),
             beat_model: nori_core::settings_model::BeatModel::Unavailable,

@@ -45,7 +45,7 @@
   </div>
   <div class="middle">
     <Controls />
-    {#if s}<Seek inline />{/if}
+    {#if s}<Seek inline times={!ui.full} />{/if}
   </div>
   <div class="right">
     {#if s && !n?.jam}<Seal what="song" id={s.id} on={!!s.starred} />{/if}

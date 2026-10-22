@@ -5,13 +5,13 @@ use std::ffi::c_char;
 
 use nori_core::profiles::{device_rows, output_port, sheet, ChoiceKind, OutputPort};
 use nori_core::settings_store::SoundTool;
+use nori_core::client::Client;
 use nori_core::{AutoEqEntry, Core};
-use nori_host::session::Session;
 use serde_json::{json, Value};
 
 use crate::pages::owned;
 use crate::output::route_key;
-use crate::session::{c_text, with_session};
+use crate::session::{c_text, server, with_session};
 
 /// AutoEQ curves a device's sheet offers.
 const SHEET_CURVES: u32 = 5;
@@ -100,8 +100,8 @@ fn browse_json(core: &Core, query: String) -> Value {
 }
 
 /// Fetches `entry`'s curve. `Ok(None)`: AutoEQ has none, and the core hides the entry from now on.
-fn curve(s: &Session, entry: AutoEqEntry) -> Result<Option<String>, ()> {
-    nori_core::transport::block_on(s.client.autoeq_curve(entry)).map_err(|_| ())
+fn curve(client: &Client, entry: AutoEqEntry) -> Result<Option<String>, ()> {
+    nori_core::transport::block_on(client.autoeq_curve(entry)).map_err(|_| ())
 }
 
 /// 1 curve applied, 0 AutoEQ has none for it, -1 the request failed.
@@ -193,9 +193,11 @@ pub unsafe extern "C" fn nori_ios_device_adopt(
     let output = c_text(output);
     let entry = unsafe { entry_of(name, source, form, target, path) };
     let live = output == route_key();
+    let Some((client, _)) = server() else { return 0 };
+    let name = entry.name.clone();
+    let got = curve(&client, entry);
     with_session(|s| {
-        let name = entry.name.clone();
-        fetched(curve(s, entry), |text| match s.core.device_adopt(output.clone(), name, text, live) {
+        fetched(got, |text| match s.core.device_adopt(output.clone(), name, text, live) {
             Ok(effect) => {
                 s.device_effect(&output, effect);
                 true
@@ -240,14 +242,12 @@ pub unsafe extern "C" fn nori_ios_autoeq_browse(query: *const c_char) -> *mut c_
 /// kept, or -1 when the request failed.
 #[no_mangle]
 pub extern "C" fn nori_ios_autoeq_update() -> i32 {
-    with_session(|s| {
-        match nori_core::transport::block_on(s.client.autoeq_update(true, false)) {
-            // None: a download already running; the count is what is kept so far.
-            Ok(n) => n.or_else(|| s.core.autoeq_count().ok()).map_or(0, |n| n as i32),
-            Err(_) => -1,
-        }
-    })
-    .unwrap_or(-1)
+    let Some((client, core)) = server() else { return -1 };
+    match nori_core::transport::block_on(client.autoeq_update(true, false)) {
+        // None: a download already running; the count is what is kept so far.
+        Ok(n) => n.or_else(|| core.autoeq_count().ok()).map_or(0, |n| n as i32),
+        Err(_) => -1,
+    }
 }
 
 /// Fetches AutoEQ curve (name, source, form, target, path) and makes it the current sound, as
@@ -264,8 +264,10 @@ pub unsafe extern "C" fn nori_ios_autoeq_apply(
     path: *const c_char,
 ) -> i32 {
     let entry = unsafe { entry_of(name, source, form, target, path) };
+    let Some((client, _)) = server() else { return 0 };
+    let got = curve(&client, entry);
     with_session(|s| {
-        fetched(curve(s, entry), |text| {
+        fetched(got, |text| {
             match s.core.session.settings.sound_tool(SoundTool::Import { text }) {
                 Ok(change) => {
                     if let Some(change) = change {

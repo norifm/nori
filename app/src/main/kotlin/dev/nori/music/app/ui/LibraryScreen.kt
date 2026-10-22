@@ -22,9 +22,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Radio
@@ -38,7 +37,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -269,8 +267,13 @@ private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel = viewModel())
         val context = androidx.compose.ui.platform.LocalContext.current
         androidx.compose.runtime.LaunchedEffect(list, albums) {
             androidx.compose.runtime.snapshotFlow { list.firstVisibleItemIndex }.collect { first ->
-                prefetchCovers(context, albums.drop(first + 6).take(12).map { vm.cover(it.coverArt, CoverSize.CARD) })
+                val from = minOf(first + 6, albums.size)
+                prefetchCovers(context, albums.subList(from, minOf(from + 12, albums.size)).map { vm.cover(it.coverArt, CoverSize.CARD) })
             }
+        }
+        // The next page a screenful before the end, from a snapshot observer rather than from item composition.
+        androidx.compose.runtime.LaunchedEffect(list, albums.size) {
+            androidx.compose.runtime.snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= albums.size - 12 }.collect { if (it) vm.loadMore() }
         }
         // Two columns, counted rather than measured: an adaptive grid gave a wide phone a third column,
         // and a cover a third of the way across the screen is too small to recognise a sleeve by, which
@@ -282,8 +285,7 @@ private fun Albums(actions: ActionsViewModel, vm: AlbumsViewModel = viewModel())
         val wide = LocalWide.current
         if (none) EmptyNote(Note.NO_ALBUMS)
         LazyVerticalGrid(if (wide) GridCells.Adaptive(ALBUM_MIN) else GridCells.Fixed(2), state = list, contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, top = Space.gutter, bottom = Space.gutter + LocalChromeInset.current), horizontalArrangement = Arrangement.spacedBy(ALBUM_GAP), verticalArrangement = Arrangement.spacedBy(ALBUM_GAP)) {
-            itemsIndexed(albums, key = { _, a -> a.id }, contentType = { _, _ -> "album" }) { i, a ->
-                if (i >= albums.size - 12) vm.loadMore()
+            items(albums, key = { it.id }, contentType = { "album" }) { a ->
                 AlbumCard(a, vm.cover(a.coverArt, CoverSize.CARD), 132.dp, { nav.album(a.id, a) }, Modifier.fillMaxWidth(), fill = true)
             }
         }
@@ -298,9 +300,10 @@ private val ROW_COVER = 64.dp
 private fun ArtistRows(vm: AlbumsViewModel) {
     val rows by vm.rows.collectAsStateWithLifecycle()
     val nav = LocalNav.current
-    LazyColumn(contentPadding = PaddingValues(top = 4.dp, bottom = Space.gutter + LocalChromeInset.current)) {
-        itemsIndexed(rows, key = { _, r -> r.first().id }, contentType = { _, _ -> "artist" }) { i, row ->
-            if (i >= rows.size - 8) vm.loadMore()
+    val list = rememberLazyListState()
+    LaunchedEffect(list, rows.size) { snapshotFlow { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= rows.size - 8 }.collect { if (it) vm.loadMore() } }
+    LazyColumn(state = list, contentPadding = PaddingValues(top = 4.dp, bottom = Space.gutter + LocalChromeInset.current)) {
+        items(rows, key = { it.first().id }, contentType = { "artist" }) { row ->
             val first = row.first()
             val artist = first.artistId
             Column(Modifier.padding(bottom = 12.dp)) {
@@ -541,7 +544,6 @@ internal val DOWNLOADED_SONGS = dev.nori.music.ffi.model.PageOrigin(dev.nori.mus
 
 @Composable
 private fun Downloads(actions: ActionsViewModel) {
-    val d by actions.downloads.collectAsState()
     val done by actions.downloadedLibrary.collectAsStateWithLifecycle()
     val list = rememberSongListState(actions)
     val counts by actions.downloadQueueCounts.collectAsStateWithLifecycle()

@@ -803,6 +803,18 @@ internal object PageMotion {
 }
 
 /**
+ * [layer] drawn again into a software Bitmap, where the app makes no hardware Bitmaps
+ * ([dev.nori.music.look.CoverPixels.hardware]): `toImageBitmap` renders it into one on the GPU.
+ */
+private fun drawnOnCpu(layer: androidx.compose.ui.graphics.layer.GraphicsLayer, density: androidx.compose.ui.unit.Density, direction: androidx.compose.ui.unit.LayoutDirection): androidx.compose.ui.graphics.ImageBitmap {
+    val size = layer.size
+    val picture = androidx.compose.ui.graphics.ImageBitmap(size.width, size.height)
+    val canvas = androidx.compose.ui.graphics.Canvas(picture)
+    androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(density, direction, canvas, androidx.compose.ui.geometry.Size(size.width.toFloat(), size.height.toFloat())) { drawLayer(layer) }
+    return picture
+}
+
+/**
  * A page as [PageMotion] and [PageSwipe] need it. Opaque while it moves - the screens paint no background,
  * the app's one Surface does - and darkened when it is the one underneath. Drawn through a layer of its
  * own so a picture of it can be kept as a page opened over it covers it: what a swipe back shows under
@@ -819,7 +831,11 @@ private fun androidx.compose.animation.AnimatedVisibilityScope.Page(entry: andro
     val moving = transition.currentState != transition.targetState
     // Covered by a page opened over it, or by a tab tapped (the tabs sit on Home): pictured now, as it was last drawn.
     val covered = transition.targetState == androidx.compose.animation.EnterExitState.PostExit && PageMotion.pop != true
-    LaunchedEffect(covered) { if (covered) swipe.keep(entry.id, layer.toImageBitmap()) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val direction = androidx.compose.ui.platform.LocalLayoutDirection.current
+    LaunchedEffect(covered) {
+        if (covered) swipe.keep(entry.id, if (dev.nori.music.look.CoverPixels.hardware) layer.toImageBitmap() else drawnOnCpu(layer, density, direction))
+    }
     androidx.compose.runtime.DisposableEffect(entry.id) { onDispose { swipe.left(entry.id) } }
     val swiped = swipe.moving == entry.id
     val onTop = swiped || moving && !plain && when (PageMotion.pop) {

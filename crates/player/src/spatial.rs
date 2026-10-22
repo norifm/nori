@@ -93,7 +93,8 @@ impl Virtualizer {
     #[inline]
     fn back(&self, frames: usize) -> [f64; 2] {
         let len = self.ring.len();
-        self.ring[(self.pos + len - frames) % len]
+        let i = self.pos + len - frames;
+        self.ring[if i >= len { i - len } else { i }]
     }
 
     #[inline]

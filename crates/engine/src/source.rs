@@ -1659,6 +1659,8 @@ impl Loaded {
         let mut body: Option<Icy> = None;
         let mut chunk = vec![0u8; LIVE_CHUNK];
         let mut failures = 0;
+        // Whether the open connection has given bytes.
+        let mut fed = false;
         loop {
             {
                 let mut s = self.state.lock();
@@ -1688,33 +1690,32 @@ impl Loaded {
                     }
                     Err(e) => {
                         failures += 1;
-                        if failures > RETRIES {
-                            let mut s = self.state.lock();
-                            s.error = Some(e);
-                            s.done = true;
-                            self.wake(&mut s);
-                            return;
-                        }
-                        if !self.rest(self.resting(failures)) {
+                        if !self.retry_or_end(failures, e) {
                             return;
                         }
                         continue;
                     }
                 }
+                fed = false;
             }
             let icy = body.as_mut().expect("a body is open");
             let got = icy.read(&mut chunk);
             let title = icy.title.take();
             let mut s = self.state.lock();
+            let mut empty = None;
             match got {
                 Ok(n) if n > 0 => {
                     failures = 0;
+                    fed = true;
                     s.data.extend(&chunk[..n]);
                 }
-                // Closed or broken: reconnect.
-                _ => {
+                // Closed or broken: reconnect; one that gave nothing counts as a failure to open.
+                got => {
                     body = None;
                     failures += 1;
+                    if !fed {
+                        empty = Some(got.err().map_or_else(|| "the station closed the connection".to_string(), |e| e.to_string()));
+                    }
                 }
             }
             if let Some(t) = title {
@@ -1722,7 +1723,26 @@ impl Loaded {
                 s.titles.push_back((at, t));
             }
             self.wake(&mut s);
+            drop(s);
+            if let Some(why) = empty {
+                if !self.retry_or_end(failures, why) {
+                    return;
+                }
+            }
         }
+    }
+
+    /// After `failures` failures in a row to get bytes from a live station: ends the stream once they
+    /// pass `RETRIES` (false), otherwise rests before the next try (false once the song is let go).
+    fn retry_or_end(&self, failures: u32, why: String) -> bool {
+        if failures > RETRIES {
+            let mut s = self.state.lock();
+            s.error = Some(why);
+            s.done = true;
+            self.wake(&mut s);
+            return false;
+        }
+        self.rest(self.resting(failures))
     }
 
     /// The loader thread died (panicked): readers are told the song failed and the engine is woken.
@@ -1909,12 +1929,14 @@ struct Icy {
     left: usize,
     /// The last title, until the loader takes it.
     title: Option<String>,
+    /// The last title the station sent; one it repeats is not said again.
+    sent: Option<String>,
 }
 
 impl Icy {
     fn new(inner: Box<dyn Read + Send>, every: Option<usize>) -> Icy {
         let every = every.filter(|&n| n > 0);
-        Icy { inner, every, left: every.unwrap_or(0), title: None }
+        Icy { inner, every, left: every.unwrap_or(0), title: None, sent: None }
     }
 
     /// Reads one metadata block.
@@ -1928,7 +1950,10 @@ impl Icy {
         let mut text = vec![0u8; n];
         self.inner.read_exact(&mut text)?;
         if let Some(t) = stream_title(&text) {
-            self.title = Some(t);
+            if self.sent.as_ref() != Some(&t) {
+                self.sent = Some(t.clone());
+                self.title = Some(t);
+            }
         }
         Ok(())
     }
@@ -2572,6 +2597,61 @@ mod tests {
         until(&l, "the song fails", |s| s.done);
         assert!(l.error().is_some(), "failed");
         assert_eq!(*s.0.lock(), RETRIES + 1, "asked once and again {RETRIES} times");
+    }
+
+    /// A station that answers and closes or breaks every connection before a byte fails after a few
+    /// tries, resting between them, rather than being asked again and again at once.
+    #[test]
+    fn live_body_closing_at_once_fails_after_retries() {
+        struct Closes(Mutex<u32>, bool);
+        struct Empty(bool);
+        impl Read for Empty {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                if self.0 { Err(io::Error::new(io::ErrorKind::ConnectionReset, "reset")) } else { Ok(0) }
+            }
+        }
+        impl ByteSource for Closes {
+            fn open(&self, _: &str, _: u64) -> Result<Body, OpenError> {
+                Err("live only".into())
+            }
+
+            fn open_live(&self, _: &str) -> Result<(Body, Option<usize>), String> {
+                *self.0.lock() += 1;
+                Ok((Body { start: 0, len: None, reader: Box::new(Empty(self.1)) }, None))
+            }
+        }
+        for breaks in [false, true] {
+            let s = Arc::new(Closes(Mutex::new(0), breaks));
+            let l = Loader::live(&Arc::default(), s.clone(), "radio".into(), Waits { stall_ms: 20_000, retry_ms: 1 });
+            until(&l, "the station fails", |s| s.done);
+            assert!(l.error().is_some(), "failed (breaks {breaks})");
+            assert_eq!(*s.0.lock(), RETRIES + 1, "asked once and again {RETRIES} times (breaks {breaks})");
+        }
+    }
+
+    /// A title the station repeats in every block is said once.
+    #[test]
+    fn repeated_icy_title_is_said_once() {
+        let block = |title: &str| {
+            let text = format!("StreamTitle='{title}';");
+            let mut b = vec![(text.len().div_ceil(16)) as u8];
+            b.extend(text.bytes());
+            b.resize(1 + text.len().div_ceil(16) * 16, 0);
+            b
+        };
+        let mut bytes = Vec::new();
+        for title in ["A - One", "A - One", "B - Two", "B - Two"] {
+            bytes.extend([7u8; 4]);
+            bytes.extend(block(title));
+        }
+        bytes.extend([7u8; 4]);
+        let mut icy = Icy::new(Box::new(io::Cursor::new(bytes)), Some(4));
+        let mut said = Vec::new();
+        let mut buf = [0u8; 4];
+        while icy.read(&mut buf).is_ok_and(|n| n > 0) {
+            said.extend(icy.title.take());
+        }
+        assert_eq!(said, ["A - One", "B - Two"]);
     }
 
     #[test]

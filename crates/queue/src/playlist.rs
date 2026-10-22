@@ -345,12 +345,14 @@ impl Session {
         q.change(at)
     }
 
-    /// Sets a queue already in play order (a weighted shuffle), shown as shuffled.
-    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set_ordered"))]
-    pub fn set_ordered(&self, ids: Vec<String>, origin: Option<PageOrigin>) -> QueueChange {
+    /// Sets a queue shuffled into `order` (list indexes, a weighted shuffle), from its first song.
+    /// Shuffle off then plays the list in order from the song playing.
+    #[cfg_attr(feature = "ffi", uniffi::method(name = "playlist_set_shuffled"))]
+    pub fn set_shuffled(&self, ids: Vec<String>, order: Vec<u32>, origin: Option<PageOrigin>) -> QueueChange {
         let mut q = self.queue.lock();
         q.set_origin(origin);
-        let at = q.list.set_ordered(ids);
+        let start = order.first().map_or(0, |&i| i as usize);
+        let at = q.list.set_in_order(ids, start, order.into_iter().map(|i| i as usize).collect(), seed());
         q.change(at)
     }
 
@@ -627,7 +629,7 @@ pub(crate) mod tests {
         assert!(s.from_page(&album));
         assert_eq!(s.origin_gen(), gen);
 
-        s.set_ordered(ids(&["r1", "r2"]), Some(artist.origin()));
+        s.set_shuffled(ids(&["r1", "r2"]), vec![1, 0], Some(artist.origin()));
         assert!(s.from_page(&artist) && !s.from_page(&album));
         s.set(ids(&["radio:1"]), Some(0), false, None);
         assert_eq!(s.origin(), None);
@@ -690,12 +692,25 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_page_shuffle_turned_off_plays_the_page_in_order() {
+        let s = session(&["o0"], 0);
+        let names = |s: &Session| s.playlist(|p| p.play_order().map(|i| p.ids()[i].clone()).collect::<Vec<_>>());
+        assert_eq!(s.set_shuffled(ids(&["p1", "p2", "p3", "p4"]), vec![2, 0, 3, 1], None).at, Some(2), "starts on the order's first");
+        s.moved_to(0);
+        s.shuffle(false);
+        assert_eq!(s.playlist(|p| p.current_id().map(str::to_string)).as_deref(), Some("p1"), "the song playing goes on");
+        assert_eq!(names(&s), ids(&["p1", "p2", "p3", "p4"]), "the page's order is back");
+        s.shuffle(true);
+        assert_eq!(names(&s)[0], "p1", "shuffled again around the song playing");
+    }
+
+    #[test]
     fn shuffle_shown_until_turned_off() {
         let s = session(&["s1", "s2"], 0);
         assert!(!s.shuffle_shown());
         s.show_shuffle(true);
         assert!(s.shuffle_shown());
-        s.set_ordered(ids(&["s2", "s1"]), None);
+        s.set_shuffled(ids(&["s1", "s2"]), vec![1, 0], None);
         assert!(s.shuffle_shown(), "a weighted shuffle stays lit");
         s.take(0, ids(&["s3"]), vec![Hand::Last]);
         assert!(s.shuffle_shown());

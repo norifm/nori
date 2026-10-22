@@ -456,12 +456,15 @@ impl Client {
     /// A source may reshuffle Home on every request: a refresh keeps what was shown and adds what is new.
     async fn home_fetch(&self, digest: Option<u64>) -> NetResult<Option<Page>> {
         let Page::Feed { v } = self.read_now(Read::HomeFeed).await? else { return Ok(None) };
-        let shown = self.core.home.lock().take();
-        let v = match shown {
-            Some(shown) => merged(shown, v),
-            None => v,
+        let v = {
+            let mut home = self.core.home.lock();
+            let v = match home.take() {
+                Some(shown) => merged(shown, v),
+                None => v,
+            };
+            *home = Some(v.clone());
+            v
         };
-        *self.core.home.lock() = Some(v.clone());
         let page = Page::Feed { v };
         let kept = page_digest(&page);
         if let Some((key, _)) = self.kept_key(&Read::HomeFeed) {

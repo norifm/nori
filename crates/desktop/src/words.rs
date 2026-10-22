@@ -111,13 +111,7 @@ pub fn songs_caption(n: usize, seconds: u64) -> String {
 
 /// "FLAC 24/96.0", "MP3 320 kbps".
 pub fn quality(s: &Song) -> Option<String> {
-    let detail = if nori_core::model::is_lossless(&s.suffix) && s.bit_depth > 0 {
-        Some(format!("{}/{}", s.bit_depth, numbers::khz(s.sampling_rate as i32)))
-    } else {
-        (s.bit_rate > 0).then(|| format!("{} kbps", s.bit_rate))
-    };
-    let parts: Vec<String> = [(!s.suffix.is_empty()).then(|| s.suffix.to_uppercase()), detail].into_iter().flatten().collect();
-    (!parts.is_empty()).then(|| parts.join(" "))
+    numbers::quality(&s.suffix, s.bit_depth, s.sampling_rate, s.bit_rate)
 }
 
 pub fn net_error(e: &NetError) -> String {
@@ -496,7 +490,5 @@ mod tests {
     #[test]
     fn formats_counts() {
         assert_eq!((songs(1), songs_caption(2, 200)), ("1 song".into(), "2 songs · 3:20".into()));
-        let s = Song { suffix: "flac".into(), bit_depth: 24, sampling_rate: 96000, ..Default::default() };
-        assert_eq!(quality(&s).as_deref(), Some("FLAC 24/96.0"));
     }
 }

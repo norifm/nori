@@ -88,10 +88,6 @@ private const val RESTORED = "restored"
 fun MediaItem.isRestored(): Boolean = mediaMetadata.extras?.getBoolean(RESTORED) == true
 fun MediaItem.restored(): MediaItem = withExtra { putBoolean(RESTORED, true) }
 
-/**
- * A list already put in the order it plays (a weighted shuffle, which the player's own shuffle would
- * undo), marked on its first item so the core keeps shuffle shown while the player's is off.
- */
 private const val KEPT = "kept"
 /**
  * The song playing, in a new queue made around it (a tap on it in its album's list): the player takes
@@ -104,9 +100,13 @@ fun MediaItem.kept(): MediaItem = withExtra { putBoolean(KEPT, true) }
 fun MediaItem.inJam(jam: String?): MediaItem =
     if (jam == null) this else buildUpon().setMediaMetadata(mediaMetadata.buildUpon().setSubtitle(jam).build()).build()
 
-private const val ORDERED = "ordered"
-fun MediaItem.inOrder(): Boolean = mediaMetadata.extras?.getBoolean(ORDERED) == true
-fun MediaItem.ordered(): MediaItem = withExtra { putBoolean(ORDERED, true) }
+/**
+ * The order a list plays in (positions in it, a weighted shuffle, which the player's own shuffle would
+ * undo), marked on its first item so the core shuffles the list into it (nori-queue `playlist_set_shuffled`).
+ */
+private const val SHUFFLED = "shuffled"
+fun MediaItem.shuffledAs(): IntArray? = mediaMetadata.extras?.getIntArray(SHUFFLED)
+fun MediaItem.shuffled(order: IntArray): MediaItem = withExtra { putIntArray(SHUFFLED, order) }
 
 /**
  * The page a new queue is started from (nori-queue `playlist_set`'s origin), marked on its first item so

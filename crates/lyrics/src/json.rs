@@ -521,9 +521,9 @@ fn clock_ms(s: &str) -> Option<i64> {
 const ROW_TYPES: &[&str] = &["song", "video", "single", "ep", "album", "episode", "podcast"];
 
 /// The songs of a YouTube Music search, in order: video id, title, artists (runs linking to an artist,
-/// else the first part of the second line) and length.
-pub(crate) fn youtube_songs(json: &str) -> Vec<FoundTrack> {
-    let Some(v) = parse(json) else { return Vec::new() };
+/// else the first part of the second line) and length; `None` when the answer is not JSON.
+pub(crate) fn youtube_songs(json: &str) -> Option<Vec<FoundTrack>> {
+    let v = parse(json)?;
     let mut out: Vec<FoundTrack> = Vec::new();
     for r in all(&v, "musicResponsiveListItemRenderer") {
         let r = Value::Object(r.clone());
@@ -566,7 +566,7 @@ pub(crate) fn youtube_songs(json: &str) -> Vec<FoundTrack> {
             out.push(FoundTrack { id: id.to_string(), title: title.trim().to_string(), artist, duration_ms });
         }
     }
-    out
+    Some(out)
 }
 
 /// Where a YouTube Music song's lyrics tab points: the page to `browse` for them.
@@ -755,11 +755,12 @@ mod tests {
 
     #[test]
     fn youtube() {
-        let songs = youtube_songs(YT_SEARCH);
+        let songs = youtube_songs(YT_SEARCH).unwrap();
         assert_eq!(songs.len(), 2);
         assert_eq!(songs[0], FoundTrack { id: "AbCdEfGhIjK".into(), title: "Glass Harbour".into(), artist: "The Lanterns".into(), duration_ms: 239_000 });
         assert_eq!((songs[1].artist.as_str(), songs[1].duration_ms), ("Someone Else", 3_845_000));
-        assert!(youtube_songs("{}").is_empty());
+        assert!(youtube_songs("{}").unwrap().is_empty());
+        assert!(youtube_songs("<html>").is_none());
 
         // Youtube lyrics tab and page.
         let next = r#"{"contents":{"singleColumnMusicWatchNextResultsRenderer":{"tabbedRenderer":{"watchNextTabbedResultsRenderer":{"tabs":[

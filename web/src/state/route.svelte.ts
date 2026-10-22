@@ -3,6 +3,15 @@
 /** Pages under the Library tab on a phone. */
 const LIBRARY = ["library", "albums", "album", "artists", "artist", "playlists", "playlist", "genres", "genre", "songs", "favorites"];
 
+/** `a` unescaped; as typed when it holds a malformed escape. */
+function decoded(a: string): string {
+  try {
+    return decodeURIComponent(a);
+  } catch {
+    return a;
+  }
+}
+
 class Route {
   top = $state("home");
   arg = $state("");
@@ -15,7 +24,7 @@ class Route {
   read() {
     const [, top = "", a = ""] = location.hash.replace(/^#\/?/, "/").split("/");
     this.top = top || "home";
-    this.arg = decodeURIComponent(a);
+    this.arg = decoded(a);
     this.visit++;
   }
 }

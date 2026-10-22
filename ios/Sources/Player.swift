@@ -236,7 +236,14 @@ final class PlayerCard: UIViewController {
         ticker = nil
     }
 
-    @objc private func changed() {
+    /// A full-screen sheet is up: the card is out of sight, though UIKit keeps it "appeared".
+    private var covered: Bool {
+        guard let sheet = presentedViewController else { return false }
+        return sheet.modalPresentationStyle == .overFullScreen && !sheet.isBeingDismissed
+    }
+
+    /// The sheets call this as they close, so the clock starts again.
+    @objc func changed() {
         let now = Core.shared.now
         // The output's button is lit while the sound is elsewhere, and a jam's while someone listens.
         let listened = now.jam && (Core.shared.jam?.listeners.count ?? 0) > 0
@@ -297,7 +304,7 @@ final class PlayerCard: UIViewController {
             }
         }
         paintTime()
-        if now.playing && view.window != nil && UIApplication.shared.applicationState == .active {
+        if now.playing && view.window != nil && !covered && UIApplication.shared.applicationState == .active {
             if ticker == nil {
                 ticker = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.paintTime() }
                 ticker?.tolerance = 0.1
@@ -311,9 +318,10 @@ final class PlayerCard: UIViewController {
         guard !scrubbing else { return }
         let now = Core.shared.now
         let total = (now.song?.seconds ?? 0) * 1000
-        let at = min(now.position, max(total, 0))
+        let at = total > 0 ? min(now.position, total) : now.position
+        seek.isEnabled = total > 0
         seek.maximumValue = Float(max(total, 1))
-        seek.value = Float(at)
+        seek.value = total > 0 ? Float(at) : 0
         elapsed.text = Fmt.clock(ms: at)
         remaining.text = "-" + Fmt.clock(ms: max(0, total - at))
     }
@@ -409,11 +417,16 @@ final class PlayerCard: UIViewController {
 
     @objc private func lyricsTapped() {
         guard let song = Core.shared.now.song else { return }
-        present(LyricsSheet(song: song.id), animated: true)
+        cover(with: LyricsSheet(song: song.id))
     }
 
     @objc private func queueTapped() {
-        present(QueueSheet(), animated: true)
+        cover(with: QueueSheet())
+    }
+
+    private func cover(with sheet: UIViewController) {
+        stopTicking()
+        present(sheet, animated: true)
     }
 
     /// The output button: nori's devices with this iPod's outputs among them, or just the outputs with
@@ -422,7 +435,7 @@ final class PlayerCard: UIViewController {
         if Core.shared.now.jam {
             queueTapped()
         } else if Core.shared.now.remote {
-            present(DevicesSheet(), animated: true)
+            cover(with: DevicesSheet())
         } else {
             outputs.show()
         }
@@ -487,6 +500,11 @@ final class LyricsSheet: UIViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     override var preferredStatusBarStyle: UIStatusBarStyle { Theme.statusBar }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        (presentingViewController as? PlayerCard)?.changed()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()

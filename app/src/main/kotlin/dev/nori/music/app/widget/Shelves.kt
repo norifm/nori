@@ -115,7 +115,7 @@ class MixesWidget : NoriWidget() {
                         async {
                             val covers = t.covers.take(4).map { c -> async { Widgets.picture(context, nori.library.coverUrl(c, CoverSize.ROW), pw / 2) } }.awaitAll()
                             val colours = dev.nori.music.ffi.library.mixTileColours(t.origin.id).map { it.toInt() }
-                            v.setImageViewBitmap(MIX_ART[i], Painter.mix(covers, colours, pw, ph, 12f * pw / tileW))
+                            v.setImageViewBitmap(MIX_ART[i], withContext(Dispatchers.Default) { Painter.mix(covers, colours, pw, ph, 12f * pw / tileW) })
                         }
                     }.awaitAll()
                 }
@@ -198,6 +198,7 @@ class AlbumsWidget : NoriWidget() {
                 val px = Widgets.px(context, side.toFloat(), 300)
                 val r = 12 * px / side.toFloat()
                 val pictures = coroutineScope { albums.map { a -> async { Widgets.picture(context, nori.library.coverUrl(a.coverArt, CoverSize.CARD), px) } }.awaitAll() }
+                val tiles = withContext(Dispatchers.Default) { List(want) { i -> Painter.cover(context, pictures.getOrNull(i), px, px, r, theme.look) } }
                 ROWS.forEachIndexed { row, rowId -> v.setViewVisibility(rowId, if (row < rows) View.VISIBLE else View.GONE) }
                 for (row in 0 until ROWS.size) for (col in ALBUMS[row].indices) {
                     val cell = ALBUMS[row][col]
@@ -205,7 +206,7 @@ class AlbumsWidget : NoriWidget() {
                     if (row >= rows || col >= cols) { v.setViewVisibility(cell, View.GONE); continue }
                     v.setViewVisibility(cell, View.VISIBLE)
                     val a = albums.getOrNull(i)
-                    v.setImageViewBitmap(cell, Painter.cover(context, pictures.getOrNull(i), px, px, r, theme.look))
+                    v.setImageViewBitmap(cell, tiles[i])
                     if (a != null) {
                         v.setContentDescription(cell, a.name)
                         v.setOnClickPendingIntent(cell, Widgets.playOrOpen(context, AlbumsWidget::class.java, PageOrigin(OriginKind.ALBUM, a.id)))

@@ -277,7 +277,7 @@ impl LyricTiming {
     }
 
     /// The line whose start was last reached by `t` (the lit line switches half a glide earlier).
-    pub(crate) fn sung_line(&self, t: i64) -> Option<usize> {
+    pub fn sung_line(&self, t: i64) -> Option<usize> {
         if self.sorted {
             self.starts.partition_point(|&s| s <= t).checked_sub(1)
         } else {
@@ -665,7 +665,7 @@ mod tests {
         let t = LyricTiming::new(true, true, lines(&[1000, 3000]));
         assert_eq!((t.sung_line(999), t.sung_line(1000), t.sung_line(2999), t.sung_line(3000)), (None, Some(0), Some(0), Some(1)));
         assert_eq!(t.line_at(2700), 1, "lit 310 ms early");
-        // Unsorted starts: last one reached, like Kotlin's indexOfLast.
+        // Unsorted starts: the last one reached.
         let t = LyricTiming::new(true, true, lines(&[1000, 500, 2000]));
         assert_eq!((t.sung_line(600), t.sung_line(1500)), (Some(1), Some(1)));
     }

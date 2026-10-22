@@ -398,13 +398,7 @@ class Say(private val r: Resources) {
     ).joinToString(" · ")
 
     /** The format of a record, from its first song: "FLAC 24/96.0", "MP3 320 kbps". */
-    fun quality(s: Song): String? {
-        val lossless = dev.nori.music.ffi.model.isLossless(s.suffix)
-        val name = s.suffix.uppercase()
-        val detail = if (lossless && s.bitDepth > 0u) "${s.bitDepth}/${Fmt.khz(s.samplingRate.toInt())}"
-        else if (s.bitRate > 0u) "${s.bitRate} kbps" else null
-        return listOfNotNull(name.ifEmpty { null }, detail).takeIf { it.isNotEmpty() }?.joinToString(" ")
-    }
+    fun quality(s: Song): String? = dev.nori.music.ffi.model.quality(s.suffix, s.bitDepth, s.samplingRate, s.bitRate)
 
     /** A song's rate, sample rate, depth and (with [channels]) channels as the details say them, each only if known. */
     private fun qualityParts(s: Song, channels: Boolean): List<String> = listOfNotNull(

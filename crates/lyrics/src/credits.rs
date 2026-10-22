@@ -59,6 +59,9 @@ const WATERMARKS: &[&str] = &[
 /// Placeholders standing in for words where a song has none, after brackets and stars are gone.
 const INSTRUMENTAL: &[&str] = &["instrumental", "instrumental break", "instrumental outro", "instrumental intro", "music", "inst", "インスト", "연주곡", "間奏", "间奏"];
 
+/// Duet speaker tags ("男：…", "여: …"): labels of sung lines, not credits.
+const SPEAKERS: &[&str] = &["男", "女", "合", "合唱", "男女", "全", "齐", "齊", "남", "여", "남자", "여자", "모두", "全員"];
+
 /// "Role: name": a short label naming a credit in English or written in another script (作词, 작사).
 fn role_and_name(t: &str) -> bool {
     let Some((label, value)) = t.split_once([':', '：']) else { return false };
@@ -66,7 +69,7 @@ fn role_and_name(t: &str) -> bool {
     let lower = label.to_lowercase();
     // "Lyricsby:" is "Lyrics by:" with its space lost.
     let named = lower.split(|c: char| !c.is_alphabetic()).any(|w| CREDIT_WORDS.contains(&w.strip_suffix("by").unwrap_or(w)) || DETAIL_WORDS.contains(&w));
-    let native = !label.is_empty() && label.chars().count() <= 8 && !label.chars().any(|c| c.is_ascii_alphanumeric()) && label.chars().any(char::is_alphabetic);
+    let native = !label.is_empty() && !SPEAKERS.contains(&label) && label.chars().count() <= 8 && !label.chars().any(|c| c.is_ascii_alphanumeric()) && label.chars().any(char::is_alphabetic);
     !value.trim().is_empty() && label.chars().count() <= 24 && (named || native)
 }
 
@@ -205,6 +208,18 @@ mod tests {
         let mut fr = lyrics(&["Paroles de la chanson Glass Harbour par The Lanterns", SUNG[0], SUNG[1], SUNG[2], "Lyrics from somewhere.example", "Lyrics provided by SomeService", "Produced by Some Producer"], false);
         strip_edges(&mut fr, "Glass Harbour", "The Lanterns");
         assert_eq!(texts(&fr), &SUNG[..3]);
+    }
+
+    #[test]
+    fn speaker_tags_are_sung() {
+        for tags in [["男：你好", "女：再见", "合：我们"], ["남: 안녕", "여: 잘 가", "모두: 우리"], ["男女：你好", "合唱：再见", "全員：我们"]] {
+            let mut l = lyrics(&[tags[0], tags[1], tags[2], "作词：某人", SUNG[0]], true);
+            strip_edges(&mut l, "Glass Harbour", "The Lanterns");
+            assert_eq!(texts(&l), [tags[0], tags[1], tags[2], "作词：某人", SUNG[0]], "{tags:?}");
+        }
+        let mut l = lyrics(&["作词：某人", "男：你好", SUNG[0]], true);
+        strip_edges(&mut l, "Glass Harbour", "The Lanterns");
+        assert_eq!(texts(&l), ["男：你好", SUNG[0]], "a credit still goes");
     }
 
     #[test]
