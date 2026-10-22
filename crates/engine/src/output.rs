@@ -339,8 +339,8 @@ impl Feed {
         if n < want && !resting && !r.ended.load(Ordering::Relaxed) && w > 0 {
             r.underruns.fetch_add(1, Ordering::Relaxed);
         }
-        // At the low mark: wake the engine for the next burst, once.
-        if w.saturating_sub(at + n) <= r.low.load(Ordering::Relaxed) && r.waiting.load(Ordering::Relaxed) && r.waiting.swap(false, Ordering::AcqRel) {
+        // At the low mark: wake the engine for the next burst, once. `waiting` is read first so `low` is the value stored before it.
+        if r.waiting.load(Ordering::Acquire) && w.saturating_sub(at + n) <= r.low.load(Ordering::Relaxed) && r.waiting.swap(false, Ordering::AcqRel) {
             r.engine.unpark();
         }
         n as usize
