@@ -92,13 +92,13 @@ internal fun songsMore(songs: List<Song>, done: Set<String>, actions: ActionsVie
     listOf(say.addToQueue to { actions.enqueue(songs) }, downloadEntry(songs, done, actions))
 
 /**
- * The places in [songs] a filter keeps, by title or artist in either case (nori-core's `TextIndex`); null
+ * The places in [songs] a filter keeps, by the fields nori-core's `song_index` finds songs by; null
  * with no filter, for all of them. The index takes the list's text once, and only when a filter is first
  * typed; each keystroke then sends the filter.
  */
 @Composable
 private fun rememberMatching(songs: List<Song>, q: String): List<UInt>? {
-    val index = remember(songs) { lazy { dev.nori.music.ffi.library.TextIndex(songs.map { listOf(it.title, it.artist) }) } }
+    val index = remember(songs) { lazy { dev.nori.music.ffi.library.songIndex(songs) } }
     return remember(index, q) { if (q.isBlank()) null else index.value.view(q).rows }
 }
 

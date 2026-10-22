@@ -168,6 +168,37 @@ pub struct IndexView {
     pub show_letters: bool,
 }
 
+/// Find text typed over a list: a row is kept when any of its fields contains it, ignoring case; blank
+/// text keeps every row.
+pub struct Find {
+    query: Vec<char>,
+}
+
+impl Find {
+    pub fn new(query: &str) -> Find {
+        Find { query: if query.trim().is_empty() { Vec::new() } else { query.chars().collect() } }
+    }
+
+    pub fn keeps<S: AsRef<str>>(&self, fields: &[S]) -> bool {
+        self.query.is_empty() || fields.iter().any(|f| contains_ignoring_case(f.as_ref(), &self.query))
+    }
+
+    pub fn keeps_song(&self, s: &Song) -> bool {
+        self.keeps(&song_fields(s))
+    }
+}
+
+/// What a song is found by in a list's filter.
+fn song_fields(s: &Song) -> [&str; 2] {
+    [&s.title, &s.artist]
+}
+
+/// A [`TextIndex`] over songs, by the fields [`Find`] reads.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn song_index(songs: Vec<Song>) -> std::sync::Arc<TextIndex> {
+    TextIndex::new(songs.iter().map(|s| song_fields(s).map(String::from).to_vec()).collect())
+}
+
 /// A list with this many initials or fewer gets no index.
 const INDEX_FROM: usize = 3;
 
@@ -202,10 +233,9 @@ impl TextIndex {
 
     /// The rows `filter` keeps (all of them for a blank one), and the letters of the first field.
     pub fn view(&self, filter: String) -> IndexView {
-        let blank = filter.trim().is_empty();
-        let filter: Vec<char> = filter.chars().collect();
+        let find = Find::new(&filter);
         let rows: Vec<u32> = (0..self.rows.len())
-            .filter(|&i| blank || self.rows[i].iter().any(|f| contains_ignoring_case(f, &filter)))
+            .filter(|&i| find.keeps(&self.rows[i]))
             .map(|i| i as u32)
             .collect();
         let mut letters: Vec<(char, u32)> = Vec::new();
@@ -505,6 +535,14 @@ mod tests {
         );
         let upper = release_groups(&[a(2003, &["EP"], false), a(2004, &["mixtape"], false)]);
         assert_eq!((upper[0].kind, upper[1].kind, upper[1].tag.as_str()), (ReleaseKind::Ep, ReleaseKind::Tagged, "Mixtape"));
+    }
+
+    #[test]
+    fn songs_are_found_by_title_and_artist() {
+        let s = Song { title: "Jóga".into(), artist: "Björk".into(), album: "Homogenic".into(), ..Default::default() };
+        let found = |q: &str| Find::new(q).keeps_song(&s);
+        assert_eq!([found("JÓG"), found("bjö"), found("homogenic"), found(" ")], [true, true, false, true]);
+        assert_eq!(song_index(vec![s.clone()]).view("homogenic".into()).rows, Vec::<u32>::new());
     }
 
     #[test]

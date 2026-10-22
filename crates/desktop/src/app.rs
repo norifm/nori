@@ -1514,19 +1514,17 @@ impl App {
 
     fn rows(&self, songs: &[Song]) -> ModelRc<SongRow> {
         let heard = self.heard.as_deref();
-        let find = self.find.to_lowercase();
-        let hit = |s: &Song| find.is_empty() || [&s.title, &s.artist, &s.album].iter().any(|t| t.to_lowercase().contains(&find));
+        let find = nori_core::pages::Find::new(&self.find);
         let row = |(i, s): (usize, &Song)| SongRow { by: if self.asked.contains(&s.id) { words::ASKED.into() } else { SharedString::default() }, ..row(s, i, heard == Some(s.id.as_str())) };
-        ModelRc::new(VecModel::from(songs.iter().enumerate().filter(|(_, s)| hit(s)).map(row).collect::<Vec<_>>()))
+        ModelRc::new(VecModel::from(songs.iter().enumerate().filter(|(_, s)| find.keeps_song(s)).map(row).collect::<Vec<_>>()))
     }
 
     /// Re-applies the find filter to every list.
     fn narrowed(&self) {
         let ui = self.ui();
-        let find = self.find.to_lowercase();
-        let found = |title: &str, sub: &str| find.is_empty() || title.to_lowercase().contains(&find) || sub.to_lowercase().contains(&find);
-        let pick = |v: &[Card]| cards(v.iter().filter(|c| found(&c.title, &c.sub)).cloned());
-        let albums: Vec<nori_core::Album> = self.lists.albums.iter().filter(|a| found(&a.name, &a.artist)).cloned().collect();
+        let find = nori_core::pages::Find::new(&self.find);
+        let pick = |v: &[Card]| cards(v.iter().filter(|c| find.keeps(&[c.title.as_str(), c.sub.as_str()])).cloned());
+        let albums: Vec<nori_core::Album> = self.lists.albums.iter().filter(|a| find.keeps(&[&a.name, &a.artist])).cloned().collect();
         if self.album_sort == AlbumSort::ArtistRows {
             let starts = nori_core::browse::artist_rows(albums.clone());
             let ends = starts.iter().skip(1).copied().chain([albums.len() as u32]);
