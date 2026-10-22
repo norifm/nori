@@ -793,7 +793,6 @@ object DownloadLines {
     }
 }
 
-/** "45 s left", "12:34 left", "2:05:00 left" onto [out]; nothing when it cannot be said (negative). */
 /** Adds `" · "` and what [f] writes, or nothing when it writes nothing (the first part has no dot). */
 internal inline fun StringBuilder.part(f: (StringBuilder) -> Unit) {
     val start = length
@@ -803,6 +802,7 @@ internal inline fun StringBuilder.part(f: (StringBuilder) -> Unit) {
     if (length == mark) setLength(start)
 }
 
+/** "45 s left", "12:34 left", "2:05:00 left" onto [out]; nothing when it cannot be said (negative). */
 internal fun appendEta(res: Resources, out: StringBuilder, sec: Long) {
     when {
         sec < 0 -> Unit
