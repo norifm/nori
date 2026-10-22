@@ -189,7 +189,7 @@ pub fn build(mut all: Vec<Structured>) -> Lyrics {
         let cues = main.cue_line.iter().find(|c| c.index == i && !c.cue.is_empty());
         let (text, end, words, bg) = if let Some(c) = cues {
             word_timed = true;
-            let words = c.cue.iter().map(|w| LyricWord { start_ms: at(w.start), end_ms: at(w.end), start: utf16_at(&c.value, w.byte_start), end: utf16_at(&c.value, w.byte_end + 1) }).collect();
+            let words = c.cue.iter().map(|w| LyricWord { start_ms: at(w.start), end_ms: at(w.end), start: utf16_at(&c.value, w.byte_start), end: utf16_at(&c.value, w.byte_end.saturating_add(1)) }).collect();
             (c.value.clone(), if c.end > c.start { at(c.end) } else { next }, words, c.agent_id.as_deref().is_some_and(|a| background.contains(&a)))
         } else {
             let (text, marks) = inline_words(&l.value);
@@ -291,6 +291,15 @@ mod tests {
             let l = crate::json::from_lyricsplus(json);
             assert!(l.lines.iter().all(|x| x.start_ms <= LONGEST_MS), "{json}");
         }
+        for file in [
+            "version: '1.0'\nlines:\n  - {text: x, start_ms: 9223372036854775807}\n",
+            "version: '1.0'\nlines:\n  - {text: x, start_ms: 1000, words: [{text: x, start_ms: 9223372036854775807}]}\n",
+        ] {
+            let l = crate::formats::from_lyricsfile(file);
+            assert!(l.lines.iter().all(|x| (0..=LONGEST_MS).contains(&x.start_ms) && x.words.iter().all(|w| (0..=LONGEST_MS).contains(&w.start_ms))), "{file}");
+        }
+        let l = parse(r#"[{"synced":true,"line":[{"start":0,"value":"x"}],"cueLine":[{"index":0,"value":"x","cue":[{"start":0,"end":5,"byteStart":0,"byteEnd":18446744073709551615}]}]}]"#);
+        assert!(l.lines[0].words[0].end >= l.lines[0].words[0].start, "a byte end past the text ends at the text");
         let early = from_lrc("[offset:1]\n[00:00.00]Title\n[00:05.00]x");
         assert_eq!(early.lines[0].start_ms, 0, "an offset before the start is the start, not untimed");
         let shared = from_lrc("[00:01.00]line\n[00:01.00]translated\n[00:02.00]next");
