@@ -3136,7 +3136,10 @@ impl Remote {
             }
             Op::Clock { t1 } => Body::Clock { t1, t2: received, t3: self.now() },
             Op::Page { from: turn, count } if !matches!(via, Via::Relay(Some(_)) | Via::LanJam) => {
-                let q = self.read_queue(|_, len| turn as usize..(turn.saturating_add(count.min(PAGE_MAX)) as usize).min(len));
+                let q = self.read_queue(|_, len| {
+                    let start = (turn as usize).min(len);
+                    start..(turn.saturating_add(count.min(PAGE_MAX)) as usize).min(len)
+                });
                 Body::Page { id, rev: q.rev, from: turn, entries: q.entries }
             }
             op => Body::Ack { id, refusal: self.carry_out(&via, &from, id, op).err() },

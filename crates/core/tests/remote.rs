@@ -1550,6 +1550,25 @@ fn a_device_playing_elsewhere_is_mirrored_whole() {
 }
 
 #[test]
+fn a_page_past_the_end_of_a_queue_that_shrank_is_empty() {
+    let relay = Relay::new();
+    let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
+    let desk = Device::account(&relay, DeviceKind::Desktop, "Desk");
+    phone.playing(&["s1", "s2", "s3"], 0);
+    phone.remote.clone().serve(true);
+    let phone_id = phone.remote.id();
+    desk.remote.clone().watch(true);
+    desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
+
+    desk.remote.clone().send(phone_id, Op::Page { from: 10, count: 50 });
+    eventually(&relay, "an empty page", || {
+        let hub = relay.hub.lock();
+        hub.rooms.values().flat_map(|r| &r.events).any(|(_, _, _, b)| matches!(b, Body::Page { from: 10, entries, .. } if entries.is_empty()))
+    });
+    relay.close();
+}
+
+#[test]
 fn a_mirrored_queue_is_cleared_and_a_removed_song_put_back_in_its_place() {
     let relay = Relay::new();
     let phone = Device::account(&relay, DeviceKind::Phone, "Phone");
