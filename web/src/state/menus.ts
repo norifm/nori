@@ -15,22 +15,15 @@ export async function addToPlaylist(songs: Song[]) {
   const { playlists } = await read<{ playlists: { id: string; name: string }[] }>({ kind: "playlists" });
   const songIds = songs.map((s) => s.id);
   ui.menu(W.addToPlaylist, [
-    {
-      label: W.newPlaylist,
-      icon: "playlist",
-      run: async () => {
-        const name = await ui.ask(W.playlistName);
-        if (name) await library.change({ kind: "createPlaylist", name, songIds });
-      },
-    },
+    { label: W.newPlaylist, icon: "playlist", run: () => newPlaylist(songIds) },
     ...(playlists ?? []).map((p) => ({ label: p.name, run: () => library.change({ kind: "addToPlaylist", id: p.id, songIds }) })),
   ]);
 }
 
-export async function newPlaylist() {
+/** Asks for a name and makes a playlist of `songIds` called that. */
+export async function newPlaylist(songIds: string[] = []) {
   const name = await ui.ask(W.playlistName);
-  if (!name) return;
-  await library.change({ kind: "createPlaylist", name, songIds: [] });
+  if (name) await library.change({ kind: "createPlaylist", name, songIds });
 }
 
 /** What a song menu's action is, or null for one a browser has nothing for (downloads, the sleep
