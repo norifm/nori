@@ -1505,9 +1505,11 @@ fn a_device_playing_elsewhere_is_mirrored_whole() {
     desk.remote.clone().watch(true);
     desk.until("the phone", |r| r.devices().into_iter().find(|d| d.id == phone_id).and_then(|d| d.state));
     desk.remote.clone().watch(false);
+    assert!(!desk.remote.mirroring());
     desk.remote.clone().pick(Some(phone_id.clone()));
     let order: Vec<u32> = phone.core.session.playlist(|p| p.play_order().map(|i| i as u32).collect());
     let m = desk.until("the whole queue", |r| r.active().filter(|m| m.rows.len() == 130));
+    assert!(desk.remote.mirroring());
     assert_eq!(m.rows.iter().map(|r| r.index).collect::<Vec<_>>(), order, "in play order, by list index");
     assert_eq!(m.at.map(|a| m.rows[a as usize].song.id.clone()), Some("s60".to_string()));
     assert!(m.shuffle && m.playing && m.len == 130);
@@ -1540,6 +1542,7 @@ fn a_device_playing_elsewhere_is_mirrored_whole() {
     // Gone: no longer followed, and nothing more is asked of the relay for it.
     phone.remote.clone().serve(false);
     desk.until("the phone gone", |r| r.active().is_none().then_some(()));
+    assert!(!desk.remote.mirroring());
     let asked = desk.polls(&relay);
     let other = Device::account(&relay, DeviceKind::Phone, "Other");
     other.playing(&["s1"], 0);

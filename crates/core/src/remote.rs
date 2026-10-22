@@ -984,10 +984,14 @@ impl Inner {
         self.plays(id) || (has_song && self.heard_playing.get(id).copied() >= self.played_last)
     }
 
+    /// Device `id` as it is listed.
+    fn member(&self, id: &str) -> Option<&Member> {
+        self.peers.iter().map(|p| &p.member).chain(self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members)).find(|m| m.id == id)
+    }
+
     /// Device `id`'s name and kind, as it is listed.
     fn who(&self, id: &str) -> Option<(String, DeviceKind)> {
-        let m = self.peers.iter().map(|p| &p.member).chain(self.rooms.iter().filter(|r| !r.jam).flat_map(|r| &r.members)).find(|m| m.id == id)?;
-        Some((m.name.clone(), m.kind))
+        self.member(id).map(|m| (m.name.clone(), m.kind))
     }
 
     fn jam_room(&self) -> Option<&str> {
@@ -1467,6 +1471,12 @@ impl Remote {
         let m = i.mirror.as_ref()?;
         let (name, kind) = i.who(&m.id)?;
         m.view(name, kind, i.refused.get(&m.id).copied())
+    }
+
+    /// Whether [`Remote::active`] has a device, without building its mirror.
+    pub fn mirroring(&self) -> bool {
+        let i = self.inner.lock();
+        i.mirror.as_ref().is_some_and(|m| m.shown.is_some() && i.member(&m.id).is_some())
     }
 
     /// Moves the playback to `device`, or here (None): the active device hands its queue over and

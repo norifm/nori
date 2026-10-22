@@ -147,7 +147,7 @@ impl RemoteShown for Shown {
     }
 
     fn changed(&self) {
-        let elsewhere = self.remotes.get().is_some_and(|r| r.active().is_some());
+        let elsewhere = self.remotes.get().is_some_and(|r| r.mirroring());
         if self.remotes.mirroring(elsewhere) {
             self.engine.release_now();
         }
