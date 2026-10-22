@@ -320,6 +320,19 @@ impl Nori {
         Ok(n)
     }
 
+    /// Plays everything artist `id` has in the library, shuffled with `shuffle`: the songs played (0: none).
+    pub async fn play_artist(&self, id: String, shuffle: bool) -> Result<usize, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let what = nori_host::Fetch::Artist(id);
+        let from = what.origin();
+        let songs = what.songs(&client).await.map_err(error)?;
+        let n = songs.len();
+        if n > 0 {
+            self.with(|h| h.play(songs, 0, shuffle, Some(from)));
+        }
+        Ok(n)
+    }
+
     /// Plays the queue's song at `index`.
     pub fn jump(&self, index: usize) {
         self.with(|h| h.jump(index));

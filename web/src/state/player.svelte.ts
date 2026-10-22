@@ -102,6 +102,13 @@ class Player {
     await this.refresh();
   }
 
+  /** Everything `artist` has in the library. */
+  async playArtist(artist: string, shuffle: boolean) {
+    await this.soundCard();
+    if ((await ask<number>("play_artist", artist, shuffle)) === 0) ui.say(W.nothingToPlay);
+    await this.refresh();
+  }
+
   /** One of the session's controls (`toggle`, `next`, `seek`, ...). */
   async control(call: string, ...args: unknown[]) {
     if (!rpc.player) return;
