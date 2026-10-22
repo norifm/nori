@@ -1319,7 +1319,7 @@ impl App {
             }
             (Req::Home, Err(e)) => self.home.error = Some(e),
             (Req::Albums { offset }, Ok(Data::Albums(v))) => {
-                self.library.albums_more = v.len() as u32 == ALBUM_PAGE;
+                self.library.albums_more = nori_core::browse::next_album_page(nori_core::browse::AlbumSort::ByName, offset, ALBUM_PAGE, v.len() as u32).is_some();
                 match &mut self.library.albums {
                     Load::Ready(have) if offset > 0 => {
                         have.truncate(offset as usize);

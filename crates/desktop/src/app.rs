@@ -502,13 +502,10 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
 fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
     list.truncate(offset as usize);
     list.extend_from_slice(page);
-    let next = offset + page.len() as u32;
-    // Every page is read at once here, and a random order never runs out.
-    let more = !nori_core::browse::albums_exhausted(page.len() as u32) && sort != AlbumSort::Random && *asked < next;
-    more.then(|| {
-        *asked = next;
-        next
-    })
+    // Every page is read at once here.
+    let next = nori_core::browse::next_album_page(sort, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|&n| *asked < n)?;
+    *asked = next;
+    Some(next)
 }
 
 /// The profile the sign-in form saves from its fields (name, address, user, password) for provider `info`:
@@ -3226,9 +3223,9 @@ mod tests {
         let (mut list, mut asked) = (Vec::new(), 0);
         assert_eq!(albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked), Some(full as u32));
         assert_eq!(albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked), None, "the server's copy of the first page");
-        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(full, 3), &mut asked), None, "the last page");
-        assert_eq!(list.len(), full + 3);
-        assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 2).to_string()));
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(full, 100), &mut asked), None, "the last page");
+        assert_eq!(list.len(), full + 100);
+        assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 99).to_string()));
         let (mut list, mut asked) = (Vec::new(), 0);
         assert_eq!(albums_paged(&mut list, AlbumSort::Random, 0, &page(0, full), &mut asked), None, "a random order is one page");
     }
