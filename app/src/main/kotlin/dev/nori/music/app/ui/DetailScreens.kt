@@ -291,7 +291,7 @@ private fun AlbumPage(album: Album, detail: AlbumDetail?, failed: String?, actio
                 // `pages::album_discs`) and never narrowed. A row each: only the ones on screen are composed.
                 detail.discs.forEachIndexed { n, disc ->
                     // Only an album of several discs heads them (the core leaves the one disc's empty).
-                    if (disc.headed) item(key = "disc-$n", contentType = "disc") { SectionTitle(remember(disc) { say.discHeading(disc) }, Modifier.arriving(arrival)) }
+                    if (disc.headed) item(key = "disc-$n", contentType = "disc") { SectionTitle(remember(disc) { say.discHeading(disc) }, Modifier.arriving(arrival), compact = true) }
                     songRows(
                         detail.songs, actions, list,
                         numbered = true, rows = disc.songs, lines = disc.lines, arrival = arrival, from = from,

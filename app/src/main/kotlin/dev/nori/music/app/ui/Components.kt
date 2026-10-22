@@ -698,7 +698,7 @@ fun AlbumCard(album: Album, coverUrl: String?, size: Dp, onClick: () -> Unit, mo
     )
 
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null) = SectionHeader(text, modifier, onMore)
+fun SectionTitle(text: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null, compact: Boolean = false) = SectionHeader(text, modifier, onMore, compact = compact)
 
 /**
  * Content that was not on the page at first (the songs under a hero hint) fades and rises once, as one

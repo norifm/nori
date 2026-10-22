@@ -499,11 +499,13 @@ fun Hairline(startIndent: Dp = Space.gutter) {
 fun SectionHeader(
     title: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null,
     action: @Composable (RowScope.() -> Unit)? = null,
+    /** Closer to the rows it heads: a disc's name inside one list. */
+    compact: Boolean = false,
 ) {
     Row(
         modifier.fillMaxWidth()
             .then(if (onMore != null) Modifier.clickable(onClick = onMore) else Modifier)
-            .padding(start = Space.gutter, end = if (action != null) Space.tight else Space.gutter, top = Space.section, bottom = 12.dp),
+            .padding(start = Space.gutter, end = if (action != null) Space.tight else Space.gutter, top = if (compact) 12.dp else Space.section, bottom = if (compact) 2.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
