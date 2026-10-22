@@ -22,7 +22,7 @@ use nori_host::Fetch;
 use nori_core::settings::HomeRow;
 use serde_json::{json, Value};
 
-use crate::session::{c_text, with_session};
+use crate::session::{c_text, server, with_session};
 
 pub const PAGE_HOME: i32 = 1;
 pub const PAGE_ALBUMS: i32 = 2;
@@ -444,7 +444,7 @@ fn pages(
 }
 
 fn read(token: u64, kind: i32, arg: String) {
-    let Some((client, core)) = with_session(|s| (s.client.clone(), s.core.clone())) else {
+    let Some((client, core)) = server() else {
         send(token, &json!({ "closed": true }));
         return;
     };
@@ -968,7 +968,9 @@ pub extern "C" fn nori_ios_download_act(token: u64, act: i32) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_collection_download_entries(kind: i32, id: *const c_char) -> *mut c_char {
     let id = c_text(id);
-    with_session(|s| owned(&entries_of(s, &collection_songs(&s.core, &s.client, kind, id)))).unwrap_or(std::ptr::null_mut())
+    let Some((client, core)) = server() else { return std::ptr::null_mut() };
+    let songs = collection_songs(&core, &client, kind, id);
+    with_session(|s| owned(&entries_of(s, &songs))).unwrap_or(std::ptr::null_mut())
 }
 
 /// [`nori_ios_download_act`] for an album, playlist or artist by id. Blocks.
@@ -978,7 +980,9 @@ pub unsafe extern "C" fn nori_ios_collection_download_entries(kind: i32, id: *co
 #[no_mangle]
 pub unsafe extern "C" fn nori_ios_collection_download_act(kind: i32, id: *const c_char, act: i32) -> i32 {
     let id = c_text(id);
-    with_session(|s| act_on(s, collection_songs(&s.core, &s.client, kind, id), act)).unwrap_or(0)
+    let Some((client, core)) = server() else { return 0 };
+    let songs = collection_songs(&core, &client, kind, id);
+    with_session(|s| act_on(s, songs, act)).unwrap_or(0)
 }
 
 fn fetch(kind: i32, id: String) -> Option<Fetch> {
