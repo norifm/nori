@@ -266,8 +266,12 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
     // had got, in one frame. Those come after it instead, the page cross-fading to them once it is in.
     val arrivingNowMeasured = if (tinted) rememberCoverPalette(shift.towards, black) else null
     val arriving = remember(shift.towards, tinted, black) { arrivingNowMeasured }
-    val previousTintUrl = state.queue.getOrNull(state.previousIndex)?.let { vm.cover(it.coverArt, CoverSize.ROW)?.takeUnless(::isProviderCover) }
-    val nextTintUrl = state.queue.getOrNull(state.nextIndex)?.let { vm.cover(it.coverArt, CoverSize.ROW)?.takeUnless(::isProviderCover) }
+    val previousTintUrl = remember(state.queue, state.previousIndex) {
+        state.queue.getOrNull(state.previousIndex)?.let { vm.cover(it.coverArt, CoverSize.ROW)?.takeUnless(::isProviderCover) }
+    }
+    val nextTintUrl = remember(state.queue, state.nextIndex) {
+        state.queue.getOrNull(state.nextIndex)?.let { vm.cover(it.coverArt, CoverSize.ROW)?.takeUnless(::isProviderCover) }
+    }
     // Both neighbours' colours are worked out while nothing is happening, so that a record swiped to has
     // them the moment it starts moving. The now playing bar does this too, but the bar is not on screen
     // while the player is, and without it the page had nothing to cross-fade to: it wore the last

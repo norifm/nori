@@ -386,7 +386,7 @@ extern "system" fn cancel(_: JNIEnv, _: JClass, ticket: jlong) {
     }
 }
 
-/// `covers::is_provider_cover`, per list row: `@FastNative`, allocation-free.
+/// `covers::is_provider_cover`, per list row: `@FastNative`, copies the string once.
 extern "system" fn is_provider(env: JNIEnv, _: JClass, url: JString) -> jboolean {
     with_str(&env, &url, nori_core::covers::is_provider_cover).unwrap_or(false) as jboolean
 }
