@@ -28,19 +28,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.CloudDownload
-import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.LibraryMusic
-import androidx.compose.material.icons.outlined.Lyrics
-import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.PlayCircle
-import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -215,15 +202,15 @@ private fun Choice(row: SettingRow.Choice, divider: Boolean, onChange: (String) 
 
 /** Each group's icon; the groups themselves, their order and their words are SettingsPages.kt's. */
 private fun groupIcon(id: String): ImageVector = when (id) {
-    "servers" -> Icons.Outlined.Dns
-    "playing" -> Icons.Outlined.PlayCircle
-    "sound" -> Icons.Outlined.GraphicEq
-    "look" -> Icons.Outlined.Palette
-    "lyrics" -> Icons.Outlined.Lyrics
-    "library" -> Icons.Outlined.LibraryMusic
-    "data" -> Icons.Outlined.CloudDownload
-    "about" -> Icons.Outlined.Info
-    else -> Icons.Outlined.AutoAwesome
+    "servers" -> Iconoir.Server
+    "playing" -> Iconoir.Play
+    "sound" -> Iconoir.ControlSlider
+    "look" -> Iconoir.Palette
+    "lyrics" -> Iconoir.EmojiSingRightNote
+    "library" -> Iconoir.AlbumList
+    "data" -> Iconoir.CloudDownload
+    "about" -> Iconoir.InfoCircle
+    else -> Iconoir.Sparks
 }
 
 /** A titled group: small-caps label over a card of rows. */
@@ -319,7 +306,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
                         // Only the perf build has a recorder, and with it the last row (docs/site/developers/building.md).
                         GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
                     }
-                    if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Icons.Outlined.Speed, chevron = true, divider = false)
+                    if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Iconoir.DashboardSpeed, chevron = true, divider = false)
                 }
             }
         }

@@ -2,7 +2,6 @@ package dev.nori.music.app.ui
 
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.pointerInput
@@ -25,9 +24,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
@@ -400,13 +396,13 @@ private fun QueueOfferCard(offer: dev.nori.music.ffi.library.QueueOffer, actions
                     Modifier.height(38.dp).clip(PillShape).background(ink).clickable(onClick = onPlay).padding(horizontal = 14.dp),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
                 ) {
-                    Icon(androidx.compose.material.icons.Icons.Rounded.PlayArrow, null, Modifier.size(18.dp), tint = page)
+                    Icon(Iconoir.PlaySolid, null, Modifier.size(18.dp), tint = page)
                     Text(say.resume, Modifier.padding(start = 6.dp), style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp), color = page)
                 }
             }
         }
         Box(Modifier.align(androidx.compose.ui.Alignment.TopEnd).size(40.dp).clickable(onClick = onDismiss), androidx.compose.ui.Alignment.Center) {
-            Icon(androidx.compose.material.icons.Icons.Rounded.Close, say.close, Modifier.size(18.dp), tint = ink.copy(alpha = 0.6f))
+            Icon(Iconoir.Xmark, say.close, Modifier.size(18.dp), tint = ink.copy(alpha = 0.6f))
         }
     }
 }

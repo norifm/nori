@@ -15,10 +15,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -73,7 +69,7 @@ fun EqualizerScreen(vm: SettingsViewModel) {
 
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
             Text(say.equalizer, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall))
             NoriSwitch(p.eqEnabled, { on -> vm.update { it.copy(eqEnabled = on) } })
         }
@@ -176,10 +172,10 @@ fun EqualizerScreen(vm: SettingsViewModel) {
                 val used = remember(rows, profile) { say.profileUse(rows.filter { it.output in profile.outputs }.map { it.name }) }
                 GroupRow(
                     profile.name, { vm.applyProfile(profile) }, subtitle = used,
-                    trailing = { IconButton({ vm.deleteProfile(profile.name) }) { Icon(Icons.Outlined.Delete, remember(profile.name) { say.deleteNamed(profile.name) }, tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    trailing = { IconButton({ vm.deleteProfile(profile.name) }) { Icon(Iconoir.Trash, remember(profile.name) { say.deleteNamed(profile.name) }, tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
-            GroupRow(say.saveAsProfile, { newName = ""; naming = true }, icon = Icons.Filled.Add, divider = false)
+            GroupRow(say.saveAsProfile, { newName = ""; naming = true }, icon = Iconoir.Plus, divider = false)
         }
     }
 }

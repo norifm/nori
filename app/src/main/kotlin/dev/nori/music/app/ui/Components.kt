@@ -41,26 +41,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Radio
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.HeartBroken
 import dev.nori.music.ffi.settings.SwipeAction
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -188,7 +169,7 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)), exit = androidx.compose.animation.fadeOut(),
         ) {
             LookIcon(
-                Icons.Filled.MusicNote, null,
+                Iconoir.MusicNote, null,
                 Modifier.size(if (size > 0.dp) size * 0.34f else 40.dp),
             ) { look.color(CoverLook.ON_22) }
         }
@@ -455,7 +436,7 @@ fun SongRow(
                 Modifier.widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
                 style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.onSurface else tint, maxLines = 1, softWrap = false,
             )
-            IconButton(onMenu, Modifier.size(40.dp)) { Icon(Icons.Filled.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
+            IconButton(onMenu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
         }
       }
         if (divider) Hairline(startIndent = if (number != null) Space.gutter + 40.dp else Space.gutter + 56.dp)
@@ -610,9 +591,9 @@ internal fun rowSwipe(action: SwipeAction, song: Song, actions: ActionsViewModel
     return remember(act, song, actions) {
         val label = say.rowSwipe(act)
         when (act) {
-            dev.nori.music.ffi.library.RowSwipeAct.Queue -> RowSwipe(Icons.AutoMirrored.Filled.QueueMusic, label) { actions.enqueue(listOf(song)) }
-            dev.nori.music.ffi.library.RowSwipeAct.PlayNext -> RowSwipe(Icons.AutoMirrored.Filled.PlaylistPlay, label) { actions.playNext(listOf(song)) }
-            dev.nori.music.ffi.library.RowSwipeAct.Download -> RowSwipe(Icons.Filled.Download, label) { actions.download(listOf(song)) }
+            dev.nori.music.ffi.library.RowSwipeAct.Queue -> RowSwipe(Iconoir.Playlist, label) { actions.enqueue(listOf(song)) }
+            dev.nori.music.ffi.library.RowSwipeAct.PlayNext -> RowSwipe(Iconoir.PlaylistPlay, label) { actions.playNext(listOf(song)) }
+            dev.nori.music.ffi.library.RowSwipeAct.Download -> RowSwipe(Iconoir.Download, label) { actions.download(listOf(song)) }
             is dev.nori.music.ffi.library.RowSwipeAct.Favourite -> RowSwipe(if (act.on) sealed else seal, label) { actions.star(song, act.on) }
         }
     }
@@ -666,7 +647,7 @@ fun RemoteLine(
     val tint = MaterialTheme.colorScheme.onSurfaceVariant
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         if (remote) Icon(
-            Icons.Filled.CloudDownload, say.notInLibraryYet,
+            Iconoir.CloudDownload, say.notInLibraryYet,
             Modifier.padding(end = if (text.isEmpty()) 0.dp else 4.dp).size(with(LocalDensity.current) { style.fontSize.toDp() } + 1.dp), tint,
         )
         if (text.isNotEmpty()) Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = style, color = color)
@@ -802,16 +783,16 @@ fun EmptyNote(text: String, modifier: Modifier = Modifier, icon: androidx.compos
 /** The glyph over a note of an empty list; none over help and failures. */
 @Composable
 private fun noteIcon(note: Note): androidx.compose.ui.graphics.vector.ImageVector? = when (note) {
-    Note.NO_INDEX, Note.NO_SONGS -> Icons.Rounded.MusicNote
-    Note.NO_ALBUMS -> Icons.Rounded.Album
-    Note.NO_ARTISTS -> Icons.Rounded.Person
-    Note.NO_PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic
-    Note.NO_STATIONS -> Icons.Rounded.Radio
-    Note.NOTHING_DOWNLOADED, Note.NO_DOWNLOADS -> Icons.Rounded.Download
+    Note.NO_INDEX, Note.NO_SONGS -> Iconoir.MusicNote
+    Note.NO_ALBUMS -> Iconoir.CompactDisc
+    Note.NO_ARTISTS -> Iconoir.User
+    Note.NO_PLAYLISTS -> Iconoir.Playlist
+    Note.NO_STATIONS -> Iconoir.AntennaSignal
+    Note.NOTHING_DOWNLOADED, Note.NO_DOWNLOADS -> Iconoir.Download
     Note.NO_FAVOURITE_SONGS -> Kanji.Seal
-    Note.NOTHING_TO_MIX -> Icons.Rounded.AutoAwesome
-    Note.NO_HISTORY -> Icons.Rounded.History
-    Note.NOTHING_FOUND -> Icons.Rounded.Search
+    Note.NOTHING_TO_MIX -> Iconoir.Sparks
+    Note.NO_HISTORY -> Iconoir.ClockRotateRight
+    Note.NOTHING_FOUND -> Iconoir.Search
     else -> null
 }
 

@@ -76,9 +76,6 @@ import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.PlayerViewModel
 
@@ -463,7 +460,7 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
             // for it because the title beside it is already allowed to run out of space gracefully. The skip is
             // a swipe away. A jam guest's speaker and seal would be the host's; its play is the one its role offers.
             // While a jam is on it stands in the speaker's place: a jam plays on this device only.
-            jam?.let { Box(standing) { JamButton(it, 24.dp) { look.color(CoverLook.CHROME_CONTENT_75) } } }
+            jam?.let { Box(standing) { JamButton(it, 24.dp, idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { look.color(CoverLook.ACCENT) }) } }
             if (!state.jamGuest) {
                 if (jam == null) Box(standing) {
                     OutputButton(

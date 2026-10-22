@@ -10,11 +10,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Surface
@@ -229,10 +224,10 @@ val LocalAsked = staticCompositionLocalOf<androidx.compose.runtime.State<Set<Str
 val LocalLyricsKeepOn = staticCompositionLocalOf<androidx.compose.runtime.MutableState<Boolean>> { androidx.compose.runtime.mutableStateOf(false) }
 
 private val tabs = listOf(
-    Tab("home", say.home, Icons.Filled.Home),
-    Tab("library", say.library, Icons.Filled.LibraryMusic),
-    Tab("settings", say.settings, Icons.Filled.Settings),
-    Tab("search", say.search, Icons.Filled.Search),
+    Tab("home", say.home, Iconoir.HomeSimple),
+    Tab("library", say.library, Iconoir.AlbumList),
+    Tab("settings", say.settings, Iconoir.Settings),
+    Tab("search", say.search, Iconoir.Search),
 )
 
 /**

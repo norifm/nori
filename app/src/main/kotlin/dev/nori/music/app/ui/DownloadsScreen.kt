@@ -37,13 +37,6 @@ import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DownloadDone
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.outlined.Downloading
-import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -136,7 +129,7 @@ val MARK_SLOT = 26.dp
 fun DownloadSlot(id: String, downloaded: Boolean, tint: Color) {
     val all = LocalDownloadMarks.current
     if (all == null) {
-        if (downloaded) Icon(Icons.Filled.DownloadDone, say.downloaded, Modifier.size(MARK), tint)
+        if (downloaded) Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), tint)
         return
     }
     val mark = all.marks.value[id]
@@ -171,7 +164,7 @@ private fun MarkBody(glyph: Glyph, drawn: Glyph, mark: DownloadMark?, growIn: Bo
     // A song that was already downloaded when the row appeared has nothing to change into but gone,
     // which the presence above handles: it is drawn as the plain icon it always was.
     if (drawn == Glyph.DONE && mark == null && !growIn) {
-        Icon(Icons.Filled.DownloadDone, say.downloaded, box.size(MARK), tint)
+        Icon(Iconoir.CheckCircle, say.downloaded, box.size(MARK), tint)
         return
     }
     AnimatedContent(
@@ -186,8 +179,8 @@ private fun MarkBody(glyph: Glyph, drawn: Glyph, mark: DownloadMark?, growIn: Bo
     ) { g ->
         when (g) {
             Glyph.RING -> DownloadRing(mark?.progress, MARK, 1.5.dp, tint.copy(alpha = 0.3f), ink, plain)
-            Glyph.FAILED -> Icon(Icons.Outlined.ErrorOutline, say.downloadFailed, Modifier.size(MARK), tint.copy(alpha = 0.85f))
-            else -> Icon(Icons.Filled.DownloadDone, say.downloaded, Modifier.size(MARK), tint)
+            Glyph.FAILED -> Icon(Iconoir.WarningCircle, say.downloadFailed, Modifier.size(MARK), tint.copy(alpha = 0.85f))
+            else -> Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), tint)
         }
     }
 }
@@ -275,7 +268,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
     }
     Column {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = Space.gutter - 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
             Spacer(Modifier.weight(1f))
             AnimatedVisibility(unfinished > 0, enter = fadeIn(tween(if (plain) 0 else 200)), exit = fadeOut(tween(if (plain) 0 else 200))) {
                 Text(
@@ -313,12 +306,12 @@ fun DownloadsScreen(actions: ActionsViewModel) {
                     ) {
                         when (section) {
                             DownloadPhase.FAILED -> {
-                                IconButton({ actions.retryDownloads(listOf(song)) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Refresh, say.retry, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurface) }
-                                IconButton({ actions.cancelDownloads(listOf(song)) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Close, say.remove, Modifier.size(19.dp), MaterialTheme.colorScheme.onSurfaceVariant) }
+                                IconButton({ actions.retryDownloads(listOf(song)) }, Modifier.size(40.dp)) { Icon(Iconoir.Refresh, say.retry, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurface) }
+                                IconButton({ actions.cancelDownloads(listOf(song)) }, Modifier.size(40.dp)) { Icon(Iconoir.Xmark, say.remove, Modifier.size(19.dp), MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
                             // The ring hands over to the downloaded icon as the song moves to the finished ones.
                             else -> Crossfade(section == DownloadPhase.DONE, animationSpec = if (plain) snap() else tween(200), label = "trailing") { done ->
-                                if (done) Box(Modifier.size(40.dp), Alignment.Center) { Icon(Icons.Filled.DownloadDone, say.downloaded, Modifier.size(MARK), MaterialTheme.colorScheme.onSurfaceVariant) }
+                                if (done) Box(Modifier.size(40.dp), Alignment.Center) { Icon(Iconoir.CheckCircle, say.downloaded, Modifier.size(MARK), MaterialTheme.colorScheme.onSurfaceVariant) }
                                 else StopControl(song, plain, stoppable = !phase.processing) { actions.cancelDownloads(listOf(song)) }
                             }
                         }
@@ -346,7 +339,7 @@ fun DownloadsScreen(actions: ActionsViewModel) {
                     Modifier.fillMaxWidth().then(moving(plain)).padding(horizontal = Space.gutter * 2, vertical = 96.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Icon(Icons.Outlined.Downloading, null, Modifier.size(44.dp), MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                    Icon(Iconoir.DataTransferDown, null, Modifier.size(44.dp), MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
                     Text(noteText(Note.NO_DOWNLOADS), Modifier.padding(top = 14.dp), style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
                     Text(
                         noteText(Note.NO_DOWNLOADS_HELP),

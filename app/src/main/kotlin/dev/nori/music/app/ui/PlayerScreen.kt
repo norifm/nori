@@ -9,7 +9,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material.icons.filled.PlaylistRemove
 import dev.nori.music.ffi.model.Song
 import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.background
@@ -19,7 +18,6 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.zIndex
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -46,28 +44,8 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.material.icons.filled.Speaker
-import androidx.compose.material.icons.outlined.Speaker
 import dev.nori.music.app.R
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.rounded.FastForward
-import androidx.compose.material.icons.rounded.FastRewind
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Lyrics
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -674,7 +652,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                                 if (starred) Kanji.Sealed else Kanji.Seal,
                                 say.favourite, starred, rememberStamp(),
                             ) { tap(s, !starred) }
-                            TitleButton(Icons.Filled.MoreHoriz, say.more, false) { playerMenu(s) }
+                            TitleButton(Iconoir.MoreHoriz, say.more, false) { playerMenu(s) }
                         }
                     }
                 }
@@ -698,7 +676,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 // A jam guest's transport is what its role offers (Spotify's Jam): an admin's is the host's, a
                 // guest listening here has play and pause of its own, one only watching has none.
                 Row(kept("transport").fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 18.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-                    PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, enabled = !radio, lower = 2.dp) { choose(Panel.LYRICS) }
+                    PanelButton(Iconoir.EmojiSingRightNote, say.lyrics, page == Panel.LYRICS, enabled = !radio, lower = 2.dp) { choose(Panel.LYRICS) }
                     // The buttons send the record across exactly as a swipe does, so the two ways of
                     // changing song look like the same thing happening. A previous that only rewinds
                     // this song is not a record change and gets no slide - there is nothing to slide
@@ -711,12 +689,12 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                             if (rewinds || !slide.ask(1)) vm.previous()
                         },
                         Modifier.size(56.dp),
-                    ) { LookIcon(Icons.Rounded.FastRewind, say.previous, Modifier.size(38.dp), ink) }
+                    ) { LookIcon(Iconoir.RewindSolid, say.previous, Modifier.size(38.dp), ink) }
                     if (state.offersPlayPause) IconButton(vm::toggle, Modifier.size(68.dp)) {
                         PlayPauseGlyph(state.playing, state.buffering, 60.dp, 26.dp, ink)
                     }
-                    if (state.offersSkip) IconButton({ if (!slide.ask(-1)) vm.next() }, Modifier.size(56.dp)) { LookIcon(Icons.Rounded.FastForward, say.next, Modifier.size(38.dp), ink) }
-                    PanelButton(Icons.AutoMirrored.Filled.QueueMusic, say.queue, page == Panel.QUEUE) { choose(Panel.QUEUE) }
+                    if (state.offersSkip) IconButton({ if (!slide.ask(-1)) vm.next() }, Modifier.size(56.dp)) { LookIcon(Iconoir.ForwardSolid, say.next, Modifier.size(38.dp), ink) }
+                    PanelButton(Iconoir.Playlist, say.queue, page == Panel.QUEUE) { choose(Panel.QUEUE) }
                 }
                 // Paused here while the jam plays on: play joins it again where it is.
                 if (state.jam?.pausedHere == true) LookText(
@@ -818,7 +796,7 @@ internal fun OutputButton(
     val output by settings.currentOutput.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val o = remember(output) { dev.nori.music.ffi.devices.outputLook(output) }
-    val icon = if (otherDevice) Icons.Filled.Speaker else Icons.Outlined.Speaker
+    val icon = if (otherDevice) Iconoir.SoundHighSolid else Iconoir.SoundHigh
     val description = remember(o) { say.outputDescription(o.port, o.name) }
     // With remote control or jams on, the button opens nori's own devices first (RemoteScreens); this
     // phone's outputs are one row of it.
@@ -2237,7 +2215,7 @@ private fun OutputRow(vm: PlayerViewModel) {
     val jam by vm.jamStrip.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth().padding(horizontal = PLAYER_GUTTER, vertical = 2.dp), Arrangement.Center, Alignment.CenterVertically) {
         val jamOn = jam
-        if (jamOn != null) JamButton(jamOn, 20.dp) { look.color(CoverLook.ON_VARIANT) }
+        if (jamOn != null) JamButton(jamOn, 20.dp, idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ACCENT) })
         else if (!state.jamGuest) OutputButton(
             state.playingOn != null, 20.dp,
             idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
@@ -2665,11 +2643,11 @@ private fun Queue(vm: PlayerViewModel) {
                 val shuffleOn = state.shuffle
                 val repeatOn = state.repeat != Repeat.OFF
                 IconButton(vm::toggleShuffle, Modifier.size(44.dp)) {
-                    LookIcon(Icons.Filled.Shuffle, say.shuffle, Modifier.size(22.dp)) { look.color(if (shuffleOn) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+                    LookIcon(Iconoir.Shuffle, say.shuffle, Modifier.size(22.dp)) { look.color(if (shuffleOn) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
                 }
                 IconButton(vm::cycleRepeat, Modifier.size(44.dp)) {
                     LookIcon(
-                        if (state.repeat == Repeat.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat, say.repeat,
+                        if (state.repeat == Repeat.ONE) Iconoir.RepeatOnce else Iconoir.Repeat, say.repeat,
                         Modifier.size(22.dp),
                     ) { look.color(if (repeatOn) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
                 }
@@ -2792,7 +2770,7 @@ private fun Queue(vm: PlayerViewModel) {
                     swipe.offset.floatValue, 0f, animationSpec = spring(dampingRatio = 0.9f, stiffness = 420f),
                 ) { v, _ -> swipe.offset.floatValue = v }
             }
-            val take = RowSwipe(Icons.Filled.PlaylistRemove, say.remove) {
+            val take = RowSwipe(Iconoir.MinusCircle, say.remove) {
                 // Where the song is now: the list may have moved under a slow swipe.
                 val now = vm.state.value.queue
                 val index = queueKeys(now.map { it.id }).indexOf(key)
@@ -2866,12 +2844,12 @@ private fun Queue(vm: PlayerViewModel) {
                             // Added by hand: plays before the rest of the queue carries on. A jam guest's song says who.
                             val by = added[s.id]
                             if (by != null) AddedBy(by, ink, plate)
-                            else if (i in state.queued) LookIcon(Icons.AutoMirrored.Filled.QueueMusic, say.addedByYou, Modifier.padding(end = 4.dp).size(14.dp), quiet)
+                            else if (i in state.queued) LookIcon(Iconoir.Playlist, say.addedByYou, Modifier.padding(end = 4.dp).size(14.dp), quiet)
                             LookText(s.artist, quiet, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     if (edits) IconButton({ undo.took(s, i, key, 0f); vm.remove(i) }, Modifier.size(38.dp)) {
-                        LookIcon(Icons.Filled.Close, say.remove, Modifier.size(19.dp), quiet)
+                        LookIcon(Iconoir.Xmark, say.remove, Modifier.size(19.dp), quiet)
                     }
                     // The handle's room is kept on every row while the list can be reordered, so every ×
                     // stands in one column; only the rows still to come show a handle in it.
@@ -2884,7 +2862,7 @@ private fun Queue(vm: PlayerViewModel) {
                         enter = androidx.compose.animation.fadeIn(),
                         exit = androidx.compose.animation.fadeOut(),
                     ) { LookIcon(
-                        Icons.Filled.DragHandle, say.reorder,
+                        Iconoir.Menu, say.reorder,
                         tint = { if (drag.liftKey == key) androidx.compose.ui.graphics.lerp(quiet(), ink(), drag.lift.floatValue) else quiet() },
                         modifier = Modifier.size(44.dp).padding(11.dp).pointerInput(Unit) {
                             var lifting: kotlinx.coroutines.Job? = null

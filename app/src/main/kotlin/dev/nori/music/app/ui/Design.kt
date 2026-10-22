@@ -4,10 +4,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.runtime.setValue
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.animation.togetherWith
@@ -39,14 +35,6 @@ import androidx.compose.ui.graphics.ColorProducer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -515,7 +503,7 @@ fun SectionHeader(
         )
         action?.invoke(this)
         if (onMore != null) Icon(
-            Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            Iconoir.NavArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -592,7 +580,7 @@ fun GroupRow(
             )
             trailing?.invoke(this)
             if (chevron) Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.padding(start = 4.dp).size(20.dp), tint = scheme.onSurfaceVariant,
+                Iconoir.NavArrowRight, null, Modifier.padding(start = 4.dp).size(20.dp), tint = scheme.onSurfaceVariant,
             )
         }
         if (divider) Hairline(startIndent = if (icon != null) GROUP_INSET * 2 + GROUP_ICON else GROUP_INSET)
@@ -620,7 +608,7 @@ fun LargeTitle(text: String, modifier: Modifier = Modifier, trailing: @Composabl
 fun BackTitle(text: String) {
     val nav = LocalNav.current
     Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-        androidx.compose.material3.IconButton(nav::back) { Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+        androidx.compose.material3.IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
         Text(text, Modifier.weight(1f), style = titled(MaterialTheme.typography.headlineSmall), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -702,7 +690,7 @@ fun MessagePill(
                 }
             }
             if (onDismiss != null) {
-                IconButton(onDismiss) { LookIcon(Icons.Filled.Clear, words(R.string.close), Modifier.size(20.dp)) { look.color(CoverLook.CHROME_CONTENT_75) } }
+                IconButton(onDismiss) { LookIcon(Iconoir.Xmark, words(R.string.close), Modifier.size(20.dp)) { look.color(CoverLook.CHROME_CONTENT_75) } }
             } else if (action == null) {
                 Spacer(Modifier.width(14.dp))
             }
@@ -796,7 +784,7 @@ fun SearchField(
         border = if (focused) androidx.compose.foundation.BorderStroke(HAIRLINE * 2, scheme.primary) else hairlineBorder(),
     ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Search, null, Modifier.size(19.dp), tint = scheme.onSurfaceVariant)
+            Icon(Iconoir.Search, null, Modifier.size(19.dp), tint = scheme.onSurfaceVariant)
             // The padding belongs to the box, not to the field: with it on the field the placeholder sat
             // at the top of the capsule while the typed text sat in the middle of it.
             Box(Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 11.dp)) {
@@ -811,7 +799,7 @@ fun SearchField(
                 )
             }
             if (value.isNotEmpty()) androidx.compose.material3.IconButton({ onValue("") }, Modifier.size(28.dp)) {
-                Icon(Icons.Filled.Clear, say.clear, Modifier.size(17.dp), tint = scheme.onSurfaceVariant)
+                Icon(Iconoir.Xmark, say.clear, Modifier.size(17.dp), tint = scheme.onSurfaceVariant)
             }
         }
     }
@@ -965,7 +953,7 @@ fun NavRow(
             )
             action?.invoke(this)
             if (chevron) Icon(
-                Icons.AutoMirrored.Filled.KeyboardArrowRight, null,
+                Iconoir.NavArrowRight, null,
                 Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f),
             )
         }
@@ -1090,7 +1078,7 @@ fun FavoriteButton(starred: Boolean, modifier: Modifier = Modifier, onClick: () 
 fun MoreButton(items: List<Pair<String, () -> Unit>>, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
-        GlyphButton(Icons.Filled.MoreHoriz, say.more) { open = true }
+        GlyphButton(Iconoir.MoreHoriz, say.more) { open = true }
         NoriPopover(open, { open = false }) {
             items.forEach { (label, action) -> PopoverItem(label) { action(); open = false } }
         }
@@ -1213,7 +1201,7 @@ fun PopoverItem(label: String, chosen: Boolean = false, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = scheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (chosen) Icon(Icons.Filled.Check, say.chosen, Modifier.padding(start = 12.dp).size(18.dp), tint = scheme.onSurfaceVariant)
+        if (chosen) Icon(Iconoir.Check, say.chosen, Modifier.padding(start = 12.dp).size(18.dp), tint = scheme.onSurfaceVariant)
     }
 }
 
@@ -1350,10 +1338,10 @@ fun PlayPauseGlyph(
         Box(Modifier.size(size), Alignment.Center) {
             when (g) {
                 dev.nori.music.ffi.TransportGlyph.SPINNER -> androidx.compose.material3.CircularProgressIndicator(Modifier.size(spinner), color = tint?.invoke() ?: androidx.compose.material3.LocalContentColor.current, strokeWidth = 2.dp)
-                dev.nori.music.ffi.TransportGlyph.PAUSE -> if (tint != null) LookIcon(Icons.Rounded.Pause, say.pause, Modifier.fillMaxSize(), tint)
-                    else androidx.compose.material3.Icon(Icons.Rounded.Pause, say.pause, Modifier.fillMaxSize())
-                else -> if (tint != null) LookIcon(Icons.Rounded.PlayArrow, say.play, Modifier.fillMaxSize(), tint)
-                    else androidx.compose.material3.Icon(Icons.Rounded.PlayArrow, say.play, Modifier.fillMaxSize())
+                dev.nori.music.ffi.TransportGlyph.PAUSE -> if (tint != null) LookIcon(Iconoir.PauseSolid, say.pause, Modifier.fillMaxSize(), tint)
+                    else androidx.compose.material3.Icon(Iconoir.PauseSolid, say.pause, Modifier.fillMaxSize())
+                else -> if (tint != null) LookIcon(Iconoir.PlaySolid, say.play, Modifier.fillMaxSize(), tint)
+                    else androidx.compose.material3.Icon(Iconoir.PlaySolid, say.play, Modifier.fillMaxSize())
             }
         }
     }

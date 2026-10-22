@@ -21,10 +21,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -95,7 +91,7 @@ private fun DeviceItem(d: DeviceRow, onClick: () -> Unit) {
             Crossfade(d.sound, Modifier.padding(start = 12.dp), animationSpec = tween(motion()), label = "sound") { sound ->
                 Text(sound, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f))
+            Icon(Iconoir.NavArrowRight, null, Modifier.padding(start = 6.dp).size(19.dp), tint = scheme.onSurfaceVariant.copy(alpha = 0.7f))
         }
         Hairline(startIndent = 14.dp)
     }
@@ -216,7 +212,7 @@ private fun DeviceSheet(vm: SettingsViewModel, d: DeviceRow, onDone: () -> Unit)
         }
         if (sheet.canForget) item("forget") {
             GroupCard(Modifier.padding(top = 16.dp)) {
-                GroupRow(say.forgetDevice, { vm.forgetDevice(d.output); onDone() }, icon = Icons.Outlined.Delete, divider = false)
+                GroupRow(say.forgetDevice, { vm.forgetDevice(d.output); onDone() }, icon = Iconoir.Trash, divider = false)
             }
         }
     }
@@ -228,7 +224,7 @@ private fun Option(title: String, subtitle: String?, selected: Boolean, divider:
         title, onClick, subtitle = subtitle, divider = divider,
         trailing = {
             AnimatedVisibility(selected, enter = fadeIn(tween(motion())), exit = fadeOut(tween(motion()))) {
-                Icon(Icons.Filled.Check, say.chosen, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
+                Icon(Iconoir.Check, say.chosen, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
             }
         },
     )

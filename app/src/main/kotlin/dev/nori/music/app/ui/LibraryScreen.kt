@@ -5,11 +5,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.layout.layout
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
-import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -28,14 +26,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Radio
-import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Downloading
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -59,19 +49,6 @@ import dev.nori.music.app.vm.ArtistsViewModel
 import dev.nori.music.app.vm.DecadesViewModel
 import dev.nori.music.app.vm.FoldersViewModel
 import dev.nori.music.ffi.settings.LibrarySection
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.CalendarMonth
-import androidx.compose.material.icons.rounded.Category
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.Folder
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Radio
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import dev.nori.music.app.vm.LibraryHomeViewModel
 import dev.nori.music.app.vm.SongSort
 import dev.nori.music.app.vm.SongsViewModel
@@ -124,7 +101,7 @@ fun LibraryScreen(actions: ActionsViewModel, initial: LibrarySection? = null, vm
             items(chips, key = { it.name }) { s -> Chip(say.librarySection(s), s == shown) { picked = s.name } }
         }
         // A profile with no library (a provider's, signed out) is found through search.
-        if (rules.sections.isEmpty()) EmptyNote(say.searchIsTheWayIn, icon = Icons.Rounded.Search)
+        if (rules.sections.isEmpty()) EmptyNote(say.searchIsTheWayIn, icon = Iconoir.Search)
         when (shown) {
             LibrarySection.ALBUMS -> Albums(albums!!, places)
             LibrarySection.ARTISTS -> Artists(places)
@@ -170,7 +147,7 @@ private fun Places(vm: LibraryHomeViewModel, favorites: Boolean, shuffle: (() ->
                     value = if (s == LibrarySection.DOWNLOADS) size else null, divider = shuffleRow != null || i < shown.lastIndex,
                 )
             }
-            if (shuffleRow != null) GroupRow(say.shuffle, shuffleRow, icon = Icons.Rounded.Shuffle, divider = false)
+            if (shuffleRow != null) GroupRow(say.shuffle, shuffleRow, icon = Iconoir.Shuffle, divider = false)
         }
     }
 }
@@ -182,18 +159,18 @@ internal val GRID_GAP = 12.dp
 /** What each section is drawn with. */
 @Composable
 private fun sectionIcon(s: LibrarySection): androidx.compose.ui.graphics.vector.ImageVector = when (s) {
-    LibrarySection.ALBUMS -> Icons.Rounded.Album
+    LibrarySection.ALBUMS -> Iconoir.CompactDisc
     LibrarySection.FAVOURITES -> Kanji.Seal
-    LibrarySection.ARTISTS -> Icons.Rounded.Person
-    LibrarySection.SONGS -> Icons.Rounded.MusicNote
-    LibrarySection.PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic
-    LibrarySection.SMART -> Icons.Rounded.AutoAwesome
-    LibrarySection.HISTORY -> Icons.Rounded.History
-    LibrarySection.GENRES -> Icons.Rounded.Category
-    LibrarySection.DECADES -> Icons.Rounded.CalendarMonth
-    LibrarySection.FOLDERS -> Icons.Rounded.Folder
-    LibrarySection.RADIO -> Icons.Rounded.Radio
-    LibrarySection.DOWNLOADS -> Icons.Rounded.Download
+    LibrarySection.ARTISTS -> Iconoir.User
+    LibrarySection.SONGS -> Iconoir.MusicNote
+    LibrarySection.PLAYLISTS -> Iconoir.Playlist
+    LibrarySection.SMART -> Iconoir.Sparks
+    LibrarySection.HISTORY -> Iconoir.ClockRotateRight
+    LibrarySection.GENRES -> Iconoir.ViewGrid
+    LibrarySection.DECADES -> Iconoir.Calendar
+    LibrarySection.FOLDERS -> Iconoir.Folder
+    LibrarySection.RADIO -> Iconoir.AntennaSignal
+    LibrarySection.DOWNLOADS -> Iconoir.Download
 }
 
 /** One section of the library, a page of its own. Only it is composed, so only its view model loads anything. */
@@ -300,7 +277,7 @@ private fun ArtistRows(vm: AlbumsViewModel, header: @Composable () -> Unit) {
                     )
                     Spacer(Modifier.weight(1f))
                     if (artist != null) Icon(
-                        Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        Iconoir.NavArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -399,7 +376,7 @@ private fun Folders(header: @Composable () -> Unit = {}, vm: FoldersViewModel = 
             item { header() }
             item {
                 GroupCard {
-                    roots.forEachIndexed { i, f -> GroupRow(f.name, { nav.folder(f.id) }, icon = Icons.Filled.Folder, chevron = true, divider = i < roots.lastIndex) }
+                    roots.forEachIndexed { i, f -> GroupRow(f.name, { nav.folder(f.id) }, icon = Iconoir.Folder, chevron = true, divider = i < roots.lastIndex) }
                 }
             }
         }
@@ -431,17 +408,17 @@ private fun Playlists(actions: ActionsViewModel, header: @Composable () -> Unit 
             item { header() }
             // Smart playlists are playlists: theirs is a row here, as Apple keeps them among the others.
             if (smart) item {
-                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) })
+                NavRow(say.smartPlaylists, { nav.librarySection(LibrarySection.SMART) }, chevron = true, leading = { Icon(Iconoir.Sparks, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface) })
             }
-            item { ActionRow(say.newPlaylist, Icons.Filled.Add, { name = ""; creating = true }) }
-            item { ActionRow(say.importPlaylistFile, Icons.Filled.FileDownload, { pickM3u.launch(arrayOf("*/*")) }) }
+            item { ActionRow(say.newPlaylist, Iconoir.Plus, { name = ""; creating = true }) }
+            item { ActionRow(say.importPlaylistFile, Iconoir.Download, { pickM3u.launch(arrayOf("*/*")) }) }
             if (playlists.isEmpty()) item { EmptyNote(Note.NO_PLAYLISTS) }
             items(playlists, key = { it.id }) { p ->
                 NavRow(
                     p.name, { nav.playlist(p.id, p) },
                     subtitle = remember(p.songCount, p.duration) { say.listCaption(p.songCount.toInt(), p.duration.toLong(), false) },
                     leading = { Cover(vm.cover(p.coverArt, CoverSize.ROW), 48.dp) },
-                    action = { IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Delete, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    action = { IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Iconoir.Trash, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
         }
@@ -509,13 +486,13 @@ private fun Radio(header: @Composable () -> Unit = {}, vm: RadioViewModel = view
     LoadBox(load) { stations ->
         LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
             item { header() }
-            item { ActionRow(say.newStation, Icons.Filled.Add, { name = ""; url = ""; adding = true }) }
+            item { ActionRow(say.newStation, Iconoir.Plus, { name = ""; url = ""; adding = true }) }
             if (stations.isEmpty()) item { EmptyNote(Note.NO_STATIONS) }
             items(stations, key = { it.id }) { s ->
                 NavRow(
                     s.name, { vm.play(s) },
-                    leading = { Icon(Icons.Filled.Radio, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
-                    action = { IconButton({ vm.delete(s.id) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Delete, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    leading = { Icon(Iconoir.AntennaSignal, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
+                    action = { IconButton({ vm.delete(s.id) }, Modifier.size(40.dp)) { Icon(Iconoir.Trash, say.delete, Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 )
             }
         }
@@ -544,7 +521,7 @@ private fun Downloads(actions: ActionsViewModel) {
             NavRow(
                 say.downloadQueue, nav::downloads, chevron = true,
                 subtitle = remember(c) { say.downloadQueue((c?.waiting ?: 0u).toInt(), (c?.failed ?: 0u).toInt()) },
-                leading = { Icon(Icons.Filled.Downloading, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
+                leading = { Icon(Iconoir.DataTransferDown, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurface) },
             )
         }
         // Until the songs are read there is nothing to say, not "nothing downloaded" for a frame.

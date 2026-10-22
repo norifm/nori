@@ -30,10 +30,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -264,12 +260,12 @@ fun HeroPage(
                     }
                 }
                 GlyphButton(
-                    Icons.Filled.Shuffle, say.shuffle,
+                    Iconoir.Shuffle, say.shuffle,
                     enabled = buttons.shuffleEnabled, lit = buttons.shuffleLit,
                     onClick = { press(buttons.shufflePress, onShuffle) },
                 )
                 PillButton(
-                    if (buttons.pausing) say.pause else say.play, if (buttons.pausing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    if (buttons.pausing) say.pause else say.play, if (buttons.pausing) Iconoir.PauseSolid else Iconoir.PlaySolid,
                     { press(buttons.playPress, onPlay) }, Modifier.weight(1f),
                     prominent = true, enabled = buttons.playEnabled,
                 )

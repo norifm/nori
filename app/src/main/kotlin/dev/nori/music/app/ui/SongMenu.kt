@@ -20,28 +20,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lyrics
-import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
-import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.Album
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Bedtime
-import androidx.compose.material.icons.filled.Block
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.IosShare
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.LibraryAdd
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -148,27 +126,27 @@ fun SongMenu(
             val labels = remember(items) { items.map { say.songAction(it.action) } }
             @Composable fun line(i: dev.nori.music.ffi.library.SongMenuItem, label: String, divider: Boolean) = when (val a = i.action) {
                 is dev.nori.music.ffi.library.SongAction.Favourite -> Item(label, if (a.on) Kanji.Seal else Kanji.Sealed, divider = divider) { actions.star(song, a.on); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.PlayNext -> Item(label, Icons.AutoMirrored.Filled.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.AddToQueue -> Item(label, Icons.AutoMirrored.Filled.QueueMusic, divider = divider) { actions.enqueue(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.AddToPlaylist -> Item(label, Icons.AutoMirrored.Filled.PlaylistAdd, divider = divider) { picking = true }
-                dev.nori.music.ffi.library.SongAction.RemoveDownload -> Item(label, Icons.Filled.Delete, divider = divider) { actions.removeDownloads(listOf(song.id)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.StopDownload -> Item(label, Icons.Filled.Close, divider = divider) { actions.cancelDownloads(listOf(song)); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Download -> Item(label, Icons.Filled.Download, divider = divider) { actions.download(listOf(song)); onDismiss() }
-                is dev.nori.music.ffi.library.SongAction.GoToAlbum -> { val nav = LocalNav.current; Item(label, Icons.Filled.Album, divider = divider) { nav.album(a.id); onDismiss() } }
+                dev.nori.music.ffi.library.SongAction.PlayNext -> Item(label, Iconoir.PlaylistPlay, divider = divider) { actions.playNext(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.AddToQueue -> Item(label, Iconoir.Playlist, divider = divider) { actions.enqueue(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.AddToPlaylist -> Item(label, Iconoir.PlusCircle, divider = divider) { picking = true }
+                dev.nori.music.ffi.library.SongAction.RemoveDownload -> Item(label, Iconoir.Trash, divider = divider) { actions.removeDownloads(listOf(song.id)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.StopDownload -> Item(label, Iconoir.Xmark, divider = divider) { actions.cancelDownloads(listOf(song)); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Download -> Item(label, Iconoir.Download, divider = divider) { actions.download(listOf(song)); onDismiss() }
+                is dev.nori.music.ffi.library.SongAction.GoToAlbum -> { val nav = LocalNav.current; Item(label, Iconoir.CompactDisc, divider = divider) { nav.album(a.id); onDismiss() } }
                 // The song's own cover stands in for a lone artist's until their page has one.
-                is dev.nori.music.ffi.library.SongAction.GoToArtist -> { val nav = LocalNav.current; Item(label, Icons.Filled.Person, divider = divider) {
+                is dev.nori.music.ffi.library.SongAction.GoToArtist -> { val nav = LocalNav.current; Item(label, Iconoir.User, divider = divider) {
                     nav.artist(a.id, Artist(a.id, a.name, song.coverArt.takeIf { song.artists.size <= 1 }, null, 0u, false, false)); onDismiss()
                 } }
-                dev.nori.music.ffi.library.SongAction.AddToLibrary -> Item(label, Icons.Filled.LibraryAdd, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(label, Icons.Filled.Lyrics, enabled = i.enabled, divider = divider) { timing = true }
-                dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(label, Icons.Filled.Bedtime, divider = divider) { sleeping = true }
-                dev.nori.music.ffi.library.SongAction.StartRadio -> Item(label, Icons.Filled.Radio, divider = divider) { actions.startRadio(song); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.InstantMix -> Item(label, Icons.Filled.AutoAwesome, divider = divider) { actions.instantMix(song); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> Item(label, Icons.Filled.Block, divider = divider) { actions.excludeFromMixes(song); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Share -> Item(label, Icons.Filled.IosShare, divider = divider) { actions.share(song.id); onDismiss() }
-                dev.nori.music.ffi.library.SongAction.Details -> Item(label, Icons.Filled.Info, divider = divider) { details = true }
+                dev.nori.music.ffi.library.SongAction.AddToLibrary -> Item(label, Iconoir.FolderPlus, divider = divider) { actions.addToLibrary(song.id, isAlbum = false); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Lyrics -> Item(label, Iconoir.EmojiSingRightNote, enabled = i.enabled, divider = divider) { timing = true }
+                dev.nori.music.ffi.library.SongAction.SleepTimer -> Item(label, Iconoir.HalfMoon, divider = divider) { sleeping = true }
+                dev.nori.music.ffi.library.SongAction.StartRadio -> Item(label, Iconoir.AntennaSignal, divider = divider) { actions.startRadio(song); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.InstantMix -> Item(label, Iconoir.Sparks, divider = divider) { actions.instantMix(song); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.ExcludeFromMixes -> Item(label, Iconoir.Prohibition, divider = divider) { actions.excludeFromMixes(song); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Share -> Item(label, Iconoir.ShareIos, divider = divider) { actions.share(song.id); onDismiss() }
+                dev.nori.music.ffi.library.SongAction.Details -> Item(label, Iconoir.InfoCircle, divider = divider) { details = true }
                 // Plays the song and opens the queue, where the jam's invite is.
-                dev.nori.music.ffi.library.SongAction.StartJam -> { val nav = LocalNav.current; Item(label, Icons.Filled.Groups, divider = divider) {
+                dev.nori.music.ffi.library.SongAction.StartJam -> { val nav = LocalNav.current; Item(label, Iconoir.Community, divider = divider) {
                     actions.play(listOf(song)); remote.jamStart(); onDismiss(); nav.player(Panel.QUEUE)
                 } }
             }
@@ -181,10 +159,10 @@ fun SongMenu(
                     val ms = if (reduceMotion()) 0 else 220
                     val turn by animateFloatAsState(if (more) 180f else 0f, animationSpec = tween(ms), label = "more")
                     GroupRow(
-                        say.more, { more = !more }, icon = Icons.Filled.MoreHoriz, divider = more,
+                        say.more, { more = !more }, icon = Iconoir.MoreHoriz, divider = more,
                         // The chevron turns over rather than swapping for its opposite, so the row says which
                         // way it is about to move before it moves.
-                        trailing = { Icon(Icons.Filled.KeyboardArrowDown, null, Modifier.size(22.dp).graphicsLayer { rotationZ = turn }, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                        trailing = { Icon(Iconoir.NavArrowDown, null, Modifier.size(22.dp).graphicsLayer { rotationZ = turn }, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                     )
                     AnimatedVisibility(
                         more,
@@ -315,7 +293,7 @@ fun SelectionBar(actions: ActionsViewModel) {
                 BarAction(say.queue) { actions.enqueue(songs); actions.clearSelection() }
                 if (LocalRules.current.account) BarAction(say.playlist) { picking = true }
                 if (LocalRules.current.downloads) BarAction(say.get) { actions.download(songs); actions.clearSelection() }
-                IconButton(actions::clearSelection) { Icon(androidx.compose.material.icons.Icons.Filled.Close, say.clearSelection) }
+                IconButton(actions::clearSelection) { Icon(Iconoir.Xmark, say.clearSelection) }
             }
         }
     }

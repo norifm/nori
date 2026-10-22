@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Arrangement
@@ -24,12 +23,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,7 +46,6 @@ import dev.nori.music.app.vm.HistoryViewModel
 import dev.nori.music.app.vm.MixesViewModel
 import dev.nori.music.app.vm.MixViewModel
 import dev.nori.music.app.vm.MixCard
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.foundation.layout.fillMaxSize
 
 import dev.nori.music.ffi.library.SmartEditRule
@@ -111,7 +103,7 @@ private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp) {
         MixCovers(card.covers, size)
         Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.38f to c[2], 0.72f to c[3], 1f to c[4])))
         Column(Modifier.align(Alignment.BottomStart).padding(18.dp)) {
-            Icon(if (card.favourites) Kanji.Sealed else Icons.Filled.AutoAwesome, null, Modifier.size(22.dp), tint = white.copy(alpha = 0.9f))
+            Icon(if (card.favourites) Kanji.Sealed else Iconoir.Sparks, null, Modifier.size(22.dp), tint = white.copy(alpha = 0.9f))
             Text(
                 card.title, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.headlineSmall, color = white,
                 maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -202,7 +194,7 @@ fun MixScreen(id: String, actions: ActionsViewModel, vm: MixViewModel = viewMode
             headLabel = if (m.songs.isEmpty()) "" else say.listCaption(m.songs.size, m.songs.sumOf { it.duration.toLong() }, true),
             // After Play, as a record's seal stands there: keep the mix on the account as a playlist.
             actions = {
-                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Icons.AutoMirrored.Filled.PlaylistAdd, say.saveAsPlaylist) { actions.saveMixAsPlaylist(m.title, m.songs) }
+                if (LocalRules.current.account && m.songs.isNotEmpty()) GlyphButton(Iconoir.PlusCircle, say.saveAsPlaylist) { actions.saveMixAsPlaylist(m.title, m.songs) }
             },
             headActions = {
                 PageActionGlyphs(
@@ -224,13 +216,13 @@ fun SmartList(vm: SmartViewModel = viewModel()) {
     val saved by vm.saved.collectAsStateWithLifecycle()
     val nav = LocalNav.current
     LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-        item { ActionRow(say.newSmartPlaylist, Icons.Filled.Add, { nav.smartEdit("") }) }
+        item { ActionRow(say.newSmartPlaylist, Iconoir.Plus, { nav.smartEdit("") }) }
         items(saved, key = { it.id }) { p ->
             NavRow(
                 remember(p) { say.smartName(p) }, { nav.smart(p.id) },
                 action = {
                     TextAction(say.edit, { nav.smartEdit(p.id) })
-                    IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Icons.Filled.Close, say.delete, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    IconButton({ vm.delete(p.id) }, Modifier.size(40.dp)) { Icon(Iconoir.Xmark, say.delete, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
                 },
             )
         }
@@ -283,7 +275,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
             Text(say.smartPlaylist, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
             TextAction(say.save, { error = vm.save(draft) { nav.back() } })
         }
@@ -307,7 +299,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
                         Pick(r.op, remember(r.field) { dev.nori.music.ffi.library.smartEditOps(r.field) }) { o -> set(r.copy(op = o)) }
                         Spacer(Modifier.weight(1f))
                         IconButton({ draft = dev.nori.music.ffi.library.smartEditRemove(draft, i.toUInt()) }, Modifier.size(38.dp)) {
-                            Icon(Icons.Filled.Close, say.removeRule, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(Iconoir.Xmark, say.removeRule, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     val hint = remember(r.op) { dev.nori.music.ffi.library.smartValueHint(r.op) }
@@ -318,7 +310,7 @@ fun SmartEditScreen(id: String, vm: SmartViewModel = viewModel()) {
                 }
             }
         }
-        ActionRow(say.addRule, Icons.Filled.Add, { draft = dev.nori.music.ffi.library.smartEditAdd(draft) }, divider = false)
+        ActionRow(say.addRule, Iconoir.Plus, { draft = dev.nori.music.ffi.library.smartEditAdd(draft) }, divider = false)
         Row(Modifier.padding(start = Space.gutter, end = Space.gutter, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(say.sortBy, style = MaterialTheme.typography.bodyLarge)
             Pick(draft.sortField, sorts) { draft = draft.copy(sortField = it) }
@@ -365,7 +357,7 @@ fun StatsScreen(vm: HistoryViewModel = viewModel()) {
     val nav = LocalNav.current
     Column(Modifier.underStatusBar().verticalScroll(rememberScrollState()).padding(top = LocalStatusRoom.current, bottom = 24.dp + LocalChromeInset.current)) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
             Text(say.listening, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
         }
         LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = Space.gutter, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

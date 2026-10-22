@@ -16,13 +16,6 @@ import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.DownloadDone
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -113,15 +106,15 @@ internal fun PageActionGlyphs(
     }
     for (a in offered) when (a) {
         is PageAction.Download -> GlyphButton(
-            if (a.act == DownloadAct.REMOVE) Icons.Filled.DownloadDone else Icons.Filled.Download,
+            if (a.act == DownloadAct.REMOVE) Iconoir.CheckCircle else Iconoir.Download,
             say.downloadEntry(a.act, missing.size), quiet = true, onClick = downloadAction(a.act, songs, missing, actions),
         )
-        PageAction.DownloadEverything -> GlyphButton(Icons.Filled.Download, say.downloadEverything, quiet = true) { artistId?.let { actions.downloadArtist(it) } }
-        PageAction.AddToQueue -> GlyphButton(Icons.AutoMirrored.Filled.QueueMusic, say.addToQueue, quiet = true) {
+        PageAction.DownloadEverything -> GlyphButton(Iconoir.Download, say.downloadEverything, quiet = true) { artistId?.let { actions.downloadArtist(it) } }
+        PageAction.AddToQueue -> GlyphButton(Iconoir.Playlist, say.addToQueue, quiet = true) {
             if (artistId != null) actions.queueArtist(artistId) else actions.enqueue(songs)
         }
-        PageAction.Refresh -> own(a)?.let { GlyphButton(Icons.Filled.Refresh, say.newMix, onClick = it) }
-        PageAction.Edit -> own(a)?.let { GlyphButton(Icons.Filled.Edit, say.edit, onClick = it) }
+        PageAction.Refresh -> own(a)?.let { GlyphButton(Iconoir.Refresh, say.newMix, onClick = it) }
+        PageAction.Edit -> own(a)?.let { GlyphButton(Iconoir.EditPencil, say.edit, onClick = it) }
     }
 }
 
