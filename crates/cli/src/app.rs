@@ -782,11 +782,13 @@ pub struct Shown {
     pub cols: usize,
     /// The panel's width inside its margins.
     pub panel_w: u16,
+    /// A seek clock is on screen, so playback needs a redraw each second.
+    pub clock: bool,
 }
 
 impl Default for Shown {
     fn default() -> Self {
-        Shown { cols: 4, panel_w: 37 }
+        Shown { cols: 4, panel_w: 37, clock: true }
     }
 }
 
@@ -1380,15 +1382,17 @@ impl App {
 
     // ---- time ----
 
-    /// When the loop must next wake on its own: the next second of playback and a lyrics change (both
-    /// only in sight), a pending search, a note expiring, a downloads refresh. None when idle.
+    /// When the loop must next wake on its own: the next second of playback (while a clock is drawn) and a
+    /// lyrics change (both only in sight), a pending search, a note expiring, a downloads refresh. None when idle.
     pub fn next_wake(&self, now: Instant) -> Option<Instant> {
         let mut at: Option<Instant> = None;
         let mut sooner = |t: Instant| at = Some(at.map_or(t, |a| a.min(t)));
         if self.in_sight && self.now.state == State::Playing && !self.now.buffering {
-            let pos = self.now.position(now).max(0);
-            let left = 1000 - pos % 1000;
-            sooner(now + Duration::from_millis((left as f32 / self.now.speed.max(0.1)) as u64 + 5));
+            if self.shown.clock {
+                let pos = self.now.position(now).max(0);
+                let left = 1000 - pos % 1000;
+                sooner(now + Duration::from_millis((left as f32 / self.now.speed.max(0.1)) as u64 + 5));
+            }
             if self.lyrics_shown() {
                 if let Some(t) = self.lyrics_wake {
                     sooner(t);

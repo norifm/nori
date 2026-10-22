@@ -1075,6 +1075,20 @@ fn idle() {
 }
 
 #[test]
+fn clock_wakes_only_where_drawn() {
+    let mut a = app();
+    let now = Instant::now();
+    a.now = crate::app::Now { state: State::Playing, position_ms: 12_300, at: now, speed: 1.0, mixing: false, buffering: false };
+    a.song = Some(Song { id: "s".into(), title: "Song".into(), duration: 200, ..Default::default() });
+    draw(&mut a, 60, 14);
+    assert_eq!(a.next_wake(now), None, "a bar without a clock needs no tick");
+    draw(&mut a, 100, 40);
+    assert!(a.next_wake(now).is_some(), "the bar's clock ticks each second");
+    draw(&mut a, 60, 14);
+    assert_eq!(a.next_wake(now), None, "a resize back drops the tick");
+}
+
+#[test]
 fn terminal_replies() {
     use crate::term::sixel_feature;
     // Ghostty (no sixel) under tmux: tmux claims sixel but would show a placeholder.

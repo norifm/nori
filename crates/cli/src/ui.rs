@@ -342,6 +342,7 @@ const FADE: [f32; 2] = [0.66, 0.33];
 #[allow(clippy::needless_option_as_deref)]
 pub fn draw(f: &mut Frame, app: &mut App, mut art: Option<&mut Art>) {
     app.hits.clear();
+    app.shown.clock = false;
     let area = f.area();
     let t = app.look;
     put(f, Block::default().style(t.ground()), area);
@@ -1801,6 +1802,7 @@ fn seek_line(f: &mut Frame, app: &mut App, t: &Theme, [a, track, b]: [Rect; 3]) 
         Some(crate::app::Drag::Seek(share)) => (share * len as f32) as i64,
         _ => app.now.position(Instant::now()).clamp(0, len.max(0)),
     };
+    app.shown.clock = true;
     text(f, a, &clock(pos), t.dim());
     text(f, b, &clock(len), t.dim());
     track_bar(f, track, if len > 0 { pos as f32 / len as f32 } else { 0.0 }, t);
