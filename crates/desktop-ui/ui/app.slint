@@ -205,6 +205,13 @@ export global Chrome {
     // The room a page keeps under the top pill and above the player pill; content runs on under them.
     out property <length> top-room: 76px;
     out property <length> bottom-room: 96px;
+    // The main window's height (the window keeps it).
+    in-out property <length> window-height;
+    // How far up a menu `height` tall, opened at `y` in the window, moves to clear the player pill, which
+    // lies over the window's foot; never above the top pill.
+    public pure function menu-lift(y: length, height: length) -> length {
+        return max(0px, min(y + height - (root.window-height - root.bottom-room), y - root.top-room));
+    }
 }
 
 // The two typefaces, as Android has them: Inter for everything, Literata for what a page is called.
@@ -859,6 +866,13 @@ component Art inherits Rectangle {
     }
 }
 
+// The collection menu's height before it shows, for placing it: a 40 px row per line and its padding.
+global CollectionMenuSize {
+    public pure function tall() -> length {
+        return ((Jam.guest ? 2 : 3) + (Jam.on && !Jam.hosting && !Jam.guest ? 1 : 0)) * 40px + 12px;
+    }
+}
+
 // What a right press on an album, playlist, song card or mix offers: play it, play it next, add it to the
 // queue, and start a jam with it while one can start. A guest's songs go to the host, so it has no Play.
 component CollectionMenu inherits PopupWindow {
@@ -936,7 +950,7 @@ component CardView inherits Rectangle {
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down && root.playable {
                 root.menu-x = min(self.mouse-x, root.width - 120px);
-                root.menu-y = self.mouse-y;
+                root.menu-y = self.mouse-y - Chrome.menu-lift(self.absolute-position.y + self.mouse-y, CollectionMenuSize.tall());
                 card-menu.show();
             }
         }
@@ -1326,7 +1340,7 @@ component PickCard inherits Rectangle {
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
                 root.menu-x = min(self.mouse-x, root.width - 120px);
-                root.menu-y = self.mouse-y;
+                root.menu-y = self.mouse-y - Chrome.menu-lift(self.absolute-position.y + self.mouse-y, CollectionMenuSize.tall());
                 pick-menu.show();
             }
         }
@@ -1385,6 +1399,11 @@ component SongLine inherits Rectangle {
     callback menu() -> [SongGo];
     callback act(int, string);
     property <[SongGo]> lines;
+    // The menu's height for its lines: a row each and Play, a rule's room where one stands, the padding.
+    pure function menu-tall() -> length {
+        let ruled = root.lines.length > 0 ? 9px : 0px;
+        return (root.lines.length + (Jam.guest ? 0 : 1)) * 40px + ruled + 12px;
+    }
     height: root.thumb ? 56px : 44px;
     border-radius: 7px;
     background: touch.has-hover ? Theme.hover : transparent;
@@ -1402,8 +1421,8 @@ component SongLine inherits Rectangle {
         pointer-event(e) => {
             if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
                 root.menu-x = min(self.mouse-x, root.width - 250px);
-                root.menu-y = self.mouse-y;
                 root.lines = root.menu();
+                root.menu-y = self.mouse-y - Chrome.menu-lift(self.absolute-position.y + self.mouse-y, root.menu-tall());
                 song-menu.show();
             }
         }
@@ -4400,6 +4419,7 @@ component TopContent inherits Rectangle {
 
 
 export component AppWindow inherits Window {
+    init => { Chrome.window-height = self.height; }
     in property <bool> downloads;
     // The season tile and the appearance chosen (the settings', for the settings menu).
     in property <int> season-worn;
@@ -4554,7 +4574,10 @@ export component AppWindow inherits Window {
     callback page-moved();
     callback player-changed();
     changed width => { root.page-moved(); }
-    changed height => { root.page-moved(); }
+    changed height => {
+        Chrome.window-height = self.height;
+        root.page-moved();
+    }
     changed full-player => { root.player-changed(); }
     changed full-panel => { root.player-changed(); }
     changed view => { root.player-changed(); }
@@ -5888,6 +5911,10 @@ export component AppWindow inherits Window {
                 border-color: Theme.outline;
                 background: Theme.ground;
                 clip: true;
+                // Presses and scrolls on the sheet's own ground stay on it, rather than reaching the page under it.
+                TouchArea {
+                    scroll-event(e) => { accept }
+                }
                 PanelTabs {
                     x: 10px;
                     y: 10px;
