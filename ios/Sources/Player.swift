@@ -318,9 +318,10 @@ final class PlayerCard: UIViewController {
         guard !scrubbing else { return }
         let now = Core.shared.now
         let total = (now.song?.seconds ?? 0) * 1000
-        let at = min(now.position, max(total, 0))
+        let at = total > 0 ? min(now.position, total) : now.position
+        seek.isEnabled = total > 0
         seek.maximumValue = Float(max(total, 1))
-        seek.value = Float(at)
+        seek.value = total > 0 ? Float(at) : 0
         elapsed.text = Fmt.clock(ms: at)
         remaining.text = "-" + Fmt.clock(ms: max(0, total - at))
     }
