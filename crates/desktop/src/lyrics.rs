@@ -55,13 +55,13 @@ impl SongLyrics {
         lyrics_replaces(Some(&self.pick), next)
     }
 
-    /// State at `position_ms`: active line, fill progress, and when to call again. `sweep`: a view showing
-    /// the words fill is open; without one the next call is due at the next line.
-    pub fn advance(&self, position_ms: i64, sweep: bool, force: bool) -> Now {
-        let step = self.clock.advance(position_ms, sweep, true, force);
+    /// State at `position_ms`: active line, fill progress, and when to call again. `shown`: a view shows
+    /// the lyrics; without one nothing is waited for.
+    pub fn advance(&self, position_ms: i64, shown: bool, force: bool) -> Now {
+        let step = self.clock.advance(position_ms, shown, true, force);
         let sweeping = self.clock.timing().sweeps();
         // While a word fills, the clock counts 60 Hz frames.
-        let wait = self.clock.wait_ms(&step, sweep, 16);
+        let wait = if shown { self.clock.wait_ms(&step, true, 16) } else { None };
         let line = usize::try_from(step.frame.active).ok().and_then(|i| self.pick.lyrics.lines.get(i));
         let (sung, now, mix, rest) = match line {
             Some(l) if sweeping => split(&l.text, step.frame.sung),
@@ -164,9 +164,8 @@ mod tests {
         assert_eq!((now.sung.as_str(), now.now.as_str(), now.rest.as_str()), ("one t", "w", "o"));
         assert!(now.wait.is_some_and(|ms| ms <= 16), "a word is filling");
 
-        // With no view showing the fill, only the next line is waited for.
-        let wait = l.advance(2500, false, true).wait;
-        assert!(wait.is_some_and(|ms| ms >= 100), "the next line is due at 6000, waited {wait:?}");
+        // With no view showing the lyrics, nothing is waited for.
+        assert_eq!(l.advance(2500, false, true).wait, None);
     }
 
 }
