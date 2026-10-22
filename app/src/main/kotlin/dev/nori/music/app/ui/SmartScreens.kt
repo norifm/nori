@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -84,13 +86,14 @@ private fun MixCovers(urls: List<String>, size: androidx.compose.ui.unit.Dp) {
         urls, Modifier.size(size),
         animationSpec = androidx.compose.animation.core.tween(if (AppMotion.reduce) 0 else 320), label = "mix art",
     ) { covers ->
-        val half = size / 2
+        // Cells share the square by weight: halves rounded one by one left a pixel gap that showed at the seam.
+        val cell = Modifier.fillMaxSize()
         when {
             covers.size >= 4 -> Column {
-                Row { Cover(covers[0], half, radius = 0.dp, plate = false); Cover(covers[1], half, radius = 0.dp, plate = false) }
-                Row { Cover(covers[2], half, radius = 0.dp, plate = false); Cover(covers[3], half, radius = 0.dp, plate = false) }
+                Row(Modifier.weight(1f)) { Cover(covers[0], 0.dp, cell.weight(1f), radius = 0.dp, plate = false); Cover(covers[1], 0.dp, cell.weight(1f), radius = 0.dp, plate = false) }
+                Row(Modifier.weight(1f)) { Cover(covers[2], 0.dp, cell.weight(1f), radius = 0.dp, plate = false); Cover(covers[3], 0.dp, cell.weight(1f), radius = 0.dp, plate = false) }
             }
-            covers.isNotEmpty() -> Cover(covers[0], size, radius = 0.dp, plate = false)
+            covers.isNotEmpty() -> Cover(covers[0], 0.dp, cell, radius = 0.dp, plate = false)
             else -> Box(Modifier.fillMaxSize())
         }
     }
@@ -118,6 +121,7 @@ private fun MixArt(card: MixCard, size: androidx.compose.ui.unit.Dp) {
 }
 
 private val MIX_CARD_WIDTH = 150.dp
+private val ART_FADE = androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Black, 1f to androidx.compose.ui.graphics.Color.Transparent)
 private val MIX_CARD_HEIGHT = 206.dp
 
 /**
@@ -136,14 +140,21 @@ private fun MixCardBody(card: MixCard, papers: Papers, width: androidx.compose.u
     val dyed = remember(card.id, papers) {
         cardColours[card.id to papers] ?: dev.nori.music.ffi.library.mixCardColours(card.id, papers.light, papers.dark, papers.darkTheme).also { cardColours.put(card.id to papers, it) }
     }
-    val page = androidx.compose.ui.graphics.Color(dyed.page.toInt())
-    val ink = androidx.compose.ui.graphics.Color(dyed.ink.toInt())
+    // The page of the mix opened from this card wears its first cover's colours (HeroPage), so the card
+    // fades into the same ones when they are known; until then, the mix's own dyed paper.
+    val tint = rememberCoverPalette(card.covers.firstOrNull())
+    val page = tint?.background ?: androidx.compose.ui.graphics.Color(dyed.page.toInt())
+    val ink = tint?.let { androidx.compose.ui.graphics.Color(it.look[dev.nori.music.look.CoverLook.ON]) } ?: androidx.compose.ui.graphics.Color(dyed.ink.toInt())
     val seed = remember(card.id) { tileColours(card.id)[0] }
     Column(modifier.size(width, width * (MIX_CARD_HEIGHT / MIX_CARD_WIDTH)).clip(TileShape).background(page).clickable(onClick = onClick)) {
-        Box(Modifier.size(width).background(seed)) {
-            MixCovers(card.covers, width)
-            Box(Modifier.matchParentSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(0.45f to androidx.compose.ui.graphics.Color.Transparent, 1f to page)))
-        }
+        // The art is rubbed out into the card's paper rather than painted over with it: a painted edge
+        // let the covers show through as a light line wherever it fell between pixels (an overscroll stretch).
+        Box(
+            Modifier.size(width)
+                .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                .drawWithContent { drawContent(); drawRect(ART_FADE, blendMode = androidx.compose.ui.graphics.BlendMode.DstIn) }
+                .background(seed),
+        ) { MixCovers(card.covers, width) }
         Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), Arrangement.Center) {
             Text(
                 card.title, style = titled(MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, fontWeight = FontWeight.SemiBold)),
