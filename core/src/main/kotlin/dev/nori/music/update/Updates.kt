@@ -140,6 +140,7 @@ class Updates(private val context: Context, private val http: () -> Http, privat
     fun later() {
         job?.cancel()
         val s = _state.value
+        if (s is State.Downloading) dir.deleteRecursively()
         val update = when (s) {
             is State.Available -> s.update
             is State.Downloading -> s.update
