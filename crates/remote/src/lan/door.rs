@@ -1,9 +1,9 @@
 //! A controllable device's door: the listener and its connections, native only.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use nori_tasks::Tasks;
 use nori_time::{Duration, Instant};
@@ -15,6 +15,12 @@ use crate::wire::{Answer, Body, DeviceState, Event, Member, Outgoing, Room, HOLD
 
 /// How far a request's time may be from the door's: a captured request cannot be sent again later.
 const SKEW_MS: i64 = 60_000;
+
+/// Connections a door serves at once; later ones are closed unread. Held polls from a few controllers and jam guests fit.
+const MAX_CONNECTIONS: usize = 32;
+
+/// Bytes of a request's line and headers; a longer head is not a command.
+const HEAD_MOST: u64 = 16 << 10;
 
 /// Replies a door keeps for controllers that have not polled them yet.
 const KEPT_EVENTS: usize = 64;
@@ -63,6 +69,8 @@ impl Inside {
 struct Shared {
     secret: Mutex<String>,
     closed: AtomicBool,
+    /// Connections being served, at most [`MAX_CONNECTIONS`].
+    live: AtomicUsize,
     inside: Mutex<Inside>,
     handler: Handler,
     jam: Mutex<Option<LanJam>>,
@@ -79,7 +87,7 @@ struct LanJam {
 }
 
 /// A controllable device's listener. Its thread blocks in `accept` (no wakeups); each connection gets a
-/// thread of its own while it lasts.
+/// thread of its own while it lasts, up to [`MAX_CONNECTIONS`].
 pub struct Door {
     port: u16,
     shared: Arc<Shared>,
@@ -90,7 +98,7 @@ impl Door {
     pub fn open(me: Member, secret: String, handler: Handler, tasks: Arc<dyn Tasks>) -> std::io::Result<Door> {
         let listener = TcpListener::bind(("0.0.0.0", 0))?;
         let port = listener.local_addr()?.port();
-        let shared = Arc::new(Shared { secret: Mutex::new(secret), closed: AtomicBool::new(false), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0 }), handler, jam: Mutex::new(None), tasks });
+        let shared = Arc::new(Shared { secret: Mutex::new(secret), closed: AtomicBool::new(false), live: AtomicUsize::new(0), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0 }), handler, jam: Mutex::new(None), tasks });
         let s = shared.clone();
         std::thread::Builder::new().name("nori-door".into()).spawn(move || {
             for conn in listener.incoming() {
@@ -98,8 +106,15 @@ impl Door {
                     break;
                 }
                 let Ok(conn) = conn else { continue };
+                if s.live.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+                    s.live.fetch_sub(1, Ordering::AcqRel);
+                    continue;
+                }
                 let s = s.clone();
-                let _ = std::thread::Builder::new().name("nori-door-in".into()).spawn(move || serve(&s, conn));
+                let _ = std::thread::Builder::new().name("nori-door-in".into()).spawn(move || {
+                    serve(&s, conn);
+                    s.live.fetch_sub(1, Ordering::AcqRel);
+                });
             }
         })?;
         Ok(Door { port, shared })
@@ -188,17 +203,23 @@ fn serve(s: &Shared, conn: TcpStream) {
     let _ = out.shutdown(Shutdown::Both);
 }
 
-/// Method, target and body of the next request on a connection; None at its end.
+/// Method, target and body of the next request on a connection; None at its end or when its head
+/// outgrows [`HEAD_MOST`].
 fn read_request(r: &mut impl BufRead) -> Option<(String, String, Vec<u8>)> {
+    let mut head = (&mut *r).take(HEAD_MOST);
     let mut line = String::new();
-    r.read_line(&mut line).ok().filter(|n| *n > 0)?;
+    let mut next_line = |line: &mut String| {
+        line.clear();
+        // A line the budget cut short has no newline.
+        head.read_line(line).ok().filter(|_| line.ends_with('\n')).map(|_| ())
+    };
+    next_line(&mut line)?;
     let mut parts = line.split_whitespace();
     let (method, target) = (parts.next()?.to_string(), parts.next()?.to_string());
     let mut length = 0usize;
     loop {
-        let mut h = String::new();
-        r.read_line(&mut h).ok().filter(|n| *n > 0)?;
-        let h = h.trim_end();
+        next_line(&mut line)?;
+        let h = line.trim_end();
         if h.is_empty() {
             break;
         }
@@ -444,6 +465,26 @@ mod tests {
         let mut b = vec![0; length];
         r.read_exact(&mut b).unwrap();
         (status.split_whitespace().nth(1).unwrap().parse().unwrap(), String::from_utf8(b).unwrap())
+    }
+
+    #[test]
+    fn a_request_head_past_its_budget_is_refused() {
+        let mut huge = b"GET /rest/noriRemote.poll HTTP/1.1\r\nX-Pad: ".to_vec();
+        huge.extend(std::iter::repeat_n(b'a', 1 << 20));
+        huge.extend_from_slice(b"\r\n\r\n");
+        assert!(read_request(&mut std::io::Cursor::new(huge)).is_none());
+        let small = b"POST /x?a=b HTTP/1.1\r\nContent-Length: 2\r\n\r\nhi".to_vec();
+        assert_eq!(read_request(&mut std::io::Cursor::new(small)), Some(("POST".into(), "/x?a=b".into(), b"hi".to_vec())));
+    }
+
+    #[test]
+    fn connections_past_the_cap_are_closed_at_once() {
+        let door = Door::open(Member { id: "host".into(), ..Default::default() }, "pw".into(), Box::new(|_, _| {}), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
+        let held: Vec<_> = (0..MAX_CONNECTIONS).map(|_| TcpStream::connect(("127.0.0.1", door.port())).unwrap()).collect();
+        let mut over = TcpStream::connect(("127.0.0.1", door.port())).unwrap();
+        over.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        assert_eq!(over.read(&mut [0; 1]).map_err(|e| e.kind()), Ok(0));
+        drop(held);
     }
 
     #[test]
