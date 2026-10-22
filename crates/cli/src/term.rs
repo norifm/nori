@@ -1,18 +1,19 @@
 //! Terminal setup and teardown (raw mode, alternate screen), restored on exit, error and panic. While the
 //! screen is ours, stderr goes to a log file so log lines cannot corrupt it.
 
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste, EnableFocusChange, EnableMouseCapture};
+use ratatui::crossterm::event::{DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste, EnableFocusChange};
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::crossterm::{cursor, execute};
 use ratatui::Terminal;
 
-pub type Term = Terminal<CrosstermBackend<io::Stdout>>;
+/// Frames are buffered so each reaches the terminal in one write; ratatui flushes after every draw.
+pub type Term = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
 
 // Globals because the panic hook has no handle to the terminal state.
 /// The original stderr, duplicated before redirecting to the log; -1 if not redirected.
@@ -72,7 +73,7 @@ pub fn enter(mouse: bool) -> io::Result<Term> {
     execute!(out, EnterAlternateScreen, EnableBracketedPaste, EnableFocusChange, cursor::Hide)?;
     ON.store(true, Ordering::SeqCst);
     set_mouse(mouse);
-    let mut t = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut t = Terminal::new(CrosstermBackend::new(BufWriter::with_capacity(64 << 10, io::stdout())))?;
     t.clear()?;
     Ok(t)
 }
@@ -145,10 +146,11 @@ pub fn tmux_focus_events() {
     }
 }
 
-/// Mouse capture on or off; off lets the terminal select text.
+/// Mouse capture on or off; off lets the terminal select text. On reports presses, drags and the wheel
+/// (1000, 1002, SGR 1006), not every pointer move (1003), which no screen uses.
 pub fn set_mouse(on: bool) {
     let mut out = io::stdout();
-    let _ = if on { execute!(out, EnableMouseCapture) } else { execute!(out, DisableMouseCapture) };
+    let _ = if on { out.write_all(b"\x1b[?1000h\x1b[?1002h\x1b[?1006h").and_then(|()| out.flush()) } else { execute!(out, DisableMouseCapture) };
 }
 
 /// Undoes [`enter`]. Idempotent; called from the panic hook too.
