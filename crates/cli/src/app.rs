@@ -932,7 +932,7 @@ impl App {
     }
 
     pub fn retheme(&mut self) {
-        let day = crate::art::Day::today();
+        let day = crate::art::Day::now();
         let dark = crate::art::terminal_dark(std::env::var("COLORFGBG").ok().as_deref());
         self.look = Theme::season(&self.prefs, day, dark, self.paint, self.colors);
         let accents = nori_look::theme::accents(nori_core::settings::season_of(self.prefs.season), day.month, day.day, day.southern);

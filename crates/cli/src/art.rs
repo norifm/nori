@@ -151,30 +151,7 @@ pub fn blend(a: Color, b: Color, t: f32) -> Color {
 }
 
 /// A date and hemisphere, which the followed season depends on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Day {
-    pub month: u32,
-    pub day: u32,
-    pub southern: bool,
-}
-
-impl Day {
-    /// Today, by the local clock and the time zone's hemisphere.
-    pub fn today() -> Day {
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        let (month, day) = nori_look::theme::utc_date(now + nori_core::library::local_offset_s(now));
-        Day { month, day, southern: nori_look::theme::southern(&zone()) }
-    }
-}
-
-/// The IANA time zone: `TZ`, else where `/etc/localtime` points.
-fn zone() -> String {
-    if let Some(tz) = std::env::var("TZ").ok().filter(|z| !z.is_empty()) {
-        return tz.trim_start_matches(':').to_string();
-    }
-    let link = std::fs::read_link("/etc/localtime").map(|p| p.display().to_string()).unwrap_or_default();
-    link.split_once("zoneinfo/").map_or_else(String::new, |(_, z)| z.to_string())
-}
+pub use nori_host::desktop::Today as Day;
 
 /// Whether the terminal's own background is dark, as `COLORFGBG` ("fg;bg") says; dark when unknown.
 pub fn terminal_dark(colorfgbg: Option<&str>) -> bool {

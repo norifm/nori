@@ -184,7 +184,7 @@ impl SettingsView {
     pub fn pages(&mut self, prefs: &StoredPrefs) -> &[Page] {
         if self.pages.is_none() {
             let state = settings_model::state(prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
-            let today = Day::today();
+            let today = Day::now();
             self.pages = Some(GROUPS.iter().map(|g| page(g.id, prefs, &state, &self.facts, &self.own, today)).collect());
         }
         self.pages.as_deref().expect("made above")
