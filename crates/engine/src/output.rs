@@ -359,6 +359,11 @@ impl Feed {
         self.ring.engine.unpark();
     }
 
+    /// The engine's thread, to wake it from where the feed itself may be gone.
+    pub fn waker(&self) -> std::thread::Thread {
+        self.ring.engine.clone()
+    }
+
     /// The engine waits for the low mark (a pull that clears this woke it). For test devices.
     pub fn engine_waits(&self) -> bool {
         self.ring.waiting.load(Ordering::Acquire)
