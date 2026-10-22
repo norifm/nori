@@ -231,18 +231,18 @@ impl AlbumSort {
     }
 }
 
-/// The album grid's orders offered, in their order; the client names each. Artist is [`AlbumSort::ArtistRows`]:
-/// a plain A–Z by artist is no longer offered.
+/// The album grid's orders offered, in their order; the client names each. Those that mean the same on the
+/// songs list (favorites, title, artist, year, added, most played) come in its order. Artist is
+/// [`AlbumSort::ArtistRows`]: a plain A–Z by artist is no longer offered.
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn album_sorts() -> Vec<AlbumSort> {
     vec![
+        AlbumSort::Starred,
         AlbumSort::ByName,
         AlbumSort::ArtistRows,
-        AlbumSort::Newest,
-        AlbumSort::Recent,
-        AlbumSort::Frequent,
-        AlbumSort::Starred,
         AlbumSort::ByYear,
+        AlbumSort::Newest,
+        AlbumSort::Frequent,
         AlbumSort::Random,
     ]
 }

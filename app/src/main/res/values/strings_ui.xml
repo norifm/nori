@@ -514,9 +514,7 @@
     <string name="shelf_other">Others</string>
     <string name="shelf_tagged">%1$ss</string>
     <!-- The album grid's and the songs list's orders. -->
-    <string name="sort_az">A–Z</string>
     <string name="sort_artist">Artist</string>
-    <string name="sort_artist_rows">Artist</string>
     <string name="sort_added">Added</string>
     <string name="sort_played">Played</string>
     <string name="sort_most_played">Most played</string>
