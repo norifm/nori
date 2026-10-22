@@ -676,7 +676,7 @@ async fn youtube_id(a: &Ask<'_>, song: &Song) -> Asked<Option<String>> {
     }
     let title = clean(&song.title);
     let answer = youtube(a, "search", json!({ "query": format!("{} {title}", song.artist), "params": YOUTUBE_SONGS })).await?;
-    let fitting = answers::youtube_songs(&answer).into_iter().filter(|t| fits(song, &title, &t.title, &t.artist, t.duration_ms as f64)).collect();
+    let fitting = answers::youtube_songs(&answer).ok_or_else(|| shape("youtube search"))?.into_iter().filter(|t| fits(song, &title, &t.title, &t.artist, t.duration_ms as f64)).collect();
     let id = closest_first(song, fitting, |t| t.duration_ms as f64).into_iter().next().map(|t| t.id);
     let mut kept = a.shared.memory.youtube.lock();
     if kept.len() >= YOUTUBE_KEPT {
@@ -918,6 +918,15 @@ pub(crate) mod tests {
         assert!(web.asked().iter().any(|u| u.contains("/next")), "the song's video was found and asked about: {:?}", web.asked());
         let body: Value = serde_json::from_str(web.sent.lock()[0].json.as_deref().unwrap()).unwrap();
         assert_eq!(body["context"]["client"]["clientName"], "WEB_REMIX");
+
+        let web = Web::default();
+        web.answer("https://music.youtube.com/youtubei/v1/search", 200, "<html>");
+        let memory = LyricsMemory::default();
+        for _ in 0..2 {
+            let shared = Shared::over(&memory);
+            assert_eq!(block(ask(LyricsService::YoutubeMusic, &Ask::new(&web, &keys(), &shared, LyricsService::YoutubeMusic), &s)), Lookup::Failed, "a search not read is a failure");
+        }
+        assert_eq!(web.asked().len(), 2, "a failed search is not remembered");
     }
 
 }
