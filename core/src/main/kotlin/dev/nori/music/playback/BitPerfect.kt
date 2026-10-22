@@ -164,7 +164,7 @@ class BitPerfect(context: Context) {
     }
 
     /** What the AudioTrack was opened with, recorded after the fact so the user can check it. */
-    fun onTrack(rate: Int, pcmEncoding: Int, offloaded: Boolean) {
+    @Synchronized fun onTrack(rate: Int, pcmEncoding: Int, offloaded: Boolean) {
         val bits = when (pcmEncoding) {
             AudioFormat.ENCODING_PCM_16BIT -> 16
             AudioFormat.ENCODING_PCM_24BIT_PACKED -> 24
