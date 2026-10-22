@@ -695,7 +695,7 @@ fun PlayerScreen(vm: PlayerViewModel, actions: ActionsViewModel) {
                 // A jam guest's transport is what its role offers (Spotify's Jam): an admin's is the host's, a
                 // guest listening here has play and pause of its own, one only watching has none.
                 Row(kept("transport").fillMaxWidth().padding(start = 18.dp, end = 18.dp, top = 18.dp), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-                    PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, enabled = !radio) { choose(Panel.LYRICS) }
+                    PanelButton(Icons.Filled.Lyrics, say.lyrics, page == Panel.LYRICS, enabled = !radio, lower = 2.dp) { choose(Panel.LYRICS) }
                     // The buttons send the record across exactly as a swipe does, so the two ways of
                     // changing song look like the same thing happening. A previous that only rewinds
                     // this song is not a record change and gets no slide - there is nothing to slide
@@ -832,8 +832,8 @@ internal fun OutputButton(
     ) {
         LookIcon(icon, description, Modifier.size(size), color)
         LookText(
-            say.outputLabel(o.port, o.name), color, Modifier.weight(1f, fill = false),
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+            say.outputName(o.port, o.name), color, Modifier.weight(1f, fill = false),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
     } else IconButton(open) {
@@ -2208,9 +2208,9 @@ private fun OutputRow(vm: PlayerViewModel) {
     val jam by vm.jamStrip.collectAsStateWithLifecycle()
     Row(Modifier.fillMaxWidth().padding(horizontal = PLAYER_GUTTER, vertical = 2.dp), Arrangement.Center, Alignment.CenterVertically) {
         val jamOn = jam
-        if (jamOn != null) JamButton(jamOn, 22.dp) { look.color(CoverLook.ON_VARIANT) }
+        if (jamOn != null) JamButton(jamOn, 20.dp) { look.color(CoverLook.ON_VARIANT) }
         else if (!state.jamGuest) OutputButton(
-            state.playingOn != null, 22.dp,
+            state.playingOn != null, 20.dp,
             idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
             named = true,
         )
@@ -2299,10 +2299,11 @@ private class ReadOut(val key: String) {
 internal const val READ_OUT = 2
 
 @Composable
-private fun PanelButton(icon: ImageVector, label: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+private fun PanelButton(icon: ImageVector, label: String, on: Boolean, enabled: Boolean = true, lower: androidx.compose.ui.unit.Dp = 0.dp, onClick: () -> Unit) {
     val look = LocalLook.current
     IconButton(onClick, enabled = enabled) {
-        LookIcon(icon, label, Modifier.size(26.dp)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
+        // [lower]: a glyph whose weight sits high in its box (Lyrics) is set down to read level with its neighbor.
+        LookIcon(icon, label, Modifier.offset(y = lower).size(26.dp)) { look.color(if (!enabled) CoverLook.ON_22 else if (on) CoverLook.ACCENT else CoverLook.ON_VARIANT) }
     }
 }
 
