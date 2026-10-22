@@ -170,13 +170,21 @@ pub(crate) fn spread_order(songs: &[Song], rng: &mut Rng, after: Option<&Song>) 
     let mut last_album = after.and_then(album_key).and_then(|k| albums.get(&k).copied());
     let mut prev_artist = None;
 
+    // How many artists have each number of songs left, and the largest such number.
+    let mut have = vec![0usize; n + 1];
+    for q in &queues {
+        have[q.len()] += 1;
+    }
+    let mut most = queues.iter().map(VecDeque::len).max().unwrap_or(0);
+
     let mut slots: Vec<Option<usize>> = shuffled.into_iter().map(Some).collect();
     let mut out = Vec::with_capacity(n);
     let mut start = 0;
     for left in (1..=n).rev() {
-        let dominant = (0..queues.len()).max_by_key(|&a| queues[a].len()).unwrap_or(0);
-        let pick = if queues[dominant].len() * 2 > left && Some(dominant) != last_artist {
-            queues[dominant][0]
+        // More than half of what is left makes the dominant artist unique, so the scan runs only then.
+        let dominant = if most * 2 > left { (0..queues.len()).max_by_key(|&a| queues[a].len()) } else { None };
+        let pick = if let Some(d) = dominant.filter(|&d| Some(d) != last_artist) {
+            queues[d][0]
         } else {
             let (mut fits, mut looked) = (None, 0);
             for i in start..n {
@@ -201,7 +209,13 @@ pub(crate) fn spread_order(songs: &[Song], rng: &mut Rng, after: Option<&Song>) 
         };
         let a = artist_of[pick];
         if let Some(p) = queues[a].iter().position(|&i| i == pick) {
+            let c = queues[a].len();
             queues[a].remove(p);
+            have[c] -= 1;
+            have[c - 1] += 1;
+            while most > 0 && have[most] == 0 {
+                most -= 1;
+            }
         }
         out.extend(slots[pick].take());
         (prev_artist, last_artist, last_album) = (last_artist, Some(a), Some(album_of[pick]));
@@ -447,6 +461,47 @@ mod tests {
         l.extend((0..6).map(|i| Song { id: format!("o{i}"), artist: "Other".into(), ..Default::default() }));
         let out = weighted_shuffle(l, 5);
         assert_eq!(out.windows(2).filter(|w| w[0].artist.to_lowercase() == w[1].artist.to_lowercase()).count(), 0);
+    }
+
+    /// Mixed artists, one artist holding most of the songs, and many small artists.
+    fn pinned_cases() -> Vec<Vec<Song>> {
+        let mut mixed = Vec::new();
+        for (artist, n) in [("A", 7), ("B", 5), ("C", 3), ("D", 1)] {
+            for i in 0..n {
+                mixed.push(song(&format!("{artist}{i}"), "t", artist, &format!("{artist}-album-{}", i % 2), "", 0));
+            }
+        }
+        // One artist holds more than half of what is left for most of the run.
+        let mut dominant: Vec<Song> = (0..12).map(|i| song(&format!("a{i}"), "t", "A", &format!("al{}", i % 3), "", 0)).collect();
+        dominant.extend((0..5).map(|i| song(&format!("s{i}"), "t", &format!("S{i}"), "", "", 0)));
+        let many: Vec<Song> = (0..30).map(|i| song(&format!("m{i}"), "t", &format!("artist {}", i % 9), "", "", 0)).collect();
+        vec![mixed, dominant, many]
+    }
+
+    #[test]
+    fn shuffle_order_is_pinned() {
+        let expected: [[&[usize]; 3]; 3] = [
+            [
+                &[2, 11, 13, 6, 10, 14, 0, 7, 12, 5, 15, 3, 9, 4, 8, 1],
+                &[8, 3, 12, 10, 6, 15, 13, 5, 9, 2, 14, 4, 7, 1, 11, 0],
+                &[12, 11, 5, 14, 8, 1, 15, 0, 10, 3, 13, 4, 9, 2, 7, 6],
+            ],
+            [
+                &[11, 13, 9, 12, 2, 16, 4, 14, 1, 15, 6, 3, 8, 5, 0, 7, 10],
+                &[9, 14, 10, 13, 1, 15, 0, 12, 11, 16, 5, 7, 3, 4, 8, 6, 2],
+                &[10, 16, 6, 14, 3, 12, 11, 13, 2, 15, 5, 0, 1, 8, 7, 9, 4],
+            ],
+            [
+                &[9, 7, 10, 12, 18, 15, 25, 3, 24, 16, 19, 6, 13, 1, 27, 8, 11, 4, 26, 2, 0, 17, 14, 28, 29, 23, 22, 20, 21, 5],
+                &[21, 29, 0, 28, 11, 27, 1, 20, 18, 24, 13, 16, 2, 23, 6, 26, 12, 5, 22, 9, 8, 15, 4, 14, 19, 17, 3, 7, 10, 25],
+                &[28, 5, 4, 1, 27, 15, 26, 9, 6, 16, 11, 21, 25, 19, 20, 12, 22, 24, 18, 23, 29, 17, 0, 2, 10, 8, 14, 13, 7, 3],
+            ],
+        ];
+        for (case, l) in pinned_cases().iter().enumerate() {
+            for (i, seed) in [1, 2, 3].into_iter().enumerate() {
+                assert_eq!(weighted_shuffle_order(l, seed), expected[case][i], "case {case} seed {seed}");
+            }
+        }
     }
 
     #[test]
