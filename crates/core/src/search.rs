@@ -45,7 +45,7 @@ impl SearchSession {
 
     /// Applies the server's answer to `query`; None if stale.
     pub fn server(&self, query: String, result: SearchResult) -> Option<SearchView> {
-        let split = search_split(result);
+        let split = search_split(result, &query);
         let mut s = self.0.lock();
         if s.query() != query {
             return None;
@@ -96,9 +96,10 @@ impl Core {
 }
 
 impl Core {
-    /// Index search, split like the server's.
+    /// Index search, ranked and split like the server's.
     pub(crate) fn local_search_split(&self, query: String, limit: u32) -> Result<SearchSplit> {
-        Ok(split(self.local_search(query, limit)?))
+        let found = self.local_search(query.clone(), limit)?;
+        Ok(split(ranked(found, &query)))
     }
 }
 
