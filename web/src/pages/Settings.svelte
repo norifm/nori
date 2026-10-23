@@ -52,7 +52,6 @@
       {/each}
       <a class="group-row" href={href("settings", "Account")}><Icon name="server" /><span class="words"><span>{W.account}</span><span class="sub">{page.data?.profile?.user ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
     </div>
-    <p class="about">{W.aboutLead}</p>
   </Page>
 {:else if name === "Account"}
   <Page title={W.account} back narrow ready={!!page.data} error={page.error}>
@@ -133,11 +132,6 @@
   }
   .group {
     margin: 0 -4px;
-  }
-  .about {
-    color: var(--ink2);
-    font-size: 13px;
-    margin: 32px 12px 0;
   }
   .under {
     padding-left: 34px;

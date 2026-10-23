@@ -161,7 +161,6 @@ export const W = {
   time: clock,
   account: "Account",
   thisServer: "This server",
-  aboutLead: "nori for the web: your own music server, in a browser.",
   // Settings, by the core's pages (their title and what they hold), sections and setting names.
   settingsPages: {
     Playing: ["Playback", "Crossfade, AutoMix, queue"],
