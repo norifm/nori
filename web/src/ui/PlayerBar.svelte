@@ -48,7 +48,7 @@
     {#if s}<Seek inline times={!ui.full} />{/if}
   </div>
   <div class="right">
-    {#if s && !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} size={22} />{/if}
+    {#if s && !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} />{/if}
     {#if !n?.asks}<OutputButton />{/if}
     {#each panes as [pane, icon, label] (pane)}
       <button class="glyph quiet" class:on={ui.full && ui.pane === pane} title={label} aria-label={label} data-pane={pane} onclick={() => ui.show(pane)}><Icon name={icon} /></button>
@@ -125,7 +125,9 @@
     min-width: 40px;
     height: 40px;
   }
-  .right :global(.icon) {
+  /* Every line glyph here one size (the seal's too), so their lines match. */
+  .right :global(.icon),
+  .right :global(.output .icon) {
     width: 21px;
     height: 21px;
   }

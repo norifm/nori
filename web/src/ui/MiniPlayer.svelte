@@ -23,7 +23,7 @@
   </div>
   {#if !n?.asks}
     <OutputButton />
-    <Seal what="song" id={s.id} on={!!s.starred} size={22} />
+    <Seal what="song" id={s.id} on={!!s.starred} />
   {/if}
   <button
     class="glyph"
@@ -71,6 +71,12 @@
   }
   .mini :global(.seal.on) {
     color: var(--accent);
+  }
+  /* The line glyphs (where it plays, the seal) one size, so their lines match; play and pause, solid, larger. */
+  .mini :global(.output .icon),
+  .mini :global(.seal .icon) {
+    width: 22px;
+    height: 22px;
   }
   .glyph :global(.icon) {
     width: 26px;

@@ -149,9 +149,10 @@
   .starred {
     color: var(--accent);
   }
+  /* The seal the size of the row's other glyphs, so its line is theirs. */
   .starred :global(.icon) {
-    width: 15px;
-    height: 15px;
+    width: 20px;
+    height: 20px;
   }
   .len {
     color: var(--ink2);

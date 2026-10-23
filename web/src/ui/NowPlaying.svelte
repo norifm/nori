@@ -74,7 +74,7 @@
         <span class="title clip">{s.title}</span>
         {#if s.artistId}<a class="artist clip" href={href("artist", s.artistId)} onclick={close}>{s.artist}</a>{:else}<span class="artist clip">{s.artist}</span>{/if}
       </div>
-      {#if !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} size={26} />{/if}
+      {#if !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} />{/if}
       <button class="glyph" aria-label={W.more} title={W.more} onclick={(e) => void songMenu(s, beside(e), { inPlayer: true })}><Icon name="more-horiz" /></button>
     </div>
     <Seek />
@@ -218,7 +218,8 @@
   .title-row :global(.seal.on) {
     color: var(--accent);
   }
-  .title-row .glyph :global(.icon) {
+  /* The seal and the menu, one size, so their lines match. */
+  .title-row :global(.icon) {
     width: 26px;
     height: 26px;
   }
