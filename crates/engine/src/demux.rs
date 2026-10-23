@@ -1252,6 +1252,8 @@ struct Pushed {
     /// The loader's [`Loader::shortened`] at the last try, and the tries made again for it.
     seen: u32,
     reopens: usize,
+    /// A copy cut short was fetched anew: if this one is too, the song itself is.
+    refetched: bool,
 }
 
 impl Pushed {
@@ -1279,8 +1281,8 @@ impl Pushed {
             (self.seen, self.reopens) = (now, self.reopens + 1);
             return None;
         }
-        if opened.as_ref().is_ok_and(|s| s.cut_short) && l.refetch() {
-            self.need = Some(0);
+        if opened.as_ref().is_ok_and(|s| s.cut_short) && !self.refetched && l.refetch() {
+            (self.need, self.refetched) = (Some(0), true);
             return None;
         }
         Some(opened)
@@ -1370,7 +1372,7 @@ impl Demuxed {
         if loader.pushed() {
             loader.opening(true);
             let seen = loader.shortened();
-            let p = Pushed { hint: hint.map(str::to_string), from_ms, offset_ms, duration_ms, estimated, encoding, mode, platform, need: None, seen, reopens: 0 };
+            let p = Pushed { hint: hint.map(str::to_string), from_ms, offset_ms, duration_ms, estimated, encoding, mode, platform, need: None, seen, reopens: 0, refetched: false };
             return Demuxed { state: State::Pushed(Box::new(p)), loader: Some((loader, engine)) };
         }
         if loader.complete() {
