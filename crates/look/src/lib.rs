@@ -6,6 +6,7 @@ pub mod color;
 pub mod compose;
 pub mod cover;
 pub mod dress;
+pub mod eink;
 pub mod lyrics;
 pub mod motion;
 #[cfg(test)]
