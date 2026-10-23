@@ -567,6 +567,29 @@ fn mouse() {
     assert!(matches!(a.cmds.last(), Some(Cmd::Play { start: 4, .. })), "{:?}", a.cmds);
 }
 
+/// The look's seasons, as the phone's tiles: each its kanji in its season's accent, then its name, the one
+/// worn ticked. No dots.
+#[test]
+fn the_seasons_show_their_kanji_in_their_accent() {
+    use nori_look::theme::Season;
+    let mut a = App::new(StoredPrefs { theme: nori_core::settings::ThemeMode::Dark, season: nori_core::settings::ThemeSeason::Winter, ..StoredPrefs::default() });
+    a.go(View::Settings);
+    draw(&mut a, 100, 30);
+    let look = GROUPS.iter().position(|g| g.id == crate::settings_view::Gid::Core(nori_core::settings_pages::SettingsPage::Look)).expect("the look");
+    a.settings.jump(look);
+    let s = draw(&mut a, 100, 30);
+    dump("seasons", &s);
+    let buf = LAST.with(|l| l.borrow().clone()).unwrap();
+    for (kanji, name, season) in [("春", "Spring", Season::Spring), ("夏", "Summer", Season::Summer), ("秋", "Autumn", Season::Autumn), ("冬", "Winter", Season::Winter)] {
+        let y = s.lines().position(|l| l.contains(&format!("{kanji}  {name}"))).unwrap_or_else(|| panic!("{name} missing:\n{s}"));
+        let line = s.lines().nth(y).unwrap();
+        assert!(!line.contains('●'), "{name} shows no dots: {line}");
+        assert_eq!(line.contains('✓'), season == Season::Winter, "only the season worn is ticked: {line}");
+        let x = (0..buf.area.width).find(|&x| buf[(x, y as u16)].symbol() == kanji).unwrap();
+        assert_eq!(buf[(x, y as u16)].fg, crate::art::argb(season.palette(true).accent), "{name}'s kanji in its accent");
+    }
+}
+
 #[test]
 fn settings_page() {
     let mut a = app();

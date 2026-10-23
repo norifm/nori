@@ -84,9 +84,9 @@ pub enum Row {
     /// `options` are (label, value); `shown` is the chosen label, or the raw value if none matches.
     /// `chips`: few options, all on view.
     Choice { target: Target, title: String, options: Vec<(String, String)>, shown: String, enabled: bool, chips: bool },
-    /// One of the four seasons: its name, its kanji, its theme's page, accent and on colors in the mode the
-    /// interface is in, whether it is the one worn, and whether picking it changes the setting.
-    Season { value: String, name: &'static str, kanji: &'static str, colors: [u32; 3], worn: bool, picked: bool, enabled: bool },
+    /// One of the four seasons: its name, its kanji, its theme's accent in the mode the interface is in,
+    /// whether it is the one worn, and whether picking it changes the setting.
+    Season { value: String, name: &'static str, kanji: &'static str, accent: u32, worn: bool, picked: bool, enabled: bool },
     Note { text: String },
     /// Opens another screen, with a status at the end.
     Link { title: String, status: String, action: Act },
@@ -602,7 +602,7 @@ const TILES: [(&str, &str, &str, ThemeSeason); 4] = [
 ];
 const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-/// The season setting as the four seasons, the one worn marked, each with its theme's colors in the mode
+/// The season setting as the four seasons, the one worn marked, each with its theme's accent in the mode
 /// the interface is in (`dark`), then the switch that follows the calendar, saying when the next comes in.
 fn season_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, dark: bool, today: Day) -> Option<Vec<Row>> {
     let RowItem::Setting { spec, .. } = &r.item else { return None };
@@ -615,9 +615,9 @@ fn season_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, dark: bool, tod
     let mut rows: Vec<Row> = TILES
         .iter()
         .map(|&(name, kanji, value, season)| {
-            let pal = nori_core::settings::season_palette(season, p.theme, dark, today.month, today.day, today.southern);
+            let accent = nori_core::settings::season_palette(season, p.theme, dark, today.month, today.day, today.southern).accent;
             let is = nori_core::settings::season_of(season) == Some(worn);
-            Row::Season { value: value.into(), name, kanji, colors: [pal.page, pal.accent, pal.on], worn: is, picked: p.season == season, enabled: r.enabled }
+            Row::Season { value: value.into(), name, kanji, accent, worn: is, picked: p.season == season, enabled: r.enabled }
         })
         .collect();
     let next = TILES[now.next as usize].0;
@@ -1059,14 +1059,13 @@ mod tests {
         assert_eq!(seasons(&winter)[3], s("WINTER", true, true));
         let (value, on, detail) = follow(&winter);
         assert_eq!((value.as_str(), on, detail.as_str()), ("FOLLOW", false, ""));
-        // Each in its theme's colors, dark as the interface is; Midnight's on black.
-        let colors = |sections: &[Section]| match &sections[0].rows[1] {
-            Row::Season { colors, .. } => *colors,
+        // Each in its theme's accent, dark as the interface is.
+        let accent = |sections: &[Section]| match &sections[0].rows[1] {
+            Row::Season { accent, .. } => *accent,
             other => panic!("{other:?}"),
         };
         let summer = nori_look::theme::palette(Some(nori_look::theme::Season::Summer), DAY.month, DAY.day, false, true, false);
-        assert_eq!(colors(&winter), [summer.page, summer.accent, summer.on]);
-        assert_eq!(colors(&look(ThemeSeason::Winter, nori_core::settings::ThemeMode::Midnight))[0], 0xFF00_0000);
+        assert_eq!(accent(&winter), summer.accent);
         // Picking a season stops following; the one picked asks nothing.
         let mut v = SettingsView { pages: Some(vec![Page { title: String::new(), summary: String::new(), sections: winter }]), ..SettingsView::default() };
         v.row.at = 2;
