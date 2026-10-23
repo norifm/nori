@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-automix',
  'edition': '2021',
- 'version': '0.7.0-beta.7',
+ 'version': '0.7.0-beta.8',
  'targets': [{'name': 'nori_automix', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': ['ffi'], 'desktop': [], 'desktop-tests': []},
  'local': [{'package': 'nori-db',
