@@ -836,6 +836,8 @@ pub struct App {
     pub colours: Option<Box<CoverColours>>,
     /// The season's colors, for the chrome and the pages.
     pub look: Theme,
+    /// The interface is dark, as the appearance setting and the terminal have it.
+    pub dark: bool,
     /// The full player's colors: the cover's when it wears them, else the season's.
     pub theme: Theme,
     /// Paint the page in the season's colors.
@@ -919,6 +921,7 @@ impl App {
     pub fn retheme(&mut self) {
         let day = crate::art::Day::now();
         let dark = crate::art::terminal_dark(std::env::var("COLORFGBG").ok().as_deref());
+        self.dark = self.prefs.theme.is_dark(dark);
         self.look = Theme::season(&self.prefs, day, dark, self.paint, self.colors);
         let accents = nori_look::theme::accents(nori_core::settings::season_of(self.prefs.season), day.month, day.day, day.southern);
         self.theme = match &self.colours {

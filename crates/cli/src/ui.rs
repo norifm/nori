@@ -959,7 +959,7 @@ fn sliders(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_
 fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let prefs = app.prefs.clone();
     let own = &app.settings.own;
-    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), data: own.data.clone(), device: own.device.clone() };
+    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), data: own.data.clone(), device: own.device.clone(), dark: app.dark };
     let body = heading(f, area, View::Settings.name(), "", t);
     let App { settings: v, hits, .. } = app;
     let pages = v.pages(&prefs).to_vec();
@@ -990,13 +990,32 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
 /// One settings page line.
 fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
     let row = match line {
-        SLine::Group(title) => return Line::from(Span::styled(title.to_string(), bold().fg(t.ink))),
+        SLine::Group(title, summary) => return Line::from(vec![Span::styled(title.to_string(), bold().fg(t.ink)), Span::styled(format!("   {summary}"), t.dim())]),
         SLine::Title(title) => return Line::from(Span::styled(format!("  {}", title.to_uppercase()), t.dim())),
         SLine::Row(r) => *r,
     };
     let (title, detail) = settings_view::row_words(row);
     let live = settings_view::row_enabled(row);
     let text_style = if live { Style::default().fg(t.ink) } else { t.dim() };
+    // A season: its kanji and name, the one worn in ink, and its page, accent and on as dots.
+    if let settings_view::Row::Season { colors, worn, .. } = row {
+        let name = if *worn { bold().fg(t.ink) } else { t.dim() };
+        let mut spans = vec![Span::styled(format!("    {}", pad(&title, 14)), name)];
+        for c in colors {
+            spans.push(Span::styled(" ●", Style::default().fg(crate::art::argb(*c))));
+        }
+        return Line::from(spans);
+    }
+    // A few options, all on view: the chosen one in ink, underlined.
+    if let settings_view::Row::Choice { options, shown, chips: true, .. } = row {
+        let mut spans = vec![Span::styled(format!("    {}", pad(&title, 24)), text_style)];
+        for (label, _) in options {
+            let style = if label == shown && live { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() };
+            spans.push(Span::styled(label.clone(), style));
+            spans.push(Span::raw("  "));
+        }
+        return Line::from(spans);
+    }
     if let Some((share, centred)) = settings_view::slider_share(row) {
         let bar_w = (w / 3).clamp(8, 30);
         let at = (share * (bar_w - 1) as f32).round() as usize;

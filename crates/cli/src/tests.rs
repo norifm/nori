@@ -1666,7 +1666,7 @@ fn the_main_screens() {
                 "appearance" => "Season",
                 _ => "John Coltrane",
             };
-            assert!(s.contains(want), "{name} at {w}x{h}:\n{s}");
+            assert!(s.to_lowercase().contains(&want.to_lowercase()), "{name} at {w}x{h}:\n{s}");
             assert!(s.contains("Moment's Notice"), "{name} at {w}x{h} shows the song playing:\n{s}");
         }
     }

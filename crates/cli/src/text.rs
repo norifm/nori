@@ -73,12 +73,12 @@ pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
     match row {
         HomeRow::Recent => "Recently played",
         HomeRow::Newest => "Recently added",
-        HomeRow::Frequent => "Most played",
-        HomeRow::Starred => "Favorites",
-        HomeRow::Random => "Something random",
+        HomeRow::Frequent => "Most played albums",
+        HomeRow::Starred => "Favorite albums",
+        HomeRow::Random => "Random",
         HomeRow::Playlists => "Playlists",
-        HomeRow::Pinned => "Pinned",
-        HomeRow::TopSongs => "Top songs",
+        HomeRow::Pinned => "Favorite playlists",
+        HomeRow::TopSongs => "Most played songs",
     }
 }
 
