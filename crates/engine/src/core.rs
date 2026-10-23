@@ -559,7 +559,6 @@ impl Downloader {
             let file = std::fs::OpenOptions::new().create(true).write(true).append(append).truncate(!append).open(&part);
             let Ok(mut file) = file else { return false };
             let (mut at, mut reader) = (if append { have } else { 0 }, body.reader);
-            let from = at;
             let broke = loop {
                 match reader.read(&mut chunk) {
                     Ok(0) => break false,
@@ -584,7 +583,8 @@ impl Downloader {
                 }
                 return kept;
             }
-            idle = if at > from { 0 } else { idle + 1 };
+            // Progress is past what was on disk: a connection that starts over must get further.
+            idle = if at > have { 0 } else { idle + 1 };
             if idle >= DOWNLOAD_TRIES {
                 return false;
             }
