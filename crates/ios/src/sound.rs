@@ -131,6 +131,26 @@ unsafe fn entry_of(
     }
 }
 
+/// The player's output button for the output playing now (`outputs::output_look`), as JSON to free:
+/// `{glyph, port, name}`, `glyph` 0 this device's speaker, 1 headphones, 2 Bluetooth, 3 anything else;
+/// `port` as the Sound page codes it; `name` the device's own, when it gave one.
+#[no_mangle]
+pub extern "C" fn nori_ios_output_look() -> *mut c_char {
+    owned(&output_look_json(&route_key()))
+}
+
+fn output_look_json(output: &str) -> Value {
+    use nori_core::outputs::{output_look, OutputGlyph};
+    let o = output_look(output.to_string());
+    let glyph = match o.glyph {
+        OutputGlyph::Phone => 0,
+        OutputGlyph::Headphones => 1,
+        OutputGlyph::Bluetooth => 2,
+        OutputGlyph::Cast => 3,
+    };
+    json!({ "glyph": glyph, "port": port_code(o.port), "name": o.name })
+}
+
 /// The outputs and the sound each gets, as JSON to free:
 /// `{current, rows: [{output, port, name, current, choice, profile}]}`.
 #[no_mangle]
@@ -293,6 +313,18 @@ mod tests {
 
     fn core() -> std::sync::Arc<Core> {
         Core::new(String::new(), "t".into(), Default::default()).unwrap()
+    }
+
+    #[test]
+    fn the_output_button_names_what_plays() {
+        let look = |o: &str| {
+            let v = output_look_json(o);
+            (v["glyph"].as_i64().unwrap(), v["port"].as_i64().unwrap(), v["name"].as_str().map(str::to_string))
+        };
+        assert_eq!(look(SPEAKER), (0, 0, None));
+        assert_eq!(look(WIRED), (1, 1, None));
+        assert_eq!(look(BUDS), (2, 3, Some("Buds".into())));
+        assert_eq!(look("AirPlay TV").0, 3);
     }
 
     #[test]

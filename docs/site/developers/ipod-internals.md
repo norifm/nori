@@ -322,12 +322,14 @@ numbers written by a Swift `Fmt` mirroring `core/text/Fmt.kt` with the same vect
 
 ### 6.2 The player
 
-Top to bottom on 568 pt: status bar 20, grabber 14, cover **272 × 272** (24 pt margins; scales to 0.82
-when paused, as Apple's does, a spring the user's tap drives), title/artist/album with star and menu (56),
-seek bar with times (36), transport row (72), `MPVolumeView` (36), bottom row: lyrics, route picker
-(`AVRoutePickerView`), queue (44). The background is black whatever the cover (the owner's decision,
-2026-10-04): the cover's colors tint nothing, so pale covers never wash out the light text and nothing
-is derived or composed per song.
+As Android's (`docs/research/seasons-port-reference.md`): the artwork from the top, as wide as the screen
+and 44 pt deeper than square, melting into the page behind the title; the title row (Literata title,
+artist, album) with the seal and more; the seek bar with its times; one row of lyrics, previous, play,
+next and queue; then the output line, the device's glyph (the core's `output_look`, or the other device's
+kind, lit) and its name as one button. The page is the season's paper dyed with the cover
+(`nori_ios_cover_look`), not in Midnight; the queue, lyrics and devices sheets open in the same colors.
+No volume slider (the hardware keys set it, and reach another device playing), and no blur behind the
+controls: a blur over a moving cover is per-frame work this GPU is not asked for.
 
 ### 6.3 Lyrics
 
@@ -348,15 +350,18 @@ on the main thread, the request posts its answer to main.
 
 ### 6.5 Type, icons, theme
 
-System font (San Francisco: the exact Apple Music typeface), Dynamic Type through `UIFontMetrics`. No SF
-Symbols on iOS 12: the glyphs are Android's own Material icons (`Icons.Filled.*`), their path data
-carried into `ios/Sources/Glyphs.swift` and drawn as templates at the size each place needs; the
-Licenses page credits them. Themes: iOS 12 has no system dark mode, so the app's own `theme` setting (dark by
-default, day as the option; Midnight is pointless on an LCD and is hidden). The season theme
-is colors only: `Theme.swift` reads the palette from `nori_ios_palette` (`crates/ios/src/theme.rs`, over
-`nori_look::theme::palette` on the device's date and zone) and rebuilds the views when the `theme` or `season`
-setting changes, when the app becomes active on a new day, and at launch. Settings, Theme lists the four
-seasons with their kanji and a follow switch.
+Nori Seasons, with Android as the reference. Inter for everything and Literata for what a page is called:
+Android's own variable fonts, bundled (`UIAppFonts`) and set on their weight axis, scaled by Dynamic Type
+through `UIFontMetrics`. No SF Symbols on iOS 12: the glyphs are Iconoir's, written as plain path data into
+`ios/Sources/Iconoir.swift` by `tools/glyphs.py` (with the seal and the seasons' kanji from Android's
+drawables) and drawn by `Glyphs.swift` as templates at the size each place needs; the Licenses page credits
+Iconoir, Inter, Literata and Shippori Mincho with the core's data credits. The theme is the `theme` and
+`season` settings: `Theme.swift` reads what they wear from `nori_ios_look` (`crates/ios/src/theme.rs`, over
+the core's `theme_palette` on the device's date and zone) and rebuilds the views when either changes, when
+the app becomes active on a new day, and at launch. System is Night, iOS 12 having no scheme of its own;
+Midnight is true black and wears no cover colors. `Design.swift` holds the shapes: radii, spacing, the
+grouped card and its rows, small capitals, chips, the ink pill, bare glyph buttons and the one sheet every
+menu is. The tabs and the mini player are one outlined pill at the foot, drawn flat (no blur).
 
 ### 6.6 Motion
 
@@ -442,13 +447,15 @@ Each ends with something that runs on the iPod; nothing moves on until the one b
 
 ## 11. The owner's decisions (2026-10-03)
 
-- **Night by default.** Day stays as a setting; Midnight is hidden (LCD).
+- **Night by default.** Day stays as a setting. Midnight was hidden (LCD); since Nori Seasons it is offered, as on
+  Android, and System stands for Night.
 - **The headphone jack is the output.** No Lightning DAC: the `Usb` route, bit-perfect reopening per song
   and the DAC pages are not built for this client; Bluetooth and the speaker are the other two routes.
 - **Downloads run while the app is open or playing.** No `NSURLSession` background sessions; the Downloads
   page says so in one line.
-- **The player is black.** (2026-10-04) Whatever the cover; its colors tint nothing.
-- **The icons are Android's.** (2026-10-04) Its Material icons, drawn from their path data.
+- **The player is black.** (2026-10-04) Whatever the cover; its colors tint nothing. Superseded by Nori
+  Seasons (2026-10-23): the player wears the season's paper dyed with the cover, as Android's does.
+- **The icons are Android's.** (2026-10-04) Its Material icons then, Iconoir since Nori Seasons.
 - **Other music apps on the device are not a reference.** Nothing of their behavior is copied; the
   reference is Android's app and Apple's own Music app (section 6).
 
@@ -582,9 +589,9 @@ pauses within the fade, Bluetooth speaker gets its own profile row in the device
 
 ### W7 - the app shell and design system (Swift) ‖ W8 - covers
 
-The shell is on the device: `ShellController` (Home, Library, Search, Settings), large titles, the dark
-theme, drawn glyphs, and the mini player (cover, song, play/pause, next, a progress hairline ticking once a
-second only while playing and in front). `Say.swift` holds the words in English, `Fmt` the times, sizes
+The shell is on the device: `ShellController` (Home, Library, Settings, Search), large titles in Literata,
+the season theme, drawn glyphs, and one outlined pill at the foot holding the mini player (cover, song,
+output, seal, play/pause; nothing ticks in it) over the tabs. `Say.swift` holds the words in English, `Fmt` the times, sizes
 and quality line. Every screen word goes through `Say`, in `strings.xml`'s wording where Android has the
 phrase; text styles follow Dynamic Type live (the card keeps its fixed sizes, fitted to 568 pt);
 VoiceOver labels on every glyph button and on the drawn lyric lines. Left: the `fmt-check` vectors.
@@ -662,12 +669,12 @@ the queue and lyrics, on the strip above the list) or a pull past the list's top
 
 ### W10 - the player card and mini player (Swift)
 
-`PlayerCard` in `Player.swift`: the 6.2 layout, the paused cover scale (spring, snaps with reduce
-motion), seek with times, transport, shuffle / repeat, `MPVolumeView`, `AVRoutePickerView`, star, go to
-album / artist, the song menu. It opens and closes through `CardTransition`: UIKit's own presentation
+`PlayerCard` in `Player.swift`: the 6.2 layout, seek with times, transport, the output line (the
+system's `AVRoutePickerView` behind it while remote control is off), the seal, go to album / artist,
+the song menu. It opens and closes through `CardTransition`: UIKit's own presentation
 with a `UIPercentDrivenInteractiveTransition` the finger drives (up from the mini player, down on the
 card); the card's transform is never touched, since UIKit sets its frame while presenting. Its page is
-black. The seek timer runs at 2 Hz only while the card is shown and
+the season's paper dyed with the cover. The seek timer runs at 2 Hz only while the card is shown and
 playing.
 
 The custom presentation controller and interactive transition (one pan, `UISpringTimingParameters`,
@@ -702,7 +709,7 @@ Settings → Sound lists the outputs and the sound each gets (`crates/ios/src/so
 output playing now is read from the audio session's route when asked (`output::route_key`, keyed as the
 engine keys outputs), not remembered from events, and the list reads it again on a route change; and
 Headphone presets is the AutoEQ list (download, search, apply to the current sound). Settings → About →
-Licenses lists `core_credits`, the Material icons from `android_credits` and `data_credits`, with the
+Licenses lists `core_credits` and `data_credits` (Iconoir and the fonts among them), with the
 texts from Android's assets. Settings has Android's Queue section (skip explicit songs, keep playing when
 the queue ends and, while it does, carry on with songs or albums, chosen by, remote songs) and When
 something goes wrong (play downloads when offline).

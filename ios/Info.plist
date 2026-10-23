@@ -75,6 +75,11 @@
 			<string>{320, 568}</string>
 		</dict>
 	</array>
+	<key>UIAppFonts</key>
+	<array>
+		<string>fonts/inter.ttf</string>
+		<string>fonts/literata.ttf</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

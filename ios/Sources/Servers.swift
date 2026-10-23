@@ -81,7 +81,7 @@ final class ServersPage: UITableViewController {
     override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
         guard editingStyle == .delete, !switching else { return }
         let s = servers[indexPath.row]
-        let sheet = UIAlertController.sheet(Say.forgetServer(s.label), Say.forgetServerNote)
+        let sheet = Sheet(Say.forgetServer(s.label), Say.forgetServerNote)
         sheet.add(Say.forget, destructive: true) { [weak self] in
             let forget = { dataDirectory().path.withCString { d in s.id.withCString { nori_ios_remove_server(d, $0) } } }
             if s.active {
@@ -99,7 +99,7 @@ final class ServersPage: UITableViewController {
     /// Runs `change` on the saved list, then reopens on whichever server is active after it.
     private func switchTo(_ change: @escaping () -> Void) {
         switching = true
-        let spinner = UIActivityIndicatorView(style: Theme.light ? .gray : .white)
+        let spinner = UIActivityIndicatorView(style: Theme.dark ? .white : .gray)
         spinner.startAnimating()
         navigationItem.rightBarButtonItem = UIBarButtonItem(customView: spinner)
         DispatchQueue.global(qos: .userInitiated).async {

@@ -5,12 +5,16 @@ sidebar:
   order: 4
 ---
 
-Applies to nori 0.6 on the iPod touch 6th generation, iOS 12.2 or later, jailbroken.
+Applies to nori 0.7 on the iPod touch 6th generation, iOS 12.2 or later, jailbroken.
 
 The iPod client is a UIKit app over the same core: Home, Library, Search and Settings tabs, the player
 and mini player, the queue, lyrics, the equalizer and per-device sound, downloads,
 [remote control](../connected/remote-control.md) and [jams](../connected/jams.md), and the lock screen's
-controls. It has a dark theme by default, and a light one. Settings, Theme picks a season (Spring, Summer, Autumn or Winter) or follows the seasons with the calendar, as on the other clients; the season only changes the colors.
+controls. It wears Nori Seasons as the Android app does: Settings, Appearance picks System, Day, Night or
+Midnight (iOS 12 has no system scheme, so System is Night) and one of the four season tiles, or follows the
+calendar. Album, artist, playlist and mix pages and the player take the season's paper dyed with their cover,
+except in Midnight. The library keeps Favorites, Downloads and Shuffle on a card above its sections, and Home
+offers to carry on with a queue another device left on the server.
 
 ## What you need
 

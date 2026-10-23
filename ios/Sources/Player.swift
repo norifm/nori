@@ -3,38 +3,41 @@ import CoreText
 import MediaPlayer
 import UIKit
 
-/// The player card: cover, song, seek bar, previous / play / next, volume, then lyrics, output, devices
-/// (with remote control on) and queue. While another device plays, the card is that device's music and
-/// controls it, and its volume stands where this iPod's was. A jam guest's is the jam's music, its host's
-/// to control: the jam's glyph stands where the output's speaker does and opens the queue, where the jam
-/// is. Drag down to close.
+/// The player, as Android's: the artwork running edge to edge from the top and melting into the page, the
+/// title row with the seal and more, the seek bar, then lyrics, previous, play, next and queue, then where
+/// the sound goes, the device's glyph and name as one button. The page is the season's paper dyed with the
+/// cover (not in Midnight). While another device plays, the card is that device's music and controls it;
+/// a jam guest's is the jam's, its host's to control, the jam's glyph where the output is. Drag down to
+/// close.
 final class PlayerCard: UIViewController {
     /// The cover's size on the card, which the lock screen's artwork shares.
-    static let coverPoints: CGFloat = 272
+    static var coverPoints: CGFloat { UIScreen.main.bounds.width }
     static var coverPx: Int { Int(coverPoints * UIScreen.main.scale) }
 
-    /// How the card comes and goes; kept here because `transitioningDelegate` is weak.
+    /// How card comes and goes; kept here because `transitioningDelegate` is weak.
     let transition = CardTransition()
     private var closer: DragToClose?
     private let cover = CoverView()
+    private let melt = GradientView(colours: [])
     private let songTitle = ReadingLine()
-    private let artist = UILabel()
-    private let album = UILabel()
-    private let heart = UIButton(type: .system)
-    private let more = UIButton(type: .system)
+    private let artist = label(Fonts.font(16, .medium, .headline), Theme.Card.label)
+    private let album = label(Fonts.font(14, .regular, .subheadline), Theme.Card.label)
+    private let seal = GlyphButton(Glyph.seal, Say.favorite)
+    private let more = GlyphButton(Glyph.more, Say.more)
     private let seek = UISlider()
-    private let elapsed = UILabel()
-    private let remaining = UILabel()
-    private let mixing = UILabel()
-    private let previous = UIButton(type: .system)
-    private let play = UIButton(type: .system)
-    private let nextButton = UIButton(type: .system)
+    private let elapsed = label(Fonts.digits(12), Theme.Card.secondary)
+    private let remaining = label(Fonts.digits(12), Theme.Card.secondary)
+    private let mixing = label(Fonts.font(11, .regular, .caption2), Theme.Card.secondary)
+    private let lyrics = GlyphButton(Glyph.lyrics, Say.lyrics, quiet: true)
+    private let previous = GlyphButton(Glyph.bigPrevious, Say.previous, side: 56)
+    private let play = GlyphButton(Glyph.bigPlay, Say.play, side: 68)
+    private let nextButton = GlyphButton(Glyph.bigNext, Say.next, side: 56)
+    private let queue = GlyphButton(Glyph.queue, Say.queue, quiet: true)
     private let transport = UIStackView()
-    private let volume = MPVolumeView()
-    /// The volume of the device playing, in the iPod's volume's place while the music plays elsewhere.
-    private let deviceVolume = UISlider()
-    private let devices = UIButton(type: .system)
+    /// Where the sound goes: the device's glyph and name, one button.
+    private let output = UIButton(type: .custom)
     private let outputs = OutputPicker()
+    private let grabber = UIButton(type: .custom)
     private var ticker: Timer?
     private var scrubbing = false
     private var paintedCover = ""
@@ -51,175 +54,123 @@ final class PlayerCard: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Black whatever the cover: the cover's colours never tint the card.
-        view.backgroundColor = Theme.Card.background
-
-        let grabber = UIButton(type: .system)
-        grabber.setImage(Glyph.chevronDown, for: .normal)
-        grabber.tintColor = Theme.Card.secondary
+        grabber.setImage(Glyph.close, for: .normal)
+        grabber.tintColor = .white
         grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
         grabber.accessibilityLabel = Say.close
+        cover.layer.cornerRadius = 0
+        let shade = GradientView(colours: [UIColor.black.withAlphaComponent(0.30), UIColor.black.withAlphaComponent(0)], at: [0, 0.16])
 
-        cover.layer.cornerRadius = 8
-        songTitle.font = UIFont.systemFont(ofSize: 20, weight: .semibold)
-        songTitle.textColor = Theme.Card.label
-        // As on Android: the artist and the album each on a line of their own, held back from the title
-        // rather than coloured, and each a way there.
-        artist.font = UIFont.systemFont(ofSize: 18)
-        artist.textColor = Theme.Card.label.withAlphaComponent(0.6)
-        album.font = UIFont.systemFont(ofSize: 15)
-        album.textColor = Theme.Card.label.withAlphaComponent(0.45)
-        for (label, action) in [(artist, #selector(artistTapped)), (album, #selector(albumTapped))] {
-            label.isUserInteractionEnabled = true
-            label.addGestureRecognizer(UITapGestureRecognizer(target: self, action: action))
+        songTitle.font = Fonts.title(26, .title1)
+        // The artist and the album each on a line of their own, held back from the title rather than
+        // colored, and each a way there.
+        for (l, action) in [(artist, #selector(artistTapped)), (album, #selector(albumTapped))] {
+            l.isUserInteractionEnabled = true
+            l.addGestureRecognizer(UITapGestureRecognizer(target: self, action: action))
         }
-        heart.tintColor = Theme.Card.label
-        heart.addTarget(self, action: #selector(heartTapped), for: .touchUpInside)
-        more.setImage(Glyph.more, for: .normal)
-        more.accessibilityLabel = Say.more
-        more.tintColor = Theme.Card.label
+        seal.addTarget(self, action: #selector(sealTapped), for: .touchUpInside)
         more.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
         let names = UIStackView(arrangedSubviews: [songTitle, artist, album])
         names.axis = .vertical
         names.spacing = 1
-        let songRow = UIStackView(arrangedSubviews: [names, heart, more])
-        songRow.spacing = 4
+        let songRow = UIStackView(arrangedSubviews: [names, seal, more])
+        songRow.spacing = 0
         songRow.alignment = .center
+        songRow.setCustomSpacing(4, after: names)
 
-        seek.minimumTrackTintColor = Theme.Card.label
-        seek.maximumTrackTintColor = Theme.Card.track
-        seek.setThumbImage(PlayerCard.dot(8), for: .normal)
-        seek.setThumbImage(PlayerCard.dot(16), for: .highlighted)
         seek.addTarget(self, action: #selector(scrubBegan), for: .touchDown)
         seek.addTarget(self, action: #selector(scrubMoved), for: .valueChanged)
         seek.addTarget(self, action: #selector(scrubEnded), for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        for l in [elapsed, remaining] {
-            l.font = UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-            l.textColor = Theme.Card.secondary
-        }
         remaining.textAlignment = .right
         for l in [elapsed, remaining] {
             l.setContentHuggingPriority(.required, for: .horizontal)
             l.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
         mixing.text = Say.mixing
-        mixing.font = UIFont.preferredFont(forTextStyle: .caption2)
-        mixing.textColor = Theme.Card.secondary
         mixing.textAlignment = .center
         mixing.isHidden = true
         let times = UIStackView(arrangedSubviews: [elapsed, mixing, remaining])
         times.distribution = .equalSpacing
-        times.spacing = 8
 
-        previous.setImage(Glyph.bigPrevious, for: .normal)
-        nextButton.setImage(Glyph.bigNext, for: .normal)
-        play.setImage(Glyph.bigPlay, for: .normal)
-        previous.accessibilityLabel = Say.previous
-        nextButton.accessibilityLabel = Say.next
-        for b in [previous, play, nextButton] { b.tintColor = Theme.Card.label }
+        lyrics.addTarget(self, action: #selector(lyricsTapped), for: .touchUpInside)
         previous.addTarget(self, action: #selector(previousTapped), for: .touchUpInside)
         play.addTarget(self, action: #selector(playTapped), for: .touchUpInside)
         nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
-        // Three controls, as on Android: shuffle and repeat live in the queue.
-        [previous, play, nextButton].forEach(transport.addArrangedSubview)
+        queue.addTarget(self, action: #selector(queueTapped), for: .touchUpInside)
+        // One row of bare glyphs: Lyrics, rewind, play, fast-forward, the queue.
+        [lyrics, previous, play, nextButton, queue].forEach(transport.addArrangedSubview)
         transport.distribution = .equalSpacing
         transport.alignment = .center
-        let deck = UIStackView(arrangedSubviews: [transport])
-        deck.axis = .vertical
 
-        volume.showsRouteButton = false
-        volume.tintColor = Theme.Card.label
-        volume.setVolumeThumbImage(PlayerCard.dot(12), for: .normal)
-        deviceVolume.minimumTrackTintColor = Theme.Card.label
-        deviceVolume.maximumTrackTintColor = Theme.Card.track
-        deviceVolume.setThumbImage(PlayerCard.dot(12), for: .normal)
-        deviceVolume.isContinuous = false
-        deviceVolume.isHidden = true
-        deviceVolume.accessibilityLabel = Say.volume
-        deviceVolume.addTarget(self, action: #selector(deviceVolumeSet), for: .valueChanged)
-
-        let lyrics = UIButton(type: .system)
-        lyrics.setImage(Glyph.lyrics, for: .normal)
-        lyrics.accessibilityLabel = Say.lyrics
-        lyrics.tintColor = Theme.Card.secondary
-        lyrics.addTarget(self, action: #selector(lyricsTapped), for: .touchUpInside)
-        let queue = UIButton(type: .system)
-        queue.setImage(Glyph.queue, for: .normal)
-        queue.accessibilityLabel = Say.queue
-        queue.tintColor = Theme.Card.secondary
-        queue.addTarget(self, action: #selector(queueTapped), for: .touchUpInside)
-        devices.setImage(Glyph.speaker, for: .normal)
-        devices.accessibilityLabel = Say.output
+        output.titleLabel?.font = Fonts.font(15, .regular, .subheadline)
+        output.titleLabel?.lineBreakMode = .byTruncatingTail
+        output.imageEdgeInsets = UIEdgeInsets(top: 0, left: -5, bottom: 0, right: 5)
+        output.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: -5)
+        output.contentEdgeInsets = UIEdgeInsets(top: 0, left: 19, bottom: 0, right: 19)
+        output.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        output.addTarget(self, action: #selector(devicesTapped), for: .touchUpInside)
         outputs.attach(to: view)
-        devices.tintColor = Theme.Card.secondary
-        devices.addTarget(self, action: #selector(devicesTapped), for: .touchUpInside)
-        // The volume's row: the iPod's volume, or the volume of the device that plays.
-        let level = UIStackView(arrangedSubviews: [volume, deviceVolume])
-        let bottom = UIStackView(arrangedSubviews: [lyrics, devices, queue])
-        bottom.distribution = .equalSpacing
-        bottom.alignment = .center
+        let outputRow = UIStackView(arrangedSubviews: [output])
+        outputRow.alignment = .center
+        outputRow.axis = .vertical
 
-        // The transport, the volume and the bottom icons share one centred block, Android's share of the
-        // width (its 296 of 411 dp); the song and the seek bar run the full width.
-        let block = min(230, UIScreen.main.bounds.width - 48)
-        let column = UIStackView(arrangedSubviews: [songRow, seek, times,
-                                                    PlayerCard.centred(deck, block), PlayerCard.centred(level, block),
-                                                    PlayerCard.centred(bottom, block)])
+        let column = UIStackView(arrangedSubviews: [songRow, seek, times, transport, outputRow])
         column.axis = .vertical
-        column.spacing = 6
-        column.setCustomSpacing(14, after: songRow)
-        column.setCustomSpacing(14, after: times)
-        column.setCustomSpacing(18, after: column.arrangedSubviews[3])
-        column.setCustomSpacing(18, after: column.arrangedSubviews[4])
+        column.spacing = 4
+        column.setCustomSpacing(10, after: songRow)
+        column.setCustomSpacing(8, after: times)
+        column.setCustomSpacing(6, after: transport)
 
-        for v in [grabber, cover, column] {
+        for v in [cover, column, grabber] as [UIView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
-        for label in [songTitle, artist, album] {
-            label.setContentCompressionResistancePriority(.required, for: .vertical)
-            label.setContentHuggingPriority(.required, for: .vertical)
+        for v in [melt, shade] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            cover.addSubview(v)
+            NSLayoutConstraint.activate([
+                v.leadingAnchor.constraint(equalTo: cover.leadingAnchor),
+                v.trailingAnchor.constraint(equalTo: cover.trailingAnchor),
+                v.topAnchor.constraint(equalTo: cover.topAnchor),
+                v.bottomAnchor.constraint(equalTo: cover.bottomAnchor),
+            ])
         }
-        // The cover takes what the controls leave, up to 272 pt: 568 pt does not fit them all at full size.
-        let stage = UILayoutGuide()
-        view.addLayoutGuide(stage)
-        let full = cover.widthAnchor.constraint(equalToConstant: min(PlayerCard.coverPoints, UIScreen.main.bounds.width - 48))
-        full.priority = .defaultHigh
+        for l in [songTitle, artist, album] as [UIView] {
+            l.setContentCompressionResistancePriority(.required, for: .vertical)
+            l.setContentHuggingPriority(.required, for: .vertical)
+        }
+        // As tall as a page's hero (`HeroHeader.deeper` past square), held to the end of the title row.
+        let deep = cover.heightAnchor.constraint(equalTo: cover.widthAnchor, constant: HeroHeader.deeper)
+        deep.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            stage.topAnchor.constraint(equalTo: grabber.bottomAnchor),
-            stage.bottomAnchor.constraint(equalTo: column.topAnchor),
-            cover.centerYAnchor.constraint(equalTo: stage.centerYAnchor),
-            cover.heightAnchor.constraint(lessThanOrEqualTo: stage.heightAnchor, constant: -20),
-            full,
-            column.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
-        ])
-        NSLayoutConstraint.activate([
+            // The artwork from the top, as wide as the screen, reaching down behind the title.
+            cover.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            cover.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            cover.topAnchor.constraint(equalTo: view.topAnchor),
+            cover.bottomAnchor.constraint(lessThanOrEqualTo: songRow.bottomAnchor),
+            deep,
             grabber.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             grabber.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             grabber.widthAnchor.constraint(equalToConstant: 60),
-            grabber.heightAnchor.constraint(equalToConstant: 24),
-            cover.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            cover.heightAnchor.constraint(equalTo: cover.widthAnchor),
-            column.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            column.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-            heart.widthAnchor.constraint(equalToConstant: 36),
-            more.widthAnchor.constraint(equalToConstant: 36),
-            transport.heightAnchor.constraint(equalToConstant: 56),
-            level.heightAnchor.constraint(equalToConstant: 30),
-            lyrics.widthAnchor.constraint(equalToConstant: 36),
-            devices.widthAnchor.constraint(equalToConstant: 36),
-            queue.widthAnchor.constraint(equalToConstant: 36),
+            grabber.heightAnchor.constraint(equalToConstant: 32),
+            column.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.gutter),
+            column.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Space.gutter + 8),
+            column.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -6),
+            seek.trailingAnchor.constraint(equalTo: column.trailingAnchor, constant: -8),
+            times.trailingAnchor.constraint(equalTo: column.trailingAnchor, constant: -8),
         ])
         closer = DragToClose(self, transition)
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .noriNow, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(paintHeart), name: .noriFavorites, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(paintSeal), name: .noriFavorites, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: .noriJam, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(paintOutput), name: AVAudioSession.routeChangeNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(changed), name: UIApplication.didBecomeActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(stopTicking), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        wear(Theme.player)
         changed()
     }
 
-    override var preferredStatusBarStyle: UIStatusBarStyle { Theme.statusBar }
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
@@ -236,6 +187,26 @@ final class PlayerCard: UIViewController {
         ticker = nil
     }
 
+    /// The card in `look`'s colors: the page, its ink and its quieter ink, the melt into it.
+    private func wear(_ look: PageLook) {
+        Theme.player = look
+        view.backgroundColor = look.page
+        (melt.layer as? CAGradientLayer)?.colors = look.melt.map { $0.cgColor }
+        (melt.layer as? CAGradientLayer)?.locations = look.stops.map { NSNumber(value: Double($0)) }
+        songTitle.textColor = look.ink
+        songTitle.fadeColor = look.page
+        artist.textColor = look.ink.withAlphaComponent(0.6)
+        album.textColor = look.ink.withAlphaComponent(0.45)
+        for l in [elapsed, remaining, mixing] { l.textColor = look.quiet }
+        seek.minimumTrackTintColor = look.ink
+        seek.maximumTrackTintColor = look.veil(0.2)
+        seek.setThumbImage(PlayerCard.dot(8, look.ink), for: .normal)
+        seek.setThumbImage(PlayerCard.dot(16, look.ink), for: .highlighted)
+        for b in [seal, more, lyrics, previous, play, nextButton, queue] { b.look = look }
+        paintSeal()
+        paintOutput()
+    }
+
     /// A full-screen sheet is up: the card is out of sight, though UIKit keeps it "appeared".
     private var covered: Bool {
         guard let sheet = presentedViewController else { return false }
@@ -245,64 +216,46 @@ final class PlayerCard: UIViewController {
     /// The sheets call this as they close, so the clock starts again.
     @objc func changed() {
         let now = Core.shared.now
-        // The output's button is lit while the sound is elsewhere, and a jam's while someone listens.
-        let listened = now.jam && (Core.shared.jam?.listeners.count ?? 0) > 0
-        devices.tintColor = (now.jam ? listened : now.device != nil) ? Theme.Card.label : Theme.Card.secondary
-        let elsewhere = now.device != nil
-        if volume.isHidden != elsewhere {
-            let swap = {
-                self.volume.isHidden = elsewhere
-                self.deviceVolume.isHidden = !elsewhere
-            }
-            if view.window != nil && !UIAccessibility.isReduceMotionEnabled {
-                UIView.animate(withDuration: 0.25, animations: swap)
-            } else {
-                swap()
-            }
-        }
-        deviceVolume.isEnabled = now.volume != nil
-        if !deviceVolume.isTracking { deviceVolume.value = Float(now.volume ?? 0) / 100 }
         // A jam guest's controls are those its role offers (the core's jam controls).
         let jam = now.jam ? Core.shared.jam : nil
         previous.isHidden = now.jam && (jam?.skip ?? 0) == 0
         nextButton.isHidden = previous.isHidden
         play.isHidden = now.jam && (jam?.play ?? 0) == 0
-        transport.isHidden = previous.isHidden && play.isHidden
-        // A jam stands where the output's speaker does: a jam plays on this device only.
-        devices.setImage(now.jam ? (listened ? Glyph.groups : Glyph.groupsOutline) : Glyph.speaker, for: .normal)
-        devices.accessibilityLabel = now.jam ? (Core.shared.jam?.strip ?? Say.jamGuest) : Say.output
         seek.isUserInteractionEnabled = !now.jam || (jam?.seek ?? 0) != 0
         mixing.isHidden = !now.playing || !now.mixing
+        paintOutput()
         guard let song = now.song else {
             songTitle.text = Say.nothingPlaying
             artist.text = ""
             album.text = ""
-            heart.isHidden = true
+            seal.isHidden = true
             return
         }
         songTitle.text = song.title
         artist.text = song.subtitle
         album.text = song.album
         album.isHidden = song.album.isEmpty
-        paintHeart()
+        paintSeal()
         if paintedCover != song.cover {
             paintedCover = song.cover
             cover.show(song.cover, points: PlayerCard.coverPoints)
+            if Theme.coversTint && !song.cover.isEmpty {
+                let id = song.cover
+                Core.shared.coverLook(id) { [weak self] look in
+                    guard let self, let look, self.paintedCover == id else { return }
+                    let swap = { self.wear(look) }
+                    if self.view.window != nil && !Motion.plain {
+                        UIView.transition(with: self.view, duration: 0.3, options: [.transitionCrossDissolve, .allowUserInteraction], animations: swap)
+                    } else {
+                        swap()
+                    }
+                }
+            }
         }
         // A jam guest's says what its controls say: paused here while the jam plays on.
         let playing = jam?.playing ?? now.playing
         play.setImage(playing ? Glyph.bigPause : Glyph.bigPlay, for: .normal)
         play.accessibilityLabel = playing ? Say.pause : Say.play
-        let target: CGAffineTransform = playing ? .identity : CGAffineTransform(scaleX: 0.82, y: 0.82)
-        if cover.transform != target {
-            if view.window != nil && !UIAccessibility.isReduceMotionEnabled {
-                UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.75, initialSpringVelocity: 0, options: [.beginFromCurrentState]) {
-                    self.cover.transform = target
-                }
-            } else {
-                cover.transform = target
-            }
-        }
         paintTime()
         if now.playing && view.window != nil && !covered && UIApplication.shared.applicationState == .active {
             if ticker == nil {
@@ -312,6 +265,33 @@ final class PlayerCard: UIViewController {
         } else {
             stopTicking()
         }
+    }
+
+    /// Where the sound goes: what plays (another device's glyph, lit), or the jam in its place.
+    @objc private func paintOutput() {
+        let now = Core.shared.now
+        let look = Theme.player
+        let glyph: UIImage, words: String, lit: Bool
+        if now.jam {
+            glyph = Glyph.jam
+            words = Core.shared.jam?.strip ?? Say.jamGuest
+            lit = (Core.shared.jam?.listeners.count ?? 0) > 0
+        } else if let device = now.device {
+            glyph = Glyph.device(now.deviceKind, 22)
+            words = device
+            lit = true
+        } else {
+            let o = OutputLook.now()
+            glyph = Glyph.output(o.glyph, 22)
+            words = Say.outputName(port: o.port, name: o.name)
+            lit = false
+            output.accessibilityLabel = Say.outputDescription(port: o.port, name: o.name)
+        }
+        let colour = lit ? (now.jam ? look.accent : look.ink) : look.quiet
+        output.setImage(glyph, for: .normal)
+        output.setTitle(words, for: .normal)
+        output.tintColor = colour
+        output.setTitleColor(colour, for: .normal)
     }
 
     private func paintTime() {
@@ -326,23 +306,9 @@ final class PlayerCard: UIViewController {
         remaining.text = "-" + Fmt.clock(ms: max(0, total - at))
     }
 
-    /// `v` at `width`, centred in a row the column stretches.
-    private static func centred(_ v: UIView, _ width: CGFloat) -> UIView {
-        let row = UIView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(v)
-        NSLayoutConstraint.activate([
-            v.centerXAnchor.constraint(equalTo: row.centerXAnchor),
-            v.widthAnchor.constraint(equalToConstant: width),
-            v.topAnchor.constraint(equalTo: row.topAnchor),
-            v.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-        ])
-        return row
-    }
-
-    private static func dot(_ d: CGFloat) -> UIImage {
+    private static func dot(_ d: CGFloat, _ colour: UIColor) -> UIImage {
         UIGraphicsBeginImageContextWithOptions(CGSize(width: d, height: d), false, 0)
-        Theme.Card.label.setFill()
+        colour.setFill()
         UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: d, height: d)).fill()
         let image = UIGraphicsGetImageFromCurrentImageContext() ?? UIImage()
         UIGraphicsEndImageContext()
@@ -366,23 +332,22 @@ final class PlayerCard: UIViewController {
     }
 
     @objc private func playTapped() { nori_ios_toggle() }
-    @objc private func deviceVolumeSet() { nori_ios_set_volume(deviceVolume.value) }
     @objc private func nextTapped() { nori_ios_next() }
     @objc private func previousTapped() { nori_ios_previous() }
 
-    @objc private func paintHeart() {
+    /// The seal where songs carry favorites: in the accent when the song is one.
+    @objc private func paintSeal() {
         guard let song = Core.shared.now.song else { return }
         let on = Core.shared.isFavorite(song)
-        heart.setImage(on ? Glyph.heartFilled : Glyph.heart, for: .normal)
-        heart.accessibilityLabel = Say.favorite
-        heart.accessibilityTraits = on ? [.button, .selected] : .button
-        heart.isHidden = song.external || !Core.shared.rules.stars
+        seal.setImage(on ? Glyph.sealed : Glyph.seal, for: .normal)
+        seal.lit = on
+        seal.isHidden = song.external || !Core.shared.rules.stars
     }
 
-    @objc private func heartTapped() {
+    @objc private func sealTapped() {
         guard let song = Core.shared.now.song else { return }
         Core.shared.favorite(song, !Core.shared.isFavorite(song))
-        paintHeart()
+        paintSeal()
     }
 
     @objc private func artistTapped() {
@@ -409,9 +374,9 @@ final class PlayerCard: UIViewController {
 
     /// Closes the card and opens `page` in the visible tab.
     private func go(_ page: UIViewController) {
-        let shell = presentingViewController as? UITabBarController
+        let shell = presentingViewController as? ShellController
         dismiss(animated: true) {
-            (shell?.selectedViewController as? UINavigationController)?.pushViewController(page, animated: true)
+            shell?.current.pushViewController(page, animated: true)
         }
     }
 
@@ -430,7 +395,7 @@ final class PlayerCard: UIViewController {
     }
 
     /// The output button: nori's devices with this iPod's outputs among them, or just the outputs with
-    /// remote control off.
+    /// remote control off; the jam's queue where a jam is.
     @objc private func devicesTapped() {
         if Core.shared.now.jam {
             queueTapped()
@@ -510,7 +475,7 @@ final class LyricsSheet: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = Theme.Card.background
         let grabber = UIButton(type: .system)
-        grabber.setImage(Glyph.chevronDown, for: .normal)
+        grabber.setImage(Glyph.close, for: .normal)
         grabber.tintColor = Theme.Card.secondary
         grabber.accessibilityLabel = Say.close
         grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
@@ -590,7 +555,7 @@ final class DragToClose: NSObject, UIGestureRecognizerDelegate {
 /// One lyric line drawn with CoreText: the first `sung` UTF-16 units at `strength`, the rest at `rest`,
 /// the edge moving smoothly inside a character.
 final class LyricLineView: UIView {
-    static let font = UIFont.systemFont(ofSize: 24, weight: .semibold)
+    static let font = Fonts.font(24, .semibold, .title2)
     private var framesetter: CTFramesetter?
     private var drawn: CTFrame?
     var text = "" {
@@ -998,6 +963,10 @@ final class ReadingLine: UIView {
     var textColor: UIColor {
         get { first.textColor }
         set { first.textColor = newValue; second.textColor = newValue }
+    }
+    /// The page the soft edge fades into.
+    var fadeColor = Theme.Card.background {
+        didSet { fade.colors = [fadeColor.cgColor, fadeColor.cgColor, UIColor.clear.cgColor] }
     }
 
     override init(frame: CGRect) {

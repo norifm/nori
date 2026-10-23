@@ -6,7 +6,7 @@ use std::ffi::{c_char, CString};
 
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::{Starrable, Write};
-use nori_core::menus::{row_swipe, sleep_choices, song_menu, JamOffer, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
+use nori_core::menus::{row_swipe, saved_mix_name, sleep_choices, song_menu, JamOffer, RowSwipeAct, SongAction, SongDownload, SongMenuItem};
 use nori_core::browse::ProfileRules;
 use nori_core::Song;
 use serde_json::{json, Value};
@@ -208,6 +208,31 @@ pub unsafe extern "C" fn nori_ios_playlist_create(token: u64, index: i32, name: 
         return 0;
     }
     wrote(Write::CreatePlaylist { name: name.trim().to_string(), song_ids: vec![song.id] })
+}
+
+/// Saves list `token` (a mix's songs) as a new playlist named after `title`, the mix's name as the app
+/// words it (`menus::saved_mix_name` against the account's playlists). Blocks; the name it took, to free,
+/// or null when it was not saved.
+///
+/// # Safety
+/// `title` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_save_list(token: u64, title: *const c_char) -> *mut c_char {
+    let Some((songs, _)) = crate::pages::list(token) else { return std::ptr::null_mut() };
+    let Some((client, _)) = server() else { return std::ptr::null_mut() };
+    let mut existing = Vec::new();
+    let _ = nori_host::session::read_pages(&client, Read::PlaylistList, |p| {
+        if let Page::Playlists { v } = p {
+            existing = v.into_iter().map(|p| p.name).collect();
+        }
+    });
+    let name = saved_mix_name(c_text(title), existing);
+    let song_ids = songs.into_iter().map(|s| s.id).collect();
+    if wrote(Write::CreatePlaylist { name: name.clone(), song_ids }) == 1 {
+        CString::new(name).map_or(std::ptr::null_mut(), CString::into_raw)
+    } else {
+        std::ptr::null_mut()
+    }
 }
 
 /// What swiping a song row does, to the left when `left` and else to the right, on a song whose heart is
