@@ -372,7 +372,7 @@ impl Client {
     }
 
     /// Walks the whole library into the offline index, a search3 page at a time, then drops what the
-    /// server no longer lists; how many of each it listed.
+    /// server no longer lists; how many of each it listed. A page with nothing new ends the walk.
     pub async fn sync_library(&self) -> NetResult<IngestStats> {
         let page = crate::browse::library_sizes().sync_page;
         let n = page.to_string();
@@ -393,6 +393,10 @@ impl Client {
             let (seen, rows) = self.core.ingest_search(self.fetch("search3", p).await?)?;
             if seen.songs == 0 && seen.albums == 0 && seen.artists == 0 {
                 self.core.prune_index(&kept)?;
+                return Ok(total);
+            }
+            // Nothing new: the server ignores the offset, so what it no longer lists is unknown.
+            if rows.iter().all(|row| kept.contains(row)) {
                 return Ok(total);
             }
             total = IngestStats { artists: total.artists + seen.artists, albums: total.albums + seen.albums, songs: total.songs + seen.songs };
@@ -740,5 +744,22 @@ mod tests {
         assert!(asked[0].ends_with("&query=&songCount=500&songOffset=0&albumCount=500&albumOffset=0&artistCount=500&artistOffset=0"), "{}", asked[0]);
         assert!(asked[1].contains("&songOffset=500&"), "{}", asked[1]);
         assert_eq!(asked.len(), 2);
+    }
+
+    #[test]
+    fn sync_ends_at_a_page_with_nothing_new() {
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        fake.answer(r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":"a","title":"x"},{"id":"b","title":"y"}]}}}"#);
+        fake.answer(EMPTY_PAGE);
+        block(c.sync_library()).unwrap();
+        // The server now ignores the offset: its first page again and again. What it no longer lists is
+        // unknown, so nothing is dropped.
+        for _ in 0..3 {
+            fake.answer(r#"{"subsonic-response":{"status":"ok","searchResult3":{"song":[{"id":"a","title":"x"}]}}}"#);
+        }
+        let asked = fake.asked().len();
+        block(c.sync_library()).unwrap();
+        assert_eq!(fake.asked().len() - asked, 2);
+        assert_eq!(c.core.index_size().unwrap().songs, 2);
     }
 }

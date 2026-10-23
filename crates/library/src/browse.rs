@@ -182,6 +182,12 @@ pub fn next_album_page(sort: AlbumSort, offset: u32, asked: u32, got: u32) -> Op
     (got >= asked && sort != AlbumSort::Random).then_some(offset + got)
 }
 
+/// Whether `page`, read after `listed`, starts with an album already listed: the server ignored the
+/// offset, and reading on would bring the same page without end.
+pub fn album_page_repeats(listed: &[Album], page: &[Album]) -> bool {
+    page.first().is_some_and(|first| listed.iter().any(|a| a.id == first.id))
+}
+
 // ---- album orders -------------------------------------------------------------
 
 /// The album grid's orders: those `getAlbumList2` knows, and ByArtist drawn as a row per artist.
@@ -550,6 +556,13 @@ mod tests {
     fn album_pages_go_on_while_full() {
         let next = |sort, got| next_album_page(sort, 1000, 500, got);
         assert_eq!([next(AlbumSort::Newest, 500), next(AlbumSort::Newest, 100), next(AlbumSort::Newest, 0), next(AlbumSort::Random, 500)], [Some(1500), None, None, None]);
+    }
+
+    #[test]
+    fn a_page_starting_with_a_listed_album_repeats() {
+        let albums = |ids: &[&str]| ids.iter().map(|id| Album { id: id.to_string(), ..Default::default() }).collect::<Vec<_>>();
+        let listed = albums(&["a", "b"]);
+        assert_eq!([&albums(&["a", "b"]), &albums(&["c", "a"]), &albums(&[])].map(|page| album_page_repeats(&listed, page)), [true, false, false]);
     }
 
     #[test]

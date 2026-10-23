@@ -511,9 +511,12 @@ fn top(ui: &AppWindow) -> Option<TopBar> {
 }
 
 /// The album list once its page from `offset` came (`page`), and the page to ask for next: while pages
-/// come full, each once (`asked`: the pages asked for, to this offset).
+/// come full and new, each once (`asked`: the pages asked for, to this offset).
 fn albums_paged(list: &mut Vec<nori_core::Album>, sort: AlbumSort, offset: u32, page: &[nori_core::Album], asked: &mut u32) -> Option<u32> {
     list.truncate(offset as usize);
+    if nori_core::browse::album_page_repeats(list, page) {
+        return None;
+    }
     list.extend_from_slice(page);
     // Every page is read at once here.
     let next = nori_core::browse::next_album_page(sort, offset, nori_host::pages::ALBUM_PAGE, page.len() as u32).filter(|&n| *asked < n)?;
@@ -3476,6 +3479,10 @@ mod tests {
         assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(full, 100), &mut asked), None, "the last page");
         assert_eq!(list.len(), full + 100);
         assert_eq!(list.last().map(|c| c.id.to_string()), Some((full + 99).to_string()));
+        let (mut list, mut asked) = (Vec::new(), 0);
+        albums_paged(&mut list, AlbumSort::ByName, 0, &page(0, full), &mut asked);
+        assert_eq!(albums_paged(&mut list, AlbumSort::ByName, full as u32, &page(0, full), &mut asked), None, "a server that ignores the offset");
+        assert_eq!(list.len(), full);
         let (mut list, mut asked) = (Vec::new(), 0);
         assert_eq!(albums_paged(&mut list, AlbumSort::Random, 0, &page(0, full), &mut asked), None, "a random order is one page");
     }
