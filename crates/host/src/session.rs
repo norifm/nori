@@ -806,6 +806,13 @@ impl Handle {
         true
     }
 
+    /// A page's Shuffle and Play as they stand (`pages::hero_buttons`): for the queue `page` started while it
+    /// is the one in play, `playing` or `buffering`.
+    pub fn page_buttons(&self, page: &PageOrigin, playing: bool, buffering: bool) -> nori_core::pages::HeroButtons {
+        let q = &self.core.session;
+        nori_core::pages::hero_buttons(q.origin().as_ref() == Some(page), q.shuffle_shown(), playing, buffering, true, true)
+    }
+
     pub fn repeat(&self, mode: u8) {
         if !self.there(Press::Repeat { mode }) {
             self.repeat_here(mode);

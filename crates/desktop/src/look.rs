@@ -5,7 +5,7 @@ use nori_core::settings::{season_of, StoredPrefs, ThemeMode};
 use nori_look::compose::with_alpha;
 use nori_look::cover::CoverColours;
 use nori_look::dress::{self, Scheme, LEN};
-use nori_look::theme::{self, Palette, Season};
+use nori_look::theme::{self, Dye, Palette, Season};
 
 use crate::Theme;
 
@@ -18,8 +18,8 @@ pub struct Look {
     on: u32,
     on_on: u32,
     danger: u32,
-    /// Each season's page and accent, for the season tiles.
-    seasons: [(u32, u32); 4],
+    /// Each season's page, accent and on colors, for the season tiles.
+    seasons: [(u32, u32, u32); 4],
 }
 
 /// Material's baseline error, light and dark: the palette has none of its own.
@@ -56,20 +56,36 @@ pub fn plain(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Look {
     // A tile wears its season's dark palette rather than black: on black every tile would be the same.
     let seasons = [Season::Spring, Season::Summer, Season::Autumn, Season::Winter].map(|s| {
         let p = theme::palette(Some(s), 1, 1, false, dark, false);
-        (p.page, p.accent)
+        (p.page, p.accent, p.on)
     });
     Look { table: dress::plain(&scheme), on: p.on, on_on: r.on_secondary, danger: if dark { DANGER_DARK } else { DANGER_LIGHT }, seasons }
 }
 
-/// A page about a cover: the cover's page and ink, the theme's accent moved until it reads there.
+/// The season's light and dark palettes as the app wears them, and whether it is dark: the paper a cover's
+/// page and a mix's card are dyed on.
+pub struct Papers {
+    pub light: Palette,
+    pub dark: Palette,
+    pub dark_theme: bool,
+}
+
+pub fn papers(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Papers {
+    let of = |dark| nori_core::settings::season_palette(prefs.season, prefs.theme, dark, today.month, today.day, today.southern);
+    Papers { light: of(false), dark: of(true), dark_theme: is_dark(prefs, system_dark) }
+}
+
+/// The dye of a cover's page on the season's paper; none where pages wear no cover (Midnight).
+pub fn dye(prefs: &StoredPrefs, system_dark: bool, today: Today, c: &CoverColours) -> Option<Dye> {
+    let p = papers(prefs, system_dark, today);
+    prefs.theme.covers_tint_pages().then(|| Dye::new(c.edge, p.light, p.dark, p.dark_theme))
+}
+
+/// A page about a cover: the season's paper dyed with the cover, its roles laid out as the theme's are.
 pub fn cover(prefs: &StoredPrefs, system_dark: bool, today: Today, c: &CoverColours) -> Look {
     let base = plain(prefs, system_dark, today);
-    if !prefs.theme.covers_tint_pages() {
-        return base;
-    }
-    let (light, dark) = theme::accents(season_of(prefs.season), today.month, today.day, today.southern);
+    let Some(dye) = dye(prefs, system_dark, today, c) else { return base };
     let page = dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
-    Look { table: dress::accented(&page, light, dark), ..base }
+    Look { table: dress::dyed(&page, &dye), ..base }
 }
 
 impl Look {
@@ -84,7 +100,6 @@ impl Look {
         self.table[dress::BACKGROUND]
     }
 
-    #[cfg(test)]
     pub fn ink(&self) -> u32 {
         self.table[dress::ON]
     }
@@ -120,9 +135,10 @@ impl Look {
         theme.set_danger(c(self.danger));
         theme.set_edge(c(t[dress::EDGE]));
         theme.set_dark(nori_look::color::luminance(t[dress::BACKGROUND]) < 0.5);
-        let colors = |pick: fn(&(u32, u32)) -> u32| slint::ModelRc::new(slint::VecModel::from(self.seasons.iter().map(|s| c(pick(s))).collect::<Vec<_>>()));
+        let colors = |pick: fn(&(u32, u32, u32)) -> u32| slint::ModelRc::new(slint::VecModel::from(self.seasons.iter().map(|s| c(pick(s))).collect::<Vec<_>>()));
         theme.set_season_pages(colors(|s| s.0));
         theme.set_season_accents(colors(|s| s.1));
+        theme.set_season_ons(colors(|s| s.2));
     }
 }
 
@@ -173,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cover_page_keeps_the_themes_accent_readable_on_the_cover() {
+    fn a_cover_page_is_the_seasons_paper_dyed_with_the_cover() {
         let calculate_contrast = |a: u32, b: u32| {
             let (a, b) = (nori_look::color::luminance(a) as f64 + 0.05, nori_look::color::luminance(b) as f64 + 0.05);
             a.max(b) / a.min(b)
@@ -181,7 +197,9 @@ mod tests {
         let prefs = prefs(ThemeSeason::Autumn, ThemeMode::Dark);
         let cover_colours = nori_look::cover::derive(&[0xFF20_5030], 1, 1, false);
         let look = cover(&prefs, false, OCTOBER, &cover_colours);
-        assert_eq!((look.page(), look.ink()), (cover_colours.background, cover_colours.on));
+        let dyed = Dye::new(cover_colours.edge, Season::Autumn.palette(false), Season::Autumn.palette(true), true).palette();
+        assert_eq!((look.page(), look.ink()), (dyed.page, dyed.ink));
+        assert_ne!(look.page(), Season::Autumn.palette(true).page, "the paper takes the cover's colour");
         assert_ne!(look.accent(), cover_colours.accent, "the cover's own accent is not worn");
         let reads = calculate_contrast(look.accent(), look.page());
         assert!(reads >= 4.5f64.min(calculate_contrast(look.ink(), look.page())), "accent reads at {reads:.2}");

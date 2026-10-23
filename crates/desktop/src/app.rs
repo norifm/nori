@@ -9,6 +9,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use nori_core::browse::AlbumSort;
+use nori_core::menus::PageKind;
 use nori_core::search::SearchView;
 use nori_core::settings::SavedServer;
 use nori_core::Song;
@@ -295,13 +296,13 @@ pub(crate) fn mosaic(images: &[Image]) -> Option<Image> {
     Some(i_slint_renderer_skia::image_from_skia(surface.image_snapshot()))
 }
 
-/// The cover's blurred wash (square ARGB) as an image.
-fn wash(c: &CoverColours) -> Image {
+/// The cover's blurred wash (square ARGB) as an image, dyed as its page is where `dye` says.
+fn wash(c: &CoverColours, dye: Option<&nori_look::theme::Dye>) -> Image {
     let Some(w) = &c.wash else { return Image::default() };
     let side = (w.len() as f64).sqrt() as u32;
     let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(side, side);
     for (px, argb) in buf.make_mut_slice().iter_mut().zip(w) {
-        let [a, r, g, b] = argb.to_be_bytes();
+        let [a, r, g, b] = dye.map_or(*argb, |d| d.wash(*argb)).to_be_bytes();
         *px = Rgba8Pixel { r, g, b, a };
     }
     Image::from_rgba8(buf)
@@ -359,6 +360,12 @@ pub struct App {
     /// The artist page's Show all pressed: every song listed, not the first few.
     page_songs_all: bool,
     page_fetch: Option<Fetch>,
+    /// The mix shown, its id and its name: it can be drawn again and kept as a playlist.
+    page_mix: Option<(String, String)>,
+    /// The queue another device or app left on the server, offered at the top of Home (the core's `queue_offer`).
+    offer: Option<nori_core::library::QueueOffer>,
+    /// Home's mixes, whose cards take their first cover's colors once known.
+    mixes: Vec<nori_core::mixes::board::MixTile>,
     songs: Vec<Song>,
     search_songs: Vec<Song>,
     /// Search's Show all pressed, for the query in `search_query`.
@@ -541,7 +548,7 @@ fn home_shelves(rows: &[nori_core::settings::HomeRow]) -> Vec<Shelf> {
 pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCell<App>> {
     let shelves = Rc::new(VecModel::from(Vec::new()));
     ui.set_shelves(ModelRc::from(shelves.clone()));
-    ui.set_greeting("Home".into());
+    ui.set_greeting(words::LISTEN_NOW.into());
     ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
     ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
@@ -578,6 +585,9 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             page_songs: Vec::new(),
             page_songs_all: false,
             page_fetch: None,
+            page_mix: None,
+            offer: None,
+            mixes: Vec::new(),
             songs: Vec::new(),
             search_songs: Vec::new(),
             search_songs_all: false,
@@ -633,6 +643,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
     });
     let h = app.borrow().me.clone();
     wire(ui, &h);
+    app.borrow().output_shown();
     let me = Rc::downgrade(&app);
     app.borrow().compositor.on_exit(move || {
         if let Some(app) = me.upgrade() {
@@ -790,13 +801,11 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_add_to_playlist, h, |a, id| a.add_to_playlist(Ok(id.into())));
     on!(ui.on_add_to_new_playlist, h, |a, name| a.add_to_playlist(Err(name.into())));
     on!(ui.on_play_page, h, |a, shuffle| a.play_page(shuffle));
-    on!(ui.on_page_later, h, |a| a.enqueue_page());
     on!(ui.on_page_star, h, |a| a.star_page());
-    on!(ui.on_page_download, h, |a| {
-        if let Some(fetch) = a.page_fetch.clone() {
-            a.on_session(|s| { if s.rules().downloads { s.download_later(fetch); } });
-        }
-    });
+    on!(ui.on_page_act, h, |a, act| a.page_act(act));
+    on!(ui.on_page_save, h, |a| a.save_mix());
+    on!(ui.on_take_offer, h, |a| a.close_offer(true));
+    on!(ui.on_dismiss_offer, h, |a| a.close_offer(false));
     on!(ui.on_more, h, |a| a.more_songs());
     on!(ui.on_search_edited, h, |a, t| a.search_edited(&t));
     on!(ui.on_search_again, h, |a, t| a.search_again(&t));
@@ -1140,7 +1149,10 @@ impl App {
             self.search_edited("");
         }
         let req = match view {
-            HOME => self.home_req(),
+            HOME => {
+                self.look_for_offer();
+                self.home_req()
+            }
             ALBUMS => {
                 self.albums_asked = 0;
                 self.album_sort = nori_core::browse::album_sort_saved(crate::session::app().settings.current().unwrap_or_default().list_prefs);
@@ -1227,6 +1239,10 @@ impl App {
         ui.set_page_sub_artist("".into());
         ui.set_page_caption("".into());
         ui.set_page_art("".into());
+        ui.set_page_covers(ModelRc::default());
+        ui.set_page_acts(ModelRc::default());
+        ui.set_page_can_save(false);
+        self.page_mix = None;
         ui.set_page_songs(ModelRc::default());
         ui.set_page_shelves(ModelRc::default());
         self.page_colours(None);
@@ -1242,9 +1258,11 @@ impl App {
         self.open_page(ask);
     }
 
-    /// The page's cover (an album's or artist's), whose colors the page wears, or none.
+    /// The page's cover, whose colors the page wears, or none. Its header is the cover's own wash, undyed, as
+    /// Android's page shows the cover itself and lets it melt into the dyed page; none where pages wear no cover.
     fn page_colours(&mut self, c: Option<&CoverColours>) {
-        self.ui().set_page_wash(c.map_or_else(Image::default, wash));
+        let tinted = crate::session::app().settings.prefs(|p| p.theme.covers_tint_pages());
+        self.ui().set_page_wash(c.filter(|_| tinted).map(|c| wash(c, None)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
     }
@@ -1264,14 +1282,21 @@ impl App {
         let ui = self.ui();
         self.backdrop = Some(art.to_string());
         let on_b = !ui.get_wash_on_b();
+        let dyed = self.dyed_wash(c).unwrap_or_default();
         if on_b {
-            ui.set_wash_b(wash(c));
+            ui.set_wash_b(dyed);
         } else {
-            ui.set_wash_a(wash(c));
+            ui.set_wash_a(dyed);
         }
         ui.set_wash_on_b(on_b);
         self.now_cover = Some(c.clone());
         self.repaint();
+    }
+
+    /// A cover's wash on the season's paper, as its page is dyed; none where pages wear no cover.
+    fn dyed_wash(&self, c: &CoverColours) -> Option<Image> {
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        crate::look::dye(&prefs, self.compositor.system_dark(), crate::look::Today::now(), c).map(|d| wash(c, Some(&d)))
     }
 
     /// The look of the page the app is on: the season's, or a cover's.
@@ -1365,22 +1390,8 @@ impl App {
         match d {
             Data::Home(HomePart::Mixes(tiles)) => {
                 self.art.borrow_mut().mosaics.clear();
-                let picks: Vec<Pick> = tiles
-                    .into_iter()
-                    .map(|t| {
-                        let colours = nori_core::mixes::board::mix_tile_colours(t.id.clone());
-                        Pick {
-                            title: words::mix_name(t.name).into(),
-                            sub: words::mix_caption(t.favourites).into(),
-                            covers: ModelRc::new(VecModel::from(t.covers.into_iter().map(SharedString::from).collect::<Vec<_>>())),
-                            tint: colour(colours[0]),
-                            deep: colour(colours[1]),
-                            id: t.id.into(),
-                        }
-                    })
-                    .collect();
-                ui.set_picks(ModelRc::new(VecModel::from(picks)));
-                ui.set_picks_loaded(true);
+                self.mixes = tiles;
+                self.show_picks();
             }
             Data::Home(HomePart::Feed(feed)) => {
                 // Each shelf as the source lists it: its songs first (a song card plays the shelf's songs
@@ -1452,48 +1463,218 @@ impl App {
                 ui.set_page_caption(caption.join(" · ").into());
                 self.set_page_art(d.album.cover_art.clone());
                 self.page_songs = d.songs;
+                self.page_actions(PageKind::Album);
                 self.show_page_songs();
             }
             Data::Page(PageGot::Artist(d)) if shown => {
                 ui.set_page_starred(self.session.as_ref().is_some_and(|s| s.core.starred(nori_core::client::Starrable::Artist, &d.artist.id, d.artist.starred)));
                 ui.set_page_title(d.artist.name.as_str().into());
                 ui.set_page_sub("".into());
-                let caption = if d.albums.is_empty() && !d.songs.is_empty() { words::songs(d.songs.len()) } else { words::albums(d.albums.len() as u32) };
-                ui.set_page_caption(caption.into());
+                ui.set_page_caption(words::artist_caption(d.albums.len(), d.albums.iter().map(|a| a.song_count as usize).sum(), d.songs.len()).into());
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
                 let card = |a: &nori_core::Album| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) };
                 let shelves = d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true });
                 ui.set_page_shelves(ModelRc::new(VecModel::from(shelves.collect::<Vec<_>>())));
                 self.page_songs = d.songs;
+                self.page_actions(PageKind::Artist);
                 self.show_page_songs();
             }
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_title(d.playlist.name.as_str().into());
-                ui.set_page_sub(d.playlist.owner.clone().unwrap_or_default().into());
-                ui.set_page_caption(words::songs_caption(d.songs.len(), d.seconds).into());
+                let notes = crate::session::app().settings.prefs(|p| p.playlist_notes);
+                ui.set_page_sub(nori_core::pages::playlist_description(d.playlist.comment.clone(), notes).unwrap_or_default().into());
+                ui.set_page_caption(if d.songs.is_empty() { String::new() } else { words::songs_caption(d.songs.len(), d.seconds) }.into());
                 self.set_page_art(d.playlist.cover_art.clone());
                 self.page_songs = d.songs;
+                self.page_actions(PageKind::Playlist);
                 self.show_page_songs();
             }
             Data::Page(PageGot::Mix(m)) if shown => {
                 ui.set_page_title(words::mix_name(m.name).into());
-                ui.set_page_sub(words::mix_caption(m.favourites).into());
-                ui.set_page_caption(words::songs_caption(m.songs.len(), m.seconds).into());
+                ui.set_page_caption(if m.songs.is_empty() { String::new() } else { words::songs_caption(m.songs.len(), m.seconds) }.into());
+                ui.set_page_covers(ModelRc::new(VecModel::from(m.covers.iter().map(SharedString::from).collect::<Vec<_>>())));
+                ui.set_page_can_save(self.session.as_ref().is_some_and(|s| s.rules().account) && !m.songs.is_empty());
                 self.set_page_art(m.covers.first().cloned());
                 self.page_songs = m.songs;
+                self.page_mix = Some((m.id.clone(), words::mix_name(m.name).to_string()));
+                self.page_actions(PageKind::Mix { refreshable: m.refreshable });
                 self.show_page_songs();
             }
             Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_)) => {}
         }
     }
 
-    /// Sets the page picture. An album's or artist's page wears its cover's colors; a playlist's stays plain.
+    /// Sets the page picture, whose colors the page wears: a mix's first cover's.
     fn set_page_art(&mut self, art: Option<String>) {
         let art = art.unwrap_or_default();
         let ui = self.ui();
         ui.set_page_art(art.as_str().into());
-        let c = self.art.borrow().colours.get(&art).cloned().filter(|_| ui.get_page_kind() != 2);
+        let c = self.art.borrow().colours.get(&art).cloned();
         self.page_colours(c.as_deref());
+    }
+
+    /// The list head's glyphs for the page's songs (the core's `page_actions`), how many are not downloaded
+    /// read once, and its Shuffle and Play.
+    fn page_actions(&mut self, kind: PageKind) {
+        use nori_core::menus::{page_actions, DownloadAct, PageAction, SongDownload};
+        let Some(s) = &self.session else { return };
+        let ids: Vec<&str> = self.page_songs.iter().map(|s| s.id.as_str()).collect();
+        let missing = s.download_states(&ids).iter().filter(|d| **d != SongDownload::Done).count();
+        let acts: Vec<i32> = page_actions(kind, ids.len() as u32, missing as u32, s.rules().downloads)
+            .into_iter()
+            .filter_map(|a| match a {
+                PageAction::Download { act: DownloadAct::All } => Some(0),
+                PageAction::Download { act: DownloadAct::Missing } => Some(1),
+                PageAction::Download { act: DownloadAct::Remove } => Some(2),
+                PageAction::DownloadEverything => Some(3),
+                PageAction::AddToQueue => Some(4),
+                PageAction::Refresh => Some(5),
+                PageAction::Edit => None,
+            })
+            .collect();
+        self.ui().set_page_acts(ModelRc::new(VecModel::from(acts)));
+        self.hero_shown();
+    }
+
+    /// A list head glyph pressed ([`App::page_actions`]'s numbers).
+    fn page_act(&mut self, act: i32) {
+        let Some(fetch) = self.page_fetch.clone() else { return };
+        match act {
+            0 | 3 => self.on_session(|s| s.download_later(fetch)),
+            1 => {
+                let Some(s) = &self.session else { return };
+                let ids: Vec<&str> = self.page_songs.iter().map(|s| s.id.as_str()).collect();
+                let states = s.download_states(&ids);
+                let missing = self.page_songs.iter().zip(states).filter(|(_, d)| *d != nori_core::menus::SongDownload::Done).map(|(s, _)| s.clone()).collect();
+                s.download(missing);
+            }
+            2 => self.on_session(|s| self.page_songs.iter().for_each(|song| s.download_remove(&song.id))),
+            4 if matches!(fetch, Fetch::Artist(_)) => self.on_session(|s| s.enqueue_later(fetch, false)),
+            4 => self.enqueue_page(),
+            5 => self.redraw_mix(),
+            _ => {}
+        }
+        if act != 5 {
+            let kind = self.ui().get_page_kind();
+            self.page_actions(match (kind, &self.page_mix) {
+                (0, _) => PageKind::Album,
+                (1, _) => PageKind::Artist,
+                (_, Some(_)) => PageKind::Mix { refreshable: true },
+                _ => PageKind::Playlist,
+            });
+        }
+    }
+
+    /// Home's "For you": each mix's card on the season's paper dyed with the mix (the core's
+    /// `mix_card_colours`), or once its first cover's colors are known with those, as the mix's page wears them.
+    fn show_picks(&self) {
+        use nori_core::mixes::board::{mix_card_colours, mix_tile_colours};
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
+        let papers = crate::look::papers(&prefs, dark, today);
+        let art = self.art.borrow();
+        let picks: Vec<Pick> = self
+            .mixes
+            .iter()
+            .map(|t| {
+                let card = mix_card_colours(t.id.clone(), papers.light, papers.dark, papers.dark_theme);
+                let (page, ink) = match t.covers.first().and_then(|c| art.colours.get(c)) {
+                    Some(c) => {
+                        let look = crate::look::cover(&prefs, dark, today, c);
+                        (look.page(), look.ink())
+                    }
+                    None => (card.page, card.ink),
+                };
+                Pick {
+                    title: words::mix_name(t.name).into(),
+                    sub: words::mix_caption(t.favourites).into(),
+                    covers: ModelRc::new(VecModel::from(t.covers.iter().map(SharedString::from).collect::<Vec<_>>())),
+                    seed: colour(mix_tile_colours(t.id.clone())[0]),
+                    page: colour(page),
+                    ink: colour(ink),
+                    id: t.id.as_str().into(),
+                }
+            })
+            .collect();
+        let ui = self.ui();
+        ui.set_picks(ModelRc::new(VecModel::from(picks)));
+        ui.set_picks_loaded(true);
+    }
+
+    /// Asks whether another device or app left a queue worth carrying on here, as Home comes into sight.
+    fn look_for_offer(&self) {
+        let Some(s) = self.session.as_ref().filter(|s| s.rules().account) else { return };
+        let (client, tx, playing, here) = (s.client.clone(), self.tx.clone(), self.ui().get_playing(), self.heard.clone());
+        nori_host::spawn("nori-queue-offer", move || {
+            let offer = nori_core::transport::block_on(client.queue_offer(playing, here)).ok().flatten();
+            tx.send(Msg::Offer(offer));
+        });
+    }
+
+    /// Home's Continue card: the offered song, where it stands in its queue, and its cover.
+    fn offer_shown(&self) {
+        let ui = self.ui();
+        let song = self.offer.as_ref().and_then(|o| o.songs.get(o.index as usize).map(|s| (o, s)));
+        ui.set_offer_shown(song.is_some());
+        if let Some((o, s)) = song {
+            ui.set_offer_title(s.title.as_str().into());
+            ui.set_offer_line(words::offer_place(&s.artist, o.index as usize + 1, o.songs.len()).into());
+            ui.set_offer_art(s.cover_art.clone().unwrap_or_default().into());
+        }
+    }
+
+    /// The offered queue taken up (played from its song and place) or turned down: either way it is not
+    /// offered again.
+    fn close_offer(&mut self, take: bool) {
+        let (Some(o), Some(s)) = (self.offer.take(), &self.session) else { return };
+        s.client.queue_offer_done(o.clone());
+        if take {
+            s.play(o.songs, o.index as usize, false, None);
+            s.seek(o.position_ms as i64);
+        }
+        self.offer_shown();
+    }
+
+    /// The mix shown drawn again, then shown anew.
+    fn redraw_mix(&self) {
+        let (Some((id, _)), Some(s)) = (self.page_mix.clone(), &self.session) else { return };
+        let (client, core, tx) = (s.client.clone(), s.core.clone(), self.tx.clone());
+        nori_host::spawn("nori-mix-redraw", move || {
+            nori_core::transport::block_on(client.mix_ensure(id.clone(), true));
+            if let nori_core::mixes::board::MixLookup::Ready { sheet } = core.mix_page(id.clone()) {
+                tx.send(Msg::Data(Req::Page(PageAsk::Mix(id)), Ok(Data::Page(PageGot::Mix(Box::new(sheet))))));
+            }
+        });
+    }
+
+    /// The mix shown kept on the account as a playlist, named by the core (`saved_mix_name`): "nori <mix>",
+    /// counted on when that is taken.
+    fn save_mix(&self) {
+        let (Some((_, title)), Some(s)) = (self.page_mix.clone(), &self.session) else { return };
+        let (client, tx) = (s.client.clone(), self.tx.clone());
+        let ids: Vec<String> = self.page_songs.iter().map(|s| s.id.clone()).collect();
+        nori_host::spawn("nori-mix-save", move || {
+            use nori_core::cache_policy::{Page, Read};
+            let existing = match nori_core::transport::block_on(client.read_now(Read::PlaylistList)) {
+                Ok(Page::Playlists { v }) => v.into_iter().map(|p| p.name).collect(),
+                _ => Vec::new(),
+            };
+            let name = nori_core::menus::saved_mix_name(title, existing);
+            let note = match nori_core::transport::block_on(client.write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: ids })) {
+                Ok(_) => Msg::Note { text: words::playlist_created(&name), error: false },
+                Err(e) => Msg::Note { text: words::playlist_failed(&words::net_error(&e)), error: true },
+            };
+            tx.send(note);
+        });
+    }
+
+    /// The page's Shuffle and Play for the queue it started (the core's `hero_buttons`).
+    fn hero_shown(&self) {
+        let (Some(fetch), Some(s)) = (&self.page_fetch, &self.session) else { return };
+        let ui = self.ui();
+        let b = s.page_buttons(&fetch.origin(), ui.get_playing(), ui.get_buffering());
+        ui.set_page_shuffle_lit(b.shuffle_lit);
+        ui.set_page_pausing(b.pausing);
     }
 
     /// Songs as rows filtered by the find text; each row keeps its index in `songs`.
@@ -1719,8 +1900,7 @@ impl App {
         let download = if s.rules().downloads { s.download_state(&one.id) } else { SongDownload::None };
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
         let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, offer);
-        let first_more = items.iter().position(|m| m.more);
-        let lines = items.into_iter().enumerate().filter(|(_, m)| m.enabled).map(|(n, m)| {
+        let lines = items.into_iter().map(|m| {
             let (kind, id) = match &m.action {
                 A::Favourite { .. } => (0, String::new()),
                 A::GoToAlbum { id } => (1, id.clone()),
@@ -1741,7 +1921,8 @@ impl App {
                 A::Lyrics => (16, String::new()),
                 A::SleepTimer => (17, String::new()),
             };
-            SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), rule: Some(n) == first_more }
+            let filled = matches!(m.action, A::Favourite { on: false });
+            SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), more: m.more, enabled: m.enabled, filled }
         });
         ModelRc::new(VecModel::from(lines.collect::<Vec<_>>()))
     }
@@ -1909,6 +2090,12 @@ impl App {
     fn play_page(&self, shuffle: bool) {
         let Some(fetch) = self.page_fetch.clone() else { return };
         if shuffle && self.session.as_ref().is_some_and(|s| s.shuffle_page(&fetch.origin())) {
+            return;
+        }
+        // The queue this page started: Play pauses and resumes it.
+        let ui = self.ui();
+        if !shuffle && self.session.as_ref().is_some_and(|s| s.page_buttons(&fetch.origin(), ui.get_playing(), ui.get_buffering()).play_press == nori_core::pages::HeroPress::Toggle) {
+            self.on_session(|s| s.toggle());
             return;
         }
         // An artist's Play is all its songs, not the few its page lists.
@@ -2173,6 +2360,7 @@ impl App {
                     // The output playing: the equalizer page suggests its headphones' AutoEQ curves.
                     Event::Output { name } => {
                         self.output = name.clone();
+                        self.output_shown();
                         if self.ui().get_view() == EQUALIZER {
                             self.eq_extras();
                         }
@@ -2211,6 +2399,11 @@ impl App {
             }
             Msg::Note { text, error } => self.say(&text, error),
             Msg::Shared(Some(link)) => self.copy(link),
+            Msg::Offer(offer) => {
+                let (playing, here) = (self.ui().get_playing(), self.heard.clone());
+                self.offer = offer.filter(|o| o.songs.get(o.index as usize).is_some_and(|s| nori_core::library::offer_stands(&s.id, here, playing)));
+                self.offer_shown();
+            }
             Msg::Shared(None) => self.say(words::SHARE_FAILED, true),
             Msg::Ask { text, action } => self.ask(&text, &action),
             Msg::Reachable(Err(e)) => self.say(&e, true),
@@ -2347,7 +2540,9 @@ impl App {
         });
         // The loader serves newest first; reversed so the top left of a frame comes first.
         for k in wanted.into_iter().rev() {
-            let Some(t) = s.cover(k.clone(), cover_px(k.size)) else { continue };
+            // A mix card's first cover brings its colors, which the card wears.
+            let colours = k.size != CoverSize::Card || self.mixes.iter().any(|m| m.covers.first() == Some(&k.id));
+            let Some(t) = s.cover(k.clone(), cover_px(k.size), colours) else { continue };
             self.tickets.push_back((k, t));
         }
         // Dropping a ticket cancels it; the cover may be requested again.
@@ -2374,9 +2569,12 @@ impl App {
             if ui.get_now_art() == id.as_str() {
                 self.now_colours(&id, c.as_deref());
             }
-            if ui.get_view() == PAGE && ui.get_page_kind() != 2 && ui.get_page_art() == id.as_str() {
+            if ui.get_view() == PAGE && ui.get_page_art() == id.as_str() {
                 self.page_colours(c.as_deref());
             }
+        }
+        if self.mixes.iter().any(|m| m.covers.first() == Some(&id)) && self.art.borrow().colours.contains_key(&id) {
+            self.show_picks();
         }
     }
 
@@ -2565,6 +2763,35 @@ impl App {
         devices_set(&ui, rows);
     }
 
+    /// Where the sound goes, for the output buttons: the device playing while it is another one, else this
+    /// computer's output as the core's `output_look` reads it (this computer until the first song opens one).
+    fn output_shown(&self) {
+        use nori_core::outputs::{output_look, OutputGlyph};
+        let (elsewhere, glyph, name) = match self.there() {
+            Some(e) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
+            None if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
+            None => {
+                let look = output_look(self.output.clone());
+                let glyph = match look.glyph {
+                    OutputGlyph::Phone => 0,
+                    OutputGlyph::Headphones => 1,
+                    OutputGlyph::Bluetooth => 2,
+                    OutputGlyph::Cast => 3,
+                };
+                (false, glyph, words::output_name(look.port, look.name))
+            }
+        };
+        let set = |o: crate::Output| {
+            o.set_elsewhere(elsewhere);
+            o.set_glyph(glyph);
+            o.set_name(name.as_str().into());
+        };
+        set(self.ui().global::<crate::Output>());
+        if let Some(p) = &self.player {
+            set(p.global::<crate::Output>());
+        }
+    }
+
     /// Moves the music to device `id`, or here ("").
     fn pick_device(&self, id: String) {
         if let Some(r) = self.session.as_ref().and_then(|s| s.remote()) {
@@ -2585,6 +2812,7 @@ impl App {
         ui.set_playing_on(there.as_deref().map_or_else(String::new, words::playing_on).into());
         let moved = there.is_some() != self.there().is_some();
         self.playback = playback;
+        self.output_shown();
         if moved {
             self.queue = None;
             ui.set_buffering(false);
@@ -2614,8 +2842,7 @@ impl App {
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         let view = ui.get_view();
         if view == SETTINGS {
-            let tabs = crate::settings::tabs(&self.facts.rules.settings);
-            ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs.iter().map(|p| SharedString::from(crate::settings::tab_name(*p))).collect::<Vec<_>>())));
+            ui.set_settings_tabs(ModelRc::new(VecModel::from(crate::settings::tabs(&self.facts.rules.settings).into_iter().map(|p| SharedString::from(crate::settings::tab_name(p))).collect::<Vec<_>>())));
             ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab(), today));
         }
         if view == EQUALIZER {
@@ -3002,6 +3229,9 @@ impl App {
         let playing = now.playing;
         ui.set_playing(playing);
         ui.set_mixing(now.mixing && now.state == State::Playing);
+        if ui.get_view() == PAGE {
+            self.hero_shown();
+        }
         position_shown(&ui, self.player.as_ref(), now.position_now() as i32);
         self.lyrics_seen();
         if now.song.as_ref().map(|s| &s.id) != self.heard.as_ref() {
@@ -3066,7 +3296,7 @@ fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
 
 fn album_card(a: &nori_core::Album) -> Card {
     let sub_artist = a.artist_id.clone().unwrap_or_default().into();
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.artist.as_str().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0 }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0 }
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
@@ -3415,7 +3645,7 @@ mod tests {
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
             // The first row, under the page's head.
-            let (w, rows) = (shot.width() as usize, 380..420);
+            let (w, rows) = (shot.width() as usize, 455..495);
             rows.flat_map(|y| shot.as_slice()[y * w..(y + 1) * w].to_vec()).collect::<Vec<_>>()
         };
         let song = SongRow { title: "Glass Harbour".into(), time: "3:21".into(), index: 0, ..Default::default() };
@@ -3423,7 +3653,7 @@ mod tests {
     }
 
     /// A song's menu does what its entries say: Favorite stars the song, the album's opens it, a line
-    /// below the rule is told by its kind.
+    /// folded under More is told by its kind.
     #[test]
     fn a_songs_menu_entries_act() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -3433,9 +3663,9 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(PAGE);
         let menu = vec![
-            crate::SongGo { kind: 0, title: "Favorite".into(), ..Default::default() },
-            crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), rule: false },
-            crate::SongGo { kind: 14, title: "Details".into(), rule: true, ..Default::default() },
+            crate::SongGo { kind: 0, title: "Favorite".into(), enabled: true, ..Default::default() },
+            crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), enabled: true, ..Default::default() },
+            crate::SongGo { kind: 14, title: "Details".into(), more: true, enabled: true, ..Default::default() },
         ];
         ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(menu.clone())));
         ui.set_page_songs(ModelRc::new(VecModel::from(vec![SongRow { title: "Glass Harbour".into(), ..Default::default() }])));
@@ -3459,17 +3689,20 @@ mod tests {
             settle();
         };
         use slint::platform::PointerEventButton::{Left, Right};
-        // The menu opens where the row is pressed: Play, then the song's own lines.
-        let row = (400.0, 400.0);
-        let entry = |n: f32| row.1 + 6.0 + 40.0 + n * 40.0 + 20.0;
+        // The menu opens where the row is pressed: the song at its head, then Play, the song's own lines and
+        // More, which unfolds the rest in place.
+        let row = (400.0, 470.0);
+        // Its 6 px inset, the song's head (53 px with its hairline), then 32 px rows.
+        let entry = |n: f32| row.1 + 6.0 + 53.0 + n * 32.0 + 16.0;
+        press(row.0, row.1, Right);
+        press(row.0 + 40.0, entry(2.0), Left);
         press(row.0, row.1, Right);
         press(row.0 + 40.0, entry(1.0), Left);
         press(row.0, row.1, Right);
         press(row.0 + 40.0, entry(0.0), Left);
         press(row.0, row.1, Right);
-        press(row.0 + 40.0, row.1 + 26.0, Left);
-        press(row.0, row.1, Right);
-        press(row.0 + 40.0, entry(2.0) + 9.0, Left);
+        press(row.0 + 40.0, entry(3.0), Left);
+        press(row.0 + 40.0, entry(4.0), Left);
         assert_eq!(*did.borrow(), ["album al", "song 0 0 0", "song 0 0 -1", "song 0 0 14"]);
     }
 
@@ -3484,7 +3717,7 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.global::<crate::Chrome>().set_player_x(140.0);
         ui.global::<crate::Chrome>().set_player_w(1000.0);
-        ui.on_player_menu(|| ModelRc::new(VecModel::from(vec![crate::SongGo { kind: 17, title: "Sleep timer…".into(), ..Default::default() }])));
+        ui.on_player_menu(|| ModelRc::new(VecModel::from(vec![crate::SongGo { kind: 17, title: "Sleep timer…".into(), enabled: true, ..Default::default() }])));
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
         ui.on_player_act(move |kind, _| seen.borrow_mut().push(kind));
@@ -3497,8 +3730,8 @@ mod tests {
         settle();
         ui.invoke_show_player_menu();
         settle();
-        // One line: the popover is 6 + 40 + 6 tall, its foot on the pill's room, its right edge the pill's.
-        let at = slint::LogicalPosition::new(1140.0 - 200.0, 820.0 - 96.0 - 52.0 + 26.0);
+        // One row under the song's head: the popover's foot on the pill's room, its right edge the ⋯ button's.
+        let at = slint::LogicalPosition::new(1128.0 - 100.0, 820.0 - 96.0 - 6.0 - 16.0);
         use slint::platform::PointerEventButton::Left;
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Left });
@@ -3586,13 +3819,13 @@ mod tests {
         use slint::platform::{PointerEventButton::Left, WindowEvent::*};
         // The first service's handle; the rows below it stand 56 px apart.
         let at = |y: f32| slint::LogicalPosition::new(978.0, y);
-        ui.window().dispatch_event(PointerMoved { position: at(591.0) });
-        ui.window().dispatch_event(PointerPressed { position: at(591.0), button: Left });
-        for y in (591..=721).step_by(10) {
+        ui.window().dispatch_event(PointerMoved { position: at(532.0) });
+        ui.window().dispatch_event(PointerPressed { position: at(532.0), button: Left });
+        for y in (532..=662).step_by(10) {
             ui.window().dispatch_event(PointerMoved { position: at(y as f32) });
             pass(16);
         }
-        ui.window().dispatch_event(PointerReleased { position: at(721.0), button: Left });
+        ui.window().dispatch_event(PointerReleased { position: at(662.0), button: Left });
         pass(16);
         assert_eq!(*moved.borrow(), [("LYRICS_PLUS".to_string(), 2)]);
     }
@@ -3709,16 +3942,15 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_devices_on(true);
-        ui.set_full_player(true);
         ui.show().unwrap();
-        // The tabs head the right half; their glyphs' tops sit above the names.
+        // The tabs head the side sheet; their glyphs' tops sit above the names.
         let glyph_tops = |panel: i32| {
-            ui.set_full_panel(panel);
+            ui.set_inspector(panel);
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
-            let top = glyphs(&shot, 640..1280, 4..48).iter().map(|g| g.2).min().unwrap();
-            glyphs(&shot, 640..1280, top..top + 3).iter().map(|g| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
+            let top = glyphs(&shot, 960..1250, 80..112).iter().map(|g| g.2).min().unwrap();
+            glyphs(&shot, 960..1250, top..top + 3).iter().map(|g| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
         };
         let devices = glyph_tops(3);
         assert!(devices.len() >= 3, "{devices:?}");
@@ -3730,7 +3962,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pills_seal_matches_the_speaker_beside_it() {
+    fn the_pills_seal_matches_the_output_beside_it() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
@@ -3745,9 +3977,9 @@ mod tests {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             let shot = bar.window().take_snapshot().unwrap();
-            // Right of the transport: the seal, then the speaker.
+            // Right of the transport: where the sound goes, then the seal.
             let found = glyphs(&shot, 840..1200, 8..56);
-            let (seal, speaker) = (found[0], found[1]);
+            let (speaker, seal) = (found[0], found[1]);
             let height = |g: (usize, usize, usize, usize)| g.3 - g.2 + 1;
             assert!(height(seal).abs_diff(height(speaker)) <= 1, "dark {dark}: seal {seal:?}, speaker {speaker:?}");
             // A glyph's ink: its pixel furthest from the pill under it.
@@ -4069,7 +4301,7 @@ mod tests {
         ui.set_view(HOME);
         ui.set_picks_loaded(true);
         ui.set_picks(ModelRc::new(VecModel::from((0..6).map(|i| crate::Pick {
-            tint: Color::from_rgb_u8(255, 0, 0), deep: Color::from_rgb_u8(0, 0, 255),
+            seed: Color::from_rgb_u8(255, 0, 0), page: Color::from_rgb_u8(0, 0, 255),
             covers: ModelRc::new(VecModel::from((0..4).map(|j| format!("pick-{i}-{j}").into()).collect::<Vec<_>>())),
             ..Default::default()
         }).collect::<Vec<_>>())));
@@ -4175,7 +4407,7 @@ mod tests {
         let pick = mosaic(&vec![image.clone(); 4]).unwrap();
         ui.on_pick_art(move |_, _| pick.clone());
         ui.on_art(move |_, _, _| image.clone());
-        let pick = crate::Pick { tint: Color::from_rgb_u8(255, 0, 0), deep: Color::from_rgb_u8(0, 0, 255), covers: ModelRc::new(VecModel::from(vec!["cover".into(); 4])), ..Default::default() };
+        let pick = crate::Pick { seed: Color::from_rgb_u8(255, 0, 0), page: Color::from_rgb_u8(0, 0, 255), covers: ModelRc::new(VecModel::from(vec!["cover".into(); 4])), ..Default::default() };
         ui.set_picks(ModelRc::new(VecModel::from(vec![pick; 2])));
         ui.show().unwrap();
         for (logical_width, scale) in [(1280, 1.0), (1261, 1.0), (1258, 1.0), (1280, 1.25), (1261, 1.5), (1280, 2.0)] {
@@ -4193,7 +4425,7 @@ mod tests {
             let right = line.iter().rposition(white).unwrap();
             // The rightmost white is in the second card; each card fills half the shelf.
             let side = (right - left - (22.0 * scale) as usize).div_ceil(2);
-            for y in top + (14.0 * scale) as usize..top + side - (14.0 * scale) as usize {
+            for y in top + (14.0 * scale) as usize..top + side * 45 / 100 {
                 for x in left + 2..left + side - 2 {
                     let p = pixels[y * width as usize + x];
                     assert!(p.r.abs_diff(p.g) <= 1, "background shows through at {x},{y}, width {width}: {p:?}");
