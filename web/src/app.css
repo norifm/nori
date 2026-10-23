@@ -327,6 +327,89 @@ button.group-row:hover:enabled {
   margin-left: -10px;
 }
 
+/* A list of rows on the page itself, running out past the gutters. */
+.rows {
+  list-style: none;
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 0;
+}
+
+/* The row every list shares: something on the left (a picture, a glyph), a title and maybe a quiet line,
+   a value or an arrow on the right, and a hairline that starts where the text does. */
+.nav-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 11px var(--gutter);
+  text-align: left;
+  font-size: 16px;
+  line-height: 21px;
+}
+
+.nav-row::after {
+  content: "";
+  position: absolute;
+  left: var(--gutter);
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.nav-row.pictured::after {
+  left: calc(var(--gutter) + 60px);
+}
+
+.nav-row.glyphed::after {
+  left: calc(var(--gutter) + 32px);
+}
+
+li:last-child > .nav-row::after {
+  display: none;
+}
+
+a.nav-row:hover,
+button.nav-row:hover {
+  background: var(--hover);
+}
+
+.nav-row .picture {
+  width: 48px;
+  flex: none;
+}
+
+.nav-row > .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.nav-row .words {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-row .words > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-row .value {
+  font-size: 15px;
+  color: var(--ink2);
+}
+
+.nav-row > .icon:last-child:not(:first-child) {
+  width: 19px;
+  height: 19px;
+  color: color-mix(in srgb, var(--ink2) 70%, transparent);
+}
+
 .sub {
   color: var(--ink2);
   font-size: 13px;

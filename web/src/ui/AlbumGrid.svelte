@@ -13,6 +13,8 @@
 
   let { sort, top, head }: { sort: string; top: string; head?: Snippet } = $props();
   const page = (offset: number) => read<{ albums?: Album[]; next: number | null }>({ kind: "albums", sort, size: 500, offset });
+  // The page's name for a check: it does not change while the grid is shown.
+  // svelte-ignore state_referenced_locally
   const first = reading(top, () => page(0));
   /** The pages after the first. */
   let rest = $state.raw<Album[]>([]);

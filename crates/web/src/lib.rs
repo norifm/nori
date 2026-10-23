@@ -233,6 +233,12 @@ impl Nori {
         Ok(Value::from(nori_core::browse::artist_rows(albums)).to_string())
     }
 
+    /// The rows of `rows` (JSON, each a list of fields) that `filter` keeps, by position (`pages::TextIndex::view`).
+    pub fn filter_rows(&self, rows: String, filter: String) -> Result<String, JsValue> {
+        let rows: Vec<Vec<String>> = serde_json::from_str(&rows).map_err(error)?;
+        Ok(Value::from(nori_core::pages::TextIndex::new(rows).view(filter).rows).to_string())
+    }
+
     /// Home's rows that a browser draws, in the order kept (`browse::home_rows_shown`, `home_shelves`):
     /// `[{ row, kind: "albums", sort, size } | { row, kind: "playlists", take }]`, `row` the `HomeRow`'s
     /// name. The songs shelf reads the offline index and the pinned playlists are pinned on a phone,
@@ -341,7 +347,7 @@ impl Nori {
                         v["named"] = json!(named);
                         "GoToArtist"
                     }
-                    a => return json!({ "action": format!("{a:?}"), "more": m.more }),
+                    a => return json!({ "action": format!("{a:?}"), "more": m.more, "enabled": m.enabled }),
                 };
                 v["action"] = json!(action);
                 v

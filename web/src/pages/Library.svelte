@@ -1,73 +1,52 @@
 <script lang="ts">
-  // The library's sections (a phone's Library tab; the sidebar lists them on a wide screen), and what
-  // was added last.
-  import { read } from "../rpc";
+  // The library, as Android's: its sections as chips in the order kept (the core's `library_sections`), the
+  // one chosen below them (the address names it), the places at the top of each: Favorites, and Shuffle
+  // where the section has one.
+  import type { Component } from "svelte";
+  import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
+  import { player } from "../state/player.svelte";
   import { remote } from "../state/remote.svelte";
-  import { href } from "../state/route.svelte";
-  import type { Album } from "../state/types";
+  import { go, href, route } from "../state/route.svelte";
   import { W } from "../words";
-  import Cards from "../ui/Cards.svelte";
   import Icon from "../ui/Icon.svelte";
   import Page from "../ui/Page.svelte";
+  import Albums from "./Albums.svelte";
+  import Artists from "./Artists.svelte";
+  import Genres from "./Genres.svelte";
+  import Playlists from "./Playlists.svelte";
+  import Songs from "./Songs.svelte";
 
-  const page = reading("library", () => read<{ albums: Album[] }>({ kind: "albums", sort: "newest", size: 12, offset: 0 }).then((p) => p.albums ?? []));
-  const sections = $derived(
-    [
-      [W.playlists, href("playlists"), "playlist"],
-      [W.artists, href("artists"), "user"],
-      [W.albums, href("albums", "alphabeticalByName"), "compact-disc"],
-      [W.songs, href("songs"), "music-note"],
-      [W.genres, href("genres"), "view-grid"],
-      [W.favorites, href("favorites"), "seal"],
-    ].filter(([, h]) => !remote.jam?.guest || !(h === href("playlists") || h === href("favorites"))),
-  );
+  const drawn: Record<string, Component<any>> = { Albums, Artists, Songs, Playlists, Genres };
+  const sections = reading("library", async () => JSON.parse(await ask<string>("library_sections")) as string[]);
+  const chips = $derived((sections.data ?? []).filter((s) => s in drawn));
+  const shown = $derived(chips.includes(route.arg) ? route.arg : chips[0]);
+  const favorites = $derived(!!sections.data?.includes("Favourites"));
+  /** The section's Shuffle: random albums, or random songs; the account's own library only. */
+  const shuffle = $derived(remote.jam?.guest ? null : shown === "Albums" ? () => player.shuffleLibrary(true) : shown === "Songs" ? () => player.shuffleLibrary(false) : null);
+  const Section = $derived(shown ? drawn[shown] : null);
 </script>
 
-<Page title={W.library} ready={!!page.data} error={page.error}>
-  <ul class="sections">
-    {#each sections as [name, h, icon] (h)}
-      <li><a href={h}><Icon name={icon} /><span>{name}</span><Icon name="nav-arrow-right" /></a></li>
+<Page title={W.library} ready={!!sections.data} error={sections.error}>
+  <div class="chips" role="tablist">
+    {#each chips as s (s)}
+      <button class="chip" class:on={s === shown} role="tab" aria-selected={s === shown} data-section={s} onclick={() => go("library", s)}>{W.librarySections[s]}</button>
     {/each}
-  </ul>
-  <h2 class="section">{W.recentlyAdded}</h2>
-  <Cards albums={page.data ?? []} />
+  </div>
+  {#if Section}<Section {places} />{/if}
 </Page>
 
+{#snippet places()}
+  {#if favorites || shuffle}
+    <div class="group places">
+      {#if favorites}<a class="group-row" href={href("favorites")}><Icon name="seal" /><span class="words">{W.favorites}</span><Icon name="nav-arrow-right" /></a>{/if}
+      {#if shuffle}<button class="group-row" onclick={() => void shuffle()}><Icon name="shuffle" /><span class="words">{W.shuffle}</span></button>{/if}
+    </div>
+  {/if}
+{/snippet}
+
 <style>
-  .sections {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    background: var(--surface);
-    border: 1px solid var(--hair);
-    border-radius: 18px;
-    overflow: hidden;
-  }
-  .sections li + li {
-    border-top: 1px solid var(--hair);
-  }
-  .sections a {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    height: 52px;
-    padding: 0 16px;
-    font-size: 17px;
-  }
-  .sections a:hover {
-    background: var(--hover);
-  }
-  .sections a span {
-    flex: 1;
-  }
-  .sections :global(.icon) {
-    color: var(--ink);
-    width: 24px;
-    height: 24px;
-  }
-  .sections :global(.icon:last-child) {
-    color: var(--outline);
-    width: 20px;
+  .places {
+    margin: 0 -4px 10px;
   }
 </style>

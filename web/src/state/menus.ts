@@ -14,15 +14,15 @@ import type { MenuAction, Song } from "./types";
 export async function addToPlaylist(songs: Song[]) {
   const { playlists } = await read<{ playlists: { id: string; name: string }[] }>({ kind: "playlists" });
   const songIds = songs.map((s) => s.id);
-  ui.menu(W.addToPlaylist, [
-    { label: W.newPlaylist, icon: "playlist", run: () => newPlaylist(songIds) },
-    ...(playlists ?? []).map((p) => ({ label: p.name, run: () => library.change({ kind: "addToPlaylist", id: p.id, songIds }) })),
+  ui.menu({ title: W.addToPlaylist }, [
+    { label: W.newPlaylist, icon: "plus", run: () => newPlaylist(songIds) },
+    ...(playlists ?? []).map((p) => ({ label: p.name, icon: "playlist", run: () => library.change({ kind: "addToPlaylist", id: p.id, songIds }) })),
   ]);
 }
 
 /** Asks for a name and makes a playlist of `songIds` called that. */
 export async function newPlaylist(songIds: string[] = []) {
-  const name = await ui.ask(W.playlistName);
+  const name = await ui.ask(W.newPlaylist);
   if (name) await library.change({ kind: "createPlaylist", name, songIds });
 }
 
@@ -31,23 +31,23 @@ export async function newPlaylist(songIds: string[] = []) {
 function item(a: MenuAction, s: Song): Item | null {
   switch (a.action) {
     case "Favourite":
-      return { label: a.on ? W.favorite : W.unfavorite, icon: a.on ? "seal-line" : "seal", run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
+      return { label: a.on ? W.addToFavorites : W.removeFromFavorites, icon: a.on ? "seal" : "sealed", run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
     case "PlayNext":
       return { label: W.playNext, icon: "playlist-play", run: () => player.enqueue([s], true) };
     case "AddToQueue":
-      return { label: W.playLater, icon: "playlist", run: () => player.enqueue([s], false) };
+      return { label: W.addToQueue, icon: "playlist", run: () => player.enqueue([s], false) };
     case "AddToPlaylist":
-      return { label: W.addToPlaylist, icon: "playlist", run: () => addToPlaylist([s]) };
+      return { label: W.addToPlaylistMenu, icon: "plus-circle", run: () => addToPlaylist([s]) };
     case "GoToAlbum":
       return { label: W.goToAlbum, icon: "compact-disc", run: () => ((ui.full = false), go("album", a.id!)) };
     case "GoToArtist":
       return { label: W.goToArtist(a.name ?? "", !!a.named), icon: "user", run: () => ((ui.full = false), go("artist", a.id!)) };
     case "Lyrics":
-      return { label: W.lyricsInfo, icon: "emoji-sing-right-note", run: () => (ui.lyricsInfo = true) };
+      return { label: W.lyrics, icon: "emoji-sing-right-note", run: () => (ui.lyricsInfo = true) };
     case "StartRadio":
       return { label: W.startRadio, icon: "antenna-signal", run: () => player.mix(s, true) };
     case "InstantMix":
-      return { label: W.instantMix, icon: "shuffle", run: () => player.mix(s, false) };
+      return { label: W.instantMix, icon: "sparks", run: () => player.mix(s, false) };
     case "StartJam":
       return {
         label: W.startJam,
@@ -56,7 +56,7 @@ function item(a: MenuAction, s: Song): Item | null {
           await player.soundCard();
           await remote.act(() => ask("jam_start", JSON.stringify([s]), 0));
           await player.refresh();
-          ui.show("devices");
+          ui.devices = true;
         },
       };
     default:
@@ -64,13 +64,15 @@ function item(a: MenuAction, s: Song): Item | null {
   }
 }
 
-/** Song `s`'s menu; `extra` for the page's own entries; `inPlayer` when opened from the player. */
+/** Song `s`'s menu: what one opens it for, then the rest under More; `extra` the page's own entries;
+ * `inPlayer` when opened from the player. */
 export async function songMenu(s: Song, extra: Item[] = [], inPlayer = false) {
   const lyrics = inPlayer && !!player.shown && player.shown.song === s.id;
   const actions = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics)) as MenuAction[];
-  const items = actions.flatMap((a): Item[] => {
-    const i = item(a, s);
-    return i ? [{ ...i, disabled: !a.enabled }] : [];
-  });
-  ui.menu(s.title, [...items, ...extra]);
+  const of = (more: boolean) =>
+    actions.flatMap((a): Item[] => {
+      const i = !!a.more === more ? item(a, s) : null;
+      return i ? [{ ...i, disabled: !a.enabled }] : [];
+    });
+  ui.menu({ title: s.title, line: s.line || s.artist, cover: s.cover ?? "" }, [...of(false), ...extra], of(true));
 }

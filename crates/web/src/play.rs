@@ -333,6 +333,17 @@ impl Nori {
         Ok(n)
     }
 
+    /// Adds everything artist `id` has in the library to the end of the queue: the songs added (0: none).
+    pub async fn queue_artist(&self, id: String) -> Result<usize, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let songs = nori_host::Fetch::Artist(id).songs(&client).await.map_err(error)?;
+        let n = songs.len();
+        if n > 0 {
+            self.with(|h| h.enqueue(songs, false));
+        }
+        Ok(n)
+    }
+
     /// The Library's Shuffle: random albums, each whole (`albums`), or random songs (`Core::shuffle_albums`,
     /// `shuffle_all`): the songs played (0: none).
     pub async fn shuffle_library(&self, albums: bool) -> Result<usize, JsValue> {

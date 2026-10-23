@@ -30,11 +30,18 @@
   ];
 </script>
 
+<header class="queue-head">
+  <h2>{W.playingNext}</h2>
+  {#if !n?.jam}
+    <button class="glyph quiet" class:on={n?.shuffle} title={W.shuffle} aria-label={W.shuffle} aria-pressed={!!n?.shuffle} onclick={() => void player.control("shuffle", !n?.shuffle)}><Icon name="shuffle" /></button>
+    <button class="glyph quiet" class:on={!!n?.repeat} title={n?.repeat === 1 ? W.repeatOne : W.repeat} aria-label={W.repeat} aria-pressed={!!n?.repeat} onclick={() => void player.control("cycle_repeat")}><Icon name={n?.repeat === 1 ? "repeat-once" : "repeat"} /></button>
+  {/if}
+</header>
 <JamQueue />
 <ol class="queue" id="queue" bind:this={list} use:sortable={{ moved: (from, to) => move(rows[from].index, rows[to].index) }}>
   {#each rows as q, at (`${q.index}:${q.id}`)}
     {#if at === 0 && current > 0}<li class="head">{W.history}</li>{/if}
-    {#if at === current + 1}<li class="head">{W.queue}</li>{/if}
+    {#if at === current + 1}<li class="head">{W.playingNext}</li>{/if}
     <li class="row" class:current={at === current} class:past={at < current} data-row={n?.reorderable && at !== current ? "" : undefined} data-at={at}>
       <button class="play" onclick={() => void player.control("jump", q.index)}>
         <span class="art"><Cover src={q.cover} /></span>
@@ -42,7 +49,7 @@
           <span class="title clip">{q.title ?? q.id ?? ""}</span>
           <span class="sub clip">{q.by ? W.jamAddedBy(q.by) : (q.artist ?? "")}</span>
         </span>
-        {#if at === current}<Icon name={player.playing ? "play-solid" : "pause-solid"} />{/if}
+
       </button>
       {#if n?.reorderable && at !== current}
         <span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="menu" /></span>
@@ -57,6 +64,20 @@
 </ol>
 
 <style>
+  .queue-head {
+    display: flex;
+    align-items: center;
+    margin-right: -12px;
+  }
+  .queue-head h2 {
+    flex: 1;
+    font-size: 17px;
+    line-height: 22px;
+  }
+  .queue-head :global(.icon) {
+    width: 22px;
+    height: 22px;
+  }
   .queue {
     list-style: none;
     margin: 0;
@@ -66,10 +87,12 @@
     min-height: 0;
   }
   .head {
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: -0.2px;
-    padding: 18px 8px 8px;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink2);
+    padding: 16px 0 8px;
   }
   .row {
     display: flex;
@@ -90,7 +113,7 @@
     position: relative;
     z-index: 1;
     background: var(--surface);
-    box-shadow: 0 0 0 1px var(--outline);
+    box-shadow: 0 0 0 var(--hairline) var(--hair);
   }
   .handle {
     display: grid;
@@ -110,17 +133,9 @@
     padding: 6px 8px;
     text-align: left;
   }
-  .play > :global(.icon) {
-    color: var(--accent);
-    width: 16px;
-    height: 16px;
-  }
   .art {
-    width: 40px;
+    width: 44px;
     flex: none;
-  }
-  .art :global(.cover) {
-    border-radius: 7px;
   }
   .text {
     flex: 1;
@@ -129,7 +144,8 @@
     flex-direction: column;
   }
   .title {
-    font-size: 14px;
+    font-size: 16px;
+    line-height: 21px;
   }
   .more {
     color: var(--ink2);

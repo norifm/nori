@@ -2,7 +2,8 @@
   // Songs as rows: a click plays them from there, as the page's list (`kind`, `id`); each has its menu
   // (`extra`: the page's own entries). `numbered` shows track numbers instead of covers (an album's);
   // `rows` the positions shown (a disc's), with their second `lines`; `shown` only the first few, with
-  // Show all under them; `moved`, each row's handle drags it to another place (a playlist's).
+  // Show all under them; `moved`, each row's handle drags it to another place (a playlist's); `one`, a
+  // click plays that song alone (a search's results).
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import type { Item } from "../state/ui.svelte";
@@ -21,8 +22,9 @@
     lines,
     shown,
     moved,
+    one = false,
     extra = () => [],
-  }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; rows?: number[]; lines?: string[]; shown?: number; moved?: (from: number, to: number) => unknown; extra?: (s: Song, i: number) => Item[] } = $props();
+  }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; rows?: number[]; lines?: string[]; shown?: number; moved?: (from: number, to: number) => unknown; one?: boolean; extra?: (s: Song, i: number) => Item[] } = $props();
   const playingId = $derived(player.song?.id);
   let all = $state(false);
   const at = $derived(rows ?? songs.map((_, i) => i));
@@ -34,7 +36,7 @@
     {@const s = songs[i]}
     {@const line = lines ? lines[k] : (s.line ?? s.artist)}
     <li class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
-      <button class="play" onclick={() => void player.play(songs, i, false, kind, id)}>
+      <button class="play" onclick={() => void (one ? player.play([s], 0, false, kind, id) : player.play(songs, i, false, kind, id))}>
         {#if numbered}
           <span class="n">{#if s.id === playingId}<span class="bars" class:still={!player.playing}><i></i><i></i><i></i></span>{:else}{s.track || ""}{/if}</span>
         {:else}

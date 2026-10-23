@@ -1,10 +1,18 @@
-// Every word the web client shows. The core says what happened; the words are the client's.
+// Every word the web client shows, as the Android app words it (app/src/main/res/values). The core says
+// what happened; the words are the client's.
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
+/** A length: "3:07", or "1:02:03" from an hour. */
+const clock = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+};
 
 export const W = {
   appName: "nori",
-  signInTitle: "Sign in",
   signInLead: "Your server's address, user and password.",
   server: "Server",
   user: "User",
@@ -17,17 +25,44 @@ export const W = {
   library: "Library",
   search: "Search",
   settings: "Settings",
-  playlists: "Playlists",
+  listenNow: "Listen now",
   artists: "Artists",
   albums: "Albums",
   songs: "Songs",
-  genres: "Genres",
   favorites: "Favorites",
-  recentlyAdded: "Recently added",
-  recentlyPlayed: "Recently played",
-  mostPlayed: "Most played",
-  discover: "Something different",
-  seeAll: "See all",
+  /** Home's rows, by the core's `HomeRow`. */
+  homeRows: {
+    Pinned: "Favorite playlists",
+    Playlists: "Playlists",
+    Recent: "Recently played",
+    Newest: "Recently added",
+    Frequent: "Most played albums",
+    TopSongs: "Most played songs",
+    Random: "Random",
+    Starred: "Favorite albums",
+  } as Record<string, string>,
+  /** The Library's sections, by the core's `LibrarySection`. */
+  librarySections: { Albums: "Albums", Artists: "Artists", Songs: "Songs", Playlists: "Playlists", Genres: "Genres", Favourites: "Favorites" } as Record<string, string>,
+  /** The album grid's orders, by the server's names (`album_sorts`). */
+  albumSorts: {
+    starred: "Favorites",
+    alphabeticalByName: "Title",
+    artistRows: "Artist",
+    byYear: "Year",
+    newest: "Added",
+    frequent: "Most played",
+    random: "Random",
+    recent: "Played",
+  } as Record<string, string>,
+  sortBy: "Sort by",
+  filterArtists: "Filter artists",
+  /** An artist's shelf, by the core's `ReleaseKind`; a shelf the server tagged by its tag. */
+  shelf: (kind: string, tag: string) =>
+    ({ Album: "Albums", Ep: "EPs", Single: "Singles", Live: "Live", Compilation: "Compilations", Soundtrack: "Soundtracks", Remix: "Remixes", Other: "Others" })[kind] ??
+    (tag.endsWith("s") ? tag : `${tag}s`),
+  releases: (n: number) => plural(n, "release", "releases"),
+  disc: (n: number) => `Disc ${n}`,
+  discTitled: (n: number, title: string) => `Disc ${n} · ${title}`,
   showAll: "Show all",
   back: "Back",
   play: "Play",
@@ -39,15 +74,16 @@ export const W = {
   repeatOne: "Repeat one",
   seek: "Position",
   playNext: "Play next",
-  playLater: "Play later",
+  addToQueue: "Add to queue",
   remove: "Remove",
   more: "More",
   cancel: "Cancel",
   done: "Done",
   close: "Close",
-  favorite: "Favorite",
-  unfavorite: "Undo favorite",
+  addToFavorites: "Add to favorites",
+  removeFromFavorites: "Remove from favorites",
   addToPlaylist: "Add to playlist",
+  addToPlaylistMenu: "Add to playlist…",
   newPlaylist: "New playlist",
   playlistName: "Playlist name",
   rename: "Rename",
@@ -59,15 +95,16 @@ export const W = {
   removeFromPlaylist: "Remove from playlist",
   goToAlbum: "Go to album",
   goToArtist: (name: string, named: boolean) => (named ? `Go to ${name}` : "Go to artist"),
-  startRadio: "Start radio",
+  startRadio: "Start radio from this song",
   instantMix: "Instant mix",
   startJam: "Start a Jam here",
   mixEmpty: "The server has nothing like it.",
   nothingToPlay: "Nothing to play.",
   lyrics: "Lyrics",
-  queue: "Playing next",
+  queue: "Queue",
+  playingNext: "Playing next",
   history: "History",
-  noLyrics: "No lyrics for this song.",
+  noLyrics: "No lyrics",
   lyricsLoading: "Looking for lyrics",
   lyricsInfo: "Lyrics",
   lyricsFrom: "Source",
@@ -98,40 +135,35 @@ export const W = {
     YoutubeMusic: "YouTube Music",
   } as Record<string, string>,
   nothingPlaying: "Not playing",
+  nowPlayingBar: "Now playing bar",
   loadingPlayer: "Starting the player",
-  searchHint: "Artists, albums, songs",
-  noResults: "Nothing found.",
-  topResults: "Top results",
-  empty: "Nothing here yet.",
+  searchHint: "Songs, albums, artists",
+  noResults: "Nothing found",
+  noAlbums: "No albums yet",
+  noArtists: "No artists yet",
+  noSongs: "No songs yet",
+  noPlaylists: "No playlists yet",
+  noFavoriteSongs: "No favorite songs yet. Tap the seal on a song and it will be here.",
   loading: "Loading",
   failed: (why: string) => `Something went wrong: ${why}`,
   songCount: (n: number) => plural(n, "song", "songs"),
+  /** A count of songs that reads as a list's: "1 songs" stays "1 song" only in a sentence. */
+  songsAlways: (n: number) => `${n} songs`,
   albumCount: (n: number) => plural(n, "album", "albums"),
-  minutes: (s: number) => {
-    const m = Math.round(s / 60);
-    return m >= 60 ? `${Math.floor(m / 60)} hr ${m % 60} min` : `${m} min`;
-  },
-  time: (ms: number) => {
-    const s = Math.max(0, Math.floor(ms / 1000));
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  },
-  sortBy: "Sort",
-  sorts: {
-    alphabeticalByName: "Title",
-    alphabeticalByArtist: "Artist",
-    newest: "Recently added",
-    recent: "Recently played",
-    frequent: "Most played",
-    starred: "Favorites",
-    random: "Random",
-  } as Record<string, string>,
-  autoMix: "AutoMix",
+  /** A list's head: "8 songs · 36:28". */
+  listCaption: (n: number, seconds: number) => `${n} songs · ${clock(seconds * 1000)}`,
+  time: clock,
   account: "Account",
-  signedInAs: (user: string, url: string) => `${user} on ${url}`,
-  about: "About",
+  thisServer: "This server",
   aboutLead: "nori for the web: your own music server, in a browser.",
-  // Settings, by the core's pages, sections and setting names.
-  settingsPages: { Playing: "Playback", Sound: "Sound", Look: "Appearance", Lyrics: "Lyrics", Library: "Library" } as Record<string, string>,
+  // Settings, by the core's pages (their title and what they hold), sections and setting names.
+  settingsPages: {
+    Playing: ["Playback", "Crossfade, AutoMix, queue"],
+    Sound: ["Sound", "Equalizer, volume, output"],
+    Look: ["Appearance", "Theme, colors, size"],
+    Lyrics: ["Lyrics", "Display and sources"],
+    Library: ["Library", "Lists, search, history"],
+  } as Record<string, [string, string]>,
   sections: {
     Between: "Between songs",
     Controls: "Controls",
@@ -140,92 +172,77 @@ export const W = {
     Volume: "Volume",
     Display: "Display",
     Sources: "Sources",
-    History: "History",
+    History: "Listening history",
     Online: "Online",
-    Devices: "Devices",
+    Devices: "Other devices",
+    Theme: "Theme",
+    Motion: "Motion",
   } as Record<string, string>,
   settingNames: {
-    crossfadeSec: ["Crossfade", "One song fades into the next."],
-    autoMix: ["AutoMix", "Songs flow into each other, matched in tempo and key."],
-    autoMixBetterBeats: ["Better beats", "A neural beat tracker for AutoMix. Uses more battery."],
-    crossfadeKeepAlbums: ["Keep albums gapless", "Songs of one album that follow each other in order play without mixing."],
-    fadeMs: ["Fade on pause", "Pausing and seeking fade the sound."],
-    previousAlwaysSkips: ["Previous always skips", "Previous goes to the song before, even mid-song."],
-    speed: ["Speed", ""],
-    pitch: ["Pitch", ""],
-    skipSilence: ["Skip silence", "Quiet stretches inside songs are skipped."],
-    skipExplicit: ["Skip explicit songs", ""],
-    autoFill: ["Autoplay", "When the queue ends, similar music plays on."],
-    autoFillKind: ["Plays", ""],
-    autoFillBasis: ["Like", ""],
-    autoFillRemote: ["Also from other devices", "Autoplay when another device's queue ends."],
-    compressor: ["Compressor", "Quiet parts come up, loud ones down."],
-    compressorPreset: ["For", ""],
-    replayGain: ["Volume leveling", "Songs play at the same loudness."],
-    loudnessLevel: ["Level", ""],
-    volumeBoostDb: ["Volume boost", ""],
-    lyricsSweep: ["Words light up", "Each word lights up as it is sung, where the lyrics have word times."],
-    lyricsTranslation: ["Translations", "Shown under each line, where there are some."],
-    lyricsOnline: ["Lyrics online", "Lyrics are looked up online when the server has none."],
-    lyricsPreferWords: ["Prefer word timing", "Lyrics timed word by word win over line by line."],
-    tasteModel: ["Learn my taste", "What you play and skip shapes Autoplay and mixes."],
-    scrobble: ["Scrobble", "Songs played are reported to your server."],
-    thirdPartyLookups: ["Online lookups", "Lyrics and artist pictures from services other than your server."],
-    remoteControl: ["Remote control and jams", "Other devices of yours can play here and be played on; jams can start."],
-  } as Record<string, [string, string]>,
-  choices: {
-    OFF: "Off",
-    TRACK: "Song",
-    ALBUM: "Album",
-    AUTO: "Auto",
-    QUIET: "Quiet",
-    NORMAL: "Normal",
-    LOUD: "Loud",
-    LIGHT: "Light",
-    CAR: "Car",
-    NIGHT: "Night",
-    SONGS: "Songs",
-    ALBUMS: "Albums",
-    SIMILAR: "Similar songs",
-    ARTIST: "The artist",
-    GENRE: "The genre",
-    ERA: "The era",
+    crossfadeSec: "Crossfade",
+    autoMix: "AutoMix",
+    autoMixBetterBeats: "Better beat detection",
+    crossfadeKeepAlbums: "Keep albums gapless",
+    fadeMs: "Fade on play and pause",
+    previousAlwaysSkips: "Previous goes back a song",
+    speed: "Speed",
+    pitch: "Pitch",
+    skipSilence: "Skip silence",
+    skipExplicit: "Skip explicit songs",
+    autoFill: "Keep playing when the queue ends",
+    autoFillKind: "Carry on with",
+    autoFillBasis: "Chosen by",
+    autoFillRemote: "Include remote songs",
+    compressor: "Compressor",
+    compressorPreset: "Compressor type",
+    replayGain: "Volume leveling",
+    loudnessLevel: "Level",
+    volumeBoostDb: "Volume boost",
+    headphoneSound: "Headphone sound",
+    lyricsSweep: "Fill in words as they're sung",
+    lyricsTranslation: "Show translations",
+    lyricsOnline: "Find missing lyrics online",
+    lyricsPreferWords: "Prefer word-by-word lyrics",
+    tasteModel: "Keep listening history",
+    scrobble: "Tell the server what you play",
+    thirdPartyLookups: "Look things up online",
+    remoteControl: "Remote control and jams",
+    theme: "Appearance",
+    motion: "Motion",
   } as Record<string, string>,
+  /** A setting's value in words, by setting and value. */
+  choices: {
+    autoFillKind: { SONGS: "Songs", ALBUMS: "Albums" },
+    autoFillBasis: { SIMILAR: "Similar music", ARTIST: "The same artist", GENRE: "The same genre", ERA: "The same era" },
+    compressorPreset: { LIGHT: "Light", CAR: "Car", NIGHT: "Night" },
+    replayGain: { OFF: "Off", TRACK: "Per song", ALBUM: "Per album", AUTO: "Automatic" },
+    loudnessLevel: { QUIET: "Quiet", NORMAL: "Normal", LOUD: "Loud" },
+    headphoneSound: { OFF: "Off", NATURAL: "Natural", WIDE: "Wide" },
+    theme: { SYSTEM: "System", LIGHT: "Day", DARK: "Night", MIDNIGHT: "Midnight" },
+    motion: { FULL: "Full", REDUCED: "Reduced", EINK: "E-ink" },
+  } as Record<string, Record<string, string>>,
   choice: (name: string, v: string) => {
     if (name === "crossfadeSec") return v === "0" ? "Off" : `${v} s`;
-    if (name === "fadeMs") return v === "0" ? "Off" : `${v} ms`;
-    if (name === "speed" || name === "pitch") return `${v}×`;
-    return W.choices[v] ?? v;
+    if (name === "fadeMs") return v === "0" ? "Off" : Number(v) % 1000 === 0 ? `${Number(v) / 1000} s` : `${v} ms`;
+    if (name === "speed") return Number(v) === 1 ? "Normal" : `${v}×`;
+    if (name === "pitch") {
+      const pct = Math.round((Number(v) - 1) * 100);
+      return pct === 0 ? "Normal" : pct < 0 ? `−${-pct} %` : `+${pct} %`;
+    }
+    return W.choices[name]?.[v.toUpperCase()] ?? v;
   },
   level: (name: string, v: number) => (name === "volumeBoostDb" ? (v === 0 ? "Off" : `+${v.toFixed(1)} dB`) : String(v)),
   notes: {
     HeldByDac: "Off in bit-perfect mode.",
   } as Record<string, string>,
-  // The look: season and appearance.
+  // The season.
   season: "Season",
-  seasonFollow: "Follow the seasons",
-  seasonFollowLead: "Changes with the calendar",
-  /** Following the seasons: "Autumn now · Winter from November 7". */
-  seasonNow: (now: string, next: string, month: number, day: number) =>
-    `${now} now · ${next} from ${new Date(2001, month - 1, day).toLocaleDateString("en-US", { month: "long", day: "numeric" })}`,
-  seasons: [
-    ["SPRING", "春", "Spring"],
-    ["SUMMER", "夏", "Summer"],
-    ["AUTUMN", "秋", "Autumn"],
-    ["WINTER", "冬", "Winter"],
-  ] as [string, string, string][],
-  appearance: "Appearance",
-  appearances: [
-    ["SYSTEM", "System"],
-    ["LIGHT", "Day"],
-    ["DARK", "Night"],
-    ["MIDNIGHT", "Midnight"],
-  ] as [string, string][],
-  // The top bar and the player bar.
-  libraryMenu: "Library",
-  devices: "Devices",
+  seasonFollow: "Follow the calendar",
+  /** Following the calendar: "Winter comes in on November 7". */
+  seasonNext: (next: string, month: number, day: number) =>
+    `${next} comes in on ${new Date(2001, month - 1, day).toLocaleDateString("en-US", { month: "long", day: "numeric" })}`,
+  seasons: { SPRING: "Spring", SUMMER: "Summer", AUTUMN: "Autumn", WINTER: "Winter" } as Record<string, string>,
   volume: "Volume",
-  mute: "Mute",
   moreResults: "All results",
   // Jams.
   jam: "Jam",

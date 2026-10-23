@@ -1,50 +1,23 @@
 <script lang="ts">
-  // Every genre with songs, by name.
+  // The Library's genres: its places, then every genre with songs, by name, with how many.
+  import type { Snippet } from "svelte";
   import { read } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { href } from "../state/route.svelte";
   import type { Genre } from "../state/types";
   import { W } from "../words";
-  import Page from "../ui/Page.svelte";
+  import Icon from "../ui/Icon.svelte";
 
-  const page = reading("genres", () =>
+  let { places }: { places: Snippet } = $props();
+  const page = reading("library", () =>
     read<{ genres: Genre[] }>({ kind: "genres" }).then((p) => (p.genres ?? []).filter((g) => g.songCount > 0).sort((a, b) => a.value.localeCompare(b.value))),
   );
 </script>
 
-<Page title={W.genres} back ready={!!page.data} error={page.error}>
-  <ul class="genres">
-    {#each page.data ?? [] as g (g.value)}
-      <li><a href={href("genre", g.value)}><span class="name">{g.value}</span><span class="sub">{W.songCount(g.songCount)}</span></a></li>
-    {/each}
-  </ul>
-</Page>
-
-<style>
-  .genres {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 12px;
-  }
-  a {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    height: 96px;
-    padding: 14px;
-    border-radius: 18px;
-    background: var(--surface);
-    border: 1px solid var(--hair);
-  }
-  a:hover {
-    background: var(--hover);
-  }
-  .name {
-    font-size: 17px;
-    font-weight: 700;
-    letter-spacing: -0.2px;
-  }
-</style>
+{@render places()}
+{#if page.error}<p class="empty">{W.failed(page.error)}</p>{/if}
+<ul class="rows genres">
+  {#each page.data ?? [] as g (g.value)}
+    <li><a class="nav-row" href={href("genre", g.value)}><span class="words">{g.value}</span><span class="value">{g.songCount}</span><Icon name="nav-arrow-right" /></a></li>
+  {/each}
+</ul>
