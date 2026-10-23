@@ -1300,12 +1300,13 @@ impl Remote {
         lan_secret(&self.client).map(|secret| lan::pairing_link(&secret))
     }
 
-    /// Accepts a pairing code explicitly chosen by the user, then reannounces the door.
+    /// Accepts a pairing code explicitly chosen by the user, then reannounces the door and looks again: the
+    /// doors already found were turned away under the old secret, and are reported only to a new look.
     pub fn pair(self: Arc<Self>, link: String) -> bool {
         let Some(secret) = lan::parse_pairing(&link) else { return false };
         if self.pairing_link().is_none() { return false; }
         if !keep_pairing(&self.client.core.session.settings, &secret) { return false; }
-        let announce = {
+        let (announce, browsing) = {
             let mut i = self.inner.lock();
             i.peers.clear();
             i.lan_generation += 1;
@@ -1317,9 +1318,15 @@ impl Remote {
             let announce = i.door.as_ref().map(|door| self.announcement(door.port()));
             #[cfg(target_arch = "wasm32")]
             let announce = None;
-            announce
+            (announce, i.browsing())
         };
-        if let Some(discovery) = &self.discovery { discovery.announce(announce); }
+        if let Some(discovery) = &self.discovery {
+            discovery.announce(announce);
+            if browsing {
+                discovery.browse(false);
+                discovery.browse(true);
+            }
+        }
         self.shown.changed();
         true
     }

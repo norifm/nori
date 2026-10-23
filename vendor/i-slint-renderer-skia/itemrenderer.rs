@@ -1100,6 +1100,8 @@ impl GlyphRenderer for SkiaItemRenderer<'_> {
         };
         let mut font = skia_safe::Font::from_typeface(type_face, font_size.get());
         font.set_subpixel(true);
+        // NORI: Text moving by less than a pixel (a lyric word rising) would step whole pixels with a snapped baseline.
+        font.set_baseline_snap(false);
 
         let (glyph_ids, glyph_positions): (Vec<_>, Vec<_>) = glyphs_it
             .into_iter()

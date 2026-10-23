@@ -2,8 +2,9 @@
   // Every menu on a wide window (and a phone's menus about no one thing): one surface on the paper with a
   // hairline edge and no backdrop, beside the button that opened it or at the pointer, turned or moved to
   // stay inside the window. Its head (a song's cover, title and line), then its rows, each a hairline from
-  // the next, the rarer ones under More; the chosen one ticked. Its corners are the tile's; what sits in
-  // them is round by the tile's corner less the inset (`--inner`). A click outside or Escape closes it.
+  // the next, the rarer ones behind More, which shows them in the rows' place under Back; the chosen one
+  // ticked. Its corners are the tile's; what sits in them is round by the tile's corner less the inset
+  // (`--inner`). A click outside or Escape closes it.
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
   import Cover from "./Cover.svelte";
@@ -15,8 +16,8 @@
   let more = $state(false);
   let place = $state("visibility:hidden");
   const EDGE = 8;
-  // Placed once drawn (and again as More opens): below a button and level with its right edge, or with
-  // its top left at the pointer; turned up or left where the window ends.
+  // Placed once drawn (and again as More or Back swaps the rows): below a button and level with its right
+  // edge, or with its top left at the pointer; turned up or left where the window ends.
   $effect(() => {
     void more;
     if (!menu) return;
@@ -55,10 +56,14 @@
       <span class="words"><span class="title clip">{m.head.title}</span>{#if m.head.line}<span class="sub clip">{m.head.line}</span>{/if}</span>
     </div>
   {/if}
-  {#each m.items as it, i (i)}{@render row(it)}{/each}
-  {#if m.more.length}
-    <button class="popover-item" aria-expanded={more} onclick={() => (more = !more)}><Icon name="more-horiz" /><span class="clip">{W.more}</span><span class="turn" class:open={more}><Icon name="nav-arrow-down" /></span></button>
-    {#if more}{#each m.more as it, i (i)}{@render row(it)}{/each}{/if}
+  {#if more}
+    <button class="popover-item" onclick={() => (more = false)}><Icon name="arrow-left" /><span class="clip">{W.back}</span></button>
+    {#each m.more as it, i (i)}{@render row(it)}{/each}
+  {:else}
+    {#each m.items as it, i (i)}{@render row(it)}{/each}
+    {#if m.more.length}
+      <button class="popover-item" onclick={() => (more = true)}><Icon name="more-horiz" /><span class="clip">{W.more}</span><span class="opens"><Icon name="nav-arrow-right" /></span></button>
+    {/if}
   {/if}
 </div>
 
@@ -105,12 +110,8 @@
   .sub {
     font-size: 13px;
   }
-  .turn {
+  .opens {
     display: grid;
     margin-left: auto;
-    transition: transform 220ms;
-  }
-  .turn.open {
-    transform: rotate(180deg);
   }
 </style>

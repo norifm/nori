@@ -680,6 +680,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
                 if let Some(ui) = weak.upgrade() { ui.set_covers_rev(ui.get_covers_rev().wrapping_add(1)); }
             });
         }
+        ui.set_traffic_lights(cfg!(target_os = "macos"));
         menu_actions(ui, &a.compositor);
         // Now Playing's lyrics: the active line sharp, the rest blurred by the compositor.
         let weak = ui.as_weak();
@@ -1080,8 +1081,8 @@ impl App {
                 // Albums and artists carry the account's seals, as on Android.
                 ui.set_page_can_star(s.rules().account && s.rules().stars);
                 self.session = Some(s);
-                self.heard = None;
-                self.song = None;
+                // The last profile's song leaves the screen; the new one's, if it has one, comes with follow.
+                self.song_shown(None);
                 // The new profile's core has no lyrics view open yet.
                 self.lyrics_viewed = false;
                 self.queue = None;
@@ -1425,10 +1426,13 @@ impl App {
             Data::Page(PageGot::Artists(v)) => {
                 self.lists.artists = v.iter().map(artist_card).collect();
                 self.narrowed();
-                // The Artists view opens on its first artist.
-                if ui.get_artist_chosen().is_empty() {
-                    if let Some(first) = v.first() {
-                        self.choose_artist(first.id.clone());
+                // The Artists view opens on its first artist, unless one of these is chosen already (the last
+                // profile's is not).
+                let chosen = ui.get_artist_chosen();
+                if !v.iter().any(|a| a.id == chosen.as_str()) {
+                    match v.first() {
+                        Some(first) => self.choose_artist(first.id.clone()),
+                        None => ui.set_artist_chosen("".into()),
                     }
                 }
             }
@@ -3690,7 +3694,7 @@ mod tests {
         };
         use slint::platform::PointerEventButton::{Left, Right};
         // The menu opens where the row is pressed: the song at its head, then Play, the song's own lines and
-        // More, which unfolds the rest in place.
+        // More, whose lines take the card's place under Back.
         let row = (400.0, 470.0);
         // Its 6 px inset, the song's head (53 px with its hairline), then 32 px rows.
         let entry = |n: f32| row.1 + 6.0 + 53.0 + n * 32.0 + 16.0;
@@ -3702,8 +3706,12 @@ mod tests {
         press(row.0 + 40.0, entry(0.0), Left);
         press(row.0, row.1, Right);
         press(row.0 + 40.0, entry(3.0), Left);
-        press(row.0 + 40.0, entry(4.0), Left);
-        assert_eq!(*did.borrow(), ["album al", "song 0 0 0", "song 0 0 -1", "song 0 0 14"]);
+        press(row.0 + 40.0, entry(0.0), Left);
+        press(row.0 + 40.0, entry(2.0), Left);
+        press(row.0, row.1, Right);
+        press(row.0 + 40.0, entry(3.0), Left);
+        press(row.0 + 40.0, entry(1.0), Left);
+        assert_eq!(*did.borrow(), ["album al", "song 0 0 0", "song 0 0 -1", "album al", "song 0 0 14"]);
     }
 
     /// The player's menu opens above the pill with the lines it is given, and a line reaches the app by

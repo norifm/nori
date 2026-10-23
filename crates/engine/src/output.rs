@@ -148,6 +148,8 @@ pub(crate) struct Ring {
     underruns: AtomicU64,
     /// A pull is reading slots.
     pulling: AtomicBool,
+    /// Frames pulls handed to the device: unlike `read`, never moved by a flush's discard.
+    taken: AtomicU64,
 }
 
 // SAFETY: the slots are the only unsynchronised state; the writer and the reader never touch the same
@@ -179,6 +181,7 @@ impl Ring {
             ended: AtomicBool::new(false),
             underruns: AtomicU64::new(0),
             pulling: AtomicBool::new(false),
+            taken: AtomicU64::new(0),
         }
     }
 
@@ -335,6 +338,7 @@ impl Feed {
         out[n as usize * ch..].fill(S::default());
         r.read.store(at + n, Ordering::Release);
         r.limit.store(at + n, Ordering::Release);
+        r.taken.fetch_add(n, Ordering::Release);
         r.pulling.store(false, Ordering::Release);
         if n < want && !resting && !r.ended.load(Ordering::Relaxed) && w > 0 {
             r.underruns.fetch_add(1, Ordering::Relaxed);
@@ -370,10 +374,11 @@ impl Feed {
     }
 
     /// The frames pulled since the ring was made, readable from any thread (0 once the ring is gone): a
-    /// device's count of what it took that a reading never finds apart from the ring's own.
+    /// device's count of what it took that a reading never finds apart from the ring's own. What a flush
+    /// drops is not in it: the device never took it.
     pub fn pulled(&self) -> impl Fn() -> u64 + Send + Sync + 'static {
         let ring = Arc::downgrade(&self.ring);
-        move || ring.upgrade().map_or(0, |r| r.read_at())
+        move || ring.upgrade().map_or(0, |r| r.taken.load(Ordering::Acquire))
     }
 
     /// Frames of music waiting in the ring.
