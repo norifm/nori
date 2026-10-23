@@ -238,6 +238,7 @@ impl Client {
         loop {
             let read = Read::AlbumList { kind, size: ALBUMS_PER_READ as i32, offset: all.len() as i32, genre: genre.map(Into::into) };
             match self.cached_or_fetched(read).await {
+                Ok(Some(Page::Albums { v })) if crate::browse::album_page_repeats(&all, &v) => return Some(all),
                 Ok(Some(Page::Albums { v })) => {
                     let more = v.len() == ALBUMS_PER_READ;
                     all.extend(v);
@@ -451,6 +452,13 @@ pub(crate) mod tests {
             assert_eq!(p.folders.last().map(|f| f.id.as_str()), Some("album:a520"), "{parent}");
             assert_eq!(fake.asked().len(), 2, "{parent}");
         }
+        // A server that ignores the offset sends its first page again: the list ends there.
+        let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
+        for _ in 0..3 {
+            fake.answer(&albums(1, 500));
+        }
+        let p = block(c.browse_children("albums:alphabeticalByName".into(), 0, 1000));
+        assert_eq!((p.folders.len(), fake.asked().len()), (500, 2));
     }
 
     #[test]
