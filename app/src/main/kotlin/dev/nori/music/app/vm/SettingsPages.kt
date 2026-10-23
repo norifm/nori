@@ -97,7 +97,7 @@ sealed interface SettingRow {
 }
 
 /** One season's tile: its value, its name, and the colors of its theme in the mode the app is in (ARGB). */
-data class SeasonTile(val season: dev.nori.music.ffi.look.Season, val value: String, val label: String, val page: Int, val accent: Int, val on: Int)
+data class SeasonTile(val season: dev.nori.music.ffi.look.Season, val value: String, val label: String, val page: Int, val accent: Int)
 
 data class SettingsSection(val title: String, val rows: List<SettingRow>)
 
@@ -586,7 +586,7 @@ private class PageBuilder(val res: Resources, val p: StoredPrefs, val f: Setting
             val season = dev.nori.music.ffi.settings.seasonOf(dev.nori.music.ffi.settings.ThemeSeason.valueOf(o.value)) ?: return@mapNotNull null
             // Its dark palette rather than black: on black every tile would be the same.
             val c = dev.nori.music.ffi.look.palette(season, 1u, 1u, false, dark, false)
-            SeasonTile(season, o.value, o.label, c.page.toInt(), c.accent.toInt(), c.on.toInt())
+            SeasonTile(season, o.value, o.label, c.page.toInt(), c.accent.toInt())
         }
         val now = dev.nori.music.ffi.look.seasonNow(today.monthValue.toUInt(), today.dayOfMonth.toUInt(), southern)
         val following = value == options.first().value
