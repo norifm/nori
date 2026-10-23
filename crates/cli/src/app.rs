@@ -6,7 +6,10 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
+use nori_core::library::QueueOffer;
+use nori_core::mixes::board::{MixSheet, MixTile};
 use nori_core::model::HistoryEntry;
+use nori_core::settings::HomeRow;
 use nori_core::client::Starrable;
 use nori_core::playlist::PlaylistView;
 use nori_core::remote::wire::Pending;
@@ -114,6 +117,11 @@ pub enum Cmd {
     /// The next repeat mode after the one shown.
     CycleRepeat,
     Download(Vec<Song>),
+    /// Asks for the queue another device left, for a player `playing` or not and showing the song `shown`.
+    LookForOffer { playing: bool, shown: Option<String> },
+    /// Plays the queue offered where it was left, and does not offer it again.
+    TakeOffer(QueueOffer),
+    DismissOffer(QueueOffer),
     /// Keeps an order of a list for the next time.
     Keep(nori_core::browse::ListPref),
     /// Plays the library shuffled: random albums whole, or every song.
@@ -299,8 +307,11 @@ pub enum Page {
     DownloadedAlbum { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
     Artist { id: String, detail: Load<Box<ArtistDetail>>, sel: Sel },
     Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel },
-    /// All of a Home shelf's entries.
-    Row { title: String, items: Vec<Item>, sel: Sel },
+    /// One of the core's mixes, or the favorites.
+    Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
+    /// All of a Home shelf's entries: a library row's read a page at a time (`more` while there may be more),
+    /// a feed's or For you's as Home has them.
+    Row { title: String, items: Vec<Item>, row: Option<HomeRow>, more: bool, sel: Sel },
 }
 
 impl Page {
@@ -311,13 +322,14 @@ impl Page {
             Page::DownloadedAlbum { id, .. } => Req::DownloadedAlbum(id.clone()),
             Page::Artist { id, .. } => Req::Artist(id.clone()),
             Page::Playlist { id, .. } => Req::Playlist(id.clone()),
-            Page::Row { .. } => return None,
+            Page::Mix { id, .. } => Req::Mix(id.clone()),
+            Page::Row { row, .. } => Req::Row { row: (*row)?, offset: 0 },
         })
     }
 
     fn sel(&mut self) -> &mut Sel {
         match self {
-            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } | Page::Row { sel, .. } => sel,
+            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } | Page::Row { sel, .. } => sel,
         }
     }
 
@@ -326,16 +338,18 @@ impl Page {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { d.albums.len() }),
             Page::Playlist { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
+            Page::Mix { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
             Page::Row { items, .. } => items.len(),
         }
     }
 
-    /// The page's songs: an album's, a playlist's, and an artist's that lists no albums (a YouTube Music
-    /// profile's videos); an artist with albums shows their cards.
+    /// The page's songs: an album's, a playlist's, a mix's, and an artist's that lists no albums (a YouTube
+    /// Music profile's videos); an artist with albums lists those.
     pub fn songs(&self) -> Option<&[Song]> {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Playlist { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
+            Page::Mix { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Artist { detail, .. } => detail.ready().filter(|d| d.albums.is_empty()).map(|d| d.songs.as_slice()),
             Page::Row { .. } => None,
         }
@@ -350,13 +364,27 @@ pub enum Item {
     DownloadedAlbum(Album),
     Artist(Artist),
     Playlist(Playlist),
+    Mix(MixTile),
 }
 
-/// The home page: one list of its shelves, each a heading and its first entries.
+/// One of Home's shelves: its title, its entries, and the library's row it is (none for a source's own).
+#[derive(Debug, Clone)]
+pub struct Shelf {
+    pub title: String,
+    pub items: Vec<Item>,
+    pub row: Option<HomeRow>,
+}
+
+/// The home page: the queue another device left, For you, then its shelves, each a heading and its first
+/// entries.
 #[derive(Default)]
 pub struct Home {
-    /// Indexed like the session's `home_album_rows`; None until loaded.
-    pub rows: Vec<Option<(String, Vec<Item>)>>,
+    /// Indexed like the session's Home rows, or a source's feed; None until loaded.
+    pub rows: Vec<Option<Shelf>>,
+    /// For you: the favorites, then the mixes.
+    pub mixes: Vec<MixTile>,
+    /// The queue left on the server, offered to carry on here (`Client::queue_offer`).
+    pub offer: Option<QueueOffer>,
     pub error: Option<String>,
     pub asked: bool,
     /// Selection over [`Home::lines`].
@@ -366,28 +394,51 @@ pub struct Home {
 /// How many of a shelf's entries Home lists; its heading opens all of them.
 pub const HOME_ENTRIES: usize = 5;
 
-/// A line of Home: a shelf's heading, one of its entries, or the gap before the next heading.
+/// Which of Home's shelves: For you, or a row by index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShelfAt {
+    ForYou,
+    Row(usize),
+}
+
+/// A line of Home: the queue offered, a shelf's heading, one of its entries, or the gap before the next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HomeLine {
-    Shelf(usize),
-    Entry(usize, usize),
+    Offer,
+    Shelf(ShelfAt),
+    Entry(ShelfAt, usize),
     Gap,
 }
 
 impl Home {
-    /// Non-empty shelves: index, title, entries.
-    pub fn shelves(&self) -> Vec<(usize, &str, &[Item])> {
-        self.rows.iter().enumerate().filter_map(|(i, r)| r.as_ref().filter(|(_, v)| !v.is_empty()).map(|(t, v)| (i, t.as_str(), v.as_slice()))).collect()
+    /// A shelf's title and entries; For you's are the mixes.
+    pub fn shelf(&self, at: ShelfAt) -> Option<(String, Vec<Item>)> {
+        match at {
+            ShelfAt::ForYou => Some((crate::text::FOR_YOU.to_string(), self.mixes.iter().cloned().map(Item::Mix).collect())),
+            ShelfAt::Row(i) => self.rows.get(i)?.as_ref().map(|s| (s.title.clone(), s.items.clone())),
+        }
+    }
+
+    /// How many entries a shelf has.
+    pub fn count(&self, at: ShelfAt) -> usize {
+        match at {
+            ShelfAt::ForYou => self.mixes.len(),
+            ShelfAt::Row(i) => self.rows.get(i).and_then(|r| r.as_ref()).map_or(0, |s| s.items.len()),
+        }
     }
 
     pub fn lines(&self) -> Vec<HomeLine> {
         let mut out = Vec::new();
-        for (i, _, items) in self.shelves() {
+        if self.offer.is_some() {
+            out.push(HomeLine::Offer);
+        }
+        let shelves = std::iter::once(ShelfAt::ForYou).chain((0..self.rows.len()).map(ShelfAt::Row));
+        for at in shelves.filter(|at| self.count(*at) > 0) {
             if !out.is_empty() {
                 out.push(HomeLine::Gap);
             }
-            out.push(HomeLine::Shelf(i));
-            out.extend((0..items.len().min(HOME_ENTRIES)).map(|n| HomeLine::Entry(i, n)));
+            out.push(HomeLine::Shelf(at));
+            out.extend((0..self.count(at).min(HOME_ENTRIES)).map(|n| HomeLine::Entry(at, n)));
         }
         out
     }
@@ -398,9 +449,10 @@ impl Home {
     }
 
     /// The entry selected.
-    pub fn item(&self) -> Option<&Item> {
+    pub fn item(&self) -> Option<Item> {
         match self.line()? {
-            HomeLine::Entry(i, n) => self.rows.get(i)?.as_ref()?.1.get(n),
+            HomeLine::Entry(ShelfAt::ForYou, n) => self.mixes.get(n).cloned().map(Item::Mix),
+            HomeLine::Entry(ShelfAt::Row(i), n) => self.rows.get(i)?.as_ref()?.items.get(n).cloned(),
             _ => None,
         }
     }
@@ -410,6 +462,14 @@ impl Home {
         let lines = self.lines();
         if lines.get(self.sel.at) == Some(&HomeLine::Gap) {
             self.sel.at = if down && self.sel.at + 1 < lines.len() { self.sel.at + 1 } else { self.sel.at.saturating_sub(1) };
+        }
+    }
+
+    /// The offered song, playing here or the player showing it, takes the offer away (`offer_stands`).
+    fn offer_still(&mut self, here: Option<String>, playing: bool) {
+        let gone = self.offer.as_ref().is_some_and(|o| !o.songs.get(o.index as usize).is_some_and(|s| nori_core::library::offer_stands(&s.id, here.clone(), playing)));
+        if gone {
+            self.offer = None;
         }
     }
 }
@@ -852,6 +912,9 @@ pub enum Button {
     StarSong,
     Help,
     Connect,
+    /// Plays the queue offered on Home, or turns it down.
+    Resume,
+    Dismiss,
 }
 
 /// Layout facts from the last frame: the full player's panel width, and whether a clock shows.
@@ -1175,11 +1238,18 @@ impl App {
         }
         let l = &mut self.library;
         match view {
-            View::Home if !self.home.asked => {
-                self.home.asked = true;
-                self.home.rows = Vec::new();
-                self.home.sel = Sel::default();
-                self.cmds.push(Cmd::Load(Req::Home));
+            View::Home => {
+                if !self.home.asked {
+                    self.home.asked = true;
+                    (self.home.rows, self.home.mixes) = (Vec::new(), Vec::new());
+                    self.home.sel = Sel::default();
+                    self.cmds.push(Cmd::Load(Req::Home));
+                }
+                // Each time Home comes into sight, the queue another device left; a jam guest's is the host's.
+                if self.rules.account {
+                    let (playing, shown) = (self.now.state == State::Playing, self.song.as_ref().map(|s| s.id.clone()));
+                    self.cmds.push(Cmd::LookForOffer { playing, shown });
+                }
             }
             View::Albums if matches!(l.albums, Load::Idle) => {
                 l.albums = Load::Loading;
@@ -1369,6 +1439,11 @@ impl App {
                 }
             }
             Msg::Note { text, error } => self.say(text, error),
+            Msg::Offer(offer) => {
+                self.home.offer = offer;
+                let (here, playing) = (self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
+                self.home.offer_still(here, playing);
+            }
             Msg::LoggedIn(r) => {
                 self.login.busy = false;
                 if let Err(e) = r {
@@ -1418,6 +1493,9 @@ impl App {
                 if s == State::Playing {
                     self.lyrics_wake = Some(Instant::now());
                 }
+                // Music started: Home lets the offer go.
+                let here = self.song.as_ref().map(|s| s.id.clone());
+                self.home.offer_still(here, s == State::Playing);
             }
             Event::Song { .. } | Event::Looped { .. } => {}
             Event::Error { id, message } => {
@@ -1444,6 +1522,8 @@ impl App {
     pub fn heard(&mut self, song: Option<Song>) {
         let changed = self.song.as_ref().map(|s| &s.id) != song.as_ref().map(|s| &s.id);
         self.song = song;
+        // The player came to show the song offered.
+        self.home.offer_still(self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
         if !changed {
             return;
         }
@@ -1467,15 +1547,19 @@ impl App {
 
     fn data(&mut self, req: Req, r: Result<Data, String>) {
         match (req, r) {
-            (Req::Home, Ok(Data::HomeRow(i, title, items))) => {
+            (Req::Home, Ok(Data::HomeRow(i, row, title, items))) => {
                 // A feed has as many shelves as the service sends.
                 if i >= self.home.rows.len() {
                     self.home.rows.resize(i + 1, None);
                 }
                 if let Some(slot) = self.home.rows.get_mut(i) {
-                    *slot = Some((title, items));
+                    *slot = Some(Shelf { title, items, row });
                 }
                 self.home.error = None;
+                self.home.settle(true);
+            }
+            (Req::Home, Ok(Data::Mixes(tiles))) => {
+                self.home.mixes = tiles;
                 self.home.settle(true);
             }
             (Req::Home, Err(e)) => self.home.error = Some(e),
@@ -1549,6 +1633,21 @@ impl App {
             (Req::Downloads | Req::DownloadProgress, Err(e)) => self.downloads = Load::Failed(e),
             (Req::Facts, Ok(Data::Facts(f))) => self.settings.set_facts(*f),
             (Req::Facts, Err(_)) => {}
+            (Req::Row { row, offset }, r) => {
+                let Some(Page::Row { items, more, .. }) = self.pages.iter_mut().rev().find(|p| matches!(p, Page::Row { row: Some(at), .. } if *at == row)) else { return self.dirty = false };
+                match r {
+                    Ok(Data::Row(v, done)) => {
+                        if offset == 0 {
+                            *items = v;
+                        } else {
+                            items.truncate(offset as usize);
+                            items.extend(v);
+                        }
+                        *more = !done;
+                    }
+                    _ => *more = false,
+                }
+            }
             (req, r) => {
                 for page in self.pages.iter_mut().rev() {
                     if page.req().as_ref() != Some(&req) {
@@ -1558,6 +1657,8 @@ impl App {
                         (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Ok(Data::Album(d))) => *detail = Load::Ready(d),
                         (Page::Artist { detail, .. }, Ok(Data::Artist(d))) => *detail = Load::Ready(d),
                         (Page::Playlist { detail, .. }, Ok(Data::Playlist(d))) => *detail = Load::Ready(d),
+                        (Page::Mix { detail, .. }, Ok(Data::Mix(d))) => *detail = Load::Ready(d),
+                        (Page::Mix { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Artist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Playlist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
@@ -1640,7 +1741,7 @@ impl App {
             Focus::Panel => &[Scope::List, Scope::Global],
             Focus::Main if self.page().is_some() => &[Scope::List, Scope::Global],
             Focus::Main => match self.view {
-                View::Downloads => &[Scope::Edit, Scope::List, Scope::Global],
+                View::Downloads | View::Home => &[Scope::Edit, Scope::List, Scope::Global],
                 View::Equalizer => &[Scope::Eq, Scope::List, Scope::Global],
                 View::Settings => &[Scope::Values, Scope::List, Scope::Global],
                 _ => &[Scope::List, Scope::Global],
@@ -2043,6 +2144,7 @@ impl App {
                 },
                 None => self.dirty = false,
             },
+            Action::Remove if self.home_line() == Some(HomeLine::Offer) => self.take_offer(false),
             Action::Remove => self.dirty = false,
             Action::Jam => self.jam_with_selected(),
             Action::Undo if self.queue_in_focus() => match self.taken.take() {
@@ -2229,7 +2331,19 @@ impl App {
 
     /// Requests the next page when the selection nears the end of a paged list.
     fn more(&mut self) {
-        if self.focus != Focus::Main || self.page().is_some() {
+        if self.focus != Focus::Main {
+            return;
+        }
+        // A Home row in full, a page at a time.
+        if let Some(Page::Row { items, row: Some(row), more: more @ true, sel, .. }) = self.pages.last_mut() {
+            if sel.at + 30 >= items.len() {
+                *more = false;
+                let (row, offset) = (*row, items.len() as u32);
+                self.cmds.push(Cmd::Load(Req::Row { row, offset }));
+            }
+            return;
+        }
+        if self.page().is_some() {
             return;
         }
         let l = &mut self.library;
@@ -2273,7 +2387,7 @@ impl App {
         }
         if let Some(p) = self.page() {
             return match p {
-                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
+                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { sel, .. } if p.songs().is_some() => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { detail, sel, .. } => detail.ready().and_then(|d| d.albums.get(sel.at).cloned()).map(Item::Album),
                 Page::Row { items, sel, .. } => items.get(sel.at).cloned(),
@@ -2286,7 +2400,7 @@ impl App {
             Some(Item::Artist(Artist { id: a.artist_id.clone()?, name: a.artist.clone(), ..Default::default() }))
         };
         match self.view {
-            View::Home => self.home.item().cloned(),
+            View::Home => self.home.item(),
             View::Albums | View::Artists | View::Songs | View::Playlists => match self.library_line()? {
                 LibLine::Shelf(start) => shelf(start),
                 LibLine::Entry(i) => match self.view {
@@ -2363,8 +2477,10 @@ impl App {
         if matches!(a, Action::PlayAll | Action::ShuffleAll) {
             return self.play_all(a == Action::ShuffleAll);
         }
-        if let (Action::Open, Some(HomeLine::Shelf(i))) = (a, self.home_line()) {
-            return self.open_shelf(i);
+        match (a, self.home_line()) {
+            (Action::Open, Some(HomeLine::Shelf(at))) => return self.open_shelf(at),
+            (Action::Open, Some(HomeLine::Offer)) => return self.take_offer(true),
+            _ => {}
         }
         if let (Action::Open, Some(LibLine::Place(place))) = (a, self.library_line().filter(|_| self.focus == Focus::Main && self.page().is_none())) {
             return match place {
@@ -2381,6 +2497,7 @@ impl App {
             (Action::Open, Item::DownloadedAlbum(a)) => self.open_page(Page::DownloadedAlbum { id: a.id, detail: Load::Loading, sel: Sel::default() }),
             (Action::Open, Item::Artist(ar)) => self.open_artist(ar.id),
             (Action::Open, Item::Playlist(p)) => self.open_playlist(p.id),
+            (Action::Open, Item::Mix(m)) => self.open_page(Page::Mix { id: m.id, detail: Load::Loading, sel: Sel::default() }),
             (Action::Enqueue | Action::PlayNext, item) => {
                 let next = a == Action::PlayNext;
                 match item {
@@ -2389,6 +2506,7 @@ impl App {
                     Item::DownloadedAlbum(a) => self.cmds.push(Cmd::EnqueueFetch(Fetch::DownloadedAlbum(a.id), next)),
                     Item::Artist(ar) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Artist(ar.id), next)),
                     Item::Playlist(p) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Playlist(p.id), next)),
+                    Item::Mix(m) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Mix(m.id), next)),
                 }
             }
             // Hearts are where songs carry them, downloads the account's.
@@ -2401,6 +2519,7 @@ impl App {
                 Item::DownloadedAlbum(_) => {},
                 Item::Artist(ar) => self.cmds.push(Cmd::DownloadFetch(Fetch::Artist(ar.id))),
                 Item::Playlist(p) => self.cmds.push(Cmd::DownloadFetch(Fetch::Playlist(p.id))),
+                Item::Mix(m) => self.cmds.push(Cmd::DownloadFetch(Fetch::Mix(m.id))),
             },
             (Action::Star, item) => {
                 let (kind, id, listed) = match item {
@@ -2408,7 +2527,7 @@ impl App {
                     Item::Album(al) => (Starrable::Album, al.id, al.starred),
                     Item::DownloadedAlbum(a) => (Starrable::Album, a.id, a.starred),
                     Item::Artist(ar) => (Starrable::Artist, ar.id, ar.starred),
-                    Item::Playlist(_) => return,
+                    Item::Playlist(_) | Item::Mix(_) => return,
                 };
                 self.star(kind, id, listed);
             }
@@ -2447,15 +2566,28 @@ impl App {
         }
     }
 
+    /// Plays the queue offered where it was left (`take`), or turns it down; either way it is not offered
+    /// again (`queue_offer_done`).
+    fn take_offer(&mut self, take: bool) {
+        if let Some(offer) = self.home.offer.take() {
+            self.cmds.push(if take { Cmd::TakeOffer(offer) } else { Cmd::DismissOffer(offer) });
+            self.home.settle(true);
+        }
+    }
+
     /// Home's line selected, while Home has the keys.
     fn home_line(&self) -> Option<HomeLine> {
         (self.focus == Focus::Main && self.page().is_none() && self.view == View::Home).then(|| self.home.line()).flatten()
     }
 
     /// All of Home's shelf `i`, as a page.
-    fn open_shelf(&mut self, i: usize) {
-        let Some(Some((title, items))) = self.home.rows.get(i) else { return };
-        self.open_page(Page::Row { title: title.clone(), items: items.clone(), sel: Sel::default() });
+    fn open_shelf(&mut self, at: ShelfAt) {
+        let Some((title, items)) = self.home.shelf(at) else { return };
+        let row = match at {
+            ShelfAt::Row(i) => self.home.rows.get(i).and_then(|r| r.as_ref()).and_then(|s| s.row),
+            ShelfAt::ForYou => None,
+        };
+        self.open_page(Page::Row { title, items, row, more: false, sel: Sel::default() });
     }
 
     /// A song picked from a list, per the `tap_action` setting (not offered here; default PlayList).
@@ -2482,6 +2614,7 @@ impl App {
                 Page::DownloadedAlbum { id, .. } => PageOrigin::new(OriginKind::Downloads, id.as_str()),
                 Page::Artist { id, .. } => PageOrigin::new(OriginKind::Artist, id.as_str()),
                 Page::Playlist { id, .. } => PageOrigin::new(OriginKind::Playlist, id.as_str()),
+                Page::Mix { id, .. } => PageOrigin::new(OriginKind::Mix, id.as_str()),
                 Page::Row { .. } => return None,
             });
         }
@@ -2512,6 +2645,7 @@ impl App {
             Some(Item::DownloadedAlbum(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), shuffle)),
             Some(Item::Artist(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(a.id), shuffle)),
             Some(Item::Playlist(p)) => self.cmds.push(Cmd::PlayFetch(Fetch::Playlist(p.id), shuffle)),
+            Some(Item::Mix(m)) => self.cmds.push(Cmd::PlayFetch(Fetch::Mix(m.id), shuffle)),
             Some(Item::Song(songs, _)) => {
                 let from = self.origin_here();
                 self.cmds.push(Cmd::Play { songs, start: 0, shuffle, from })
@@ -2698,6 +2832,7 @@ impl App {
             Some(Item::DownloadedAlbum(a)) => Some(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), false)),
             Some(Item::Artist(a)) => Some(Cmd::PlayFetch(Fetch::Artist(a.id), false)),
             Some(Item::Playlist(p)) => Some(Cmd::PlayFetch(Fetch::Playlist(p.id), false)),
+            Some(Item::Mix(m)) => Some(Cmd::PlayFetch(Fetch::Mix(m.id), false)),
             None => None,
         };
         if self.devices.jam.is_none() && self.devices.jams {
@@ -2968,6 +3103,7 @@ impl App {
                     Some(Page::Album { id, .. }) => Fetch::Album(id.clone()),
                     Some(Page::Artist { id, .. }) => Fetch::Artist(id.clone()),
                     Some(Page::Playlist { id, .. }) => Fetch::Playlist(id.clone()),
+                    Some(Page::Mix { id, .. }) => Fetch::Mix(id.clone()),
                     Some(Page::Row { .. }) => return,
                     None => return,
                 };
@@ -2982,6 +3118,8 @@ impl App {
             }
             Button::Help => self.do_action(Action::Help),
             Button::Connect => self.connect(),
+            Button::Resume => self.take_offer(true),
+            Button::Dismiss => self.take_offer(false),
         }
     }
 

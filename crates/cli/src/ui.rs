@@ -266,6 +266,7 @@ fn item_line(item: &Item, w: usize, t: &Theme, starred: bool, playing: bool) -> 
         Item::Album(a) | Item::DownloadedAlbum(a) => (a.name.as_str(), a.artist.clone(), if a.year > 0 { a.year.to_string() } else { String::new() }),
         Item::Song(songs, at) => (songs[*at].title.as_str(), songs[*at].artist.clone(), clock(songs[*at].duration as i64 * 1000)),
         Item::Playlist(p) => (p.name.as_str(), p.owner.clone().unwrap_or_default(), crate::text::playlist_line(p)),
+        Item::Mix(m) => (crate::text::mix_name(m.name), crate::text::mix_line(m.favourites).to_string(), String::new()),
         Item::Artist(a) => (a.name.as_str(), String::new(), a.album_count.map(crate::text::albums).unwrap_or_default()),
     };
     let name_w = (w * 11 / 20).max(12);
@@ -383,6 +384,7 @@ fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
         return h::PAGE;
     }
     match app.view {
+        View::Home if app.home.line() == Some(crate::app::HomeLine::Offer) => h::OFFER,
         View::Home => h::HOME,
         View::Settings => h::SETTINGS,
         View::Equalizer => h::EQUALIZER,
@@ -475,16 +477,17 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     }
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let App { home, hits, marks, rules, .. } = app;
-    let rows = &home.rows;
+    let h = &*home;
     let row = |i: usize, w: usize| match lines[i] {
-        HomeLine::Shelf(s) => {
-            let (title, items) = rows[s].as_ref().map(|(t, v)| (t.as_str(), v.len())).unwrap_or_default();
-            let more = if items > crate::app::HOME_ENTRIES { crate::text::SHOW_ALL.to_string() } else { String::new() };
-            spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(format!("{more} "), t.dim()), w)
+        HomeLine::Offer => offer_line(h.offer.as_ref(), w, t),
+        HomeLine::Shelf(at) => {
+            let (title, _) = h.shelf(at).unwrap_or_default();
+            let more = if h.count(at) > crate::app::HOME_ENTRIES { crate::text::SHOW_ALL } else { "" };
+            spread(vec![Span::styled(title, bold().fg(t.ink))], Span::styled(format!("{more} "), t.dim()), w)
         }
-        HomeLine::Entry(s, n) => {
-            let Some(item) = rows[s].as_ref().and_then(|(_, v)| v.get(n)) else { return Line::from("") };
-            let mut line = item_line(item, w.saturating_sub(2), t, starred(item, marks, rules.stars), is_playing(item, playing.as_deref()));
+        HomeLine::Entry(at, n) => {
+            let Some(item) = h.shelf(at).and_then(|(_, v)| v.into_iter().nth(n)) else { return Line::from("") };
+            let mut line = item_line(&item, w.saturating_sub(2), t, starred(&item, marks, rules.stars), is_playing(&item, playing.as_deref()));
             line.spans.insert(0, Span::raw("  "));
             line
         }
@@ -493,6 +496,24 @@ fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let mut sel = home.sel;
     list(f, area, &mut sel, lines.len(), ListRef::Home, hits, t, focused, &row);
     home.sel = sel;
+    // The offer's own words act on it too.
+    if let Some(r) = app.hits.iter().find(|(_, h)| *h == Hit::Row(ListRef::Home, 0)).map(|(r, _)| *r).filter(|_| app.home.offer.is_some() && sel.top == 0) {
+        let words = [(Span::styled(crate::text::RESUME, bold().fg(t.ink)), Button::Resume), (Span::styled(crate::text::CLOSE, t.dim()), Button::Dismiss)];
+        let w: u16 = words.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>() - 3;
+        let at = Rect { x: r.x + r.width.saturating_sub(w + 2), width: w, ..r };
+        buttons(f, &mut app.hits, at, &words);
+    }
+}
+
+/// The queue another device left, offered to carry on here: what it is called, the song, and where it
+/// stands; its Resume and Close are drawn over its end.
+fn offer_line(offer: Option<&nori_core::library::QueueOffer>, w: usize, t: &Theme) -> Line<'static> {
+    let Some(o) = offer else { return Line::from("") };
+    let Some(song) = o.songs.get(o.index as usize) else { return Line::from("") };
+    let place = crate::text::offer_place(&song.artist, o.index + 1, o.songs.len());
+    let left = vec![Span::styled(format!("{}  ", crate::text::CONTINUE), t.dim()), Span::styled(song.title.clone(), bold().fg(t.ink)), Span::styled(format!("  {place}"), t.dim())];
+    let room = crate::text::RESUME.width() + crate::text::CLOSE.width() + 6;
+    spread(left, Span::raw(" ".repeat(room)), w)
 }
 
 /// Whether `item` shows its seal: an album or artist starred, as this session marked it.
@@ -502,7 +523,7 @@ fn starred(item: &Item, marks: &StarMarks, stars: bool) -> bool {
             Item::Album(a) | Item::DownloadedAlbum(a) => marks.starred(Starrable::Album, &a.id, a.starred),
             Item::Artist(a) => marks.starred(Starrable::Artist, &a.id, a.starred),
             Item::Song(songs, at) => marks.starred(Starrable::Song, &songs[*at].id, songs[*at].starred),
-            Item::Playlist(_) => false,
+            Item::Playlist(_) | Item::Mix(_) => false,
         }
 }
 
@@ -762,6 +783,8 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), if d.albums.is_empty() && !d.songs.is_empty() { crate::text::count(d.songs.len() as u64, "song", "songs") } else { d.artist.album_count.map(crate::text::albums).unwrap_or_default() }, Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
         Page::Playlist { detail: Load::Ready(d), .. } => (d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), None),
         Page::Row { title, items, .. } => (title.clone(), String::new(), crate::text::count(items.len() as u64, "entry", "entries"), None),
+        Page::Mix { detail: Load::Ready(m), .. } => (crate::text::mix_name(m.name).to_string(), String::new(), crate::text::songs_caption(m.songs.len() as u32, m.seconds), None),
+        Page::Mix { detail: Load::Failed(e), .. } => return failed(f, area, t, e),
         Page::Album { detail: Load::Failed(e), .. } | Page::DownloadedAlbum { detail: Load::Failed(e), .. } | Page::Artist { detail: Load::Failed(e), .. } | Page::Playlist { detail: Load::Failed(e), .. } => {
             return failed(f, area, t, e);
         }
@@ -820,6 +843,10 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
                 let item = Item::Album(albums[i].clone());
                 item_line(&item, w, t, starred(&item, seals, stars), false)
             });
+        }
+        Page::Mix { detail: Load::Ready(m), sel, .. } => {
+            let songs = &m.songs;
+            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
         }
         Page::Row { items, sel, .. } => {
             list(f, body, sel, items.len(), ListRef::Page, hits, t, focused, &|i, w| item_line(&items[i], w, t, starred(&items[i], seals, stars), is_playing(&items[i], playing.as_deref())));

@@ -45,6 +45,8 @@ pub enum Msg {
     Search(SearchView),
     /// A status bar message.
     Note { text: String, error: bool },
+    /// The queue another device left on the server, to offer here.
+    Offer(Option<nori_core::library::QueueOffer>),
     /// The login form's result: the profile to keep, or the error.
     LoggedIn(Result<SavedServer, String>),
     /// Result of the reachability check made when a session opens.
@@ -82,6 +84,7 @@ impl Msg {
             Msg::Lyrics { song, .. } => format!("lyrics for {song}"),
             Msg::Search(v) => format!("search results for {:?}", v.query),
             Msg::Note { text, error } => format!("note {text:?} error={error}"),
+            Msg::Offer(o) => format!("queue offered: {}", o.is_some()),
             Msg::LoggedIn(r) => format!("logged in: {}", r.is_ok()),
             Msg::Reachable(r) => format!("reachable: {}", r.is_ok()),
             Msg::Volume(v) => format!("volume {v}"),
@@ -113,6 +116,9 @@ pub enum Req {
     DownloadedAlbum(String),
     Artist(String),
     Playlist(String),
+    Mix(String),
+    /// A Home row in full, a page from `offset`.
+    Row { row: nori_core::settings::HomeRow, offset: u32 },
     Favorites,
     Downloads,
     /// The downloads screen's queue sections only, for the refresh while downloads run.
@@ -121,8 +127,14 @@ pub enum Req {
 }
 
 pub enum Data {
-    /// Home shelf: index (into the session's `home_album_rows`, or the service's feed), title, cards.
-    HomeRow(usize, String, Vec<crate::app::Item>),
+    /// Home shelf: index (into the session's Home rows, or the service's feed), the library's row it is,
+    /// title, entries.
+    HomeRow(usize, Option<nori_core::settings::HomeRow>, String, Vec<crate::app::Item>),
+    /// For you's tiles.
+    Mixes(Vec<nori_core::mixes::board::MixTile>),
+    /// A page of a Home row in full, and whether it was the last.
+    Row(Vec<crate::app::Item>, bool),
+    Mix(Box<nori_core::mixes::board::MixSheet>),
     Albums(Vec<nori_core::Album>),
     Artists(Vec<nori_core::Artist>),
     Playlists(Vec<nori_core::Playlist>),
@@ -235,16 +247,35 @@ impl Session {
             Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
             Req::Artist(id) => Some(PageAsk::Artist(id)),
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
+            Req::Mix(id) => Some(PageAsk::Mix(id)),
             Req::Favorites => Some(PageAsk::Favorites),
-            Req::Home | Req::Songs { .. } | Req::History(_) | Req::DownloadsSize | Req::Downloads | Req::DownloadProgress | Req::Facts => None,
+            Req::Row { .. } | Req::Home | Req::Songs { .. } | Req::History(_) | Req::DownloadsSize | Req::Downloads | Req::DownloadProgress | Req::Facts => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
         }
         match req {
+            Req::Row { row, offset } => {
+                use crate::app::Item;
+                // A page shorter than asked for is the last; whole lists come as one.
+                let size = match nori_core::browse::home_row_page(row, offset) {
+                    Some(nori_core::browse::HomeShelf::Albums { size, .. }) => size as usize,
+                    Some(nori_core::browse::HomeShelf::Songs { limit, .. }) => limit as usize,
+                    _ => usize::MAX,
+                };
+                self.host.read_page(PageAsk::HomeRow { row, offset }, move |r| {
+                    send(match r {
+                        Ok(PageGot::Albums(v)) => Ok(Data::Row(v.iter().cloned().map(Item::Album).collect(), v.len() < size)),
+                        Ok(PageGot::Playlists(v)) => Ok(Data::Row(v.into_iter().map(Item::Playlist).collect(), true)),
+                        Ok(PageGot::Songs { songs, exhausted }) => Ok(Data::Row((0..songs.len()).map(|n| Item::Song(songs.clone(), n)).collect(), exhausted)),
+                        Ok(_) | Err(PageFailed::Nothing) => Ok(Data::Row(Vec::new(), true)),
+                        Err(e) => Err(page_failed(&e)),
+                    })
+                });
+            }
             Req::Home => {
-                let rows = self.host.home_album_rows();
-                self.host.read_home(rows.clone(), false, move |r| match r {
+                let rows = self.host.home_rows();
+                self.host.read_home(rows.clone(), true, move |r| match r {
                     // A source's own Home: its feed, each shelf's songs first (a song plays the shelf's songs
                     // from it), then its albums, playlists and artists, as the desktop's.
                     Ok(HomePart::Feed(feed)) => {
@@ -253,13 +284,19 @@ impl Session {
                             use crate::app::Item;
                             let songs = (0..f.songs.len()).map(|n| Item::Song(f.songs.clone(), n));
                             let rest = f.albums.into_iter().map(Item::Album).chain(f.playlists.into_iter().map(Item::Playlist)).chain(f.artists.into_iter().map(Item::Artist));
-                            send(Ok(Data::HomeRow(i, f.title, songs.chain(rest).collect())));
+                            send(Ok(Data::HomeRow(i, None, f.title, songs.chain(rest).collect())));
                         }
                     }
-                    Ok(HomePart::Shelf { at, items: ShelfItems::Albums(albums) }) => {
-                        send(Ok(Data::HomeRow(at, crate::text::home_row(rows[at]).into(), albums.into_iter().map(crate::app::Item::Album).collect())))
+                    Ok(HomePart::Shelf { at, items }) => {
+                        use crate::app::Item;
+                        let items = match items {
+                            ShelfItems::Albums(v) => v.into_iter().map(Item::Album).collect(),
+                            ShelfItems::Playlists(v) => v.into_iter().map(Item::Playlist).collect(),
+                            ShelfItems::Songs(v) => (0..v.len()).map(|n| Item::Song(v.clone(), n)).collect(),
+                        };
+                        send(Ok(Data::HomeRow(at, Some(rows[at]), crate::text::home_row(rows[at]).into(), items)))
                     }
-                    Ok(_) => {}
+                    Ok(HomePart::Mixes(tiles)) => send(Ok(Data::Mixes(tiles))),
                     Err(e) => send(Err(unreachable(&e))),
                 });
             }
@@ -379,8 +416,7 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Album(d) => Data::Album(d),
         PageGot::Artist(d) => Data::Artist(d),
         PageGot::Playlist(d) => Data::Playlist(d),
-        // No screen of the terminal's reads a mix as a page.
-        PageGot::Mix(m) => Data::Songs(m.songs, true),
+        PageGot::Mix(m) => Data::Mix(m),
     }
 }
 

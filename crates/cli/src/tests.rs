@@ -453,7 +453,7 @@ fn a_feed_shelf_shows_songs_and_playlists_too() {
     let songs = vec![song("s1", "Quick One", 200), song("s2", "Quick Two", 180)];
     let list = nori_core::Playlist { id: "p1".into(), name: "Mixed Bag".into(), ..Default::default() };
     let cards = vec![Item::Song(songs.clone(), 0), Item::Song(songs.clone(), 1), Item::Playlist(list)];
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Quick picks".into(), cards))));
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, None, "Quick picks".into(), cards))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Quick Two") && s.contains("Mixed Bag"), "{s}");
     key(&mut a, KeyCode::Down);
@@ -473,13 +473,13 @@ fn home_shelves() {
     a.go(View::Home);
     let shelf = |n: usize, p: &str| (0..n).map(|i| Item::Album(album(&format!("{p}-{i}"), &format!("{p} {i}")))).collect::<Vec<_>>();
     let id = |a: &App| match a.home.item() { Some(Item::Album(al)) => al.id.clone(), _ => String::new() };
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Recently added".into(), shelf(12, "New")))));
-    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(2, "Most played".into(), shelf(3, "Top")))));
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, Some(nori_core::settings::HomeRow::Newest), "Recently added".into(), shelf(12, "New")))));
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(2, Some(nori_core::settings::HomeRow::Frequent), "Most played".into(), shelf(3, "Top")))));
     let s = draw(&mut a, 160, 40);
     assert!(s.contains("Recently added") && s.contains("Most played") && s.contains("New 0") && s.contains("Top 2"), "{s}");
     assert!(s.contains("Listen now") && !s.contains("New 5"), "a shelf lists its first five:\n{s}");
     dump("home", &s);
-    assert_eq!(a.home.line(), Some(crate::app::HomeLine::Shelf(0)), "the first shelf's heading");
+    assert_eq!(a.home.line(), Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::Row(0))), "the first shelf's heading");
     for _ in 0..3 {
         key(&mut a, KeyCode::Down);
     }
@@ -487,7 +487,7 @@ fn home_shelves() {
     for _ in 0..3 {
         key(&mut a, KeyCode::Down);
     }
-    assert_eq!(a.home.line(), Some(crate::app::HomeLine::Shelf(2)), "over the gap to the next heading");
+    assert_eq!(a.home.line(), Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::Row(2))), "over the gap to the next heading");
     key(&mut a, KeyCode::Up);
     assert_eq!(id(&a), "New-4", "and back over it");
     a.cmds.clear();
@@ -1694,8 +1694,8 @@ fn the_main_screens() {
         };
         let mut out = Vec::new();
         a.go(View::Home);
-        a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Recently played".into(), albums[..6].iter().cloned().map(Item::Album).collect()))));
-        a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(1, "Recently added".into(), albums[6..].iter().cloned().map(Item::Album).collect()))));
+        a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, None, "Recently played".into(), albums[..6].iter().cloned().map(Item::Album).collect()))));
+        a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(1, None, "Recently added".into(), albums[6..].iter().cloned().map(Item::Album).collect()))));
         out.push(shot(a, "home"));
         a.go(View::Albums);
         a.handle(Msg::Data(albums_req(), Ok(Data::Albums(albums.clone()))));
@@ -1749,4 +1749,65 @@ fn albums_req() -> Req {
 /// The songs' first page by title.
 fn songs_req() -> Req {
     Req::Songs { sort: "TITLE".into(), starred: false, offset: 0 }
+}
+
+/// Home: the queue another device left first, to carry on with or close, as the phone's Continue card;
+/// For you's mixes; each library row whole from its heading, a page at a time.
+#[test]
+fn home_offers_the_queue_left_and_the_mixes() {
+    use nori_core::library::{QueueBy, QueueOffer};
+    use nori_core::mixes::board::{MixName, MixTile};
+    let mut a = app();
+    a.rules = nori_core::browse::profile_rules(false);
+    a.go(View::Home);
+    assert!(a.cmds.contains(&Cmd::LookForOffer { playing: false, shown: None }), "{:?}", a.cmds);
+    let songs = vec![song("o1", "Left Off", 200), song("o2", "Next Up", 200)];
+    let offer = QueueOffer { by: QueueBy::Nori, songs: songs.clone(), index: 1, position_ms: 42_000 };
+    a.handle(Msg::Offer(Some(offer.clone())));
+    let tiles = vec![MixTile { id: "favourites".into(), name: MixName::Favourites, covers: vec![], favourites: true }, MixTile { id: "quick".into(), name: MixName::QuickPicks, covers: vec![], favourites: false }];
+    a.handle(Msg::Data(Req::Home, Ok(Data::Mixes(tiles))));
+    a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, Some(nori_core::settings::HomeRow::Newest), "Recently added".into(), vec![Item::Album(album("al-1", "One"))]))));
+    let s = draw(&mut a, 120, 30);
+    dump("home-offer", &s);
+    let lines: Vec<&str> = s.lines().map(str::trim).collect();
+    let at = lines.iter().position(|l| l.starts_with("Continue")).unwrap_or_else(|| panic!("{s}"));
+    assert!(lines[at].contains("Next Up  Artist · 2 of 2") && lines[at].ends_with("Resume   Close"), "{s}");
+    assert!(lines[at + 2] == "For you" && lines[at + 3].starts_with("Favorites") && lines[at + 3].contains("Your favorites") && lines[at + 4].contains("Made for you"), "{s}");
+    // Enter on it plays the queue where it was left; d closes it; neither comes back.
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds, [Cmd::TakeOffer(offer.clone())]);
+    assert!(a.home.offer.is_none() && a.home.line() == Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::ForYou)));
+    a.handle(Msg::Offer(Some(offer.clone())));
+    key(&mut a, KeyCode::Char('g'));
+    key(&mut a, KeyCode::Char('d'));
+    assert_eq!(a.cmds.last(), Some(&Cmd::DismissOffer(offer.clone())));
+    // An offer whose song is playing here is gone.
+    a.handle(Msg::Offer(Some(offer)));
+    a.heard(Some(song("o2", "Next Up", 200)));
+    assert!(a.home.offer.is_none(), "the player shows its song");
+    // A mix opens as a page.
+    key(&mut a, KeyCode::Char('g'));
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Down);
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds, [Cmd::Load(Req::Mix("quick".into()))]);
+    key(&mut a, KeyCode::Esc);
+    // The library row's heading: its full view, read from the start and a page on near its end.
+    while a.home.line() != Some(crate::app::HomeLine::Shelf(crate::app::ShelfAt::Row(0))) {
+        key(&mut a, KeyCode::Down);
+    }
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    let row = nori_core::settings::HomeRow::Newest;
+    assert_eq!(a.cmds, [Cmd::Load(Req::Row { row, offset: 0 })]);
+    let page: Vec<Item> = (0..60).map(|i| Item::Album(album(&format!("n{i}"), &format!("New {i}")))).collect();
+    a.handle(Msg::Data(Req::Row { row, offset: 0 }, Ok(Data::Row(page, false))));
+    assert!(draw(&mut a, 120, 30).contains("New 0"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Char('G'));
+    assert_eq!(a.cmds, [Cmd::Load(Req::Row { row, offset: 60 })]);
+    a.handle(Msg::Data(Req::Row { row, offset: 60 }, Ok(Data::Row(vec![Item::Album(album("n60", "New 60"))], true))));
+    assert!(matches!(a.page(), Some(crate::app::Page::Row { items, more: false, .. }) if items.len() == 61));
 }

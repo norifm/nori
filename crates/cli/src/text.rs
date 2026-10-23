@@ -280,6 +280,7 @@ pub mod hints {
     pub const HOME: Hints = &[("enter", "open"), ("a", "add"), ("x", "play"), ("/", "search"), ("1-9", "go"), ("F", "player"), ("?", "keys")];
     pub const LIBRARY: Hints = &[("enter", "open"), ("a", "add"), ("x", "play"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
     pub const SORTED: Hints = &[("enter", "open"), ("a", "add"), ("S", "sort"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
+    pub const OFFER: Hints = &[("enter", "resume"), ("d", "close"), ("/", "search"), ("1-9", "go"), ("?", "keys")];
     pub const HISTORY: Hints = &[("enter", "play"), ("a", "add"), ("esc", "back"), ("?", "keys")];
     pub const PAGE: Hints = &[("enter", "play"), ("x", "play all"), ("X", "shuffle"), ("a", "add"), ("f", "favorite"), ("esc", "back"), ("?", "keys")];
     pub const RESULTS: Hints = &[("enter", "open"), ("a", "add"), ("/", "type"), ("esc", "back"), ("?", "keys")];
@@ -308,6 +309,33 @@ pub const OFFLINE: &str = "offline";
 pub const UNREACHABLE: &str = "unreachable";
 
 pub const SORT_BY: &str = "Sort by";
+pub const FOR_YOU: &str = "For you";
+pub const CONTINUE: &str = "Continue";
+pub const RESUME: &str = "Resume";
+pub const CLOSE: &str = "Close";
+
+/// Where the offered queue stands: "Artist · 3 of 12".
+pub fn offer_place(artist: &str, at: u32, of: usize) -> String {
+    format!("{artist} · {at} of {of}")
+}
+
+/// A For you mix's name, as its line and its page say it.
+pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
+    use nori_core::mixes::board::MixName as M;
+    match n {
+        M::Favourites => "Favorites",
+        M::QuickPicks => "Quick picks",
+        M::Discover => "Discover",
+        M::DiscoverWeekly => "Discover Weekly",
+        M::ListenAgain => "Listen again",
+        M::Top => "Your top songs",
+    }
+}
+
+/// Under a mix's name: what it is made from.
+pub fn mix_line(favourites: bool) -> &'static str {
+    if favourites { "Your favorites" } else { "Made for you" }
+}
 
 /// One of the albums' orders (`browse::album_sorts`).
 pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {

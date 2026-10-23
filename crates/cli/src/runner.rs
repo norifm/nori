@@ -685,6 +685,21 @@ impl Runner {
                 app.say(crate::text::repeat(s.now().repeat), false);
             }
             Cmd::Download(songs) => s.download(songs),
+            Cmd::LookForOffer { playing, shown } => {
+                let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+                nori_host::spawn("nori-offer", move || {
+                    // An offer that cannot be asked for is none.
+                    let offer = block_on(client.queue_offer(playing, shown)).ok().flatten();
+                    let _ = tx.send(Msg::From(id, Box::new(Msg::Offer(offer))));
+                });
+            }
+            Cmd::TakeOffer(offer) => {
+                s.client.queue_offer_done(offer.clone());
+                let (index, position) = (offer.index as usize, offer.position_ms as i64);
+                s.play(offer.songs, index, false, None);
+                s.seek(position);
+            }
+            Cmd::DismissOffer(offer) => s.client.queue_offer_done(offer),
             Cmd::ShuffleLibrary { albums } => {
                 let (h, tx, id) = ((**s).clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-shuffle", move || {
