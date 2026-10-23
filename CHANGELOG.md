@@ -6,10 +6,80 @@ hand. Versions follow [semantic versioning](https://semver.org).
 
 ## [Unreleased]
 
-**Many settings were removed.** Most of them were rarely changed, so where one well-tuned behaviour
-serves everyone (AutoMix tuning, the crossfade curve, the scrobble point, downloads at once and more),
-nori now just uses it. If you relied on one that's gone,
-[open an issue](https://github.com/norifm/nori/issues/new) and tell us how you used it.
+## [0.7.0] - 2026-10-23
+
+**nori has a new look.** It's called Nori Seasons, and every app wears it: Android, the desktop, the
+terminal and the iPod. It's the biggest change to how nori looks so far, so we'd really like to hear
+what you think. If something looks off, is harder to use than before, is broken, or you just don't like
+it, please [open an issue](https://github.com/norifm/nori/issues/new) and tell us. A screenshot helps a
+lot.
+
+**Many settings were removed or merged.** Most were rarely changed, so where one well-tuned behavior
+serves everyone, nori now just uses it. Your old choices carry over to the new options where they
+exist. The list is under "Removed" below. If you relied on one that's gone, open an issue and tell us
+how you used it.
+
+### New
+
+- **Nori Seasons, the new look.** Pages are paper in a season (Spring 春, Summer 夏, Autumn 秋,
+  Winter 冬) that follows the calendar or one you pick, in System, Day, Night or Midnight (true black).
+  New icons, and a favorite is now the seal 好 instead of a heart. On Android, home, the library, album
+  and artist pages, menus and the player are reworked. The desktop, terminal and iPod keep their own
+  layouts in the new style, and the terminal was redesigned to feel like a terminal app.
+- **Lyrics from eleven services**, asked at once and checked against the singing, so the timing lines up
+  with the voice. You can nudge a song's timing in 50 ms steps.
+- **YouTube Music works like a server.** Sign in with Google, search, browse artists with every album
+  and single, play, download, radio and live streams, Android Auto, widgets and jams. Works in the
+  terminal too.
+- **The server can go away mid-song.** An unreachable server no longer pauses playback: the song waits
+  and goes on, and the offline queue hands back to yours as soon as the server is back.
+- Albums, playlists and mixes offer Play next and Add to queue.
+- Search leads with the top song's artist and album, then what you play most.
+- Albums can be sorted into a row of covers per artist.
+- Burn-in protection: shifts the screen, dims it and hides the bars while nori keeps the screen on.
+- E-ink motion: the seek bar fills in blocks and counts whole minutes, nothing else moves.
+- Storage shows downloads for every profile, and each profile's download size is its own.
+- The desktop's song and player menus have everything Android's do (sleep timer, lyrics timing and
+  more), and its artist pages shelve singles, EPs and live albums apart.
+- Linux media controls show the cover and follow seeks.
+
+### Better
+
+- Songs start sooner, especially on a slow connection, and seeks land faster.
+- Less work while playing, less memory and fewer requests.
+- Settings that depend on another switch stay in place, grayed out, instead of jumping around.
+- Download notifications show a progress bar and a steadier time left.
+
+### Removed
+
+These settings are gone. Where something replaces them, it's named here.
+
+- **Pure black and Cover colors.** Pick the Midnight appearance for true black (it turns cover colors
+  off). In every other appearance cover colors are always on.
+- **Volume leveling's preamp, gain boost and untagged gain.** Leveling is now Off, Song, Album or Auto
+  (album in order, song in shuffle), at a Quiet, Normal or Loud level. Untagged songs are measured and
+  clipping is always prevented. Volume boost stays.
+- **Loudness compensation and the noise gate.** Removed. **Bass boost** is now an equalizer preset.
+- **The compressor's knobs.** It's a switch with Light, Car and Night presets.
+- **Crossfeed presets and the virtualizer slider.** Now one choice, Headphone sound: Off, Natural or
+  Wide.
+- **AutoMix's sub-switches and the crossfade curve.** AutoMix is one switch (plus better beat
+  detection), and crossfade is Off or 1 to 12 seconds on a fixed curve.
+- **Reduce motion, E-ink screen and Animate anyway.** Now one choice, Motion: Full, Reduced or E-ink.
+  nori's choice wins over Android's animation setting.
+- **UI scale.** nori follows Android's display size.
+- **The favorite notice.** Removed.
+- **Lyrics prefetch and skip on error.** Always on now.
+- **Playlist descriptions and hide import notes.** Merged into one switch.
+- **Search delay, scrobble point, downloads at once and covers ahead.** Fixed at tuned values.
+- **Lyrics from Genius, Megalobiz, Portato, SimpMusic and YouTube captions.** Dropped after measuring
+  them on hundreds of songs; the other services find more, with better timing.
+- **The separate Keys section.** BetterLyrics takes its key on its own row.
+
+### Fixed
+
+- Dozens of fixes, mostly playback that stuck on loading, remote control and jams, scrobbles a proxy
+  refused, lyrics after quick skips or a lost network, and the Linux desktop app.
 
 ## [0.6.2] - 2026-10-17
 
