@@ -596,6 +596,9 @@ struct Mirrored {
     unanswered: u32,
     /// Since when (this device's clock) it has not been there: shown paused from then.
     unreachable: Option<i64>,
+    /// Its state (instance, seq) when playback was handed to it: a hand-off said in that state or an
+    /// older one came before, and is not followed.
+    handed_at: Option<(Option<u64>, u64)>,
 }
 
 /// A command sent to the mirrored device, as it is expected to come out.
@@ -634,7 +637,7 @@ impl Change {
 
 impl Mirrored {
     fn new(id: String, now: i64) -> Mirrored {
-        Mirrored { id, heard: None, arrived: 0, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new(), unanswered: 0, unreachable: None }
+        Mirrored { id, heard: None, arrived: 0, shown: None, at: now, device_at: None, clock: ClockSync::default(), pages: Vec::new(), asking: None, taken: Vec::new(), foreseen: Vec::new(), unanswered: 0, unreachable: None, handed_at: None }
     }
 
     /// A state arrived from the device (`at`: when, on this device's clock). It ends the foresight of
@@ -929,7 +932,7 @@ struct Inner {
     playing: Playing,
     /// When `playing` was said, on this device's clock: its position runs on from then.
     playing_at: Option<i64>,
-    /// The device this one last handed its playback to, until it plays again.
+    /// The device this one last handed its playback to, until it plays again or a queue is sent here.
     handed_to: Option<String>,
     /// The last command carried out from each controller, as published states say it.
     obeyed: Vec<Obeyed>,
@@ -1490,7 +1493,7 @@ impl Remote {
             self.clone().discover_active(false);
         }
         if started {
-            self.set_active(None);
+            self.set_active(None, false);
         }
         if publish {
             self.publish();
@@ -1556,15 +1559,15 @@ impl Remote {
         let here = self.client.core.session.playlist(|p| p.current().is_some());
         match (active, device) {
             (None, None) => {}
-            (Some(_), None) if idle => self.set_active(None),
+            (Some(_), None) if idle => self.set_active(None, false),
             (Some(a), None) => self.pull(a),
             (None, Some(d)) if here && !leads => self.clone().hand_over(d),
-            (None, Some(d)) => self.set_active(Some(d)),
+            (None, Some(d)) => self.set_active(Some(d), false),
             (Some(a), Some(d)) if a == d => {}
-            (Some(_), Some(d)) if plays => self.set_active(Some(d)),
+            (Some(_), Some(d)) if plays => self.set_active(Some(d), false),
             (Some(a), Some(d)) => {
                 self.clone().send(a, Op::Transfer { to: d.clone(), listen_handoff: false });
-                self.set_active(Some(d));
+                self.set_active(Some(d), true);
             }
         }
         if cancelled {
@@ -3004,14 +3007,16 @@ impl Remote {
         self.shown.changed();
     }
 
-    /// Makes `to` the active device (None: this one), and follows it while it is another.
-    fn set_active(self: &Arc<Self>, to: Option<String>) {
+    /// Makes `to` the active device (None: this one), and follows it while it is another; `handed`:
+    /// playback was just handed to it.
+    fn set_active(self: &Arc<Self>, to: Option<String>, handed: bool) {
         {
             let mut i = self.inner.lock();
             if i.mirror.as_ref().map(|m| &m.id) == to.as_ref() || (to.is_some() && i.jams()) {
                 return;
             }
-            i.mirror = to.map(|id| Mirrored::new(id, self.now()));
+            let handed_at = to.as_deref().filter(|_| handed).and_then(|id| i.state_of(id)).map(|(s, _)| (s.instance, s.seq));
+            i.mirror = to.map(|id| Mirrored { handed_at, ..Mirrored::new(id, self.now()) });
         }
         self.retime();
         self.follow_active();
@@ -3190,7 +3195,8 @@ impl Remote {
                 Some((st, at)) if m.heard(&st, at, &me) => {
                     // It may have started or stopped playing: the time keeper looks again.
                     self.timing.notify();
-                    st.handed_to.filter(|to| *to != me && *to != id)
+                    let newer = m.handed_at.is_none_or(|h| (st.instance, st.seq) > h);
+                    st.handed_to.filter(|to| *to != me && *to != id && newer)
                 }
                 _ => None,
             };
@@ -3203,7 +3209,7 @@ impl Remote {
             moved
         };
         if let Some(to) = next {
-            return self.set_active(Some(to));
+            return self.set_active(Some(to), true);
         }
         if let Some((id, from)) = page {
             self.clone().send(id, Op::Page { from, count: PAGE });
@@ -3347,7 +3353,8 @@ impl Remote {
                 // A queue sent here plays here: this is the active device.
                 if let Op::Replace { listen, .. } = &op {
                     self.client.core.session.receive_listen(listen.clone());
-                    self.set_active(None);
+                    self.inner.lock().handed_to = None;
+                    self.set_active(None, false);
                 }
                 self.player.apply(op)
             }
@@ -3403,7 +3410,7 @@ impl Remote {
             self.out(Out::send(link, Outgoing { to: Some(to.clone()), body: Some(command), ..Default::default() }));
         }
         self.player.apply(Op::Pause);
-        self.set_active(Some(to));
+        self.set_active(Some(to), true);
         self.publish();
     }
 
