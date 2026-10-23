@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-Applies to nori 0.6 on Linux and macOS.
+Applies to nori 0.7 on Linux and macOS.
 
 The desktop client is a window over the same core, drawn with Slint. It plays through the system's sound
 (PipeWire or ALSA on Linux, CoreAudio on macOS), shows its controls, the song's cover and its seeks to the desktop (MPRIS on Linux), and
@@ -19,24 +19,43 @@ Favorites (the current one named and lit), then the search field, which widens a
 with what it finds, and the settings menu, which holds your account, the
 equalizer, your other devices, joining a jam, and the season and appearance. Playlists opens your playlists
 under it. A second outline along the bottom is the player: the song on the left; shuffle, previous, play, next
-and repeat with the seek bar under them; and on the right the seal, the speaker (your devices), lyrics, the
-queue and the volume. Pages scroll under both and fade out before them. A narrow window drops the tab names,
-then the volume slider and the panel buttons.
+and repeat with the seek bar under them; and on the right where the sound goes (with remote control on, a tap
+opens your devices), the seal, lyrics, the queue and the volume. Pages scroll under both and fade out before
+them. A narrow window drops the tab names, then the volume slider and the panel buttons.
+
+Home starts with a Continue card when another device left a queue on your server: Resume carries it on here,
+the cross turns it down, and either way that queue is not offered again. Every row's title has an arrow that
+opens the whole row. Albums lists its orders as chips under its title (Favorites, Title, Artist, Year, Added,
+Most played, Random); Artist shows a shelf per artist.
+
+An album, artist, playlist or mix page lays out as Android's does on a wide screen: the cover fills the left
+of the window and goes soft into the page, and on the right are the name, Shuffle, Play (Pause while that
+page's queue plays) and the seal, then a line with the songs' count, length and format and the glyphs to
+download them, add them to the queue or, on a mix, draw it again. A mix has Save as playlist beside Play: the
+playlist is called "nori <mix name>".
 
 A favorite is a seal: an outline until you like a song, then filled and slightly tilted. Lyrics, the queue and
 your devices open in a sheet that floats on the right between the two outlines, over the page, which stays
-where it is; tabs at its top switch between them. In the full player the same tabs head the panel beside the
-cover. The queue shows the songs already played, dimmed above the one playing, then what plays next. With
+where it is; tabs at its top switch between them. The full player is laid out as Android's: the title with the
+seal and the menu, the seek bar, then lyrics, previous, play, next and the queue, then the volume and the
+output (the device and its name). The queue shows the songs already played, dimmed above the one playing,
+then what plays next, with shuffle and repeat at its head. A song's menu (a right click on its row, or the
+player's ⋯) shows the song at its head and its lines grouped on one card, the ones used less under More. With
 nothing typed, the search page lists your recent searches.
 
 ## Look
 
 nori wears one of four seasons, Spring (春), Summer (夏), Autumn (秋) and Winter (冬), in one of four modes:
 System, Day, Night or Midnight (true black). By default it follows the calendar and blends from one season to the next over two weeks
-(southern-hemisphere zones turn half a year later). Choose a season and the appearance in Settings, General, or
-in the settings menu. The accent color marks only what is current: the open tab, the song playing, a lit
-shuffle or repeat, a liked seal. Album and artist pages and Now Playing wear their cover's colors, except in Midnight; the side sheet wears the page's own.
-With Motion set to Reduced in nori's settings, nothing slides, stamps or fades.
+(southern-hemisphere zones turn half a year later). Choose a season and the appearance in Settings,
+Appearance, or in the settings menu. The accent color marks only what is current: the open tab, the song
+playing, a lit shuffle or repeat, a liked seal. Album, artist, playlist and mix pages and Now Playing wear the
+season's paper dyed with their cover, except in Midnight; the side sheet wears the page's own. The icons are
+Iconoir's, drawn as lines. With Motion set to Reduced in nori's settings, nothing slides, stamps or fades.
+
+Settings lists its categories on the left as Android does (Servers, Playback, Sound, Appearance, Lyrics,
+Library, Downloads and storage), each with its icon and a line, and shows the one chosen beside them in
+grouped cards under small capitals.
 
 ## YouTube Music
 
