@@ -45,10 +45,8 @@
     {#if s}<Seek inline times={!ui.full} />{/if}
   </div>
   <div class="right">
-    {#if s && !n?.asks}
-      <OutputButton />
-      <Seal what="song" id={s.id} on={!!s.starred} size={22} />
-    {/if}
+    {#if !n?.asks}<OutputButton />{/if}
+    {#if s && !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} size={22} />{/if}
     {#each panes as [pane, icon, label] (pane)}
       <button class="glyph quiet" class:on={ui.full && ui.pane === pane} title={label} aria-label={label} data-pane={pane} onclick={() => ui.show(pane)}><Icon name={icon} /></button>
     {/each}

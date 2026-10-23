@@ -3,14 +3,13 @@
   // current one in the accent), and in the Search tab's place the search field, which lists the best
   // matches under it as you type.
   import { href, route } from "../state/route.svelte";
-  import { W } from "../words";
   import Icon from "./Icon.svelte";
   import SearchBox from "./SearchBox.svelte";
   import { tabs } from "./TabBar.svelte";
 </script>
 
 <header class="top">
-  <a class="brand" href={href("home")}>{W.appName}</a>
+  <span></span>
   <nav class="chrome tabs" id="nav">
     {#each tabs.filter(([top]) => top !== "search") as [top, icon, label] (top)}
       <a class="tab" class:on={route.tab === top} href={href(top)} data-top={top} aria-current={route.tab === top ? "page" : undefined}><Icon name={icon} /><span>{label}</span></a>
@@ -31,12 +30,6 @@
     align-items: center;
     gap: 12px;
     height: 50px;
-  }
-  .brand {
-    font: 700 22px/1 var(--display);
-    letter-spacing: -0.3px;
-    padding-left: 6px;
-    justify-self: start;
   }
   .tabs {
     display: flex;

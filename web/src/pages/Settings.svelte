@@ -13,6 +13,7 @@
   import Icon from "../ui/Icon.svelte";
   import Page from "../ui/Page.svelte";
 
+  const kanji: Record<string, string> = { SPRING: "kanji-spring", SUMMER: "kanji-summer", AUTUMN: "kanji-autumn", WINTER: "kanji-winter" };
   const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "emoji-sing-right-note", Library: "album-list", Account: "server", About: "info-circle" };
   let rev = $state(0);
   const page = reading("settings", async () => {
@@ -87,7 +88,7 @@
     {#each worn.tiles as t (t.season)}
       {@const on = wornSeason(it.value) === t.season}
       <button class="tile" class:on role="radio" aria-checked={on} aria-label={named(t.season)} data-season={t.season} onclick={() => !on || following ? void set("season", t.season) : undefined}>
-        <Icon name="kanji-{t.season.toLowerCase()}" />
+        <Icon name={kanji[t.season]} />
         <span class="dots"><i class="paper" style:background={t.page}></i><i style:background={t.accent}></i><i style:background={t.on}></i></span>
       </button>
     {/each}
