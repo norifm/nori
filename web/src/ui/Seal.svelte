@@ -1,7 +1,8 @@
 <script lang="ts">
-  // A favorite on a song, album or artist (`what`), drawn as `on`: the seal. Not liked it is the outline,
-  // upright and quiet; liked it is filled with the accent, tilted, and stamped on when the click made it
-  // so. A seal that changes by itself (another song) is drawn, not stamped.
+  // A favorite on a song, album or artist (`what`), drawn as `on`: the seal 好. Not a favorite it is its
+  // outline in the quiet ink; a favorite it is the stamped seal in the accent, stamped down when the
+  // click made it one. A seal that changes by itself (another song) is drawn, not stamped. Its glyph is the
+  // size of the glyphs beside it (its row sets them), so its line is theirs; its target is 48 px.
   import { library } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
   import { W } from "../words";
@@ -10,24 +11,24 @@
   let { what, id, on }: { what: "song" | "album" | "artist"; id: string; on: boolean } = $props();
   let stamp = $state(false);
 
-  // A like taken off ends the stamp.
+  // A favorite taken off ends the stamp.
   $effect(() => {
     if (!on) stamp = false;
   });
 </script>
 
 <button
-  class="round seal"
+  class="glyph seal"
   class:on
   class:stamp
-  title={on ? W.unfavorite : W.favorite}
-  aria-label={on ? W.unfavorite : W.favorite}
+  title={on ? W.removeFromFavorites : W.addToFavorites}
+  aria-label={on ? W.removeFromFavorites : W.addToFavorites}
   aria-pressed={on}
   onclick={(e) => {
     e.stopPropagation();
     stamp = !on;
     void library.change({ kind: "star", what, id, on: !on }).then(() => player.refresh());
-  }}><Icon name={on ? "seal" : "seal-line"} /></button
+  }}><Icon name={on ? "sealed" : "seal"} /></button
 >
 
 <style>
@@ -37,18 +38,12 @@
   .seal.on {
     color: var(--accent);
   }
-  .seal.on :global(.icon) {
-    transform: rotate(-4deg);
-  }
   .seal.stamp :global(.icon) {
     animation: stamp 420ms cubic-bezier(0.3, 1.6, 0.5, 1);
   }
   @keyframes stamp {
     from {
-      transform: rotate(-4deg) scale(1.5);
-    }
-    to {
-      transform: rotate(-4deg) scale(1);
+      transform: scale(1.5);
     }
   }
 </style>

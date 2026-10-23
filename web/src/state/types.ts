@@ -12,8 +12,11 @@ export type Song = {
   cover?: string;
   suffix?: string;
   starred?: boolean;
+  /** Its second line, as the core words it (the explicit mark and the artist). */
+  line?: string;
 };
-export type Album = { id: string; name: string; artist: string; artistId?: string; year: number; cover?: string; songCount: number; duration: number; genre?: string; starred?: boolean };
+/** `subtitle`: a card's line under its name, as the core words it. */
+export type Album = { id: string; name: string; artist: string; artistId?: string; year: number; cover?: string; songCount: number; duration: number; genre?: string; starred?: boolean; subtitle?: string };
 export type Artist = { id: string; name: string; cover?: string; albumCount?: number | null; starred?: boolean };
 export type Playlist = { id: string; name: string; songCount: number; duration: number; cover?: string; comment?: string; owner?: string };
 /** As the server names it: the name is `value`. */
@@ -43,6 +46,8 @@ export type Now = {
   volume: number;
   /** The device playing elsewhere, while it is another one. */
   device: string | null;
+  /** That device's kind (`Phone`, `Desktop`, `Terminal`, `Guest`). */
+  deviceKind: string | null;
   jam: boolean;
   /** A jam guest's picks are asked of the host; its lyric taps reach nothing. */
   asks: boolean;

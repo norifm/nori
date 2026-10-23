@@ -1,6 +1,7 @@
 <script lang="ts">
   // Shuffle, previous, play or pause, next and repeat (the host's cycle: off, all, one); a jam guest's
-  // shuffle and repeat are the host's. Play and pause are the bare glyph; the press shows a ripple.
+  // shuffle and repeat are the host's. The transport's glyphs are solid, the ends lit in the accent while
+  // on; a press shows a ripple.
   import { player } from "../state/player.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
@@ -22,15 +23,15 @@
 
 <div class="controls" class:big>
   {#if ends && !n?.jam}
-    <button class="round side" class:on={n?.shuffle} title={W.shuffle} aria-label={W.shuffle} aria-pressed={!!n?.shuffle} onclick={() => void player.control("shuffle", !n?.shuffle)}><Icon name="shuffle" /></button>
+    <button class="glyph quiet side" class:on={n?.shuffle} title={W.shuffle} aria-label={W.shuffle} aria-pressed={!!n?.shuffle} onclick={() => void player.control("shuffle", !n?.shuffle)}><Icon name="shuffle" /></button>
   {/if}
-  <button class="round skip" title={W.previous} aria-label={W.previous} onclick={() => void player.control("previous")}><Icon name="previous" /></button>
-  <button class="round main" title={playing ? W.pause : W.play} aria-label={playing ? W.pause : W.play} onclick={() => void player.control("toggle")}>
-    {#if waiting}<span class="spin"></span>{:else}{#key playing}<span class="glyph"><Icon name={playing ? "pause" : "play"} /></span>{/key}{/if}
+  <button class="glyph skip" title={W.previous} aria-label={W.previous} onclick={() => void player.control("previous")}><Icon name="rewind-solid" /></button>
+  <button class="glyph main" title={playing ? W.pause : W.play} aria-label={playing ? W.pause : W.play} onclick={() => void player.control("toggle")}>
+    {#if waiting}<span class="spin"></span>{:else}{#key playing}<span class="turn"><Icon name={playing ? "pause-solid" : "play-solid"} /></span>{/key}{/if}
   </button>
-  <button class="round skip" title={W.next} aria-label={W.next} onclick={() => void player.control("next")}><Icon name="next" /></button>
+  <button class="glyph skip" title={W.next} aria-label={W.next} onclick={() => void player.control("next")}><Icon name="forward-solid" /></button>
   {#if ends && !n?.jam}
-    <button class="round side" class:on={!!n?.repeat} title={n?.repeat === 1 ? W.repeatOne : W.repeat} aria-label={W.repeat} aria-pressed={!!n?.repeat} onclick={() => void player.control("cycle_repeat")}><Icon name={n?.repeat === 1 ? "repeat-one" : "repeat"} /></button>
+    <button class="glyph quiet side" class:on={!!n?.repeat} title={n?.repeat === 1 ? W.repeatOne : W.repeat} aria-label={W.repeat} aria-pressed={!!n?.repeat} onclick={() => void player.control("cycle_repeat")}><Icon name={n?.repeat === 1 ? "repeat-once" : "repeat"} /></button>
   {/if}
 </div>
 
@@ -39,16 +40,19 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 2px;
   }
-  .side {
-    color: var(--ink2);
+  .glyph {
+    width: 40px;
+    height: 40px;
   }
-  .side.on {
-    color: var(--accent);
+  .side :global(.icon) {
+    width: 20px;
+    height: 20px;
   }
-  .skip {
-    color: var(--ink);
+  .skip :global(.icon) {
+    width: 24px;
+    height: 24px;
   }
   .main {
     width: 46px;
@@ -58,11 +62,11 @@
     width: 30px;
     height: 30px;
   }
-  .glyph {
+  .turn {
     display: grid;
-    animation: glyph 180ms ease-out;
+    animation: turn 180ms ease-out;
   }
-  @keyframes glyph {
+  @keyframes turn {
     from {
       opacity: 0;
       transform: scale(0.8);
@@ -83,19 +87,23 @@
     }
   }
   .big {
-    gap: 22px;
+    gap: 20px;
   }
-  .big .round {
+  .big .glyph {
     width: 52px;
     height: 52px;
   }
-  .big .round :global(.icon) {
-    width: 28px;
-    height: 28px;
+  .big .side :global(.icon) {
+    width: 24px;
+    height: 24px;
+  }
+  .big .skip :global(.icon) {
+    width: 36px;
+    height: 36px;
   }
   .big .main {
-    width: 84px;
-    height: 84px;
+    width: 72px;
+    height: 72px;
   }
   .big .main :global(.icon) {
     width: 56px;

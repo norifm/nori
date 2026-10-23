@@ -16,8 +16,8 @@
 <Page title={name} back ready={!!page.data} error={page.error}>
   {#snippet head()}
     <div class="actions">
-      <button class="pill solid" onclick={() => void player.play(page.data ?? [], 0, false, "Genre", name)}><Icon name="play" />{W.play}</button>
-      <button class="pill" onclick={() => void player.play(page.data ?? [], 0, true, "Genre", name)}><Icon name="shuffle" />{W.shuffle}</button>
+      <button class="pill small" onclick={() => void player.play(page.data ?? [], 0, false, "Genre", name)}><Icon name="play-solid" />{W.play}</button>
+      <button class="pill small quiet" onclick={() => void player.play(page.data ?? [], 0, true, "Genre", name)}><Icon name="shuffle" />{W.shuffle}</button>
     </div>
   {/snippet}
   <SongList songs={page.data ?? []} kind="Genre" id={name} />

@@ -109,6 +109,20 @@ class Player {
     await this.refresh();
   }
 
+  /** Everything `artist` has in the library, at the end of the queue. */
+  async queueArtist(artist: string) {
+    await this.soundCard();
+    if ((await ask<number>("queue_artist", artist)) === 0) ui.say(W.nothingToPlay);
+    await this.refresh();
+  }
+
+  /** The Library's Shuffle: random albums, each whole, or random songs. */
+  async shuffleLibrary(albums: boolean) {
+    await this.soundCard();
+    if ((await ask<number>("shuffle_library", albums)) === 0) ui.say(W.nothingToPlay);
+    await this.refresh();
+  }
+
   /** One of the session's controls (`toggle`, `next`, `seek`, ...). */
   async control(call: string, ...args: unknown[]) {
     if (!rpc.player) return;
@@ -229,10 +243,8 @@ class Player {
         e.preventDefault();
         void this.control("toggle");
       }
-      if (e.key === "Escape") {
-        if (ui.lyricsInfo) ui.lyricsInfo = false;
-        else if (ui.full) ui.full = false;
-      }
+      // A dialog over the player (a sheet, the lyrics' source) closes itself on Escape, and only it.
+      if (e.key === "Escape" && !t.closest?.("dialog") && ui.full) ui.full = false;
     });
   }
 }

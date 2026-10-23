@@ -4,7 +4,7 @@
   import { ask, boot, facts, onMovedAway, playerSoon, takeOver } from "../rpc";
   import { drawn } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
-  import { refreshTheme } from "../state/theme";
+  import { refreshTheme } from "../state/theme.svelte";
   import { remote } from "../state/remote.svelte";
   import { W } from "../words";
   import Shell from "./Shell.svelte";
@@ -82,14 +82,14 @@
     <input class="field" bind:value={url} aria-label={W.server} placeholder={W.server} autocomplete="url" />
     <input class="field" bind:value={user} aria-label={W.user} placeholder={W.user} autocomplete="username" />
     <input class="field" type="password" bind:value={password} aria-label={W.password} placeholder={W.password} autocomplete="current-password" />
-    <button class="pill solid" disabled={busy}>{busy ? W.signingIn : W.signIn}</button>
+    <button class="pill" disabled={busy}>{busy ? W.signingIn : W.signIn}</button>
     {#if failed}<p class="error">{W.signInFailed(failed)}</p>{/if}
   </form>
 {:else if phase === "elsewhere"}
   <div class="gate">
     <h1>{W.elsewhere}</h1>
     <p class="sub">{W.elsewhereLead}</p>
-    <button class="pill solid" id="use-here" onclick={() => void takeOver()}>{W.useHere}</button>
+    <button class="pill" id="use-here" onclick={() => void takeOver()}>{W.useHere}</button>
   </div>
 {:else}
   <p class="loading">{W.appName}</p>

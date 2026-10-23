@@ -9,7 +9,7 @@ use std::sync::Arc;
 use nori_core::look::clock_on;
 use nori_core::race::LyricsPick;
 use nori_core::settings::SavedServer;
-use nori_core::{LyricsTiming, PageOrigin, Song};
+use nori_core::{LyricsTiming, OriginKind, PageOrigin, Song};
 use nori_engine::{AudioOutput, Body, ByteSource, Feed, Filling, OpenError, OutputFormat, State};
 use nori_host::session::{Driven, Note, Open, Said, Session};
 use nori_look::lyrics::LyricClock;
@@ -282,7 +282,7 @@ impl Nori {
     /// name the page they are the list of (an album, a playlist), or are empty.
     pub fn play(&self, songs: String, start: usize, shuffle: bool, kind: String, id: String) -> Result<(), JsValue> {
         let songs: Vec<Song> = serde_json::from_str(&songs).map_err(error)?;
-        let from = serde_json::from_value::<nori_core::OriginKind>(Value::String(kind)).ok().map(|k| PageOrigin::new(k, id.as_str()));
+        let from = serde_json::from_value::<OriginKind>(Value::String(kind)).ok().map(|k| PageOrigin::new(k, id.as_str()));
         self.with(|h| h.play(songs, start, shuffle, from)).ok_or_else(|| error("not signed in"))
     }
 
@@ -329,6 +329,30 @@ impl Nori {
         let n = songs.len();
         if n > 0 {
             self.with(|h| h.play(songs, 0, shuffle, Some(from)));
+        }
+        Ok(n)
+    }
+
+    /// Adds everything artist `id` has in the library to the end of the queue: the songs added (0: none).
+    pub async fn queue_artist(&self, id: String) -> Result<usize, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let songs = nori_host::Fetch::Artist(id).songs(&client).await.map_err(error)?;
+        let n = songs.len();
+        if n > 0 {
+            self.with(|h| h.enqueue(songs, false));
+        }
+        Ok(n)
+    }
+
+    /// The Library's Shuffle: random albums, each whole (`albums`), or random songs (`Core::shuffle_albums`,
+    /// `shuffle_all`): the songs played (0: none).
+    pub async fn shuffle_library(&self, albums: bool) -> Result<usize, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let (songs, kind) = if albums { (client.shuffle_albums().await, OriginKind::ShuffleAlbums) } else { (client.shuffle_all().await, OriginKind::ShuffleSongs) };
+        let songs = songs.map_err(error)?;
+        let n = songs.len();
+        if n > 0 {
+            self.with(|h| h.play(songs, 0, false, Some(PageOrigin::new(kind, ""))));
         }
         Ok(n)
     }
@@ -412,9 +436,10 @@ impl Nori {
     /// What the player shows playing (`nori_host::player`): this browser's playback, the account's
     /// device playing while it is another one, or a jam guest's host: `{ state, playing, index, id,
     /// positionMs, pace, mixing, buffering, song, queue, current, reorderable, shuffle, repeat, device,
-    /// jam, asks, underruns, transition }` (`asks`: a jam guest's picks are asked of the host, and its
-    /// lyric taps reach nothing). `queue` is in play order, each song with its list `index`;
-    /// `current` the place in it of the song heard; `device` the name of the device playing elsewhere;
+    /// deviceKind, jam, asks, underruns, transition }` (`asks`: a jam guest's picks are asked of the host,
+    /// and its lyric taps reach nothing). `queue` is in play order, each song with its list `index`;
+    /// `current` the place in it of the song heard; `device` the name of the device playing elsewhere
+    /// and `deviceKind` its kind (`Phone`, `Desktop`, ...);
     /// `transition` the plan out of the song here, `{ kind, into, reason }`.
     pub fn now(&self) -> String {
         self.with(|h| {
@@ -456,6 +481,7 @@ impl Nori {
                 "repeat": n.repeat,
                 "volume": h.volume(),
                 "device": n.device,
+                "deviceKind": h.elsewhere().map(|e| format!("{:?}", e.mirror.kind)),
                 "jam": n.jam,
                 "asks": h.rules().asks,
                 "underruns": status.as_ref().map_or(0, |s| s.underruns),

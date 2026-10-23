@@ -1,6 +1,6 @@
-// Screenshots of the web client at a desktop's and a phone's width, light and dark: Home, Library, an
-// album, an artist, search, the player bar, the full player with lyrics and with the queue, Settings
-// and a jam. Against a server with the relay (for the jam):
+// Screenshots of the web client at a desktop's and a phone's width, in Day, Night and Midnight and two
+// seasons: Home, Library, an album, an artist, search, the player bar, the full player with lyrics and
+// with the queue, the devices and a jam, Settings and Appearance. The theme is put back after. Against a server with the relay (for the jam):
 //
 //   python3 web/serve.py --port 8081 --server http://localhost:5274
 //   node web/check/shots.mjs http://localhost:8081/ <directory>
@@ -55,11 +55,16 @@ await ask("jam_open").catch(() => {});
 await wait(1500);
 
 const shot = (name) => page.screenshot({ path: `${out}/${name}.png` });
-for (const scheme of ["light", "dark"]) {
-  await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: scheme }]);
+for (const [theme, season] of [["LIGHT", "AUTUMN"], ["DARK", "AUTUMN"], ["LIGHT", "WINTER"], ["MIDNIGHT", "WINTER"]]) {
+  await ask("setting", "theme", theme);
+  await ask("setting", "season", season);
+  const look = `${{ LIGHT: "day", DARK: "night", MIDNIGHT: "midnight" }[theme]}-${season.toLowerCase()}`;
   for (const [width, height, scale, size] of [[1280, 800, 1, "desktop"], [390, 844, 2, "phone"]]) {
     await page.setViewport({ width, height, deviceScaleFactor: scale, isMobile: size === "phone", hasTouch: size === "phone" });
-    const name = (what) => `${what}-${size}-${scheme}`;
+    // The page wears the theme it reads as it starts.
+    await page.reload({ waitUntil: "load" });
+    await page.waitForFunction(() => window.nori.page !== undefined, { timeout: 60000 });
+    const name = (what) => `${what}-${size}-${look}`;
     await go("#/home", "home");
     await shot(name("home"));
     await go("#/library", "library");
@@ -85,6 +90,8 @@ for (const scheme of ["light", "dark"]) {
     await shot(name("search"));
     await go("#/settings", "settings");
     await shot(name("settings"));
+    await go("#/settings/Look", "settings");
+    await shot(name("appearance"));
     if (size === "desktop") {
       // The player bar with the lyrics beside the page, then the queue, then the devices and the jam.
       await go(`#/album/${sung.id}`, "album");
@@ -124,5 +131,7 @@ for (const scheme of ["light", "dark"]) {
   }
 }
 await ask("jam_close").catch(() => {});
+await ask("setting", "theme", "SYSTEM");
+await ask("setting", "season", "FOLLOW");
 console.log(fs.readdirSync(out).filter((f) => f.endsWith(".png")).length, "screenshots in", out);
 await browser.close();

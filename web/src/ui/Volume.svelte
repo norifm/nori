@@ -8,7 +8,7 @@
 </script>
 
 <div class="vol">
-  <Icon name={level === 0 ? "volume-mute" : level < 0.5 ? "volume-low" : "volume"} />
+  <Icon name={level === 0 ? "sound-off" : level < 0.5 ? "sound-low" : "sound-high"} />
   <input
     class="range"
     type="range"

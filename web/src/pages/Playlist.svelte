@@ -1,6 +1,7 @@
 <script lang="ts">
-  // A playlist: its head with its menu (rename, delete), and its songs, each movable and removable.
-  import { read } from "../rpc";
+  // A playlist: its head ("8 songs · 36:28", what the core offers for its songs, its menu: rename, delete),
+  // and its songs, each movable and removable.
+  import { ask, read } from "../rpc";
   import { library, reading } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
   import { go } from "../state/route.svelte";
@@ -10,10 +11,14 @@
   import Hero from "../ui/Hero.svelte";
   import Icon from "../ui/Icon.svelte";
   import Page from "../ui/Page.svelte";
+  import PageTools from "../ui/PageTools.svelte";
   import SongList from "../ui/SongList.svelte";
 
   let { id }: { id: string } = $props();
-  const page = reading("playlist", () => read<{ playlist: Playlist; songs: Song[]; seconds: number }>({ kind: "playlist", id }));
+  const page = reading("playlist", async () => {
+    const d = await read<{ playlist: Playlist; songs: Song[]; seconds: number }>({ kind: "playlist", id });
+    return { ...d, tools: JSON.parse(await ask<string>("page_actions", "Playlist", d.songs.length)) as string[] };
+  });
   const pl = $derived(page.data?.playlist);
   const songs = $derived(page.data?.songs ?? []);
 
@@ -23,12 +28,12 @@
     return library.change({ kind: "reorderPlaylist", id, songIds: order });
   };
   const edits = (_: Song, i: number): Item[] => [
-    ...(i > 0 ? [{ label: W.moveUp, icon: "up", run: () => moved(i, i - 1) }] : []),
-    ...(i < songs.length - 1 ? [{ label: W.moveDown, icon: "down", run: () => moved(i, i + 1) }] : []),
-    { label: W.removeFromPlaylist, icon: "close", danger: true, run: () => library.change({ kind: "removeFromPlaylist", id, index: i }) },
+    ...(i > 0 ? [{ label: W.moveUp, icon: "nav-arrow-up", run: () => moved(i, i - 1) }] : []),
+    ...(i < songs.length - 1 ? [{ label: W.moveDown, icon: "nav-arrow-down", run: () => moved(i, i + 1) }] : []),
+    { label: W.removeFromPlaylist, icon: "xmark", run: () => library.change({ kind: "removeFromPlaylist", id, index: i }) },
   ];
-  const more = () =>
-    ui.menu(pl!.name, [
+  const more = (e: MouseEvent) =>
+    ui.drop(e, [
       {
         label: W.rename,
         run: async () => {
@@ -38,7 +43,6 @@
       },
       {
         label: W.deletePlaylist,
-        danger: true,
         run: async () => {
           if (!confirm(W.deleteConfirm(pl!.name))) return;
           await library.change({ kind: "deletePlaylist", id });
@@ -50,9 +54,12 @@
 
 <Page back ready={!!pl} error={page.error}>
   {#if pl}
-    <Hero cover={pl.cover} title={pl.name} fallback="playlist" facts={`${W.songCount(songs.length)} · ${W.minutes(page.data?.seconds ?? 0)}`} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
+    <Hero cover={pl.cover} title={pl.name} fallback="playlist" label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
       {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
-      {#snippet actions()}<button class="round" aria-label={W.more} title={W.more} onclick={more}><Icon name="more" /></button>{/snippet}
+      {#snippet actions()}
+        <PageTools tools={page.data?.tools ?? []} {songs} />
+        <button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>
+      {/snippet}
     </Hero>
     <SongList {songs} kind="Playlist" {id} extra={edits} {moved} />
   {/if}
@@ -61,6 +68,6 @@
 <style>
   .comment {
     font-size: 15px;
-    color: var(--ink2);
+    font-weight: 400;
   }
 </style>

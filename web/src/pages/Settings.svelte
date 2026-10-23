@@ -1,24 +1,36 @@
 <script lang="ts">
-  // Settings: the pages the core lays out for a browser (`settings_page`), each row drawn by its kind and
-  // worded here; then the jam, the account and what this is.
+  // Settings, as Android's: the root lists the pages the core lays out for a browser (`settings_pages`),
+  // each with its glyph and what it holds, then the account and About; a page (`#/settings/<page>`) has its
+  // sections as small-caps labels over grouped cards, each row drawn by its kind and worded here. A row says
+  // only what is not obvious from its name. Appearance is the look the top bar's menu has too.
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
+  import { route, href } from "../state/route.svelte";
+  import { refreshTheme } from "../state/theme.svelte";
+  import { ui } from "../state/ui.svelte";
   import type { SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
+  import Icon from "../ui/Icon.svelte";
   import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
 
+  const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "emoji-sing-right-note", Library: "album-list", Account: "server", About: "info-circle" };
   let rev = $state(0);
   const page = reading("settings", async () => {
     void rev;
     const names = JSON.parse(await ask<string>("settings_pages")) as string[];
-    const pages = await Promise.all(names.map(async (n) => [n, JSON.parse(await ask<string>("settings_page", n))] as [string, SettingsSection[]]));
+    const name = route.arg;
+    const sections = names.includes(name) ? (JSON.parse(await ask<string>("settings_page", name)) as SettingsSection[]) : [];
     const profile = JSON.parse(await ask<string>("profile")) as { url: string; user: string } | null;
-    return { pages, profile };
+    return { names, sections, profile };
   });
+  const name = $derived(route.arg);
+  /** The page's sections the rows draw: Appearance is the look, drawn whole. */
+  const drawn = $derived(name === "Look" ? [] : (page.data?.sections ?? []));
 
-  async function set(name: string, value: string) {
-    await ask("setting", name, value);
+  async function set(setting: string, value: string) {
+    await ask("setting", setting, value);
+    if (setting === "season" || setting === "theme" || setting === "motion") await refreshTheme();
     rev++;
   }
 
@@ -28,96 +40,98 @@
     location.reload();
   }
 
-  const label = (name: string) => W.settingNames[name]?.[0] ?? name;
-  const lead = (name: string) => W.settingNames[name]?.[1] ?? "";
   const shownRows = (s: SettingsSection) => s.rows.filter((r) => r.shown);
+  const label = (setting: string) => W.settingNames[setting] ?? setting;
 </script>
 
-<Page title={W.settings} ready={!!page.data} error={page.error}>
-  {#each page.data?.pages ?? [] as [name, sections] (name)}
-    <h2 class="section">{W.settingsPages[name] ?? name}</h2>
-    {#if name === "Look"}
-      <Look />
-    {:else}
-      {#each sections as sec (sec.id)}
-        {#if shownRows(sec).length}
-          <h3>{W.sections[sec.id] ?? sec.id}</h3>
-          <div class="group">
-            {#each shownRows(sec) as r, i (i)}
-              {@render row(r)}
-            {/each}
-          </div>
-        {/if}
+{#if !name}
+  <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
+    <div class="group root">
+      {#each page.data?.names ?? [] as n (n)}
+        <a class="group-row" href={href("settings", n)} data-page={n}><Icon name={glyphs[n] ?? "settings"} /><span class="words"><span>{W.settingsPages[n]?.[0] ?? n}</span><span class="sub">{W.settingsPages[n]?.[1] ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
       {/each}
-    {/if}
-  {/each}
-  <h2 class="section">{W.account}</h2>
-  <div class="group">
-    <div class="setting">
-      <span class="sub">{page.data?.profile ? W.signedInAs(page.data.profile.user, page.data.profile.url) : ""}</span>
-      <button class="pill" onclick={() => void signOut()}>{W.signOut}</button>
+      <a class="group-row" href={href("settings", "Account")}><Icon name="server" /><span class="words"><span>{W.account}</span><span class="sub">{page.data?.profile?.user ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
     </div>
-  </div>
-  <p class="about">{W.aboutLead}</p>
-</Page>
+  </Page>
+{:else if name === "Account"}
+  <Page title={W.account} back narrow ready={!!page.data} error={page.error}>
+    <div class="group-label">{W.thisServer}</div>
+    <div class="group">
+      <div class="group-row"><Icon name="server" /><span class="words"><span>{page.data?.profile?.user ?? ""}</span><span class="sub">{page.data?.profile?.url ?? ""}</span></span></div>
+      <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
+    </div>
+  </Page>
+{:else}
+  <Page title={W.settingsPages[name]?.[0] ?? name} back narrow ready={!!page.data} error={page.error}>
+    {#if name === "Look"}<Look />{/if}
+    {#each drawn as sec (sec.id)}
+      {@const rest = shownRows(sec)}
+      {#if rest.length}
+        <div class="group-label">{W.sections[sec.id] ?? sec.id}</div>
+        <div class="group">
+          {#each rest as r, i (i)}{@render row(r)}{/each}
+        </div>
+      {/if}
+    {/each}
+  </Page>
+{/if}
 
 {#snippet row(r: SettingRow)}
   {#if r.item.kind === "note"}
-    <p class="note" class:under={r.depth > 0}>{W.notes[r.item.note] ?? ""}</p>
+    <p class="note">{W.notes[r.item.note] ?? ""}</p>
   {:else}
     {@const it = r.item}
-    <div class="setting" class:under={r.depth > 0} class:off={!r.enabled} data-setting={it.name}>
-      <div class="words">
-        <span class="title">{label(it.name)}</span>
-        {#if lead(it.name)}<span class="sub">{lead(it.name)}</span>{/if}
-      </div>
-      {#if it.type === "Switch"}
+    {#if it.type === "Switch"}
+      <label class="group-row" class:under={r.depth > 0} class:off={!r.enabled} data-setting={it.name}>
+        <span class="words">{label(it.name)}</span>
         <input type="checkbox" class="switch" aria-label={label(it.name)} checked={it.value === "true"} disabled={!r.enabled} onchange={(e) => void set(it.name, e.currentTarget.checked ? "true" : "false")} />
-      {:else if it.type === "Choice" && it.chips}
-        <div class="chips" role="radiogroup" aria-label={label(it.name)}>
+      </label>
+    {:else if it.type === "Choice" && it.chips}
+      <div class="group-row chips-row" class:under={r.depth > 0} class:off={!r.enabled} data-setting={it.name}>
+        <span class="words">{label(it.name)}</span>
+        <div class="choices" role="radiogroup" aria-label={label(it.name)}>
           {#each it.options as o (o)}
-            <button role="radio" class:on={o === it.value} aria-checked={o === it.value} disabled={!r.enabled} onclick={() => void set(it.name, o)}>{W.choice(it.name, o)}</button>
+            <button class="chip" class:on={o === it.value} role="radio" aria-checked={o === it.value} disabled={!r.enabled} onclick={() => o !== it.value && void set(it.name, o)}>{W.choice(it.name, o)}</button>
           {/each}
         </div>
-      {:else if it.type === "Choice"}
-        <select class="field pick" aria-label={label(it.name)} disabled={!r.enabled} onchange={(e) => void set(it.name, e.currentTarget.value)}>
-          {#each it.options as o (o)}<option value={o} selected={Number(o) === Number(it.value) || o === it.value}>{W.choice(it.name, o)}</option>{/each}
-        </select>
-      {:else if it.type === "Level"}
-        <div class="level">
-          <input type="range" min={it.min} max={it.max} step={(it.max - it.min) / 24} value={it.value} aria-label={label(it.name)} disabled={!r.enabled} onchange={(e) => void set(it.name, e.currentTarget.value)} />
-          <span class="sub">{W.level(it.name, Number(it.value))}</span>
-        </div>
-      {/if}
-    </div>
+      </div>
+    {:else if it.type === "Choice"}
+      <button
+        class="group-row"
+        class:under={r.depth > 0}
+        class:off={!r.enabled}
+        data-setting={it.name}
+        disabled={!r.enabled}
+        onclick={(e) => ui.drop(e, it.options.map((o) => ({ label: W.choice(it.name, o), chosen: o === it.value || Number(o) === Number(it.value), run: () => set(it.name, o) })))}
+        ><span class="words">{label(it.name)}</span><span class="value">{W.choice(it.name, it.value)}</span><Icon name="nav-arrow-right" /></button
+      >
+    {:else if it.type === "Level"}
+      <div class="group-row level" class:under={r.depth > 0} class:off={!r.enabled} data-setting={it.name}>
+        <span class="words">{label(it.name)}</span>
+        <span class="value">{W.level(it.name, Number(it.value))}</span>
+        <input
+          class="range"
+          type="range"
+          min={it.min}
+          max={it.max}
+          step={(it.max - it.min) / 24}
+          value={it.value}
+          style:--v="{((Number(it.value) - it.min) / (it.max - it.min || 1)) * 100}%"
+          aria-label={label(it.name)}
+          disabled={!r.enabled}
+          onchange={(e) => void set(it.name, e.currentTarget.value)}
+        />
+      </div>
+    {/if}
   {/if}
 {/snippet}
 
 <style>
-  h3 {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--ink2);
-    margin: 18px 4px 8px;
+  .root {
+    margin: 10px -4px 0;
   }
   .group {
-    background: var(--surface);
-    border: 1px solid var(--hair);
-    border-radius: 18px;
-    overflow: hidden;
-    max-width: 760px;
-  }
-  .setting {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 12px 16px;
-    min-height: 52px;
-    border-top: 1px solid var(--hair);
-  }
-  .group > :first-child {
-    border-top: 0;
+    margin: 0 -4px;
   }
   .under {
     padding-left: 34px;
@@ -125,63 +139,29 @@
   .off {
     opacity: 0.5;
   }
-  .words {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .title {
-    font-size: 15px;
-  }
   .note {
     margin: 0;
-    padding: 0 16px 12px;
-    font-size: 12px;
+    padding: 0 14px 12px;
+    font-size: 13px;
     color: var(--ink2);
   }
-  .chips {
+  /* Chips under their name, the same room above and below them. */
+  .chips-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .choices {
     display: flex;
     flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 6px;
-    flex: none;
-  }
-  .chips button {
-    border: 1px solid var(--outline);
-    border-radius: 999px;
-    padding: 4px 12px;
-    font-size: 13px;
-    color: var(--ink2);
-  }
-  .chips button.on {
-    background: var(--ink);
-    border-color: var(--ink);
-    color: var(--page);
-  }
-  .pick {
-    width: auto;
-    min-width: 110px;
-    height: 32px;
-    font-size: 14px;
+    gap: 8px;
   }
   .level {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex: none;
+    flex-wrap: wrap;
   }
-  .level input {
-    accent-color: var(--ink);
-    width: 160px;
-  }
-  .about {
-    color: var(--outline);
-    font-size: 13px;
-    margin-top: 32px;
-  }
-  @media (max-width: 719px) {
-    .setting {
-      flex-wrap: wrap;
-    }
+  .level .range {
+    width: 100%;
   }
 </style>

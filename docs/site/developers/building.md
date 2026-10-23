@@ -931,13 +931,21 @@ Applies to the `slim` development branch (not in a release yet). The web client 
 workspace's tests and clippy do not see it) and `web/` (Svelte 5 with runes, TypeScript and Vite).
 `docs/research/web-client.md` has how it works and what remains.
 
-The look follows the other clients' redesign (`docs/redesign-contract.md`): no sidebar, an outlined bar along
-the top (Home, Albums, Artists, Songs, Playlists, Favorites, search, settings) and one along the bottom for
-the player, both blurring the page (`backdrop-filter`) with the page's color over it; below 720 px wide the
-phone's layout, one bottom bar holding the mini player over the tabs. Colors come from the core
-(`Nori.theme` in `crates/web`, from the `season` and `theme` settings and the browser's date and zone) into
-CSS variables (`web/src/state/theme.ts`), never copied into the shell. Inter and Literata are the Android
-app's font files; `web/build.sh` copies them into `web/src/fonts` (not in git).
+The look is Nori Seasons, the Android app's design language (paper and ink roles, the season tiles, the
+seal, Iconoir glyphs, Inter and Literata, pills and hairlines, no shadows), on the web's own layout: no
+sidebar, an outlined bar along the top (the wordmark, Home and the library's sections in the order kept,
+search, settings) and one along the bottom for the player, both blurring the page (`backdrop-filter`) with
+the page's color over it; below 720 px wide the phone's layout, one pill at the bottom holding the mini
+player over the tabs (Home, Library, Settings, Search). What Android decides, the web does too, from the
+core: Home's rows, the library's sections, the album orders, a list head's actions, the song menu's
+grouping, the queue offered to carry on. Colors come from the core (`Nori.theme` in `crates/web`, from the
+`season` and `theme` settings and the browser's date and zone) into CSS variables
+(`web/src/state/theme.svelte.ts`), never copied into the shell; album, artist and playlist pages and the
+player wear the season's paper dyed with their cover, also the core's (`Nori.cover_look`), and none in
+Midnight. Inter and Literata are the Android app's font files;
+`web/build.sh` copies them into `web/src/fonts` (not in git). The glyphs are nori's Iconoir set, written into
+`web/index.html`'s sprite by `tools/glyphs.py` (only those `web/src` names): after naming a new glyph in the
+source, run `python3 tools/glyphs.py <iconoir>/icons` again.
 
 ### What it needs
 
@@ -969,9 +977,11 @@ once more picks up the new build (it loads twice). `web/dist` is static: any ser
 page signs requests itself; there are no CORS headers to set). `web/serve.py` is for development only.
 Serve `.wasm` as `application/wasm` and, in production, precompressed with brotli.
 
-The shell loads the other pages and the full player on demand. Wide windows have a sidebar, player
-bar and side panel; phones have a tab bar, mini player and full-screen player. Settings pages and
-playback rules come from Rust. To capture both layouts against a relay-backed development server:
+The shell loads the other pages and the full player on demand. Wide windows have the top bar, the player
+bar and a side panel beside the full player's cover; phones have the bottom pill, the mini player and a
+full-screen player. Settings pages, Home's rows, the Library's sections, the
+album orders, page actions and playback rules come from Rust. To capture both layouts in Day, Night and
+Midnight and two seasons against a relay-backed development server (the theme is put back after):
 
 ```sh
 node web/check/shots.mjs http://localhost:8081/ /private/tmp/nori-web-shots

@@ -51,18 +51,18 @@
 <svelte:window onpointerdown={(e) => open && !box?.contains(e.target as Node) && close()} onkeydown={(e) => e.key === "Escape" && close()} />
 
 <div class="box" bind:this={box}>
-  <form class="chrome search" role="search" onsubmit={submit}>
+  <form class="chrome search" class:on={route.tab === "search"} role="search" onsubmit={submit}>
     <Icon name="search" />
-    <input type="search" placeholder={W.search} aria-label={W.search} autocomplete="off" bind:value={query} oninput={typed} onfocus={() => query.trim() && (open = true)} />
+    <input type="search" placeholder={W.searchHint} aria-label={W.search} autocomplete="off" bind:value={query} oninput={typed} onfocus={() => query.trim() && (open = true)} />
   </form>
   {#if open && found}
-    <div class="results chrome" role="listbox">
+    <div class="results" role="listbox">
       {#if none}<p class="sub empty">{W.noResults}</p>{/if}
       {#each (found.artists ?? []).slice(0, 2) as a (a.id)}
-        <a class="res" href={href("artist", a.id)} onclick={close}><span class="art"><Cover src={a.cover} round fallback="artist" /></span><span class="clip">{a.name}</span></a>
+        <a class="res" href={href("artist", a.id)} onclick={close}><span class="art"><Cover src={a.cover} round fallback="user" /></span><span class="clip">{a.name}</span></a>
       {/each}
       {#each (found.albums ?? []).slice(0, 3) as a (a.id)}
-        <a class="res" href={href("album", a.id)} onclick={close}><span class="art"><Cover src={a.cover} fallback="album" /></span><span class="clip">{a.name}<span class="sub">{a.artist}</span></span></a>
+        <a class="res" href={href("album", a.id)} onclick={close}><span class="art"><Cover src={a.cover} fallback="compact-disc" /></span><span class="clip">{a.name}<span class="sub">{a.artist}</span></span></a>
       {/each}
       {#each (found.songs ?? []).slice(0, 4) as s, i (s.id)}
         <button class="res" onclick={() => (close(), void player.play(found?.songs?.slice(i, i + 1) ?? [], 0))}><span class="art"><Cover src={s.cover} /></span><span class="clip">{s.title}<span class="sub">{s.artist}</span></span></button>
@@ -80,27 +80,30 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    width: 210px;
-    height: 40px;
-    padding: 0 14px;
-    border-radius: 20px;
+    width: 220px;
+    height: 50px;
+    padding: 0 16px;
+    border-radius: 25px;
     transition: width 200ms;
-    color: var(--ink2);
+    color: color-mix(in srgb, var(--ink) 65%, transparent);
+  }
+  .search.on {
+    color: var(--accent);
   }
   .search:focus-within {
     width: 320px;
-    border-color: var(--accent);
+    border: 1px solid var(--accent);
   }
   .search :global(.icon) {
-    width: 20px;
-    height: 20px;
+    width: 21px;
+    height: 21px;
   }
   input {
     all: unset;
     flex: 1;
     min-width: 0;
     color: var(--ink);
-    font-size: 14px;
+    font-size: 15px;
   }
   input::placeholder {
     color: var(--ink2);
@@ -110,13 +113,13 @@
   }
   .results {
     position: absolute;
-    top: 48px;
+    top: 58px;
     right: 0;
     width: 360px;
-    padding: 8px;
-    border-radius: 20px;
+    padding: 6px;
+    border-radius: var(--r-tile);
     background: var(--surface);
-    backdrop-filter: none;
+    border: var(--hairline) solid var(--hair);
     display: flex;
     flex-direction: column;
     z-index: 5;
@@ -124,10 +127,11 @@
   .res {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 7px;
-    border-radius: 12px;
+    gap: 12px;
+    padding: 6px 8px;
+    border-radius: var(--r-card);
     text-align: left;
+    font-size: 15px;
   }
   .res:hover {
     background: var(--hover);
@@ -138,13 +142,14 @@
     flex: 1;
   }
   .art {
-    width: 38px;
+    width: 40px;
     flex: none;
   }
   .more {
     color: var(--ink2);
     justify-content: center;
-    font-size: 13px;
+    font-size: 14px;
+    min-height: 40px;
   }
   .empty {
     margin: 0;
