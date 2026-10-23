@@ -37,8 +37,7 @@ fn stands(o: &QueueOffer, here: Option<String>, playing: bool) -> bool {
 pub extern "C" fn nori_ios_queue_offer() -> *mut c_char {
     let Some((client, _)) = server() else { return std::ptr::null_mut() };
     let (here, playing) = shown();
-    let found = nori_core::transport::block_on(client.queue_offer(playing, here.clone())).ok().flatten();
-    let found = found.filter(|o| stands(o, here, playing));
+    let found = nori_core::transport::block_on(client.queue_offer(playing, here)).ok().flatten();
     let answer = found.as_ref().and_then(|o| {
         let song = o.songs.get(o.index as usize)?;
         let app = match &o.by {
