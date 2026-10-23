@@ -182,9 +182,9 @@ impl Session {
         }
     }
 
-    /// Requests a cover at `px` square; large ones also get page colours, derived off this thread.
-    pub fn cover(&self, key: CoverKey, px: u32) -> Option<Ticket> {
-        let (send, colours) = (self.sender(), key.size != CoverSize::Card);
+    /// Requests a cover at `px` square, with its page colours where `colours`, derived off this thread.
+    pub fn cover(&self, key: CoverKey, px: u32, colours: bool) -> Option<Ticket> {
+        let send = self.sender();
         self.host.cover(key.id.clone(), px, colours, move |image, colours| {
             if let Ok(image) = image { send(Msg::Cover { key, image, colours }); }
         })

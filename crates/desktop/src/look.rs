@@ -100,7 +100,6 @@ impl Look {
         self.table[dress::BACKGROUND]
     }
 
-    #[cfg(test)]
     pub fn ink(&self) -> u32 {
         self.table[dress::ON]
     }

@@ -364,6 +364,8 @@ pub struct App {
     page_mix: Option<(String, String)>,
     /// The queue another device or app left on the server, offered at the top of Home (the core's `queue_offer`).
     offer: Option<nori_core::library::QueueOffer>,
+    /// Home's mixes, whose cards take their first cover's colors once known.
+    mixes: Vec<nori_core::mixes::board::MixTile>,
     songs: Vec<Song>,
     search_songs: Vec<Song>,
     /// Search's Show all pressed, for the query in `search_query`.
@@ -585,6 +587,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             page_fetch: None,
             page_mix: None,
             offer: None,
+            mixes: Vec::new(),
             songs: Vec::new(),
             search_songs: Vec::new(),
             search_songs_all: false,
@@ -1384,26 +1387,8 @@ impl App {
         match d {
             Data::Home(HomePart::Mixes(tiles)) => {
                 self.art.borrow_mut().mosaics.clear();
-                let prefs = crate::session::app().settings.current().unwrap_or_default();
-                let papers = crate::look::papers(&prefs, self.compositor.system_dark(), crate::look::Today::now());
-                let picks: Vec<Pick> = tiles
-                    .into_iter()
-                    .map(|t| {
-                        use nori_core::mixes::board::{mix_card_colours, mix_tile_colours};
-                        let card = mix_card_colours(t.id.clone(), papers.light, papers.dark, papers.dark_theme);
-                        Pick {
-                            title: words::mix_name(t.name).into(),
-                            sub: words::mix_caption(t.favourites).into(),
-                            covers: ModelRc::new(VecModel::from(t.covers.into_iter().map(SharedString::from).collect::<Vec<_>>())),
-                            seed: colour(mix_tile_colours(t.id.clone())[0]),
-                            page: colour(card.page),
-                            ink: colour(card.ink),
-                            id: t.id.into(),
-                        }
-                    })
-                    .collect();
-                ui.set_picks(ModelRc::new(VecModel::from(picks)));
-                ui.set_picks_loaded(true);
+                self.mixes = tiles;
+                self.show_picks();
             }
             Data::Home(HomePart::Feed(feed)) => {
                 // Each shelf as the source lists it: its songs first (a song card plays the shelf's songs
@@ -1575,6 +1560,42 @@ impl App {
                 _ => PageKind::Playlist,
             });
         }
+    }
+
+    /// Home's "For you": each mix's card on the season's paper dyed with the mix (the core's
+    /// `mix_card_colours`), or once its first cover's colors are known with those, as the mix's page wears them.
+    fn show_picks(&self) {
+        use nori_core::mixes::board::{mix_card_colours, mix_tile_colours};
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        let (dark, today) = (self.compositor.system_dark(), crate::look::Today::now());
+        let papers = crate::look::papers(&prefs, dark, today);
+        let art = self.art.borrow();
+        let picks: Vec<Pick> = self
+            .mixes
+            .iter()
+            .map(|t| {
+                let card = mix_card_colours(t.id.clone(), papers.light, papers.dark, papers.dark_theme);
+                let (page, ink) = match t.covers.first().and_then(|c| art.colours.get(c)) {
+                    Some(c) => {
+                        let look = crate::look::cover(&prefs, dark, today, c);
+                        (look.page(), look.ink())
+                    }
+                    None => (card.page, card.ink),
+                };
+                Pick {
+                    title: words::mix_name(t.name).into(),
+                    sub: words::mix_caption(t.favourites).into(),
+                    covers: ModelRc::new(VecModel::from(t.covers.iter().map(SharedString::from).collect::<Vec<_>>())),
+                    seed: colour(mix_tile_colours(t.id.clone())[0]),
+                    page: colour(page),
+                    ink: colour(ink),
+                    id: t.id.as_str().into(),
+                }
+            })
+            .collect();
+        let ui = self.ui();
+        ui.set_picks(ModelRc::new(VecModel::from(picks)));
+        ui.set_picks_loaded(true);
     }
 
     /// Asks whether another device or app left a queue worth carrying on here, as Home comes into sight.
@@ -2516,7 +2537,9 @@ impl App {
         });
         // The loader serves newest first; reversed so the top left of a frame comes first.
         for k in wanted.into_iter().rev() {
-            let Some(t) = s.cover(k.clone(), cover_px(k.size)) else { continue };
+            // A mix card's first cover brings its colors, which the card wears.
+            let colours = k.size != CoverSize::Card || self.mixes.iter().any(|m| m.covers.first() == Some(&k.id));
+            let Some(t) = s.cover(k.clone(), cover_px(k.size), colours) else { continue };
             self.tickets.push_back((k, t));
         }
         // Dropping a ticket cancels it; the cover may be requested again.
@@ -2543,9 +2566,12 @@ impl App {
             if ui.get_now_art() == id.as_str() {
                 self.now_colours(&id, c.as_deref());
             }
-            if ui.get_view() == PAGE && ui.get_page_kind() != 2 && ui.get_page_art() == id.as_str() {
+            if ui.get_view() == PAGE && ui.get_page_art() == id.as_str() {
                 self.page_colours(c.as_deref());
             }
+        }
+        if self.mixes.iter().any(|m| m.covers.first() == Some(&id)) && self.art.borrow().colours.contains_key(&id) {
+            self.show_picks();
         }
     }
 
