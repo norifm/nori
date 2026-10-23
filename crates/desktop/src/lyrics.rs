@@ -8,7 +8,10 @@ use skia_safe::Typeface;
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::sung::{self, Laid};
-use crate::LyricPiece;
+use crate::{LyricPiece, SungLine};
+
+/// In a duet, the room each voice leaves clear on the far side, so two singers read as a conversation.
+const DUET_LANE: f32 = 48.0;
 
 pub struct SongLyrics {
     pick: LyricsPick,
@@ -26,8 +29,19 @@ impl SongLyrics {
         SongLyrics { pick, clock, face, laid: [None, None], rows_at: [None, None] }
     }
 
-    pub fn lines(&self) -> ModelRc<SharedString> {
-        ModelRc::new(VecModel::from(self.pick.lyrics.lines.iter().map(|l| SharedString::from(l.text.as_str())).collect::<Vec<_>>()))
+    pub fn lines(&self) -> ModelRc<SungLine> {
+        let lines = self.pick.lyrics.lines.iter().map(|l| SungLine {
+            text: l.text.as_str().into(),
+            backing: l.backing.as_str().into(),
+            right: l.voice == 1,
+            background: l.background,
+        });
+        ModelRc::new(VecModel::from(lines.collect::<Vec<_>>()))
+    }
+
+    /// The room every line leaves clear on its far side: a duet's lane, else none.
+    pub fn lane(&self) -> f32 {
+        if self.pick.lyrics.lines.iter().any(|l| l.voice == 1) { DUET_LANE } else { 0.0 }
     }
 
     pub fn pick(&self) -> &LyricsPick {
@@ -75,6 +89,7 @@ impl SongLyrics {
     /// or width change.
     pub fn pieces(&mut self, view: usize, now: &Now, size: f32, width: f32, lit: f32, dim: f32) -> Vec<LyricPiece> {
         let Some(face) = &self.face else { return Vec::new() };
+        let width = width - self.lane();
         let Some((i, line)) = usize::try_from(now.active).ok().and_then(|i| self.pick.lyrics.lines.get(i).map(|l| (i, l))) else { return Vec::new() };
         let slot = &mut self.laid[view];
         if !slot.as_ref().is_some_and(|l| l.is_for(i, size, width)) {
@@ -87,6 +102,7 @@ impl SongLyrics {
     /// is new; None when the lines are already so, or there is no face to measure in.
     pub fn rows(&mut self, view: usize, size: f32, width: f32) -> Option<ModelRc<SharedString>> {
         let face = self.face.as_ref()?;
+        let width = width - self.lane();
         if self.rows_at[view] == Some(width) {
             return None;
         }

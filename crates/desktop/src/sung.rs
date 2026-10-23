@@ -37,11 +37,11 @@ pub fn bold_face() -> Option<Typeface> {
     FontMgr::new().new_from_data(skia_safe::Data::new_copy(INTER), None)
 }
 
-/// `face` at `size` and weight 700, at the optical size Slint draws it in: the variable font's default
+/// `face` at `size` and `weight`, at the optical size Slint draws it in: the variable font's default
 /// (Inter's text cut, wider than its display cut).
-fn font(face: &Typeface, size: f32) -> Font {
+fn font(face: &Typeface, size: f32, weight: f32) -> Font {
     let face = face.clone();
-    let coords = [Coordinate { axis: FourByteTag::from_chars('w', 'g', 'h', 't'), value: 700.0 }];
+    let coords = [Coordinate { axis: FourByteTag::from_chars('w', 'g', 'h', 't'), value: weight }];
     let args = FontArguments::new().set_variation_design_position(VariationPosition { coordinates: &coords });
     let face = if face.variation_design_parameters().is_some_and(|a| !a.is_empty()) { face.clone_with_arguments(&args).unwrap_or(face) } else { face };
     Font::from_typeface(face, size)
@@ -63,10 +63,12 @@ fn byte_at(s: &str, u: u32) -> usize {
     s.len()
 }
 
-/// Lays out line `index` at `size` px within `width`, wrapping at spaces like the text does.
+/// Lays out line `index` at `size` px within `width`, wrapping at spaces like the text does; the second
+/// voice's rows end at the right edge, as its text is aligned.
 pub fn lay(face: &Typeface, index: usize, line: &LyricLine, size: f32, width: f32) -> Laid {
     let key = (index, size.to_bits(), width.to_bits());
-    let font = font(face, size);
+    // Backing vocals alone on their line are drawn lighter.
+    let font = font(face, size, if line.background { 400.0 } else { 700.0 });
     let (spacing, _) = font.metrics();
     let measure = |s: &str| font.measure_str(s, None).0;
     let text = &line.text;
@@ -135,6 +137,15 @@ pub fn lay(face: &Typeface, index: usize, line: &LyricLine, size: f32, width: f3
             x += w;
         }
         i = j + 1;
+    }
+    if line.voice == 1 {
+        let mut row_end = vec![0.0f32; pieces.last().map_or(0, |p: &Placed| p.row as usize + 1)];
+        for p in &pieces {
+            row_end[p.row as usize] = row_end[p.row as usize].max(p.x + measure(p.text.trim_end()));
+        }
+        for p in &mut pieces {
+            p.x += width - row_end[p.row as usize];
+        }
     }
     Laid { key, pieces, row_h: spacing }
 }
@@ -269,6 +280,19 @@ mod tests {
         let l = lay(&face(), 0, &line(), 20.0, 40.0);
         assert!(l.pieces.iter().map(|p| p.row).max().unwrap_or(0) > 0);
         assert!(l.pieces.iter().filter(|p| p.x == 0.0).all(|p| !p.text.starts_with(' ')));
+    }
+
+    #[test]
+    fn the_second_voice_ends_its_rows_at_the_right_edge() {
+        let font = font(&face(), 20.0, 700.0);
+        let line = LyricLine { voice: 1, ..line() };
+        for width in [1000.0, 60.0] {
+            let l = lay(&face(), 0, &line, 20.0, width);
+            for row in 0..=l.pieces.iter().map(|p| p.row).max().unwrap() {
+                let end = l.pieces.iter().filter(|p| p.row == row).map(|p| p.x + font.measure_str(p.text.trim_end(), None).0).fold(0.0, f32::max);
+                assert!((end - width).abs() < 0.01, "row {row} at width {width} ends at {end}");
+            }
+        }
     }
 
     /// A line drawn as rows breaks where its pieces wrap: the space before each row's first piece is a line

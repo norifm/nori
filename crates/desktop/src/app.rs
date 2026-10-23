@@ -2100,6 +2100,7 @@ impl App {
         let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_face.clone());
         let ui = self.ui();
         ui.set_lyrics_lines(l.lines());
+        ui.set_lyrics_lane(l.lane());
         ui.set_lyrics_synced(l.synced());
         ui.set_lyrics_note(if l.is_empty() { "No lyrics for this song".into() } else { l.credit().into() });
         ui.set_lyrics_waiting(false);
