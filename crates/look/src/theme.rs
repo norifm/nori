@@ -16,7 +16,7 @@ pub enum Season {
 }
 
 /// The seasons in the calendar's order.
-const SEASONS: [Season; 4] = [Season::Spring, Season::Summer, Season::Autumn, Season::Winter];
+pub const SEASONS: [Season; 4] = [Season::Spring, Season::Summer, Season::Autumn, Season::Winter];
 
 /// What a theme is made of: the page, a raised surface (sheets, menus), the ink, the accent for the
 /// one thing that is "you, now" (the current tab, a favorite, what is playing) and the color of a

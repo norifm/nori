@@ -66,9 +66,9 @@ data class Today(val month: Int, val day: Int, val southern: Boolean) {
     }
 }
 
-/** The season's palette on [today], the calendar's when following (nori_look::theme::palette). */
+/** The season's palette on [today], the calendar's when following (the core's `season_palette`). */
 internal fun paletteOf(prefs: StoredPrefs, dark: Boolean, today: Today): Palette =
-    dev.nori.music.ffi.look.palette(dev.nori.music.ffi.settings.seasonOf(prefs.season), today.month.toUInt(), today.day.toUInt(), today.southern, dark, prefs.theme == dev.nori.music.ffi.settings.ThemeMode.MIDNIGHT)
+    dev.nori.music.ffi.settings.seasonPalette(prefs.season, prefs.theme, dark, today.month.toUInt(), today.day.toUInt(), today.southern)
 
 /** The theme's accent for a light page and for a dark one, for the widgets' covers (nori_look::dress::accented). */
 @androidx.compose.runtime.Immutable
