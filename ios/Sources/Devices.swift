@@ -47,16 +47,16 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         super.viewDidLoad()
         view.backgroundColor = Theme.Card.background
         let grabber = UIButton(type: .system)
-        grabber.setImage(Glyph.chevronDown, for: .normal)
+        grabber.setImage(Glyph.close, for: .normal)
         grabber.tintColor = Theme.Card.secondary
         grabber.accessibilityLabel = Say.close
         grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
         let title = UILabel()
         title.text = Say.playOn
-        title.font = UIFont.systemFont(ofSize: 22, weight: .bold)
+        title.font = Fonts.title(22)
         title.textColor = Theme.Card.label
         table.backgroundColor = Theme.Card.background
-        table.separatorColor = Theme.Card.track
+        table.separatorColor = Theme.player.hairline
         table.rowHeight = 60
         table.dataSource = self
         table.delegate = self
@@ -72,7 +72,7 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
             grabber.widthAnchor.constraint(equalToConstant: 60),
             grabber.heightAnchor.constraint(equalToConstant: 24),
             title.topAnchor.constraint(equalTo: grabber.bottomAnchor, constant: 4),
-            title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Space.gutter),
             title.heightAnchor.constraint(equalToConstant: 44),
             table.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
             table.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -120,8 +120,11 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         cell.tintColor = Theme.Card.label
         cell.textLabel?.textColor = Theme.Card.label
         cell.detailTextLabel?.textColor = Theme.Card.secondary
-        cell.detailTextLabel?.font = UIFont.preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.font = Fonts.font(13, .regular, .footnote)
+        cell.textLabel?.font = Fonts.font(16)
+        cell.imageView?.tintColor = Theme.Card.label
         guard indexPath.row > 0 else {
+            cell.imageView?.image = Glyph.device(0, 22)
             cell.textLabel?.text = Say.thisIPod
             cell.detailTextLabel?.text = nil
             cell.accessoryType = here ? .checkmark : .none
@@ -129,23 +132,27 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         }
         guard indexPath.row <= devices.count else {
             if indexPath.row >= devices.count + 3 {
+                cell.imageView?.image = Glyph.draw(indexPath.row == devices.count + 3 ? Iconoir.smartphoneDevice : Iconoir.trash, 22)
                 cell.textLabel?.text = indexPath.row == devices.count + 3 ? Say.pairDevices : Say.forgetDevices
                 cell.detailTextLabel?.text = nil
                 cell.accessoryType = .disclosureIndicator
                 return cell
             }
             if indexPath.row == devices.count + 1 {
+                cell.imageView?.image = Glyph.output(OutputLook.now().glyph, 22)
                 cell.textLabel?.text = Say.output
                 cell.detailTextLabel?.text = nil
                 cell.accessoryType = .none
                 return cell
             }
+            cell.imageView?.image = Glyph.jam
             cell.textLabel?.text = Say.joinJam
             cell.detailTextLabel?.text = nil
             cell.accessoryType = .disclosureIndicator
             return cell
         }
         let d = devices[indexPath.row - 1]
+        cell.imageView?.image = Glyph.device(d["kind"] as? Int ?? 0, 22)
         cell.textLabel?.text = d["name"] as? String
         let song = [d["title"] as? String, d["artist"] as? String].compactMap { $0 }.filter { !$0.isEmpty }
         let playing = d["playing"] as? Bool ?? false

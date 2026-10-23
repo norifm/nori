@@ -117,12 +117,12 @@ fn device_json(d: &RemoteDevice, active: bool) -> Value {
     json!({
         "id": d.id, "name": d.name, "active": active, "playing": state.is_some_and(|s| s.playing),
         "title": song.map(|e| e.title.as_str()), "artist": song.map(|e| e.artist.as_str()),
-        "refused": refusal_code(d.refused),
+        "refused": refusal_code(d.refused), "kind": d.kind as u8,
     })
 }
 
 /// Where the music can play, as JSON to free; NULL while remote control is off: `{"here": this iPod plays,
-/// "devices": [{"id", "name", "active", "playing", "title", "artist", "refused"}]}`.
+/// "devices": [{"id", "name", "kind", "active", "playing", "title", "artist", "refused"}]}`, `kind` a `DeviceKind`.
 #[no_mangle]
 pub extern "C" fn nori_ios_remote_devices() -> *mut c_char {
     with_session(|s| {

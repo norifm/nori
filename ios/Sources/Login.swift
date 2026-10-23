@@ -34,7 +34,6 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         view.backgroundColor = Theme.background
         title = Say.addServer
         navigationItem.largeTitleDisplayMode = .never
-        additionalSafeAreaInsets.bottom = MiniPlayer.height
 
         field(address, Say.serverUrl, .URL, false)
         field(user, Say.user, .default, false)
@@ -45,14 +44,14 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
 
         connect.setTitle(Say.connect, for: .normal)
         connect.setTitleColor(Theme.background, for: .normal)
-        connect.titleLabel?.font = UIFont.preferredFont(forTextStyle: .headline)
+        connect.titleLabel?.font = Fonts.font(16, .semibold, .headline)
         connect.titleLabel?.adjustsFontForContentSizeCategory = true
         connect.backgroundColor = Theme.label
         connect.layer.cornerRadius = 10
         connect.addTarget(self, action: #selector(submit), for: .touchUpInside)
 
         status.textColor = UIColor(rgb: 0xFFB4AB)
-        status.font = UIFont.preferredFont(forTextStyle: .footnote)
+        status.font = Fonts.font(13, .regular, .footnote)
         status.adjustsFontForContentSizeCategory = true
         status.numberOfLines = 0
         status.textAlignment = .center
@@ -64,7 +63,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         kind.isHidden = kinds.count < 2
         kind.addTarget(self, action: #selector(kindChanged), for: .valueChanged)
         hint.textColor = Theme.secondary
-        hint.font = UIFont.preferredFont(forTextStyle: .footnote)
+        hint.font = Fonts.font(13, .regular, .footnote)
         hint.adjustsFontForContentSizeCategory = true
         hint.numberOfLines = 0
         hint.textAlignment = .center
@@ -211,7 +210,7 @@ final class LoginPage: UIViewController, UITextFieldDelegate {
         box.tintColor = Theme.accent
         box.backgroundColor = Theme.row
         box.layer.cornerRadius = 10
-        box.font = UIFont.preferredFont(forTextStyle: .body)
+        box.font = Fonts.font(16)
         box.adjustsFontForContentSizeCategory = true
         box.delegate = self
         box.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 44))

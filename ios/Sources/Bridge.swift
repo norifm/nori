@@ -59,8 +59,10 @@ struct Section {
     let key: String
     let grid: Bool
     let items: [Item]
-    /// A source's own title for it (its feed's shelves); empty: the key's words.
+    /// A source's own title for it (its feed's shelves, an artist's shelf); empty: the key's words.
     var title = ""
+    /// The section as answered, for what only some carry (an artist shelf's `artistId`, a release's `kind`).
+    var raw: [String: Any] = [:]
 }
 
 /// A page answer: sections, an optional header, or an error code.
@@ -70,6 +72,15 @@ struct PageAnswer {
     let error: Int32?
     let detail: String
     let raw: [String: Any]
+
+    /// Sections in hand, without a read.
+    init(sections given: [Section]) {
+        raw = [:]
+        head = [:]
+        error = nil
+        detail = ""
+        sections = given
+    }
 
     init(_ d: [String: Any]) {
         raw = d
@@ -81,7 +92,8 @@ struct PageAnswer {
                 key: $0["key"] as? String ?? "",
                 grid: $0["grid"] as? Bool ?? false,
                 items: ($0["items"] as? [[String: Any]] ?? []).map(Item.init),
-                title: $0["title"] as? String ?? ""
+                title: $0["title"] as? String ?? "",
+                raw: $0
             )
         }
     }
@@ -105,8 +117,9 @@ struct Now {
     /// Waiting for bytes after a seek or open: the place stands still until sound is heard again.
     var mixing = false
     var buffering = false
-    /// Another device plays, and this is its music: its name.
+    /// Another device plays, and this is its music: its name and kind (`DeviceKind`).
     var device: String?
+    var deviceKind = 0
     /// Remote control is on: the music can move to the account's other devices.
     var remote = false
     /// The other device's volume in percent, when music plays there and it can be set.
@@ -305,6 +318,24 @@ final class Core {
         return t
     }
 
+    /// Measures cover `id`'s page colors (`nori_ios_cover_look`) on the season's paper; `done` runs on the
+    /// main thread with them, or with nil for a cover that does not load. Measured once per cover and look.
+    func coverLook(_ id: String, done: @escaping (PageLook?) -> Void) {
+        let key = "\(id) \(Theme.mode) \(Theme.look.worn.page)"
+        if let kept = looks[key] { return done(kept) }
+        var light = Theme.look.light, dark = Theme.look.dark
+        let t = token()
+        pages[t] = { [weak self] a in
+            self?.pages[t] = nil
+            let look = PageLook(a.raw)
+            if let look { self?.looks[key] = look }
+            done(look)
+        }
+        id.withCString { nori_ios_cover_look(t, $0, &light, &dark, Theme.look.dark_theme) }
+    }
+
+    private var looks: [String: PageLook] = [:]
+
     /// Stops listening for a page's answers.
     func forget(_ token: UInt64) {
         pages[token] = nil
@@ -347,6 +378,7 @@ final class Core {
         n.hz = d["hz"] as? Int ?? 0
         n.bits = d["bits"] as? Int ?? 0
         n.device = d["device"] as? String
+        n.deviceKind = d["kind"] as? Int ?? 0
         n.remote = d["remote"] as? Bool ?? false
         n.volume = d["volume"] as? Int
         n.jam = d["jam"] as? Bool ?? false
@@ -493,19 +525,21 @@ enum Toast {
         let label = PaddedLabel()
         label.text = text
         label.textColor = Theme.label
-        label.backgroundColor = Theme.track
-        label.font = UIFont.preferredFont(forTextStyle: .footnote)
+        label.backgroundColor = Theme.row
+        label.font = Fonts.font(14, .regular, .footnote)
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 2
         label.textAlignment = .center
-        label.layer.cornerRadius = 10
+        label.layer.borderWidth = hairlineWidth
+        label.layer.borderColor = Theme.hairline.cgColor
+        label.layer.cornerRadius = 20
         label.clipsToBounds = true
         label.translatesAutoresizingMaskIntoConstraints = false
         window.addSubview(label)
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: window.centerXAnchor),
             label.widthAnchor.constraint(lessThanOrEqualTo: window.widthAnchor, constant: -40),
-            label.bottomAnchor.constraint(equalTo: window.bottomAnchor, constant: -(49 + MiniPlayer.height + 12)),
+            label.bottomAnchor.constraint(equalTo: window.bottomAnchor, constant: -(BottomChrome.reach + 12)),
         ])
         shown = label
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak label] in

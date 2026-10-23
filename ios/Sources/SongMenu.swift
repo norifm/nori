@@ -14,16 +14,45 @@ enum SongMenu {
                 guard let d else { return }
                 let items = d["items"] as? [[String: Any]] ?? []
                 let details = d["details"] as? [String: Any] ?? [:]
-                let sheet = UIAlertController.sheet(song.title, message)
+                // The song leads the sheet as its row looked: its cover, its artist and album, its format.
+                let line = [[song.subtitle, song.album].filter { !$0.isEmpty }.joined(separator: " · "), message ?? ""]
+                    .filter { !$0.isEmpty }.joined(separator: "\n")
+                let sheet = Sheet(song.title, line, cover: song.cover)
                 for item in items {
                     guard let a = item["a"] as? Int else { continue }
-                    sheet.add(Say.songAction(a, item), enabled: item["enabled"] as? Bool ?? true) {
+                    sheet.add(Say.songAction(a, item), glyph: glyph(a, item), enabled: item["enabled"] as? Bool ?? true,
+                              more: item["more"] as? Bool ?? false) {
                         act(a, item, song: song, token: token, index: index, details: details, host: host, go: go)
                     }
                 }
                 sheet.show(from: host)
             }
         }
+    }
+
+    /// Each line's glyph, as Android's song menu draws it.
+    private static func glyph(_ a: Int, _ item: [String: Any]) -> UIImage {
+        let parts: [GlyphPart]
+        switch a {
+        case 0: parts = item["on"] as? Bool ?? true ? Iconoir.sealOutline : Iconoir.seal
+        case 1: parts = Iconoir.playlistPlay
+        case 2: parts = Iconoir.playlist
+        case 3: parts = Iconoir.plusCircle
+        case 4: parts = Iconoir.trash
+        case 5: parts = Iconoir.xmark
+        case 6: parts = Iconoir.download
+        case 7: parts = Iconoir.compactDisc
+        case 8: parts = Iconoir.user
+        case 9: parts = Iconoir.folderPlus
+        case 10: parts = Iconoir.halfMoon
+        case 11: parts = Iconoir.antennaSignal
+        case 12: parts = Iconoir.sparks
+        case 13: parts = Iconoir.prohibition
+        case 14: parts = Iconoir.shareIos
+        case 18: parts = Iconoir.community
+        default: parts = Iconoir.infoCircle
+        }
+        return Glyph.draw(parts, 20)
     }
 
     private static func act(_ a: Int, _ item: [String: Any], song: Item, token: UInt64, index: Int,
@@ -82,7 +111,7 @@ enum SongMenu {
             // The stored copy is enough to pick from; the server's later answer is not waited for.
             Core.shared.forget(asked)
             let playlists = a.sections.flatMap { $0.items }.filter { $0.kind == "playlist" }
-            let sheet = UIAlertController.sheet(Say.addToPlaylist)
+            let sheet = Sheet(Say.addToPlaylist)
             sheet.add(Say.newPlaylist) { newPlaylist(token: token, index: index, from: host) }
             for p in playlists {
                 sheet.add(p.title) {
@@ -141,7 +170,7 @@ final class SleepTimer {
 
     func pick(from host: UIViewController) {
         guard let choices = takenJSON(nori_ios_sleep_choices(running ? 1 : 0)) as? [[String: Any]] else { return }
-        let sheet = UIAlertController.sheet(Say.sleepTimer)
+        let sheet = Sheet(Say.sleepTimer)
         for c in choices {
             let minutes = c["minutes"] as? Int ?? 0
             let end = c["end"] as? Bool ?? false

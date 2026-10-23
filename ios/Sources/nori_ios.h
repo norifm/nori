@@ -157,6 +157,8 @@ void nori_ios_remote_pick(const char *id);
 #define NORI_PAGE_SMARTS 16
 #define NORI_PAGE_SMART 17
 #define NORI_PAGE_DOWNLOADED_ALBUM 18
+/// A Home row in full: `arg` its shelf's key, then "\n" and an offset for a page past the first.
+#define NORI_PAGE_HOME_ROW 19
 
 /// A page answer: `json` is valid for the call only. Comes on a library thread, the stored copy first.
 typedef void (*NoriPageFn)(uint64_t token, const char *json);
@@ -172,6 +174,23 @@ void nori_ios_download_list(uint64_t token, int32_t index);
 char *nori_ios_download_entries(uint64_t token);
 /// Runs a download entry on list `token`: the songs downloaded, or removed for act 2.
 int32_t nori_ios_download_act(uint64_t token, int32_t act);
+/// A page's list head (page kind as NORI_PAGE_*; `refreshable` a mix drawn again), JSON to free: [{a, act, n}],
+/// a 0 download (act and n as the entries), 1 everything by the artist, 2 add to queue, 3 new mix, 4 edit.
+char *nori_ios_page_actions(uint64_t token, int32_t kind, int32_t refreshable);
+/// Draws mix `id` again. Blocks.
+void nori_ios_mix_refresh(const char *id);
+/// Plays the library shuffled: whole random albums (1) or random songs. Blocks; 1 when it plays.
+int32_t nori_ios_shuffle_library(int32_t albums);
+/// Saves list `token` as a playlist named after `title` (the mix's name); the name it took, to free, or
+/// NULL. Blocks.
+char *nori_ios_save_list(uint64_t token, const char *title);
+/// The queue left on the server to offer on Home, JSON to free: {song, index, count, app}, NULL for none.
+/// Blocks.
+char *nori_ios_queue_offer(void);
+/// 1 while the offer still stands against what plays; one that does not is let go.
+int32_t nori_ios_queue_offer_stands(void);
+/// The offer taken (1: it plays where it was left) or turned down; not offered again.
+void nori_ios_queue_offer_done(int32_t take);
 
 /// Album (8), artist (9) or playlist (10) by id, fetched first.
 void nori_ios_play_collection(int32_t kind, const char *id, int32_t shuffle);
@@ -221,13 +240,24 @@ void nori_ios_lyric_free(LyricClock *clock);
 float nori_ios_lyric_strength(int32_t synced, int32_t line, int32_t active);
 float nori_ios_lyric_unsung(void);
 
-/// The season theme (crates/ios/src/theme.rs). Colors are ARGB. `season` is the `season` setting's value
-/// (FOLLOW, SPRING, SUMMER, AUTUMN, WINTER); the date is `unix_s` in the zone with `offset_min` from UTC.
-/// `quiet` is the secondary text color.
+/// The season theme (crates/ios/src/theme.rs). Colors are ARGB; `quiet` is the secondary text color.
 typedef struct NoriPalette {
     uint32_t page, surface, ink, accent, on, quiet;
 } NoriPalette;
-void nori_ios_palette(const char *season, int32_t dark, int64_t unix_s, int32_t offset_min, const char *zone, NoriPalette *out);
+/// What the app wears: the theme's palette, the season's day and night ones a cover dyes, whether it is
+/// dark, and whether pages take their covers' colors (not in Midnight).
+typedef struct NoriLook {
+    NoriPalette worn, light, dark;
+    int32_t dark_theme, covers;
+} NoriLook;
+/// `season` and `theme` are the settings' values (FOLLOW, SPRING, ...; SYSTEM, LIGHT, DARK, MIDNIGHT),
+/// `system_dark` the scheme SYSTEM follows; the date is `unix_s` in the zone with `offset_min` from UTC.
+void nori_ios_look(const char *season, const char *theme, int32_t system_dark, int64_t unix_s, int32_t offset_min, const char *zone, NoriLook *out);
+/// A mix card's colors: the season's paper dyed with the mix's.
+void nori_ios_mix_card(const char *id, const NoriPalette *light, const NoriPalette *dark, int32_t dark_theme, NoriPalette *out);
+/// A cover's page colors, measured off the main thread: JSON {page, surface, ink, quiet, accent, hairline,
+/// edge, mid, stops} on the page callback with `token`; nothing for a cover that does not load.
+void nori_ios_cover_look(uint64_t token, const char *id, const NoriPalette *light, const NoriPalette *dark, int32_t dark_theme);
 /// The calendar's season (0 spring to 3 winter), the next one and the date it starts.
 typedef struct NoriSeasonNow {
     int32_t season, next;
@@ -258,6 +288,9 @@ void nori_ios_tuning(int32_t in_sight, int32_t touched);
 /// `port`: 0 speaker, 1 wired, 2 USB, 3 Bluetooth, 4 other. `choice`: 0 automatic, 1 quiet, 2 flat,
 /// 3 profile, 4 no processing.
 char *nori_ios_devices(void);
+/// The player's output button for the output playing now, JSON to free: {glyph, port, name}, glyph 0 this
+/// device's speaker, 1 headphones, 2 Bluetooth, 3 anything else.
+char *nori_ios_output_look(void);
 /// One output's choices, JSON to free: {port, profiles, forget, curves: [{name, source, form, target, path}]}.
 char *nori_ios_device_sheet(const char *output);
 /// `profile` names a saved profile for choice 3. 1 when kept.
@@ -316,7 +349,7 @@ void nori_ios_sync(void);
 /// now, packed as the core's HeroButtons::pack: bit 0 Shuffle lit, 2 pausing, bits 4-5 Shuffle's press
 /// and 6-7 Play's (0 start, 1 toggle, 2 shuffle off). `playing` and `buffering` as the app shows them.
 int32_t nori_ios_hero(int32_t kind, const char *id, int32_t playing, int32_t buffering);
-/// The credits page's lists as JSON to free: {core, data, app}, each [{name, what, copyright, licence, file}].
+/// The credits page's lists as JSON to free: {core, data}, each [{name, what, copyright, licence, file}].
 char *nori_ios_credits(void);
 /// Index and storage numbers as JSON (free it).
 char *nori_ios_facts(void);

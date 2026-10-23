@@ -50,8 +50,8 @@ enum Say {
     /// song orders by `browse::song_sorts` name.
     static func sort(_ name: String) -> String {
         switch name {
-        case "alphabeticalByName": return "A–Z"
-        case "alphabeticalByArtist", "ARTIST": return "Artist"
+        case "alphabeticalByName": return "Title"
+        case "alphabeticalByArtist", "artistRows", "ARTIST": return "Artist"
         case "newest", "ADDED": return "Added"
         case "recent": return "Played"
         case "frequent", "PLAYS": return "Most played"
@@ -80,6 +80,25 @@ enum Say {
     }
 
     static func songs(_ n: Int) -> String { n == 1 ? "1 song" : "\(n) songs" }
+    /// "1 songs" too: where a count stands with others ("2019 · 1 songs · 3:20"), as Android's.
+    static func songsPlural(_ n: Int) -> String { "\(n) songs" }
+    static func releases(_ n: Int) -> String { n == 1 ? "1 release" : "\(n) releases" }
+    /// A list head's "12 songs · 48:10".
+    static func listCaption(_ n: Int, _ seconds: Int) -> String { songsPlural(n) + " · " + Fmt.clock(ms: seconds * 1000) }
+    /// An artist's shelf by its `ReleaseKind` code, a tagged one by the server's tag.
+    static func release(_ kind: Int, _ tag: String) -> String {
+        switch kind {
+        case 0: return albumsTitle
+        case 1: return "EPs"
+        case 2: return "Singles"
+        case 3: return "Live"
+        case 4: return "Compilations"
+        case 5: return "Soundtracks"
+        case 6: return "Remixes"
+        case 7: return "Others"
+        default: return tag.hasSuffix("s") ? tag : tag + "s"
+        }
+    }
     static func albums(_ n: Int) -> String { n == 1 ? "1 album" : "\(n) albums" }
 
     static func note(_ code: Int32, _ count: Int) -> String? {
@@ -186,12 +205,29 @@ enum Say {
     static let favorites = "Favorites"
     static let smartPlaylists = "Smart playlists"
     static let downloaded = "Downloaded"
+    static let downloads = "Downloads"
+    static let saveAsPlaylist = "Save as playlist"
+    static let newMix = "New mix"
+    static let downloadEverything = "Download everything"
+    /// A page's download glyph by its act: all, the missing ones, or removal.
+    static func downloadEntry(_ act: Int, _ n: Int) -> String {
+        switch act {
+        case 1: return downloadOther(n)
+        case 2: return removeDownloads
+        default: return download
+        }
+    }
+    static let mixLineMade = "Made for you"
+    static let mixLineFavourites = "Your favorites"
+    static let continueLabel = "Continue"
+    static let resume = "Resume"
+    /// The offered queue's line: "Artist · 3 of 12".
+    static func offerPlace(_ artist: String, _ at: Int, _ of: Int) -> String { "\(artist) · \(at) of \(of)" }
     static let downloadsRun = "Downloads run while nori is open or playing."
     static let searchHint = "Songs, albums, artists"
     static let nothingPlaying = "Nothing playing"
     static let lookingForLyrics = "Looking for lyrics…"
     static let noLyrics = "No lyrics for this song"
-    static let sortBy = "Sort by"
     static let noServer = "No server yet"
     static let noServerDetail = "Add your server in Settings → Server."
     static let couldNotLoad = "Could not load this page"
@@ -266,19 +302,33 @@ enum Say {
     static let about = "About"
     static let version = "Version"
     static let streamed = "Streamed music"
-    static let theme = "Theme"
-    static let light = "Day"
-    static let dark = "Night"
     static let appearance = "Appearance"
     static let season = "Season"
-    static let followSeasons = "Follow the seasons"
-    /// A season by the core's number (0 spring to 3 winter), with its kanji as Android's picker has them.
+    static let followSeasons = "Follow the calendar"
+    /// A mode of the `theme` setting.
+    static func mode(_ value: String) -> String {
+        switch value {
+        case "LIGHT": return "Day"
+        case "DARK": return "Night"
+        case "MIDNIGHT": return "Midnight"
+        default: return "System"
+        }
+    }
+
+    // The settings' groups, from Android's strings.xml (settings_group_*).
+    static let groupPlaying = "Playback"
+    static let groupPlayingSummary = "Crossfade, AutoMix, queue"
+    static let groupSoundSummary = "Equalizer, volume, output"
+    static let lookSummary = "Theme, colors, size"
+    static let groupLyricsSummary = "Display and sources"
+    static let groupLibrarySummary = "Lists, search, history"
+    static let groupAboutSummary = "Version, updates, licenses"
+    /// A season by the core's number (0 spring to 3 winter).
     static let seasons = [("Spring", "春"), ("Summer", "夏"), ("Autumn", "秋"), ("Winter", "冬")]
-    /// The `season` setting's values, in the same order.
-    static let seasonValues = ["SPRING", "SUMMER", "AUTUMN", "WINTER"]
     private static let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    /// "Winter comes in on 7 November".
     static func seasonNow(_ now: NoriSeasonNow) -> String {
-        "\(seasons[Int(now.season)].0) now · \(seasons[Int(now.next)].0) from \(now.next_day) \(months[Int(now.next_month) - 1])"
+        "\(seasons[Int(now.next)].0) comes in on \(now.next_day) \(months[Int(now.next_month) - 1])"
     }
 
     // What controls drawn as glyphs say to VoiceOver, from Android's strings.xml.
@@ -303,10 +353,8 @@ enum Say {
 
     // About, from Android's strings.xml.
     static let licences = "Licenses"
-    static let licencesDetail = "The libraries, fonts and data this app is made of, and their terms"
     static let freeSoftware = "nori is free software"
     static let rustCore = "Rust core"
-    static let appCredits = "iPod app"
     static let fontsAndData = "Fonts and data"
     static let noLicenceText = "No license text to reproduce."
     static let licenceUnreadable = "The license text could not be read."
@@ -485,6 +533,9 @@ enum Say {
         default: return nil
         }
     }
+
+    /// What the output button says to VoiceOver: "Output: Wired headphones".
+    static func outputDescription(port: Int, name: String?) -> String { "Output: " + outputLabel(port: port, name: name) }
 
     /// A device's name: its own, or the app's for one without. The iPod has no phone speaker.
     static func outputName(port: Int, name: String?) -> String {

@@ -55,13 +55,13 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         view.backgroundColor = Theme.Card.background
 
         let grabber = UIButton(type: .system)
-        grabber.setImage(Glyph.chevronDown, for: .normal)
+        grabber.setImage(Glyph.close, for: .normal)
         grabber.tintColor = Theme.Card.secondary
         grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
         grabber.accessibilityLabel = Say.close
         let title = UILabel()
         title.text = Say.queue
-        title.font = UIFont.systemFont(ofSize: 22, weight: .bold)
+        title.font = Fonts.title(22)
         title.textColor = Theme.Card.label
         shuffle.setImage(Glyph.shuffle, for: .normal)
         shuffle.accessibilityLabel = Say.shuffle
@@ -106,12 +106,12 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         undoBar.backgroundColor = Theme.Card.track
         undoBar.layer.cornerRadius = 10
         undoBar.isHidden = true
-        undoText.font = UIFont.preferredFont(forTextStyle: .footnote)
+        undoText.font = Fonts.font(13, .regular, .footnote)
         undoText.textColor = Theme.Card.label
         let undo = UIButton(type: .system)
         undo.setTitle(Say.undo, for: .normal)
         undo.tintColor = Theme.Card.label
-        undo.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        undo.titleLabel?.font = Fonts.font(15, .semibold)
         undo.addTarget(self, action: #selector(undoTapped), for: .touchUpInside)
         undo.setContentHuggingPriority(.required, for: .horizontal)
         let undoRow = UIStackView(arrangedSubviews: [undoText, undo])
@@ -259,7 +259,7 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         header.backgroundColor = Theme.Card.background
         let label = UILabel()
         label.text = part == .asked ? Say.youAskedFor : part == .history ? Say.history : Say.upNext
-        label.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        label.font = Fonts.font(17, .semibold)
         label.textColor = Theme.Card.label
         label.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(label)
@@ -304,14 +304,14 @@ final class QueueSheet: UIViewController, UITableViewDataSource, UITableViewDele
         cell.selectionStyle = .none
         cell.accessoryView = nil
         cell.textLabel?.textColor = Theme.Card.label
-        cell.textLabel?.font = UIFont.systemFont(ofSize: 17, weight: .regular)
+        cell.textLabel?.font = Fonts.font(17, .regular)
         cell.detailTextLabel?.textColor = Theme.Card.secondary
-        cell.detailTextLabel?.font = UIFont.preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.font = Fonts.font(13, .regular, .footnote)
         cell.detailTextLabel?.numberOfLines = 0
         switch row {
         case .people:
             cell.textLabel?.text = Say.jamOf(jam.host)
-            cell.textLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+            cell.textLabel?.font = Fonts.font(17, .semibold)
             cell.detailTextLabel?.text = ([Say.listening(jam.listeners.count)] + jam.listeners).joined(separator: " · ")
         case .listen:
             cell.textLabel?.text = jam.listening == 1 ? Say.playingHere : Say.listenHere
@@ -431,9 +431,9 @@ final class QueueCell: UITableViewCell {
         let selected = UIView()
         selected.backgroundColor = Theme.Card.track
         selectedBackgroundView = selected
-        title.font = UIFont.preferredFont(forTextStyle: .body)
+        title.font = Fonts.font(16)
         title.adjustsFontForContentSizeCategory = true
-        detail.font = UIFont.preferredFont(forTextStyle: .footnote)
+        detail.font = Fonts.font(13, .regular, .footnote)
         detail.adjustsFontForContentSizeCategory = true
         grip.tintColor = Theme.Card.dim
         grip.setContentHuggingPriority(.required, for: .horizontal)
@@ -464,7 +464,7 @@ final class QueueCell: UITableViewCell {
         cover.show(item.cover, points: 44)
         title.text = item.title.isEmpty ? item.id : item.title
         detail.text = note ?? ([item.subtitle, item.by].filter { !$0.isEmpty }.joined(separator: " · "))
-        title.font = UIFont.systemFont(ofSize: 17, weight: playing ? .semibold : .regular)
+        title.font = Fonts.font(17, playing ? .semibold : .regular)
         title.textColor = Theme.Card.label.withAlphaComponent(played ? 0.45 : 1)
         detail.textColor = Theme.Card.secondary.withAlphaComponent(played ? 0.6 : 1)
         cover.alpha = played ? 0.5 : 1
