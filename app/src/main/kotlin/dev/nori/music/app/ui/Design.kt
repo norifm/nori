@@ -556,12 +556,13 @@ fun GroupRow(
     icon: ImageVector? = null,
     chevron: Boolean = false,
     divider: Boolean = true,
+    minHeight: Dp = 52.dp,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     Column(modifier.fillMaxWidth()) {
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 52.dp)
+            Modifier.fillMaxWidth().heightIn(min = minHeight)
                 .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .padding(horizontal = GROUP_INSET, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
