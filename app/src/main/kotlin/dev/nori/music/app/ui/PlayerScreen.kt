@@ -804,7 +804,7 @@ internal fun OutputButton(
     val icon = otherDevice?.let(::kindIcon) ?: when (o.glyph) {
         dev.nori.music.ffi.devices.OutputGlyph.PHONE -> Iconoir.SmartphoneDevice
         dev.nori.music.ffi.devices.OutputGlyph.HEADPHONES -> Iconoir.Headset
-        dev.nori.music.ffi.devices.OutputGlyph.BLUETOOTH -> Iconoir.BluetoothTag
+        dev.nori.music.ffi.devices.OutputGlyph.BLUETOOTH -> Iconoir.Bluetooth
         dev.nori.music.ffi.devices.OutputGlyph.CAST -> Iconoir.Airplay
     }
     val description = remember(o) { say.outputDescription(o.port, o.name) }
