@@ -131,6 +131,10 @@ FITTED = {"SmartphoneDevice", "Headset", "Bluetooth", "Airplay", "Computer", "Te
 FRAME = (3.0, 3.0, 21.0, 21.0)
 WIDEST = 22.5
 
+# Drawn to this height instead, centred, line width unchanged: a glyph that fills its whole box, made as large
+# as the compact ones beside it (Refresh's full circle by Download's 16 in a page's list head).
+SHRUNK = {"Refresh": 16.0}
+
 ARGS = {"M": 2, "L": 2, "T": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "A": 7, "Z": 0}
 
 
@@ -168,12 +172,12 @@ def points(cmds):
             sx, sy = x, y
 
 
-def fitted(ds):
-    """[ds] scaled about their middle to [FRAME]'s height, or to [WIDEST] if that comes first, and centred on it."""
+def fitted(ds, height=FRAME[3] - FRAME[1]):
+    """[ds] scaled about their middle to [height], or to [WIDEST] if that comes first, and centred on [FRAME]."""
     every = [pt for d in ds for pt in points(commands(d))]
     x0, y0 = min(p[0] for p in every), min(p[1] for p in every)
     x1, y1 = max(p[0] for p in every), max(p[1] for p in every)
-    k = min(WIDEST / max(x1 - x0, 1e-6), (FRAME[3] - FRAME[1]) / max(y1 - y0, 1e-6))
+    k = min(WIDEST / max(x1 - x0, 1e-6), height / max(y1 - y0, 1e-6))
     mx, my = (x0 + x1) / 2, (y0 + y1) / 2
     cx, cy = (FRAME[0] + FRAME[2]) / 2, (FRAME[1] + FRAME[3]) / 2
     X = lambda v: f"{cx + (v - mx) * k:.4g}"
@@ -269,8 +273,9 @@ def xml_part(p, colour):
 
 def main(icons: Path):
     shapes = {name: parts(icons / style / f"{icon}.svg") for name, (icon, style, _) in GLYPHS.items()}
-    for name in FITTED:
-        for p, d in zip(shapes[name], fitted([p["d"] for p in shapes[name]])):
+    heights = {name: FRAME[3] - FRAME[1] for name in FITTED} | SHRUNK
+    for name, height in heights.items():
+        for p, d in zip(shapes[name], fitted([p["d"] for p in shapes[name]], height)):
             p["d"] = d
     lines = []
     for name, (icon, style, flip) in GLYPHS.items():
