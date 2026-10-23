@@ -100,23 +100,7 @@ impl Door {
         let port = listener.local_addr()?.port();
         let shared = Arc::new(Shared { secret: Mutex::new(secret), closed: AtomicBool::new(false), live: AtomicUsize::new(0), inside: Mutex::new(Inside { seq: 1, me, events: VecDeque::new(), holds: HashMap::new(), holds_opened: 0 }), handler, jam: Mutex::new(None), tasks });
         let s = shared.clone();
-        std::thread::Builder::new().name("nori-door".into()).spawn(move || {
-            for conn in listener.incoming() {
-                if s.closed.load(Ordering::Acquire) {
-                    break;
-                }
-                let Ok(conn) = conn else { continue };
-                if s.live.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
-                    s.live.fetch_sub(1, Ordering::AcqRel);
-                    continue;
-                }
-                let s = s.clone();
-                let _ = std::thread::Builder::new().name("nori-door-in".into()).spawn(move || {
-                    serve(&s, conn);
-                    s.live.fetch_sub(1, Ordering::AcqRel);
-                });
-            }
-        })?;
+        std::thread::Builder::new().name("nori-door".into()).spawn(move || accept_each(&s, listener.incoming()))?;
         Ok(Door { port, shared })
     }
 
@@ -182,6 +166,38 @@ impl Drop for Door {
         self.shared.inside.lock().ring();
         // Wakes the accepting thread so it sees the door closed.
         let _ = TcpStream::connect(("127.0.0.1", self.port));
+    }
+}
+
+/// How long the door waits after an accept that failed without taking a connection (the process is out of
+/// descriptors): accepting again at once would fail the same way.
+const ACCEPT_PAUSE: Duration = Duration::from_millis(100);
+
+/// Serves each accepted connection on a thread of its own, until the door closes.
+fn accept_each(s: &Arc<Shared>, accepted: impl Iterator<Item = std::io::Result<TcpStream>>) {
+    use std::io::ErrorKind::{ConnectionAborted, ConnectionReset, Interrupted};
+    for conn in accepted {
+        if s.closed.load(Ordering::Acquire) {
+            break;
+        }
+        let conn = match conn {
+            Ok(conn) => conn,
+            // That connection is gone; the next is accepted at once.
+            Err(e) if matches!(e.kind(), ConnectionAborted | ConnectionReset | Interrupted) => continue,
+            Err(_) => {
+                std::thread::sleep(ACCEPT_PAUSE);
+                continue;
+            }
+        };
+        if s.live.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+            s.live.fetch_sub(1, Ordering::AcqRel);
+            continue;
+        }
+        let s = s.clone();
+        let _ = std::thread::Builder::new().name("nori-door-in".into()).spawn(move || {
+            serve(&s, conn);
+            s.live.fetch_sub(1, Ordering::AcqRel);
+        });
     }
 }
 
@@ -328,16 +344,16 @@ fn answer(s: &Shared, conn: &TcpStream, method: &str, target: &str, body: &[u8],
     }
 }
 
-/// Holds a poll until the door changes past `since`, closes, [`HOLD_MS`] pass or the controller speaks
-/// again; None when it hung up.
+/// Holds a poll while the door has nothing past `since`, until it changes, closes, [`HOLD_MS`] pass or
+/// the controller speaks again; None when it hung up.
 fn hold_poll(s: &Shared, i: &mut MutexGuard<Inside>, conn: &TcpStream, since: u64) -> Option<()> {
     let until = Instant::now() + Duration::from_millis(HOLD_MS as u64);
     let Ok((bell, ear)) = alarm() else { return Some(()) };
     let hold = i.holds_opened;
     i.holds_opened += 1;
     i.holds.insert(hold, (bell, s.tasks.waiting()));
-    let mut woke = Woke::Rung;
-    while woke == Woke::Rung && i.seq <= since && !s.closed.load(Ordering::Acquire) {
+    let mut woke = if i.seq <= since && !s.closed.load(Ordering::Acquire) { Woke::Interrupted } else { Woke::Rung };
+    while woke == Woke::Interrupted {
         woke = MutexGuard::unlocked(i, || wait(conn, &ear, until));
     }
     i.holds.remove(&hold);
@@ -347,8 +363,11 @@ fn hold_poll(s: &Shared, i: &mut MutexGuard<Inside>, conn: &TcpStream, since: u6
 /// Why a held poll woke.
 #[derive(PartialEq)]
 enum Woke {
-    /// The door changed or closed.
+    /// The door changed or closed: a ring drops the hold's bell, so it is heard once.
     Rung,
+    /// A signal cut the wait short: waited again.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    Interrupted,
     TimedOut,
     /// The controller sent more: answered now. Heard only where a hold polls the socket (unix).
     #[cfg_attr(not(unix), allow(dead_code))]
@@ -386,8 +405,7 @@ fn wait(conn: &TcpStream, mut ear: &Ear, until: Instant) -> Woke {
     // SAFETY: `fds` is a valid array of two pollfds for the call's length.
     match unsafe { libc::poll(fds.as_mut_ptr(), 2, ms) } {
         0 => Woke::TimedOut,
-        // Interrupted: looked at again.
-        n if n < 0 => Woke::Rung,
+        n if n < 0 => Woke::Interrupted,
         _ if fds[0].revents != 0 => match conn.peek(&mut [0]) {
             Ok(n) if n > 0 => Woke::Spoke,
             _ => Woke::HungUp,
@@ -510,6 +528,39 @@ mod tests {
             if guest { door.kick(&first.you); } else { door.pair_secret("new-paired-secret".into()); }
             assert_eq!(held.join().unwrap().0, 401, "held poll is revoked, guest={guest}");
         }
+    }
+
+    #[test]
+    fn failing_accepts_wait_and_end_with_the_door() {
+        let door = Door::open(Member::default(), "pw".into(), Box::new(|_, _| {}), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
+        let shared = door.shared.clone();
+        let tries = Arc::new(AtomicUsize::new(0));
+        let counted = tries.clone();
+        let out_of_files = std::iter::from_fn(move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+            Some(Err(std::io::Error::other("too many open files")))
+        });
+        let accepting = std::thread::spawn(move || accept_each(&shared, out_of_files));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        drop(door);
+        accepting.join().unwrap();
+        assert!(tries.load(Ordering::Relaxed) <= 5, "{} accepts", tries.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_held_poll_ends_at_the_next_change() {
+        let door = Door::open(Member { id: "desk".into(), ..Default::default() }, "pw".into(), Box::new(|_, _| {}), Arc::new(nori_tasks::Native::new("door-test").unwrap())).unwrap();
+        let port = door.port();
+        // A cursor past the door's own: no change reaches it.
+        let (answered, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || answered.send(request(port, "pw", "GET", &format!("/rest/noriRemote.poll?dev=phone&since={}&hold=1", u64::MAX), "").0));
+        let until = Instant::now() + Duration::from_secs(5);
+        while door.shared.inside.lock().holds.is_empty() {
+            assert!(Instant::now() < until, "poll reached its hold");
+            std::thread::yield_now();
+        }
+        door.publish(DeviceState { playing: true, ..Default::default() });
+        assert_eq!(answer.recv_timeout(Duration::from_secs(5)), Ok(200), "answered at the change");
     }
 
     #[test]
