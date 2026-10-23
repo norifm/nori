@@ -262,6 +262,194 @@ def xml_part(p, colour):
     return "<path " + " ".join(a) + " />"
 
 
+SWIFT = ROOT / "ios/Sources/Iconoir.swift"
+SEALS = {"seal": CORE / "seal.xml", "sealOutline": CORE / "seal_outline.xml"}
+KANJI = ROOT / "app/src/main/kotlin/dev/nori/music/app/ui/Kanji.kt"
+
+
+def arc_cubics(x0, y0, rx, ry, phi, large, sweep, x1, y1):
+    """An SVG arc from (x0, y0) as cubic Béziers, each (c1x, c1y, c2x, c2y, x, y), a quarter turn at most."""
+    import math
+    if rx == 0 or ry == 0 or (x0, y0) == (x1, y1):
+        return [(x0, y0, x1, y1, x1, y1)]
+    rx, ry = abs(rx), abs(ry)
+    cos, sin = math.cos(math.radians(phi)), math.sin(math.radians(phi))
+    dx, dy = (x0 - x1) / 2, (y0 - y1) / 2
+    x1p, y1p = cos * dx + sin * dy, -sin * dx + cos * dy
+    k = x1p ** 2 / rx ** 2 + y1p ** 2 / ry ** 2
+    if k > 1:
+        rx, ry = rx * math.sqrt(k), ry * math.sqrt(k)
+    num = rx ** 2 * ry ** 2 - rx ** 2 * y1p ** 2 - ry ** 2 * x1p ** 2
+    co = math.sqrt(max(0.0, num / (rx ** 2 * y1p ** 2 + ry ** 2 * x1p ** 2))) * (-1 if large == sweep else 1)
+    cxp, cyp = co * rx * y1p / ry, -co * ry * x1p / rx
+    cx, cy = cos * cxp - sin * cyp + (x0 + x1) / 2, sin * cxp + cos * cyp + (y0 + y1) / 2
+    angle = lambda ux, uy, vx, vy: math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+    t0 = angle(1, 0, (x1p - cxp) / rx, (y1p - cyp) / ry)
+    dt = angle((x1p - cxp) / rx, (y1p - cyp) / ry, (-x1p - cxp) / rx, (-y1p - cyp) / ry)
+    if not sweep and dt > 0:
+        dt -= 2 * math.pi
+    elif sweep and dt < 0:
+        dt += 2 * math.pi
+    n = max(1, math.ceil(abs(dt) / (math.pi / 2) - 1e-9))
+    step = dt / n
+    h = 4 / 3 * math.tan(step / 4)
+    point = lambda t: (cx + rx * math.cos(t) * cos - ry * math.sin(t) * sin, cy + rx * math.cos(t) * sin + ry * math.sin(t) * cos)
+    slope = lambda t: (-rx * math.sin(t) * cos - ry * math.cos(t) * sin, -rx * math.sin(t) * sin + ry * math.cos(t) * cos)
+    out = []
+    for i in range(n):
+        a, b = t0 + i * step, t0 + (i + 1) * step
+        (ax, ay), (bx, by) = point(a), point(b)
+        (dax, day), (dbx, dby) = slope(a), slope(b)
+        out.append((ax + h * dax, ay + h * day, bx - h * dbx, by - h * dby, bx, by))
+    out[-1] = out[-1][:4] + (x1, y1)
+    return out
+
+
+def plain_path(d, turn=None):
+    """`d` as absolute M, L, C and Z alone (arcs and quadratics as cubics), turned by `turn` (degrees, about
+    12 12) when given: what the iPod's small parser reads."""
+    import math
+    if turn:
+        co, si = math.cos(math.radians(turn)), math.sin(math.radians(turn))
+        at = lambda x, y: (12 + (x - 12) * co - (y - 12) * si, 12 + (x - 12) * si + (y - 12) * co)
+    else:
+        at = lambda x, y: (x, y)
+    num = lambda v: f"{v:.3f}".rstrip("0").rstrip(".") if abs(v) >= 0.0005 else "0"
+    out = []
+    put = lambda c, *xy: out.append(c + " ".join(num(v) for p in zip(xy[0::2], xy[1::2]) for v in at(*p)))
+    x = y = sx = sy = 0.0
+    last = None  # the previous curve's second control point, and whether it was cubic
+    for c, a in commands(d):
+        rel = c.islower(); C = c.upper()
+        ox, oy = (x, y) if rel else (0.0, 0.0)
+        if C == "Z":
+            out.append("Z"); x, y = sx, sy; last = None; continue
+        if C == "M":
+            x, y = ox + a[0], oy + a[1]; sx, sy = x, y; put("M", x, y); last = None
+        elif C in "LHV":
+            if C == "H":
+                x = ox + a[0]
+            elif C == "V":
+                y = (y if rel else 0.0) + a[0]
+            else:
+                x, y = ox + a[0], oy + a[1]
+            put("L", x, y); last = None
+        elif C in "CS":
+            if C == "C":
+                c1 = (ox + a[0], oy + a[1]); rest = a[2:]
+            else:
+                c1 = (2 * x - last[0][0], 2 * y - last[0][1]) if last and last[1] else (x, y); rest = a
+            c2 = (ox + rest[0], oy + rest[1]); end = (ox + rest[2], oy + rest[3])
+            put("C", *c1, *c2, *end); x, y = end; last = (c2, True)
+        elif C in "QT":
+            if C == "Q":
+                q = (ox + a[0], oy + a[1]); end = (ox + a[2], oy + a[3])
+            else:
+                q = (2 * x - last[0][0], 2 * y - last[0][1]) if last and not last[1] else (x, y); end = (ox + a[0], oy + a[1])
+            c1 = (x + 2 / 3 * (q[0] - x), y + 2 / 3 * (q[1] - y))
+            c2 = (end[0] + 2 / 3 * (q[0] - end[0]), end[1] + 2 / 3 * (q[1] - end[1]))
+            put("C", *c1, *c2, *end); x, y = end; last = (q, False)
+        elif C == "A":
+            end = (ox + a[5], oy + a[6])
+            for cubic in arc_cubics(x, y, a[0], a[1], a[2], bool(a[3]), bool(a[4]), *end):
+                put("C", *cubic)
+            x, y = end; last = None
+    return " ".join(out)
+
+
+def drawn_parts(path: Path):
+    """The paths of an Android vector drawable (the seal's), each with its group's turn baked in."""
+    A = "{http://schemas.android.com/apk/res/android}"
+    out = []
+
+    def walk(el, turn):
+        for child in el:
+            if child.tag == "group":
+                walk(child, float(child.get(A + "rotation", 0)) + turn)
+            elif child.tag == "path":
+                stroke = child.get(A + "strokeColor") is not None
+                out.append(dict(
+                    d=plain_path(child.get(A + "pathData"), turn), fill=child.get(A + "fillColor") is not None,
+                    even=child.get(A + "fillType") == "evenOdd", stroke=stroke, width=float(child.get(A + "strokeWidth", 0)),
+                    cap=child.get(A + "strokeLineCap") == "round", join=child.get(A + "strokeLineJoin") == "round",
+                    alpha=float(child.get(A + "fillAlpha", 1)),
+                ))
+
+    walk(ET.parse(path).getroot(), 0.0)
+    return out
+
+
+def swift_part(p):
+    args = [f'"{p["d"]}"']
+    if p["fill"]:
+        args.append("fill: true")
+    if p["even"]:
+        args.append("evenOdd: true")
+    if not p["stroke"]:
+        args.append("stroke: false")
+    elif p["width"] != 1.5:
+        args.append(f'width: {p["width"]:g}')
+    if p["stroke"] and not (p["cap"] and p["join"]):
+        args.append("round: false")
+    if p.get("alpha", 1) != 1:
+        args.append(f'alpha: {p["alpha"]:g}')
+    return f'GlyphPart({", ".join(args)})'
+
+
+def write_swift(shapes):
+    """ios/Sources/Iconoir.swift: every glyph as plain path data for the iPod (Glyphs.swift draws them), with
+    the seal and the seasons' kanji carried from Android's drawables and Kanji.kt."""
+    entries = []
+    for name, (icon, style, _) in GLYPHS.items():
+        parts = [dict(p, d=plain_path(p["d"])) for p in shapes[name]]
+        entries.append((f'{icon}{" (solid)" if style == "solid" else ""}', name[0].lower() + name[1:], parts))
+    for name, path in SEALS.items():
+        entries.append((f"{path.stem}.xml", name, drawn_parts(path)))
+    kanji = dict(re.findall(r'private const val (SPRING|SUMMER|AUTUMN|WINTER) = "([^"]+)"', KANJI.read_text()))
+    for season in ("SPRING", "SUMMER", "AUTUMN", "WINTER"):
+        entries.append((f"Kanji.kt {season}", season.lower(), [dict(d=plain_path(kanji[season]), fill=True, even=False, stroke=False, width=0, cap=False, join=False)]))
+    lines = []
+    for doc, name, parts in entries:
+        body = ",\n        ".join(swift_part(p) for p in parts)
+        name = f"`{name}`" if name in SWIFT_KEYWORDS else name
+        lines.append(f"    /// {doc}\n    static let {name} = [\n        {body},\n    ]")
+    SWIFT.write_text(SWIFT_HEAD + "\n\n".join(lines) + "\n}\n")
+
+
+SWIFT_KEYWORDS = {"repeat", "import", "default", "case", "switch", "in", "is", "as", "for", "while", "return"}
+
+SWIFT_HEAD = '''import CoreGraphics
+
+// Generated by tools/glyphs.py from Iconoir (MIT, https://iconoir.com) and Android's seal and kanji; do not
+// edit by hand.
+
+/// One path of a glyph on a 24 x 24 grid, as absolute M, L, C and Z: a line 1.5 wide with round caps and
+/// joins unless it says otherwise.
+struct GlyphPart {
+    let d: String
+    var fill = false
+    var evenOdd = false
+    var stroke = true
+    var width: CGFloat = 1.5
+    var round = true
+    var alpha: CGFloat = 1
+
+    init(_ d: String, fill: Bool = false, evenOdd: Bool = false, stroke: Bool = true, width: CGFloat = 1.5, round: Bool = true, alpha: CGFloat = 1) {
+        self.d = d
+        self.fill = fill
+        self.evenOdd = evenOdd
+        self.stroke = stroke
+        self.width = width
+        self.round = round
+        self.alpha = alpha
+    }
+}
+
+/// nori's icons: Iconoir's line glyphs, its solid ones for the transport, the seal and the seasons.
+enum Iconoir {
+'''
+
+
 def main(icons: Path):
     shapes = {name: parts(icons / style / f"{icon}.svg") for name, (icon, style, _) in GLYPHS.items()}
     for name in FITTED:
@@ -294,6 +482,8 @@ def main(icons: Path):
             ps = "\n    ".join(xml_part(p, "#FFFFFFFF") for p in shapes[glyph])
             body = f'    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"{mirror}>\n    {ps}'
         path.write_text(f'<?xml version="1.0" encoding="utf-8"?>\n{head}\n<vector xmlns:android="http://schemas.android.com/apk/res/android"\n{body}\n</vector>\n')
+
+    write_swift(shapes)
 
 
 KOTLIN_HEAD = '''package dev.nori.music.app.ui
