@@ -149,3 +149,43 @@ fn a_pushed_song_opens_half_way() {
         assert!(asked.len() < 16, "{hint}: a few requests, not one per try: {asked:?}");
     }
 }
+
+/// [`Pushes`] behind a cache that forgets a song whenever told (the phone's media3 cache), counting how
+/// often.
+#[derive(Default)]
+struct Cached(Pushes, Mutex<u32>);
+
+impl ByteSource for Cached {
+    fn open(&self, _: &str, _: u64) -> Result<Body, OpenError> {
+        unreachable!("a pushed song is never read on a thread")
+    }
+
+    fn push(&self, fill: Filling) -> Option<Filling> {
+        self.0.push(fill)
+    }
+
+    fn forget(&self, _: &str) -> bool {
+        *self.1.lock() += 1;
+        true
+    }
+}
+
+/// An Ogg cut short on the server itself (without its last page) looks like a cached copy cut short:
+/// fetched anew once, then played as it is.
+#[test]
+fn a_pushed_song_cut_short_on_the_server_is_fetched_again_once() {
+    if !common::ffmpeg() {
+        return;
+    }
+    let dir = nori_testdir::TempDir::new("pushed-cut");
+    let mut song = encode(dir.path(), "c.ogg", 20, &["-c:a", "libopus", "-b:a", "96k"]);
+    let last_page = song.windows(4).rposition(|w| w == b"OggS").unwrap();
+    song.truncate(last_page);
+    let cached = Arc::new(Cached::default());
+    let loader = Loader::start_within(&Arc::new(Fetching::default()), cached.clone(), "song".into(), WHOLE, Some(20_000), None, None, None, Waits::default());
+    let mut fill = cached.0 .0.lock().pop().expect("the fetching was pushed");
+    let mut net = Network { song: &song, chunk: 16 * 1024, asked: Vec::new() };
+    let mut d = Demuxed::load(loader, std::thread::current(), Some("ogg"), 0, Some(20_000), false, Encoding::Pcm16, Default::default());
+    assert!(!decoded(&mut d, || net.step(&mut fill)).is_empty());
+    assert_eq!(*cached.1.lock(), 1, "forgotten once");
+}
