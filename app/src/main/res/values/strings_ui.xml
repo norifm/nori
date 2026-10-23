@@ -85,7 +85,7 @@
     <string name="new_playlist">New playlist</string>
     <string name="import_playlist_file">Import M3U…</string>
     <string name="favourite_songs">Favorite songs</string>
-    <string name="starred_favourites">★ Favorites</string>
+    <string name="starred_favourites">Favorites</string>
     <string name="new_station">New station</string>
     <string name="stream_url">Stream URL</string>
     <string name="download_queue">Download queue</string>
