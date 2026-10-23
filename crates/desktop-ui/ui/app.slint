@@ -307,7 +307,6 @@ export global Theme {
     // Each season's page and accent (spring to winter), for the season tiles.
     in property <[color]> season-pages;
     in property <[color]> season-accents;
-    in property <[color]> season-ons;
     // The sheet on the right (lyrics, the queue, the devices).
     out property <length> panel-w: 320px;
 }
@@ -3468,49 +3467,43 @@ component Chooser inherits Rectangle {
     }
 }
 
-// The four seasons as tiles, as Android's: each its kanji, and under it three dots of its paper, accent and
-// on colors; the one worn raised on the surface with a hairline edge. `options` names them, for the reader;
-// `picked` reports the tile's index, spring first.
-component SeasonTiles inherits Rectangle {
+// The four seasons as tiles, as Android's: each its season's paper with its kanji in its accent and its name
+// under it, the one worn ringed in that accent. `options` names them; `picked` reports the tile's index,
+// spring first.
+component SeasonTiles inherits VerticalLayout {
     in property <[string]> options;
     in property <int> chosen;
-    in property <length> tile-height: 92px;
+    in property <length> tile-height: 72px;
     callback picked(int);
     property <[string]> marks: ["春", "夏", "秋", "冬"];
-    height: root.tile-height;
     HorizontalLayout {
-        spacing: 8px;
-        for o[i] in root.options: Rectangle {
-            border-radius: 18px;
-            background: i == root.chosen ? Theme.panel : ta.has-hover ? Theme.hover : transparent;
-            border-width: i == root.chosen ? 1px : 0;
-            border-color: Theme.hairline;
-            VerticalLayout {
-                alignment: center;
-                spacing: 8px;
+        spacing: 10px;
+        for o[i] in root.options: VerticalLayout {
+            spacing: 6px;
+            Rectangle {
+                height: root.tile-height;
+                border-radius: 18px;
+                background: Theme.season-pages[i];
+                border-width: i == root.chosen ? 2px : 1px;
+                border-color: i == root.chosen ? Theme.season-accents[i] : Theme.hairline;
                 Text {
                     text: root.marks[i];
-                    color: i == root.chosen ? Theme.text : Theme.dim;
+                    color: Theme.season-accents[i];
                     font-size: 32px;
                     font-weight: 700;
-                    horizontal-alignment: center;
                 }
-                HorizontalLayout {
-                    alignment: center;
-                    spacing: 6px;
-                    for c[k] in [Theme.season-pages[i], Theme.season-accents[i], Theme.season-ons[i]]: Rectangle {
-                        width: 10px;
-                        height: 10px;
-                        border-radius: 5px;
-                        background: c;
-                        border-width: k == 0 ? 1px : 0;
-                        border-color: Theme.hairline;
-                    }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.picked(i); }
                 }
             }
-            ta := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.picked(i); }
+            Text {
+                text: o;
+                color: i == root.chosen ? Theme.text : Theme.dim;
+                font-size: 12px;
+                font-weight: 500;
+                horizontal-alignment: center;
+                overflow: elide;
             }
         }
     }
@@ -6657,7 +6650,7 @@ export component AppWindow inherits Window {
                     SeasonTiles {
                         options: ["Spring", "Summer", "Autumn", "Winter"];
                         chosen: root.season-worn;
-                        tile-height: 76px;
+                        tile-height: 60px;
                         picked(i) => { root.setting-chosen("season", i); }
                     }
                     ToggleLine {
