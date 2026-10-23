@@ -71,7 +71,7 @@ fn fetch(transport: &dyn nori_net::transport::Transport, url: &str, total: u64, 
         let r = nori_net::transport::block_on(transport.send(ask)).map_err(|e| e.to_string())?;
         match r.status {
             206 if !r.body.is_empty() => out.extend_from_slice(&r.body),
-            200 if from == 0 => out = r.body,
+            200 if from == 0 && !r.body.is_empty() => out = r.body,
             status => return Err(format!("HTTP {status} for bytes {from}-{to}")),
         }
     }
@@ -156,6 +156,11 @@ mod tests {
         // An error, or an empty piece, ends it; so does the switch going off.
         fake.answers.lock().push_back(Ok((206, Vec::new())));
         assert!(fetch(&fake, "u", total, || true).is_err());
+        for answer in [(200, Vec::new()), (206, vec![7; total as usize])] {
+            fake.answers.lock().push_back(Ok(answer));
+        }
+        assert!(fetch(&fake, "u", total, || true).is_err(), "an empty whole file");
+        fake.answers.lock().clear();
         let asked = fake.sent.lock().len();
         assert!(fetch(&fake, "u", total, || false).is_err());
         assert_eq!(fake.sent.lock().len(), asked, "nothing fetched once unwanted");
