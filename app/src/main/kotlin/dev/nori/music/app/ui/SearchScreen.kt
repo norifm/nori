@@ -73,7 +73,17 @@ fun SearchScreen(actions: ActionsViewModel, vm: SearchViewModel = viewModel()) {
             }
             return@Column
         }
-        LazyColumn(Modifier.pageToEdges(), contentPadding = pagePadding(LocalChromeInset.current)) {
+        // A fuller answer puts artists and albums above the songs: the list stays at its top for them, as a
+        // shelf does, and a new search or scope starts there.
+        val first = when {
+            r.artists.isNotEmpty() -> "artists"
+            r.albums.isNotEmpty() -> "albums"
+            r.playlists.isNotEmpty() -> "playlists"
+            else -> "songs"
+        }
+        val list = rememberShelfState(first)
+        androidx.compose.runtime.LaunchedEffect(ui.query, ui.scope) { list.requestScrollToItem(0) }
+        LazyColumn(Modifier.pageToEdges(), list, contentPadding = pagePadding(LocalChromeInset.current)) {
             if (r.artists.isNotEmpty()) item(key = "artists") {
                 SectionTitle(say.artists)
                 LazyRow(Modifier.bleedsToEdges(), contentPadding = edgePadding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

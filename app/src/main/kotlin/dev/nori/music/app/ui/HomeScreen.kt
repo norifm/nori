@@ -239,9 +239,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistShelf(
 }
 
 /**
- * A shelf's scroll state that stays at its start when cards come in ahead of its first (an album just
- * played joins Recently played): by key, the row would keep the old first card in view, one card in.
- * A shelf scrolled by hand keeps its place.
+ * A list's scroll state that stays at its start when items come in ahead of its [first] (an album just
+ * played joins Recently played, artists join a search's songs): by key, the list would keep the old first
+ * item in view. A list scrolled by hand keeps its place.
  */
 @Composable
 internal fun rememberShelfState(first: Any?): LazyListState {
