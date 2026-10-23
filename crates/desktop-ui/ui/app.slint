@@ -4317,81 +4317,6 @@ component ShowAllButton inherits Rectangle {
     }
 }
 
-// A page's buttons, as Android's: Shuffle, a wide Play, the page's seal where it has one, and its menu.
-component PageActions inherits HorizontalLayout {
-    in property <bool> seal;
-    in property <bool> liked;
-    // The menu offers Download.
-    in property <bool> download;
-    callback play(bool);
-    callback star();
-    callback later();
-    callback download-page();
-    property <length> side: 44px;
-    spacing: 10px;
-    IconButton {
-        y: (parent.height - self.height) / 2;
-        glyph: Icons.shuffle;
-        size: root.side;
-        icon: 22px;
-        ink: Theme.plate-ink;
-        base: Theme.plate;
-        clicked => { root.play(true); }
-    }
-    Capsule {
-        size: root.side;
-        text: "Play";
-        icon: Icons.play-solid;
-        clicked => { root.play(false); }
-    }
-    if root.seal: Rectangle {
-        y: (parent.height - self.height) / 2;
-        width: root.side;
-        height: root.side;
-        border-radius: self.height / 2;
-        background: Theme.plate;
-        Seal {
-            liked: root.liked;
-            size: 24px;
-            clicked => { root.star(); }
-        }
-    }
-    Rectangle {
-        y: (parent.height - self.height) / 2;
-        width: root.side;
-        height: root.side;
-        IconButton {
-            glyph: Icons.more-horiz;
-            size: root.side;
-            icon: 22px;
-            ink: Theme.plate-ink;
-            base: Theme.plate;
-            clicked => { menu.show(); }
-        }
-        menu := PopupWindow {
-            x: 0;
-            y: root.side + 4px;
-            width: 220px;
-            close-policy: close-on-click-outside;
-            Popover {
-                VerticalLayout {
-                    padding: 6px;
-                    MenuRow {
-                        icon: Icons.playlist;
-                        text: "Add to Queue";
-                        clicked => { root.later(); menu.close(); }
-                    }
-                    if root.download: MenuRow {
-                        icon: Icons.download;
-                        text: "Download";
-                        clicked => { root.download-page(); menu.close(); }
-                    }
-                }
-            }
-        }
-    }
-}
-
 // Where the window is dragged from, and double-clicked to zoom: the content runs up under the titlebar.
 component TitleStrip inherits TouchArea {
     callback drag;
@@ -4644,9 +4569,18 @@ export component AppWindow inherits Window {
     callback all-songs(int);
     // An artist's releases, a shelf per kind (pages.rs's `release_groups`).
     in property <[Shelf]> page-shelves;
-    // The page wears its cover's colours: the blurred cover (nori-look's wash) runs out into the page's own
-    // colour, so there is no line where the picture stops.
-    in property <image> page-wash;
+    // A mix's covers, two by two in the cover's place.
+    in property <[string]> page-covers;
+    // The list head's glyphs, the core's `page_actions` in their order: 0 download, 1 download the rest, 2
+    // remove the download, 3 download everything, 4 add to queue, 5 a new draw.
+    in property <[int]> page-acts;
+    callback page-act(int);
+    // The page's Shuffle and Play for the queue it started (the core's `hero_buttons`).
+    in property <bool> page-shuffle-lit;
+    in property <bool> page-pausing;
+    // A mix can be kept on the account as a playlist.
+    in property <bool> page-can-save;
+    callback page-save();
     // Colors from the cover on album and artist pages and in Now Playing; off in Midnight.
     in property <bool> covers-tint: true;
 
@@ -4916,8 +4850,6 @@ export component AppWindow inherits Window {
     callback queue-card(int, string, bool);
     callback play-mix(string);
     // The page's songs added at the end of the queue.
-    callback page-later();
-    callback page-download();
     // The album's or artist's seal: offered where the profile keeps the account's favorites, and its state.
     in property <bool> page-can-star;
     in property <bool> page-starred;
@@ -5088,24 +5020,6 @@ export component AppWindow inherits Window {
 
         if root.view != 7: Rectangle {
             visible: full-screen.opacity < 1;
-            // A page that wears its cover's colour: the colour and the wash behind it.
-            if root.view == 6: Rectangle {
-                width: parent.width;
-                background: Theme.ground;
-                Image {
-                    y: 0;
-                    width: 100%;
-                    height: 440px;
-                    visible: root.covers-tint;
-                    source: root.page-wash;
-                    image-fit: fill;
-                }
-                Rectangle {
-                    y: 0;
-                    height: 440px;
-                    background: @linear-gradient(180deg, Theme.ground.with-alpha(0.15) 0%, Theme.ground.with-alpha(0.55) 55%, Theme.ground 100%);
-                }
-            }
             // The page; it runs up under the top pill and under the player pill, and gives the panel its room.
             Rectangle {
                 x: 0;
@@ -5655,179 +5569,203 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                // An album, an artist or a playlist, as iOS 27 draws its artist pages: the picture dissolves
-                // into the page, and the page takes its colour.
+                // An album, an artist, a playlist or a mix, as Android lays one out on a wide screen: the picture
+                // fills the page's left part from top to bottom and goes soft at its right edge, under the name,
+                // the buttons, the list's head and the list on the right. The page is the season's paper dyed
+                // with the cover.
                 if root.view == 6: Fade {
                     push: true;
+                    property <length> words-at: min(max(self.width * 0.45, 360px), self.width * 0.5);
+                    // The picture: the cover, a mix's four covers two by two, or the plate a missing one shows.
                     Rectangle {
-                        // An artist: the picture across the page's whole width, drifting up slower than the page
-                        // as it scrolls, and dissolving into the page's colour.
-                        if root.page-kind == 1: Rectangle {
-                            y: max(-self.height, page-flick.content-y * 0.45);
-                            width: parent.width;
-                            height: max(420px, root.height * 0.64);
-                            opacity: 1 + max(-0.8, page-flick.content-y / self.height);
-                            clip: true;
-                            Image {
-                                width: 100%;
-                                height: 100%;
-                                source: root.art(root.page-art, 2, root.covers-rev);
-                                image-fit: cover;
-                                opacity: self.source.width > 0 ? 1 : 0;
-                                animate opacity { duration: Motion.reduced ? 0ms : 400ms; easing: ease-out; }
-                            }
-                            Rectangle {
-                                background: @linear-gradient(180deg, Theme.ground.with-alpha(0) 0%, Theme.ground.with-alpha(0) 45%, Theme.ground.with-alpha(0.7) 78%, Theme.ground 100%);
-                            }
+                        x: 0;
+                        y: 0;
+                        width: parent.words-at + 28px;
+                        height: parent.height;
+                        clip: true;
+                        background: Theme.fill;
+                        Image {
+                            width: 100%;
+                            height: 100%;
+                            source: root.page-covers.length >= 4 ? root.pick-art(root.page-covers, root.covers-rev) : root.art(root.page-art, root.page-kind == 1 ? 2 : 1, root.covers-rev);
+                            image-fit: cover;
+                            opacity: self.source.width > 0 ? 1 : 0;
+                            animate opacity { duration: Motion.reduced ? 0ms : 400ms; easing: ease-out; }
                         }
-
-                        page-flick := Flickable {
-                            // Up and down only: a long title or row is cut to the page, never scrolled sideways.
-                            content-width: self.width;
-                            content-height: detail.preferred-height;
-                            detail := VerticalLayout {
-                                width: parent.width;
-                                padding-left: 32px;
-                                padding-right: 32px;
-                                padding-top: Chrome.top-room + 8px;
-                                padding-bottom: 100px;
-                                spacing: 26px;
-                                // An artist: the name and the play button over the bottom of the picture.
-                                if root.page-kind == 1: VerticalLayout {
-                                    spacing: 16px;
-                                    Rectangle {
-                                        height: max(420px, root.height * 0.64) - Chrome.top-room - 8px - 170px - (root.page-caption != "" ? 32px : 0);
-                                    }
-                                    Text {
-                                        text: root.page-title;
-                                        color: Theme.text;
-                                        font-family: Type.title;
-                                        font-size: 44px;
-                                        font-weight: 800;
-                                        letter-spacing: -1px;
-                                        horizontal-alignment: center;
-                                    }
-                                    if root.page-caption != "": Text {
-                                        text: root.page-caption;
-                                        color: Theme.dim;
-                                        font-size: 13px;
-                                        font-weight: 600;
-                                        horizontal-alignment: center;
-                                    }
+                        // Its right edge rubbed out into the page over its last 30 % (nori_look::sleeve's across stops).
+                        Rectangle {
+                            background: @linear-gradient(90deg, Theme.ground.with-alpha(0) 70%, Theme.ground.with-alpha(0.104) 76%, Theme.ground.with-alpha(0.352) 82%, Theme.ground.with-alpha(0.648) 88%, Theme.ground.with-alpha(0.896) 94%, Theme.ground 100%);
+                        }
+                    }
+                    page-flick := Flickable {
+                        x: parent.words-at;
+                        width: parent.width - self.x;
+                        // Up and down only: a long title or row is cut to the page, never scrolled sideways.
+                        content-width: self.width;
+                        content-height: detail.preferred-height;
+                        detail := VerticalLayout {
+                            width: parent.width;
+                            padding-left: 20px;
+                            padding-right: 20px;
+                            padding-top: Chrome.top-room + 12px;
+                            padding-bottom: 100px;
+                            // The name, and the artist under it in ink, a way to their page.
+                            Text {
+                                text: root.page-title;
+                                color: Theme.text;
+                                font-family: Type.title;
+                                font-size: root.page-kind == 1 ? 32px : 27px;
+                                font-weight: 700;
+                                letter-spacing: -0.3px;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                                overflow: elide;
+                                max-height: self.font-size * 2.6;
+                            }
+                            if root.page-sub != "": HorizontalLayout {
+                                padding-top: 3px;
+                                alignment: center;
+                                Link {
+                                    text: root.page-sub;
+                                    artist: root.page-sub-artist;
+                                    color: Theme.text;
+                                    font-size: 17px;
+                                    font-weight: 500;
+                                    overflow: elide;
+                                }
+                            }
+                            // Shuffle · Play · the page's seal, or a mix's Save as playlist: bare glyphs either side
+                            // of an ink pill that fills the row. Play is Pause, and Shuffle lit, while the queue this
+                            // page started plays (the core's `hero_buttons`).
+                            HorizontalLayout {
+                                padding-top: 12px;
+                                spacing: 4px;
+                                IconButton {
+                                    y: (parent.height - self.height) / 2;
+                                    glyph: Icons.shuffle;
+                                    lit: root.page-shuffle-lit;
+                                    size: 48px;
+                                    icon: 24px;
+                                    clicked => { root.play-page(true); }
+                                }
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    height: 46px;
+                                    border-radius: self.height / 2;
+                                    background: Theme.pill;
+                                    opacity: play-touch.pressed ? 0.75 : 1;
                                     HorizontalLayout {
                                         alignment: center;
-                                        PageActions {
-                                            seal: root.page-can-star;
-                                            liked: root.page-starred;
-                                            download: root.downloads;
-                                            play(shuffle) => { root.play-page(shuffle); }
-                                            star => { root.page-star(); }
-                                            later => { root.page-later(); }
-                                            download-page => { root.page-download(); }
-                                        }
-                                    }
-                                }
-                                // An album or a playlist: the artwork beside its title, as the Mac lays them out.
-                                if root.page-kind != 1: HorizontalLayout {
-                                    spacing: 28px;
-                                    alignment: start;
-                                    Art {
-                                        width: 270px;
-                                        height: 270px;
-                                        border-radius: 10px;
-                                                        source: root.art(root.page-art, 1, root.covers-rev);
-                                    }
-                                    VerticalLayout {
-                                        spacing: 2px;
-                                        Rectangle {
-                                            height: 64px;
+                                        spacing: 7px;
+                                        Icon {
+                                            y: (parent.height - self.height) / 2;
+                                            glyph: root.page-pausing ? Icons.pause-solid : Icons.play-solid;
+                                            colour: Theme.pill-ink;
+                                            width: 18px;
+                                            height: 18px;
                                         }
                                         Text {
-                                            text: root.page-title;
-                                            color: Theme.text;
-                                            font-size: 26px;
-                                            font-weight: 700;
-                                            wrap: word-wrap;
-                                        }
-                                        if root.page-sub != "": Link {
-                                            text: root.page-sub;
-                                            artist: root.page-sub-artist;
-                                            color: Theme.dim;
-                                            font-size: 26px;
-                                            wrap: word-wrap;
-                                        }
-                                        Text {
-                                            text: root.page-caption;
-                                            color: Theme.dim;
-                                            font-size: 12px;
+                                            text: root.page-pausing ? "Pause" : "Play";
+                                            color: Theme.pill-ink;
+                                            font-size: 15px;
                                             font-weight: 600;
-                                        }
-                                        Rectangle {
-                                            vertical-stretch: 1;
-                                        }
-                                        PageActions {
-                                            alignment: start;
-                                            seal: root.page-can-star && root.page-kind == 0;
-                                            liked: root.page-starred;
-                                            download: root.downloads;
-                                            play(shuffle) => { root.play-page(shuffle); }
-                                            star => { root.page-star(); }
-                                            later => { root.page-later(); }
-                                            download-page => { root.page-download(); }
+                                            vertical-alignment: center;
                                         }
                                     }
-                                }
-                                if root.page-kind == 1: ReleaseShelves {
-                                    shelves: root.page-shelves;
-                                    titled: true;
-                                    rev: root.covers-rev;
-                                    art(a, s, r) => { return root.art(a, s, r); }
-                                    open(c) => { root.open-album(c.id); }
-                                    play(c) => { root.play-album(c.id); }
-                                    queue(c, next) => { root.queue-card(0, c.id, next); }
-                                    jam(c) => { root.jam-play(0, c.id); }
-                                }
-                                if root.page-kind == 1 && root.page-songs.length > 0: SectionTitle {
-                                    text: "Songs";
-                                }
-                                // Only the rows on screen (and a few either side) are made: a playlist of thousands
-                                // opens as fast as one of ten.
-                                song-rows := Rectangle {
-                                    // A playlist's and an artist's songs come from many albums: each row shows its cover and album.
-                                    property <bool> mixed: root.page-kind != 0;
-                                    property <length> row-h: self.mixed ? 56px : 44px;
-                                    // Their column heads, right over the rows.
-                                    property <length> head: self.mixed && root.page-songs.length > 0 ? 28px : 0;
-                                    property <length> seen-from: -page-flick.content-y - self.y - self.head - 400px;
-                                    property <length> seen-to: -page-flick.content-y - self.y - self.head + page-flick.height + 400px;
-                                    height: self.head + root.page-songs.length * self.row-h;
-                                    if song-rows.head > 0: SongHeads {
-                                        y: 0;
-                                        height: song-rows.head;
-                                    }
-                                    for s[i] in root.page-songs: Rectangle {
-                                        y: song-rows.head + i * song-rows.row-h;
-                                        height: song-rows.row-h;
-                                        if (i + 1) * song-rows.row-h > song-rows.seen-from && i * song-rows.row-h < song-rows.seen-to: SongLine {
-                                            width: parent.width;
-                                            song: s;
-                                            number: s.index + 1;
-                                            table: song-rows.mixed;
-                                            show-album: song-rows.mixed;
-                                            thumb: song-rows.mixed;
-                                            picture: song-rows.mixed ? root.art(s.art, 0, root.covers-rev) : root.art("", 0, 0);
-                                            play => { root.song(0, s.index, -1); }
-                                            menu => { return root.song-menu(0, s.index); }
-                                            act(kind, id) => { root.song(0, s.index, kind); }
-                                        }
+                                    play-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.play-page(false); }
                                     }
                                 }
-                                if root.page-songs-more: HorizontalLayout {
-                                    alignment: start;
-                                    ShowAllButton {
-                                        text: root.show-all-text;
-                                        clicked => { root.all-songs(0); }
+                                if root.page-can-star && !root.page-mix: Seal {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 48px;
+                                    height: 48px;
+                                    size: 24px;
+                                    liked: root.page-starred;
+                                    clicked => { root.page-star(); }
+                                }
+                                if root.page-can-save: IconButton {
+                                    y: (parent.height - self.height) / 2;
+                                    glyph: Icons.plus-circle;
+                                    size: 48px;
+                                    icon: 24px;
+                                    clicked => { root.page-save(); }
+                                }
+                            }
+                            // The list's head: what it is ("2019 · 8 songs · 36:28 · FLAC") and the core's glyphs for
+                            // its songs (`page_actions`), a hairline under.
+                            HorizontalLayout {
+                                padding-top: 6px;
+                                height: 54px;
+                                spacing: 2px;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: root.page-caption;
+                                    color: Theme.dim;
+                                    font-size: 13px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                for a in root.page-acts: IconButton {
+                                    y: (parent.height - self.height) / 2;
+                                    glyph: a == 2 ? Icons.check-circle : a == 4 ? Icons.playlist : a == 5 ? Icons.refresh : Icons.download;
+                                    quiet: true;
+                                    size: 44px;
+                                    icon: 24px;
+                                    clicked => { root.page-act(a); }
+                                }
+                            }
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.hairline;
+                            }
+                            Rectangle {
+                                height: 10px;
+                            }
+                            if root.page-kind == 1: ReleaseShelves {
+                                shelves: root.page-shelves;
+                                titled: true;
+                                rev: root.covers-rev;
+                                art(a, s, r) => { return root.art(a, s, r); }
+                                open(c) => { root.open-album(c.id); }
+                                play(c) => { root.play-album(c.id); }
+                                queue(c, next) => { root.queue-card(0, c.id, next); }
+                                jam(c) => { root.jam-play(0, c.id); }
+                            }
+                            if root.page-kind == 1 && root.page-songs.length > 0: SectionTitle {
+                                text: "Songs";
+                            }
+                            // Only the rows on screen (and a few either side) are made: a playlist of thousands
+                            // opens as fast as one of ten.
+                            song-rows := Rectangle {
+                                // A playlist's, a mix's and an artist's songs come from many albums: each row shows its cover.
+                                property <bool> mixed: root.page-kind != 0;
+                                property <length> row-h: self.mixed ? 56px : 44px;
+                                property <length> seen-from: -page-flick.content-y - self.y - 400px;
+                                property <length> seen-to: -page-flick.content-y - self.y + page-flick.height + 400px;
+                                height: root.page-songs.length * self.row-h;
+                                for s[i] in root.page-songs: Rectangle {
+                                    y: i * song-rows.row-h;
+                                    height: song-rows.row-h;
+                                    if (i + 1) * song-rows.row-h > song-rows.seen-from && i * song-rows.row-h < song-rows.seen-to: SongLine {
+                                        width: parent.width;
+                                        song: s;
+                                        number: s.index + 1;
+                                        show-album: false;
+                                        thumb: song-rows.mixed;
+                                        picture: song-rows.mixed ? root.art(s.art, 0, root.covers-rev) : root.art("", 0, 0);
+                                        play => { root.song(0, s.index, -1); }
+                                        menu => { return root.song-menu(0, s.index); }
+                                        act(kind, id) => { root.song(0, s.index, kind); }
                                     }
+                                }
+                            }
+                            if root.page-songs-more: HorizontalLayout {
+                                alignment: start;
+                                ShowAllButton {
+                                    text: root.show-all-text;
+                                    clicked => { root.all-songs(0); }
                                 }
                             }
                         }

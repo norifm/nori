@@ -107,6 +107,18 @@ pub fn albums(n: u32) -> String {
     count(n, "album", "albums")
 }
 
+/// An artist page's list head: "14 releases · 162 songs", or the songs its page lists where it has no releases.
+pub fn artist_caption(releases: usize, songs_in_releases: usize, songs_listed: usize) -> String {
+    if releases == 0 {
+        return if songs_listed > 0 { songs(songs_listed) } else { String::new() };
+    }
+    let mut parts = vec![count(releases as u64, "release", "releases")];
+    if songs_in_releases > 0 {
+        parts.push(songs(songs_in_releases));
+    }
+    parts.join(" · ")
+}
+
 /// An artist's shelf heading: "Albums", "EPs", or a type nori does not know by its tag ("Mixtapes").
 pub fn release_shelf(g: &ReleaseGroup) -> String {
     match g.kind {

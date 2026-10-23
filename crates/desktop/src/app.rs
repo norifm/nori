@@ -9,6 +9,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use nori_core::browse::AlbumSort;
+use nori_core::menus::PageKind;
 use nori_core::search::SearchView;
 use nori_core::settings::SavedServer;
 use nori_core::Song;
@@ -359,6 +360,8 @@ pub struct App {
     /// The artist page's Show all pressed: every song listed, not the first few.
     page_songs_all: bool,
     page_fetch: Option<Fetch>,
+    /// The mix shown, its id and its name: it can be drawn again and kept as a playlist.
+    page_mix: Option<(String, String)>,
     songs: Vec<Song>,
     search_songs: Vec<Song>,
     /// Search's Show all pressed, for the query in `search_query`.
@@ -578,6 +581,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             page_songs: Vec::new(),
             page_songs_all: false,
             page_fetch: None,
+            page_mix: None,
             songs: Vec::new(),
             search_songs: Vec::new(),
             search_songs_all: false,
@@ -791,13 +795,9 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_add_to_playlist, h, |a, id| a.add_to_playlist(Ok(id.into())));
     on!(ui.on_add_to_new_playlist, h, |a, name| a.add_to_playlist(Err(name.into())));
     on!(ui.on_play_page, h, |a, shuffle| a.play_page(shuffle));
-    on!(ui.on_page_later, h, |a| a.enqueue_page());
     on!(ui.on_page_star, h, |a| a.star_page());
-    on!(ui.on_page_download, h, |a| {
-        if let Some(fetch) = a.page_fetch.clone() {
-            a.on_session(|s| { if s.rules().downloads { s.download_later(fetch); } });
-        }
-    });
+    on!(ui.on_page_act, h, |a, act| a.page_act(act));
+    on!(ui.on_page_save, h, |a| a.save_mix());
     on!(ui.on_more, h, |a| a.more_songs());
     on!(ui.on_search_edited, h, |a, t| a.search_edited(&t));
     on!(ui.on_search_again, h, |a, t| a.search_again(&t));
@@ -1228,6 +1228,10 @@ impl App {
         ui.set_page_sub_artist("".into());
         ui.set_page_caption("".into());
         ui.set_page_art("".into());
+        ui.set_page_covers(ModelRc::default());
+        ui.set_page_acts(ModelRc::default());
+        ui.set_page_can_save(false);
+        self.page_mix = None;
         ui.set_page_songs(ModelRc::default());
         ui.set_page_shelves(ModelRc::default());
         self.page_colours(None);
@@ -1245,7 +1249,6 @@ impl App {
 
     /// The page's cover (an album's or artist's), whose colors the page wears, or none.
     fn page_colours(&mut self, c: Option<&CoverColours>) {
-        self.ui().set_page_wash(c.and_then(|c| self.dyed_wash(c)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
     }
@@ -1464,48 +1467,148 @@ impl App {
                 ui.set_page_caption(caption.join(" · ").into());
                 self.set_page_art(d.album.cover_art.clone());
                 self.page_songs = d.songs;
+                self.page_actions(PageKind::Album);
                 self.show_page_songs();
             }
             Data::Page(PageGot::Artist(d)) if shown => {
                 ui.set_page_starred(self.session.as_ref().is_some_and(|s| s.core.starred(nori_core::client::Starrable::Artist, &d.artist.id, d.artist.starred)));
                 ui.set_page_title(d.artist.name.as_str().into());
                 ui.set_page_sub("".into());
-                let caption = if d.albums.is_empty() && !d.songs.is_empty() { words::songs(d.songs.len()) } else { words::albums(d.albums.len() as u32) };
-                ui.set_page_caption(caption.into());
+                ui.set_page_caption(words::artist_caption(d.albums.len(), d.albums.iter().map(|a| a.song_count as usize).sum(), d.songs.len()).into());
                 self.set_page_art(d.artist.cover_art.clone().or_else(|| d.albums.first().and_then(|a| a.cover_art.clone())));
                 let card = |a: &nori_core::Album| Card { sub: if a.year > 0 { a.year.to_string().into() } else { "".into() }, sub_artist: SharedString::default(), ..album_card(a) };
                 let shelves = d.groups.iter().map(|g| Shelf { title: words::release_shelf(g).into(), cards: cards(g.albums.iter().filter_map(|&i| d.albums.get(i as usize)).map(card)), loaded: true });
                 ui.set_page_shelves(ModelRc::new(VecModel::from(shelves.collect::<Vec<_>>())));
                 self.page_songs = d.songs;
+                self.page_actions(PageKind::Artist);
                 self.show_page_songs();
             }
             Data::Page(PageGot::Playlist(d)) if shown => {
                 ui.set_page_title(d.playlist.name.as_str().into());
-                ui.set_page_sub(d.playlist.owner.clone().unwrap_or_default().into());
-                ui.set_page_caption(words::songs_caption(d.songs.len(), d.seconds).into());
+                let notes = crate::session::app().settings.prefs(|p| p.playlist_notes);
+                ui.set_page_sub(nori_core::pages::playlist_description(d.playlist.comment.clone(), notes).unwrap_or_default().into());
+                ui.set_page_caption(if d.songs.is_empty() { String::new() } else { words::songs_caption(d.songs.len(), d.seconds) }.into());
                 self.set_page_art(d.playlist.cover_art.clone());
                 self.page_songs = d.songs;
+                self.page_actions(PageKind::Playlist);
                 self.show_page_songs();
             }
             Data::Page(PageGot::Mix(m)) if shown => {
                 ui.set_page_title(words::mix_name(m.name).into());
-                ui.set_page_sub(words::mix_caption(m.favourites).into());
-                ui.set_page_caption(words::songs_caption(m.songs.len(), m.seconds).into());
+                ui.set_page_caption(if m.songs.is_empty() { String::new() } else { words::songs_caption(m.songs.len(), m.seconds) }.into());
+                ui.set_page_covers(ModelRc::new(VecModel::from(m.covers.iter().map(SharedString::from).collect::<Vec<_>>())));
+                ui.set_page_can_save(self.session.as_ref().is_some_and(|s| s.rules().account) && !m.songs.is_empty());
                 self.set_page_art(m.covers.first().cloned());
                 self.page_songs = m.songs;
+                self.page_mix = Some((m.id.clone(), words::mix_name(m.name).to_string()));
+                self.page_actions(PageKind::Mix { refreshable: m.refreshable });
                 self.show_page_songs();
             }
             Data::Page(PageGot::Album(_) | PageGot::Artist(_) | PageGot::Playlist(_) | PageGot::Mix(_)) => {}
         }
     }
 
-    /// Sets the page picture. An album's or artist's page wears its cover's colors; a playlist's stays plain.
+    /// Sets the page picture, whose colors the page wears: a mix's first cover's.
     fn set_page_art(&mut self, art: Option<String>) {
         let art = art.unwrap_or_default();
         let ui = self.ui();
         ui.set_page_art(art.as_str().into());
-        let c = self.art.borrow().colours.get(&art).cloned().filter(|_| ui.get_page_kind() != 2);
+        let c = self.art.borrow().colours.get(&art).cloned();
         self.page_colours(c.as_deref());
+    }
+
+    /// The list head's glyphs for the page's songs (the core's `page_actions`), how many are not downloaded
+    /// read once, and its Shuffle and Play.
+    fn page_actions(&mut self, kind: PageKind) {
+        use nori_core::menus::{page_actions, DownloadAct, PageAction, SongDownload};
+        let Some(s) = &self.session else { return };
+        let ids: Vec<&str> = self.page_songs.iter().map(|s| s.id.as_str()).collect();
+        let missing = s.download_states(&ids).iter().filter(|d| **d != SongDownload::Done).count();
+        let acts: Vec<i32> = page_actions(kind, ids.len() as u32, missing as u32, s.rules().downloads)
+            .into_iter()
+            .filter_map(|a| match a {
+                PageAction::Download { act: DownloadAct::All } => Some(0),
+                PageAction::Download { act: DownloadAct::Missing } => Some(1),
+                PageAction::Download { act: DownloadAct::Remove } => Some(2),
+                PageAction::DownloadEverything => Some(3),
+                PageAction::AddToQueue => Some(4),
+                PageAction::Refresh => Some(5),
+                PageAction::Edit => None,
+            })
+            .collect();
+        self.ui().set_page_acts(ModelRc::new(VecModel::from(acts)));
+        self.hero_shown();
+    }
+
+    /// A list head glyph pressed ([`App::page_actions`]'s numbers).
+    fn page_act(&mut self, act: i32) {
+        let Some(fetch) = self.page_fetch.clone() else { return };
+        match act {
+            0 | 3 => self.on_session(|s| s.download_later(fetch)),
+            1 => {
+                let Some(s) = &self.session else { return };
+                let ids: Vec<&str> = self.page_songs.iter().map(|s| s.id.as_str()).collect();
+                let states = s.download_states(&ids);
+                let missing = self.page_songs.iter().zip(states).filter(|(_, d)| *d != nori_core::menus::SongDownload::Done).map(|(s, _)| s.clone()).collect();
+                s.download(missing);
+            }
+            2 => self.on_session(|s| self.page_songs.iter().for_each(|song| s.download_remove(&song.id))),
+            4 if matches!(fetch, Fetch::Artist(_)) => self.on_session(|s| s.enqueue_later(fetch, false)),
+            4 => self.enqueue_page(),
+            5 => self.redraw_mix(),
+            _ => {}
+        }
+        if act != 5 {
+            let kind = self.ui().get_page_kind();
+            self.page_actions(match (kind, &self.page_mix) {
+                (0, _) => PageKind::Album,
+                (1, _) => PageKind::Artist,
+                (_, Some(_)) => PageKind::Mix { refreshable: true },
+                _ => PageKind::Playlist,
+            });
+        }
+    }
+
+    /// The mix shown drawn again, then shown anew.
+    fn redraw_mix(&self) {
+        let (Some((id, _)), Some(s)) = (self.page_mix.clone(), &self.session) else { return };
+        let (client, core, tx) = (s.client.clone(), s.core.clone(), self.tx.clone());
+        nori_host::spawn("nori-mix-redraw", move || {
+            nori_core::transport::block_on(client.mix_ensure(id.clone(), true));
+            if let nori_core::mixes::board::MixLookup::Ready { sheet } = core.mix_page(id.clone()) {
+                tx.send(Msg::Data(Req::Page(PageAsk::Mix(id)), Ok(Data::Page(PageGot::Mix(Box::new(sheet))))));
+            }
+        });
+    }
+
+    /// The mix shown kept on the account as a playlist, named by the core (`saved_mix_name`): "nori <mix>",
+    /// counted on when that is taken.
+    fn save_mix(&self) {
+        let (Some((_, title)), Some(s)) = (self.page_mix.clone(), &self.session) else { return };
+        let (client, tx) = (s.client.clone(), self.tx.clone());
+        let ids: Vec<String> = self.page_songs.iter().map(|s| s.id.clone()).collect();
+        nori_host::spawn("nori-mix-save", move || {
+            use nori_core::cache_policy::{Page, Read};
+            let existing = match nori_core::transport::block_on(client.read_now(Read::PlaylistList)) {
+                Ok(Page::Playlists { v }) => v.into_iter().map(|p| p.name).collect(),
+                _ => Vec::new(),
+            };
+            let name = nori_core::menus::saved_mix_name(title, existing);
+            let note = match nori_core::transport::block_on(client.write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: ids })) {
+                Ok(_) => Msg::Note { text: words::playlist_created(&name), error: false },
+                Err(e) => Msg::Note { text: words::playlist_failed(&words::net_error(&e)), error: true },
+            };
+            tx.send(note);
+        });
+    }
+
+    /// The page's Shuffle and Play for the queue it started (the core's `hero_buttons`).
+    fn hero_shown(&self) {
+        let (Some(fetch), Some(s)) = (&self.page_fetch, &self.session) else { return };
+        let ui = self.ui();
+        let b = s.page_buttons(&fetch.origin(), ui.get_playing(), ui.get_buffering());
+        ui.set_page_shuffle_lit(b.shuffle_lit);
+        ui.set_page_pausing(b.pausing);
     }
 
     /// Songs as rows filtered by the find text; each row keeps its index in `songs`.
@@ -1921,6 +2024,12 @@ impl App {
     fn play_page(&self, shuffle: bool) {
         let Some(fetch) = self.page_fetch.clone() else { return };
         if shuffle && self.session.as_ref().is_some_and(|s| s.shuffle_page(&fetch.origin())) {
+            return;
+        }
+        // The queue this page started: Play pauses and resumes it.
+        let ui = self.ui();
+        if !shuffle && self.session.as_ref().is_some_and(|s| s.page_buttons(&fetch.origin(), ui.get_playing(), ui.get_buffering()).play_press == nori_core::pages::HeroPress::Toggle) {
+            self.on_session(|s| s.toggle());
             return;
         }
         // An artist's Play is all its songs, not the few its page lists.
@@ -3045,6 +3154,9 @@ impl App {
         let playing = now.playing;
         ui.set_playing(playing);
         ui.set_mixing(now.mixing && now.state == State::Playing);
+        if ui.get_view() == PAGE {
+            self.hero_shown();
+        }
         position_shown(&ui, self.player.as_ref(), now.position_now() as i32);
         self.lyrics_seen();
         if now.song.as_ref().map(|s| &s.id) != self.heard.as_ref() {
