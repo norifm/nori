@@ -652,8 +652,11 @@ impl SkiaRenderer {
         retained: bool,
     ) -> Result<Option<DirtyRegion>, PlatformError> {
         let adapter = self.window_adapter()?;
+        // NORI: The layer's surface outlives the frame: its canvas must not keep this frame's repaint clip.
+        let canvas = surface.canvas();
+        let saved = canvas.save();
         let damage = self.render_to_canvas(
-            surface.canvas(),
+            canvas,
             0.,
             (0., 0.),
             Some(context),
@@ -662,6 +665,7 @@ impl SkiaRenderer {
             adapter.window(),
             None,
         );
+        canvas.restore_to_count(saved);
         context.flush_and_submit_surface(surface, None);
         Ok(damage)
     }
