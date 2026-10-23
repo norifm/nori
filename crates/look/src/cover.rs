@@ -9,7 +9,11 @@ use crate::palette;
 use crate::random::JavaRandom;
 
 /// Fraction of the sleeve's height that fades into the page.
-pub const MELT: f32 = 0.19;
+pub const FADE_SHARE: f32 = 0.38;
+
+/// Fraction of the cover's height at its bottom that the page colours are sampled from (the wash's
+/// edge, the seam's band): the depth of fade they were tuned against, kept so they stay as tuned.
+pub const SAMPLE_SHARE: f32 = 0.19;
 
 /// Side of the wash computation grid (16 lost all shape).
 pub const WASH: usize = 32;
@@ -30,7 +34,7 @@ pub struct CoverColours {
     pub accent: u32,
     /// Blurred cover muted towards the page, [`WASH_OUT`]² pixels; `None` on AMOLED black.
     pub wash: Option<Vec<u32>>,
-    /// Average of the wash's bottom [`MELT`] rows (visible where the sleeve fades); `edge` without a wash.
+    /// Average of the wash's bottom [`SAMPLE_SHARE`] rows (visible where the sleeve fades); `edge` without a wash.
     pub wash_edge: u32,
 }
 
@@ -91,6 +95,12 @@ fn page_of(colour: u32) -> u32 {
     if hsl[2] - color_to_hsl(darker)[2] <= color_to_hsl(lighter)[2] - hsl[2] { darker } else { lighter }
 }
 
+/// How much of a colour's HSL saturation is its own rather than noise, by its Oklab `chroma`: none under
+/// 0.006, all from 0.016, so JPEG noise or a scanner cast tints nothing while real creams stay.
+pub(crate) fn own_tint(chroma: f32) -> f32 {
+    ((chroma - 0.006) / 0.010).clamp(0.0, 1.0)
+}
+
 /// Derives page colours from `w` x `h` ARGB pixels (at least 1 x 1: every decoder rejects empty images).
 /// The page is a colour of the cover, whatever the app's theme: the one it dissolves into most softly
 /// ([`Seam`]). With `amoled` it is black, without a wash.
@@ -102,13 +112,12 @@ pub fn derive(pixels: &[u32], w: usize, h: usize, amoled: bool) -> CoverColours 
     let body_grey = ok.lightness_chroma(body).1 < GREY;
     let source = seam.frame.unwrap_or(seam.colour);
     let (source_light, source_colour) = ok.lightness_chroma(source);
-    // Paper and ink: a near-neutral page, light or dark. Their tint fades out below 0.016 chroma and is
-    // gone under 0.006, so JPEG noise or a scanner cast does not tint the page while real creams stay.
+    // Paper and ink: a near-neutral page, light or dark; noise does not tint it ([`own_tint`]).
     let neutral = source_colour < PAPER_CHROMA;
     let paper = neutral && source_light >= 0.79;
     let ink = source_colour < GREY && source_light < 0.21;
     let mut source_hsl = color_to_hsl(source);
-    source_hsl[1] *= ((source_colour - 0.006) / 0.010).clamp(0.0, 1.0);
+    source_hsl[1] *= own_tint(source_colour);
     let background = if amoled { BLACK } else { page_of(hsl_to_color(source_hsl)) };
     let on = text_on(background);
     // A monochrome sleeve's accent is its own tint, unless a vivid colour covers 1 % of it (Parachutes'
@@ -223,7 +232,7 @@ fn wash_of(pixels: &[u32], w: usize, h: usize, background: u32, on: u32, paper: 
             *p = background;
         }
     }
-    let first = ((WASH as f32 * (1.0 - MELT)) as usize).min(WASH - 1);
+    let first = ((WASH as f32 * (1.0 - SAMPLE_SHARE)) as usize).min(WASH - 1);
     let (mut r, mut g, mut b) = (0f32, 0f32, 0f32);
     for y in first..WASH {
         for x in 0..WASH {
@@ -528,11 +537,11 @@ const PLAYER_SLEEVE: f32 = 0.74;
 /// cell straddling two colours is a mix, not a colour of the cover.
 const CANDIDATES: usize = 8;
 const CANDIDATE_SHARE: f32 = 0.06;
-/// The band the artwork visibly dissolves in, as fractions of its height: from where the blurred copy is
-/// half in to where the player has nearly rubbed the sleeve out (`sleeve::RUB_OUT`) and the album's
-/// dissolve is nearly opaque (`sleeve::HERO_STOPS`).
-const SEAM_FROM: f32 = 1.0 - MELT * 1.6;
-const SEEN_TO: f32 = 1.0 - MELT * 0.55;
+/// The band the colours are sampled from, as fractions of the cover's height: where the artwork dissolves
+/// in a fade [`SAMPLE_SHARE`] deep, from where the blurred copy is half in to where the sleeve is nearly
+/// rubbed out (`sleeve::RUB_OUT`) and the album's dissolve is nearly opaque (`sleeve::HERO_STOPS`).
+const SEAM_FROM: f32 = 1.0 - SAMPLE_SHARE * 1.6;
+const SEEN_TO: f32 = 1.0 - SAMPLE_SHARE * 0.55;
 
 /// What the page meets. A frame round the whole cover thicker than the blur is the page (Syro's white, In
 /// Utero's cream). Otherwise each main colour of the cover's lower half is tried as the page, the
@@ -601,7 +610,8 @@ fn soften(px: &[u32]) -> Vec<u32> {
 }
 
 /// How hard the seam is with `page` under the artwork: down each column of the lower half, the sum of
-/// squared Oklab steps through what the player and the album page draw, ending on the page.
+/// squared Oklab steps through what the player and the album page draw, ending on the page. The player's
+/// fade is modelled [`SAMPLE_SHARE`] deep, as the colours were tuned.
 fn seam_cost(sharp: &[u32], blurred: &[u32], page: u32, ok: &Oklab) -> f32 {
     use crate::sleeve::{alpha_at, HERO_ALPHAS, HERO_STOPS, RUB_OUT, SOFT, SOFT_FROM, SOFT_TO, Stop};
     let n = GRID;
@@ -619,7 +629,7 @@ fn seam_cost(sharp: &[u32], blurred: &[u32], page: u32, ok: &Oklab) -> f32 {
             let i = y * n + x;
             if in_player {
                 let soft = alpha_at(&SOFT, (t - SOFT_FROM) / (SOFT_TO - SOFT_FROM));
-                let shown = 1.0 - alpha_at(&RUB_OUT, (t - (1.0 - MELT)) / MELT);
+                let shown = 1.0 - alpha_at(&RUB_OUT, (t - (1.0 - SAMPLE_SHARE)) / SAMPLE_SHARE);
                 let lab = ok.lab(blend_argb(page, blend_argb(sharp[i], blurred[i], soft), shown));
                 cost += player.map_or(0.0, |p| step(p, lab));
                 player = Some(lab);
@@ -1067,6 +1077,24 @@ mod tests {
         let (a, b) = (derive(&big, S * 6, S * 6, false), derive(&small, S, S, false));
         assert!(calculate_contrast(a.background, b.background) < 1.05, "{:08x} vs {:08x}", a.background, b.background);
         assert_eq!(a.on, b.on);
+    }
+
+    /// Blue down to orange, every band of rows its own colour.
+    fn graded() -> Vec<u32> {
+        (0..S * S).map(|i| blend_argb(0xFF20_40A0, 0xFFE0_7020, (i / S) as f32 / (S - 1) as f32)).collect()
+    }
+
+    #[test]
+    fn colours_are_sampled_from_the_sleeves_bottom_fifth() {
+        // Edge, page, text, accent and the wash's edge, as they were tuned; a deeper fade leaves them.
+        for (px, want) in [
+            (graded(), [0xFFB9_6538, 0xFFBB_6637, INK, INK, 0xFFB1_6B42]),
+            (tinted_paper(), [0xFFCB_CEEA, 0xFFCF_D2EC, INK, 0xFF21_2336, 0xFFCF_D2EC]),
+            (footed(0xFF30_60A0, 0xFF05_0505, 6), [0xFF2F_5F9E, 0xFF2F_5F9E, WHITE, 0xFFD1_E2F9, 0xFF2E_5C9A]),
+        ] {
+            let c = derive(&px, S, S, false);
+            assert_eq!([c.edge, c.background, c.on, c.accent, c.wash_edge], want);
+        }
     }
 
     #[test]

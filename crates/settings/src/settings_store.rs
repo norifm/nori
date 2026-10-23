@@ -140,7 +140,7 @@ impl SettingsStore {
             prefs.eq_mode = crate::settings::EqMode::Parametric;
         }
         let legacy = crate::settings::legacy(&raw);
-        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::old_screen_defaults(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
+        if raw.is_empty() || !chosen || legacy || crate::settings::picked(&raw) || crate::settings::pure_black(&raw) || crate::settings::old_screen_defaults(&raw) || raw.contains_key("jam") || raw.contains_key("jamAlong") {
             write(&mut c, &prefs)?;
         }
         if legacy {
@@ -387,7 +387,7 @@ impl SoundTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::{band_from, sound_json, CompressorPreset, EqMode, GainMode, HeadphoneSound, Level, SavedServer, EQ_MODE_KEY, EQ_RANGES};
+    use crate::settings::{band_from, sound_json, CompressorPreset, EqMode, GainMode, HeadphoneSound, Level, SavedServer, ThemeMode, EQ_MODE_KEY, EQ_RANGES};
 
     fn open(dir: &nori_testdir::TempDir) -> SettingsStore {
         SettingsStore::open(&dir.join("nori.db").display().to_string()).unwrap()
@@ -418,7 +418,7 @@ mod tests {
     fn effects_and_rebuilds() {
         let a = StoredPrefs::default();
         let cases = [
-            (StoredPrefs { amoled: !a.amoled, ..a.clone() }, 0),
+            (StoredPrefs { theme: ThemeMode::Midnight, ..a.clone() }, 0),
             (StoredPrefs { eq_bands: vec![band_from(0, 100.0, 3.0, 1.0, 0)], ..a.clone() }, SOUND),
             (StoredPrefs { eq_enabled: true, ..a.clone() }, APPLY_AUDIO | SOUND),
             (StoredPrefs { replay_gain: GainMode::Track, ..a.clone() }, APPLY_GAIN | REPLAN | SOUND),
@@ -476,11 +476,11 @@ mod tests {
         let (mut a, mut b) = (open(&dir), open(&dir));
         a.edit(|p| StoredPrefs { fade_ms: 400, ..p.clone() });
         background::flush();
-        b.edit(|p| StoredPrefs { amoled: !p.amoled, ..p.clone() });
+        b.edit(|p| StoredPrefs { theme: ThemeMode::Light, ..p.clone() });
         b.edit(|p| StoredPrefs { cache_mb: 4096, ..p.clone() });
         background::flush();
         let kept = open(&dir).prefs;
-        assert_eq!((kept.fade_ms, kept.amoled, kept.cache_mb), (400, !a.prefs.amoled, 4096));
+        assert_eq!((kept.fade_ms, kept.theme, kept.cache_mb), (400, ThemeMode::Light, 4096));
     }
 
     #[test]
@@ -640,7 +640,7 @@ mod tests {
             assert_eq!(stored, save(&prefs));
         }
         let (prefs, _) = open_old("old-changed", &stored_062(true));
-        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), (1, crate::settings::ThemeMode::Dark, 4096, false), "the rest as it was");
+        assert_eq!((prefs.servers.len(), prefs.theme, prefs.cache_mb, prefs.crossfade_keep_albums), (1, ThemeMode::Midnight, 4096, false), "the rest as it was, pure black with dark becoming Midnight");
     }
 
     #[test]
@@ -698,26 +698,21 @@ mod tests {
     }
 
     #[test]
-    fn old_cover_color_switches_become_places() {
-        use crate::settings::CoverPlace::*;
-        for (colors, amoled, player, album, artist, want) in [
-            (false, false, true, false, false, vec![]),
-            (true, false, false, false, false, vec![Pages, Player]),
-            (true, true, true, false, false, vec![Player]),
-            (true, true, false, true, false, vec![Pages]),
-            (true, true, false, false, true, vec![Pages]),
-            (true, true, true, true, true, vec![Pages, Player]),
-            (true, true, false, false, false, vec![]),
-        ] {
-            let raw = old(&[("coverColors", flag(colors)), ("amoled", flag(amoled)), ("playerColours", flag(player)), ("albumColours", flag(album)), ("artistColours", flag(artist))]);
-            assert_eq!(open_old("old-colors", &raw).0.cover_colors, want, "colors {colors}, AMOLED {amoled}, player {player}, album {album}, artist {artist}");
+    fn pure_black_with_the_dark_theme_becomes_midnight() {
+        use ThemeMode::*;
+        // (theme, pure black) -> theme; 0 is the system's, 1 light, 2 dark.
+        for (theme, pure_black, want) in [(2, true, Midnight), (2, false, Dark), (0, true, System), (1, true, Light), (3, false, Midnight)] {
+            let raw = old(&[("theme", number(theme)), ("amoled", flag(pure_black)), ("coverColorsOn", PrefValue::Text { v: "PAGES".into() })]);
+            let (p, stored) = open_old("pure-black", &raw);
+            assert_eq!(p.theme, want, "theme {theme}, pure black {pure_black}");
+            assert!(!stored.contains_key("amoled") && !stored.contains_key("coverColorsOn"), "{stored:?}");
+            assert_eq!(stored, save(&p), "stored once, as read");
         }
     }
 
     #[test]
     fn old_picks_become_conditions() {
         use crate::settings::AwakeWhen as A;
-        use crate::settings::CoverPlace as C;
         use crate::settings::HideBarWhen as H;
         let bars = [(0, vec![]), (1, vec![H::Sideways]), (2, vec![H::Upright]), (3, vec![H::Sideways, H::Upright]), (4, vec![H::Protected])];
         for (pick, want) in bars {
@@ -730,13 +725,11 @@ mod tests {
             assert_eq!(open_old("old-awake", &old(&[("keepAwake", number(pick))])).0.keep_awake, want, "{pick}");
         }
         // Stored by 0.6.3's first builds, with no key of 0.6.2's left.
-        for (pick, want) in [(0, vec![C::Pages, C::Player]), (1, vec![C::Pages]), (2, vec![C::Player]), (3, vec![])] {
-            let raw = HashMap::from([("coverColorsWhere".to_string(), number(pick)), ("keepAwake".to_string(), number(4)), ("motion".to_string(), number(2))]);
-            let (p, stored) = open_old("old-places", &raw);
-            assert_eq!((p.cover_colors, p.keep_awake, p.motion), (want, vec![A::Sideways, A::Upright], crate::settings::Motion::Eink), "{pick}");
-            assert_eq!(stored, save(&load(&stored)), "stored once, as read");
-            assert!(!crate::settings::PICK_KEYS.iter().any(|k| stored.contains_key(*k)), "{stored:?}");
-        }
+        let raw = HashMap::from([("coverColorsWhere".to_string(), number(2)), ("keepAwake".to_string(), number(4)), ("motion".to_string(), number(2))]);
+        let (p, stored) = open_old("old-places", &raw);
+        assert_eq!((p.keep_awake, p.motion), (vec![A::Sideways, A::Upright], crate::settings::Motion::Eink));
+        assert_eq!(stored, save(&load(&stored)), "stored once, as read");
+        assert!(!crate::settings::PICK_KEYS.iter().any(|k| stored.contains_key(*k)) && !stored.contains_key("coverColorsWhere"), "{stored:?}");
     }
 
     #[test]

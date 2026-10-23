@@ -18,18 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material.icons.filled.IosShare
-import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -91,15 +79,15 @@ internal fun jamLabel(jam: PlayerViewModel.JamStripState): String {
 
 /**
  * The jam's button, where the output's speaker stands while a jam is on (the player's bottom row, the bar):
- * filled while someone listens, an outline while no one does. The host's opens the devices, a guest's the
+ * [lit] while someone listens, [idle] while no one does. The host's opens the devices, a guest's the
  * queue with the jam's header.
  */
 @Composable
-internal fun JamButton(jam: PlayerViewModel.JamStripState, size: Dp, tint: ColorProducer) {
+internal fun JamButton(jam: PlayerViewModel.JamStripState, size: Dp, idle: ColorProducer, lit: ColorProducer) {
     val nav = LocalNav.current
     val devices = LocalDevices.current
     IconButton({ if (jam.host == null) devices() else nav.player(Panel.QUEUE) }) {
-        LookIcon(if (jam.listening > 0) Icons.Filled.Groups else Icons.Outlined.Groups, jamLabel(jam), Modifier.size(size), tint)
+        LookIcon(Iconoir.Community, jamLabel(jam), Modifier.size(size), if (jam.listening > 0) lit else idle)
     }
 }
 
@@ -185,7 +173,7 @@ internal fun JamRequests(j: JamView, cover: (String?) -> String?) {
 @Composable
 private fun PeopleButton(listening: Int, prominent: Boolean, onClick: () -> Unit) {
     val label = if (listening == 0) words(R.string.jam_people) else words(R.string.jam_people_count, listening)
-    PillButton(label, Icons.Filled.Groups, onClick, prominent = prominent)
+    PillButton(label, Iconoir.Community, onClick, prominent = prominent)
 }
 
 /** The first listeners' discs and how many listen: only said, People is where they are shown. */
@@ -204,7 +192,7 @@ private fun Listeners(names: List<String>, listening: Int, quiet: ColorProducer,
 @Composable
 private fun LeaveButton(tint: ColorProducer, onClick: () -> Unit) {
     Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        LookIcon(Icons.AutoMirrored.Filled.Logout, words(R.string.jam_leave), Modifier.size(22.dp), tint)
+        LookIcon(Iconoir.LogOut, words(R.string.jam_leave), Modifier.size(22.dp), tint)
     }
 }
 
@@ -213,14 +201,14 @@ private fun LeaveButton(tint: ColorProducer, onClick: () -> Unit) {
 internal fun GuestLeaveHeader() {
     val vm: RemoteViewModel = viewModel()
     val look = LocalLook.current
-    val accent = ColorProducer { look.color(CoverLook.ACCENT) }
+    val ink = ColorProducer { look.color(CoverLook.ON) }
     Row(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 6.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-        LookIcon(Icons.Filled.Groups, null, Modifier.size(22.dp), accent)
+        LookIcon(Iconoir.Community, null, Modifier.size(22.dp), ink)
         LookText(
-            words(R.string.jam_title), { look.color(CoverLook.ON) }, Modifier.weight(1f).padding(start = 8.dp),
+            words(R.string.jam_title), ink, Modifier.weight(1f).padding(start = 8.dp),
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1,
         )
-        LeaveButton(accent, vm::leave)
+        LeaveButton(ink, vm::leave)
     }
 }
 
@@ -234,7 +222,6 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
     val look = LocalLook.current
     val ink = ColorProducer { look.color(CoverLook.ON) }
     val quiet = ColorProducer { look.color(CoverLook.ON_VARIANT) }
-    val accent = ColorProducer { look.color(CoverLook.ACCENT) }
     var people by remember { mutableStateOf(false) }
     val host = remember(j.members) { j.members.firstOrNull { it.role == Role.HOST } }
     val listeners = remember(j.members) { j.members.filter { it.role != Role.HOST } }
@@ -242,7 +229,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
     Column(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
         // Where the host has Invite: playing the jam on this phone too, or only watching it.
         Row(Modifier.fillMaxWidth().padding(top = 2.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-            LookIcon(Icons.Filled.Groups, null, Modifier.size(22.dp), accent)
+            LookIcon(Iconoir.Community, null, Modifier.size(22.dp), ink)
             LookText(
                 host?.let { words(R.string.jam_of, it.name) } ?: words(R.string.jam_title), ink, Modifier.weight(1f).padding(start = 8.dp),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -250,7 +237,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
             if (j.along || j.listening != Listening.WATCHING) {
                 val here = j.listening == Listening.PLAYING
                 PillButton(
-                    words(if (here) R.string.jam_playing_here else R.string.jam_listen_here), Icons.Filled.Speaker,
+                    words(if (here) R.string.jam_playing_here else R.string.jam_listen_here), Iconoir.SoundHighSolid,
                     { vm.listen(j.listening == Listening.WATCHING) }, prominent = true,
                 )
             }
@@ -258,7 +245,7 @@ internal fun GuestJamHeader(j: JamView, cover: (String?) -> String?) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Listeners(remember(j.members) { j.members.map { it.name } }, listeners.size, quiet, Modifier.weight(1f)) { look.color(CoverLook.BACKGROUND) }
             PeopleButton(listeners.size, prominent = false) { people = true }
-            LeaveButton(accent, vm::leave)
+            LeaveButton(ink, vm::leave)
         }
         when (j.listening) {
             Listening.WATCHING -> if (j.along) R.string.jam_watching else null
@@ -296,9 +283,8 @@ private fun Request(p: Pending, coverUrl: String?, decides: Boolean, ink: ColorP
             if (p.provider && decides) LookText(words(R.string.jam_will_download), quiet, style = MaterialTheme.typography.bodySmall, maxLines = 2)
         }
         if (decides) {
-            CircleButton(Icons.Filled.Close, words(R.string.jam_decline), Modifier.size(36.dp)) { vm.accept(p.request, false) }
-            Spacer(Modifier.width(10.dp))
-            CircleButton(Icons.Filled.Check, words(R.string.jam_accept), Modifier.size(36.dp), lit = true) { vm.accept(p.request, true) }
+            GlyphButton(Iconoir.Xmark, words(R.string.jam_decline)) { vm.accept(p.request, false) }
+            GlyphButton(Iconoir.Check, words(R.string.jam_accept)) { vm.accept(p.request, true) }
         }
     }
 }
@@ -306,11 +292,11 @@ private fun Request(p: Pending, coverUrl: String?, decides: Boolean, ink: ColorP
 @Composable
 internal fun InviteBody(link: String) {
     val vm: RemoteViewModel = viewModel()
-    LinkCode(link, words(R.string.jam_invite_title), words(R.string.jam_invite), remember(vm) { vm.homeOnly() })
+    LinkCode(link, words(R.string.jam_invite), remember(vm) { vm.homeOnly() })
 }
 
 @Composable
-internal fun LinkCode(link: String, title: String, hint: String, homeOnly: String? = null) {
+internal fun LinkCode(link: String, hint: String, homeOnly: String? = null) {
     val vm: RemoteViewModel = viewModel()
     val qr by produceState<dev.nori.music.ffi.remote.QrCode?>(null, link) { value = vm.qr(link) }
     val context = LocalContext.current
@@ -319,9 +305,8 @@ internal fun LinkCode(link: String, title: String, hint: String, homeOnly: Strin
         Modifier.fillMaxWidth().windowInsetsPadding(gestureBarRoom).padding(start = Space.gutter, end = Space.gutter, bottom = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(title, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold))
         // White under the code whatever the theme, as a scanner wants it; the room is kept while it is made.
-        Box(Modifier.padding(top = 20.dp).clip(RoundedCornerShape(20.dp)).background(Color.White).padding(18.dp).size(232.dp)) {
+        Box(Modifier.clip(RoundedCornerShape(20.dp)).background(Color.White).padding(18.dp).size(232.dp)) {
             qr?.let { code ->
                 Spacer(Modifier.fillMaxSize().drawWithCache {
                     val n = code.size.toInt()
@@ -351,13 +336,13 @@ internal fun LinkCode(link: String, title: String, hint: String, homeOnly: Strin
             maxLines = 1, overflow = TextOverflow.MiddleEllipsis,
         )
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), Arrangement.spacedBy(10.dp)) {
-            PillButton(words(R.string.jam_copy_link), Icons.Filled.ContentCopy, {
+            PillButton(words(R.string.jam_copy_link), Iconoir.Copy, {
                 val clip = context.getSystemService(android.content.ClipboardManager::class.java)
                 clip?.setPrimaryClip(android.content.ClipData.newPlainText(link, link))
                 // Android 13 and later show the copy themselves.
                 if (android.os.Build.VERSION.SDK_INT < 33) android.widget.Toast.makeText(context, copied, android.widget.Toast.LENGTH_SHORT).show()
             }, Modifier.weight(1f), prominent = true)
-            PillButton(words(R.string.jam_share), Icons.Filled.IosShare, {
+            PillButton(words(R.string.jam_share), Iconoir.ShareIos, {
                 val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, link)
                 context.startActivity(android.content.Intent.createChooser(send, null))
             }, Modifier.weight(1f))
@@ -386,8 +371,8 @@ internal fun JamControls(j: JamView, onInvite: () -> Unit = {}, onSettings: () -
     Column {
         if (j.hosting) {
             Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                PillButton(words(R.string.jam_invite_button), Icons.Filled.PersonAdd, onInvite, Modifier.weight(1f), prominent = true)
-                IconButton(onSettings) { Icon(Icons.Filled.Settings, words(R.string.settings)) }
+                PillButton(words(R.string.jam_invite_button), Iconoir.UserPlus, onInvite, Modifier.weight(1f), prominent = true)
+                IconButton(onSettings) { Icon(Iconoir.Settings, words(R.string.settings), Modifier.size(22.dp)) }
             }
         }
         SectionTitle(words(R.string.jam_people))
@@ -401,12 +386,12 @@ internal fun JamControls(j: JamView, onInvite: () -> Unit = {}, onSettings: () -
                         val admin = m.role == Role.ADMIN
                         IconButton({ vm.promote(m.id, !admin) }) {
                             Icon(
-                                Icons.Filled.Key, words(if (admin) R.string.jam_make_guest else R.string.jam_make_admin), Modifier.size(20.dp),
-                                tint = if (admin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                Iconoir.Key, words(if (admin) R.string.jam_make_guest else R.string.jam_make_admin), Modifier.size(20.dp),
+                                tint = if (admin) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         IconButton({ vm.remove(m.id) }) {
-                            Icon(Icons.Filled.Close, words(R.string.jam_send_out), Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(Iconoir.Xmark, words(R.string.jam_send_out), Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -424,7 +409,6 @@ internal fun JamControls(j: JamView, onInvite: () -> Unit = {}, onSettings: () -
 @Composable
 internal fun JamSettings(j: JamView) {
     val vm: RemoteViewModel = viewModel()
-    SectionHeader(words(R.string.settings))
     Row(Modifier.fillMaxWidth().clickable { vm.jamAlong(!j.along) }.padding(horizontal = Space.gutter, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end = 12.dp)) {
             Text(words(R.string.jam_let_listen), style = MaterialTheme.typography.bodyLarge)
@@ -460,19 +444,6 @@ private fun Person(m: JamMember, line: String, actions: @Composable androidx.com
         }
         actions()
     }
-}
-
-/**
- * "Start a Jam" for a page's ⋯ ([play] plays the page first), or null where none can start: jams off,
- * a server without the relay, or one already on.
- */
-@Composable
-internal fun jamStartEntry(play: () -> Unit): Pair<String, () -> Unit>? {
-    val vm: RemoteViewModel = viewModel()
-    val can by vm.canStartJam.collectAsStateWithLifecycle()
-    if (!can) return null
-    val nav = LocalNav.current
-    return words(R.string.jam_start) to { play(); vm.jamStart(); nav.player(Panel.QUEUE) }
 }
 
 /** Says a jam that could not start, wherever one was started from. */

@@ -6,6 +6,9 @@ Font (app/src/main/res/font/inter.ttf)
   Inter — Copyright (c) 2016 The Inter Project Authors, SIL Open Font License 1.1
   (full text: app/src/main/assets/licences/OFL-1.1.txt)
 
+Icons (app/src/main/kotlin/dev/nori/music/app/ui/Iconoir.kt, the widget, shortcut and car drawables)
+  Iconoir — Copyright (c) 2021 Luca Burgio, MIT (full text: app/src/main/assets/licences/MIT.txt)
+
 Beat model network (built into the Rust core with `neural-beats`, crates/player/models/beat-this-small0.graph.onnx)
   Beat This! (Foscarin, Schlüter and Widmer, ISMIR 2024; https://github.com/CPJKU/beat_this) — Copyright (c)
     2024 Institute of Computational Perception, JKU Linz, Austria, MIT (code and weights; full text:
@@ -44,8 +47,8 @@ The terminal client (crates/cli, nori-cli; not part of the Android app)
   zbus, async-io (the desktop's media controls, crates/mpris) — zbus MIT; async-io MIT or Apache-2.0
 
 Android libraries
-  AndroidX (Media3, Compose, Material 3, Palette, Navigation, Lifecycle, Activity, Core), Material
-  Icons, OkHttp, kotlinx.coroutines — Apache License 2.0
+  AndroidX (Media3, Compose, Material 3, Palette, Navigation, Lifecycle, Activity, Core), OkHttp,
+  kotlinx.coroutines — Apache License 2.0
 
 Fetched only when asked for, not bundled
   AutoEQ headphone curves — Copyright (c) 2018 Jaakko Pasanen, MIT

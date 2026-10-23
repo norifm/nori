@@ -62,9 +62,11 @@ pub fn kind(t: i32) -> OutputKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum OutputGlyph {
+    /// The phone's own speaker.
+    Phone,
     Headphones,
     Bluetooth,
-    /// The speaker and anything else.
+    /// Anything else (HDMI, a dock, a cast target).
     Cast,
 }
 
@@ -85,7 +87,8 @@ pub fn output_look(output: String) -> OutputLook {
     let glyph = match port {
         OutputPort::Usb | OutputPort::Wired => OutputGlyph::Headphones,
         OutputPort::Bluetooth => OutputGlyph::Bluetooth,
-        _ => OutputGlyph::Cast,
+        OutputPort::Speaker => OutputGlyph::Phone,
+        OutputPort::Other => OutputGlyph::Cast,
     };
     OutputLook { glyph, port, name: name.map(str::to_string) }
 }
@@ -118,11 +121,16 @@ fn keep(settings: &Settings, known: &[String]) {
 }
 
 /// The attached devices (parallel `AudioDeviceInfo` types and product names) against the known list; a
-/// changed list is stored in the app's `settings`.
+/// changed list is stored in the app's `settings`. `routed_type` and `routed_name` are the device the open
+/// track is routed to, when there is one.
 #[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn outputs_refresh(settings: Arc<Settings>, types: Vec<i32>, names: Vec<String>, known: Vec<String>, fake_usb: Option<String>) -> Seen {
+pub fn outputs_refresh(
+    settings: Arc<Settings>, types: Vec<i32>, names: Vec<String>, routed_type: Option<i32>, routed_name: String, known: Vec<String>,
+    fake_usb: Option<String>,
+) -> Seen {
     let attached: Vec<(OutputKind, &str)> = types.iter().zip(&names).map(|(t, n)| (kind(*t), n.as_str())).collect();
-    let seen = outputs::refresh(&attached, &known, fake_usb.as_deref());
+    let routed = routed_type.map(|t| (kind(t), routed_name.as_str()));
+    let seen = outputs::refresh(&attached, routed, &known, fake_usb.as_deref());
     if let Some(k) = &seen.known {
         keep(&settings, k);
     }
@@ -209,12 +217,12 @@ mod tests {
 
     #[test]
     fn android_codes() {
-        let seen = outputs_refresh(Settings::new(), vec![18, 2, 8, 22], vec!["".into(), "".into(), "Buds".into(), " K3 ".into()], vec![], None);
+        let seen = outputs_refresh(Settings::new(), vec![18, 2, 8, 22], vec!["".into(), "".into(), "Buds".into(), " K3 ".into()], None, String::new(), vec![], None);
         assert_eq!(seen.current, "USB: K3");
         assert!(seen.usb);
         assert_eq!(seen.known.unwrap(), ["Bluetooth: Buds", "Phone speaker", "USB: K3"]);
-        assert!(outputs_refresh(Settings::new(), vec![12, 2], vec!["".into(), "".into()], vec![], None).usb, "a USB accessory");
-        assert_eq!(outputs_refresh(Settings::new(), vec![4], vec!["".into()], vec![], None).current, "Wired headphones");
+        assert!(outputs_refresh(Settings::new(), vec![12, 2], vec!["".into(), "".into()], None, String::new(), vec![], None).usb, "a USB accessory");
+        assert_eq!(outputs_refresh(Settings::new(), vec![4], vec!["".into()], None, String::new(), vec![], None).current, "Wired headphones");
 
         // Dac encodings to bits.
         let d = dac_decide(true, true, "K3".into(), vec![44_100, 96_000], vec![2, 4], 96_000, 4, None, None, false);
@@ -235,7 +243,7 @@ mod tests {
         assert_eq!(l("USB: K3"), OutputGlyph::Headphones);
         assert_eq!(l("Wired headphones"), OutputGlyph::Headphones);
         assert_eq!(l("Bluetooth: buds"), OutputGlyph::Bluetooth);
-        assert_eq!(l(outputs::SPEAKER), OutputGlyph::Cast);
+        assert_eq!(l(outputs::SPEAKER), OutputGlyph::Phone);
         assert_eq!(l("HDMI"), OutputGlyph::Cast);
         let buds = output_look("Bluetooth: buds".into());
         assert_eq!((buds.port, buds.name.as_deref()), (OutputPort::Bluetooth, Some("buds")));
@@ -251,7 +259,7 @@ mod tests {
         settings.open(&path).unwrap();
         let speaker = outputs_speaker();
         assert_eq!(outputs_known(settings.clone()), std::slice::from_ref(&speaker), "the speaker the first time");
-        let seen = outputs_refresh(settings.clone(), vec![8], vec!["Buds".into()], vec![speaker.clone()], None);
+        let seen = outputs_refresh(settings.clone(), vec![8], vec!["Buds".into()], None, String::new(), vec![speaker.clone()], None);
         assert_eq!(seen.known.unwrap(), ["Bluetooth: Buds", speaker.as_str()]);
         background::flush();
         let again = Settings::new();

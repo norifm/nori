@@ -22,7 +22,7 @@ impl Client {
         match self.core.session.push_write(current, position_ms) {
             Some(w) => {
                 self.write(w).await?;
-                *self.queue_pushed.lock() = place;
+                self.remember_queue_place(crate::library::QUEUE_PUSHED, place);
                 Ok(())
             }
             None => Ok(()),

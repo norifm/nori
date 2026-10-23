@@ -76,9 +76,6 @@ import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import dev.nori.music.app.vm.ActionsViewModel
 import dev.nori.music.app.vm.PlayerViewModel
 
@@ -283,7 +280,7 @@ private val TAB_FADE = androidx.compose.animation.core.tween<Float>(220)
  * The chrome's colors, all of them the page's: its ink, the idle tabs' quieter ink, the outline and the
  * fainter hairline between the mini player and the tabs, the page itself and a little see-through inside the outline,
  * and the accent the one current thing wears, which the page's look has already made read on it
- * (nori_look::dress::accented on a cover's page).
+ * (nori_look::dress::dyed on a cover's page).
  */
 @androidx.compose.runtime.Immutable
 private class ChromeColours(look: Look) {
@@ -357,7 +354,7 @@ private fun TabButton(tab: Tab, selected: Boolean, chrome: ChromeColours, modifi
             .semantics { contentDescription = tab.label },
         Alignment.Center,
     ) {
-        Icon(tab.icon, null, Modifier.size(23.dp).graphicsLayer { rotationZ = turn() }, tint = colour)
+        Icon(tab.icon, null, Modifier.size(21.dp).graphicsLayer { rotationZ = turn() }, tint = colour)
     }
 }
 
@@ -376,10 +373,6 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
     androidx.compose.runtime.DisposableEffect(sheet) { onDispose { sheet.miniEdge = 0f } }
     val turn = LocalGlyphTurn.current
     val standing = Modifier.graphicsLayer { rotationZ = turn() }
-    val settings: dev.nori.music.app.vm.SettingsViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
-    val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val system = androidx.compose.foundation.isSystemInDarkTheme()
-    val dark = remember(prefs.theme, system) { dev.nori.music.ffi.settings.themeIsDark(prefs.theme, system) }
     // The colours of what is playing and of the songs either side, worked out before they are reached. Their covers are
     // already fetched ahead (PlayerViewModel); this is the other half of that, and it is what stops the
     // page wearing the last song's colour for a moment after a skip. It happens here rather than in the
@@ -390,14 +383,10 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
     // worked out once per skip with the covers fetched ahead.
     val near by vm.coversNear.collectAsStateWithLifecycle()
     val around = remember(near) { near.mapNotNull { vm.cover(it, CoverSize.ROW) }.filterNot(::isProviderCover) }
-    LaunchedEffect(around, dark, prefs.coverColors, prefs.amoled) {
-        if (prefs.coverColors.isEmpty()) return@LaunchedEffect
-        val plain = !dev.nori.music.ffi.settings.coverBlack(prefs.coverColors, true, dark, prefs.amoled)
-        for (url in around) {
-            // The full-screen player keeps the record's colours where the bar goes black, so that is a
-            // second set of colours for the same cover, worked out from the same decode.
-            warmCoverPalette(context, url, dev.nori.music.ffi.look.pageBlack(dark, prefs.amoled, false), andPlain = plain)
-        }
+    val tints = LocalPapers.current.coversTint
+    LaunchedEffect(around, tints) {
+        if (!tints) return@LaunchedEffect
+        for (url in around) warmCoverPalette(context, url)
     }
     val scheme = MaterialTheme.colorScheme
     // Under the open player the bar is still composed, only covered: a title walking there redrew the
@@ -471,11 +460,11 @@ fun MiniPlayer(vm: PlayerViewModel, actions: ActionsViewModel, onOpen: () -> Uni
             // for it because the title beside it is already allowed to run out of space gracefully. The skip is
             // a swipe away. A jam guest's speaker and seal would be the host's; its play is the one its role offers.
             // While a jam is on it stands in the speaker's place: a jam plays on this device only.
-            jam?.let { Box(standing) { JamButton(it, 24.dp) { look.color(CoverLook.CHROME_CONTENT_75) } } }
+            jam?.let { Box(standing) { JamButton(it, 24.dp, idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { look.color(CoverLook.ACCENT) }) } }
             if (!state.jamGuest) {
                 if (jam == null) Box(standing) {
                     OutputButton(
-                        state.playingOn != null, 24.dp,
+                        state.playingOnKind, 22.dp,
                         idle = { look.color(CoverLook.CHROME_CONTENT_75) }, lit = { content },
                     )
                 }

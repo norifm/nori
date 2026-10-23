@@ -69,12 +69,20 @@ class Outputs(context: Context, private val settings: dev.nori.music.ffi.setting
 
     private var override: String? = null
 
+    /** The device the open track is routed to, which the system's output picker changes without anything being plugged in. */
+    private var routed: AudioDeviceInfo? = null
+
+    fun routedTo(device: AudioDeviceInfo) {
+        routed = device
+        refresh()
+    }
+
     fun stop() = audio.unregisterAudioDeviceCallback(callback)
 
     /** Hands the core every output the audio system lists (type and product name) and keeps what it says. */
     private fun refresh() {
         val devices = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        val seen = outputsRefresh(settings, devices.map { it.type }, devices.map { it.productName?.toString().orEmpty() }, _known.value, override)
+        val seen = outputsRefresh(settings, devices.map { it.type }, devices.map { it.productName?.toString().orEmpty() }, routed?.type, routed?.productName?.toString().orEmpty(), _known.value, override)
         _current.value = seen.current
         seen.known?.let { _known.value = it }
         _usb.value = seen.usb

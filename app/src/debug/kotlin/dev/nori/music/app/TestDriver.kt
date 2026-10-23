@@ -76,7 +76,7 @@ fun TestDriver(controller: NavHostController, nav: Nav, sheet: PlayerSheet, sett
                 } +
                 """"error":"${st.error.orEmpty()}","bridging":${st.bridging},"parkedId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().parked.orEmpty()}","songId":"${dev.nori.music.Nori.get(context).session.playlistBridgeState().current.orEmpty()}","eq":${p.eqEnabled},"limiter":${p.limiter},"hiRes":${p.hiRes},""" +
                 """"dspActive":${dev.nori.music.playback.Equalizer.inChain},"gainReductionDb":${dev.nori.music.playback.Equalizer.meterDb},"compressionDb":${dev.nori.music.playback.Equalizer.compressionDb},"soundBypass":${p.soundBypass},""" +
-                """"output":"${settings.currentOutput.value}","offload":${p.offload},"offloadWanted":${dev.nori.music.playback.PlaybackService.offloadWanted},"autoMix":${p.autoMix},"amoled":${p.amoled},""" +
+                """"output":"${settings.currentOutput.value}","offload":${p.offload},"offloadWanted":${dev.nori.music.playback.PlaybackService.offloadWanted},"autoMix":${p.autoMix},"theme":"${p.theme}",""" +
                 """"autoFill":${p.autoFill},"autoMixBetterBeats":${p.autoMixBetterBeats},"scrobble":${p.scrobble},"lyricsOnline":${p.lyricsOnline},""" +
                 """"lyricsAnswerSong":"${TestActions.lastLyrics?.songId.orEmpty()}","lyricsAnswerLines":${TestActions.lastLyrics?.value?.lyrics?.lines?.size ?: 0},""" +
                 """"lyricsAnswerTiming":"${TestActions.lastLyrics?.value?.lyrics?.timing?.let(::timingWords).orEmpty()}",""" +

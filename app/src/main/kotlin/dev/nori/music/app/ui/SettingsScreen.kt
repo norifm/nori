@@ -4,7 +4,8 @@ import android.content.Intent
 import android.media.audiofx.AudioEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -27,27 +28,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.CloudDownload
-import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.LibraryMusic
-import androidx.compose.material.icons.outlined.Lyrics
-import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.PlayCircle
-import androidx.compose.material.icons.outlined.Speed
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -103,36 +88,27 @@ private fun Modifier.spotlight(key: String?): Modifier {
         kotlinx.coroutines.delay(900)
         fade.animateTo(0f, androidx.compose.animation.core.tween(1400))
     }
-    val colour = MaterialTheme.colorScheme.primary
+    val colour = MaterialTheme.colorScheme.onSurface
     return this
         .onGloballyPositioned { spot.onPlaced(it.positionInWindow().y.toInt()) }
-        .drawBehind { drawRect(colour.copy(alpha = 0.22f * fade.value)) }
+        .drawBehind { drawRect(colour.copy(alpha = 0.10f * fade.value)) }
 }
 
 @Composable
-fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = true, key: String? = null, onChange: (Boolean) -> Unit) {
-    Column {
-    Row(
-        Modifier.fillMaxWidth().spotlight(key).clickable(enabled) { onChange(!value) }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f).padding(end = 14.dp).alpha(if (enabled) 1f else DIMMED)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        NoriSwitch(value, onChange, enabled = enabled)
-    }
-    Hairline(startIndent = 16.dp)
-    }
+fun Toggle(title: String, detail: String, value: Boolean, enabled: Boolean = true, key: String? = null, divider: Boolean = true, onChange: (Boolean) -> Unit) {
+    GroupRow(
+        title, if (enabled) ({ onChange(!value) }) else null, Modifier.spotlight(key).alpha(if (enabled) 1f else DIMMED),
+        subtitle = detail, divider = divider,
+        trailing = { NoriSwitch(value, if (enabled) onChange else null) },
+    )
 }
 
 /** One setting with a few values as chips, the one it has lit; a tap chooses another. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun ChipChoice(row: SettingRow.ChipChoice, onChange: (String) -> Unit) {
+private fun ChipChoice(row: SettingRow.ChipChoice, divider: Boolean, onChange: (String) -> Unit) {
     Column {
-        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
+        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             androidx.compose.foundation.layout.FlowRow(
@@ -140,18 +116,18 @@ private fun ChipChoice(row: SettingRow.ChipChoice, onChange: (String) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
             ) { row.options.forEach { o -> Chip(o.label, o.value == row.chosen) { if (row.enabled && o.value != row.chosen) onChange(o.value) } } }
         }
-        Hairline(startIndent = 16.dp)
+        if (divider) Hairline(startIndent = GROUP_INSET)
     }
 }
 
 /** Conditions that each count on their own, as chips: a tap turns one on or off, any number may be lit. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun Flags(row: SettingRow.Flags, onChange: (String) -> Unit) {
+private fun Flags(row: SettingRow.Flags, divider: Boolean, onChange: (String) -> Unit) {
     Column {
-        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
+        Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
-            Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (row.detail.isNotEmpty()) Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             androidx.compose.foundation.layout.FlowRow(
                 Modifier.padding(top = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -163,111 +139,87 @@ private fun Flags(row: SettingRow.Flags, onChange: (String) -> Unit) {
                 }
             }
         }
-        Hairline(startIndent = 16.dp)
+        if (divider) Hairline(startIndent = GROUP_INSET)
     }
 }
 
 /**
- * The four themes as tiles, each its season's page with its kanji in its accent, the one worn ringed in
- * that accent; under them, following the calendar as a switch. Picking a tile stops following; following
- * again lets the calendar choose.
+ * The four seasons as tiles on the page: each its kanji over three dots (its paper, accent and "on"), the one
+ * worn raised on the surface. Picking a tile stops following; following again lets the calendar choose.
+ * The names are for TalkBack and search, not drawn.
  */
 @Composable
 private fun SeasonPicker(row: SettingRow.Seasons, onChange: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
     val following = row.chosen == row.following
     val worn = if (following) row.now else row.tiles.indexOfFirst { it.value == row.chosen }
-    // Across a wide window four upright tiles would fill the screen's height; there they lie on their side.
-    val tileRatio = if (LocalWide.current) WIDE_TILE else UPRIGHT_TILE
     Column(Modifier.spotlight(row.key)) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp), Arrangement.spacedBy(10.dp)) {
+        GroupLabel(row.title)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), Arrangement.spacedBy(10.dp)) {
             row.tiles.forEachIndexed { i, t ->
-                val accent = androidx.compose.ui.graphics.Color(t.accent)
-                val ring by androidx.compose.animation.core.animateDpAsState(if (i == worn) 2.dp else androidx.compose.ui.unit.Dp.Hairline, label = "season ring")
-                val shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp)
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    androidx.compose.foundation.layout.Box(
-                        Modifier.fillMaxWidth().aspectRatio(tileRatio).clip(shape)
-                            .background(androidx.compose.ui.graphics.Color(t.page))
-                            .border(ring, if (i == worn) accent else MaterialTheme.colorScheme.outlineVariant, shape)
-                            .clickable { if (t.value != row.chosen) onChange(t.value) }
-                            .semantics { contentDescription = t.label; selected = i == worn },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(Kanji.seasons[t.season.ordinal], null, Modifier.size(34.dp), tint = accent)
+                val chosen = i == worn
+                Surface(
+                    onClick = { if (t.value != row.chosen) onChange(t.value) }, shape = TileShape,
+                    color = if (chosen) scheme.surfaceContainer else Color.Transparent,
+                    border = if (chosen) hairlineBorder() else null,
+                    modifier = Modifier.weight(1f).height(88.dp).semantics { contentDescription = t.label; selected = chosen },
+                ) {
+                    Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
+                        Icon(Kanji.seasons[t.season.ordinal], null, Modifier.size(30.dp), tint = if (chosen) scheme.onSurface else scheme.onSurfaceVariant)
+                        Row(Modifier.padding(top = 8.dp), Arrangement.spacedBy(5.dp)) {
+                            SeasonDot(t.page, hairline = true)
+                            SeasonDot(t.accent)
+                            SeasonDot(t.on)
+                        }
                     }
-                    Text(
-                        t.label, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium,
-                        color = if (i == worn) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
                 }
             }
         }
-        Toggle(row.followTitle, row.follow, following) { on -> onChange(if (on) row.following else row.tiles[row.now].value) }
+        GroupCard(Modifier.padding(top = 10.dp)) {
+            Toggle(row.followTitle, row.follow, following, divider = false) { on -> onChange(if (on) row.following else row.tiles[row.now].value) }
+        }
     }
 }
 
-private const val UPRIGHT_TILE = 0.84f
-private const val WIDE_TILE = 2f
+@Composable
+private fun SeasonDot(argb: Int, hairline: Boolean = false) {
+    Box(
+        Modifier.size(8.dp).clip(CircleShape).background(Color(argb))
+            .then(if (hairline) Modifier.border(hairlineBorder(), CircleShape) else Modifier),
+    )
+}
 
 /** What a setting the app is going to ignore looks like: still there, still readable, plainly not live. */
 private const val DIMMED = 0.38f
 
 @Composable
-private fun Choice(row: SettingRow.Choice, onChange: (String) -> Unit) {
+private fun Choice(row: SettingRow.Choice, divider: Boolean, onChange: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    val dim = if (row.enabled) 1f else DIMMED
-    Column {
-    Row(Modifier.fillMaxWidth().spotlight(row.key).clickable(row.enabled) { open = true }.padding(horizontal = 16.dp, vertical = 15.dp)) {
-        Text(row.title, Modifier.weight(1f).alpha(dim), style = MaterialTheme.typography.bodyLarge)
-        Text(row.shown, Modifier.alpha(dim), color = MaterialTheme.colorScheme.primary)
-        DropdownMenu(open, { open = false }) { row.options.forEach { o -> DropdownMenuItem({ Text(o.label) }, { onChange(o.value); open = false }) } }
-    }
-    Hairline(startIndent = 16.dp)
-    }
-}
-
-/**
- * The rounded plate the rows of a group sit on. The content colour is spelled out: Material resolves
- * it to Unspecified for any colour it does not recognise as one of its own roles, and text inside then
- * renders almost black - which is why every setting's title was dimmer than its own description.
- */
-@Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        shape = CardShape,
-        color = LocalLook.current.color(dev.nori.music.look.CoverLook.FORM),
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-    ) { Column(content = content) }
+    GroupRow(
+        row.title, if (row.enabled) ({ open = true }) else null, Modifier.spotlight(row.key).alpha(if (row.enabled) 1f else DIMMED),
+        value = row.shown, chevron = true, divider = divider,
+        trailing = { NoriPopover(open, { open = false }) { row.options.forEach { o -> PopoverItem(o.label, chosen = o.label == row.shown) { onChange(o.value); open = false } } } },
+    )
 }
 
 /** Each group's icon; the groups themselves, their order and their words are SettingsPages.kt's. */
 private fun groupIcon(id: String): ImageVector = when (id) {
-    "servers" -> Icons.Outlined.Dns
-    "playing" -> Icons.Outlined.PlayCircle
-    "sound" -> Icons.Outlined.GraphicEq
-    "look" -> Icons.Outlined.Palette
-    "lyrics" -> Icons.Outlined.Lyrics
-    "library" -> Icons.Outlined.LibraryMusic
-    "data" -> Icons.Outlined.CloudDownload
-    "about" -> Icons.Outlined.Info
-    else -> Icons.Outlined.AutoAwesome
+    "servers" -> Iconoir.Server
+    "playing" -> Iconoir.Play
+    "sound" -> Iconoir.ControlSlider
+    "look" -> Iconoir.Palette
+    "lyrics" -> Iconoir.EmojiSingRightNote
+    "library" -> Iconoir.AlbumList
+    "data" -> Iconoir.CloudDownload
+    "about" -> Iconoir.InfoCircle
+    else -> Iconoir.Sparks
 }
 
-/**
- * A titled block of rows on its own plate. A group page used to be one plate of twenty rows, which is
- * where things got lost; a few short, named sections are what make a page scannable.
- */
+/** A titled group: small-caps label over a card of rows. */
 @Composable
 private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Text(
-        title.uppercase(),
-        Modifier.padding(start = 30.dp, end = 30.dp, top = 16.dp, bottom = 2.dp),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    SettingsCard(content)
+    GroupLabel(title)
+    GroupCard(content = content)
 }
 
 /** A row with a line of text and a button at its end: a count, an action. */
@@ -277,19 +229,19 @@ private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) 
  * not: nothing ticks with the screen off. Its own scope, so a reading redraws only this row.
  */
 @Composable
-private fun CompressionMeter(enabled: Boolean) {
+private fun CompressionMeter(enabled: Boolean, divider: Boolean) {
     val db = meterReading(viewModel<SettingsViewModel>().compressionDb)
     val active = db > 0.05f
     val scheme = MaterialTheme.colorScheme
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).alpha(if (enabled) 1f else DIMMED)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = GROUP_INSET, vertical = 8.dp).alpha(if (enabled) 1f else DIMMED)) {
         // The words change only with the tenth of a dB they show; the bar moves far more finely.
         Text(
             remember(kotlin.math.round(db * 10f)) { say.compression(db) },
             style = MaterialTheme.typography.labelMedium,
-            color = if (active) scheme.primary else scheme.onSurfaceVariant,
+            color = if (active) scheme.onSurface else scheme.onSurfaceVariant,
         )
         val track = scheme.surfaceVariant
-        val fill = scheme.primary
+        val fill = scheme.onSurface
         // Full width is 20 dB of reduction, more than any preset takes off music.
         Spacer(
             Modifier.padding(top = 6.dp).fillMaxWidth().height(4.dp).drawBehind {
@@ -300,18 +252,19 @@ private fun CompressionMeter(enabled: Boolean) {
             },
         )
     }
+    if (divider) Hairline(startIndent = GROUP_INSET)
 }
 
 @Composable
-private fun ActionRowSetting(row: SettingRow.Action, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().spotlight(row.key).padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun ActionRowSetting(row: SettingRow.Action, divider: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().spotlight(row.key).padding(start = GROUP_INSET, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).alpha(if (row.enabled) 1f else DIMMED)) {
             Text(row.title, style = MaterialTheme.typography.bodyLarge)
             Text(row.detail, style = MaterialTheme.typography.bodySmall, color = if (row.error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        TextButton(onClick, enabled = row.enabled) { Text(row.button) }
+        TextAction(row.button, onClick, enabled = row.enabled)
     }
-    Hairline(startIndent = 16.dp)
+    if (divider) Hairline(startIndent = GROUP_INSET)
 }
 
 @Composable
@@ -320,10 +273,11 @@ fun SettingsScreen(vm: SettingsViewModel) {
     var query by remember { mutableStateOf("") }
     val res = LocalContext.current.resources
     val config = LocalConfiguration.current
-    // Titles first, then anything whose explanation mentions it: searching "oled" finds AMOLED black,
-    // asked once per change of the query (or of the language).
+    // Titles first, then anything whose explanation mentions it, asked once per change of the query (or
+    // of the language).
     val hits = remember(query, config) { if (query.isBlank()) emptyList() else vm.searchSettings(query, res) }
     val groups = remember(config) { vm.settingsGroups(res) }
+    val perf = dev.nori.music.app.PerfHooks.recorder != null
     Column {
         LargeTitle(say.settings)
         SearchField(query, { query = it }, stringResource(R.string.settings_search), Modifier.padding(horizontal = Space.gutter, vertical = 6.dp))
@@ -347,32 +301,14 @@ fun SettingsScreen(vm: SettingsViewModel) {
             }
             return@Column
         }
-        LazyColumn(contentPadding = PaddingValues(bottom = LocalChromeInset.current)) {
-            items(groups, key = { it.id }) { g ->
-                Column(Modifier.clickable { nav.settingsGroup(g.id) }) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(groupIcon(g.id), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
-                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                            Text(g.title, style = MaterialTheme.typography.bodyLarge)
-                            Text(g.summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = LocalChromeInset.current)) {
+            item(key = "groups") {
+                GroupCard {
+                    groups.forEachIndexed { i, g ->
+                        // Only the perf build has a recorder, and with it the last row (docs/site/developers/building.md).
+                        GroupRow(g.title, { nav.settingsGroup(g.id) }, subtitle = g.summary, icon = groupIcon(g.id), chevron = true, divider = i < groups.lastIndex || perf)
                     }
-                    Hairline(startIndent = Space.gutter + 36.dp)
-                }
-            }
-            // Only the perf build has a recorder, and with it this page (docs/site/developers/building.md).
-            if (dev.nori.music.app.PerfHooks.recorder != null) item(key = "perf") {
-                Column(Modifier.clickable { nav.go("perf") }) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Speed, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
-                        Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                            Text(say.performance, style = MaterialTheme.typography.bodyLarge)
-                            Text(say.performanceDetail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Hairline(startIndent = Space.gutter + 36.dp)
+                    if (perf) GroupRow(say.performance, { nav.go("perf") }, subtitle = say.performanceDetail, icon = Iconoir.DashboardSpeed, chevron = true, divider = false)
                 }
             }
         }
@@ -427,8 +363,8 @@ private fun KeyDialog(row: SettingRow.Ranked, onDismiss: () -> Unit, onSave: (St
                 FormField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
             }
         },
-        confirmButton = { TextButton({ onSave(text) }, enabled = !row.keyed || row.keySet || text.isNotBlank()) { Text(say.save) } },
-        dismissButton = { TextButton(onDismiss) { Text(say.cancel) } },
+        confirmButton = { TextAction(say.save, { onSave(text) }, enabled = !row.keyed || row.keySet || text.isNotBlank()) },
+        dismissButton = { TextAction(say.cancel, onDismiss) },
     )
 }
 
@@ -468,8 +404,8 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
         AlertCard(
             title = { Text(ask.title) },
             text = { Text(ask.text) },
-            confirmButton = { TextButton({ vm.act(action); asking = null }) { Text(ask.confirm) } },
-            dismissButton = { TextButton({ asking = null }) { Text(say.cancel) } },
+            confirmButton = { TextAction(ask.confirm, { vm.act(action); asking = null }) },
+            dismissButton = { TextAction(say.cancel, { asking = null }) },
         )
     }
     // A ranked row held and dragged (the lyrics services, one list whether on or off): which one, in
@@ -491,74 +427,63 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
     drag?.let { d -> if (!d.active && d.shown == order) androidx.compose.runtime.SideEffect { drag = null } }
     var keying by remember { mutableStateOf<SettingRow.Ranked?>(null) }
     NoriDialog(keying, { keying = null }) { row -> KeyDialog(row, { keying = null }) { v -> vm.set(row.keyName, v); keying = null } }
-    Section(section.title) {
-        // Each row under a key of its own, so a ranked row moved in the core's order is the same row, its
-        // glide and lift carried with it: keyed inside the `when` instead, a moved row began again from
-        // nothing and was drawn at its new place in one frame.
-        section.rows.forEachIndexed { at, row -> androidx.compose.runtime.key((row as? SettingRow.Ranked)?.id ?: "#$at") {
+    // Each row under a key of its own, so a ranked row moved in the core's order is the same row, its
+    // glide and lift carried with it: keyed inside the `when` instead, a moved row began again from
+    // nothing and was drawn at its new place in one frame.
+    @Composable
+    fun RowOf(at: Int, row: SettingRow, divider: Boolean) = androidx.compose.runtime.key((row as? SettingRow.Ranked)?.id ?: "#$at") {
             when (row) {
                 is SettingRow.Toggle -> Toggle(row.title, row.detail, row.on, enabled = row.enabled, key = row.key) { on -> vm.set(row.name, on.toString()) }
-                is SettingRow.Choice -> Choice(row) { v -> vm.set(row.name, v) }
-                is SettingRow.ChipChoice -> ChipChoice(row) { v -> vm.set(row.name, v) }
-                is SettingRow.Flags -> Flags(row) { v -> vm.set(row.name, v) }
-                is SettingRow.Note -> Text(row.text, Modifier.padding(horizontal = Space.gutter, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                is SettingRow.Link -> {
-                    val dim = if (row.dimmed || !row.enabled) DIMMED else 1f
-                    Row(Modifier.fillMaxWidth().spotlight(row.key).clickable(row.enabled) { act(row.action) }.padding(horizontal = 16.dp, vertical = 15.dp)) {
-                        Text(row.title, Modifier.weight(1f).alpha(dim), style = MaterialTheme.typography.bodyLarge)
-                        if (row.status.isNotEmpty()) Text(row.status, Modifier.alpha(dim), color = MaterialTheme.colorScheme.primary)
-                    }
-                    if (row.divider) Hairline(startIndent = 16.dp)
-                }
-                is SettingRow.Action -> ActionRowSetting(row) { act(row.action) }
-                is SettingRow.Usage -> {
-                    UsageBar(row)
-                    Hairline(startIndent = 16.dp)
-                }
-                is SettingRow.Info -> {
-                    Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        Text(row.title, style = MaterialTheme.typography.bodyLarge)
-                        Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Hairline(startIndent = 16.dp)
-                }
+                is SettingRow.Choice -> Choice(row, divider) { v -> vm.set(row.name, v) }
+                is SettingRow.ChipChoice -> ChipChoice(row, divider) { v -> vm.set(row.name, v) }
+                is SettingRow.Flags -> Flags(row, divider) { v -> vm.set(row.name, v) }
+                is SettingRow.Note -> Text(row.text, Modifier.padding(horizontal = GROUP_INSET, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                is SettingRow.Link -> GroupRow(
+                    row.title, if (row.enabled) ({ act(row.action) }) else null,
+                    Modifier.spotlight(row.key).alpha(if (row.dimmed || !row.enabled) DIMMED else 1f),
+                    value = row.status, chevron = true, divider = divider,
+                )
+                is SettingRow.Action -> ActionRowSetting(row, divider) { act(row.action) }
+                is SettingRow.Usage -> UsageBar(row, divider)
+                is SettingRow.Info -> GroupRow(row.title, modifier = Modifier.spotlight(row.key), subtitle = row.detail, divider = divider)
                 is SettingRow.Slider -> {
-                    Text(row.label, Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp), style = MaterialTheme.typography.bodySmall)
+                    Text(row.label, Modifier.padding(start = GROUP_INSET, end = GROUP_INSET, top = 10.dp), style = MaterialTheme.typography.bodySmall)
                     // A slider with a level is edited in place on every step, like the equalizer's.
-                    NoriSlider(row.value, row.min..row.max, { v -> row.level?.let { vm.setLevel(it, v) } ?: vm.set(row.name, v.toString()) }, Modifier.padding(horizontal = 16.dp), centred = row.centred)
+                    NoriSlider(row.value, row.min..row.max, { v -> row.level?.let { vm.setLevel(it, v) } ?: vm.set(row.name, v.toString()) }, Modifier.padding(horizontal = GROUP_INSET), centred = row.centred)
+                    if (divider) Hairline(startIndent = GROUP_INSET)
                 }
-                is SettingRow.CompressionMeter -> CompressionMeter(row.enabled)
+                is SettingRow.CompressionMeter -> CompressionMeter(row.enabled, divider)
                 is SettingRow.Seasons -> SeasonPicker(row) { v -> vm.set(row.name, v) }
                 is SettingRow.Server -> {
-                    Row(Modifier.fillMaxWidth().clickable(enabled = !row.active) { p.servers.firstOrNull { it.id == row.id }?.let(vm::switchServer) }.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().clickable(enabled = !row.active) { p.servers.firstOrNull { it.id == row.id }?.let(vm::switchServer) }.padding(start = GROUP_INSET), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(row.label, color = if (row.active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
                             Text(row.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         // A jam guest switches between the profiles; changing them is not its to do.
                         if (dev.nori.music.ffi.settings.SettingsPart.SERVER_OPTIONS in LocalRules.current.settings) {
-                            TextButton({ editing = p.servers.firstOrNull { it.id == row.id } }) { Text(say.edit) }
-                            TextButton({ vm.removeServer(row.id) }) { Text(say.remove) }
+                            TextAction(say.edit, { editing = p.servers.firstOrNull { it.id == row.id } })
+                            TextAction(say.remove, { vm.removeServer(row.id) }, destructive = true)
                         }
                     }
                     // The server's own libraries, under it: which of them the app shows.
-                    if (row.libraries.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp)) {
+                    if (row.libraries.isNotEmpty()) Column(Modifier.fillMaxWidth().padding(start = GROUP_INSET, end = GROUP_INSET, bottom = 12.dp)) {
                         Text(row.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         androidx.compose.foundation.layout.FlowRow(
                             Modifier.padding(top = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) { row.libraries.forEach { l -> Chip(l.label, l.on) { vm.set(l.name, l.tapped) } } }
                     }
-                    Hairline(startIndent = 16.dp)
+                    if (divider) Hairline(startIndent = GROUP_INSET)
                 }
-                is SettingRow.Button -> TextButton({ act(row.action) }, Modifier.padding(horizontal = 8.dp)) { Text(row.title) }
+                is SettingRow.Button -> TextAction(row.title, { act(row.action) }, Modifier.padding(horizontal = 8.dp))
                 // Each row is drawn at its place in the order shown, gliding there, while it is laid out in the
                 // core's: the neighbours make way as the held row passes them, and when it is let go it settles
                 // into its place as the core's order catches up, with nothing jumping at either end.
                 is SettingRow.Ranked -> {
                     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
                     // The held row is lifted over its neighbours, so it needs the plate's own colour behind its words.
-                    val plate = LocalLook.current.color(dev.nori.music.look.CoverLook.FORM)
+                    val plate = MaterialTheme.colorScheme.surfaceContainer
                     val scope = androidx.compose.runtime.rememberCoroutineScope()
                     val mine = drag?.id == row.id
                     val following = mine && drag?.active == true
@@ -633,7 +558,7 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                                         haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
                                     }
                                 }
-                            }.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 16.dp),
+                            }.padding(start = GROUP_INSET, top = 12.dp, bottom = 12.dp, end = GROUP_INSET),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f).padding(end = 14.dp)) {
@@ -643,17 +568,20 @@ private fun SettingsSectionRows(vm: SettingsViewModel, section: SettingsSection,
                                 val keyLabel = when (row.keyButton) { KeyAction.CHANGE -> say.changeKey; KeyAction.ADD -> say.addKey; KeyAction.NONE -> null }
                                 if (keyLabel != null) Text(
                                     keyLabel, Modifier.padding(top = 6.dp).clickable { keying = row },
-                                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                                    style = MaterialTheme.typography.labelLarge,
                                 )
                             }
                             NoriSwitch(row.on, { on -> if (on && row.asksKey) keying = row else vm.set(row.name, on.toString()) })
                         }
-                        Hairline(startIndent = 16.dp)
+                        if (divider) Hairline(startIndent = GROUP_INSET)
                     }
                 }
             }
-        } }
     }
+    // The season picker stands on the page above the group's card.
+    val (seasons, rows) = section.rows.partition { it is SettingRow.Seasons }
+    seasons.forEachIndexed { at, row -> RowOf(at, row, divider = false) }
+    if (rows.isNotEmpty()) Section(section.title) { rows.forEachIndexed { at, row -> RowOf(at, row, divider = at < rows.lastIndex) } }
 }
 
 /** A ranked row held: [id], the order when it was picked up ([from]), the place it would go ([to]), and whether the finger is still on it. */
@@ -662,14 +590,16 @@ private data class RankDrag(val id: String, val from: List<String>, val to: Int,
     val shown: List<String> = from.toMutableList().apply { remove(id); add(to, id) }
 }
 
-/** The usage parts' colors, in [SettingRow.Usage.parts] order. */
-private val USAGE_COLORS = listOf(Color(0xFF2D9CDB), Color(0xFF27AE60), Color(0xFFF2994A), Color(0xFF9B51E0), Color(0xFF8A8A8A))
+/** How much of the ink each usage part takes, in [SettingRow.Usage.parts] order: the biggest reads strongest, the last still clears the track. */
+private val USAGE_INK = listOf(0.92f, 0.68f, 0.5f, 0.36f, 0.26f)
 
 /** What is stored on this device: the total, one bar split by kind, and a line per kind with its dot. */
 @Composable
-private fun UsageBar(row: SettingRow.Usage) {
+private fun UsageBar(row: SettingRow.Usage, divider: Boolean) {
     val total = row.parts.sumOf { it.bytes }.coerceAtLeast(1)
-    Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = 16.dp, vertical = 12.dp)) {
+    val scheme = MaterialTheme.colorScheme
+    val colors = USAGE_INK.map { androidx.compose.ui.graphics.lerp(scheme.surfaceContainer, scheme.onSurface, it) }
+    Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(row.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
             Text(row.total, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -680,15 +610,16 @@ private fun UsageBar(row: SettingRow.Usage) {
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             row.parts.forEachIndexed { i, p ->
-                if (p.bytes > 0) Box(Modifier.weight(p.bytes.toFloat() / total).fillMaxHeight().background(USAGE_COLORS[i % USAGE_COLORS.size]))
+                if (p.bytes > 0) Box(Modifier.weight(p.bytes.toFloat() / total).fillMaxHeight().background(colors[i % colors.size]))
             }
         }
         row.parts.forEachIndexed { i, p ->
             Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(USAGE_COLORS[i % USAGE_COLORS.size]))
+                Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(colors[i % colors.size]))
                 Text(p.label, Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(p.size, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
+    if (divider) Hairline(startIndent = GROUP_INSET)
 }

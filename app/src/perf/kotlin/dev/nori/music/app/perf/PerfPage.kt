@@ -18,13 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Image
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.nori.music.app.ui.Hairline
+import dev.nori.music.app.ui.Iconoir
 import dev.nori.music.app.ui.LocalChromeInset
 import dev.nori.music.app.ui.LocalNav
 import dev.nori.music.app.ui.PillButton
@@ -65,7 +59,7 @@ internal fun PerfPage(recorder: Recorder) {
     val covers by recorder.coverBench
     Column(Modifier.verticalScroll(rememberScrollState()).animateContentSize()) {
         Row(Modifier.padding(start = 4.dp, end = Space.gutter), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, say.back) }
+            IconButton(nav::back) { Icon(Iconoir.ArrowLeft, say.back) }
             Text(say.performance, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
         }
         // The first reading takes a few milliseconds on the recorder's thread; the figures fade in once it is there.
@@ -84,8 +78,8 @@ private fun Recorded(shown: Shown, calls: String, covers: String, recorder: Reco
             Modifier.padding(horizontal = Space.gutter, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            PillButton(w.shareReport, Icons.Outlined.Share, { recorder.share(context, calls, covers) }, prominent = true)
-            PillButton(w.startFresh, Icons.Outlined.Delete, recorder::clear)
+            PillButton(w.shareReport, Iconoir.ShareAndroid, { recorder.share(context, calls, covers) }, prominent = true)
+            PillButton(w.startFresh, Iconoir.Trash, recorder::clear)
         }
 
         SelfTestSection(recorder.selfTest)
@@ -106,8 +100,8 @@ private fun Recorded(shown: Shown, calls: String, covers: String, recorder: Reco
             Modifier.padding(horizontal = Space.gutter, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            PillButton(w.runCalls, Icons.Outlined.Speed, recorder::runCalls)
-            PillButton(w.runCovers, Icons.Outlined.Image, recorder::runCovers)
+            PillButton(w.runCalls, Iconoir.DashboardSpeed, recorder::runCalls)
+            PillButton(w.runCovers, Iconoir.MediaImage, recorder::runCovers)
         }
         if (calls.isNotEmpty()) Figures(w.calls, calls)
         if (covers.isNotEmpty()) Figures(w.covers, covers)
@@ -160,7 +154,7 @@ private fun Log(recorder: Recorder) {
     SectionHeader(w.log)
     Note(w.logNote)
     Row(Modifier.padding(horizontal = Space.gutter, vertical = 6.dp)) {
-        PillButton(if (open) w.hideLog else w.showLog, Icons.Outlined.Info, { if (open) recorder.hideLog() else recorder.showLog() })
+        PillButton(if (open) w.hideLog else w.showLog, Iconoir.InfoCircle, { if (open) recorder.hideLog() else recorder.showLog() })
     }
     AnimatedVisibility(open, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
         SelectionContainer {
@@ -191,7 +185,7 @@ private fun SelfTestSection(test: SelfTest) {
         Modifier.padding(horizontal = Space.gutter, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        PillButton(if (running) "Cancel" else "Run self test", Icons.Outlined.Speed, { if (running) test.cancel() else test.start(activity) }, prominent = !running)
+        PillButton(if (running) "Cancel" else "Run self test", Iconoir.DashboardSpeed, { if (running) test.cancel() else test.start(activity) }, prominent = !running)
         dev.nori.music.app.ui.Chip("Listen", test.listen) { if (!running) test.listen = !test.listen }
         dev.nori.music.app.ui.Chip("Downloads", test.downloads) { if (!running) test.downloads = !test.downloads }
     }

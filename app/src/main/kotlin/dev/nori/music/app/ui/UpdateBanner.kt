@@ -15,7 +15,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,10 +68,10 @@ private fun BannerCard(vm: SettingsViewModel, s: Updates.State) {
     var open by remember(update.version) { mutableStateOf(false) }
     Surface(
         Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = TileShape,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         contentColor = MaterialTheme.colorScheme.onSurface,
-        shadowElevation = 6.dp,
+        border = hairlineBorder(),
     ) {
         Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp)) {
             Text(res.getString(R.string.update_banner_title, update.version), Modifier.padding(end = 8.dp), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
@@ -101,6 +100,7 @@ private fun BannerCard(vm: SettingsViewModel, s: Updates.State) {
                 LinearProgressIndicator(
                     progress = { if (s.total > 0) (s.done.toFloat() / s.total).coerceIn(0f, 1f) else 0f },
                     Modifier.fillMaxWidth().padding(top = 10.dp, end = 8.dp),
+                    color = MaterialTheme.colorScheme.onSurface, trackColor = MaterialTheme.colorScheme.outlineVariant,
                 )
             }
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.End) {
@@ -113,7 +113,7 @@ private fun BannerCard(vm: SettingsViewModel, s: Updates.State) {
                 }
                 updateButton(res, s, installs)?.let { word ->
                     val act = if (s is Updates.State.Downloading) vm::cancelUpdate else vm::updateNow
-                    TextButton(act) { Text(word, fontWeight = FontWeight.SemiBold) }
+                    TextAction(word, act)
                 }
             }
         }

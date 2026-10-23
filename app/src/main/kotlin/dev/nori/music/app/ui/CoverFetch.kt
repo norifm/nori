@@ -57,8 +57,12 @@ internal class CoverFetch<P : Any>(
     private var height = 0
 
     /** Asks for the picture a view [width] x [height] pixels draws, unless what is kept will do. */
-    fun want(width: Int, height: Int) {
+    fun want(viewWidth: Int, viewHeight: Int) {
         val url = url ?: return
+        // The whole square cover, whatever the view's shape: every view crops at draw time, while the loader
+        // crops a decode to the size asked for and keeps one picture per address for every view of it.
+        val width = maxOf(viewWidth, viewHeight)
+        val height = width
         this.width = width
         this.height = height
         retry?.cancel()

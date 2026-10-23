@@ -9,9 +9,14 @@ use crate::Core;
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Stage {
-    /// Share of the sleeve height that fades at the bottom (also the colour sampling share).
+    /// Share of the sleeve height that fades at the bottom (`nori_look::cover::FADE_SHARE`). The page
+    /// colours are sampled from a shallower band (`cover::SAMPLE_SHARE`), which no client draws.
     pub melt: f32,
     pub rub_out: Vec<sleeve::Stop>,
+    /// The same on its side, where the right edge goes soft over this share of the width.
+    pub across_melt: f32,
+    pub across_rub_out: Vec<sleeve::Stop>,
+    pub across_soft: Vec<sleeve::Stop>,
     pub soft: Vec<sleeve::Stop>,
     pub soft_from: f32,
     pub soft_to: f32,
@@ -49,8 +54,11 @@ pub struct Stage {
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn stage() -> Stage {
     Stage {
-        melt: nori_look::cover::MELT,
+        melt: nori_look::cover::FADE_SHARE,
         rub_out: sleeve::RUB_OUT.to_vec(),
+        across_melt: sleeve::ACROSS_MELT,
+        across_rub_out: sleeve::ACROSS_RUB_OUT.to_vec(),
+        across_soft: sleeve::ACROSS_SOFT.to_vec(),
         soft: sleeve::SOFT.to_vec(),
         soft_from: sleeve::SOFT_FROM,
         soft_to: sleeve::SOFT_TO,

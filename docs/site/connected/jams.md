@@ -8,7 +8,8 @@ sidebar:
 Applies to nori 0.6 on Android, the desktop, the terminal and the iPod touch. Server profiles need octo-fiesta. Current development builds also support YouTube Music jams on the local network.
 
 A jam is a session others join without an account. **Remote control and jams** is enabled by default (Settings, Library, Other devices).
-Start a jam from the devices button, or from a song's, album's or playlist's menu.
+Start a jam from the output sheet (the devices button), or from a song's menu. On Android these are the
+only places; the other clients also start one from an album or playlist.
 
 ## Inviting
 

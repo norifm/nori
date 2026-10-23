@@ -84,9 +84,8 @@
     <string name="filter_artists">Filter artists</string>
     <string name="new_playlist">New playlist</string>
     <string name="import_playlist_file">Import M3U…</string>
-    <string name="export_playlist_file">Export M3U</string>
     <string name="favourite_songs">Favorite songs</string>
-    <string name="starred_favourites">★ Favorites</string>
+    <string name="starred_favourites">Favorites</string>
     <string name="new_station">New station</string>
     <string name="stream_url">Stream URL</string>
     <string name="download_queue">Download queue</string>
@@ -108,6 +107,7 @@
     <string name="sooner">Sooner</string>
     <string name="mixing">Mixing</string>
     <string name="new_mix">New mix</string>
+    <string name="save_as_playlist">Save as playlist</string>
     <string name="new_smart_playlist">New smart playlist</string>
     <string name="ready_made">Ready made</string>
     <string name="smart_playlist">Smart playlist</string>
@@ -514,9 +514,7 @@
     <string name="shelf_other">Others</string>
     <string name="shelf_tagged">%1$ss</string>
     <!-- The album grid's and the songs list's orders. -->
-    <string name="sort_az">A–Z</string>
     <string name="sort_artist">Artist</string>
-    <string name="sort_artist_rows">Artist rows</string>
     <string name="sort_added">Added</string>
     <string name="sort_played">Played</string>
     <string name="sort_most_played">Most played</string>
@@ -617,7 +615,7 @@
     <string name="update_changelog_title">New in nori %1$s</string>
     <string name="update_changelog_done">OK</string>
     <!-- The devices sheet: where the music plays, and the account's other devices. -->
-    <string name="devices_title">Play on</string>
+    <string name="devices_title">Playing on</string>
     <string name="devices_this">@string/remote_this_phone</string>
     <!-- Told after a device's name when another has the same one: "Mac (terminal)". -->
     <string name="devices_kind_phone">phone</string>
@@ -625,16 +623,16 @@
     <string name="devices_kind_terminal">terminal</string>
     <string name="devices_kind_guest">guest</string>
     <string name="devices_output">Audio output</string>
-    <string name="devices_nearby">On this network</string>
-    <string name="devices_idle">Not playing</string>
+    <string name="devices_nearby">Nearby</string>
+    <string name="devices_idle">Idle</string>
     <string name="devices_playing_on">Playing on %1$s</string>
     <string name="devices_playing_here">Playing here</string>
     <string name="devices_stale">The queue changed there. Try again.</string>
     <string name="devices_not_allowed">That device said no.</string>
     <string name="devices_unknown">That is no longer there.</string>
     <!-- Jams: one phone plays, the others ask for songs. The jam lives in the player, its queue and the devices sheet. -->
-    <string name="jam_start">Start a Jam</string>
-    <string name="jam_yours">Your Jam</string>
+    <string name="jam_start">Start a jam</string>
+    <string name="jam_yours">Your jam</string>
     <string name="jam_title">Jam</string>
     <!-- The player's strip while this phone hosts a jam: "Jam · 2 listening". -->
     <string name="jam_strip">Jam · %1$s</string>
@@ -694,4 +692,10 @@
     <string name="jam_too_many">You have as many songs waiting as a Jam allows</string>
     <string name="jam_unsupported">Your server doesn’t support Jams yet. They need octo-fiesta with nori support in front of it.</string>
     <string name="devices_nearby_only">Devices on this network show up here. To reach them from anywhere, your server needs octo-fiesta with nori support.</string>
+    <!-- Home: the Continue card and the mix cards. -->
+    <string name="continue_label">Continue</string>
+    <string name="resume">Resume</string>
+    <string name="offer_place">%1$s · %2$d of %3$d</string>
+    <string name="mix_line_made">Made for you</string>
+    <string name="mix_line_favourites">Your favorites</string>
 </resources>

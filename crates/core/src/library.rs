@@ -116,12 +116,12 @@ impl Client {
             saved.songs.get(saved.index as usize).map(|s| s.id.clone())
         });
         let Page::Queue { v, by } = self.read_now(Read::PullQueue).await? else { return Ok(None) };
-        Ok(queue_offer(v, &by, here.as_deref(), playing, self.queue_pushed.lock().as_ref(), self.queue_seen.lock().as_ref()))
+        Ok(queue_offer(v, &by, here.as_deref(), playing, self.queue_place(QUEUE_PUSHED).as_ref(), self.queue_place(QUEUE_SEEN).as_ref()))
     }
 
     /// `offer` was taken or turned down: that queue is not offered again.
     pub fn queue_offer_done(&self, offer: QueueOffer) {
-        *self.queue_seen.lock() = offer.place();
+        self.remember_queue_place(QUEUE_SEEN, offer.place());
     }
 }
 
@@ -196,6 +196,24 @@ impl Client {
     }
 }
 
+/// Where the queue this device last handed the server stood, and the server's queue last offered here
+/// ([`Client::queue_offer`]): stored, so neither comes back as an offer after a restart.
+pub(crate) const QUEUE_PUSHED: &str = "queue_pushed";
+pub(crate) const QUEUE_SEEN: &str = "queue_seen";
+
+impl Client {
+    fn queue_place(&self, key: &str) -> Option<QueuePlace> {
+        nori_db::kv_get(&self.core.db.lock(), key).ok().flatten().and_then(|j| serde_json::from_str(&j).ok())
+    }
+
+    pub(crate) fn remember_queue_place(&self, key: &str, place: Option<QueuePlace>) {
+        let Some(place) = place else { return };
+        if let Ok(json) = serde_json::to_string(&place) {
+            let _ = nori_db::kv_put(&self.core.db.lock(), key, &json);
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -214,32 +232,34 @@ pub(crate) mod tests {
     #[test]
     fn the_server_queue_is_offered_until_taken_or_pushed_from_here() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
-        let saved = |by: &str, position: u64| {
+        let saved = |by: &str, current: &str, position: u64| {
             let songs = r#"[{"id":"a","title":"A","isDir":false},{"id":"b","title":"B","isDir":false}]"#;
-            fake.answer(&format!(r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"current":"b","position":{position},"changedBy":"{by}","entry":{songs}}}}}}}"#));
+            fake.answer(&format!(r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"current":"{current}","position":{position},"changedBy":"{by}","entry":{songs}}}}}}}"#));
         };
-        saved("NavidromeUI", 1200);
+        saved("NavidromeUI", "b", 1200);
         let offer = block(c.queue_offer(false, None)).unwrap().unwrap();
         assert_eq!((offer.by.clone(), offer.index, offer.position_ms), (QueueBy::App { name: "NavidromeUI".into() }, 1, 1200));
         c.queue_offer_done(offer);
-        saved("NavidromeUI", 1200);
+        saved("NavidromeUI", "b", 1200);
         assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "taken or turned down");
+        saved("NavidromeUI", "b", 5000);
+        assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "its song was offered, played on since");
 
         // What this device handed the server comes back as its own.
-        c.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
-        fake.answer(r#"{"subsonic-response":{"status":"ok"}}"#);
-        block(c.playlist_push(Some("b".into()), 3000)).unwrap();
-        saved("nori", 3000);
-        assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "pushed from here");
-        saved("nori", 9000);
-        assert_eq!(block(c.queue_offer(false, None)).unwrap().map(|o| o.by), Some(QueueBy::Nori), "moved on elsewhere");
         c.core.session.set(vec!["a".into(), "b".into()], Some(1), false, None);
-        saved("nori", 9000);
+        fake.answer(r#"{"subsonic-response":{"status":"ok"}}"#);
+        block(c.playlist_push(Some("a".into()), 3000)).unwrap();
+        saved("nori", "a", 3000);
+        assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "pushed from here");
+        saved("nori", "a", 9000);
+        assert_eq!(block(c.queue_offer(false, None)).unwrap().map(|o| o.by), Some(QueueBy::Nori), "moved on elsewhere");
+        c.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
+        saved("nori", "a", 9000);
         assert_eq!(block(c.queue_offer(false, None)).unwrap(), None, "its song is the one here");
         // The player shows another device it controls, paused on the saved queue's song: that song is here too.
-        c.core.session.set(vec!["a".into(), "b".into()], Some(0), false, None);
-        saved("nori", 9000);
-        assert_eq!(block(c.queue_offer(false, Some("b".into()))).unwrap(), None, "the device shown here holds its song");
+        c.core.session.set(vec!["a".into(), "b".into()], Some(1), false, None);
+        saved("nori", "a", 9000);
+        assert_eq!(block(c.queue_offer(false, Some("a".into()))).unwrap(), None, "the device shown here holds its song");
 
         // Before the player has taken up the queue saved for this start, that queue is what is here.
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });

@@ -121,7 +121,7 @@ impl QueueOffer {
 }
 
 /// A song in a queue and how far into it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct QueuePlace {
     pub song: String,
     pub position_ms: u64,
@@ -133,10 +133,10 @@ fn place(songs: &[Song], index: u32, position_ms: u64) -> Option<QueuePlace> {
 
 /// The queue `saved` on the server by the app named `by`, offered to a device showing its song `here`
 /// (or nothing) unless the offer does not stand ([`offer_stands`]), it stands where this device left it
-/// (`ours`), or it was offered before (`seen`).
+/// (`ours`), or its song was offered before (`seen`), wherever it has got to since.
 pub fn queue_offer(saved: PlayQueue, by: &str, here: Option<&str>, playing: bool, ours: Option<&QueuePlace>, seen: Option<&QueuePlace>) -> Option<QueueOffer> {
     let at = place(&saved.songs, saved.index, saved.position_ms)?;
-    if !offer_stands(&at.song, here.map(String::from), playing) || ours == Some(&at) || seen == Some(&at) {
+    if !offer_stands(&at.song, here.map(String::from), playing) || ours == Some(&at) || seen.is_some_and(|s| s.song == at.song) {
         return None;
     }
     let by = if by == nori_net::api::CLIENT { QueueBy::Nori } else { QueueBy::App { name: by.to_string() } };
@@ -203,6 +203,7 @@ mod tests {
             ("its song is here", Some("b"), false, None, None),
             ("this device left it", None, false, Some(&at), None),
             ("offered before", None, false, None, Some(&at)),
+            ("offered before, played on", None, false, None, Some(&elsewhere)),
         ] {
             assert_eq!(offer("nori", here, playing, ours, seen), None, "{why}");
         }

@@ -1,5 +1,5 @@
-//! What a song's menu, its artist line's links, the sleep timer, a row swipe and a page's download entry
-//! offer; the client draws and words each action.
+//! What a song's menu, its artist line's links, the sleep timer, a row swipe, a page's head and its
+//! download entry offer; the client draws and words each action.
 
 use nori_model::model::ArtistRef;
 use nori_model::{DownloadPhase, Song};
@@ -302,8 +302,74 @@ pub fn download_entries(songs: u32, missing: u32) -> Vec<DownloadAct> {
     }
 }
 
-/// The positions of `songs` not yet `done`: what [`DownloadAct::Missing`] fetches. Twin of Android's
-/// `downloadEntry` (DetailScreens.kt).
+/// A page whose head offers actions on its songs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PageKind {
+    Album,
+    Artist,
+    Playlist,
+    /// `refreshable`: a draw, which can be drawn again (not a ranking).
+    Mix { refreshable: bool },
+    Smart,
+}
+
+/// Something a page's head can do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum PageAction {
+    /// The page's songs, as [`download_entry`] words it.
+    Download { act: DownloadAct },
+    /// Everything by the artist.
+    DownloadEverything,
+    AddToQueue,
+    /// A new draw of the mix.
+    Refresh,
+    /// The smart playlist's rules.
+    Edit,
+}
+
+/// The actions a page's head offers, in order, for `songs` songs of which `missing` are not downloaded:
+/// what acts on its songs (nothing for a page with none, though an artist's are not counted), then the
+/// page's own. Downloads are offered where the profile keeps them ([`crate::browse::ProfileRules::downloads`]).
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn page_actions(kind: PageKind, songs: u32, missing: u32, downloads: bool) -> Vec<PageAction> {
+    let mut out = Vec::with_capacity(3);
+    match kind {
+        PageKind::Mix { refreshable: true } => out.push(PageAction::Refresh),
+        PageKind::Smart | PageKind::Album | PageKind::Playlist | PageKind::Artist | PageKind::Mix { refreshable: false } => {}
+    }
+    if kind == PageKind::Artist {
+        if downloads {
+            out.push(PageAction::DownloadEverything);
+        }
+        out.push(PageAction::AddToQueue);
+    } else if songs > 0 {
+        if downloads {
+            out.push(PageAction::Download { act: download_entry(songs, missing) });
+        }
+        out.push(PageAction::AddToQueue);
+    }
+    if kind == PageKind::Smart {
+        out.push(PageAction::Edit);
+    }
+    out
+}
+
+/// What a mix is called as a playlist saved to the server: "nori discover", then "nori discover 2" and on
+/// while `existing` (the account's playlist names) has the one before.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn saved_mix_name(title: String, existing: Vec<String>) -> String {
+    let base = format!("nori {}", title.trim().to_lowercase());
+    let taken = |name: &str| existing.iter().any(|e| e.trim().eq_ignore_ascii_case(name));
+    if !taken(&base) {
+        return base;
+    }
+    (2..).map(|n| format!("{base} {n}")).find(|name| !taken(name)).unwrap_or(base)
+}
+
+/// The positions of `songs` not yet `done`: what [`DownloadAct::Missing`] fetches, for the page glyphs'
+/// download action.
 pub fn download_missing<'a>(songs: impl IntoIterator<Item = &'a str>, done: impl Fn(&str) -> bool) -> Vec<usize> {
     songs.into_iter().enumerate().filter(|(_, id)| !done(id)).map(|(i, _)| i).collect()
 }
@@ -317,6 +383,43 @@ mod tests {
         use DownloadAct::*;
         for (songs, missing, want) in [(12, 12, vec![All]), (12, 0, vec![Remove]), (12, 5, vec![Missing, Remove]), (0, 0, vec![All])] {
             assert_eq!(download_entries(songs, missing), want, "{songs} songs, {missing} missing");
+        }
+    }
+
+    #[test]
+    fn a_saved_mix_is_named_after_itself_and_counted_when_repeated() {
+        let names = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(saved_mix_name("Discover".into(), vec![]), "nori discover");
+        assert_eq!(saved_mix_name("Discover".into(), names(&["nori discover"])), "nori discover 2");
+        assert_eq!(saved_mix_name("Discover".into(), names(&["Nori Discover", "nori discover 2", "Road trip"])), "nori discover 3");
+        assert_eq!(saved_mix_name(" Quick picks ".into(), names(&["nori discover"])), "nori quick picks");
+    }
+
+    #[test]
+    fn page_heads() {
+        use DownloadAct::{All, Missing, Remove};
+        use PageAction::*;
+        let mix = |refreshable| PageKind::Mix { refreshable };
+        // Kind, songs, missing, downloads (off for a jam guest and a profile that keeps none).
+        let cases = [
+            (PageKind::Album, 8, 8, true, vec![Download { act: All }, AddToQueue]),
+            (PageKind::Album, 8, 3, true, vec![Download { act: Missing }, AddToQueue]),
+            (PageKind::Album, 8, 0, true, vec![Download { act: Remove }, AddToQueue]),
+            (PageKind::Album, 8, 8, false, vec![AddToQueue]),
+            (PageKind::Album, 0, 0, true, vec![]),
+            (PageKind::Artist, 0, 0, true, vec![DownloadEverything, AddToQueue]),
+            (PageKind::Artist, 0, 0, false, vec![AddToQueue]),
+            (PageKind::Playlist, 12, 12, true, vec![Download { act: All }, AddToQueue]),
+            (PageKind::Playlist, 12, 12, false, vec![AddToQueue]),
+            (PageKind::Playlist, 0, 0, true, vec![]),
+            (mix(true), 50, 50, true, vec![Refresh, Download { act: All }, AddToQueue]),
+            (mix(false), 50, 0, true, vec![Download { act: Remove }, AddToQueue]),
+            (mix(true), 0, 0, false, vec![Refresh]),
+            (PageKind::Smart, 30, 30, false, vec![AddToQueue, Edit]),
+            (PageKind::Smart, 0, 0, true, vec![Edit]),
+        ];
+        for (kind, songs, missing, downloads, want) in cases {
+            assert_eq!(page_actions(kind, songs, missing, downloads), want, "{kind:?}, {songs} songs, {missing} missing, downloads {downloads}");
         }
     }
 

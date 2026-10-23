@@ -352,7 +352,7 @@ System font (San Francisco: the exact Apple Music typeface), Dynamic Type throug
 Symbols on iOS 12: the glyphs are Android's own Material icons (`Icons.Filled.*`), their path data
 carried into `ios/Sources/Glyphs.swift` and drawn as templates at the size each place needs; the
 Licenses page credits them. Themes: iOS 12 has no system dark mode, so the app's own `theme` setting (dark by
-default, light as the option; the AMOLED-black one is pointless on an LCD and is hidden). The season theme
+default, day as the option; Midnight is pointless on an LCD and is hidden). The season theme
 is colors only: `Theme.swift` reads the palette from `nori_ios_palette` (`crates/ios/src/theme.rs`, over
 `nori_look::theme::palette` on the device's date and zone) and rebuilds the views when the `theme` or `season`
 setting changes, when the app becomes active on a new day, and at launch. Settings, Theme lists the four
@@ -442,7 +442,7 @@ Each ends with something that runs on the iPod; nothing moves on until the one b
 
 ## 11. The owner's decisions (2026-10-03)
 
-- **Dark theme by default.** The light theme stays as a setting; the AMOLED-black one is hidden (LCD).
+- **Night by default.** Day stays as a setting; Midnight is hidden (LCD).
 - **The headphone jack is the output.** No Lightning DAC: the `Usb` route, bit-perfect reopening per song
   and the DAC pages are not built for this client; Bluetooth and the speaker are the other two routes.
 - **Downloads run while the app is open or playing.** No `NSURLSession` background sessions; the Downloads
@@ -708,7 +708,7 @@ the queue ends and, while it does, carry on with songs or albums, chosen by, rem
 something goes wrong (play downloads when offline).
 
 The curated settings pages for this client (what a phone-only setting is, is hidden: metered network,
-offload, bit-perfect, USB, AMOLED), each row from `settings_model::specs` and `state`, changes through
+offload, bit-perfect, USB), each row from `settings_model::specs` and `state`, changes through
 `setting_set` → `SettingChange::effect` → `Session::apply`; the equalizer screen with the bands as
 sliders, `edit_band`, presets, the shallow mode through `rules::sound_tuning` (in sight,
 touched) → `set_shallow`; the per-output sound page over `nori-devices` (speaker, wired, each Bluetooth

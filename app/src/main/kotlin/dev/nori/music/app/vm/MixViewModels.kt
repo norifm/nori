@@ -42,8 +42,6 @@ data class MixPage(
     val id: String, val title: String, val songs: List<Song>, val covers: List<String>,
     /** False for favourites (they follow the hearts) and for top songs (there is only one draw of those). */
     val refreshable: Boolean, val favourites: Boolean,
-    /** "12 songs · 48:10", the core's; empty with no songs. */
-    val caption: String,
 ) {
     /** What a queue started from this page carries: the mix, whichever draw of it. */
     val origin = dev.nori.music.ffi.model.PageOrigin(dev.nori.music.ffi.model.OriginKind.MIX, id)
@@ -58,7 +56,7 @@ data class MixPage(
 /** The core names the covers; the list rendition of each, so they are cache hits. */
 private val tileSize: Int get() = dev.nori.music.data.Covers.rules.row.toInt()
 private fun NoriViewModel.card(t: MixTile) = MixCard(t.id, dev.nori.music.app.ui.say.mixName(t.name), t.covers.mapNotNull { cover(it, tileSize) }, t.favourites)
-private fun NoriViewModel.page(s: MixSheet) = MixPage(s.id, dev.nori.music.app.ui.say.mixName(s.name), s.songs, s.covers.mapNotNull { cover(it, tileSize) }, s.refreshable, s.favourites, if (s.songs.isEmpty()) "" else dev.nori.music.app.ui.say.listCaption(s.songs.size, s.seconds.toLong(), false))
+private fun NoriViewModel.page(s: MixSheet) = MixPage(s.id, dev.nori.music.app.ui.say.mixName(s.name), s.songs, s.covers.mapNotNull { cover(it, tileSize) }, s.refreshable, s.favourites)
 
 /**
  * Today's (or this week's) draw of each mix lives in the core (see mixes/board.rs), shared by the Home

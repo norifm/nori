@@ -1,7 +1,7 @@
 //! Gradient stops that dissolve artwork into its page, as fractions of the artwork's box. Colours come
 //! from `dress`; the stops were tuned by eye against Apple Music's player.
 
-use crate::cover::MELT;
+use crate::cover::SAMPLE_SHARE;
 
 /// A gradient stop: position and alpha, both 0..1.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -15,15 +15,25 @@ const fn s(at: f32, alpha: f32) -> Stop {
     Stop { at, alpha }
 }
 
-/// Fade-out of the sleeve over its bottom band (the last [`MELT`]): eased, complete by 70 % so sharp
-/// lines in the artwork near the bottom do not show through the blur below.
-pub const RUB_OUT: [Stop; 7] = [s(0.0, 0.0), s(0.12, 0.31), s(0.25, 0.60), s(0.40, 0.86), s(0.55, 0.97), s(0.70, 1.0), s(1.0, 1.0)];
+/// Fade-out of the sleeve over its bottom band (the last [`crate::cover::FADE_SHARE`]): nearly linear, so the
+/// cover still shows behind the title and is gone only at the band's end.
+pub const RUB_OUT: [Stop; 3] = [s(0.0, 0.0), s(0.5, 0.42), s(1.0, 1.0)];
+
+/// On its side the sleeve's right edge goes soft instead: a band this share of its width, short so the
+/// cover stays clear of the controls beside it.
+pub const ACROSS_MELT: f32 = 0.3;
+/// Fade-out over that band: smoothstep, so the edge has no visible start or end.
+pub const ACROSS_RUB_OUT: [Stop; 6] = [s(0.0, 0.0), s(0.2, 0.104), s(0.4, 0.352), s(0.6, 0.648), s(0.8, 0.896), s(1.0, 1.0)];
+/// Opacity of the blurred copy over the sharp cover across that band: smoothstep, full by 70 % of the band,
+/// before the fade has hidden the cover.
+pub const ACROSS_SOFT: [Stop; 7] = [s(0.0, 0.0), s(0.14, 0.104), s(0.28, 0.352), s(0.42, 0.648), s(0.56, 0.896), s(0.7, 1.0), s(1.0, 1.0)];
 
 /// Opacity of the blurred copy over the sharp artwork, spanning [`SOFT_FROM`]..[`SOFT_TO`].
 pub const SOFT: [Stop; 5] = [s(0.0, 0.0), s(0.3, 0.10), s(0.6, 0.50), s(0.85, 0.92), s(1.0, 1.0)];
-/// Span of [`SOFT`] as fractions of the sleeve height.
-pub const SOFT_FROM: f32 = 1.0 - MELT * 2.2;
-pub const SOFT_TO: f32 = 1.0 - MELT * 0.55;
+/// Span of [`SOFT`] as fractions of the sleeve height, placed by [`SAMPLE_SHARE`] rather than the fade:
+/// the seam model that picks the page colours draws the blurred copy there.
+pub const SOFT_FROM: f32 = 1.0 - SAMPLE_SHARE * 2.2;
+pub const SOFT_TO: f32 = 1.0 - SAMPLE_SHARE * 0.55;
 
 /// Black shade under the status bar (alpha at the top), gone at [`STATUS_SHADE_TO`] of the height, so
 /// white icons read on pale covers.
@@ -53,13 +63,6 @@ pub const FLOOR_STOPS: [f32; 4] = [0.0, 0.45, 0.80, 1.0];
 /// Alpha mask fading the lyrics panel at both ends (clear before the source label).
 pub const LYRICS_MASK: [Stop; 4] = [s(0.0, 0.0), s(0.05, 1.0), s(0.66, 1.0), s(0.92, 0.0)];
 
-/// Whether a cover-tinted page renders black: the dark theme with AMOLED on, and the page not set to
-/// keep cover colours. The cover's own page does not depend on the theme; only this does.
-#[cfg_attr(feature = "ffi", uniffi::export)]
-pub fn page_black(dark: bool, amoled: bool, cover_colours: bool) -> bool {
-    dark && amoled && !cover_colours
-}
-
 /// Android `ColorMatrix` (4x5, row-major) tinting the blurred band: Rec. 709 luminance scaled per channel
 /// by `k`, mixed in at `strength` (`dress::BAND_TINT`).
 #[cfg_attr(feature = "ffi", uniffi::export)]
@@ -84,10 +87,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn black_only_in_the_dark_theme_with_amoled() {
-        assert!(page_black(true, true, false));
-        assert!(!page_black(false, true, false), "AMOLED is a dark theme setting");
-        assert!(!page_black(true, true, true), "the page keeps its cover colours");
+    fn across_curves_rise_smoothly_from_nothing_to_all() {
+        for stops in [&ACROSS_RUB_OUT[..], &ACROSS_SOFT[..]] {
+            assert_eq!((alpha_at(stops, 0.0), alpha_at(stops, 1.0)), (0.0, 1.0));
+            let mut last = 0.0;
+            for i in 1..=100 {
+                let a = alpha_at(stops, i as f32 / 100.0);
+                // Never falls and never jumps: no visible step in the edge.
+                assert!(a >= last && a - last < 0.04, "step at {i}: {last} -> {a}");
+                last = a;
+            }
+        }
+        assert!(ACROSS_MELT < crate::cover::FADE_SHARE);
     }
 
     #[test]

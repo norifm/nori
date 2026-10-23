@@ -3,7 +3,6 @@ package dev.nori.music.app.ui
 import dev.nori.music.look.CoverLook
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +13,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clip
@@ -30,10 +30,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,12 +47,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.nori.music.app.vm.PlayerViewModel
 import dev.nori.music.app.vm.SettingsViewModel
-import dev.nori.music.ffi.settings.ThemeMode
 import androidx.compose.foundation.layout.windowInsetsPadding
 
 /**
@@ -75,10 +73,10 @@ fun HeroPage(
     title: String,
     /** The same cover at the sizes lists ask for: drawn at once while [coverUrl] loads. */
     coverStandIns: List<String?> = emptyList(),
-    /** The artist line under the title, in the cover's accent colour; tapping it opens [onSubtitle]. */
+    /** The artist line under the title, in ink; tapping it opens [onSubtitle]. */
     subtitle: String? = null,
-    /** A quiet line under that, in sentence case: year, song count, length, quality. */
-    caption: String = "",
+    /** The title's size: Literata 27 for a record, larger for an artist. */
+    titleSize: TextUnit = 27.sp,
     onSubtitle: (() -> Unit)? = null,
     onPlay: (() -> Unit)? = null,
     onShuffle: (() -> Unit)? = null,
@@ -95,8 +93,12 @@ fun HeroPage(
      * leaves them Play and Shuffle. Null: the page has no queue of its own.
      */
     queue: dev.nori.music.ffi.library.PageQueue? = null,
-    /** Icon buttons on the line with the pills: favourite, queue, download. */
+    /** The seal, bare, after the Play pill. */
     actions: @Composable RowScope.() -> Unit = {},
+    /** The list head's quiet label at the left ("2019 · 8 songs · 36:28 · FLAC"; cut short at the right, so the least important part goes last); with [headActions] it heads the songs. */
+    headLabel: String = "",
+    /** Bare glyphs at the right of the list head: download, add to queue, or a mix's refresh (`PageActionGlyphs`). */
+    headActions: (@Composable RowScope.() -> Unit)? = null,
     /**
      * Artwork of the page's own making, for a page with no cover to bleed (a mix): drawn as a tile in the
      * middle, below the status bar, the way Apple shows a made-for-you mix. Used only when [coverUrl] is null.
@@ -112,10 +114,8 @@ fun HeroPage(
 ) {
     val settings: SettingsViewModel = viewModel()
     val prefs by settings.prefs.collectAsStateWithLifecycle()
-    val dark = when (prefs.theme) { ThemeMode.SYSTEM -> isSystemInDarkTheme(); ThemeMode.DARK -> true; ThemeMode.LIGHT -> false }
-    // Which pages wear their cover's colours, and which are black under only its accents, is the core's.
-    val black = remember(dark, prefs.amoled, prefs.coverColors) { dev.nori.music.ffi.settings.coverBlack(prefs.coverColors, false, dark, prefs.amoled) }
-    val tinted = prefs.coverColors.isNotEmpty()
+    // Pages wear their cover's colours except in Midnight (the core's rule).
+    val tinted = LocalPapers.current.coversTint
     // The picture that stands at the top of the page: the cover, or the mosaic of a page of several records.
     val lead = coverUrl ?: mosaic.firstOrNull()
     val picture: (@Composable (Modifier) -> Unit)? = when {
@@ -130,7 +130,7 @@ fun HeroPage(
     val measured = remember(lead, coverStandIns) {
         coverStandIns.firstOrNull { it != null && dev.nori.music.data.CoverLoader.get(context).kept(it) != null } ?: lead
     }
-    val palette = if (tinted) rememberCoverPalette(measured, black) else null
+    val palette = if (tinted) rememberCoverPalette(measured) else null
     // Shuffle stays labelled Shuffle (never Pause); it lights while this page's queue is shuffling.
     val player: PlayerViewModel = viewModel()
     val playerState by player.state.collectAsStateWithLifecycle()
@@ -162,7 +162,7 @@ fun HeroPage(
         // [coverSide]: on its side, the cover (or the page's own artwork) at this size, centred in the half,
         // so the half keeps the width its buttons need however short the screen is. Upright it is null and
         // the cover takes the full width, as ever.
-        // [showArt] false: the name, caption and buttons alone, for laying over a cover drawn apart (below).
+        // [showArt] false: the name and buttons alone, for laying over a cover drawn apart (below).
         val hero: @Composable (coverSide: androidx.compose.ui.unit.Dp?, showArt: Boolean) -> Unit = { coverSide, showArt ->
         Column(Modifier.fillMaxWidth()) {
             if (showArt) {
@@ -173,7 +173,11 @@ fun HeroPage(
                 Alignment.Center,
             ) { picture(Modifier.size(coverSide).clip(androidx.compose.foundation.shape.RoundedCornerShape(Radius.card))) }
             else if (picture != null) Box(
-                Modifier.fillMaxWidth().aspectRatio(1f)
+                Modifier.fillMaxWidth().layout { measurable, constraints ->
+                    val side = constraints.maxWidth
+                    val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(side, side + HERO_DEEPER.roundToPx()))
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                }
                     // Parallax and fade, read in the draw phase: scrolling never recomposes the hero.
                     .graphicsLayer {
                         val scrolled = heroScroll(size.height)
@@ -224,32 +228,29 @@ fun HeroPage(
             // Nothing is painted here: the artwork above has already dissolved onto the page
             // colour, and the page colour is what the root is painted with.
             Column(Modifier.fillMaxWidth()) {
+            // Upright over a picture the title block rises into the melt, overlapping the picture's last rows.
+            val rise = showArt && coverSide == null && picture != null
             Column(
-                Modifier.fillMaxWidth().padding(horizontal = Space.gutter, vertical = 4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = Space.gutter).then(if (rise) Modifier.raised(Space.titleRise + HERO_DEEPER - (if (subtitle.isNullOrEmpty()) ARTIST_LINE else 0.dp)) else Modifier.padding(vertical = 4.dp)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    title, style = titled(MaterialTheme.typography.headlineSmall), textAlign = TextAlign.Center,
+                    title, style = titled(MaterialTheme.typography.headlineSmall.copy(fontSize = titleSize)), textAlign = TextAlign.Center,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
                 if (!subtitle.isNullOrEmpty()) Text(
                     subtitle,
-                    Modifier.padding(top = 2.dp).then(if (onSubtitle != null) Modifier.clickable(onClick = onSubtitle) else Modifier),
-                    style = MaterialTheme.typography.titleMedium, color = scheme.primary,
+                    Modifier.padding(top = 3.dp).then(if (onSubtitle != null) Modifier.clickable(onClick = onSubtitle) else Modifier),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.Medium),
                     textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                // Sentence case, as Apple writes it ("25 songs, 1 hour 42 minutes"). Small
-                // capitals here made the line shout louder than the artist above it.
-                Caption(caption, Modifier.padding(top = 6.dp), align = TextAlign.Center, caps = false)
             }
 
-            // Apple's arrangement: shuffle in a circle on the left, one wide Play pill in the
-            // middle, and the page's other action in a circle on the right. Two equal pills
-            // side by side give the page two things to look at instead of one. The row is
-            // reserved while [awaitingPlay] so the layout does not jump when the taps land.
+            // Shuffle · Play · the page's seal: bare glyphs either side of an ink pill that fills the row. The
+            // row is reserved while [awaitingPlay] so the layout does not jump when the taps land.
             if (awaitingPlay || onPlay != null || onShuffle != null) Row(
-                Modifier.fillMaxWidth().padding(start = Space.gutter, end = Space.gutter, top = 16.dp),
-                Arrangement.spacedBy(12.dp), Alignment.CenterVertically,
+                Modifier.fillMaxWidth().padding(start = Space.tight, end = Space.tight, top = 12.dp),
+                Arrangement.spacedBy(4.dp), Alignment.CenterVertically,
             ) {
                 val press: (dev.nori.music.ffi.library.HeroPress, (() -> Unit)?) -> Unit = { p, start ->
                     when (p) {
@@ -258,13 +259,13 @@ fun HeroPage(
                         dev.nori.music.ffi.library.HeroPress.SHUFFLE_OFF, dev.nori.music.ffi.library.HeroPress.SHUFFLE_ON -> player.toggleShuffle()
                     }
                 }
-                CircleButton(
-                    Icons.Filled.Shuffle, say.shuffle,
+                GlyphButton(
+                    Iconoir.Shuffle, say.shuffle,
                     enabled = buttons.shuffleEnabled, lit = buttons.shuffleLit,
                     onClick = { press(buttons.shufflePress, onShuffle) },
                 )
                 PillButton(
-                    if (buttons.pausing) say.pause else say.play, if (buttons.pausing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    if (buttons.pausing) say.pause else say.play, if (buttons.pausing) Iconoir.PauseSolid else Iconoir.PlaySolid,
                     { press(buttons.playPress, onPlay) }, Modifier.weight(1f),
                     prominent = true, enabled = buttons.playEnabled,
                 )
@@ -273,6 +274,7 @@ fun HeroPage(
                 Modifier.fillMaxWidth().padding(start = Space.tight, end = Space.tight, top = 2.dp),
                 Arrangement.Center, Alignment.CenterVertically,
             ) { actions() }
+            if (headLabel.isNotEmpty() || headActions != null) ListHead(headLabel, headActions)
             Spacer(Modifier.height(10.dp))
             }
         }
@@ -296,7 +298,7 @@ fun HeroPage(
                 Row(Modifier.fillMaxSize()) {
                     // A cover fills its half as the player's sleeve fills its own: from the screen's very left
                     // edge - under the camera's punch hole, which the app otherwise keeps pages clear of - and top,
-                    // going soft at its right edge, blurred as the sleeve does, into the page. The name, caption and
+                    // going soft at its right edge, blurred as the sleeve does, into the page. The name and
                     // buttons stand on the right above the songs, as the player's controls stand beside its sleeve,
                     // so nothing is written over the picture. A page with no picture at all - an artist without a
                     // photo, or one whose details have not come (offline) - keeps the same layout with the plain plate a
@@ -324,7 +326,7 @@ fun HeroPage(
                             Box(
                                 Modifier.fillMaxSize().graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (atEnd) scaleX = -1f }.drawWithCache {
                                     val shade = Brush.verticalGradient(0f to Color.Black.copy(alpha = stage.statusShade), stage.statusShadeTo to Color.Transparent)
-                                    val right = alphaGradient(stage.rubOut, Color.Black, size.width * (1f - MELT * ACROSS_MELT), size.width, across = true)
+                                    val right = alphaGradient(stage.acrossRubOut, Color.Black, size.width * (1f - stage.acrossMelt), size.width, across = true)
                                     onDrawBehind {
                                         drawRect(shade)
                                         drawRect(right, blendMode = androidx.compose.ui.graphics.BlendMode.DstOut)
@@ -378,6 +380,32 @@ private fun Mosaic(urls: List<String>, modifier: Modifier) {
     }
 }
 
+/** The line over a page's songs: [label] quiet at the left, [actions] at the right, a hairline under. */
+@Composable
+private fun ListHead(label: String, actions: (@Composable RowScope.() -> Unit)?) {
+    val look = LocalLook.current
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = Space.gutter, end = Space.tight), verticalAlignment = Alignment.CenterVertically) {
+            LookText(
+                label, { look.color(CoverLook.ON_VARIANT) }, Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            actions?.invoke(this)
+        }
+        Box(Modifier.padding(end = Space.gutter)) { Hairline() }
+    }
+}
+
+/** The room the artist line takes under a title; a page with none lets the title down by it, so the buttons stay where an album's are. */
+private val ARTIST_LINE = 28.dp
+
+/** Placed [by] higher than it is laid out, so what follows moves up with it and the two overlap. */
+private fun Modifier.raised(by: androidx.compose.ui.unit.Dp): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val up = by.roundToPx()
+    layout(placeable.width, (placeable.height - up).coerceAtLeast(0)) { placeable.place(0, -up) }
+}
+
 /** On its side: the space above the cover and above the first song, under the status bar. */
 private val WIDE_TOP = 12.dp
 
@@ -391,3 +419,6 @@ private fun heroPress(bits: Int) = when (bits and 3) {
     3 -> dev.nori.music.ffi.library.HeroPress.SHUFFLE_ON
     else -> dev.nori.music.ffi.library.HeroPress.START
 }
+
+/** How much taller than square the picture is, with the title block rising by as much: the cover reaches further behind the title. */
+private val HERO_DEEPER = 44.dp

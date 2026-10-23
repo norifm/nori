@@ -977,7 +977,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
         nori.dac.preferredDevice()?.let { runCatching { track.setPreferredDevice(it) } }
         nori.dac.onTrack(rate, encoding, false)
         track.addOnRoutingChangedListener(AudioRouting.OnRoutingChangedListener { r ->
-            r.routedDevice?.let { d -> RustPlayerJni.device(h, d.type, d.productName?.toString()) }
+            r.routedDevice?.let { d -> nori.outputs.routedTo(d); RustPlayerJni.device(h, d.type, d.productName?.toString()) }
         }, main)
         PlaybackService.track = OpenedTrack(track, frames * channels * width, mode)
         val given = if (track.performanceMode == AudioTrack.PERFORMANCE_MODE_POWER_SAVING) "power saving" else "normal"
@@ -1023,7 +1023,7 @@ class EnginePlayer(private val context: Context, private val nori: Nori) : Simpl
             val events = offloadEvents ?: OffloadEvents { from, kind -> if (from === offloadTrack) RustPlayerJni.offloadEvent(h, kind) }.also { offloadEvents = it }
             track.registerStreamEventCallback(Runnable::run, events)
             track.addOnRoutingChangedListener(AudioRouting.OnRoutingChangedListener { r ->
-                r.routedDevice?.let { d -> RustPlayerJni.device(h, d.type, d.productName?.toString()) }
+                r.routedDevice?.let { d -> nori.outputs.routedTo(d); RustPlayerJni.device(h, d.type, d.productName?.toString()) }
             }, main)
             nori.dac.onTrack(rate, encoding, track.isOffloadedPlayback)
             PlaybackService.track = OpenedTrack(track, bytes, AudioTrack.PERFORMANCE_MODE_NONE)

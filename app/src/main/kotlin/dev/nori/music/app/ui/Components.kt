@@ -41,26 +41,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.Radio
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.HeartBroken
 import dev.nori.music.ffi.settings.SwipeAction
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -188,7 +169,7 @@ fun Cover(url: String?, size: Dp, modifier: Modifier = Modifier, radius: Dp = Ra
             enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)), exit = androidx.compose.animation.fadeOut(),
         ) {
             LookIcon(
-                Icons.Filled.MusicNote, null,
+                Iconoir.MusicNote, null,
                 Modifier.size(if (size > 0.dp) size * 0.34f else 40.dp),
             ) { look.color(CoverLook.ON_22) }
         }
@@ -223,7 +204,7 @@ private const val SWIPE_ARM = TURN
 
 /**
  * Sideways drag on a row. Only a direction with an action moves at all. Past [SWIPE_ARM] of the width
- * the row goes heavier (it follows at 40%), the strip underneath takes the accent colour and the phone
+ * the row goes heavier (it follows at 40%), the strip underneath turns to ink and the phone
  * ticks, so the finger knows before it lifts; letting go then acts and the row springs back. The row
  * paints [fill] under itself only while it is off its place, so the strip never shows through it.
  */
@@ -339,7 +320,7 @@ internal suspend fun androidx.compose.ui.input.pointer.PointerInputScope.sideway
 
 /**
  * The strip a swiped row uncovers: the action's icon and words at the edge the row left, fading in over
- * the first 64 dp. Neutral until the drag is far enough to act, then the accent, with the icon giving
+ * the first 64 dp. Neutral until the drag is far enough to act, then in ink, with the icon giving
  * a small pop. Composed only while the row is off its place, so a list at rest carries none of it.
  */
 @Composable
@@ -357,7 +338,7 @@ internal fun SwipeBackdrop(
     val face = (if (side > 0f) right else left) ?: return
     val scheme = MaterialTheme.colorScheme
     val c = colours ?: remember(scheme) {
-        SwipeColours({ scheme.surfaceContainerHighest }, { scheme.primary }, { scheme.onSurfaceVariant }, { scheme.onPrimary })
+        SwipeColours({ scheme.surfaceContainerHighest }, { scheme.onSurface }, { scheme.onSurfaceVariant }, { scheme.background })
     }
     val armed by animateFloatAsState(if (s.armed) 1f else 0f, tween(140), label = "swipe armed")
     val fill = { androidx.compose.ui.graphics.lerp(c.fill(), c.armedFill(), armed) }
@@ -425,7 +406,7 @@ fun SongRow(
                     if (number > 0) "$number" else "", textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
                 )
-            } else Cover(coverUrl, 46.dp, radius = 6.dp)
+            } else Cover(coverUrl, 44.dp, radius = Radius.cover)
             Column(Modifier.weight(1f).padding(start = if (number != null) 14.dp else 12.dp, end = 8.dp)) {
                 // With no second line (an album's own tracks) the cloud leads the title rather than standing alone under it.
                 RemoteLine(
@@ -453,12 +434,12 @@ fun SongRow(
             Text(
                 if (asked) words(R.string.jam_asked_mark) else if (song.duration > 0u) duration(song.duration.toLong()) else "",
                 Modifier.widthIn(min = TIME_SLOT), textAlign = TextAlign.End,
-                style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.primary else tint, maxLines = 1, softWrap = false,
+                style = MaterialTheme.typography.bodySmall, color = if (asked) scheme.onSurface else tint, maxLines = 1, softWrap = false,
             )
-            IconButton(onMenu, Modifier.size(40.dp)) { Icon(Icons.Filled.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
+            IconButton(onMenu, Modifier.size(40.dp)) { Icon(Iconoir.MoreHoriz, say.more, Modifier.size(20.dp), tint) }
         }
       }
-        if (divider) Hairline(startIndent = if (number != null) Space.gutter + 40.dp else Space.gutter + 58.dp)
+        if (divider) Hairline(startIndent = if (number != null) Space.gutter + 40.dp else Space.gutter + 56.dp)
     }
 }
 
@@ -610,9 +591,9 @@ internal fun rowSwipe(action: SwipeAction, song: Song, actions: ActionsViewModel
     return remember(act, song, actions) {
         val label = say.rowSwipe(act)
         when (act) {
-            dev.nori.music.ffi.library.RowSwipeAct.Queue -> RowSwipe(Icons.AutoMirrored.Filled.QueueMusic, label) { actions.enqueue(listOf(song)) }
-            dev.nori.music.ffi.library.RowSwipeAct.PlayNext -> RowSwipe(Icons.AutoMirrored.Filled.PlaylistPlay, label) { actions.playNext(listOf(song)) }
-            dev.nori.music.ffi.library.RowSwipeAct.Download -> RowSwipe(Icons.Filled.Download, label) { actions.download(listOf(song)) }
+            dev.nori.music.ffi.library.RowSwipeAct.Queue -> RowSwipe(Iconoir.Playlist, label) { actions.enqueue(listOf(song)) }
+            dev.nori.music.ffi.library.RowSwipeAct.PlayNext -> RowSwipe(Iconoir.PlaylistPlay, label) { actions.playNext(listOf(song)) }
+            dev.nori.music.ffi.library.RowSwipeAct.Download -> RowSwipe(Iconoir.Download, label) { actions.download(listOf(song)) }
             is dev.nori.music.ffi.library.RowSwipeAct.Favourite -> RowSwipe(if (act.on) sealed else seal, label) { actions.star(song, act.on) }
         }
     }
@@ -666,7 +647,7 @@ fun RemoteLine(
     val tint = MaterialTheme.colorScheme.onSurfaceVariant
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         if (remote) Icon(
-            Icons.Filled.CloudDownload, say.notInLibraryYet,
+            Iconoir.CloudDownload, say.notInLibraryYet,
             Modifier.padding(end = if (text.isEmpty()) 0.dp else 4.dp).size(with(LocalDensity.current) { style.fontSize.toDp() } + 1.dp), tint,
         )
         if (text.isNotEmpty()) Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, style = style, color = color)
@@ -702,7 +683,7 @@ fun AlbumCard(album: Album, coverUrl: String?, size: Dp, onClick: () -> Unit, mo
 }
 
 @Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) = SectionHeader(text, modifier)
+fun SectionTitle(text: String, modifier: Modifier = Modifier, onMore: (() -> Unit)? = null, compact: Boolean = false) = SectionHeader(text, modifier, onMore, compact = compact)
 
 /**
  * Content that was not on the page at first (the songs under a hero hint) fades and rises once, as one
@@ -806,16 +787,16 @@ fun EmptyNote(text: String, modifier: Modifier = Modifier, icon: androidx.compos
 /** The glyph over a note of an empty list; none over help and failures. */
 @Composable
 private fun noteIcon(note: Note): androidx.compose.ui.graphics.vector.ImageVector? = when (note) {
-    Note.NO_INDEX, Note.NO_SONGS -> Icons.Rounded.MusicNote
-    Note.NO_ALBUMS -> Icons.Rounded.Album
-    Note.NO_ARTISTS -> Icons.Rounded.Person
-    Note.NO_PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic
-    Note.NO_STATIONS -> Icons.Rounded.Radio
-    Note.NOTHING_DOWNLOADED, Note.NO_DOWNLOADS -> Icons.Rounded.Download
+    Note.NO_INDEX, Note.NO_SONGS -> Iconoir.MusicNote
+    Note.NO_ALBUMS -> Iconoir.CompactDisc
+    Note.NO_ARTISTS -> Iconoir.User
+    Note.NO_PLAYLISTS -> Iconoir.Playlist
+    Note.NO_STATIONS -> Iconoir.AntennaSignal
+    Note.NOTHING_DOWNLOADED, Note.NO_DOWNLOADS -> Iconoir.Download
     Note.NO_FAVOURITE_SONGS -> Kanji.Seal
-    Note.NOTHING_TO_MIX -> Icons.Rounded.AutoAwesome
-    Note.NO_HISTORY -> Icons.Rounded.History
-    Note.NOTHING_FOUND -> Icons.Rounded.Search
+    Note.NOTHING_TO_MIX -> Iconoir.Sparks
+    Note.NO_HISTORY -> Iconoir.ClockRotateRight
+    Note.NOTHING_FOUND -> Iconoir.Search
     else -> null
 }
 

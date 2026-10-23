@@ -35,8 +35,8 @@ Playing (♫ or `P`) shows the song alone in the middle. `tab` moves between the
 
 The page is painted in the colors of the season, which follows the calendar (a week before a season starts to a
 week after, the colors blend) or stays on the one chosen in **Settings, Look** (picking a season there stops
-following the calendar; **Follow the seasons** under it starts again), with light, dark or black
-(AMOLED) appearance; "as the terminal" takes light or dark from the terminal's background (`COLORFGBG`). The
+following the calendar; **Follow the seasons** under it starts again), in one of four modes: "as the
+terminal" (Day or Night from the terminal's background, `COLORFGBG`), day, night or midnight (true black). The
 accent marks only what is current: the open tab, the song playing, shuffle or repeat while on, a liked seal.
 A selected row is the raised surface, never the accent.
 

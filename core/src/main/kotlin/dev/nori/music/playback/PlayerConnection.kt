@@ -75,6 +75,8 @@ data class PlayerState(
     val origin: Int = 0,
     /** The device playing while it is not this phone: the page shows and controls that one. */
     val playingOn: String? = null,
+    /** What [playingOn] is, for its icon. */
+    val playingOnKind: dev.nori.music.ffi.remote.DeviceKind? = null,
     /** [playingOn] is the host of a jam this phone is a guest in: the page shows it, its controls go by [jam]. */
     val jamGuest: Boolean = false,
     /** A jam guest's controls by its role (the core's `jam_controls`): which show, and whether play joins it here again. */
@@ -152,7 +154,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             order = if (old.order.size == queue.size && old.order.withIndex().all { (k, v) -> k == v }) old.order else queue.indices.toList(),
             queued = emptySet(), radio = null, playing = jam?.playing ?: m.playing, advancing = m.playing && !m.buffering, buffering = m.buffering && m.playing, shuffle = m.shuffle,
             repeat = when (m.repeat.toInt()) { Player.REPEAT_MODE_ALL -> Repeat.ALL; Player.REPEAT_MODE_ONE -> Repeat.ONE; else -> Repeat.OFF },
-            durationMs = (queue.getOrNull(at)?.duration?.toLong() ?: 0L) * 1000, error = null, bridging = false, playingOn = m.name,
+            durationMs = (queue.getOrNull(at)?.duration?.toLong() ?: 0L) * 1000, error = null, bridging = false, playingOn = m.name, playingOnKind = m.kind,
             jamGuest = guest, jam = jam,
         )
     }
@@ -428,7 +430,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             error = if (p.playerError == null) null else old.error,
             bridging = view?.bridging ?: old.bridging,
             waiting = p.playWhenReady && PlaybackService.rustPlayer?.waiting == true,
-            origin = PlaylistJni.origin(nori.sessionHandle), playingOn = null,
+            origin = PlaylistJni.origin(nori.sessionHandle), playingOn = null, playingOnKind = null,
         )
     }
 

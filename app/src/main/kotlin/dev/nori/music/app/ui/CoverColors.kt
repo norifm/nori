@@ -42,40 +42,43 @@ private object CoverPalette {
         synchronized(locks) { locks.get(key) ?: kotlinx.coroutines.sync.Mutex().also { locks.put(key, it) } }.withLock { block() }
 }
 
+/** A cover's page dyed on one season's papers. */
+private data class DyedKey(val cover: String, val papers: Papers)
+
+/** Dyed pages, by bytes like [CoverPalette.cache]; they are worked out off the main thread. */
+private val dyedPages = object : LruCache<DyedKey, PagePalette>(2 * 1024 * 1024) {
+    override fun sizeOf(key: DyedKey, value: PagePalette): Int =
+        1024 + (value.wash?.let { it.width * it.height * 4 } ?: 0)
+}
+
 /** By the cover's [CoverLoader.key], so its colours outlast a change of the server's address. */
-private fun paletteKey(context: android.content.Context, url: String, amoled: Boolean) = "${CoverLoader.get(context).key(url)}|$amoled"
+private fun paletteKey(context: android.content.Context, url: String) = CoverLoader.get(context).key(url).toString()
 
 /**
  * Fetches the cover and works its colours out, unless that has been done before. Slow the first time
  * (a read of the disk, or the network, and a decode) and a map lookup every time after.
  */
-private suspend fun paletteOf(context: android.content.Context, url: String, amoled: Boolean): PagePalette? {
-    val key = paletteKey(context, url, amoled)
+private suspend fun paletteOf(context: android.content.Context, url: String): PagePalette? {
+    val key = paletteKey(context, url)
     CoverPalette.cache.get(key)?.let { return it }
-    measure(context, url, black = amoled, plain = !amoled)
+    measure(context, url)
     return CoverPalette.cache.get(key)
 }
 
-/**
- * Works out the cover's page on AMOLED [black] and its own [plain] one, whichever is asked for and not
- * known yet, from one decode: the bar and the player can want both for the same record.
- */
-private suspend fun measure(context: android.content.Context, url: String, black: Boolean, plain: Boolean) {
-    fun wanted(amoled: Boolean) = (if (amoled) black else plain) && CoverPalette.cache.get(paletteKey(context, url, amoled)) == null
-    if (!wanted(true) && !wanted(false)) return
+/** Works out the cover's page, unless that is known already. */
+private suspend fun measure(context: android.content.Context, url: String) {
+    val key = paletteKey(context, url)
+    if (CoverPalette.cache.get(key) != null) return
     // One cover is only ever worked out once, even when the bar, the player and the warm-up below all
     // ask for it in the same frame: the others wait here and then find it in the cache.
-    CoverPalette.once(paletteKey(context, url, false)) {
-        val onBlack = wanted(true)
-        val onPlain = wanted(false)
-        if (!onBlack && !onPlain) return@once
+    CoverPalette.once(key) {
+        if (CoverPalette.cache.get(key) != null) return@once
         // Full eight bits a channel, decoded from the file by the core rather than read off a Bitmap
         // drawn on screen (which is 5-6-5 to save memory): the colours are worked out from the same
         // pixels any other app on nori-look would hand in, so the same record gets the same page
         // everywhere.
-        val pages = withContext(Dispatchers.IO) { CoverLoader.get(context).colours(url, CoverSize.ROW, onPlain, onBlack) } ?: return@once
-        pages.plain?.let { CoverPalette.cache.put(paletteKey(context, url, false), PagePalette(it.look, wash = it.wash?.asImageBitmap())) }
-        pages.black?.let { CoverPalette.cache.put(paletteKey(context, url, true), PagePalette(it.look, wash = null)) }
+        val pages = withContext(Dispatchers.IO) { CoverLoader.get(context).colours(url, CoverSize.ROW, plain = true, black = false) } ?: return@once
+        pages.plain?.let { CoverPalette.cache.put(key, PagePalette(it.look, wash = it.wash?.asImageBitmap())) }
     }
 }
 
@@ -83,12 +86,11 @@ private suspend fun measure(context: android.content.Context, url: String, black
  * Works a cover's colours out before anything asks for them. The covers either side of what is playing
  * are fetched ahead (PlayerViewModel) so a skip lands on a picture that is already there, but the page's
  * colour was still being worked out after the fact, which is the beat the page spent wearing the last
- * song's colour. Done here, the cross-fade starts with the song. [andPlain]: its own page as well,
- * from the same decode.
+ * song's colour. Done here, the cross-fade starts with the song.
  */
-suspend fun warmCoverPalette(context: android.content.Context, url: String?, amoled: Boolean, andPlain: Boolean = false) {
+suspend fun warmCoverPalette(context: android.content.Context, url: String?) {
     if (url == null) return
-    runCatching { measure(context, url, black = amoled, plain = !amoled || andPlain) }
+    runCatching { measure(context, url) }
 }
 
 /**
@@ -99,10 +101,12 @@ suspend fun warmCoverPalette(context: android.content.Context, url: String?, amo
 data class CoverTint(val url: String?, val palette: PagePalette?)
 
 @Composable
-fun rememberCoverTint(url: String?, amoled: Boolean): CoverTint {
+fun rememberCoverTint(url: String?): CoverTint {
     val context = LocalContext.current
+    // Midnight wears no cover colors.
+    val tints = LocalPapers.current.coversTint
     // Built once per cover, not on every recomposition.
-    val key = remember(url, amoled) { url?.let { paletteKey(context, it, amoled) } }
+    val key = remember(url, tints) { url?.takeIf { tints }?.let { paletteKey(context, it) } }
     // Straight out of the cache, here in composition, not from `produceState`, whose block is a
     // coroutine that runs *after* the frame the cover changed on: everything drawn from it - the page,
     // the soft bottom under the sleeve, the text - would be the last record's for a frame or two.
@@ -112,13 +116,25 @@ fun rememberCoverTint(url: String?, amoled: Boolean): CoverTint {
     var measured by remember(key) { mutableStateOf<PagePalette?>(null) }
     LaunchedEffect(key) {
         if (url == null || ready != null) return@LaunchedEffect
-        measured = paletteOf(context, url, amoled)
+        measured = paletteOf(context, url)
     }
-    // The cover dresses the page; the accent on it is the theme's.
-    return CoverTint(url, (ready ?: measured)?.accented(LocalAccents.current))
+    // The cover dyes the season's paper. The dyeing runs off the main thread; until it is done the
+    // last page of this cover (another season's, after a change) is worn, and none for a new cover.
+    val papers = LocalPapers.current
+    val base = ready ?: measured
+    val dyedKey = key?.let { DyedKey(it, papers) }
+    var made by remember(key) { mutableStateOf<Pair<DyedKey, PagePalette>?>(null) }
+    val cached = dyedKey?.let(dyedPages::get)
+    LaunchedEffect(dyedKey, base) {
+        if (dyedKey == null || base == null || dyedPages.get(dyedKey) != null) return@LaunchedEffect
+        val page = withContext(Dispatchers.Default) { base.dyed(papers) }
+        dyedPages.put(dyedKey, page)
+        made = dyedKey to page
+    }
+    return CoverTint(url, cached ?: made?.second)
 }
 
 @Composable
-fun rememberCoverPalette(url: String?, amoled: Boolean): PagePalette? =
-    rememberCoverTint(url, amoled).palette
+fun rememberCoverPalette(url: String?): PagePalette? =
+    rememberCoverTint(url).palette
 

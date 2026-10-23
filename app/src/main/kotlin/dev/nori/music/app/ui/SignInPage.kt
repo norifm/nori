@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -53,11 +52,11 @@ fun SignInFlow(vm: SettingsViewModel, kind: ServerKind) {
     val words = providerStrings(kind).account ?: return
     NoriDialog(ui.offer, vm::skipSignIn) {
         AlertCard(
-            confirmButton = { TextButton(vm::openSignInPage, Modifier.testTag("offer-sign-in")) { Text(say.word(words.pageButton)) } },
+            confirmButton = { TextAction(say.word(words.pageButton), vm::openSignInPage, Modifier.testTag("offer-sign-in")) },
             dismissButton = {
                 Row {
-                    if (ui.ended) TextButton(vm::stopReminding, Modifier.testTag("offer-quiet")) { Text(say.word(R.string.dont_show_again)) }
-                    TextButton(vm::skipSignIn, Modifier.testTag("offer-skip")) { Text(say.notNow) }
+                    if (ui.ended) TextAction(say.word(R.string.dont_show_again), vm::stopReminding, Modifier.testTag("offer-quiet"))
+                    TextAction(say.notNow, vm::skipSignIn, Modifier.testTag("offer-skip"))
                 }
             },
             title = { Text(say.word(words.offerTitle)) },
@@ -80,7 +79,7 @@ private fun SignInSheet(vm: SettingsViewModel, kind: ServerKind, start: String, 
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.systemBarsPadding()) {
             Box(Modifier.fillMaxWidth().height(52.dp)) {
-                TextButton(vm::closeSignInPage, Modifier.align(Alignment.CenterStart).padding(start = 4.dp).testTag("sign-in-cancel")) { Text(say.cancel) }
+                TextAction(say.cancel, vm::closeSignInPage, Modifier.align(Alignment.CenterStart).padding(start = 4.dp).testTag("sign-in-cancel"))
                 Text(
                     say.word(words.pageTitle), Modifier.align(Alignment.Center),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1,
