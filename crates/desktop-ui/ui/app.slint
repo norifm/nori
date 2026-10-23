@@ -1509,15 +1509,36 @@ component PickCard inherits Rectangle {
     border-radius: 18px;
     clip: true;
     background: root.pick.page;
+    animate background { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
+    // A new mosaic fades in over the one it replaces: `faded` runs from the last change's count to this one's.
+    property <image> under;
+    property <image> over;
+    property <int> changes;
+    init => { root.over = root.picture; }
+    property <float> faded: root.changes;
+    animate faded { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
+    changed picture => {
+        root.under = root.over;
+        root.over = root.picture;
+        root.changes += 1;
+    }
     Rectangle {
         y: 0;
         height: root.width;
         background: root.pick.seed;
+        animate background { duration: Motion.reduced ? 0ms : 240ms; easing: ease-out; }
         Image {
             width: root.width;
             height: root.width;
-            source: root.picture;
+            source: root.under;
             image-fit: cover;
+        }
+        Image {
+            width: root.width;
+            height: root.width;
+            source: root.over;
+            image-fit: cover;
+            opacity: clamp(root.faded - root.changes + 1, 0, 1);
         }
         // The covers rubbed out into the card's paper from under halfway down.
         Rectangle {

@@ -245,6 +245,11 @@ fn cover_image(art: &RefCell<Art>, app: &AppHandle, id: SharedString, size: i32)
     Image::default()
 }
 
+/// Drops the mosaics no tile in `tiles` shows; those still shown stay drawn.
+fn keep_shown_mosaics(art: &mut Art, tiles: &[nori_core::mixes::board::MixTile]) {
+    art.mosaics.retain(|ids, _| tiles.iter().any(|t| t.covers.iter().take(4).eq(ids.iter())));
+}
+
 fn pick_image(art: &RefCell<Art>, app: &AppHandle, covers: ModelRc<SharedString>, compose: impl FnOnce(&[Image]) -> Option<Image>) -> Image {
     let ids: Vec<String> = covers.iter().take(4).map(|id| id.to_string()).collect();
     if ids.len() < 4 {
@@ -1393,7 +1398,11 @@ impl App {
         };
         match d {
             Data::Home(HomePart::Mixes(tiles)) => {
-                self.art.borrow_mut().mosaics.clear();
+                // A like reads the tiles again; unchanged, nothing on Home is drawn anew.
+                if tiles == self.mixes {
+                    return;
+                }
+                keep_shown_mosaics(&mut self.art.borrow_mut(), &tiles);
                 self.mixes = tiles;
                 self.show_picks();
             }
@@ -3584,6 +3593,20 @@ mod tests {
             assert_eq!((p.r, p.g, p.b, p.a), (expected.0, expected.1, expected.2, 255));
             assert_eq!(before.as_slice()[offset] != p, i == 0);
         }
+    }
+
+    #[test]
+    fn new_tiles_keep_the_mosaics_still_shown() {
+        let mut art = Art::default();
+        let image = Image::from_rgba8(SharedPixelBuffer::<Rgba8Pixel>::new(4, 4));
+        let covers = |c: &str| (0..4).map(|i| format!("{c}{i}")).collect::<Vec<_>>();
+        for c in ["a", "b"] {
+            art.mosaics.insert(covers(c), Mosaic::Ready(image.clone()));
+        }
+        let tile = |c: &str| nori_core::mixes::board::MixTile { id: c.into(), name: nori_core::mixes::board::MixName::Discover, covers: covers(c), favourites: false };
+        keep_shown_mosaics(&mut art, &[tile("a"), tile("c")]);
+        assert!(art.mosaics.contains_key(&covers("a")));
+        assert!(!art.mosaics.contains_key(&covers("b")));
     }
 
     #[test]
