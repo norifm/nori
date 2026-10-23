@@ -3556,10 +3556,10 @@ component Plate inherits Rectangle {
 }
 
 // One row of the settings page, of whichever kind.
-// The storage bar's colors, one per kind of thing stored, as Android's.
+// The storage bar's colors, one per kind of thing stored: shades of the page's ink, as Android's, the biggest strongest.
 global UsageColors {
     public pure function of(i: int) -> color {
-        return i == 0 ? #2D9CDB : i == 1 ? #27AE60 : i == 2 ? #F2994A : i == 3 ? #9B51E0 : #8A8A8A;
+        return Theme.text.with-alpha([0.92, 0.68, 0.5, 0.36, 0.26][min(i, 4)]);
     }
 }
 
@@ -7087,7 +7087,7 @@ export component AppWindow inherits Window {
             TouchArea {
                 clicked => { root.key-open = false; }
             }
-            Popover {
+            MenuSheet {
                 x: (parent.width - self.width) / 2;
                 y: 80px;
                 width: 380px;
@@ -7148,7 +7148,7 @@ export component AppWindow inherits Window {
             TouchArea {
                 clicked => { root.lyrics-sheet-open = false; }
             }
-            Popover {
+            MenuSheet {
                 x: (parent.width - self.width) / 2;
                 y: 80px;
                 width: 380px;
@@ -7221,7 +7221,7 @@ export component AppWindow inherits Window {
             TouchArea {
                 clicked => { root.details-open = false; }
             }
-            Popover {
+            MenuSheet {
                 x: (parent.width - self.width) / 2;
                 y: 60px;
                 width: 440px;
@@ -7274,7 +7274,7 @@ export component AppWindow inherits Window {
             TouchArea {
                 clicked => { root.picker-open = false; }
             }
-            Popover {
+            MenuSheet {
                 x: (parent.width - self.width) / 2;
                 y: 60px;
                 width: 380px;
@@ -7341,7 +7341,7 @@ export component AppWindow inherits Window {
             TouchArea {
                 clicked => { root.join-open = false; }
             }
-            Popover {
+            MenuSheet {
                 x: (parent.width - self.width) / 2;
                 y: 80px;
                 width: 420px;
@@ -7415,7 +7415,7 @@ export component AppWindow inherits Window {
             TouchArea {
                 clicked => { root.signin-open = false; }
             }
-            Popover {
+            MenuSheet {
                 x: (parent.width - self.width) / 2;
                 y: max(40px, (parent.height - self.height) / 2);
                 width: 440px;
@@ -7534,7 +7534,7 @@ export component AppWindow inherits Window {
             TouchArea {
                 clicked => { root.pairing-open = false; }
             }
-            Popover {
+            MenuSheet {
                 x: (parent.width - self.width) / 2;
                 y: max(40px, (parent.height - self.height) / 2);
                 width: 380px;
