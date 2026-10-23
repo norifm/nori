@@ -1,40 +1,74 @@
+import AVFoundation
 import UIKit
 
-/// Home, Library, Settings and Search, as on Android, with the mini player over the tab bar.
-final class ShellController: UITabBarController {
-    private let mini = MiniPlayer()
-    private var tabs: [UINavigationController] = []
+/// Home, Library, Settings and Search, as on Android: each a navigation stack, with the bottom chrome (the
+/// mini player over the tabs, one outlined pill) floating over them; the pages scroll under it.
+final class ShellController: UIViewController {
+    private(set) var tabs: [UINavigationController] = []
+    private(set) var selectedIndex = 0
+    let chrome = BottomChrome()
+
+    /// The tab shown.
+    var current: UINavigationController { tabs[selectedIndex] }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = Theme.background
-        Theme.apply(tab: tabBar)
         tabs = [
-            tab(Say.home, Glyph.home, PageController(kind: NORI_PAGE_HOME, title: Say.home)),
-            tab(Say.library, Glyph.library, LibraryPage()),
-            tab(Say.settingsTitle, Glyph.settings, SettingsPage()),
-            tab(Say.search, Glyph.search, SearchPage()),
+            tab(Say.home, HomePage()),
+            tab(Say.library, LibraryPage()),
+            tab(Say.settingsTitle, SettingsPage()),
+            tab(Say.search, SearchPage()),
         ]
+        chrome.tabs.picked = { [weak self] i in self?.select(i) }
+        chrome.mini.opened = { [weak self] in self?.openPlayer() }
+        chrome.mini.dragged = { [weak self] in self?.dragPlayer($0) }
+        chrome.mini.devicesOpened = { [weak self] in self?.present(Core.shared.now.jam ? QueueSheet() : DevicesSheet(), animated: true) }
+        chrome.resized = { [weak self] in self?.view.setNeedsLayout() }
+        view.addSubview(chrome)
         lay()
+        select(0)
         NotificationCenter.default.addObserver(self, selector: #selector(lay), name: .noriOpened, object: nil)
-        mini.opened = { [weak self] in self?.openPlayer() }
-        mini.dragged = { [weak self] in self?.dragPlayer($0) }
-        mini.devicesOpened = { [weak self] in self?.present(Core.shared.now.jam ? QueueSheet() : DevicesSheet(), animated: true) }
-        view.addSubview(mini)
     }
 
     /// The tabs the open profile has: Settings where it opens any (a jam guest's: this iPod's own).
     @objc private func lay() {
-        let shown = tabs.filter { !Core.shared.rules.settings.isEmpty || !($0.viewControllers.first is SettingsPage) }
-        guard viewControllers?.count != shown.count else { return }
-        setViewControllers(shown, animated: false)
+        let settings = !Core.shared.rules.settings.isEmpty
+        chrome.tabs.shown(settings ? [0, 1, 2, 3] : [0, 1, 3])
+        if !settings && selectedIndex == 2 { select(0) }
     }
+
+    /// Shows tab `i`; the tab already shown goes back to its first page.
+    func select(_ i: Int) {
+        guard tabs.indices.contains(i) else { return }
+        if i == selectedIndex, current.parent != nil {
+            current.popToRootViewController(animated: true)
+            return
+        }
+        let old = current
+        old.willMove(toParent: nil)
+        old.view.removeFromSuperview()
+        old.removeFromParent()
+        selectedIndex = i
+        let nav = current
+        addChild(nav)
+        nav.view.frame = view.bounds
+        nav.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.insertSubview(nav.view, belowSubview: chrome)
+        nav.didMove(toParent: self)
+        chrome.tabs.chosen = i
+        setNeedsStatusBarAppearanceUpdate()
+    }
+
+    override var childForStatusBarStyle: UIViewController? { current }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let height = MiniPlayer.height
-        mini.frame = CGRect(x: 0, y: tabBar.frame.minY - height, width: view.bounds.width, height: height)
-        view.bringSubviewToFront(mini)
+        let height = chrome.height
+        chrome.frame = CGRect(x: BottomChrome.side, y: view.bounds.height - BottomChrome.below - height,
+                              width: view.bounds.width - BottomChrome.side * 2, height: height)
+        // The pages end above the chrome; what they hold scrolls under it.
+        for nav in tabs { nav.additionalSafeAreaInsets.bottom = height + BottomChrome.below }
     }
 
     func openPlayer() {
@@ -70,74 +104,164 @@ final class ShellController: UITabBarController {
         }
     }
 
-    private func tab(_ title: String, _ image: UIImage, _ root: UIViewController) -> UINavigationController {
+    private func tab(_ title: String, _ root: UIViewController) -> UINavigationController {
         root.title = title
-        let nav = UINavigationController(rootViewController: root)
-        nav.tabBarItem = UITabBarItem(title: title, image: image, selectedImage: nil)
+        let nav = NavController(rootViewController: root)
         Theme.apply(nav: nav.navigationBar)
         nav.view.backgroundColor = Theme.background
         return nav
     }
 }
 
-/// Sits above the tab bar: the song, the heart, play/pause, next and a progress hairline. Tap, or drag it
-/// up, for the card; swipe it left or right for the next or previous song.
+/// A tab's stack: the status bar is its bar's, but over a page's artwork that page's own.
+final class NavController: UINavigationController {
+    override var childForStatusBarStyle: UIViewController? {
+        (topViewController as? PageController)?.headed == true ? topViewController : nil
+    }
+}
+
+/// The chrome at the foot of the screen: one outline holding the mini player (while something plays), a
+/// hairline, and the tabs; the page shows faintly through it. No blur: the iPod draws it as a flat plate.
+final class BottomChrome: UIView {
+    /// Its margins from the screen's sides and foot.
+    static let side: CGFloat = 10
+    static let below: CGFloat = 6
+    private static let tabsHeight: CGFloat = 50
+    /// How far up from the screen's foot the chrome reaches at most: what a message keeps clear of.
+    static var reach: CGFloat { below + tabsHeight + MiniPlayer.height }
+
+    let mini = MiniPlayer()
+    let tabs = TabRow()
+    private let divider = UIView()
+    var resized: (() -> Void)?
+
+    var height: CGFloat { mini.isHidden ? BottomChrome.tabsHeight : BottomChrome.tabsHeight + MiniPlayer.height }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let page = Theme.page
+        backgroundColor = page.page.withAlphaComponent(0.94)
+        layer.borderWidth = hairlineWidth
+        layer.borderColor = page.ink.withAlphaComponent(0.2).cgColor
+        clipsToBounds = true
+        divider.backgroundColor = page.ink.withAlphaComponent(0.09)
+        for v in [mini, divider, tabs] { addSubview(v) }
+        mini.shown = { [weak self] in
+            self?.setNeedsLayout()
+            self?.resized?()
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let w = bounds.width
+        mini.frame = CGRect(x: 0, y: 0, width: w, height: mini.isHidden ? 0 : MiniPlayer.height)
+        divider.isHidden = mini.isHidden
+        divider.frame = CGRect(x: 0, y: mini.frame.maxY, width: w, height: hairlineWidth)
+        tabs.frame = CGRect(x: 0, y: mini.frame.maxY, width: w, height: BottomChrome.tabsHeight)
+        // A pill alone; with the mini player, the cover's corner and its inset.
+        layer.cornerRadius = mini.isHidden ? bounds.height / 2 : 18
+    }
+}
+
+/// The tabs, each an equal share of the row: a glyph, quiet until it is the one shown, which takes the
+/// accent. The names are for VoiceOver.
+final class TabRow: UIView {
+    private let glyphs = [Glyph.home, Glyph.library, Glyph.settings, Glyph.search]
+    private let names = [Say.home, Say.library, Say.settingsTitle, Say.search]
+    private var buttons: [UIButton] = []
+    private var order: [Int] = []
+    var picked: ((Int) -> Void)?
+    var chosen = 0 { didSet { paint() } }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        buttons = glyphs.enumerated().map { i, g in
+            let b = UIButton(type: .custom)
+            b.setImage(g, for: .normal)
+            b.tag = i
+            b.accessibilityLabel = names[i]
+            b.addTarget(self, action: #selector(tap(_:)), for: .touchUpInside)
+            addSubview(b)
+            return b
+        }
+        order = Array(buttons.indices)
+        paint()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// The tabs offered, by index.
+    func shown(_ tabs: [Int]) {
+        order = tabs
+        for (i, b) in buttons.enumerated() { b.isHidden = !tabs.contains(i) }
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let inset: CGFloat = 6
+        let each = (bounds.width - inset * 2) / CGFloat(max(1, order.count))
+        for (n, i) in order.enumerated() {
+            buttons[i].frame = CGRect(x: inset + each * CGFloat(n), y: 0, width: each, height: bounds.height)
+        }
+    }
+
+    private func paint() {
+        for (i, b) in buttons.enumerated() {
+            b.tintColor = i == chosen ? Theme.accent : Theme.secondary
+            b.accessibilityTraits = i == chosen ? [.button, .selected] : .button
+        }
+    }
+
+    @objc private func tap(_ b: UIButton) { picked?(b.tag) }
+}
+
+/// What plays: the cover, the song, where the sound goes, the seal and play/pause. Tap, or drag it up, for
+/// the card; swipe it left or right for the next or previous song. No progress line: it would tick.
 final class MiniPlayer: UIView {
     static let height: CGFloat = 56
 
     var opened: (() -> Void)?
     var dragged: ((UIPanGestureRecognizer) -> Void)?
-    /// The speaker was tapped with remote control on, or the jam in its place: the devices, or the queue where
-    /// the jam is.
+    /// The output was tapped with remote control on, or the jam in its place: the devices, or the queue
+    /// where the jam is.
     var devicesOpened: (() -> Void)?
+    /// It came or went with the song.
+    var shown: (() -> Void)?
     private let cover = CoverView()
-    private let title = UILabel()
-    private let artist = UILabel()
-    /// Where the sound goes: filled while another device plays, an outline while it is this iPod.
-    private let speaker = UIButton(type: .system)
+    private let title = label(Fonts.font(16), Theme.label)
+    private let artist = label(Fonts.font(13, .regular, .footnote), Theme.secondary)
+    private let output = UIButton(type: .custom)
     private let outputs = OutputPicker()
-    private let heart = UIButton(type: .system)
-    private let play = UIButton(type: .system)
+    private let seal = UIButton(type: .custom)
+    private let play = UIButton(type: .custom)
     /// Which way the drag under way goes, decided as it starts: up for the card, sideways to skip.
     private var sideways = false
     /// The cover and the song's lines: what follows a sideways swipe.
     private var sliding: [UIView] = []
-    private let progress = UIView()
-    private var progressWidth: NSLayoutConstraint!
-    private var ticker: Timer?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = Theme.row
-
-        let hairline = UIView()
-        hairline.backgroundColor = Theme.hairline
-        title.textColor = Theme.label
-        title.font = UIFont.preferredFont(forTextStyle: .subheadline)
-        title.adjustsFontForContentSizeCategory = true
-        artist.textColor = Theme.secondary
-        artist.font = UIFont.preferredFont(forTextStyle: .caption1)
-        artist.adjustsFontForContentSizeCategory = true
         let text = UIStackView(arrangedSubviews: [title, artist])
         text.axis = .vertical
         text.spacing = 1
-        play.setImage(Glyph.play, for: .normal)
+        cover.layer.cornerRadius = 10
         play.tintColor = Theme.label
         play.addTarget(self, action: #selector(toggle), for: .touchUpInside)
-        speaker.addTarget(self, action: #selector(speakerTapped), for: .touchUpInside)
-        outputs.attach(to: speaker)
-        heart.tintColor = Theme.label
-        heart.accessibilityLabel = Say.favorite
-        heart.addTarget(self, action: #selector(heartTapped), for: .touchUpInside)
-        progress.backgroundColor = Theme.label
-
+        output.addTarget(self, action: #selector(outputTapped), for: .touchUpInside)
+        outputs.attach(to: output)
+        seal.accessibilityLabel = Say.favorite
+        seal.addTarget(self, action: #selector(sealTapped), for: .touchUpInside)
         sliding = [cover, text]
         // The song's side, clipped where the controls start: a swiped song leaves at that edge rather
-        // than passing under the speaker, the heart and the button.
+        // than passing under the controls.
         let lane = UIView()
         lane.clipsToBounds = true
         lane.isUserInteractionEnabled = false
-        for v in [hairline, lane, speaker, heart, play, progress] {
+        for v in [lane, output, seal, play] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -145,48 +269,37 @@ final class MiniPlayer: UIView {
             v.translatesAutoresizingMaskIntoConstraints = false
             lane.addSubview(v)
         }
-        progressWidth = progress.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            hairline.leadingAnchor.constraint(equalTo: leadingAnchor),
-            hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
-            hairline.topAnchor.constraint(equalTo: topAnchor),
-            hairline.heightAnchor.constraint(equalToConstant: 1.0 / UIScreen.main.scale),
             lane.leadingAnchor.constraint(equalTo: leadingAnchor),
-            lane.trailingAnchor.constraint(equalTo: speaker.leadingAnchor),
+            lane.trailingAnchor.constraint(equalTo: output.leadingAnchor),
             lane.topAnchor.constraint(equalTo: topAnchor),
             lane.bottomAnchor.constraint(equalTo: bottomAnchor),
-            cover.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            cover.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             cover.centerYAnchor.constraint(equalTo: centerYAnchor),
             cover.widthAnchor.constraint(equalToConstant: 40),
             cover.heightAnchor.constraint(equalToConstant: 40),
-            text.leadingAnchor.constraint(equalTo: cover.trailingAnchor, constant: 10),
+            text.leadingAnchor.constraint(equalTo: cover.trailingAnchor, constant: 11),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
-            text.trailingAnchor.constraint(lessThanOrEqualTo: speaker.leadingAnchor, constant: -4),
-            speaker.trailingAnchor.constraint(equalTo: heart.leadingAnchor),
-            speaker.centerYAnchor.constraint(equalTo: centerYAnchor),
-            speaker.widthAnchor.constraint(equalToConstant: 40),
-            speaker.heightAnchor.constraint(equalToConstant: 44),
-            heart.trailingAnchor.constraint(equalTo: play.leadingAnchor),
-            heart.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heart.widthAnchor.constraint(equalToConstant: 40),
-            heart.heightAnchor.constraint(equalToConstant: 44),
-            play.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            play.centerYAnchor.constraint(equalTo: centerYAnchor),
-            play.widthAnchor.constraint(equalToConstant: 44),
-            play.heightAnchor.constraint(equalToConstant: 44),
-            progress.leadingAnchor.constraint(equalTo: leadingAnchor),
-            progress.bottomAnchor.constraint(equalTo: bottomAnchor),
-            progress.heightAnchor.constraint(equalToConstant: 2),
-            progressWidth,
+            text.trailingAnchor.constraint(lessThanOrEqualTo: output.leadingAnchor, constant: -2),
+            output.trailingAnchor.constraint(equalTo: seal.leadingAnchor),
+            seal.trailingAnchor.constraint(equalTo: play.leadingAnchor),
+            play.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
         ])
+        for b in [output, seal, play] {
+            NSLayoutConstraint.activate([
+                b.centerYAnchor.constraint(equalTo: centerYAnchor),
+                b.widthAnchor.constraint(equalToConstant: 40),
+                b.heightAnchor.constraint(equalToConstant: 48),
+            ])
+        }
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(panned(_:))))
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(changed), name: .noriNow, object: nil)
         center.addObserver(self, selector: #selector(changed), name: .noriJam, object: nil)
-        center.addObserver(self, selector: #selector(paintHeart), name: .noriFavorites, object: nil)
+        center.addObserver(self, selector: #selector(paintSeal), name: .noriFavorites, object: nil)
         center.addObserver(self, selector: #selector(changed), name: UIApplication.didBecomeActiveNotification, object: nil)
-        center.addObserver(self, selector: #selector(stopTicking), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        center.addObserver(self, selector: #selector(paintOutput), name: AVAudioSession.routeChangeNotification, object: nil)
         changed()
     }
 
@@ -194,82 +307,70 @@ final class MiniPlayer: UIView {
 
     @objc private func changed() {
         let now = Core.shared.now
-        if let song = now.song {
-            title.text = song.title
-            artist.text = song.subtitle
-            artist.isHidden = false
-            cover.show(song.cover, points: 40)
-        } else {
-            title.text = Say.nothingPlaying
-            artist.isHidden = true
-            cover.show("", points: 40)
+        let hidden = now.song == nil
+        if isHidden != hidden {
+            isHidden = hidden
+            shown?()
         }
-        play.isEnabled = now.song != nil
+        guard let song = now.song else { return }
+        title.text = song.title
+        artist.text = song.subtitle
+        artist.isHidden = song.subtitle.isEmpty
+        cover.show(song.cover, points: 40)
         // A jam guest plays as its role lets it (the core's jam controls); its skip is a swipe.
         let jam = now.jam ? Core.shared.jam : nil
         play.isHidden = now.jam && (jam?.play ?? 0) == 0
-        // The sound goes elsewhere: the speaker is filled, and says only that. A jam stands in its place: it
-        // plays on this iPod only.
-        if now.jam {
-            let listened = (Core.shared.jam?.listeners.count ?? 0) > 0
-            speaker.setImage(listened ? Glyph.groupsSmall : Glyph.groupsSmallOutline, for: .normal)
-            speaker.tintColor = listened ? Theme.label : Theme.secondary
-            speaker.accessibilityLabel = Core.shared.jam?.strip ?? Say.jamGuest
-        } else {
-            speaker.setImage(now.device != nil ? Glyph.speakerSmall : Glyph.speakerSmallOutline, for: .normal)
-            speaker.tintColor = now.device != nil ? Theme.label : Theme.secondary
-            speaker.accessibilityLabel = now.device.map(Say.playingOn) ?? Say.output
-        }
-        paintHeart()
+        paintOutput()
+        paintSeal()
         let playing = jam?.playing ?? now.playing
         play.setImage(playing ? Glyph.pause : Glyph.play, for: .normal)
         play.accessibilityLabel = playing ? Say.pause : Say.play
-        paintProgress()
-        let active = UIApplication.shared.applicationState == .active
-        if now.playing && active {
-            if ticker == nil {
-                ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.paintProgress() }
-                ticker?.tolerance = 0.3
-            }
-        } else {
-            stopTicking()
-        }
     }
 
-    @objc private func stopTicking() {
-        ticker?.invalidate()
-        ticker = nil
-    }
-
-    private func paintProgress() {
+    /// The output button: the glyph of what plays (another device's, lit), or the jam in its place.
+    @objc private func paintOutput() {
         let now = Core.shared.now
-        let total = (now.song?.seconds ?? 0) * 1000
-        let part = total > 0 ? min(1, CGFloat(now.position) / CGFloat(total)) : 0
-        progressWidth.constant = bounds.width * part
+        if now.jam {
+            let listened = (Core.shared.jam?.listeners.count ?? 0) > 0
+            output.setImage(Glyph.jam, for: .normal)
+            output.tintColor = listened ? Theme.accent : Theme.secondary
+            output.accessibilityLabel = Core.shared.jam?.strip ?? Say.jamGuest
+        } else if let device = now.device {
+            output.setImage(Glyph.device(now.deviceKind, 22), for: .normal)
+            output.tintColor = Theme.label
+            output.accessibilityLabel = Say.playingOn(device)
+        } else {
+            let look = OutputLook.now()
+            output.setImage(Glyph.output(look.glyph, 22), for: .normal)
+            output.tintColor = Theme.secondary
+            output.accessibilityLabel = Say.outputDescription(port: look.port, name: look.name)
+        }
     }
 
     @objc private func toggle() {
         nori_ios_toggle()
     }
 
-    @objc private func paintHeart() {
-        guard let song = Core.shared.now.song, !song.external, Core.shared.rules.stars else {
-            heart.isHidden = true
+    /// The seal where songs carry favorites, in the accent when the song is one.
+    @objc private func paintSeal() {
+        guard let song = Core.shared.now.song, !song.external, Core.shared.rules.stars, !Core.shared.now.jam else {
+            seal.isHidden = true
             return
         }
-        heart.isHidden = false
+        seal.isHidden = false
         let on = Core.shared.isFavorite(song)
-        heart.setImage(on ? Glyph.heartSmall : Glyph.heartSmallOutline, for: .normal)
-        heart.accessibilityTraits = on ? [.button, .selected] : .button
+        seal.setImage(on ? Glyph.sealedSmall : Glyph.sealSmall, for: .normal)
+        seal.tintColor = on ? Theme.accent : Theme.secondary
+        seal.accessibilityTraits = on ? [.button, .selected] : .button
     }
 
-    @objc private func heartTapped() {
+    @objc private func sealTapped() {
         guard let song = Core.shared.now.song else { return }
         Core.shared.favorite(song, !Core.shared.isFavorite(song))
-        paintHeart()
+        paintSeal()
     }
 
-    @objc private func speakerTapped() {
+    @objc private func outputTapped() {
         if Core.shared.now.remote || Core.shared.now.jam { devicesOpened?() } else { outputs.show() }
     }
 
@@ -292,13 +393,13 @@ final class MiniPlayer: UIView {
             let vx = g.velocity(in: self).x
             let goes = g.state == .ended && (abs(dx) > bounds.width * 0.25 || abs(vx) > 700)
             guard goes else {
-                UIView.animate(withDuration: 0.25) { moving.forEach { $0.transform = .identity } }
+                UIView.animate(withDuration: Motion.plain ? 0 : 0.25) { moving.forEach { $0.transform = .identity } }
                 return
             }
             // Left for the next song, right for the previous; the new one comes in from the other side.
             let left = (dx != 0 ? dx : vx) < 0
             let away = left ? -bounds.width : bounds.width
-            let plain = UIAccessibility.isReduceMotionEnabled
+            let plain = Motion.plain
             UIView.animate(withDuration: plain ? 0 : 0.18, animations: {
                 moving.forEach { $0.transform = CGAffineTransform(translationX: away, y: 0) }
             }, completion: { _ in
@@ -312,66 +413,24 @@ final class MiniPlayer: UIView {
     }
 }
 
-final class LibraryPage: UITableViewController {
-    /// Each row with the core's LibrarySection it is.
-    private static let all: [(String, Int32, Int)] = [
-        (Say.playlists, NORI_PAGE_PLAYLISTS, 4),
-        (Say.artists, NORI_PAGE_ARTISTS, 2),
-        (Say.albumsTitle, NORI_PAGE_ALBUMS, 0),
-        (Say.songsTitle, NORI_PAGE_SONGS, 3),
-        (Say.genres, NORI_PAGE_GENRES, 7),
-        (Say.favorites, NORI_PAGE_STARRED, 1),
-        (Say.smartPlaylists, NORI_PAGE_SMARTS, 5),
-        (Say.downloaded, NORI_PAGE_DOWNLOADS, 11),
-    ]
-    /// The sections the open profile has (a jam guest's: the host's albums, artists, songs and genres).
-    private var rows: [(String, Int32)] = []
-
-    init() { super.init(style: .grouped) }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        dress(tableView)
-        NotificationCenter.default.addObserver(self, selector: #selector(lay), name: .noriOpened, object: nil)
-        lay()
-    }
-
-    @objc private func lay() {
-        let sections = Core.shared.rules.sections
-        rows = LibraryPage.all.filter { sections.contains($0.2) }.map { ($0.0, $0.1) }
-        tableView.reloadData()
-    }
-
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { rows.count }
-
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = row(tableView, id: "library")
-        cell.textLabel?.text = rows[indexPath.row].0
-        cell.accessoryType = .disclosureIndicator
-        return cell
-    }
-
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        let (name, kind) = rows[indexPath.row]
-        let page = kind == NORI_PAGE_DOWNLOADS ? DownloadsPage() : PageController(kind: kind, title: name)
-        navigationController?.pushViewController(page, animated: true)
+/// The output playing now, as the core reads it (`nori_ios_output_look`).
+enum OutputLook {
+    static func now() -> (glyph: Int, port: Int, name: String?) {
+        let d = takenJSON(nori_ios_output_look()) as? [String: Any] ?? [:]
+        return (d["glyph"] as? Int ?? 0, d["port"] as? Int ?? 0, d["name"] as? String)
     }
 }
 
 /// Downloads, with the line saying they run only while the app is open or playing.
 final class DownloadsPage: PageController {
-    init() { super.init(kind: NORI_PAGE_DOWNLOADS, title: Say.downloaded) }
+    init() { super.init(kind: NORI_PAGE_DOWNLOADS, title: Say.downloads) }
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        let note = UILabel(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
+        let note = label(Fonts.font(13, .regular, .footnote), Theme.secondary, lines: 2)
+        note.frame = CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44)
         note.text = Say.downloadsRun
-        note.textColor = Theme.secondary
-        note.font = UIFont.preferredFont(forTextStyle: .footnote)
-        note.adjustsFontForContentSizeCategory = true
         note.textAlignment = .center
         tableView.tableFooterView = note
         NotificationCenter.default.addObserver(self, selector: #selector(stopAgain), name: UIApplication.didEnterBackgroundNotification, object: nil)
@@ -443,6 +502,7 @@ final class SearchPage: PageController, UISearchResultsUpdating, UISearchBarDele
         search.searchBar.barStyle = Theme.bar
         search.searchBar.keyboardAppearance = Theme.keyboard
         search.searchBar.tintColor = Theme.accent
+        search.searchBar.searchBarStyle = .minimal
         search.searchResultsUpdater = self
         search.searchBar.delegate = self
         search.delegate = self
@@ -512,415 +572,14 @@ final class SearchPage: PageController, UISearchResultsUpdating, UISearchBarDele
     }
 }
 
-final class SettingsPage: UITableViewController {
-    private var server = Say.none
-    private var values: [String: [String: Any]] = [:]
-    private var facts: [String: Any] = [:]
-    private var sections: [(title: String, rows: [(name: String, label: String)])] = []
-
-    init() { super.init(style: .grouped) }
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// A setting's value, from the open session.
-    static func value(_ name: String) -> String? {
-        guard let rows = takenJSON(nori_ios_settings()) as? [[String: Any]],
-              let row = rows.first(where: { $0["name"] as? String == name }) else { return nil }
-        return row["value"] as? String
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        dress(tableView)
-        // Two-line rows measured from a closer guess, and room under the last group, so the end of the
-        // list scrolls clear of the mini player.
-        tableView.estimatedRowHeight = 52
-        tableView.tableFooterView = UIView(frame: CGRect(x: 0, y: 0, width: 0, height: 24))
-        NotificationCenter.default.addObserver(self, selector: #selector(load), name: .noriOpened, object: nil)
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        load()
-    }
-
-    @objc private func load() {
-        let dir = dataDirectory().path
-        DispatchQueue.global(qos: .userInitiated).async {
-            let active = dir.withCString { takenJSON(nori_ios_active($0)) } as? [String: Any] ?? [:]
-            let label = (active["label"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-                ?? (active["kind"] as? String).map { Say.provider($0).name } ?? ""
-            let rows = takenJSON(nori_ios_settings()) as? [[String: Any]] ?? []
-            let facts = takenJSON(nori_ios_facts()) as? [String: Any] ?? [:]
-            DispatchQueue.main.async {
-                self.server = label.isEmpty ? Say.none : label
-                self.values = Dictionary(rows.compactMap { r in (r["name"] as? String).map { ($0, r) } }, uniquingKeysWith: { a, _ in a })
-                self.facts = facts
-                let shown = { (name: String) in
-                    self.values[name] != nil && Say.shownWhen[name].map { self.values[$0]?["value"] as? String == "true" } ?? true
-                }
-                self.sections = Say.settings.map { s in (s.section, s.rows.filter { shown($0.name) }) }.filter { !$0.rows.isEmpty }
-                self.tableView.reloadData()
-            }
-        }
-    }
-
-    // Section 0: server, equalizer, sound, sync, joining a jam. Then the curated settings. Last: about.
-    override func numberOfSections(in tableView: UITableView) -> Int { sections.count + 2 }
-
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        if section == 0 { return nil }
-        if section == sections.count + 1 { return Say.about }
-        return sections[section - 1].title
-    }
-
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        if section == 0 { return Core.shared.isOpen ? 5 : 1 }
-        if section == sections.count + 1 { return 5 }
-        return sections[section - 1].rows.count
-    }
-
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = row(tableView, id: "value", style: .value1)
-        cell.accessoryView = nil
-        cell.accessoryType = .none
-        cell.selectionStyle = .default
-        if indexPath.section == 0 {
-            switch indexPath.row {
-            case 0:
-                cell.textLabel?.text = Say.server
-                cell.detailTextLabel?.text = server
-                cell.accessoryType = .disclosureIndicator
-            case 1:
-                cell.textLabel?.text = Say.equalizer
-                cell.detailTextLabel?.text = (values["eq"]?["value"] as? String) == "true" ? Say.on : Say.off
-                cell.accessoryType = .disclosureIndicator
-            case 2:
-                cell.textLabel?.text = Say.sound
-                cell.detailTextLabel?.text = nil
-                cell.accessoryType = .disclosureIndicator
-            case 4:
-                cell.textLabel?.text = Say.joinJam
-                cell.detailTextLabel?.text = nil
-                cell.accessoryType = .disclosureIndicator
-            default:
-                cell.textLabel?.text = Say.refreshIndex
-                let songs = facts["songs"] as? Int ?? 0
-                cell.detailTextLabel?.text = Say.songs(songs)
-            }
-            return cell
-        }
-        if indexPath.section == sections.count + 1 {
-            cell.selectionStyle = .none
-            switch indexPath.row {
-            case 0:
-                cell.textLabel?.text = Say.version
-                cell.detailTextLabel?.text = String(cString: nori_ios_version())
-            case 1:
-                cell.textLabel?.text = Say.streamed
-                cell.detailTextLabel?.text = Fmt.bytes(facts["stream"] as? Int ?? 0)
-            case 3:
-                cell.textLabel?.text = Say.freeSoftware
-                cell.detailTextLabel?.text = "AGPL-3.0"
-            case 4:
-                cell.textLabel?.text = Say.licences
-                cell.detailTextLabel?.text = nil
-                cell.selectionStyle = .default
-                cell.accessoryType = .disclosureIndicator
-            default:
-                cell.textLabel?.text = Say.theme
-                cell.detailTextLabel?.text = ThemePage.summary
-                cell.selectionStyle = .default
-                cell.accessoryType = .disclosureIndicator
-            }
-            return cell
-        }
-        let (name, label) = sections[indexPath.section - 1].rows[indexPath.row]
-        let spec = values[name] ?? [:]
-        let value = spec["value"] as? String ?? ""
-        cell.textLabel?.text = label
-        cell.textLabel?.numberOfLines = 2
-        if spec["kind"] as? String == "switch" {
-            let toggle = UISwitch()
-            toggle.isOn = value == "true"
-            toggle.onTintColor = Theme.switchOn
-            toggle.accessibilityIdentifier = name
-            toggle.addTarget(self, action: #selector(switched(_:)), for: .valueChanged)
-            cell.accessoryView = toggle
-            cell.detailTextLabel?.text = nil
-            cell.selectionStyle = .none
-        } else {
-            cell.detailTextLabel?.text = Say.choice(name, value)
-            cell.accessoryType = .disclosureIndicator
-        }
-        return cell
-    }
-
-    @objc private func switched(_ s: UISwitch) {
-        guard let name = s.accessibilityIdentifier else { return }
-        set(name, s.isOn ? "true" : "false")
-    }
-
-    private func set(_ name: String, _ value: String) {
-        _ = name.withCString { n in value.withCString { v in nori_ios_set(n, v) } }
-        load()
-        // The player offers the devices only while remote control is on.
-        if name == "remoteControl" { Core.shared.refresh() }
-    }
-
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        if indexPath.section == 0 {
-            switch indexPath.row {
-            case 0: navigationController?.pushViewController(ServersPage(), animated: true)
-            case 1: navigationController?.pushViewController(EqualizerPage(), animated: true)
-            case 2: navigationController?.pushViewController(SoundPage(), animated: true)
-            case 4: JamJoin.ask(from: self)
-            default: if Core.shared.rules.settings.contains(1) { nori_ios_sync() }
-            }
-            return
-        }
-        if indexPath.section == sections.count + 1 {
-            if indexPath.row == 2 { navigationController?.pushViewController(ThemePage(), animated: true) }
-            if indexPath.row == 4 { navigationController?.pushViewController(CreditsPage(), animated: true) }
-            return
-        }
-        let (name, label) = sections[indexPath.section - 1].rows[indexPath.row]
-        guard let spec = values[name], let kind = spec["kind"] as? String, kind != "switch" else { return }
-        let current = spec["value"] as? String ?? ""
-        let options: [String]
-        if kind == "choice" {
-            options = spec["options"] as? [String] ?? []
-        } else {
-            let lo = spec["min"] as? Double ?? 0, hi = spec["max"] as? Double ?? 0
-            let step = max(1, ((hi - lo) / 8).rounded())
-            options = stride(from: lo, through: hi, by: step).map { $0 == $0.rounded() ? "\(Int($0))" : "\($0)" }
-        }
-        let sheet = UIAlertController.sheet(label)
-        for o in options {
-            sheet.add(Say.choice(name, o), checked: o == current) { [weak self] in self?.set(name, o) }
-        }
-        sheet.show(from: self)
-    }
-}
-
-/// The theme: the season (or following the calendar's) and light or dark. The core owns the settings and
-/// the colours; a change builds the interface again in them.
-final class ThemePage: UITableViewController {
-    init() { super.init(style: .grouped) }
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// "Autumn · Dark", for the settings row.
-    static var summary: String {
-        let name = Say.seasons[Theme.season == "FOLLOW" ? Int(Theme.calendar().season) : Say.seasonValues.firstIndex(of: Theme.season) ?? 0].0
-        return name + " · " + (Theme.light ? Say.light : Say.dark)
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        title = Say.theme
-        navigationItem.largeTitleDisplayMode = .never
-        dress(tableView)
-    }
-
-    override func numberOfSections(in tableView: UITableView) -> Int { 2 }
-
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        section == 0 ? Say.season : Say.appearance
-    }
-
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { section == 0 ? 5 : 2 }
-
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let following = Theme.season == "FOLLOW"
-        let cell = row(tableView, id: indexPath.section == 0 && indexPath.row == 0 ? "follow" : "pick",
-                       style: indexPath.section == 0 && indexPath.row == 0 ? .subtitle : .default)
-        cell.accessoryView = nil
-        cell.accessoryType = .none
-        cell.selectionStyle = .default
-        cell.detailTextLabel?.text = nil
-        if indexPath.section == 1 {
-            let isLight = indexPath.row == 0
-            cell.textLabel?.text = isLight ? Say.light : Say.dark
-            cell.accessoryType = isLight == Theme.light ? .checkmark : .none
-        } else if indexPath.row == 0 {
-            cell.textLabel?.text = Say.followSeasons
-            cell.detailTextLabel?.text = Say.seasonNow(Theme.calendar())
-            cell.detailTextLabel?.textColor = Theme.secondary
-            let toggle = UISwitch()
-            toggle.isOn = following
-            toggle.onTintColor = Theme.switchOn
-            toggle.addTarget(self, action: #selector(followed(_:)), for: .valueChanged)
-            cell.accessoryView = toggle
-            cell.selectionStyle = .none
-        } else {
-            let (name, kanji) = Say.seasons[indexPath.row - 1]
-            cell.textLabel?.text = kanji + "  " + name
-            cell.accessoryType = !following && Theme.season == Say.seasonValues[indexPath.row - 1] ? .checkmark : .none
-        }
-        return cell
-    }
-
-    override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
-        if indexPath.section == 1 {
-            change(light: indexPath.row == 0, season: Theme.season)
-        } else if indexPath.row > 0 {
-            change(light: Theme.light, season: Say.seasonValues[indexPath.row - 1])
-        }
-    }
-
-    /// Off keeps the season the calendar has now.
-    @objc private func followed(_ s: UISwitch) {
-        change(light: Theme.light, season: s.isOn ? "FOLLOW" : Say.seasonValues[Int(Theme.calendar().season)])
-    }
-
-    private func change(light: Bool, season: String) {
-        _ = "theme".withCString { n in (light ? "LIGHT" : "DARK").withCString { v in nori_ios_set(n, v) } }
-        _ = "season".withCString { n in season.withCString { v in nori_ios_set(n, v) } }
-        guard Theme.keep(light: light, season: season) else { return tableView.reloadData() }
-        (UIApplication.shared.delegate as? AppDelegate)?.restyle()
-    }
-}
-
-/// The graphic equalizer: one switch and a slider per band. While it is in sight and touched, the
-/// output runs its short buffer so a move is heard at once.
-final class EqualizerPage: UIViewController {
-    private let toggle = UISwitch()
-    private var sliders: [UISlider] = []
-    private let stack = UIStackView()
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        title = Say.equalizer
-        navigationItem.largeTitleDisplayMode = .never
-        view.backgroundColor = Theme.background
-        additionalSafeAreaInsets.bottom = MiniPlayer.height
-        toggle.onTintColor = Theme.switchOn
-        toggle.addTarget(self, action: #selector(switched), for: .valueChanged)
-        navigationItem.rightBarButtonItem = UIBarButtonItem(customView: toggle)
-        stack.axis = .vertical
-        stack.spacing = 4
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        let scroll = UIScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scroll)
-        scroll.addSubview(stack)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: scroll.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: scroll.topAnchor, constant: 16),
-            stack.bottomAnchor.constraint(equalTo: scroll.bottomAnchor, constant: -16),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor, constant: -32),
-        ])
-        load()
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        nori_ios_tuning(1, 0)
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        nori_ios_tuning(0, 0)
-    }
-
-    private func load() {
-        guard let eq = takenJSON(nori_ios_equalizer()) as? [String: Any] else {
-            let empty = EmptyState(title: Say.noServer, detail: Say.noServerDetail)
-            stack.addArrangedSubview(empty)
-            toggle.isEnabled = false
-            return
-        }
-        toggle.isOn = eq["on"] as? Bool ?? false
-        let presets = PageHeader.pill(Say.presets, Glyph.sort, filled: false)
-        presets.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        presets.addTarget(self, action: #selector(presetsTapped), for: .touchUpInside)
-        stack.addArrangedSubview(presets)
-        stack.setCustomSpacing(12, after: presets)
-        let gains = eq["gains"] as? [Double] ?? []
-        let hz = eq["hz"] as? [Double] ?? []
-        for (i, g) in gains.enumerated() {
-            let label = UILabel()
-            let f = i < hz.count ? hz[i] : 0
-            label.text = f >= 1000 ? String(format: "%g kHz", f / 1000) : String(format: "%g Hz", f)
-            label.font = UIFont.preferredFont(forTextStyle: .caption1)
-            label.adjustsFontForContentSizeCategory = true
-            label.textColor = Theme.secondary
-            label.widthAnchor.constraint(equalToConstant: 64).isActive = true
-            let slider = UISlider()
-            slider.minimumValue = -12
-            slider.maximumValue = 12
-            slider.value = Float(g)
-            slider.tag = i
-            slider.minimumTrackTintColor = Theme.label
-            slider.maximumTrackTintColor = Theme.track
-            slider.isEnabled = toggle.isOn
-            slider.addTarget(self, action: #selector(moved(_:)), for: .valueChanged)
-            sliders.append(slider)
-            let row = UIStackView(arrangedSubviews: [label, slider])
-            row.spacing = 8
-            row.heightAnchor.constraint(equalToConstant: 40).isActive = true
-            stack.addArrangedSubview(row)
-        }
-    }
-
-    @objc private func switched() {
-        _ = "eq".withCString { n in (toggle.isOn ? "true" : "false").withCString { v in nori_ios_set(n, v) } }
-        sliders.forEach { $0.isEnabled = toggle.isOn }
-        nori_ios_tuning(1, 1)
-    }
-
-    @objc private func presetsTapped() {
-        guard let kinds = takenJSON(nori_ios_presets()) as? [Int] else { return }
-        let sheet = UIAlertController.sheet(Say.presets)
-        for (i, kind) in kinds.enumerated() {
-            sheet.add(Say.preset(kind)) { [weak self] in
-                nori_ios_tuning(1, 1)
-                if nori_ios_preset(UInt32(i)) == 1 { self?.paint() }
-            }
-        }
-        sheet.show(from: self)
-    }
-
-    /// The switch and sliders as the settings now hold them.
-    private func paint() {
-        guard let eq = takenJSON(nori_ios_equalizer()) as? [String: Any] else { return }
-        toggle.isOn = eq["on"] as? Bool ?? false
-        let gains = eq["gains"] as? [Double] ?? []
-        for (slider, g) in zip(sliders, gains) {
-            slider.isEnabled = toggle.isOn
-            slider.setValue(Float(g), animated: true)
-        }
-    }
-
-    @objc private func moved(_ s: UISlider) {
-        nori_ios_tuning(1, 1)
-        let rounded = (s.value * 2).rounded() / 2
-        s.value = nori_ios_equalizer_band(UInt32(s.tag), rounded)
-    }
-}
-
 final class EmptyState: UIView {
-    private let heading = UILabel()
-    private let line = UILabel()
+    private let heading = label(Fonts.title(22, .title2), Theme.label, lines: 0)
+    private let line = label(Fonts.font(15), Theme.secondary, lines: 0)
 
     init(title: String, detail: String) {
         super.init(frame: .zero)
-        heading.textColor = Theme.label
-        heading.font = UIFont.preferredFont(forTextStyle: .title2)
-        heading.adjustsFontForContentSizeCategory = true
         heading.textAlignment = .center
-        heading.numberOfLines = 0
-        line.textColor = Theme.secondary
-        line.font = UIFont.preferredFont(forTextStyle: .body)
-        line.adjustsFontForContentSizeCategory = true
         line.textAlignment = .center
-        line.numberOfLines = 0
         let stack = UIStackView(arrangedSubviews: [heading, line])
         stack.axis = .vertical
         stack.alignment = .fill
@@ -945,26 +604,58 @@ final class EmptyState: UIView {
     }
 }
 
+/// A plain table on the page's paper, its separators hairlines.
 func dress(_ table: UITableView) {
     table.backgroundColor = Theme.background
     table.separatorColor = Theme.hairline
     table.cellLayoutMarginsFollowReadableWidth = false
-    // Room under the last row for the mini player, which sits over the tab bar.
-    table.contentInset.bottom = MiniPlayer.height
-    table.scrollIndicatorInsets.bottom = MiniPlayer.height
 }
 
+/// A titled list of grouped cards: the scroll of a settings page and of the library's top.
+class CardsPage: UIViewController {
+    let column = UIStackView()
+    private let scroll = UIScrollView()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = Theme.background
+        column.axis = .vertical
+        column.spacing = 0
+        for v in [scroll, column] as [UIView] { v.translatesAutoresizingMaskIntoConstraints = false }
+        view.addSubview(scroll)
+        scroll.addSubview(column)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: view.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            column.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            column.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 8),
+            column.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -Space.section),
+            column.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+        ])
+    }
+
+    /// The column's contents, again.
+    func set(_ views: [UIView]) {
+        column.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        views.forEach(column.addArrangedSubview)
+    }
+}
+
+/// A cell of a plain settings table on the page's surface, in the app's type.
 func row(_ table: UITableView, id: String, style: UITableViewCell.CellStyle = .default) -> UITableViewCell {
     let cell = table.dequeueReusableCell(withIdentifier: id) ?? UITableViewCell(style: style, reuseIdentifier: id)
     cell.backgroundColor = Theme.row
     cell.textLabel?.textColor = Theme.label
-    cell.textLabel?.font = UIFont.preferredFont(forTextStyle: .body)
+    cell.textLabel?.font = Fonts.font(16)
     cell.textLabel?.adjustsFontForContentSizeCategory = true
     cell.detailTextLabel?.textColor = Theme.secondary
-    cell.detailTextLabel?.font = UIFont.preferredFont(forTextStyle: .body)
+    cell.detailTextLabel?.font = Fonts.font(style == .subtitle ? 13 : 15, .regular, .footnote)
     cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
     let selected = UIView()
-    selected.backgroundColor = Theme.track
+    selected.backgroundColor = Theme.page.veil(0.06)
     cell.selectedBackgroundView = selected
     return cell
 }

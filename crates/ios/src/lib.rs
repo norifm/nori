@@ -14,6 +14,7 @@ mod account;
 mod jam;
 mod lyrics;
 mod menu;
+mod offer;
 mod output;
 mod pages;
 mod remote;

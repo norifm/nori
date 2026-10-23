@@ -47,13 +47,13 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         super.viewDidLoad()
         view.backgroundColor = Theme.Card.background
         let grabber = UIButton(type: .system)
-        grabber.setImage(Glyph.chevronDown, for: .normal)
+        grabber.setImage(Glyph.close, for: .normal)
         grabber.tintColor = Theme.Card.secondary
         grabber.accessibilityLabel = Say.close
         grabber.addTarget(self, action: #selector(close), for: .touchUpInside)
         let title = UILabel()
         title.text = Say.playOn
-        title.font = UIFont.systemFont(ofSize: 22, weight: .bold)
+        title.font = Fonts.title(22)
         title.textColor = Theme.Card.label
         table.backgroundColor = Theme.Card.background
         table.separatorColor = Theme.Card.track
@@ -120,7 +120,7 @@ final class DevicesSheet: UIViewController, UITableViewDataSource, UITableViewDe
         cell.tintColor = Theme.Card.label
         cell.textLabel?.textColor = Theme.Card.label
         cell.detailTextLabel?.textColor = Theme.Card.secondary
-        cell.detailTextLabel?.font = UIFont.preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.font = Fonts.font(13, .regular, .footnote)
         guard indexPath.row > 0 else {
             cell.textLabel?.text = Say.thisIPod
             cell.detailTextLabel?.text = nil

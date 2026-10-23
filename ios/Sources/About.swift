@@ -30,7 +30,7 @@ final class CreditsPage: UITableViewController {
                        file: $0["file"] as? String)
             }
         }
-        sections = [(Say.rustCore, read("core")), (Say.appCredits, read("app")), (Say.fontsAndData, read("data"))]
+        sections = [(Say.rustCore, read("core")), (Say.fontsAndData, read("data"))]
             .filter { !$0.credits.isEmpty }
     }
 
@@ -46,7 +46,7 @@ final class CreditsPage: UITableViewController {
         cell.textLabel?.text = c.name + "  ·  " + c.licence
         cell.detailTextLabel?.text = c.what
         cell.detailTextLabel?.numberOfLines = 0
-        cell.detailTextLabel?.font = UIFont.preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.font = Fonts.font(13, .regular, .footnote)
         cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
         cell.accessoryType = .disclosureIndicator
         return cell
@@ -86,8 +86,8 @@ final class LicencePage: UIViewController {
         view.isEditable = false
         view.backgroundColor = Theme.background
         view.textColor = Theme.label
-        view.font = UIFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
-        view.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16 + MiniPlayer.height, right: 12)
+        view.font = Fonts.digits(13)
+        view.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
         view.text = text
         self.view.addSubview(view)
     }

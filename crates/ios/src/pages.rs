@@ -7,10 +7,11 @@ use std::ffi::{c_char, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, song_sort_kept, song_sort_saved, song_sorts, AlbumSort};
+use nori_core::browse::{album_sort_kept, album_sort_saved, album_sorts, artist_rows, home_pinned, home_row_page, song_sort_kept, song_sort_saved, song_sorts, AlbumSort, HomeShelf};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Starrable;
-use nori_core::menus::{download_entries, DownloadAct, SongDownload};
+use nori_core::menus::{download_entries, page_actions, DownloadAct, PageAction, PageKind, SongDownload};
+use nori_core::pages::release_groups;
 use nori_core::mixes::board::{MixLookup, MixTile, FAVOURITES_MIX};
 use nori_core::stage::QueueRows;
 use nori_core::{Album, Artist, Genre, Lyrics, OriginKind, PageOrigin, Playlist, SearchResult, Song};
@@ -50,6 +51,8 @@ pub const PAGE_SMARTS: i32 = 16;
 /// One smart playlist by id: its songs.
 pub const PAGE_SMART: i32 = 17;
 pub const PAGE_DOWNLOADED_ALBUM: i32 = 18;
+/// A Home row in full: `arg` is its shelf's key, then a newline and the offset of a page past the first.
+pub const PAGE_HOME_ROW: i32 = 19;
 
 pub type PageFn = unsafe extern "C" fn(u64, *const c_char);
 /// `(token, width, height, rgba, len, owner)`: the pixels stay valid until `owner` is given to
@@ -145,7 +148,7 @@ pub(crate) fn extend_list(token: u64, more: &[Song]) -> Option<usize> {
     Some(from)
 }
 
-fn send(token: u64, v: &Value) {
+pub(crate) fn send(token: u64, v: &Value) {
     let Some(cb) = *lock(&PAGE_HOOK) else { return };
     let text = CString::new(v.to_string().replace('\0', " ")).unwrap_or_default();
     unsafe { cb(token, text.as_ptr()) };
@@ -160,7 +163,7 @@ fn cover(c: &Option<String>) -> &str {
     c.as_deref().unwrap_or("")
 }
 
-fn song_json(s: &Song, i: usize) -> Value {
+pub(crate) fn song_json(s: &Song, i: usize) -> Value {
     json!({
         "k": "song", "id": s.id, "t": s.title, "s": s.artist, "a": s.album,
         "albumId": s.album_id.as_deref().unwrap_or(""), "artistId": s.artist_id.as_deref().unwrap_or(""),
@@ -181,16 +184,29 @@ fn album_json(a: &Album) -> Value {
     })
 }
 
-/// An artist's page: its albums, then the songs its provider lists, kept for `token` to play from a tap.
+/// An artist's page: a shelf per kind of release (`pages::release_groups`; `kind` its `ReleaseKind` and
+/// `tag` the server's for a tagged one, for the app to word), then the songs its provider lists, kept for
+/// `token` to play from a tap.
 fn artist_page(token: u64, v: &nori_core::ArtistDetail) -> Value {
     let a = &v.artist;
     keep_list(token, v.songs.clone(), Some(Fetch::Artist(a.id.clone()).origin()));
-    let mut sections = vec![section("albums", true, v.albums.iter().map(album_json).collect())];
+    let mut sections: Vec<Value> = release_groups(&v.albums)
+        .into_iter()
+        .map(|g| {
+            let mut s = section("release", true, g.albums.iter().filter_map(|&i| v.albums.get(i as usize)).map(album_json).collect());
+            s["kind"] = json!(g.kind as u8);
+            s["tag"] = json!(g.tag);
+            s
+        })
+        .collect();
     if !v.songs.is_empty() {
         sections.push(songs_section("songs", &v.songs, 0));
     }
     json!({
-        "head": { "k": "artist", "id": a.id, "t": a.name, "c": cover(&a.cover_art), "n": v.albums.len(), "ns": v.songs.len(), "st": a.starred },
+        "head": {
+            "k": "artist", "id": a.id, "t": a.name, "c": cover(&a.cover_art), "n": v.albums.len(), "ns": v.songs.len(), "st": a.starred,
+            "albumSongs": v.albums.iter().map(|al| al.song_count).sum::<u32>(),
+        },
         "sections": sections,
     })
 }
@@ -357,16 +373,39 @@ fn album_grid(token: u64, client: &nori_core::client::Client, sort: AlbumSort, g
     };
     pages(client, token, read, &|p| match p {
         Page::Albums { v } => {
-            let items = lettered(v.iter().map(album_json).collect(), album_letters(sort));
+            let sections = if sort == AlbumSort::ArtistRows {
+                artist_shelves(&v)
+            } else {
+                vec![section("albums", true, lettered(v.iter().map(album_json).collect(), album_letters(sort)))]
+            };
             Some(json!({
                 "more": v.len() as i32 == ALBUM_PAGE && sort != AlbumSort::Random,
                 "next": offset + v.len() as i32, "from": offset,
                 "letters": album_letters(sort).is_some(),
-                "sections": [section("albums", true, items)],
+                "sections": sections,
             }))
         }
         _ => None,
     });
+}
+
+/// Albums in [`AlbumSort::ArtistRows`] order as a shelf per artist (`browse::artist_rows`), each titled
+/// with its artist (`artistId` to open them) and counted in `n`. A page that goes on with the last
+/// page's artist starts with that artist's shelf again, for the app to join.
+fn artist_shelves(albums: &[Album]) -> Vec<Value> {
+    let starts = artist_rows(albums.to_vec());
+    starts
+        .iter()
+        .enumerate()
+        .map(|(n, &from)| {
+            let to = starts.get(n + 1).map_or(albums.len(), |&t| t as usize);
+            let row = &albums[from as usize..to];
+            let mut s = section("artistRow", true, row.iter().map(album_json).collect());
+            s["title"] = json!(row[0].artist);
+            s["artistId"] = json!(row[0].artist_id.as_deref().unwrap_or(""));
+            s
+        })
+        .collect()
 }
 
 /// Hands the server's starred songs to the favourites mix when the stored copy (already handed over) is
@@ -383,17 +422,71 @@ fn refresh_favourites(
     let _ = nori_core::transport::block_on(client.mix_favourites_refresh(digest));
 }
 
-/// A Home shelf's key, which the app words.
+/// Each Home row with its shelf's key, which the app words and opens the row's full view by.
+const SHELVES: [(HomeRow, &str); 8] = [
+    (HomeRow::Pinned, "pinned"),
+    (HomeRow::Playlists, "playlists"),
+    (HomeRow::Recent, "recent"),
+    (HomeRow::Newest, "newest"),
+    (HomeRow::Frequent, "frequent"),
+    (HomeRow::TopSongs, "topSongs"),
+    (HomeRow::Random, "random"),
+    (HomeRow::Starred, "starred"),
+];
+
 fn shelf_key(row: HomeRow) -> &'static str {
-    match row {
-        HomeRow::Pinned => "pinned",
-        HomeRow::Playlists => "playlists",
-        HomeRow::Recent => "recent",
-        HomeRow::Newest => "newest",
-        HomeRow::Frequent => "frequent",
-        HomeRow::TopSongs => "topSongs",
-        HomeRow::Random => "random",
-        HomeRow::Starred => "starred",
+    SHELVES.iter().find(|(r, _)| *r == row).map_or("", |(_, k)| k)
+}
+
+fn shelf_row(key: &str) -> Option<HomeRow> {
+    SHELVES.iter().find(|(_, k)| *k == key).map(|(r, _)| *r)
+}
+
+/// A page of Home row `row`'s full view from `offset` (`browse::home_row_page`): its albums or playlists
+/// as a grid, its songs as a list kept for `token`; `more` while a page came full.
+fn home_row(token: u64, client: &nori_core::client::Client, core: &nori_core::Core, row: HomeRow, offset: u32) {
+    let Some(shelf) = home_row_page(row, offset) else {
+        return send(token, &json!({ "sections": [], "from": offset }));
+    };
+    let key = shelf_key(row);
+    match shelf {
+        HomeShelf::Albums { sort, size, follows_stars } => {
+            let read = if follows_stars && offset == 0 {
+                Read::FavouriteAlbums { size: size as i32 }
+            } else {
+                Read::AlbumList { kind: sort, size: size as i32, offset: offset as i32, genre: None }
+            };
+            pages(client, token, read, &|p| match p {
+                Page::Albums { v } => Some(json!({
+                    "more": v.len() as u32 == size, "next": offset + v.len() as u32, "from": offset,
+                    "sections": [section(key, true, v.iter().map(album_json).collect())],
+                })),
+                _ => None,
+            });
+        }
+        HomeShelf::Songs { sort, descending, limit } => {
+            let songs = core.browse_songs(sort, descending, false, 0, 0, offset, limit).unwrap_or_default();
+            let from = if offset == 0 { None } else { extend_list(token, &songs) }.unwrap_or(0);
+            let v = json!({
+                "more": songs.len() as u32 == limit, "next": offset + songs.len() as u32, "from": offset,
+                "sections": [songs_section(key, &songs, from)],
+            });
+            if offset == 0 {
+                keep_list(token, songs, Some(PageOrigin::new(OriginKind::Shelf, key)));
+            }
+            send(token, &v);
+        }
+        HomeShelf::Playlists { take } => pages(client, token, Read::PlaylistList, &|p| match p {
+            Page::Playlists { v } => Some(json!({ "sections": [section(key, true, v.iter().take(take as usize).map(playlist_json).collect())] })),
+            _ => None,
+        }),
+        HomeShelf::Pinned => {
+            let pins = core.session.settings.prefs(|p| p.pinned_playlists.clone());
+            pages(client, token, Read::PlaylistList, &|p| match p {
+                Page::Playlists { v } => Some(json!({ "sections": [section(key, true, home_pinned(v, pins.clone()).iter().map(playlist_json).collect())] })),
+                _ => None,
+            })
+        }
     }
 }
 
@@ -483,6 +576,13 @@ fn read(token: u64, kind: i32, arg: String) {
                 send(token, &json!({ "sections": *v }));
             });
         }
+        PAGE_HOME_ROW => {
+            let (key, offset) = arg.split_once('\n').unwrap_or((arg.as_str(), "0"));
+            match shelf_row(key) {
+                Some(row) => home_row(token, &client, &core, row, offset.parse().unwrap_or(0)),
+                None => send(token, &json!({ "sections": [] })),
+            }
+        }
         PAGE_MIX => {
             if arg == FAVOURITES_MIX {
                 refresh_favourites(&client, client.mix_favourites_stored());
@@ -501,7 +601,7 @@ fn read(token: u64, kind: i32, arg: String) {
                         &json!({
                             "head": {
                                 "k": "mix", "id": sheet.id, "n": sheet.name as u8, "covers": sheet.covers,
-                                "sec": sheet.seconds, "count": sheet.songs.len(),
+                                "sec": sheet.seconds, "count": sheet.songs.len(), "refreshable": sheet.refreshable,
                             },
                             "sections": [songs_section("songs", &sheet.songs, 0)],
                         }),
@@ -781,6 +881,10 @@ fn now_json(s: &nori_host::session::Session) -> Value {
     });
     if let Some(device) = &n.device {
         v["device"] = json!(device);
+        // The device's kind (`DeviceKind`), for its glyph.
+        if let Some(e) = s.elsewhere() {
+            v["kind"] = json!(e.mirror.kind as u8);
+        }
     }
     if let Some(song) = &n.song {
         v["song"] = song_json(song, n.index.unwrap_or(0));
@@ -954,6 +1058,78 @@ pub extern "C" fn nori_ios_download_entries(token: u64) -> *mut c_char {
     with_session(|s| owned(&entries_of(s, &songs))).unwrap_or(std::ptr::null_mut())
 }
 
+/// What a page's list head offers for list `token` (`menus::page_actions`), as JSON to free: `[{a, act, n}]`,
+/// `a` 0 download (`act` as [`entries_of`] codes it, `n` the songs it takes), 1 download everything by the
+/// artist, 2 add to the queue, 3 a new draw of the mix, 4 edit. `kind` as in [`nori_ios_read`];
+/// `refreshable`: a mix that can be drawn again.
+#[no_mangle]
+pub extern "C" fn nori_ios_page_actions(token: u64, kind: i32, refreshable: i32) -> *mut c_char {
+    let kind = match kind {
+        PAGE_ALBUM | PAGE_DOWNLOADED_ALBUM => PageKind::Album,
+        PAGE_ARTIST => PageKind::Artist,
+        PAGE_PLAYLIST => PageKind::Playlist,
+        PAGE_MIX => PageKind::Mix { refreshable: refreshable != 0 },
+        PAGE_SMART => PageKind::Smart,
+        _ => return std::ptr::null_mut(),
+    };
+    let songs = list(token).map(|(songs, _)| songs).unwrap_or_default();
+    with_session(|s| {
+        let states = download_states(s, &songs);
+        let missing = states.iter().filter(|(here, _)| !here).count();
+        let done = states.iter().filter(|(_, done)| *done).count();
+        owned(&Value::from(head_actions(kind, songs.len(), missing, done, s.rules().downloads)))
+    })
+    .unwrap_or(std::ptr::null_mut())
+}
+
+/// [`nori_ios_page_actions`]' lines for `songs` songs, `missing` not downloaded and `done` downloaded.
+fn head_actions(kind: PageKind, songs: usize, missing: usize, done: usize, downloads: bool) -> Vec<Value> {
+    page_actions(kind, songs as u32, missing as u32, downloads)
+        .into_iter()
+        .map(|a| match a {
+            PageAction::Download { act } => {
+                let n = match act {
+                    DownloadAct::All => songs,
+                    DownloadAct::Missing => missing,
+                    DownloadAct::Remove => done,
+                };
+                json!({ "a": 0, "act": act_code(act), "n": n })
+            }
+            PageAction::DownloadEverything => json!({ "a": 1 }),
+            PageAction::AddToQueue => json!({ "a": 2 }),
+            PageAction::Refresh => json!({ "a": 3 }),
+            PageAction::Edit => json!({ "a": 4 }),
+        })
+        .collect()
+}
+
+/// Draws mix `id` again; its page reads again after. Blocks.
+///
+/// # Safety
+/// `id` is NUL-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn nori_ios_mix_refresh(id: *const c_char) {
+    let id = c_text(id);
+    let Some((client, _)) = server() else { return };
+    nori_core::transport::block_on(client.mix_ensure(id, true));
+}
+
+/// Plays the library shuffled: random albums each whole (`albums` 1), or random songs. Blocks; 1 when it
+/// plays.
+#[no_mangle]
+pub extern "C" fn nori_ios_shuffle_library(albums: i32) -> i32 {
+    let Some((client, _)) = server() else { return 0 };
+    let (songs, kind) = if albums != 0 {
+        (nori_core::transport::block_on(client.shuffle_albums()), OriginKind::ShuffleAlbums)
+    } else {
+        (nori_core::transport::block_on(client.shuffle_all()), OriginKind::ShuffleSongs)
+    };
+    match songs {
+        Ok(songs) if !songs.is_empty() => with_session(|s| s.play(songs, 0, false, Some(PageOrigin::new(kind, "")))).map_or(0, |()| 1),
+        _ => 0,
+    }
+}
+
 /// Runs download entry `act` on list `token` ([`act_on`]).
 #[no_mangle]
 pub extern "C" fn nori_ios_download_act(token: u64, act: i32) -> i32 {
@@ -1086,7 +1262,7 @@ pub unsafe extern "C" fn nori_ios_cover(token: u64, id: *const c_char, px: u32) 
 }
 
 /// Asks for cover `id` at `px`, kept under `token` until it comes or is let go.
-fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Option<Arc<nori_covers::Image>>) + Send + 'static) {
+pub(crate) fn request(token: u64, id: String, px: u32, deliver: impl FnOnce(Option<Arc<nori_covers::Image>>) + Send + 'static) {
     if id.is_empty() || px == 0 {
         return;
     }
@@ -1227,7 +1403,7 @@ pub extern "C" fn nori_ios_sorts(kind: i32) -> *mut c_char {
     let v = match kind {
         PAGE_ALBUMS => json!({
             "now": album_sort_saved(prefs).name(),
-            "all": grid_album_sorts().map(|s| s.name()).collect::<Vec<_>>(),
+            "all": album_sorts().into_iter().map(|s| s.name()).collect::<Vec<_>>(),
         }),
         PAGE_SONGS => json!({
             "now": song_sort_saved(prefs),
@@ -1238,11 +1414,6 @@ pub extern "C" fn nori_ios_sorts(kind: i32) -> *mut c_char {
     owned(&v)
 }
 
-/// The album orders the iPod offers: its grid draws no artist rows.
-fn grid_album_sorts() -> impl Iterator<Item = AlbumSort> {
-    album_sorts().into_iter().filter(|&s| s != AlbumSort::ArtistRows)
-}
-
 /// Keeps `name` (one of [`nori_ios_sorts`]' `all`) as the order of list `kind`; the page reads again.
 ///
 /// # Safety
@@ -1251,7 +1422,7 @@ fn grid_album_sorts() -> impl Iterator<Item = AlbumSort> {
 pub unsafe extern "C" fn nori_ios_sort(kind: i32, name: *const c_char) {
     let name = c_text(name);
     let kept = match kind {
-        PAGE_ALBUMS => match grid_album_sorts().find(|s| s.name() == name) {
+        PAGE_ALBUMS => match album_sorts().into_iter().find(|s| s.name() == name) {
             Some(s) => album_sort_kept(s),
             None => return,
         },
@@ -1267,9 +1438,9 @@ pub unsafe extern "C" fn nori_ios_sort(kind: i32, name: *const c_char) {
     });
 }
 
-/// The credits page's lists as JSON to free: `{core, data, app}`, each `[{name, what, copyright,
-/// licence, file}]` (`file` names `licences/<file>.txt` in the bundle, null for none). `app` is the iOS
-/// app's own: the Material icons `ios/Sources/Glyphs.swift` draws.
+/// The credits page's lists as JSON to free: `{core, data}`, each `[{name, what, copyright, licence,
+/// file}]` (`file` names `licences/<file>.txt` in the bundle, null for none). `data` carries what the app
+/// draws with too: Inter, Literata, the seal's and the seasons' Shippori Mincho, and Iconoir.
 #[no_mangle]
 pub extern "C" fn nori_ios_credits() -> *mut c_char {
     let list = |c: Vec<nori_core::credits::Credit>| -> Vec<Value> {
@@ -1277,17 +1448,9 @@ pub extern "C" fn nori_ios_credits() -> *mut c_char {
             .map(|c| json!({ "name": c.name, "what": c.what, "copyright": c.copyright, "licence": c.licence, "file": c.file }))
             .collect()
     };
-    let app = vec![nori_core::credits::Credit {
-        name: "Material Icons".into(),
-        what: "The icons".into(),
-        copyright: "Copyright Google LLC".into(),
-        licence: "Apache-2.0".into(),
-        file: Some("Apache-2.0".into()),
-    }];
     owned(&json!({
         "core": list(nori_core::credits::core_credits()),
         "data": list(nori_core::credits::data_credits()),
-        "app": list(app),
     }))
 }
 
@@ -1420,6 +1583,7 @@ pub extern "C" fn nori_ios_facts() -> *mut c_char {
             "songs": index.songs, "albums": index.albums, "artists": index.artists,
             "downloaded": counts.done, "pending": counts.pending,
             "stream": s.store.as_ref().map_or(0, |st| st.cache_bytes()),
+            "downloadBytes": s.store.as_ref().map_or(0, |st| st.download_bytes()),
             "db": std::fs::metadata(&s.db).map(|m| m.len()).unwrap_or(0),
         }))
     })
@@ -1542,12 +1706,59 @@ mod tests {
         let artist = Artist { id: "yt-UC1".into(), ..Artist::default() };
         let v = artist_page(78, &nori_core::ArtistDetail::new(artist.clone(), vec![], vec![song("v1"), song("v2")]));
         assert_eq!((v["head"]["n"].as_u64(), v["head"]["ns"].as_u64()), (Some(0), Some(2)));
-        assert_eq!(v["sections"][1]["key"], "songs");
-        assert_eq!(v["sections"][1]["items"][1]["i"], 1);
+        assert_eq!(v["sections"][0]["key"], "songs");
+        assert_eq!(v["sections"][0]["items"][1]["i"], 1);
         let (kept, origin) = list(78).unwrap();
         assert_eq!((kept.len(), origin), (2, Some(PageOrigin::new(OriginKind::Artist, "yt-UC1"))));
         let server = artist_page(79, &nori_core::ArtistDetail::new(artist, vec![], vec![]));
-        assert_eq!(server["sections"].as_array().map(Vec::len), Some(1), "no songs, no section");
+        assert_eq!(server["sections"].as_array().map(Vec::len), Some(0), "no songs, no section");
+    }
+
+    #[test]
+    fn an_artists_releases_stand_on_a_shelf_per_kind() {
+        let _turn = lock(&ABI_IN_USE);
+        let album = |id: &str, year: u32, kinds: &[&str], songs: u32| Album {
+            id: id.into(),
+            year,
+            release_types: kinds.iter().map(|k| k.to_string()).collect(),
+            song_count: songs,
+            ..Album::default()
+        };
+        let albums = vec![album("a", 2001, &[], 10), album("s", 2003, &["Single"], 1), album("b", 2005, &[], 12)];
+        let v = artist_page(80, &nori_core::ArtistDetail::new(Artist { id: "ar".into(), ..Artist::default() }, albums, vec![]));
+        let shelf = |n: usize| {
+            let s = &v["sections"][n];
+            let ids: Vec<&str> = s["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+            (s["kind"].as_u64().unwrap(), ids)
+        };
+        let single = nori_core::pages::ReleaseKind::Single as u64;
+        assert_eq!((shelf(0), shelf(1)), ((0, vec!["b", "a"]), (single, vec!["s"])), "albums newest first, then the singles");
+        assert_eq!(v["head"]["albumSongs"], 23);
+    }
+
+    #[test]
+    fn albums_by_artist_stand_on_a_shelf_per_artist() {
+        let album = |id: &str, artist: &str| Album { id: id.into(), artist: artist.into(), artist_id: Some(artist.to_lowercase()), ..Album::default() };
+        let shelves = artist_shelves(&[album("1", "Air"), album("2", "Air"), album("3", "Beck")]);
+        let row = |s: &Value| (s["title"].as_str().unwrap().to_string(), s["artistId"].as_str().unwrap().to_string(), s["items"].as_array().unwrap().len());
+        assert_eq!(shelves.iter().map(row).collect::<Vec<_>>(), [("Air".into(), "air".into(), 2), ("Beck".into(), "beck".into(), 1)]);
+    }
+
+    #[test]
+    fn a_pages_head_offers_its_glyphs_with_what_each_takes() {
+        let lines = head_actions(PageKind::Album, 8, 3, 5, true);
+        assert_eq!(lines, [json!({ "a": 0, "act": 1, "n": 3 }), json!({ "a": 2 })]);
+        let mix = head_actions(PageKind::Mix { refreshable: true }, 4, 0, 4, true);
+        assert_eq!(mix, [json!({ "a": 3 }), json!({ "a": 0, "act": 2, "n": 4 }), json!({ "a": 2 })]);
+        assert_eq!(head_actions(PageKind::Artist, 0, 0, 0, false), [json!({ "a": 2 })]);
+    }
+
+    #[test]
+    fn every_home_row_has_a_shelf_key_that_opens_it_again() {
+        for (row, key) in SHELVES {
+            assert_eq!((shelf_key(row), shelf_row(key)), (key, Some(row)));
+        }
+        assert_eq!(shelf_row("mixes"), None);
     }
 
     #[test]

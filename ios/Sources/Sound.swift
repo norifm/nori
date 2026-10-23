@@ -54,7 +54,7 @@ private func busy(_ page: UITableViewController, _ on: Bool, after: UIBarButtonI
         page.navigationItem.rightBarButtonItem = after
         return
     }
-    let spinner = UIActivityIndicatorView(style: Theme.light ? .gray : .white)
+    let spinner = UIActivityIndicatorView(style: Theme.dark ? .white : .gray)
     spinner.startAnimating()
     page.navigationItem.rightBarButtonItem = UIBarButtonItem(customView: spinner)
 }
@@ -119,7 +119,7 @@ final class SoundPage: UITableViewController {
         cell.textLabel?.text = o.label
         let sound = Say.deviceSound(choice: o.choice, profile: o.profile)
         cell.detailTextLabel?.text = o.current ? sound + " · " + Say.playingNow : sound
-        cell.detailTextLabel?.font = UIFont.preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.font = Fonts.font(13, .regular, .footnote)
         cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
         return cell
     }
@@ -163,7 +163,7 @@ final class DevicePage: UITableViewController {
         let intro = UILabel()
         intro.text = Say.deviceIntro(kind: Say.outputKind(port: output.port))
         intro.numberOfLines = 0
-        intro.font = UIFont.preferredFont(forTextStyle: .footnote)
+        intro.font = Fonts.font(13, .regular, .footnote)
         intro.adjustsFontForContentSizeCategory = true
         intro.textColor = Theme.secondary
         let width = UIScreen.main.bounds.width - 32
@@ -211,7 +211,7 @@ final class DevicePage: UITableViewController {
         let cell = row(tableView, id: "choice", style: .subtitle)
         cell.accessoryType = .none
         cell.textLabel?.textColor = Theme.label
-        cell.detailTextLabel?.font = UIFont.preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.font = Fonts.font(13, .regular, .footnote)
         cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
         switch indexPath.section {
         case 0:
@@ -377,7 +377,7 @@ final class AutoEqPage: UITableViewController, UISearchBarDelegate {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = row(tableView, id: "curve", style: .subtitle)
         cell.backgroundColor = Theme.background
-        cell.detailTextLabel?.font = UIFont.preferredFont(forTextStyle: .footnote)
+        cell.detailTextLabel?.font = Fonts.font(13, .regular, .footnote)
         cell.detailTextLabel?.adjustsFontForContentSizeCategory = true
         cell.selectionStyle = .default
         if count == 0 {
