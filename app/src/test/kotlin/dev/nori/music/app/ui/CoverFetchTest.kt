@@ -11,7 +11,7 @@ import org.junit.Test
 class CoverFetchTest {
     /** A loader whose answers the test gives, in any order, on a clock the test moves. */
     private class Fake : CoverFetch.Source<String> {
-        class Load(val url: String, val done: (String?, Int) -> Unit) {
+        class Load(val url: String, val width: Int, val height: Int, val done: (String?, Int) -> Unit) {
             var cancelled = false
             var answered = false
         }
@@ -25,7 +25,7 @@ class CoverFetchTest {
         override fun kept(url: String, width: Int, height: Int): Pair<String, Boolean>? = kept[url]?.let { it to true }
 
         override fun load(url: String, width: Int, height: Int, done: (String?, Int) -> Unit): CoverFetch.Handle {
-            val l = Load(url, done)
+            val l = Load(url, width, height, done)
             loads += l
             return CoverFetch.Handle { l.cancelled = true }
         }
@@ -93,6 +93,15 @@ class CoverFetchTest {
             if (f.picture != null) turn.arrived(url).also { shown = f.picture }
             f.want(600, 600)
         }
+    }
+
+    @Test fun `a view that is not square asks for the whole square cover`() {
+        // The loader crops a decode to the size asked for and keeps one picture per address, so a view that
+        // asked for its own shape left a cropped picture behind that a square view then cropped again.
+        val fake = Fake()
+        CoverFetch("M", fake, null, shown = {}, missing = {}).want(200, 300)
+        val l = fake.loads.single()
+        assertEquals(300 to 300, l.width to l.height)
     }
 
     @Test fun `fast skips with loads answering out of order end on the last song's picture`() {
