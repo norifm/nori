@@ -103,7 +103,6 @@ def native(workspace, output, target_platform, jobs, test, package_only, target_
     run(sys.executable, ROOT / "tools/host-release/package.py", "--binaries", binaries,
         "--version", version, "--arch", arch, "--output", output, env=environment)
     if system == "linux":
-        run("pulseaudio", "--start", "--exit-idle-time=-1", env=environment)
         run("dbus-run-session", "--", sys.executable, ROOT / "tools/host-release/linux.py",
             "--binaries", binaries, "--version", version, "--output", output, env=environment)
     run(sys.executable, ROOT / "tools/host-release/check.py", output, env=environment)
