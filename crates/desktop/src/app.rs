@@ -60,13 +60,16 @@ const EQUALIZER: i32 = 9;
 const FAVORITES: i32 = 12;
 
 /// The way back from the page shown: the pages opened from one another before it, and the tab the first
-/// of them was opened from.
+/// of them was opened from, each with where it was scrolled; and the pages Back left, for Forward.
 #[derive(Default)]
 struct PageTrail {
     /// The page shown, and those before it, oldest first.
     shown: Option<PageAsk>,
-    before: Vec<PageAsk>,
+    before: Vec<(PageAsk, f32)>,
     tab: i32,
+    tab_at: f32,
+    /// The pages Back left, the nearest last.
+    ahead: Vec<(PageAsk, f32)>,
 }
 
 /// Where Back leads.
@@ -77,29 +80,46 @@ enum Back {
 }
 
 impl PageTrail {
-    /// `ask` is shown, opened from tab `from` (or from the page shown, when `from` is the page view).
-    fn opened(&mut self, ask: PageAsk, from: i32) {
+    /// `ask` is shown, opened from tab `from` (or from the page shown, when `from` is the page view) scrolled
+    /// to `at`.
+    fn opened(&mut self, ask: PageAsk, from: i32, at: f32) {
         if from == PAGE {
-            self.before.extend(self.shown.take());
+            self.before.extend(self.shown.take().map(|page| (page, at)));
         } else {
             self.before.clear();
             self.tab = from;
+            self.tab_at = at;
         }
+        self.ahead.clear();
         self.shown = Some(ask);
     }
 
-    /// Back from the page shown: the page before it (now shown), else the tab it was opened from.
-    fn back(&mut self) -> Back {
+    /// Back from the page shown, scrolled to `at`: the page before it (now shown), else the tab it was opened
+    /// from, and where that was scrolled.
+    fn back(&mut self, at: f32) -> (Back, f32) {
+        self.ahead.extend(self.shown.take().map(|page| (page, at)));
         match self.before.pop() {
-            Some(page) => {
+            Some((page, was)) => {
                 self.shown = Some(page.clone());
-                Back::Page(page)
+                (Back::Page(page), was)
             }
-            None => {
-                self.shown = None;
-                Back::Tab(self.tab)
-            }
+            None => (Back::Tab(self.tab), self.tab_at),
         }
+    }
+
+    /// Forward from what is shown, scrolled to `at`: the page Back last left, and where it was scrolled.
+    fn forward(&mut self, at: f32) -> Option<(PageAsk, f32)> {
+        let (page, was) = self.ahead.pop()?;
+        match self.shown.replace(page.clone()) {
+            Some(left) => self.before.push((left, at)),
+            None => self.tab_at = at,
+        }
+        Some((page, was))
+    }
+
+    /// A tab is chosen: Forward has nothing left to return to.
+    fn left(&mut self) {
+        self.ahead.clear();
     }
 }
 
@@ -674,6 +694,8 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             });
         }
         let me = a.me.clone();
+        a.compositor.on_history(move |forward| me.with(|a| if forward { a.forward() } else { a.back() }));
+        let me = a.me.clone();
         a.compositor.on_shown(move |shown| me.with(|a| {
             a.hidden = !shown;
             if let Some(s) = &a.session {
@@ -774,7 +796,10 @@ fn login_kind(info: &nori_core::providers::ProviderInfo) -> LoginKind {
 
 fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_messages_arrived, h, |a| a.drain_inbox());
-    on!(ui.on_go, h, |a, v| a.go(v));
+    on!(ui.on_go, h, |a, v| {
+        a.trail.left();
+        a.go(v);
+    });
     on!(ui.on_shelf_song, h, |a, shelf, id| {
         let songs = a.feed_songs.get(shelf.max(0) as usize).cloned().unwrap_or_default();
         if let Some(at) = songs.iter().position(|s| s.id == id.as_str()) {
@@ -1133,6 +1158,12 @@ impl App {
     }
 
     fn go(&mut self, view: i32) {
+        self.go_at(view, 0.0);
+    }
+
+    /// Shows tab `view` scrolled to `at`.
+    fn go_at(&mut self, view: i32, at: f32) {
+        self.start_at(at);
         // A new page starts unfiltered.
         if !self.find.is_empty() {
             self.find.clear();
@@ -1212,12 +1243,23 @@ impl App {
     }
 
     fn open_page(&mut self, ask: PageAsk) {
-        self.trail.opened(ask.clone(), opened_from(self.ui().get_view()));
-        self.show_page(ask);
+        let at = self.ui().global::<crate::Scroll>().get_at();
+        self.trail.opened(ask.clone(), opened_from(self.ui().get_view()), at);
+        self.show_page(ask, 0.0);
     }
 
-    /// Shows page `ask`, the way back already kept ([`PageTrail`]).
-    fn show_page(&mut self, ask: PageAsk) {
+    /// The next page or tab shown starts scrolled to `at` ([`crate::Scroll`]).
+    fn start_at(&self, at: f32) {
+        let ui = self.ui();
+        let scroll = ui.global::<crate::Scroll>();
+        scroll.set_want(at);
+        scroll.set_at(at);
+        scroll.set_asked(scroll.get_asked().wrapping_add(1));
+    }
+
+    /// Shows page `ask` scrolled to `at`, the way back already kept ([`PageTrail`]).
+    fn show_page(&mut self, ask: PageAsk, at: f32) {
+        self.start_at(at);
         if !self.find.is_empty() {
             self.find.clear();
             self.ui().set_find_text("".into());
@@ -3220,11 +3262,19 @@ impl App {
     /// page of its own.
     fn back(&mut self) {
         if self.ui().get_view() != PAGE {
+            self.trail.left();
             return self.go(HOME);
         }
-        match self.trail.back() {
-            Back::Page(page) => self.show_page(page),
-            Back::Tab(tab) => self.go(tab),
+        match self.trail.back(self.ui().global::<crate::Scroll>().get_at()) {
+            (Back::Page(page), at) => self.show_page(page, at),
+            (Back::Tab(tab), at) => self.go_at(tab, at),
+        }
+    }
+
+    /// The mouse's forward button: the page Back last left, scrolled where it was.
+    fn forward(&mut self) {
+        if let Some((page, at)) = self.trail.forward(self.ui().global::<crate::Scroll>().get_at()) {
+            self.show_page(page, at);
         }
     }
 
@@ -3449,14 +3499,45 @@ mod tests {
     fn back_retraces_pages_then_the_tab() {
         let (artist, album) = (PageAsk::Artist("ar".into()), PageAsk::Album("al".into()));
         let mut trail = PageTrail::default();
-        trail.opened(artist.clone(), FAVORITES);
-        trail.opened(album, PAGE);
-        assert_eq!(trail.back(), Back::Page(artist), "the album opened from the artist goes back to it");
-        assert_eq!(trail.back(), Back::Tab(FAVORITES), "then where the artist was opened from");
-        trail.opened(PageAsk::Album("x".into()), HOME);
-        assert_eq!(trail.back(), Back::Tab(HOME), "a page opened from a tab forgets the pages before");
-        trail.opened(PageAsk::Artist("ar".into()), opened_from(SEARCH));
-        assert_eq!(trail.back(), Back::Tab(SEARCH), "an artist found by search goes back to the search");
+        trail.opened(artist.clone(), FAVORITES, 300.0);
+        trail.opened(album.clone(), PAGE, 120.0);
+        assert_eq!(trail.back(40.0), (Back::Page(artist.clone()), 120.0), "the album opened from the artist goes back to it, scrolled as it was");
+        assert_eq!(trail.back(0.0), (Back::Tab(FAVORITES), 300.0), "then where the artist was opened from");
+        assert_eq!(trail.forward(10.0), Some((artist, 0.0)), "forward retraces the pages back left");
+        assert_eq!(trail.forward(0.0), Some((album, 40.0)));
+        assert_eq!(trail.forward(0.0), None);
+        trail.opened(PageAsk::Album("x".into()), HOME, 0.0);
+        assert_eq!(trail.back(0.0).0, Back::Tab(HOME), "a page opened from a tab forgets the pages before");
+        trail.left();
+        assert_eq!(trail.forward(0.0), None, "a tab chosen forgets the pages ahead");
+        trail.opened(PageAsk::Artist("ar".into()), opened_from(SEARCH), 0.0);
+        assert_eq!(trail.back(0.0).0, Back::Tab(SEARCH), "an artist found by search goes back to the search");
+    }
+
+    #[test]
+    fn back_returns_to_where_home_was_scrolled() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::LogicalSize::new(1280.0, 820.0));
+        let scroll = ui.global::<crate::Scroll>();
+        scroll.set_want(600.0);
+        scroll.set_asked(1);
+        ui.set_view(HOME);
+        ui.set_picks_loaded(true);
+        ui.show().unwrap();
+        ui.window().take_snapshot().unwrap();
+        slint::platform::update_timers_and_animations();
+        assert_eq!(scroll.get_at(), 0.0, "an empty Home cannot be scrolled that far yet");
+        ui.set_shelves(ModelRc::new(VecModel::from((0..12).map(|_| Shelf {
+            loaded: true, cards: cards((0..8).map(|i| Card { id: i.to_string().into(), ..Default::default() })), ..Default::default()
+        }).collect::<Vec<_>>())));
+        ui.window().take_snapshot().unwrap();
+        slint::platform::update_timers_and_animations();
+        ui.window().take_snapshot().unwrap();
+        slint::platform::update_timers_and_animations();
+        assert_eq!(scroll.get_at(), 600.0, "once its shelves come, Home is where it was left");
     }
 
     fn pill() -> crate::PlayerBar {

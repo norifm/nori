@@ -1231,7 +1231,43 @@ component Chip inherits Rectangle {
 }
 
 // Cards in rows filling the page width; only nearby rows keep components and images.
-component Grid inherits Flickable {
+// Where the page shown is scrolled: `at` as it scrolls, `want` where the next page shown starts, and `asked`
+// counts the pages shown, so a page view that stays (an album opened from an artist) starts again too.
+export global Scroll {
+    in-out property <length> at;
+    in property <length> want;
+    in property <int> asked;
+}
+
+// A page's scroll that Back returns to: it starts at `Scroll.want` once its content reaches that far (pages
+// fill in after they open) or the user scrolls it, and keeps `Scroll.at`. Off (`remember`), it is a plain one.
+component Remembered inherits Flickable {
+    in property <bool> remember: true;
+    property <bool> placed;
+    property <int> asked: Scroll.asked;
+    function place() {
+        if root.remember && !root.placed && root.content-height - root.height >= Scroll.want {
+            root.content-y = -Scroll.want;
+            root.placed = true;
+        }
+    }
+    init => { root.place(); }
+    changed asked => {
+        root.placed = false;
+        root.place();
+    }
+    changed content-height => { root.place(); }
+    changed content-y => {
+        if root.remember && root.placed {
+            Scroll.at = -root.content-y;
+        }
+    }
+    flicked => {
+        root.placed = true;
+    }
+}
+
+component Grid inherits Remembered {
     in property <[Card]> cards;
     in property <int> rev;
     in property <bool> round;
@@ -1354,6 +1390,7 @@ component ReleaseShelves inherits VerticalLayout {
             pad: 0;
             bottom: 0;
             interactive: false;
+            remember: false;
             cards: shelf.cards;
             rev: root.rev;
             art(a, s, r) => { return root.art(a, s, r); }
@@ -5328,7 +5365,7 @@ export component AppWindow inherits Window {
 
 
                 if root.view == 0: Fade {
-                    home-scroll := Flickable {
+                    home-scroll := Remembered {
                         content-height: home.preferred-height;
                         home := VerticalLayout {
                             y: floor(home-scroll.content-y / 1phx + 0.5) * 1phx - home-scroll.content-y;
@@ -5556,7 +5593,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     VerticalLayout {
-                        Flickable {
+                        Remembered {
                             vertical-stretch: 1;
                             content-height: found.preferred-height;
                             found := VerticalLayout {
@@ -5695,7 +5732,7 @@ export component AppWindow inherits Window {
                 }
 
                 if root.view == 2 && root.albums-in-rows: Fade {
-                    rows-scroll := Flickable {
+                    rows-scroll := Remembered {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 198px));
                         property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
                         // A shelf's title, its gap, its cards with their words, and the space under it (ShelfView).
@@ -5791,7 +5828,7 @@ export component AppWindow inherits Window {
 
                 if root.view == 11: Fade {
                     push: true;
-                    picks-grid := Flickable {
+                    picks-grid := Remembered {
                         property <int> columns: max(2, floor((self.width - 64px + 22px) / 222px));
                         property <length> side: (self.width - 64px - (self.columns - 1) * 22px) / self.columns;
                         content-height: Chrome.top-room + 64px + ceil(root.picks.length / self.columns) * (self.side * 206 / 150 + 22px) + 100px;
@@ -6033,7 +6070,7 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        page-flick := Flickable {
+                        page-flick := Remembered {
                             // Up and down only: a long title or row is cut to the page, never scrolled sideways.
                             content-width: self.width;
                             content-height: detail.preferred-height;

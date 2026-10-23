@@ -34,6 +34,9 @@ plays) and the seal, then a line with the songs' count, length and format and th
 them to the queue or, on a mix, draw it again. A mix has Save as playlist beside Play: the playlist is called
 "nori <mix name>".
 
+Back returns to the page or tab a page was opened from, scrolled where you left it; the mouse's back and
+forward buttons go back and forward again.
+
 A favorite is a seal: an outline until you like a song, then filled and slightly tilted. Lyrics, the queue and
 your devices open in a sheet that floats on the right between the two outlines, over the page, which stays
 where it is; tabs at its top switch between them. In the full player the same tabs head the panel beside the
