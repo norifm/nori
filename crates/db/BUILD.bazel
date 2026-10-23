@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-db',
  'edition': '2021',
- 'version': '0.7.0-beta.6',
+ 'version': '0.7.0-beta.7',
  'targets': [{'name': 'nori_db', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': ['ffi'], 'desktop': [], 'desktop-tests': []},
  'local': [{'package': 'nori-model',
