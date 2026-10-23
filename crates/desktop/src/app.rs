@@ -295,13 +295,13 @@ pub(crate) fn mosaic(images: &[Image]) -> Option<Image> {
     Some(i_slint_renderer_skia::image_from_skia(surface.image_snapshot()))
 }
 
-/// The cover's blurred wash (square ARGB) as an image.
-fn wash(c: &CoverColours) -> Image {
+/// The cover's blurred wash (square ARGB) as an image, dyed as its page is.
+fn wash(c: &CoverColours, dye: &nori_look::theme::Dye) -> Image {
     let Some(w) = &c.wash else { return Image::default() };
     let side = (w.len() as f64).sqrt() as u32;
     let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(side, side);
     for (px, argb) in buf.make_mut_slice().iter_mut().zip(w) {
-        let [a, r, g, b] = argb.to_be_bytes();
+        let [a, r, g, b] = dye.wash(*argb).to_be_bytes();
         *px = Rgba8Pixel { r, g, b, a };
     }
     Image::from_rgba8(buf)
@@ -541,7 +541,7 @@ fn home_shelves(rows: &[nori_core::settings::HomeRow]) -> Vec<Shelf> {
 pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCell<App>> {
     let shelves = Rc::new(VecModel::from(Vec::new()));
     ui.set_shelves(ModelRc::from(shelves.clone()));
-    ui.set_greeting("Home".into());
+    ui.set_greeting(words::LISTEN_NOW.into());
     ui.set_show_all_text(words::SHOW_ALL.into());
     ui.set_mixing_label(words::MIXING.into());
     ui.set_login_kinds(ModelRc::new(VecModel::from(nori_core::providers::providers().iter().map(login_kind).collect::<Vec<_>>())));
@@ -633,6 +633,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
     });
     let h = app.borrow().me.clone();
     wire(ui, &h);
+    app.borrow().output_shown();
     let me = Rc::downgrade(&app);
     app.borrow().compositor.on_exit(move || {
         if let Some(app) = me.upgrade() {
@@ -1244,7 +1245,7 @@ impl App {
 
     /// The page's cover (an album's or artist's), whose colors the page wears, or none.
     fn page_colours(&mut self, c: Option<&CoverColours>) {
-        self.ui().set_page_wash(c.map_or_else(Image::default, wash));
+        self.ui().set_page_wash(c.and_then(|c| self.dyed_wash(c)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
     }
@@ -1264,14 +1265,21 @@ impl App {
         let ui = self.ui();
         self.backdrop = Some(art.to_string());
         let on_b = !ui.get_wash_on_b();
+        let dyed = self.dyed_wash(c).unwrap_or_default();
         if on_b {
-            ui.set_wash_b(wash(c));
+            ui.set_wash_b(dyed);
         } else {
-            ui.set_wash_a(wash(c));
+            ui.set_wash_a(dyed);
         }
         ui.set_wash_on_b(on_b);
         self.now_cover = Some(c.clone());
         self.repaint();
+    }
+
+    /// A cover's wash on the season's paper, as its page is dyed; none where pages wear no cover.
+    fn dyed_wash(&self, c: &CoverColours) -> Option<Image> {
+        let prefs = crate::session::app().settings.current().unwrap_or_default();
+        crate::look::dye(&prefs, self.compositor.system_dark(), crate::look::Today::now(), c).map(|d| wash(c, &d))
     }
 
     /// The look of the page the app is on: the season's, or a cover's.
@@ -1365,16 +1373,20 @@ impl App {
         match d {
             Data::Home(HomePart::Mixes(tiles)) => {
                 self.art.borrow_mut().mosaics.clear();
+                let prefs = crate::session::app().settings.current().unwrap_or_default();
+                let papers = crate::look::papers(&prefs, self.compositor.system_dark(), crate::look::Today::now());
                 let picks: Vec<Pick> = tiles
                     .into_iter()
                     .map(|t| {
-                        let colours = nori_core::mixes::board::mix_tile_colours(t.id.clone());
+                        use nori_core::mixes::board::{mix_card_colours, mix_tile_colours};
+                        let card = mix_card_colours(t.id.clone(), papers.light, papers.dark, papers.dark_theme);
                         Pick {
                             title: words::mix_name(t.name).into(),
                             sub: words::mix_caption(t.favourites).into(),
                             covers: ModelRc::new(VecModel::from(t.covers.into_iter().map(SharedString::from).collect::<Vec<_>>())),
-                            tint: colour(colours[0]),
-                            deep: colour(colours[1]),
+                            seed: colour(mix_tile_colours(t.id.clone())[0]),
+                            page: colour(card.page),
+                            ink: colour(card.ink),
                             id: t.id.into(),
                         }
                     })
@@ -2173,6 +2185,7 @@ impl App {
                     // The output playing: the equalizer page suggests its headphones' AutoEQ curves.
                     Event::Output { name } => {
                         self.output = name.clone();
+                        self.output_shown();
                         if self.ui().get_view() == EQUALIZER {
                             self.eq_extras();
                         }
@@ -2565,6 +2578,35 @@ impl App {
         devices_set(&ui, rows);
     }
 
+    /// Where the sound goes, for the output buttons: the device playing while it is another one, else this
+    /// computer's output as the core's `output_look` reads it (this computer until the first song opens one).
+    fn output_shown(&self) {
+        use nori_core::outputs::{output_look, OutputGlyph};
+        let (elsewhere, glyph, name) = match self.there() {
+            Some(e) => (true, words::device_glyph(e.mirror.kind), e.mirror.name.clone()),
+            None if self.output.is_empty() => (false, 0, words::THIS_COMPUTER.to_string()),
+            None => {
+                let look = output_look(self.output.clone());
+                let glyph = match look.glyph {
+                    OutputGlyph::Phone => 0,
+                    OutputGlyph::Headphones => 1,
+                    OutputGlyph::Bluetooth => 2,
+                    OutputGlyph::Cast => 3,
+                };
+                (false, glyph, words::output_name(look.port, look.name))
+            }
+        };
+        let set = |o: crate::Output| {
+            o.set_elsewhere(elsewhere);
+            o.set_glyph(glyph);
+            o.set_name(name.as_str().into());
+        };
+        set(self.ui().global::<crate::Output>());
+        if let Some(p) = &self.player {
+            set(p.global::<crate::Output>());
+        }
+    }
+
     /// Moves the music to device `id`, or here ("").
     fn pick_device(&self, id: String) {
         if let Some(r) = self.session.as_ref().and_then(|s| s.remote()) {
@@ -2585,6 +2627,7 @@ impl App {
         ui.set_playing_on(there.as_deref().map_or_else(String::new, words::playing_on).into());
         let moved = there.is_some() != self.there().is_some();
         self.playback = playback;
+        self.output_shown();
         if moved {
             self.queue = None;
             ui.set_buffering(false);
@@ -3066,7 +3109,7 @@ fn cards(it: impl Iterator<Item = Card>) -> ModelRc<Card> {
 
 fn album_card(a: &nori_core::Album) -> Card {
     let sub_artist = a.artist_id.clone().unwrap_or_default().into();
-    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: a.artist.as_str().into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0 }
+    Card { id: a.id.as_str().into(), title: a.name.as_str().into(), sub: nori_core::lines::album_subtitle(&a.artist, a.year).into(), art: a.cover_art.clone().unwrap_or_default().into(), sub_artist, kind: 0 }
 }
 
 fn artist_card(a: &nori_core::Artist) -> Card {
@@ -3709,16 +3752,15 @@ mod tests {
         let ui = window();
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_devices_on(true);
-        ui.set_full_player(true);
         ui.show().unwrap();
-        // The tabs head the right half; their glyphs' tops sit above the names.
+        // The tabs head the side sheet; their glyphs' tops sit above the names.
         let glyph_tops = |panel: i32| {
-            ui.set_full_panel(panel);
+            ui.set_inspector(panel);
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
-            let top = glyphs(&shot, 640..1280, 4..48).iter().map(|g| g.2).min().unwrap();
-            glyphs(&shot, 640..1280, top..top + 3).iter().map(|g| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
+            let top = glyphs(&shot, 960..1250, 80..112).iter().map(|g| g.2).min().unwrap();
+            glyphs(&shot, 960..1250, top..top + 3).iter().map(|g| (g.0 + g.1) as f32 / 2.0).collect::<Vec<_>>()
         };
         let devices = glyph_tops(3);
         assert!(devices.len() >= 3, "{devices:?}");
@@ -3730,7 +3772,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pills_seal_matches_the_speaker_beside_it() {
+    fn the_pills_seal_matches_the_output_beside_it() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
         ))).unwrap();
@@ -3745,9 +3787,9 @@ mod tests {
             i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
             slint::platform::update_timers_and_animations();
             let shot = bar.window().take_snapshot().unwrap();
-            // Right of the transport: the seal, then the speaker.
+            // Right of the transport: where the sound goes, then the seal.
             let found = glyphs(&shot, 840..1200, 8..56);
-            let (seal, speaker) = (found[0], found[1]);
+            let (speaker, seal) = (found[0], found[1]);
             let height = |g: (usize, usize, usize, usize)| g.3 - g.2 + 1;
             assert!(height(seal).abs_diff(height(speaker)) <= 1, "dark {dark}: seal {seal:?}, speaker {speaker:?}");
             // A glyph's ink: its pixel furthest from the pill under it.
@@ -4069,7 +4111,7 @@ mod tests {
         ui.set_view(HOME);
         ui.set_picks_loaded(true);
         ui.set_picks(ModelRc::new(VecModel::from((0..6).map(|i| crate::Pick {
-            tint: Color::from_rgb_u8(255, 0, 0), deep: Color::from_rgb_u8(0, 0, 255),
+            seed: Color::from_rgb_u8(255, 0, 0), page: Color::from_rgb_u8(0, 0, 255),
             covers: ModelRc::new(VecModel::from((0..4).map(|j| format!("pick-{i}-{j}").into()).collect::<Vec<_>>())),
             ..Default::default()
         }).collect::<Vec<_>>())));
@@ -4175,7 +4217,7 @@ mod tests {
         let pick = mosaic(&vec![image.clone(); 4]).unwrap();
         ui.on_pick_art(move |_, _| pick.clone());
         ui.on_art(move |_, _, _| image.clone());
-        let pick = crate::Pick { tint: Color::from_rgb_u8(255, 0, 0), deep: Color::from_rgb_u8(0, 0, 255), covers: ModelRc::new(VecModel::from(vec!["cover".into(); 4])), ..Default::default() };
+        let pick = crate::Pick { seed: Color::from_rgb_u8(255, 0, 0), page: Color::from_rgb_u8(0, 0, 255), covers: ModelRc::new(VecModel::from(vec!["cover".into(); 4])), ..Default::default() };
         ui.set_picks(ModelRc::new(VecModel::from(vec![pick; 2])));
         ui.show().unwrap();
         for (logical_width, scale) in [(1280, 1.0), (1261, 1.0), (1258, 1.0), (1280, 1.25), (1261, 1.5), (1280, 2.0)] {
@@ -4193,7 +4235,7 @@ mod tests {
             let right = line.iter().rposition(white).unwrap();
             // The rightmost white is in the second card; each card fills half the shelf.
             let side = (right - left - (22.0 * scale) as usize).div_ceil(2);
-            for y in top + (14.0 * scale) as usize..top + side - (14.0 * scale) as usize {
+            for y in top + (14.0 * scale) as usize..top + side * 45 / 100 {
                 for x in left + 2..left + side - 2 {
                     let p = pixels[y * width as usize + x];
                     assert!(p.r.abs_diff(p.g) <= 1, "background shows through at {x},{y}, width {width}: {p:?}");

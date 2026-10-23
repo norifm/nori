@@ -33,6 +33,8 @@ pub fn provider(kind: ServerKind) -> ProviderWords {
 }
 
 pub const SHOW_ALL: &str = "Show all";
+/// Home's title.
+pub const LISTEN_NOW: &str = "Listen now";
 pub const MIXING: &str = "MIXING";
 
 /// What to say about a device's AutoEQ curve, and the button's word.
@@ -293,7 +295,7 @@ pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
 
 /// Under a mix's name: what it is made from.
 pub fn mix_caption(favourites: bool) -> &'static str {
-    if favourites { "Your favorite songs" } else { "Made for you" }
+    if favourites { "Your favorites" } else { "Made for you" }
 }
 
 
@@ -310,10 +312,33 @@ pub fn playing_on(device: &str) -> String {
     format!("Playing on {device}")
 }
 
+/// A nori device's glyph (app.slint's `Glyphs.device`): a computer, a phone, a terminal, a guest.
+pub fn device_glyph(kind: nori_core::remote::wire::DeviceKind) -> i32 {
+    use nori_core::remote::wire::DeviceKind;
+    match kind {
+        DeviceKind::Desktop => 0,
+        DeviceKind::Phone => 1,
+        DeviceKind::Terminal => 2,
+        DeviceKind::Guest => 3,
+    }
+}
+
+/// What the output button calls this computer's output, its port and the name the device gave.
+pub fn output_name(port: nori_core::profiles::OutputPort, name: Option<String>) -> String {
+    use nori_core::profiles::OutputPort;
+    match port {
+        OutputPort::Speaker => "Speakers".into(),
+        OutputPort::Wired => "Wired headphones".into(),
+        OutputPort::Usb => name.unwrap_or_else(|| "DAC".into()),
+        OutputPort::Bluetooth => name.unwrap_or_else(|| "device".into()),
+        OutputPort::Other => name.unwrap_or_else(|| "Other output".into()),
+    }
+}
+
 /// A place the music can play, as the devices panel lists it: this computer (`d` None) or a device of the
 /// account with what it plays and its last refusal; ticked while the music plays there.
 pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> crate::DeviceRow {
-    use nori_core::remote::wire::{DeviceKind, Refusal};
+    use nori_core::remote::wire::Refusal;
     let Some(d) = d else {
         return crate::DeviceRow { name: THIS_COMPUTER.into(), active, ..Default::default() };
     };
@@ -331,11 +356,7 @@ pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> 
         id: d.id.clone().into(),
         name: d.name.clone().into(),
         line: line.into(),
-        kind: match d.kind {
-            DeviceKind::Desktop => 0,
-            DeviceKind::Phone | DeviceKind::Guest => 1,
-            DeviceKind::Terminal => 2,
-        },
+        kind: device_glyph(d.kind),
         active,
         note: note.into(),
     }
