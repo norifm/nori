@@ -175,26 +175,26 @@ pub fn net_error(e: &NetError) -> String {
 pub fn song_action(a: &nori_core::menus::SongAction) -> String {
     use nori_core::menus::SongAction as A;
     match a {
-        A::Favourite { on: true } => "Add to Favorites".into(),
-        A::Favourite { on: false } => "Remove from Favorites".into(),
+        A::Favourite { on: true } => "Add to favorites".into(),
+        A::Favourite { on: false } => "Remove from favorites".into(),
         A::PlayNext => "Play next".into(),
         A::AddToQueue => "Add to queue".into(),
         A::AddToPlaylist => "Add to playlist…".into(),
         A::RemoveDownload => "Remove download".into(),
         A::StopDownload => "Stop download".into(),
         A::Download => "Download".into(),
-        A::GoToAlbum { .. } => "Go to Album".into(),
+        A::GoToAlbum { .. } => "Go to album".into(),
         A::GoToArtist { name, named: true, .. } => format!("Go to {name}"),
-        A::GoToArtist { named: false, .. } => "Go to Artist".into(),
+        A::GoToArtist { named: false, .. } => "Go to artist".into(),
         A::AddToLibrary => "Add to library".into(),
         A::Lyrics => "Lyrics".into(),
         A::SleepTimer => "Sleep timer…".into(),
-        A::StartRadio => "Start radio".into(),
+        A::StartRadio => "Start radio from this song".into(),
         A::InstantMix => "Instant mix".into(),
         A::ExcludeFromMixes => "Exclude from mixes".into(),
-        A::Share => "Copy link".into(),
+        A::Share => "Share link".into(),
         A::Details => "Details".into(),
-        A::StartJam => "Start a Jam".into(),
+        A::StartJam => "Start a jam".into(),
     }
 }
 

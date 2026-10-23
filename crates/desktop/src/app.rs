@@ -1834,8 +1834,7 @@ impl App {
         let download = if s.rules().downloads { s.download_state(&one.id) } else { SongDownload::None };
         let lyrics = player && self.lyrics.as_ref().is_some_and(|l| !l.is_empty());
         let items = song_menu(one, starred.unwrap_or_default(), download, player, lyrics, starred.is_some(), s.rules().account, s.rules().downloads, s.rules().radio, offer);
-        let first_more = items.iter().position(|m| m.more);
-        let lines = items.into_iter().enumerate().filter(|(_, m)| m.enabled).map(|(n, m)| {
+        let lines = items.into_iter().map(|m| {
             let (kind, id) = match &m.action {
                 A::Favourite { .. } => (0, String::new()),
                 A::GoToAlbum { id } => (1, id.clone()),
@@ -1856,7 +1855,8 @@ impl App {
                 A::Lyrics => (16, String::new()),
                 A::SleepTimer => (17, String::new()),
             };
-            SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), rule: Some(n) == first_more }
+            let filled = matches!(m.action, A::Favourite { on: false });
+            SongGo { title: words::song_action(&m.action).into(), kind, id: id.into(), more: m.more, enabled: m.enabled, filled }
         });
         ModelRc::new(VecModel::from(lines.collect::<Vec<_>>()))
     }
@@ -3570,7 +3570,7 @@ mod tests {
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
             // The first row, under the page's head.
-            let (w, rows) = (shot.width() as usize, 380..420);
+            let (w, rows) = (shot.width() as usize, 250..285);
             rows.flat_map(|y| shot.as_slice()[y * w..(y + 1) * w].to_vec()).collect::<Vec<_>>()
         };
         let song = SongRow { title: "Glass Harbour".into(), time: "3:21".into(), index: 0, ..Default::default() };
@@ -3578,7 +3578,7 @@ mod tests {
     }
 
     /// A song's menu does what its entries say: Favorite stars the song, the album's opens it, a line
-    /// below the rule is told by its kind.
+    /// folded under More is told by its kind.
     #[test]
     fn a_songs_menu_entries_act() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
@@ -3588,9 +3588,9 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.set_view(PAGE);
         let menu = vec![
-            crate::SongGo { kind: 0, title: "Favorite".into(), ..Default::default() },
-            crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), rule: false },
-            crate::SongGo { kind: 14, title: "Details".into(), rule: true, ..Default::default() },
+            crate::SongGo { kind: 0, title: "Favorite".into(), enabled: true, ..Default::default() },
+            crate::SongGo { kind: 1, title: "Go to album".into(), id: "al".into(), enabled: true, ..Default::default() },
+            crate::SongGo { kind: 14, title: "Details".into(), more: true, enabled: true, ..Default::default() },
         ];
         ui.on_song_menu(move |_, _| ModelRc::new(VecModel::from(menu.clone())));
         ui.set_page_songs(ModelRc::new(VecModel::from(vec![SongRow { title: "Glass Harbour".into(), ..Default::default() }])));
@@ -3614,17 +3614,19 @@ mod tests {
             settle();
         };
         use slint::platform::PointerEventButton::{Left, Right};
-        // The menu opens where the row is pressed: Play, then the song's own lines.
-        let row = (400.0, 400.0);
-        let entry = |n: f32| row.1 + 6.0 + 40.0 + n * 40.0 + 20.0;
+        // The menu opens where the row is pressed: the song at its head, then Play, the song's own lines and
+        // More, which unfolds the rest in place.
+        let row = (900.0, 268.0);
+        let entry = |n: f32| row.1 + 8.0 + 60.0 + 8.0 + n * 44.0 + 22.0;
+        press(row.0, row.1, Right);
+        press(row.0 + 40.0, entry(2.0), Left);
         press(row.0, row.1, Right);
         press(row.0 + 40.0, entry(1.0), Left);
         press(row.0, row.1, Right);
         press(row.0 + 40.0, entry(0.0), Left);
         press(row.0, row.1, Right);
-        press(row.0 + 40.0, row.1 + 26.0, Left);
-        press(row.0, row.1, Right);
-        press(row.0 + 40.0, entry(2.0) + 9.0, Left);
+        press(row.0 + 40.0, entry(3.0), Left);
+        press(row.0 + 40.0, entry(4.0), Left);
         assert_eq!(*did.borrow(), ["album al", "song 0 0 0", "song 0 0 -1", "song 0 0 14"]);
     }
 
@@ -3639,7 +3641,7 @@ mod tests {
         ui.window().set_size(slint::PhysicalSize::new(1280, 820));
         ui.global::<crate::Chrome>().set_player_x(140.0);
         ui.global::<crate::Chrome>().set_player_w(1000.0);
-        ui.on_player_menu(|| ModelRc::new(VecModel::from(vec![crate::SongGo { kind: 17, title: "Sleep timer…".into(), ..Default::default() }])));
+        ui.on_player_menu(|| ModelRc::new(VecModel::from(vec![crate::SongGo { kind: 17, title: "Sleep timer…".into(), enabled: true, ..Default::default() }])));
         let did = Rc::new(RefCell::new(Vec::new()));
         let seen = did.clone();
         ui.on_player_act(move |kind, _| seen.borrow_mut().push(kind));
@@ -3652,8 +3654,8 @@ mod tests {
         settle();
         ui.invoke_show_player_menu();
         settle();
-        // One line: the popover is 6 + 40 + 6 tall, its foot on the pill's room, its right edge the pill's.
-        let at = slint::LogicalPosition::new(1140.0 - 200.0, 820.0 - 96.0 - 52.0 + 26.0);
+        // One line under the song's head, the last thing in the sheet: its foot on the pill's room, its right edge the pill's.
+        let at = slint::LogicalPosition::new(1140.0 - 200.0, 820.0 - 96.0 - 8.0 - 22.0);
         use slint::platform::PointerEventButton::Left;
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position: at });
         ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Left });
