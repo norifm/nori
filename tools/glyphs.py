@@ -119,11 +119,11 @@ DRAWABLES = {
 
 NS = "{http://www.w3.org/2000/svg}"
 
-# Drawn to the seal's height (core/src/main/res/drawable/seal_outline.xml, Iconoir's tag frame, 3 to 21) and
+# Drawn to the seal's height (core/src/main/res/drawable/seal_outline.xml, a square frame, 3 to 21) and
 # centred on it, line width unchanged, so a device glyph beside the seal is as tall and as heavy. A glyph too
 # wide for that stops at [WIDEST], its line still inside the box.
 FITTED = {"SmartphoneDevice", "Headset", "BluetoothTag", "Airplay", "Computer", "Terminal"}
-FRAME = (2.0, 3.0, 22.0, 21.0)
+FRAME = (3.0, 3.0, 21.0, 21.0)
 WIDEST = 22.5
 
 ARGS = {"M": 2, "L": 2, "T": 2, "H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "A": 7, "Z": 0}
