@@ -16,7 +16,7 @@ use ratatui_image::picker::Picker;
 
 use crate::app::{App, Cmd, Now, Panel, View};
 use crate::art::{protocol_name, Art, Colors, COVER_PX};
-use crate::backend::{own, Msg, Open, Session};
+use crate::backend::{block_on, own, Msg, Open, Session};
 use crate::Options;
 
 /// Forwards terminal input from a dedicated thread.
@@ -128,7 +128,6 @@ struct Runner {
     picker: Option<Picker>,
     /// Pending cover requests; dropping a ticket cancels the fetch.
     tickets: Vec<nori_covers::loader::Ticket>,
-    thumb_tickets: Vec<nori_covers::loader::Ticket>,
     /// Id of the audible song last shown.
     heard: Option<String>,
     /// Rewrite the whole screen, pictures included, at the next draw.
@@ -192,7 +191,6 @@ pub fn run(o: Options) -> Result<(), String> {
     app.retheme();
     app.mouse = mouse;
     app.images = images;
-    app.card_covers = own::flag(own::CARD_COVERS, true);
     app.offline = o.offline;
     app.volume = own::number(own::VOLUME, 1.0);
     app.protocol = picker.as_ref().map_or("off", |p| protocol_name(p.protocol_type()));
@@ -200,7 +198,7 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => app.view = View::Login,
@@ -244,11 +242,12 @@ impl Runner {
                 self.heard = None;
                 // Fresh screens for the new server, keeping client-wide state.
                 let prefs = app.prefs.clone();
-                let keep = (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.data.clone(), app.colors, app.paint, app.reduced_motion);
+                let keep = (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.data.clone(), app.colors, app.paint, app.reduced_motion);
                 *app = App::new(prefs);
-                (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server, app.settings.own.data, app.colors, app.paint, app.reduced_motion) = keep;
+                (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own.data, app.colors, app.paint, app.reduced_motion) = keep;
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
+                app.output = self.o.device.clone().or_else(|| own::text(own::DEVICE)).unwrap_or_default();
                 if self.session.as_ref().is_some_and(|s| s.client.reminds_to_sign_in()) {
                     self.offer_sign_in(app);
                 }
@@ -552,15 +551,7 @@ impl Runner {
                 app.settings.invalidate();
                 return;
             }
-            Cmd::CardCovers(on) => {
-                own::keep(own::CARD_COVERS, on.to_string());
-                app.card_covers = on;
-                app.settings.invalidate();
-                app.say(if on { "Covers on album cards" } else { "No covers on album cards" }, false);
-                return;
-            }
             Cmd::Images(on) => {
-                app.thumbs_asked.clear();
                 own::keep(own::IMAGES, on.to_string());
                 app.images = on;
                 app.settings.invalidate();
@@ -572,9 +563,8 @@ impl Runner {
                 if !on {
                     self.art = None;
                     self.tickets.clear();
-                    self.thumb_tickets.clear();
                 }
-                app.say(if on { "Covers on (from the next song or page; restart to fetch covers again)" } else { "Covers off" }, false);
+                app.say(if on { "Covers on (from the next song; restart to fetch covers again)" } else { "Covers off" }, false);
                 return;
             }
             Cmd::OfferSignIn => return self.offer_sign_in(app),
@@ -645,6 +635,13 @@ impl Runner {
                 self.remote_read(app);
                 return;
             }
+            Cmd::Keep(pref) => {
+                let settings = &crate::backend::app().settings;
+                let mut prefs = settings.current().unwrap_or_default();
+                prefs.list_prefs.insert(pref.key, pref.value);
+                settings.put(prefs);
+                return prefs_changed(app);
+            }
             Cmd::SwitchServer(id) => {
                 let mut prefs = crate::backend::app().settings.current().unwrap_or_default();
                 let Some(p) = prefs.servers.iter().find(|s| s.id == id).cloned() else { return };
@@ -689,6 +686,81 @@ impl Runner {
                 app.say(crate::text::repeat(s.now().repeat), false);
             }
             Cmd::Download(songs) => s.download(songs),
+            Cmd::ReadDownloads(ids) => {
+                let states = s.download_states(&ids.iter().map(String::as_str).collect::<Vec<_>>());
+                app.knows_downloads(ids, states);
+            }
+            Cmd::ExcludeFromMixes(id) => {
+                if let Err(e) = s.core.mix_excluded_set(id, true) {
+                    app.say(e.to_string(), true);
+                }
+            }
+            Cmd::AddToPlaylist { id, songs } => {
+                let name = app.library.playlists.ready().and_then(|v| v.iter().find(|p| p.id == id)).map(|p| p.name.clone()).unwrap_or_default();
+                self.playlist_write(s, nori_core::client::Write::AddToPlaylist { id, song_ids: songs }, crate::text::added_to(&name));
+            }
+            Cmd::NewPlaylist { name, songs } => {
+                let said = crate::text::created(&name);
+                self.playlist_write(s, nori_core::client::Write::CreatePlaylist { name, song_ids: songs }, said);
+            }
+            Cmd::RedrawMix(mix) => {
+                let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+                nori_host::spawn("nori-mix", move || {
+                    block_on(client.mix_ensure(mix.clone(), true));
+                    let _ = tx.send(Msg::From(id, Box::new(Msg::Reload(crate::backend::Req::Mix(mix)))));
+                });
+            }
+            Cmd::SaveMix { title, songs } => {
+                let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+                nori_host::spawn("nori-save-mix", move || {
+                    use nori_core::cache_policy::{Page, Read};
+                    let send = |m: Msg| {
+                        let _ = tx.send(Msg::From(id, Box::new(m)));
+                    };
+                    // Named after the mix, counted on where the account has that name (`saved_mix_name`).
+                    let names = match block_on(client.read_now(Read::PlaylistList)) {
+                        Ok(Page::Playlists { v }) => v.into_iter().map(|p| p.name).collect(),
+                        _ => Vec::new(),
+                    };
+                    let name = nori_core::menus::saved_mix_name(title, names);
+                    let ids = songs.iter().map(|s| s.id.clone()).collect();
+                    match block_on(client.write(nori_core::client::Write::CreatePlaylist { name: name.clone(), song_ids: ids })) {
+                        Ok(()) => {
+                            send(Msg::Note { text: crate::text::created(&name), error: false });
+                            send(Msg::Reload(crate::backend::Req::Playlists));
+                        }
+                        Err(e) => send(Msg::Note { text: crate::text::net_error(&e), error: true }),
+                    }
+                });
+            }
+            Cmd::LookForOffer { playing, shown } => {
+                let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+                nori_host::spawn("nori-offer", move || {
+                    // An offer that cannot be asked for is none.
+                    let offer = block_on(client.queue_offer(playing, shown)).ok().flatten();
+                    let _ = tx.send(Msg::From(id, Box::new(Msg::Offer(offer))));
+                });
+            }
+            Cmd::TakeOffer(offer) => {
+                s.client.queue_offer_done(offer.clone());
+                let (index, position) = (offer.index as usize, offer.position_ms as i64);
+                s.play(offer.songs, index, false, None);
+                s.seek(position);
+            }
+            Cmd::DismissOffer(offer) => s.client.queue_offer_done(offer),
+            Cmd::ShuffleLibrary { albums } => {
+                let (h, tx, id) = ((**s).clone(), self.tx.clone(), s.id);
+                nori_host::spawn("nori-shuffle", move || {
+                    use nori_core::{OriginKind, PageOrigin};
+                    let (songs, kind) = if albums { (block_on(h.client.shuffle_albums()), OriginKind::ShuffleAlbums) } else { (block_on(h.client.shuffle_all()), OriginKind::ShuffleSongs) };
+                    match songs {
+                        Ok(songs) => h.play(songs, 0, false, Some(PageOrigin::new(kind, ""))),
+                        Err(e) => {
+                            let _ = tx.send(Msg::From(id, Box::new(Msg::Note { text: crate::text::net_error(&e), error: true })));
+                        }
+                    }
+                });
+            }
             Cmd::DownloadFetch(what) => s.download_later(what),
             Cmd::DownloadRemove(id) => {
                 s.download_remove(&id);
@@ -757,29 +829,37 @@ impl Runner {
                 s.search_server(q);
             }
             Cmd::Lyrics(id) => s.lyrics(id),
-            Cmd::Cover { art, colours } => {
-                if self.art.as_ref().is_some_and(|a| a.has(&art)) && !colours {
-                    return;
-                }
-                if let Some(t) = s.cover(art, COVER_PX, colours) {
+            Cmd::Cover(art) => {
+                if let Some(t) = s.cover(art, COVER_PX) {
                     self.tickets.push(t);
                     if self.tickets.len() > 4 {
                         drop(self.tickets.remove(0));
                     }
                 }
             }
-            Cmd::Thumb(art) => {
-                if let Some(t) = s.thumb(art, crate::art::THUMB_PX) {
-                    self.thumb_tickets.push(t);
-                    if self.thumb_tickets.len() > 150 {
-                        drop(self.thumb_tickets.remove(0));
-                    }
-                }
-            }
-            Cmd::Quit | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::CardCovers(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding => {}
+            Cmd::Quit | Cmd::Keep(_) | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding => {}
         }
     }
 
+}
+
+impl Runner {
+    /// Changes a playlist on the server, then says `said` and has the playlists read again.
+    fn playlist_write(&self, s: &Session, w: nori_core::client::Write, said: String) {
+        let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+        nori_host::spawn("nori-playlist", move || {
+            let send = |m: Msg| {
+                let _ = tx.send(Msg::From(id, Box::new(m)));
+            };
+            match block_on(client.write(w)) {
+                Ok(()) => {
+                    send(Msg::Note { text: said, error: false });
+                    send(Msg::Reload(crate::backend::Req::Playlists));
+                }
+                Err(e) => send(Msg::Note { text: crate::text::net_error(&e), error: true }),
+            }
+        });
+    }
 }
 
 /// After a sound edit: applies its effect (None: nothing changed), then may take the low-latency

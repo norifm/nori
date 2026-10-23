@@ -45,7 +45,7 @@ with an account's password or a code.
 - **Desktop** (from 0.7.0): Settings, Accounts, **Edit** on the YouTube Music profile in use, then
   **Sign in with Google**. The page opens in a small window of its own (the system's web view; on
   Linux, WebKitGTK).
-- **Terminal** (from 0.7.0): Settings, Server, Enter on the YouTube Music profile in use, then Enter
+- **Terminal** (from 0.7.0): Settings, Servers, Enter on the YouTube Music profile in use, then Enter
   again. The same window opens, from the terminal's own program. Where no window can open (over SSH,
   say), the sheet turns to pasting cookies.
 

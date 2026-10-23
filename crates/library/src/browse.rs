@@ -264,13 +264,13 @@ pub struct ListPref {
 const ALBUMS_SORT_KEY: &str = "albums.sort";
 const SONGS_SORT_KEY: &str = "songs.sort";
 
-/// The album grid's order as it was left (A–Z the first time), kept by [`AlbumSort::name`]. A plain A–Z by
-/// artist, no longer offered ([`album_sorts`]), is Artist now.
+/// The album grid's order as it was left (A–Z the first time), kept by [`AlbumSort::name`]. A plain A–Z
+/// by artist, no longer offered, comes back as [`AlbumSort::ArtistRows`].
 #[cfg_attr(feature = "ffi", uniffi::export)]
 pub fn album_sort_saved(prefs: std::collections::HashMap<String, String>) -> AlbumSort {
-    match prefs.get(ALBUMS_SORT_KEY).and_then(|n| AlbumSort::of_name(n)).unwrap_or(AlbumSort::ByName) {
-        AlbumSort::ByArtist => AlbumSort::ArtistRows,
-        kept => kept,
+    match prefs.get(ALBUMS_SORT_KEY).and_then(|n| AlbumSort::of_name(n)) {
+        Some(AlbumSort::ByArtist) => AlbumSort::ArtistRows,
+        kept => kept.unwrap_or(AlbumSort::ByName),
     }
 }
 
@@ -680,7 +680,7 @@ mod tests {
         let rows = album_sort_kept(AlbumSort::ArtistRows);
         assert_eq!(album_sort_saved(HashMap::from([(rows.key, rows.value)])), AlbumSort::ArtistRows, "kept apart from ByArtist");
         let plain = album_sort_kept(AlbumSort::ByArtist);
-        assert_eq!(album_sort_saved(HashMap::from([(plain.key, plain.value)])), AlbumSort::ArtistRows, "a plain A-Z by artist is Artist now");
+        assert_eq!(album_sort_saved(HashMap::from([(plain.key, plain.value)])), AlbumSort::ArtistRows, "a plain A-Z by artist is shown as shelves");
         assert_eq!(AlbumSort::ArtistRows.api(), "alphabeticalByArtist");
         assert_eq!(song_sort_saved(HashMap::new()), "TITLE");
         assert_eq!(song_sort_saved(HashMap::from([("songs.sort".to_string(), "PLAYS".to_string())])), "PLAYS");

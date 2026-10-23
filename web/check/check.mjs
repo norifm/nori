@@ -70,10 +70,10 @@ const album = (name, artist) => albums.find((a) => a.name === name && (!artist |
 if (!only || only.includes("browse")) {
   const counts = {};
   const firstArtist = (await read({ kind: "artists" })).artists[0]?.id;
-  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".grid .card"], ["#/genres", "genres", ".genres li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".grid .card"], ["#/settings", "settings", "[data-setting]"]]) {
+  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".grid .card"], ["#/genres", "genres", ".genres li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".grid .card"], ["#/settings", "settings", "[data-page]"], ["#/settings/Playing", "settings", "[data-setting]"]]) {
     await hash(h, top);
-    counts[top] = await page.$$eval(sel, (e) => e.length);
-    expect(counts[top] > 0 && !(await facts()).pageError, `${top} lists something`);
+    counts[h] = await page.$$eval(sel, (e) => e.length);
+    expect(counts[h] > 0 && !(await facts()).pageError, `${h} lists something`);
   }
   await hash("#/search/light", "search");
   await page.waitForFunction(() => window.nori.searched?.query === "light", { timeout: 30000 });
@@ -410,8 +410,9 @@ if (!only || only.includes("edit")) {
   // menus; what the server then holds is read back.
   page.on("dialog", (d) => void d.accept());
   const menu = async (label) => {
-    await page.waitForSelector("dialog.menu .menu-item");
-    for (const b of await page.$$("dialog.menu .menu-item")) if ((await b.evaluate((x) => x.textContent)) === label) return b.click();
+    // A song's sheet, or a menu dropped from a button.
+    await page.waitForSelector("dialog.menu .menu-item, .popover .popover-item");
+    for (const b of await page.$$("dialog.menu .menu-item, .popover .popover-item")) if ((await b.evaluate((x) => x.textContent)) === label) return b.click();
     throw new Error(`no menu item ${label}`);
   };
   const named = async (text) => {
@@ -432,7 +433,7 @@ if (!only || only.includes("edit")) {
   await hash(`#/album/${blue}`, "album");
   for (let i = 0; i < 3; i++) {
     await (await page.$$(".songs li button[aria-label='More']"))[i].click();
-    await menu("Add to playlist");
+    await menu("Add to playlist…");
     await menu(name);
     await page.waitForFunction(async ([id, n]) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlist", id }))).songs.length === n, { timeout: 30000, polling: 250 }, [made.id, i + 1]);
   }
@@ -459,13 +460,13 @@ if (!only || only.includes("edit")) {
   const first = (await read({ kind: "album", id: blue })).songs[0];
   await hash(`#/album/${blue}`, "album");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
-  await menu(first.starred ? "Undo favorite" : "Favorite");
+  await menu(first.starred ? "Remove from favorites" : "Add to favorites");
   await hash("#/favorites", "favorites");
   await page.waitForFunction(async (t) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "starred" }))).songs.some((s) => s.title === t), { timeout: 30000, polling: 250 }, first.title);
   const favorited = await page.$$eval(".songs li .title", (e, t) => e.some((x) => x.textContent === t), first.title);
   await hash(`#/album/${blue}`, "album");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
-  await menu("Undo favorite");
+  await menu("Remove from favorites");
   await page.waitForFunction(async (t) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "starred" }))).songs.some((s) => s.title === t), { timeout: 30000, polling: 250 }, first.title);
   // The playlist deleted.
   await hash(`#/playlist/${made.id}`, "playlist");

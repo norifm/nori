@@ -6,7 +6,8 @@ Font (app/src/main/res/font/inter.ttf)
   Inter — Copyright (c) 2016 The Inter Project Authors, SIL Open Font License 1.1
   (full text: app/src/main/assets/licences/OFL-1.1.txt)
 
-Icons (app/src/main/kotlin/dev/nori/music/app/ui/Iconoir.kt, the widget, shortcut and car drawables)
+Icons (app/src/main/kotlin/dev/nori/music/app/ui/Iconoir.kt, the widget, shortcut and car drawables,
+  the desktop's crates/desktop-ui/ui/icons.slint)
   Iconoir — Copyright (c) 2021 Luca Burgio, MIT (full text: app/src/main/assets/licences/MIT.txt)
 
 Beat model network (built into the Rust core with `neural-beats`, crates/player/models/beat-this-small0.graph.onnx)

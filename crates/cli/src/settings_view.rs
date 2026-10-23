@@ -3,7 +3,7 @@
 //! draws them. Rows send back a setting name and value (`setting_set`) or a level edit (`edit_level`).
 
 use crate::text;
-use nori_core::settings::{season_follow_value, EqLevel, Level, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
+use nori_core::settings::{season_follow_value, EqLevel, EqMode, SoundBand, StoredPrefs, ThemeSeason, EQ_RANGES};
 use nori_core::settings_model::{self, BeatModel, EqStatus, KeyAction, LyricsSource, SettingKind, SettingsState};
 use nori_core::settings_pages::{self, PageFacts, RowItem, SectionId, SettingsAction, SettingsClient, SettingsLink, SettingsNote, SettingsPage, SettingsPart};
 use nori_core::numbers::{self, POINT};
@@ -38,29 +38,29 @@ pub enum Switch {
     Stores(String, String),
     Mouse,
     Images,
-    CardCovers,
     /// The terminal's own background instead of the season's page.
     Transparent,
 }
 
-/// A settings group: a headed part of the page.
+/// A settings group: a headed part of the page, and what it holds in a few words.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Group {
     pub id: Gid,
     pub title: &'static str,
+    pub summary: &'static str,
 }
 
-/// The groups in page order.
+/// The groups in page order: the core's pages in its order, the terminal's own after the look.
 pub const GROUPS: [Group; 9] = [
-    Group { id: Gid::Own, title: "Interface" },
-    Group { id: Gid::Core(SettingsPage::Playing), title: "Playback" },
-    Group { id: Gid::Core(SettingsPage::Sound), title: "Sound" },
-    Group { id: Gid::Core(SettingsPage::Look), title: "Look" },
-    Group { id: Gid::Core(SettingsPage::Library), title: "Library" },
-    Group { id: Gid::Core(SettingsPage::Lyrics), title: "Lyrics" },
-    Group { id: Gid::Core(SettingsPage::Servers), title: "Server" },
-    Group { id: Gid::Core(SettingsPage::Data), title: "Storage" },
-    Group { id: Gid::About, title: "About" },
+    Group { id: Gid::Core(SettingsPage::Servers), title: "Servers", summary: "Accounts and music folder" },
+    Group { id: Gid::Core(SettingsPage::Playing), title: "Playback", summary: "Crossfade, AutoMix, queue" },
+    Group { id: Gid::Core(SettingsPage::Sound), title: "Sound", summary: "Equalizer, volume, output" },
+    Group { id: Gid::Core(SettingsPage::Look), title: "Appearance", summary: "Theme, colors, size" },
+    Group { id: Gid::Own, title: "Terminal", summary: "Mouse, covers, output device" },
+    Group { id: Gid::Core(SettingsPage::Lyrics), title: "Lyrics", summary: "Display and sources" },
+    Group { id: Gid::Core(SettingsPage::Library), title: "Library", summary: "Lists, search, history" },
+    Group { id: Gid::Core(SettingsPage::Data), title: "Downloads and storage", summary: "Quality, downloads, space" },
+    Group { id: Gid::About, title: "About", summary: "Version, licenses" },
 ];
 
 /// What a link or button does.
@@ -82,7 +82,11 @@ pub use nori_host::session::Chore;
 pub enum Row {
     Toggle { switch: Switch, title: String, detail: String, on: bool, enabled: bool },
     /// `options` are (label, value); `shown` is the chosen label, or the raw value if none matches.
-    Choice { target: Target, title: String, options: Vec<(String, String)>, shown: String, enabled: bool },
+    /// `chips`: few options, all on view.
+    Choice { target: Target, title: String, options: Vec<(String, String)>, shown: String, enabled: bool, chips: bool },
+    /// One of the four seasons: its name, its kanji, its theme's page, accent and on colors in the mode the
+    /// interface is in, whether it is the one worn, and whether picking it changes the setting.
+    Season { value: String, name: &'static str, kanji: &'static str, colors: [u32; 3], worn: bool, picked: bool, enabled: bool },
     Note { text: String },
     /// Opens another screen, with a status at the end.
     Link { title: String, status: String, action: Act },
@@ -107,6 +111,7 @@ pub struct Section {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Page {
     pub title: String,
+    pub summary: String,
     pub sections: Vec<Section>,
 }
 
@@ -141,7 +146,8 @@ pub struct Facts {
 
 /// A page line: group heading, section title or row.
 pub enum Line<'a> {
-    Group(&'a str),
+    /// A group's title and what it holds.
+    Group(&'a str, &'a str),
     Title(&'a str),
     Row(&'a Row),
 }
@@ -161,13 +167,14 @@ pub struct SettingsView {
 pub struct Own {
     pub mouse: bool,
     pub images: bool,
-    pub card_covers: bool,
     /// The page is painted in the season's colors.
     pub paint: bool,
     pub protocol: String,
     pub data: String,
     /// Output device for the next start; empty for the system default.
     pub device: String,
+    /// The interface is dark: the seasons show their dark colors.
+    pub dark: bool,
 }
 
 impl SettingsView {
@@ -194,7 +201,7 @@ impl SettingsView {
     pub fn lines(pages: &[Page]) -> Vec<Line<'_>> {
         let mut out = Vec::new();
         for p in pages {
-            out.push(Line::Group(&p.title));
+            out.push(Line::Group(&p.title, &p.summary));
             for s in &p.sections {
                 if !s.title.is_empty() {
                     out.push(Line::Title(&s.title));
@@ -203,11 +210,6 @@ impl SettingsView {
             }
         }
         out
-    }
-
-    /// Whether rows are hidden above and below, as last drawn.
-    pub fn cut(&self) -> (bool, bool) {
-        self.row.cut
     }
 
     /// The selection and line count, for list navigation.
@@ -219,14 +221,14 @@ impl SettingsView {
     /// Index in `GROUPS` of the selected line's group.
     pub fn group_at(&self) -> usize {
         let Some(pages) = self.pages.as_deref() else { return 0 };
-        Self::lines(pages).iter().take(self.row.at + 1).filter(|l| matches!(l, Line::Group(_))).count().saturating_sub(1)
+        Self::lines(pages).iter().take(self.row.at + 1).filter(|l| matches!(l, Line::Group(..))).count().saturating_sub(1)
     }
 
     /// Selects a group's first row.
     pub fn jump(&mut self, group: usize) {
         let Some(pages) = self.pages.as_deref() else { return };
         let lines = Self::lines(pages);
-        if let Some(at) = lines.iter().enumerate().filter(|(_, l)| matches!(l, Line::Group(_))).nth(group).map(|(i, _)| i) {
+        if let Some(at) = lines.iter().enumerate().filter(|(_, l)| matches!(l, Line::Group(..))).nth(group).map(|(i, _)| i) {
             self.row.at = at;
             self.row.top = at;
             self.skip_titles(true);
@@ -243,7 +245,7 @@ impl SettingsView {
 
     /// Whether a single click activates the row rather than only selecting it.
     pub fn clicks_open(&self) -> bool {
-        matches!(self.selected(), Some(Row::Toggle { .. } | Row::Button { .. } | Row::Link { .. } | Row::Action { .. } | Row::Server { .. } | Row::Ranked { .. }))
+        matches!(self.selected(), Some(Row::Toggle { .. } | Row::Button { .. } | Row::Link { .. } | Row::Action { .. } | Row::Server { .. } | Row::Ranked { .. } | Row::Season { .. }))
     }
 
     /// Enter on the selection.
@@ -258,7 +260,7 @@ impl SettingsView {
             }
             Row::Toggle { switch: Switch::Stores(name, value), .. } => Opened::Cmds(vec![Cmd::Setting(name, value)]),
             Row::Toggle { switch, .. } => Opened::Own(switch),
-            Row::Choice { target, title, options, shown, enabled: true } => {
+            Row::Choice { target, title, options, shown, enabled: true, .. } => {
                 let at = options.iter().position(|o| o.0 == shown).unwrap_or(0);
                 Opened::Overlay(Overlay::Picker { title, options, sel: Sel { at, ..Sel::default() }, target })
             }
@@ -275,6 +277,8 @@ impl SettingsView {
             Row::Ranked { enabled: false, .. } => return None,
             Row::Ranked { id, title, asks_key: true, on: false, .. } => key_input(&id, &title),
             Row::Ranked { name, on, .. } => Opened::Cmds(vec![Cmd::Setting(name, (!on).to_string())]),
+            // Picking the season worn while following stops following it.
+            Row::Season { value, picked: false, enabled: true, .. } => Opened::Cmds(vec![Cmd::Setting("season".into(), value)]),
             _ => return None,
         })
     }
@@ -316,7 +320,6 @@ impl SettingsView {
                     Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
                     Switch::Mouse => vec![Cmd::Mouse(up)],
                     Switch::Images => vec![Cmd::Images(up)],
-                    Switch::CardCovers => vec![Cmd::CardCovers(up)],
                     Switch::Transparent => vec![Cmd::Paint(!up)],
                 }
             }
@@ -337,7 +340,7 @@ impl SettingsView {
     pub fn skip_titles(&mut self, down: bool) {
         let Some(pages) = &self.pages else { return };
         let lines = Self::lines(pages);
-        let title = |i: usize| matches!(lines.get(i), Some(Line::Title(_) | Line::Group(_)));
+        let title = |i: usize| matches!(lines.get(i), Some(Line::Title(_) | Line::Group(..)));
         let mut at = self.row.at;
         while title(at) && at + 1 < lines.len() && down {
             at += 1;
@@ -392,17 +395,24 @@ pub fn page(id: Gid, p: &StoredPrefs, s: &SettingsState, f: &Facts, own: &Own, t
         Gid::About => about(own),
         Gid::Core(page) => {
             let facts = page_facts(f);
-            let mut sections: Vec<Section> = settings_pages::page(page, SettingsClient::Terminal, p, s, &facts)
-                .into_iter()
-                .map(|sec| Section { title: section_title(sec.id).into(), rows: sec.rows.into_iter().filter(|r| r.shown).flat_map(|r| flag_rows(&r, s).or_else(|| season_rows(&r, p, s, today)).unwrap_or_else(|| row_of(r, p, s, f).into_iter().collect())).collect() })
-                .collect();
-            if let (SettingsPage::Look, Some(look)) = (page, sections.first_mut()) {
-                look.rows.push(Row::Toggle { switch: Switch::Transparent, title: "Transparent background".into(), detail: String::new(), on: !own.paint, enabled: true });
+            let mut sections = Vec::new();
+            for sec in settings_pages::page(page, SettingsClient::Terminal, p, s, &facts) {
+                let mut rows = Vec::new();
+                for r in sec.rows.into_iter().filter(|r| r.shown) {
+                    // The seasons stand above their section, under a title of their own.
+                    if let Some(seasons) = season_rows(&r, p, own.dark, today) {
+                        sections.push(section(SEASON, seasons));
+                        continue;
+                    }
+                    rows.extend(flag_rows(&r, p, s).unwrap_or_else(|| row_of(r, p, s, f).into_iter().collect()));
+                }
+                sections.push(section(section_title(sec.id), rows));
             }
             sections
         }
     };
-    Page { title, sections }
+    let summary = GROUPS.iter().find(|g| g.id == id).map_or("", |g| g.summary).to_string();
+    Page { title, summary, sections }
 }
 
 /// The terminal's own group.
@@ -415,10 +425,10 @@ fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
     }
     let shown = devices.iter().find(|d| d.1 == o.device).map_or_else(|| o.device.clone(), |d| d.0.clone());
     let rows = vec![
-        toggle(Switch::Mouse, "Mouse", "Clicks, the wheel and dragging the bars. Off, the terminal selects text (m)", o.mouse, true),
-        toggle(Switch::Images, "Covers", "Album art in the player and on album pages (I)", o.images, true),
-        toggle(Switch::CardCovers, "Covers on album cards", "Small pictures on Home and Albums; off keeps a slow link or terminal light", o.card_covers, o.images),
-        Row::Choice { target: Target::Device, title: "Output device".into(), options: devices, shown, enabled: true },
+        toggle(Switch::Mouse, "Mouse", "Off, the terminal selects text", o.mouse, true),
+        toggle(Switch::Images, "Covers", "In the full player", o.images, true),
+        toggle(Switch::Transparent, "Transparent background", "", !o.paint, true),
+        Row::Choice { target: Target::Device, title: "Output device".into(), options: devices, shown, enabled: true, chips: false },
         Row::Note { text: "The device is opened at start; --device overrides it for one run.".into() },
     ];
     vec![section("", rows)]
@@ -436,180 +446,194 @@ fn section_title(id: SectionId) -> &'static str {
     use SectionId::*;
     match id {
         Accounts => "Accounts",
-        MusicFolders => "Music folders",
-        ThisServer => "This server",
-        Between => "Transitions",
+        MusicFolders | ThisServer => "This server",
+        Between => "Between songs",
         Controls => "Controls",
         Queue => "Queue",
         Equalizer => "Equalizer",
         Effects => "Effects",
         Volume => "Volume",
         Output => "Output",
-        Theme => "Look",
-        Home => "Home",
+        Theme => "Theme",
+        Home => "Layout",
         Screen => "Screen",
         Motion => "Motion",
         Display => "Display",
-        Sources => "Online",
-        AskedOrder => "Sources, in order",
-        Lists => "Lists",
-        Search => "Index and search",
-        History => "History",
-        Online => "Lookups",
+        Sources => "Sources",
+        AskedOrder => "In the order they're asked",
+        Lists => "Songs in lists",
+        Search => "Search",
+        History => "Listening history",
+        Online => "Online",
         Devices => "Other devices",
         Streaming => "Streaming",
         Downloads => "Downloads",
-        Storage => "Cache",
+        Storage => "Storage",
         Updates => "Updates",
     }
 }
 
+/// The title over the seasons.
+const SEASON: &str = "Season";
+
 /// A setting's title and the line under it, which says only how things stand now.
-fn setting_words(name: &str, s: &SettingsState) -> (String, String) {
-    let (title, detail) = match name {
-        "crossfadeSec" => ("Crossfade", ""),
-        "autoMix" => ("AutoMix", ""),
+fn setting_words(name: &str, p: &StoredPrefs, s: &SettingsState) -> (String, String) {
+    let title = match name {
+        "crossfadeSec" => "Crossfade",
+        "autoMix" => "AutoMix",
         "autoMixBetterBeats" => {
+            let mb = s.beat_model_mb;
             let state = match &s.beat_model {
+                _ if !p.auto_mix_better_beats => format!("A download of about {mb} MB"),
+                BeatModel::Failed { why } => format!("The download didn't work ({}). It tries again at the next song.", text::beat_failure(*why)),
+                BeatModel::Downloading => format!("Downloading (about {mb} MB)…"),
                 BeatModel::Ready => String::new(),
-                BeatModel::Downloading => "downloading".to_string(),
-                BeatModel::Failed { why } => format!("download failed: {}", text::beat_failure(*why)),
-                _ => format!("{} MB download", s.beat_model_mb),
+                _ => format!("A download of about {mb} MB"),
             };
-            return ("Neural beat tracking".into(), state);
+            return ("Better beat detection".into(), state);
         }
-        "crossfadeKeepAlbums" => ("Gapless albums", ""),
-        "fadeMs" => ("Fade on play/pause", ""),
-        "previousAlwaysSkips" => ("Previous always skips", ""),
-        "speed" => ("Speed", ""),
-        "pitch" => ("Pitch", ""),
-        "skipSilence" => ("Skip silence", if s.untouched { "Off while the output is bit-exact" } else { "" }),
-        "skipExplicit" => ("Skip explicit", ""),
-        "autoFill" => ("Autoplay", ""),
-        "autoFillKind" => ("Add", ""),
-        "autoFillBasis" => ("Picked by", ""),
-        "autoFillRemote" => ("Include remote songs", ""),
-        "bridgeOffline" => ("Offline fallback", ""),
-        "headphoneSound" => ("Headphone sound", ""),
-        "compressor" => ("Compressor", ""),
-        "compressorPreset" => ("Compressor type", ""),
-        "replayGain" => ("Volume leveling", ""),
-        "loudnessLevel" => ("Level", ""),
-        "volumeBoostDb" => ("Volume boost", ""),
-        "hiRes" => ("High quality output", ""),
-        "maxRate" => ("Highest sample rate", ""),
-        "season" => ("Season", ""),
-        "theme" => ("Appearance", ""),
-        "lyricsSweep" => ("Word fill", ""),
-        "lyricsTranslation" => ("Translations", ""),
-        "lyricsOnline" => ("Online lookups", ""),
-        "lyricsPreferWords" => ("Prefer word timing", ""),
-        "tasteModel" => ("Listening history", ""),
-        "scrobble" => ("Scrobble", ""),
-        "thirdPartyLookups" => ("Third-party lookups", ""),
-        "remoteControl" => ("Remote control and jams", ""),
-        "wifi" => ("Streaming quality", ""),
-        "download" => ("Download quality", ""),
-        "songsAheadWifi" => ("Prepare ahead", ""),
-        "cacheMb" => ("Stream cache limit", ""),
-        other => (other, ""),
+        "crossfadeKeepAlbums" => "Keep albums gapless",
+        "fadeMs" => "Fade on play and pause",
+        "previousAlwaysSkips" => "Previous goes back a song",
+        "speed" => "Speed",
+        "pitch" => "Pitch",
+        "skipSilence" => return ("Skip silence".into(), if s.untouched { "Off in bit-perfect mode.".into() } else { String::new() }),
+        "skipExplicit" => "Skip explicit songs",
+        "autoFill" => "Keep playing when the queue ends",
+        "autoFillKind" => "Carry on with",
+        "autoFillBasis" => "Chosen by",
+        "autoFillRemote" => "Include remote songs",
+        "bridgeOffline" => "Play downloads when offline",
+        "headphoneSound" => "Headphone sound",
+        "compressor" => "Compressor",
+        "compressorPreset" => "Compressor type",
+        "replayGain" => "Volume leveling",
+        "loudnessLevel" => "Level",
+        "volumeBoostDb" => "Volume boost",
+        "hiRes" => "High quality output",
+        "maxRate" => "Highest sample rate",
+        "season" => SEASON,
+        "theme" => "Appearance",
+        "lyricsSweep" => "Fill in words as they're sung",
+        "lyricsTranslation" => "Show translations",
+        "lyricsOnline" => "Find missing lyrics online",
+        "lyricsPreferWords" => "Prefer word-by-word lyrics",
+        "playlistNotes" => "Playlist notes",
+        "tasteModel" => "Keep listening history",
+        "scrobble" => "Tell the server what you play",
+        "queueOffer" => "Continue from other devices",
+        "thirdPartyLookups" => "Look things up online",
+        "remoteControl" => "Remote control and jams",
+        // A computer streams on one network: its quality and its songs ahead without the phone's "on Wi-Fi".
+        "wifi" => "Streaming quality",
+        "songsAheadWifi" => "Prepare songs ahead",
+        "download" => "Quality for downloads",
+        "cacheMb" => "Space for streamed music",
+        other => other,
     };
-    (title.to_string(), detail.into())
+    (title.to_string(), String::new())
 }
 
-/// A setting value in words.
 /// Asks for lyrics service `id`'s key (empty: none).
 fn key_input(id: &str, title: &str) -> Opened {
     Opened::Overlay(Overlay::Input { title: format!("{title} key (empty: none)"), text: String::new(), secret: true, name: format!("lyricsKey:{id}") })
 }
 
-/// A loudness level's target: "−18 LUFS".
-fn lufs(l: Level) -> String {
-    format!("{} LUFS", numbers::fixed(l.lufs() as f64, 0, false, POINT).replace('-', "−"))
-}
-
+/// A setting value in words.
 fn option_words(name: &str, v: &str) -> String {
-    let off_or = |v: &str, words: &dyn Fn(&str) -> String| if v == "0" { "off".to_string() } else { words(v) };
+    let off_or = |v: &str, words: &dyn Fn(&str) -> String| if v == "0" { "Off".to_string() } else { words(v) };
     match (name, v) {
         ("crossfadeSec", v) => off_or(v, &|v| format!("{v} s")),
-        ("fadeMs", v) => off_or(v, &|v| format!("{v} ms")),
-        ("speed" | "pitch", v) => format!("{v}×"),
-        ("season", "SPRING") => "Spring 春".into(),
-        ("season", "SUMMER") => "Summer 夏".into(),
-        ("season", "AUTUMN") => "Autumn 秋".into(),
-        ("season", "WINTER") => "Winter 冬".into(),
-        ("theme", "SYSTEM") => "as the terminal".into(),
-        ("theme", "LIGHT") => "day".into(),
-        ("theme", "DARK") => "night".into(),
-        ("theme", "MIDNIGHT") => "midnight".into(),
-        ("autoFillKind", "SONGS") => "songs".into(),
-        ("autoFillKind", "ALBUMS") => "albums".into(),
-        ("autoFillBasis", "SIMILAR") => "similarity".into(),
-        ("autoFillBasis", "ARTIST") => "artist".into(),
-        ("autoFillBasis", "GENRE") => "genre".into(),
-        ("autoFillBasis", "ERA") => "era".into(),
-        ("headphoneSound", "OFF") | ("replayGain", "OFF") => "off".into(),
-        ("headphoneSound", "NATURAL") => "natural".into(),
-        ("headphoneSound", "WIDE") => "wide".into(),
-        ("compressorPreset", "LIGHT") => "light".into(),
-        ("compressorPreset", "CAR") => "car".into(),
-        ("compressorPreset", "NIGHT") => "night".into(),
-        ("replayGain", "TRACK") => "per song".into(),
-        ("replayGain", "ALBUM") => "per album".into(),
-        ("replayGain", "AUTO") => "automatic".into(),
-        ("loudnessLevel", "QUIET") => format!("quiet ({})", lufs(Level::Quiet)),
-        ("loudnessLevel", "NORMAL") => format!("normal ({})", lufs(Level::Normal)),
-        ("loudnessLevel", "LOUD") => format!("loud ({})", lufs(Level::Loud)),
-        ("maxRate", "AUTO") => "each song's own".into(),
+        ("fadeMs", v) => off_or(v, &|v| match v.parse::<u32>() {
+            Ok(ms) if ms % 1000 == 0 => format!("{} s", ms / 1000),
+            _ => format!("{v} ms"),
+        }),
+        ("speed", "1") | ("pitch", "1") => "Normal".into(),
+        ("speed", v) => format!("{v}×"),
+        ("pitch", v) => {
+            let pct = ((v.parse::<f32>().unwrap_or(1.0) - 1.0) * 100.0).round() as i32;
+            if pct < 0 { format!("−{} %", -pct) } else { format!("+{pct} %") }
+        }
+        ("season", "FOLLOW") => "Follow the calendar".into(),
+        ("season", v) => TILES.iter().find(|t| t.2 == v).map_or(v, |t| t.0).into(),
+        ("theme", "SYSTEM") => "System".into(),
+        ("theme", "LIGHT") => "Day".into(),
+        ("theme", "DARK") => "Night".into(),
+        ("theme", "MIDNIGHT") => "Midnight".into(),
+        ("autoFillKind", "SONGS") => "Songs".into(),
+        ("autoFillKind", "ALBUMS") => "Albums".into(),
+        ("autoFillBasis", "SIMILAR") => "Similar music".into(),
+        ("autoFillBasis", "ARTIST") => "The same artist".into(),
+        ("autoFillBasis", "GENRE") => "The same genre".into(),
+        ("autoFillBasis", "ERA") => "The same era".into(),
+        ("headphoneSound", "OFF") | ("replayGain", "OFF") => "Off".into(),
+        ("headphoneSound", "NATURAL") => "Natural".into(),
+        ("headphoneSound", "WIDE") => "Wide".into(),
+        ("compressorPreset", "LIGHT") => "Light".into(),
+        ("compressorPreset", "CAR") => "Car".into(),
+        ("compressorPreset", "NIGHT") => "Night".into(),
+        ("replayGain", "TRACK") => "Per song".into(),
+        ("replayGain", "ALBUM") => "Per album".into(),
+        ("replayGain", "AUTO") => "Automatic".into(),
+        ("loudnessLevel", "QUIET") => "Quiet".into(),
+        ("loudnessLevel", "NORMAL") => "Normal".into(),
+        ("loudnessLevel", "LOUD") => "Loud".into(),
+        ("maxRate", "AUTO") => "Each song's own".into(),
         ("maxRate", "KHZ48") => "48 kHz".into(),
         ("maxRate", "KHZ96") => "96 kHz".into(),
         ("maxRate", "KHZ192") => "192 kHz".into(),
         ("wifi" | "download", v) => quality(v),
-        ("songsAheadWifi", "1") => "next song".into(),
+        ("songsAheadWifi", "1") => "Next song".into(),
         ("songsAheadWifi", v) => format!("{v} songs"),
         ("cacheMb", v) => match v.parse::<i32>() {
-            Ok(mb) if mb % 1024 == 0 => format!("{} GB", mb / 1024),
+            Ok(mb) if mb >= 1024 && mb % 1024 == 0 => format!("{} GB", mb / 1024),
             _ => format!("{v} MB"),
         },
         (_, v) => v.to_string(),
     }
 }
 
-/// A set of independent flags as its title, then a switch for each; None for any other row.
-const SEASON_NAMES: [&str; 4] = ["Spring", "Summer", "Autumn", "Winter"];
+/// The four seasons as their names, kanji and the setting's values.
+const TILES: [(&str, &str, &str, ThemeSeason); 4] = [
+    ("Spring", "春", "SPRING", ThemeSeason::Spring),
+    ("Summer", "夏", "SUMMER", ThemeSeason::Summer),
+    ("Autumn", "秋", "AUTUMN", ThemeSeason::Autumn),
+    ("Winter", "冬", "WINTER", ThemeSeason::Winter),
+];
 const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-/// The season: a choice of the four, the calendar's shown while following, and under it the switch to
-/// follow the calendar.
-fn season_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, today: Day) -> Option<Vec<Row>> {
-    let RowItem::Setting { spec, value, .. } = &r.item else { return None };
+/// The season setting as the four seasons, the one worn marked, each with its theme's colors in the mode
+/// the interface is in (`dark`), then the switch that follows the calendar, saying when the next comes in.
+fn season_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, dark: bool, today: Day) -> Option<Vec<Row>> {
+    let RowItem::Setting { spec, .. } = &r.item else { return None };
     if spec.name != "season" {
         return None;
     }
     let now = nori_look::theme::season_now(today.month, today.day, today.southern);
     let following = p.season == ThemeSeason::Follow;
-    let worn = if following { season_follow_value(false, today.month, today.day, today.southern) } else { value.as_str() };
-    let follow = season_follow_value(true, today.month, today.day, today.southern);
-    let options: Vec<(String, String)> = spec.options.iter().filter(|v| *v != follow).map(|v| (option_words("season", v), v.clone())).collect();
-    let shown = option_words("season", worn);
-    let detail = if following {
-        format!("{} now · {} from {} {}", SEASON_NAMES[now.season as usize], SEASON_NAMES[now.next as usize], MONTHS[now.next_month as usize - 1], now.next_day)
-    } else {
-        "The colors change with the calendar".into()
-    };
-    let (title, _) = setting_words("season", s);
-    Some(vec![
-        Row::Choice { target: Target::Setting(spec.name.clone()), title, options, shown, enabled: r.enabled },
-        Row::Toggle { switch: Switch::Stores(spec.name.clone(), season_follow_value(!following, today.month, today.day, today.southern).into()), title: "Follow the seasons".into(), detail, on: following, enabled: r.enabled },
-    ])
+    let worn = nori_core::settings::season_of(p.season).unwrap_or(now.season);
+    let mut rows: Vec<Row> = TILES
+        .iter()
+        .map(|&(name, kanji, value, season)| {
+            let pal = nori_core::settings::season_palette(season, p.theme, dark, today.month, today.day, today.southern);
+            let is = nori_core::settings::season_of(season) == Some(worn);
+            Row::Season { value: value.into(), name, kanji, colors: [pal.page, pal.accent, pal.on], worn: is, picked: p.season == season, enabled: r.enabled }
+        })
+        .collect();
+    let next = TILES[now.next as usize].0;
+    let detail = if following { format!("{next} comes in on {} {}", MONTHS[now.next_month as usize - 1], now.next_day) } else { String::new() };
+    let to = season_follow_value(!following, today.month, today.day, today.southern);
+    rows.push(Row::Toggle { switch: Switch::Stores(spec.name.clone(), to.into()), title: option_words("season", "FOLLOW"), detail, on: following, enabled: r.enabled });
+    Some(rows)
 }
 
-fn flag_rows(r: &settings_pages::SettingsRow, s: &SettingsState) -> Option<Vec<Row>> {
+/// A set of independent flags as its title, then a switch for each; None for any other row.
+fn flag_rows(r: &settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState) -> Option<Vec<Row>> {
     let RowItem::Setting { spec, value, .. } = &r.item else { return None };
     if spec.kind != SettingKind::Flags {
         return None;
     }
-    let (title, detail) = setting_words(&spec.name, s);
+    let (title, detail) = setting_words(&spec.name, p, s);
     let switches = spec.options.iter().map(|flag| Row::Toggle {
         switch: Switch::Stores(spec.name.clone(), settings_model::flag_toggled(value.clone(), flag.clone())),
         title: format!("  {}", option_words(&spec.name, flag)),
@@ -617,7 +641,12 @@ fn flag_rows(r: &settings_pages::SettingsRow, s: &SettingsState) -> Option<Vec<R
         on: settings_model::flag_on(value.clone(), flag.clone()),
         enabled: r.enabled,
     });
-    Some(std::iter::once(Row::Info { title, detail: detail.to_string() }).chain(switches).collect())
+    Some(std::iter::once(Row::Info { title, detail }).chain(switches).collect())
+}
+
+/// "12 songs", "1 song".
+fn counted(n: u32, one: &str, many: &str) -> String {
+    text::count(n as u64, one, many)
 }
 
 /// The terminal's row for one of the core's, or None for one it does not draw.
@@ -625,20 +654,20 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
     let indent = if r.depth > 0 { "  " } else { "" };
     let enabled = r.enabled;
     Some(match r.item {
-        RowItem::Setting { spec, value, .. } => {
-            let (title, detail) = setting_words(&spec.name, s);
+        RowItem::Setting { spec, value, chips } => {
+            let (title, detail) = setting_words(&spec.name, p, s);
             let title = format!("{indent}{title}");
             match spec.kind {
                 SettingKind::Switch => Row::Toggle { switch: Switch::Setting(spec.name), title, detail, on: value == "true", enabled },
                 SettingKind::Choice => {
                     let options: Vec<(String, String)> = spec.options.iter().map(|v| (option_words(&spec.name, v), v.clone())).collect();
                     let shown = options.iter().find(|o| o.1 == value).map_or_else(|| value.clone(), |o| o.0.clone());
-                    Row::Choice { target: Target::Setting(spec.name), title, options, shown, enabled }
+                    Row::Choice { target: Target::Setting(spec.name), title, options, shown, enabled, chips }
                 }
                 SettingKind::Level => {
                     let v: f32 = value.parse().unwrap_or(spec.min);
                     let level = (spec.name == "volumeBoostDb").then_some(EqLevel::VolumeBoost);
-                    let label = format!("{title} {}", if v > 0.0 { format!("+{v:.1} dB") } else { "off".into() });
+                    let label = format!("{title}: {}", if v > 0.0 { format!("{} dB", numbers::signed_db(v, POINT)) } else { "Off".into() });
                     Row::Slider { name: spec.name, label, value: v, min: spec.min, max: spec.max, centred: false, level }
                 }
                 // Drawn by `flag_rows`.
@@ -647,42 +676,56 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
         }
         RowItem::Link { to: SettingsLink::Equalizer } => {
             let status = match s.eq_status {
-                EqStatus::BitPerfect => "bypassed",
-                EqStatus::NoProcessing => "no processing",
-                EqStatus::On => "on",
-                EqStatus::Off => "off",
+                EqStatus::BitPerfect => "Off now",
+                EqStatus::NoProcessing => "No processing",
+                EqStatus::On => "On",
+                EqStatus::Off => "Off",
             };
-            Row::Link { title: "Equalizer, balance, limiter".into(), status: status.into(), action: Act::Equalizer }
+            Row::Link { title: "Equalizer and crossfeed".into(), status: status.into(), action: Act::Equalizer }
         }
         RowItem::Link { to: SettingsLink::Downloads } => {
-            Row::Link { title: "Downloads".into(), status: format!("{} songs, {}", f.storage.download_songs, numbers::bytes(f.storage.downloads, POINT)), action: Act::Downloads }
+            Row::Action { title: "Downloads".into(), detail: "Remove them from the Downloads page.".into(), button: "Show".into(), enabled: true, action: Act::Downloads }
         }
         RowItem::Link { .. } | RowItem::CompressionMeter => return None,
         RowItem::Action { action } => {
-            let bytes = |b| numbers::bytes(b, POINT);
             let (indexed_songs, albums, artists) = f.indexed;
             let chore = |title: &str, detail: String, button: &str, chore| Row::Action { title: format!("{indent}{title}"), detail, button: button.into(), enabled, action: Act::Chore(chore) };
             match action {
-                SettingsAction::MeasureAgain => chore("Measured songs", format!("{} songs with tempo and beats", f.analysed), "Forget", Chore::MeasureAgain),
-                SettingsAction::SyncLibrary => chore("Offline index", format!("{indexed_songs} songs, {albums} albums, {artists} artists"), "Update", Chore::SyncLibrary),
-                SettingsAction::DownloadLibrary => chore("Download everything", "Every indexed song".into(), "Download", Chore::DownloadLibrary),
-                SettingsAction::ClearStream => chore("Stream cache", bytes(f.storage.stream), "Clear", Chore::ClearStream),
-                SettingsAction::ClearCovers => chore("Cover cache", bytes(f.storage.covers), "Clear", Chore::ClearCovers),
-                SettingsAction::ClearLyrics => chore("Lyrics cache", format!("{} of lyrics found online", bytes(f.storage.lyrics)), "Clear", Chore::ClearLyrics),
-                SettingsAction::AddServer => Row::Button { title: "Add a server".into(), action: Act::AddServer },
+                SettingsAction::MeasureAgain => chore("Measured songs", format!("{} measured for tempo and beats.", counted(f.analysed, "song", "songs")), "Measure again", Chore::MeasureAgain),
+                SettingsAction::SyncLibrary => {
+                    let counts = format!("{} · {} · {} on this device", counted(indexed_songs, "song", "songs"), counted(albums, "album", "albums"), counted(artists, "artist", "artists"));
+                    chore("Offline search", counts, "Update", Chore::SyncLibrary)
+                }
+                SettingsAction::DownloadLibrary => chore("Download the whole library", "Every song, at the download quality.".into(), "Download", Chore::DownloadLibrary),
+                SettingsAction::ClearStream => chore("Streamed music", "Oldest goes first. Downloads stay.".into(), "Clear", Chore::ClearStream),
+                SettingsAction::ClearCovers => chore("Covers", "Fetched again when needed.".into(), "Clear", Chore::ClearCovers),
+                SettingsAction::ClearLyrics => chore("Lyrics", format!("{} found online. Looked up again when needed.", numbers::bytes(f.storage.lyrics, POINT)), "Clear", Chore::ClearLyrics),
+                SettingsAction::AddServer => Row::Button { title: "Add server".into(), action: Act::AddServer },
                 SettingsAction::JoinJam => Row::Button { title: text::JAM_JOIN.into(), action: Act::JoinJam },
                 SettingsAction::AnalyseDownloads | SettingsAction::CheckUpdate => return None,
             }
         }
         RowItem::Note { note } => Row::Note {
             text: match note {
-                SettingsNote::HeldByDac => "Bit-exact output is on: no mixing, skipping or effects.",
-                SettingsNote::LyricsSources => "Enter switches a source; ← → move it. The best match wins; the order breaks ties.",
+                SettingsNote::HeldByDac => "Off in bit-perfect mode.",
+                SettingsNote::LyricsSources if p.lyrics_online => "Your server's lyrics always come first. Among these, the best match wins; the order breaks ties.",
+                SettingsNote::LyricsSources => "Off while Find missing lyrics online is off.",
                 SettingsNote::Dac => return None,
             }
             .into(),
         },
-        RowItem::Stored => info("Database", numbers::bytes(f.storage.database, POINT)),
+        RowItem::Stored => {
+            let st = &f.storage;
+            let total = st.stream + st.downloads + st.covers + st.lyrics + st.database;
+            let parts = [
+                format!("Streamed music {}", numbers::bytes(st.stream, POINT)),
+                format!("{} {}", counted(st.download_songs, "download", "downloads"), numbers::bytes(st.downloads, POINT)),
+                format!("Covers {}", numbers::bytes(st.covers, POINT)),
+                format!("Lyrics {}", numbers::bytes(st.lyrics, POINT)),
+                format!("Library index {}", numbers::bytes(st.database, POINT)),
+            ];
+            info(&format!("Stored on this device  {}", numbers::bytes(total, POINT)), parts.join(" · "))
+        }
         RowItem::Unsent { waiting, dropped } => {
             let parts = [(waiting, "waiting for the server"), (dropped, "the server would not take")];
             info("Changes not sent", parts.iter().filter(|p| p.0 > 0).map(|(n, what)| format!("{n} {what}")).collect::<Vec<_>>().join(" · "))
@@ -692,39 +735,42 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             let active = sv.id == p.active_server_id;
             let words = text::provider(sv.kind);
             let who = if sv.user.is_empty() { words.no_user } else { sv.user.as_str() };
-            let mut detail = if sv.url.is_empty() { who.to_string() } else { format!("{who} · {}", sv.url) };
+            let mut parts = vec![who, if active { "in use" } else { "not in use" }];
             if sv.wifi_only {
-                detail.push_str(" · Wi-Fi only");
+                parts.push("Wi-Fi only");
+            }
+            if !sv.alt_url.trim().is_empty() {
+                parts.push("second address");
             }
             let label = Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| words.name.into());
-            Row::Server { id: sv.id.clone(), label, detail, active }
+            Row::Server { id: sv.id.clone(), label, detail: parts.join(" · "), active }
         }
         RowItem::MusicFolder { index, on, tapped } => {
             Row::Toggle { switch: Switch::Stores("musicFolders".into(), tapped), title: f.folders.get(index as usize)?.name.clone(), detail: String::new(), on, enabled }
         }
         RowItem::LyricsSource { index } => {
             let LyricsSource { id, on, key_set, key, asks_key_on_enable, .. } = s.lyrics_sources.get(index as usize)?;
-            let (title, detail) = service(id);
-            let detail = if *key_set { format!("{detail} · key set") } else { detail.to_string() };
+            let (title, about) = service(id);
+            let detail = if *key_set { format!("{about} Key set.") } else { about.to_string() };
             Row::Ranked { name: format!("lyricsService:{id}"), id: id.clone(), title: title.into(), detail, on: *on, asks_key: *asks_key_on_enable, key: *key, enabled: r.enabled }
         }
     })
 }
 
-/// A lyrics service's name and description by its core id.
+/// A lyrics service's name and what it is good at, by its core id.
 fn service(id: &str) -> (&'static str, &'static str) {
     match id {
-        "PAXSENIX" => ("PaxSenix", "Apple Music, syllable-timed · unofficial"),
-        "BINILYRICS" => ("BiniLyrics", "Apple Music, syllable-timed · unofficial"),
-        "UNISON" => ("Unison", "open, community-timed"),
-        "BETTER_LYRICS" => ("BetterLyrics", "Apple Music, syllable-timed · key finds more"),
-        "KUGOU" => ("KuGou", "word-timed, CJK · unofficial"),
-        "NETEASE" => ("NetEase", "word-timed, Chinese · unofficial"),
-        "LYRICS_PLUS" => ("LyricsPlus", "YouLy+, syllable-timed · unofficial"),
-        "PAXSENIX_MUSIXMATCH" => ("PaxSenix Musixmatch", "word-timed · needs a PaxSenix key"),
-        "LRCLIB" => ("LRCLIB", "open, line-timed"),
-        "PAXSENIX_SPOTIFY" => ("PaxSenix Spotify", "line-timed · needs a PaxSenix key"),
-        "YOUTUBE_MUSIC" => ("YouTube Music", "untimed · unofficial"),
+        "BINILYRICS" => ("BiniLyrics", "Apple Music's lyrics, syllable by syllable, from a volunteer's copy. Unofficial."),
+        "BETTER_LYRICS" => ("BetterLyrics", "Apple Music's lyrics, syllable by syllable. Finds more with a key. Unofficial."),
+        "PAXSENIX" => ("PaxSenix", "Apple Music's lyrics, syllable by syllable, looked up another way. Unofficial."),
+        "LYRICS_PLUS" => ("LyricsPlus", "Apple Music's lyrics and others', syllable by syllable, from volunteers. Unofficial."),
+        "PAXSENIX_MUSIXMATCH" => ("PaxSenix: Musixmatch", "Musixmatch's lyrics, often word by word. Needs a PaxSenix key."),
+        "UNISON" => ("Unison", "Open, written and timed by listeners. Many songs word by word."),
+        "NETEASE" => ("NetEase Cloud Music", "The Chinese streaming service's own lyrics, often word by word. Unofficial."),
+        "KUGOU" => ("KuGou", "Strong on Chinese, Japanese and Korean music, often word by word. Unofficial."),
+        "LRCLIB" => ("LRCLIB", "Open and run by volunteers. Timed line by line, some songs word by word."),
+        "PAXSENIX_SPOTIFY" => ("PaxSenix: Spotify", "Spotify's lyrics, timed line by line. Needs a PaxSenix key."),
+        "YOUTUBE_MUSIC" => ("YouTube Music", "The words YouTube Music shows for the song. Not timed. Unofficial."),
         _ => ("?", ""),
     }
 }
@@ -732,8 +778,10 @@ fn service(id: &str) -> (&'static str, &'static str) {
 /// A stream quality value ("320:mp3") in words.
 fn quality(v: &str) -> String {
     match v.split_once(':') {
-        Some((_, "")) | None => "original".into(),
-        Some((rate, format)) => format!("{format} {rate}k"),
+        Some((_, "")) | None => "Original".into(),
+        Some((rate, "mp3")) => format!("MP3 {rate}"),
+        Some((rate, "opus")) => format!("Opus {rate}"),
+        Some((rate, format)) => format!("{rate} {format}"),
     }
 }
 
@@ -764,7 +812,6 @@ pub fn row_value(row: &Row) -> String {
         Row::Link { status, .. } => format!("{status} ›"),
         Row::Action { button, .. } => format!("[ {button} ]"),
         Row::Button { title, .. } => format!("[ {title} ]"),
-        Row::Server { active, .. } => (if *active { "● in use" } else { "" }).into(),
         _ => String::new(),
     }
 }
@@ -778,6 +825,7 @@ pub fn row_words(row: &Row) -> (String, String) {
         Row::Action { title, detail, .. } => (title.clone(), detail.clone()),
         Row::Slider { label, .. } => (label.clone(), String::new()),
         Row::Server { label, detail, .. } => (label.clone(), detail.clone()),
+        Row::Season { name, kanji, .. } => (format!("{kanji}  {name}"), String::new()),
         Row::Button { .. } => (String::new(), String::new()),
     }
 }
@@ -785,7 +833,7 @@ pub fn row_words(row: &Row) -> (String, String) {
 /// Whether the row is live; inactive settings are drawn dimmed.
 pub fn row_enabled(row: &Row) -> bool {
     match row {
-        Row::Toggle { enabled, .. } | Row::Choice { enabled, .. } | Row::Action { enabled, .. } | Row::Ranked { enabled, .. } => *enabled,
+        Row::Toggle { enabled, .. } | Row::Choice { enabled, .. } | Row::Action { enabled, .. } | Row::Ranked { enabled, .. } | Row::Season { enabled, .. } => *enabled,
         _ => true,
     }
 }
@@ -852,24 +900,24 @@ pub fn eq_rows(p: &StoredPrefs) -> Vec<EqRow> {
 impl EqRow {
     /// Title and value.
     pub fn words(&self, p: &StoredPrefs) -> (String, String) {
-        let on = |b: bool| (if b { "● on" } else { "○ off" }).to_string();
+        let on = |b: bool| (if b { "on" } else { "off" }).to_string();
         match *self {
             EqRow::Enabled => ("Equalizer".into(), on(p.eq_enabled)),
-            EqRow::Mode => ("Kind".into(), if p.eq_mode == EqMode::Graphic { "‹ graphic ›" } else { "‹ parametric ›" }.into()),
-            EqRow::Layout => ("Bands".into(), format!("‹ {} ›", p.eq_graphic.len())),
+            EqRow::Mode => ("Kind".into(), if p.eq_mode == EqMode::Graphic { "graphic" } else { "parametric" }.into()),
+            EqRow::Layout => ("Bands".into(), p.eq_graphic.len().to_string()),
             EqRow::Slider(i) => {
                 let label = nori_core::dsp::graphic_bands(p.eq_graphic.len() as u32).get(i).map_or(0.0, |b| b.label_hz);
                 (numbers::iso_band(label, POINT), format!("{} dB", numbers::signed_db(p.eq_graphic.get(i).copied().unwrap_or(0.0), POINT)))
             }
-            EqRow::Presets => ("Presets".into(), "choose ›".into()),
+            EqRow::Presets => ("Presets".into(), String::new()),
             EqRow::AutoPreamp => ("Automatic pre-amp".into(), on(p.eq_preamp_db.is_none())),
             EqRow::Preamp => ("Pre-amp".into(), text::preamp(p.eq_preamp_db.unwrap_or(0.0), false)),
             EqRow::Band(i) => {
                 let b = p.eq_bands.get(i).copied().unwrap_or(nori_core::settings::band_from(0, 0.0, 0.0, 1.0, 0));
                 (text::band(b.freq, nori_core::settings::band_mark(b.kind as i32, b.channel as i32)), format!("{} dB", numbers::signed_db(b.gain_db, POINT)))
             }
-            EqRow::AddBand => ("Add a band".into(), "[ Add ]".into()),
-            EqRow::Reset => ("Back to flat".into(), "[ Reset ]".into()),
+            EqRow::AddBand => ("Add a band".into(), String::new()),
+            EqRow::Reset => ("Back to flat".into(), String::new()),
             EqRow::Balance => ("Balance".into(), text::balance(p.balance)),
             EqRow::Mono => ("Mono".into(), on(p.mono)),
             EqRow::Limiter => ("Limiter".into(), on(p.limiter)),
@@ -914,12 +962,12 @@ impl EqRow {
     pub fn chip(&self, p: &StoredPrefs) -> String {
         let (title, value) = self.words(p);
         match self {
-            EqRow::Enabled => (if p.eq_enabled { "● Equalizer on" } else { "○ Equalizer off" }).into(),
-            EqRow::Presets => "Presets ▾".into(),
-            EqRow::AddBand => "+ Add a band".into(),
-            EqRow::Reset => "↺ Flat".into(),
-            EqRow::Mode => (if p.eq_mode == EqMode::Graphic { "Graphic ‹›" } else { "Parametric ‹›" }).into(),
-            EqRow::Layout => format!("{} bands ‹›", p.eq_graphic.len()),
+            EqRow::Enabled => (if p.eq_enabled { "Equalizer on" } else { "Equalizer off" }).into(),
+            EqRow::Presets => "Presets".into(),
+            EqRow::AddBand => "Add a band".into(),
+            EqRow::Reset => "Flat".into(),
+            EqRow::Mode => (if p.eq_mode == EqMode::Graphic { "Graphic" } else { "Parametric" }).into(),
+            EqRow::Layout => format!("{} bands", p.eq_graphic.len()),
             _ => format!("{} {}", title.trim(), value),
         }
     }
@@ -986,27 +1034,48 @@ mod tests {
 
     #[test]
     fn the_look_picks_a_season_and_follows_the_calendar_under_it() {
-        let look = |season| {
-            let prefs = StoredPrefs { season, ..StoredPrefs::default() };
+        let look = |season, theme| {
+            let prefs = StoredPrefs { season, theme, ..StoredPrefs::default() };
             let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
-            page(Gid::Core(SettingsPage::Look), &prefs, &state, &Facts::default(), &Own { paint: true, ..Own::default() }, DAY).sections.remove(0).rows
+            page(Gid::Core(SettingsPage::Look), &prefs, &state, &Facts::default(), &Own { paint: true, dark: true, ..Own::default() }, DAY).sections
         };
-        let pick = |rows: &[Row]| match &rows[0] {
-            Row::Choice { options, shown, .. } => (options.len(), shown.clone()),
+        // The seasons first, under their own title, each its value, whether it is worn and picked.
+        let seasons = |sections: &[Section]| -> Vec<(String, bool, bool)> {
+            assert_eq!(sections[0].title, SEASON);
+            sections[0].rows.iter().filter_map(|r| match r {
+                Row::Season { value, worn, picked, .. } => Some((value.clone(), *worn, *picked)),
+                _ => None,
+            }).collect()
+        };
+        let follow = |sections: &[Section]| match sections[0].rows.last() {
+            Some(Row::Toggle { switch: Switch::Stores(name, value), title, on, detail, .. }) if name == "season" && title == "Follow the calendar" => (value.clone(), *on, detail.clone()),
             other => panic!("{other:?}"),
         };
-        let follow = |rows: &[Row]| match &rows[1] {
-            Row::Toggle { switch: Switch::Stores(name, value), title, on, detail, .. } if name == "season" && title == "Follow the seasons" => (value.clone(), *on, detail.clone()),
+        let following = look(ThemeSeason::Follow, nori_core::settings::ThemeMode::Dark);
+        let s = |v: &str, worn, picked| (v.to_string(), worn, picked);
+        assert_eq!(seasons(&following), [s("SPRING", false, false), s("SUMMER", false, false), s("AUTUMN", true, false), s("WINTER", false, false)], "the calendar's worn, none picked");
+        assert_eq!(follow(&following), ("AUTUMN".into(), true, "Winter comes in on November 7".into()), "off keeps the calendar's");
+        let winter = look(ThemeSeason::Winter, nori_core::settings::ThemeMode::Dark);
+        assert_eq!(seasons(&winter)[3], s("WINTER", true, true));
+        let (value, on, detail) = follow(&winter);
+        assert_eq!((value.as_str(), on, detail.as_str()), ("FOLLOW", false, ""));
+        // Each in its theme's colors, dark as the interface is; Midnight's on black.
+        let colors = |sections: &[Section]| match &sections[0].rows[1] {
+            Row::Season { colors, .. } => *colors,
             other => panic!("{other:?}"),
         };
-        let following = look(ThemeSeason::Follow);
-        assert_eq!(pick(&following), (4, "Autumn 秋".into()), "the four seasons, the calendar's worn");
-        assert_eq!(follow(&following), ("AUTUMN".into(), true, "Autumn now · Winter from November 7".into()), "off keeps the calendar's");
-        let winter = look(ThemeSeason::Winter);
-        assert_eq!(pick(&winter).1, "Winter 冬");
-        let (value, on, _) = follow(&winter);
-        assert_eq!((value.as_str(), on), ("FOLLOW", false));
-        assert!(matches!(following.last(), Some(Row::Toggle { switch: Switch::Transparent, on: false, .. })), "painted, so not transparent: {following:?}");
+        let summer = nori_look::theme::palette(Some(nori_look::theme::Season::Summer), DAY.month, DAY.day, false, true, false);
+        assert_eq!(colors(&winter), [summer.page, summer.accent, summer.on]);
+        assert_eq!(colors(&look(ThemeSeason::Winter, nori_core::settings::ThemeMode::Midnight))[0], 0xFF00_0000);
+        // Picking a season stops following; the one picked asks nothing.
+        let mut v = SettingsView { pages: Some(vec![Page { title: String::new(), summary: String::new(), sections: winter }]), ..SettingsView::default() };
+        v.row.at = 2;
+        assert!(matches!(v.open(), Some(Opened::Cmds(c)) if c == [Cmd::Setting("season".into(), "SPRING".into())]));
+        v.row.at = 5;
+        assert!(v.open().is_none());
+        // Then the appearance, its four modes on view.
+        let theme = &following[1];
+        assert!(matches!(&theme.rows[..], [Row::Choice { title, options, chips: true, .. }] if title == "Appearance" && options.iter().map(|o| o.0.as_str()).collect::<Vec<_>>() == ["System", "Day", "Night", "Midnight"]), "{theme:?}");
     }
 
     /// A jam guest's settings are this computer's: the profiles to switch back with, sound, look and
@@ -1022,10 +1091,10 @@ mod tests {
         };
         let account = titles(nori_core::browse::profile_rules(false));
         let guest = titles(nori_core::browse::profile_rules(true));
-        for kept in ["Accounts", "Streaming quality", "Stream cache", "Appearance"] {
+        for kept in ["Accounts", "Streaming quality", "Streamed music", "Appearance"] {
             assert!(account.iter().any(|t| t == kept) && guest.iter().any(|t| t == kept), "{kept}");
         }
-        for gone in ["Music folders", "Download quality", "Downloads"] {
+        for gone in ["Quality for downloads", "Downloads"] {
             assert!(account.iter().any(|t| t == gone) && !guest.iter().any(|t| t == gone), "{gone}");
         }
         assert!(guest.len() < account.len());
@@ -1068,7 +1137,7 @@ mod tests {
         assert!(rows.len() > 40, "rows: {}", rows.len());
         for (group, row) in &rows {
             let mut v = SettingsView::default();
-            v.pages = Some(vec![Page { title: group.to_string(), sections: vec![Section { title: String::new(), rows: vec![row.clone()] }] }]);
+            v.pages = Some(vec![Page { title: group.to_string(), summary: String::new(), sections: vec![Section { title: String::new(), rows: vec![row.clone()] }] }]);
             v.row.at = 1;
             match row {
                 Row::Toggle { switch: Switch::Setting(name), enabled: true, .. } => {
@@ -1104,10 +1173,10 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("no {name}"))
         };
-        assert_eq!(shown("replayGain"), "automatic");
-        assert_eq!(shown("wifi"), "original");
-        assert_eq!(shown("speed"), "1×");
-        assert_eq!(quality("320:mp3"), "mp3 320k");
+        assert_eq!(shown("replayGain"), "Automatic");
+        assert_eq!(shown("wifi"), "Original");
+        assert_eq!(shown("speed"), "Normal");
+        assert_eq!((quality("320:mp3"), quality("128:opus")), ("MP3 320".to_string(), "Opus 128".to_string()));
 
         // Phone only settings hidden.
         let names: Vec<String> = every_row(&everything_on())
@@ -1129,7 +1198,7 @@ mod tests {
         let state = settings_model::state(&prefs, settings_model::Output::default(), &crate::backend::app().settings.model);
         let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], ..Facts::default() };
         let page = page(Gid::Core(SettingsPage::Servers), &prefs, &state, &facts, &Own::default(), DAY);
-        let folders = page.sections.iter().find(|s| s.title == "Music folders").unwrap();
+        let folders = page.sections.iter().find(|s| s.rows.iter().any(|r| matches!(r, Row::Toggle { switch: Switch::Stores(n, _), .. } if n == "musicFolders"))).unwrap();
         let switches: Vec<_> = folders.rows.iter().map(|r| match r {
             Row::Toggle { switch: Switch::Stores(name, value), title, on, .. } => (name.as_str(), value.as_str(), title.as_str(), *on),
             other => panic!("{other:?}"),

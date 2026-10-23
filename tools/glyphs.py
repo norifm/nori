@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Writes nori's Iconoir glyphs: Iconoir.kt, and the XML drawables the widgets, shortcuts and car use.
+"""Writes nori's Iconoir glyphs: Iconoir.kt, the XML drawables the widgets, shortcuts and car use, and the
+desktop's icons.slint.
 
     python3 tools/glyphs.py <iconoir>/icons
 
@@ -25,6 +26,7 @@ GLYPHS = {
     "ArrowLeft": ("arrow-left", "regular", True),
     "NavArrowRight": ("nav-arrow-right", "regular", True),
     "NavArrowDown": ("nav-arrow-down", "regular", False),
+    "NavArrowUp": ("nav-arrow-up", "regular", False),
     "MoreHoriz": ("more-horiz", "regular", False),
     "Xmark": ("xmark", "regular", False),
     "Plus": ("plus", "regular", False),
@@ -86,6 +88,9 @@ GLYPHS = {
     "StatsUpSquare": ("stats-up-square", "regular", False),
     "SoundHigh": ("sound-high", "regular", False),
     "SoundHighSolid": ("sound-high", "solid", False),
+    "SoundLow": ("sound-low", "regular", False),
+    "SoundOff": ("sound-off", "regular", False),
+    "NavArrowLeft": ("nav-arrow-left", "regular", True),
 }
 
 # XML drawable: (directory, glyph, shortcut?)
@@ -487,6 +492,239 @@ def main(icons: Path):
             ps = "\n    ".join(xml_part(p, "#FFFFFFFF") for p in shapes[glyph])
             body = f'    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"{mirror}>\n    {ps}'
         path.write_text(f'<?xml version="1.0" encoding="utf-8"?>\n{head}\n<vector xmlns:android="http://schemas.android.com/apk/res/android"\n{body}\n</vector>\n')
+    write_web(shapes)
+
+
+def web_part(p):
+    """A path of the sprite: a line 1.5 wide with round ends unless it says otherwise (its symbol's defaults)."""
+    a = [f'd="{p["d"]}"']
+    if p["fill"]:
+        a.append('fill="currentColor"')
+    if p["even"]:
+        a.append('fill-rule="evenodd"')
+    if not p["stroke"]:
+        a.append('stroke="none"')
+    if p["width"] != 1.5:
+        a.append(f'stroke-width="{p["width"]:g}"')
+    if p["stroke"] and not p["cap"]:
+        a.append('stroke-linecap="butt"')
+    if p["stroke"] and not p["join"]:
+        a.append('stroke-linejoin="miter"')
+    return "<path " + " ".join(a) + "/>"
+
+
+def seal_parts(drawable: Path):
+    """One of core's seal drawables (which the notification and the car show too) as sprite paths."""
+    xml = drawable.read_text()
+    out = []
+    for path in re.findall(r"<path ([^>]*)/>", xml):
+        attr = dict(re.findall(r'android:(\w+)="([^"]*)"', path))
+        a = [f'd="{attr["pathData"]}"', 'fill="currentColor"' if "fillColor" in attr else 'fill="none"']
+        if "fillAlpha" in attr:
+            a.append(f'fill-opacity="{attr["fillAlpha"]}"')
+        if attr.get("fillType") == "evenOdd":
+            a.append('fill-rule="evenodd"')
+        a.append(f'stroke="currentColor" stroke-width="{attr["strokeWidth"]}"' if "strokeColor" in attr else 'stroke="none"')
+        out.append("<path " + " ".join(a) + "/>")
+    turn = re.search(r'android:rotation="([-\d.]+)" android:pivotX="([\d.]+)" android:pivotY="([\d.]+)"', xml)
+    body = "".join(out)
+    return f'<g transform="rotate({turn[1]} {turn[2]} {turn[3]})">{body}</g>' if turn else body
+
+
+def write_web(shapes):
+    """web/index.html's sprite, between its glyph markers: each glyph a <symbol> named in kebab case
+    ("PlaySolid" is #i-play-solid), the seal and its outline (#i-sealed, #i-seal) and the seasons' kanji
+    (#i-kanji-spring ...), as Android draws them. Only those web/src names in quotes ("play-solid"), so
+    the first paint carries no glyph the page never shows: run this again after naming a new one there."""
+    page = ROOT / "web/index.html"
+    named = set()
+    for f in (ROOT / "web/src").rglob("*"):
+        if f.suffix in (".svelte", ".ts") and "pkg" not in f.parts:
+            named.update(re.findall(r'"([a-z][a-z0-9-]*)"', f.read_text()))
+    kebab = lambda name: re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
+    line = ' fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"'
+    symbols = {kebab(name): f'viewBox="0 0 24 24"{line}>{"".join(web_part(p) for p in ps)}' for name, ps in shapes.items()}
+    for name, file in (("sealed", "seal.xml"), ("seal", "seal_outline.xml")):
+        symbols[name] = f'viewBox="0 0 24 24">{seal_parts(CORE / file)}'
+    kanji = dict(re.findall(r'private const val (SPRING|SUMMER|AUTUMN|WINTER) = "([^"]+)"', (KOTLIN.parent / "Kanji.kt").read_text()))
+    for season in ("SPRING", "SUMMER", "AUTUMN", "WINTER"):
+        symbols[f"kanji-{season.lower()}"] = f'viewBox="0 0 24 24"><path fill="currentColor" d="{kanji[season]}"/>'
+    symbols = [f'<symbol id="i-{id}" {body}</symbol>' for id, body in symbols.items() if id in named]
+    start, end = "<!-- glyphs -->", "<!-- /glyphs -->"
+    head, rest = page.read_text().split(start)
+    tail = rest.split(end)[1]
+    sprite = "\n    ".join(symbols)
+    page.write_text(
+        f"{head}{start}\n  <!-- Generated by tools/glyphs.py from Iconoir (MIT, https://iconoir.com), and nori's seal and kanji "
+        f"drawn from Shippori Mincho (OFL-1.1); do not edit by hand. -->\n"
+        f'  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">\n    {sprite}\n  </svg>\n  {end}{tail}'
+    )
+
+    write_slint(shapes)
+
+
+SLINT = ROOT / "crates/desktop-ui/ui/icons.slint"
+
+# The desktop's glyph fields: a stroke group per kind of ends and corners (one Slint Path draws one kind).
+SLINT_LINES = {(True, True): "lines", (False, False): "plain", (True, False): "round-ends", (False, True): "round-corners"}
+
+
+def subpaths(d):
+    """[d] in absolute segments, one entry per subpath: [start, [(kind, controls, end)], closed], kinds L, C, Q, A."""
+    out, x, y, sx, sy, cur, last_c, last_q = [], 0.0, 0.0, 0.0, 0.0, None, None, None
+    for c, a in commands(d):
+        rel, C = c.islower(), c.upper()
+        at = lambda px, py: (x + px, y + py) if rel else (px, py)
+        if C == "M":
+            x, y = at(*a)
+            sx, sy = x, y
+            cur = [(x, y), [], False]
+            out.append(cur)
+            last_c = last_q = None
+            continue
+        if C == "Z":
+            cur[2] = True
+            x, y = sx, sy
+            last_c = last_q = None
+            continue
+        if cur[2]:
+            cur = [(x, y), [], False]
+            out.append(cur)
+        if C == "H":
+            seg = ("L", [], (x + a[0] if rel else a[0], y))
+        elif C == "V":
+            seg = ("L", [], (x, y + a[0] if rel else a[0]))
+        elif C == "L":
+            seg = ("L", [], at(*a))
+        elif C == "C":
+            seg = ("C", [at(a[0], a[1]), at(a[2], a[3])], at(a[4], a[5]))
+        elif C == "S":
+            seg = ("C", [(2 * x - last_c[0], 2 * y - last_c[1]) if last_c else (x, y), at(a[0], a[1])], at(a[2], a[3]))
+        elif C == "Q":
+            seg = ("Q", [at(a[0], a[1])], at(a[2], a[3]))
+        elif C == "T":
+            seg = ("Q", [(2 * x - last_q[0], 2 * y - last_q[1]) if last_q else (x, y)], at(*a))
+        else:
+            seg = ("A", a[:5], at(a[5], a[6]))
+        cur[1].append(seg)
+        last_c = seg[1][1] if seg[0] == "C" else None
+        last_q = seg[1][0] if seg[0] == "Q" else None
+        x, y = seg[2]
+    return out
+
+
+def outline(sub):
+    """A subpath as a polygon, its curves sampled."""
+    (x, y), segs, _ = sub
+    pts = [(x, y)]
+    for kind, ctl, end in segs:
+        if kind in "CQ":
+            for i in range(1, 9):
+                t, qs = i / 8, [(x, y), *ctl, end]
+                while len(qs) > 1:
+                    qs = [(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t) for a, b in zip(qs, qs[1:])]
+                pts.append(qs[0])
+        else:
+            pts.append(end)
+        x, y = end
+    return pts
+
+
+def inside(p, poly):
+    hit = False
+    for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]):
+        if (y0 > p[1]) != (y1 > p[1]) and p[0] < x0 + (p[1] - y0) * (x1 - x0) / (y1 - y0):
+            hit = not hit
+    return hit
+
+
+def nonzero(d):
+    """[d], drawn even-odd, rewound to draw the same with the nonzero rule (the desktop's renderer ignores even-odd):
+    a subpath inside an odd number of others runs against those inside an even number."""
+    subs = subpaths(d)
+    polys = [outline(s) for s in subs]
+    n = lambda v: f"{v:.5g}"
+    out = []
+    for i, ((sx, sy), segs, closed) in enumerate(subs):
+        poly = polys[i]
+        area = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]))
+        depth = sum(inside((sx, sy), q) for j, q in enumerate(polys) if j != i)
+        drawn = [f"M{n(sx)} {n(sy)}"]
+        if (area > 0) == (depth % 2 == 0):
+            for kind, ctl, end in segs:
+                vs = [*ctl] if kind == "A" else [v for pt in ctl for v in pt]
+                drawn.append(kind + " ".join(n(v) for v in [*vs, *end]))
+        else:
+            # Backwards: from the start along the closing line to the last point, then each segment back to its start.
+            starts = [(sx, sy)] + [s[2] for s in segs[:-1]]
+            last = segs[-1][2] if segs else (sx, sy)
+            if closed and last != (sx, sy):
+                drawn.append(f"L{n(last[0])} {n(last[1])}")
+            for (kind, ctl, _), begin in zip(reversed(segs), reversed(starts)):
+                vs = [*ctl[1], *ctl[0]] if kind == "C" else [*ctl[0]] if kind == "Q" else [*ctl[:4], 1 - ctl[4]] if kind == "A" else []
+                drawn.append(kind + " ".join(n(v) for v in [*vs, *begin]))
+        if closed:
+            drawn.append("Z")
+        out.append("".join(drawn))
+    return "".join(out)
+
+
+def drawable_parts(xml: Path):
+    """A hand-drawn vector drawable's paths (the seal) as [parts] reads a glyph's, its group's tilt left out."""
+    A = "{http://schemas.android.com/apk/res/android}"
+    return [dict(d=el.get(A + "pathData"), fill=el.get(A + "fillColor") is not None, stroke=el.get(A + "strokeColor") is not None,
+                 width=float(el.get(A + "strokeWidth", 0)), cap=el.get(A + "strokeLineCap") == "round",
+                 join=el.get(A + "strokeLineJoin") == "round", even=el.get(A + "fillType") == "evenOdd",
+                 alpha=float(el.get(A + "fillAlpha", 1)))
+            for el in ET.parse(xml).getroot().iter("path")]
+
+
+def slint_glyph(ps):
+    """A glyph as a Slint `Glyph` literal: its lines grouped by their ends and corners, its fill drawn nonzero."""
+    fields, fill, alpha = {}, [], 1.0
+    for p in ps:
+        if p["stroke"]:
+            if p["width"] != 1.5:
+                raise SystemExit(f"a line {p['width']} wide is not handled on the desktop")
+            fields.setdefault(SLINT_LINES[(p["cap"], p["join"])], []).append(p["d"])
+        if p["fill"]:
+            fill.append(nonzero(p["d"]) if p["even"] else p["d"])
+            alpha = min(alpha, p.get("alpha", 1.0))
+    if fill:
+        fields["fill"] = fill
+    body = [f'{k}: "{"".join(v)}"' for k, v in fields.items()]
+    if alpha < 1:
+        body.append(f"fade: {1 - alpha:g}")
+    return "{ " + ", ".join(body) + " }"
+
+
+def write_slint(shapes):
+    kebab = lambda name: re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
+    lines = [f'    // {icon}{" (solid)" if style == "solid" else ""}\n    out property <Glyph> {kebab(name)}: {slint_glyph(shapes[name])};'
+             for name, (icon, style, _) in GLYPHS.items()]
+    for name, file, what in (("seal", "seal", "a favorite"), ("seal-outline", "seal_outline", "not a favorite")):
+        lines.append(f"    // nori's seal, {what} (core/src/main/res/drawable/{file}.xml, upright)\n"
+                     f"    out property <Glyph> {name}: {slint_glyph(drawable_parts(CORE / f'{file}.xml'))};")
+    SLINT.write_text(SLINT_HEAD + "\n".join(lines) + "\n}\n")
+
+
+SLINT_HEAD = """// Generated by tools/glyphs.py from Iconoir (MIT, https://iconoir.com) and nori's seal; do not edit by hand.
+
+// A glyph on a 24 unit square. Its lines are 1.5 wide: `lines` with round ends and corners, `plain` with plain
+// ends and sharp corners, `round-ends` with round ends and sharp corners, `round-corners` with plain ends and
+// round corners. `fill` is filled with the nonzero rule, lighter by `fade`.
+export struct Glyph {
+    lines: string,
+    plain: string,
+    round-ends: string,
+    round-corners: string,
+    fill: string,
+    fade: float,
+}
+
+// nori's icons: Iconoir's line glyphs, its solid ones for the transport, and the seal.
+export global Icons {
+"""
 
     write_swift(shapes)
 

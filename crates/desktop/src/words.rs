@@ -33,6 +33,8 @@ pub fn provider(kind: ServerKind) -> ProviderWords {
 }
 
 pub const SHOW_ALL: &str = "Show all";
+/// Home's title.
+pub const LISTEN_NOW: &str = "Listen now";
 pub const MIXING: &str = "MIXING";
 
 /// What to say about a device's AutoEQ curve, and the button's word.
@@ -84,9 +86,9 @@ pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
 pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
     use nori_core::browse::AlbumSort;
     match sort {
-        AlbumSort::ByName => "A–Z",
+        AlbumSort::ByName => "Title",
         AlbumSort::ByArtist => "Artist",
-        AlbumSort::ArtistRows => "Artist rows",
+        AlbumSort::ArtistRows => "Artist",
         AlbumSort::Newest => "Added",
         AlbumSort::Recent => "Played",
         AlbumSort::Frequent => "Most played",
@@ -103,6 +105,18 @@ pub fn songs(n: usize) -> String {
 
 pub fn albums(n: u32) -> String {
     count(n, "album", "albums")
+}
+
+/// An artist page's list head: "14 releases · 162 songs", or the songs its page lists where it has no releases.
+pub fn artist_caption(releases: usize, songs_in_releases: usize, songs_listed: usize) -> String {
+    if releases == 0 {
+        return if songs_listed > 0 { songs(songs_listed) } else { String::new() };
+    }
+    let mut parts = vec![count(releases as u64, "release", "releases")];
+    if songs_in_releases > 0 {
+        parts.push(songs(songs_in_releases));
+    }
+    parts.join(" · ")
 }
 
 /// An artist's shelf heading: "Albums", "EPs", or a type nori does not know by its tag ("Mixtapes").
@@ -161,26 +175,26 @@ pub fn net_error(e: &NetError) -> String {
 pub fn song_action(a: &nori_core::menus::SongAction) -> String {
     use nori_core::menus::SongAction as A;
     match a {
-        A::Favourite { on: true } => "Add to Favorites".into(),
-        A::Favourite { on: false } => "Remove from Favorites".into(),
+        A::Favourite { on: true } => "Add to favorites".into(),
+        A::Favourite { on: false } => "Remove from favorites".into(),
         A::PlayNext => "Play next".into(),
         A::AddToQueue => "Add to queue".into(),
         A::AddToPlaylist => "Add to playlist…".into(),
         A::RemoveDownload => "Remove download".into(),
         A::StopDownload => "Stop download".into(),
         A::Download => "Download".into(),
-        A::GoToAlbum { .. } => "Go to Album".into(),
+        A::GoToAlbum { .. } => "Go to album".into(),
         A::GoToArtist { name, named: true, .. } => format!("Go to {name}"),
-        A::GoToArtist { named: false, .. } => "Go to Artist".into(),
+        A::GoToArtist { named: false, .. } => "Go to artist".into(),
         A::AddToLibrary => "Add to library".into(),
         A::Lyrics => "Lyrics".into(),
         A::SleepTimer => "Sleep timer…".into(),
-        A::StartRadio => "Start radio".into(),
+        A::StartRadio => "Start radio from this song".into(),
         A::InstantMix => "Instant mix".into(),
         A::ExcludeFromMixes => "Exclude from mixes".into(),
-        A::Share => "Copy link".into(),
+        A::Share => "Share link".into(),
         A::Details => "Details".into(),
-        A::StartJam => "Start a Jam".into(),
+        A::StartJam => "Start a jam".into(),
     }
 }
 
@@ -293,7 +307,7 @@ pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
 
 /// Under a mix's name: what it is made from.
 pub fn mix_caption(favourites: bool) -> &'static str {
-    if favourites { "Your favorite songs" } else { "Made for you" }
+    if favourites { "Your favorites" } else { "Made for you" }
 }
 
 
@@ -310,10 +324,33 @@ pub fn playing_on(device: &str) -> String {
     format!("Playing on {device}")
 }
 
+/// A nori device's glyph (app.slint's `Glyphs.device`): a computer, a phone, a terminal, a guest.
+pub fn device_glyph(kind: nori_core::remote::wire::DeviceKind) -> i32 {
+    use nori_core::remote::wire::DeviceKind;
+    match kind {
+        DeviceKind::Desktop => 0,
+        DeviceKind::Phone => 1,
+        DeviceKind::Terminal => 2,
+        DeviceKind::Guest => 3,
+    }
+}
+
+/// What the output button calls this computer's output, its port and the name the device gave.
+pub fn output_name(port: nori_core::profiles::OutputPort, name: Option<String>) -> String {
+    use nori_core::profiles::OutputPort;
+    match port {
+        OutputPort::Speaker => "Speakers".into(),
+        OutputPort::Wired => "Wired headphones".into(),
+        OutputPort::Usb => name.unwrap_or_else(|| "DAC".into()),
+        OutputPort::Bluetooth => name.unwrap_or_else(|| "device".into()),
+        OutputPort::Other => name.unwrap_or_else(|| "Other output".into()),
+    }
+}
+
 /// A place the music can play, as the devices panel lists it: this computer (`d` None) or a device of the
 /// account with what it plays and its last refusal; ticked while the music plays there.
 pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> crate::DeviceRow {
-    use nori_core::remote::wire::{DeviceKind, Refusal};
+    use nori_core::remote::wire::Refusal;
     let Some(d) = d else {
         return crate::DeviceRow { name: THIS_COMPUTER.into(), active, ..Default::default() };
     };
@@ -331,11 +368,7 @@ pub fn device_row(d: Option<&nori_core::remote::RemoteDevice>, active: bool) -> 
         id: d.id.clone().into(),
         name: d.name.clone().into(),
         line: line.into(),
-        kind: match d.kind {
-            DeviceKind::Desktop => 0,
-            DeviceKind::Phone | DeviceKind::Guest => 1,
-            DeviceKind::Terminal => 2,
-        },
+        kind: device_glyph(d.kind),
         active,
         note: note.into(),
     }
@@ -422,6 +455,11 @@ pub fn jam_home_only(address: &str) -> String {
 }
 
 /// The undo pill after a song is taken out of the queue.
+/// Where the offered song stands in its queue, on Home's Continue card: "Artist · 3 of 12".
+pub fn offer_place(artist: &str, at: usize, of: usize) -> String {
+    format!("{artist} · {at} of {of}")
+}
+
 pub fn removed(title: &str) -> String {
     format!("Removed “{title}”")
 }

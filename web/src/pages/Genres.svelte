@@ -12,7 +12,7 @@
   );
 </script>
 
-<Page title={W.genres} back ready={!!page.data} error={page.error}>
+<Page title={W.librarySections.Genres} back ready={!!page.data} error={page.error}>
   <ul class="genres">
     {#each page.data ?? [] as g (g.value)}
       <li><a href={href("genre", g.value)}><span class="name">{g.value}</span><span class="sub">{W.songCount(g.songCount)}</span></a></li>
@@ -27,7 +27,7 @@
     padding: 0;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 12px;
+    gap: var(--grid-gap);
   }
   a {
     display: flex;
@@ -35,16 +35,16 @@
     justify-content: flex-end;
     height: 96px;
     padding: 14px;
-    border-radius: 18px;
+    border-radius: var(--r-tile);
     background: var(--surface);
-    border: 1px solid var(--hair);
+    border: var(--hairline) solid var(--hair);
   }
   a:hover {
-    background: var(--hover);
+    background: color-mix(in srgb, var(--ink) 5%, var(--surface));
   }
   .name {
     font-size: 17px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: -0.2px;
   }
 </style>

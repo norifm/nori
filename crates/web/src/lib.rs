@@ -134,6 +134,25 @@ impl Nori {
         pages::read(&client, &ask).await.map_err(error)
     }
 
+    /// The queue another device or app left on the server, offered while nothing plays here
+    /// (`Client::queue_offer`; `playing` and `shown`, the song the player shows, are the player's):
+    /// `{ songs, index, positionMs }` (the songs as a page reads them), or null.
+    pub async fn queue_offer(&self, playing: bool, shown: Option<String>) -> Result<String, JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let Some(o) = client.queue_offer(playing, shown).await.map_err(error)? else { return Ok("null".into()) };
+        let songs: Vec<Value> = o.songs.iter().map(|s| pages::song(client.core(), s)).collect();
+        Ok(json!({ "songs": songs, "index": o.index, "positionMs": o.position_ms }).to_string())
+    }
+
+    /// The offer of `songs` (JSON) from `index`, `position_ms` in, was taken or turned down: that queue is
+    /// not offered again (`Client::queue_offer_done`, which keeps where it stands, not who left it).
+    pub fn queue_offer_done(&self, songs: String, index: u32, position_ms: f64) -> Result<(), JsValue> {
+        let client = self.client().ok_or_else(|| error("not signed in"))?;
+        let songs: Vec<nori_core::Song> = serde_json::from_str(&songs).map_err(error)?;
+        client.queue_offer_done(nori_core::library::QueueOffer { by: nori_core::library::QueueBy::Nori, songs, index, position_ms: position_ms as u64 });
+        Ok(())
+    }
+
     /// Cover `id`'s address for `px` square.
     pub fn cover(&self, id: String, px: u32) -> String {
         self.client().map_or_else(String::new, |c| pages::cover(c.core(), &id, px))
@@ -141,46 +160,146 @@ impl Nori {
 
     /// The colors the page wears on a date in the browser's zone, from the season and appearance
     /// settings: `{ season (the calendar's now), next, nextMonth, nextDay (the season after and its first day),
-    /// dark, page, surface, ink, ink2, hair, outline, accent, on, onAccent, still }`, the colors each a `#rrggbb`;
-    /// `still` when the Motion setting asks for less than full motion.
+    /// dark, page, surface, ink, ink2, hair, outline, accent, on, onAccent, still, tiles }`, the colors each a
+    /// `#rrggbb`; `still` when the Motion setting asks for less than full motion; `tiles` the four seasons'
+    /// `{ season, page, accent, on }` in the appearance worn (Night's, not black, in Midnight).
     /// `system_dark`: the browser's color scheme, followed while the appearance is System.
     pub fn theme(&self, month: u32, day: u32, zone: String, system_dark: bool) -> String {
-        use nori_look::theme::{roles, season_now, southern};
+        use nori_look::theme::{roles, season_now, southern, SEASONS};
         let prefs = self.app.settings.current().unwrap_or_default();
         let (palette, dark) = nori_core::settings::theme_palette(&prefs, system_dark, month, day, southern(&zone));
         let r = roles(palette);
         let now = season_now(month, day, southern(&zone));
         let name = |s: nori_look::theme::Season| format!("{s:?}").to_uppercase();
         let hex = |c: u32| format!("#{:06x}", c & 0xFF_FFFF);
+        let tiles: Vec<Value> = SEASONS
+            .iter()
+            .map(|&s| {
+                let p = s.palette(dark);
+                json!({ "season": name(s), "page": hex(p.page), "accent": hex(p.accent), "on": hex(p.on) })
+            })
+            .collect();
         json!({
             "season": name(now.season), "next": name(now.next), "nextMonth": now.next_month, "nextDay": now.next_day, "dark": dark, "page": hex(palette.page), "surface": hex(palette.surface), "ink": hex(palette.ink),
             "ink2": hex(r.on_surface_variant), "hair": hex(r.outline_variant), "outline": hex(r.outline),
             "accent": hex(palette.accent), "on": hex(palette.on), "onAccent": hex(r.on_primary),
-            "still": prefs.motion != nori_core::settings::Motion::Full,
+            "still": prefs.motion != nori_core::settings::Motion::Full, "tiles": tiles,
         })
         .to_string()
     }
 
-    /// What Now Playing wears for a cover, from `rgba` (a `w` x `h` copy the page decoded): `[colors,
-    /// wash]`, the colors JSON `{ page, surface, ink, ink2, outline, hair, accent, onAccent }` (each a
-    /// `#rrggbbaa`) and the wash (the cover blurred, RGBA, `washSide` square) or null; as Android's player.
-    pub fn cover_look(&self, rgba: Vec<u8>, w: u32, h: u32) -> js_sys::Array {
+    /// What a cover's page wears (an album's, an artist's, the player's), from `rgba` (a `w` x `h` copy
+    /// the page decoded), dyed on the season's paper as Android's pages are: `[colors, wash]`, the colors JSON
+    /// `{ page, surface, ink, ink2, outline, hair, accent, onAccent, heroEdge, heroMid, heroStops, melt,
+    /// washSide }` (each color a `#rrggbbaa`; `heroStops` where the artwork's dissolve reaches `heroEdge`,
+    /// `heroMid` and the page; `melt` the share of the player's sleeve that fades) and the wash (the cover
+    /// blurred, RGBA, `washSide` square) or null. Both null where the appearance wears no cover colors
+    /// (Midnight). The date, zone and `system_dark` as for [`Nori::theme`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn cover_look(&self, rgba: Vec<u8>, w: u32, h: u32, month: u32, day: u32, zone: String, system_dark: bool) -> js_sys::Array {
         use nori_look::dress;
-        let argb: Vec<u32> = rgba.chunks_exact(4).map(|p| u32::from_be_bytes([p[3], p[0], p[1], p[2]])).collect();
+        let prefs = self.app.settings.current().unwrap_or_default();
+        if !prefs.theme.covers_tint_pages() {
+            return js_sys::Array::of2(&JsValue::NULL, &JsValue::NULL);
+        }
+        let argb: Vec<u32> = rgba.as_chunks::<4>().0.iter().map(|&[r, g, b, a]| u32::from_be_bytes([a, r, g, b])).collect();
         let c = nori_look::cover::derive(&argb, w.max(1) as usize, h.max(1) as usize, false);
-        let t = dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
+        let south = nori_look::theme::southern(&zone);
+        let paper = |dark| nori_core::settings::season_palette(prefs.season, prefs.theme, dark, month, day, south);
+        let page = dress::page(c.edge, c.background, c.on, c.accent, c.wash_edge);
+        let dye = nori_look::theme::Dye::new(page[dress::EDGE], paper(false), paper(true), prefs.theme.is_dark(system_dark));
+        let t = dress::dyed(&page, &dye);
         let hex = |argb: u32| format!("#{:06x}{:02x}", argb & 0xFF_FFFF, argb >> 24);
         let side = c.wash.as_ref().map_or(0, |w| (w.len() as f64).sqrt() as u32);
         let colors = json!({
             "page": hex(t[dress::BACKGROUND]), "surface": hex(t[dress::SURFACE_CONTAINER]), "ink": hex(t[dress::ON]),
-            "ink2": hex(t[dress::ON_60]), "outline": hex(t[dress::ON_35]), "hair": hex(t[dress::VEIL_13]),
-            "accent": hex(t[dress::ACCENT]), "onAccent": hex(t[dress::ON_PRIMARY]), "washSide": side,
+            "ink2": hex(t[dress::ON_VARIANT]), "outline": hex(t[dress::ON_35]), "hair": hex(t[dress::OUTLINE_VARIANT]),
+            "accent": hex(t[dress::ACCENT]), "onAccent": hex(t[dress::ON_PRIMARY]),
+            "heroEdge": hex(t[dress::HERO_EDGE]), "heroMid": hex(t[dress::HERO_MID]), "heroStops": nori_look::sleeve::HERO_STOPS,
+            "melt": nori_look::cover::FADE_SHARE, "washSide": side,
         });
         let wash = c.wash.map_or(JsValue::NULL, |w| {
-            let bytes: Vec<u8> = w.iter().flat_map(|p| { let [a, r, g, b] = p.to_be_bytes(); [r, g, b, a] }).collect();
+            let bytes: Vec<u8> = w.iter().flat_map(|&p| { let [a, r, g, b] = dye.wash(p).to_be_bytes(); [r, g, b, a] }).collect();
             js_sys::Uint8ClampedArray::from(bytes.as_slice()).into()
         });
         js_sys::Array::of2(&JsValue::from_str(&colors.to_string()), &wash)
+    }
+
+    /// The album grid's orders, in the order offered, by name (`browse::album_sorts`): `newest`, `artistRows`, ...
+    pub fn album_sorts(&self) -> String {
+        Value::from(nori_core::browse::album_sorts().iter().map(|s| s.name()).collect::<Vec<_>>()).to_string()
+    }
+
+    /// The album grid's order as it was left, by name (`browse::album_sort_saved`).
+    pub fn album_sort(&self) -> String {
+        let prefs = self.app.settings.current().unwrap_or_default();
+        nori_core::browse::album_sort_saved(prefs.list_prefs).name().into()
+    }
+
+    /// Keeps `name` as the album grid's order (`browse::album_sort_kept`).
+    pub fn keep_album_sort(&self, name: String) -> Result<(), JsValue> {
+        let sort = nori_core::browse::AlbumSort::of_name(&name).ok_or_else(|| error(format!("no album order {name}")))?;
+        let kept = nori_core::browse::album_sort_kept(sort);
+        let mut prefs = self.app.settings.current().unwrap_or_default();
+        prefs.list_prefs.insert(kept.key, kept.value);
+        self.app.settings.put(prefs);
+        Ok(())
+    }
+
+    /// Where each artist's shelf starts among `albums` (JSON, in the Artist order: `browse::artist_rows`).
+    pub fn artist_rows(&self, albums: String) -> Result<String, JsValue> {
+        let albums: Vec<nori_core::Album> = serde_json::from_str(&albums).map_err(error)?;
+        Ok(Value::from(nori_core::browse::artist_rows(albums)).to_string())
+    }
+
+    /// The rows of `rows` (JSON, each a list of fields) that `filter` keeps, by position (`pages::TextIndex::view`).
+    pub fn filter_rows(&self, rows: String, filter: String) -> Result<String, JsValue> {
+        let rows: Vec<Vec<String>> = serde_json::from_str(&rows).map_err(error)?;
+        Ok(Value::from(nori_core::pages::TextIndex::new(rows).view(filter).rows).to_string())
+    }
+
+    /// Home's rows that a browser draws, in the order kept (`browse::home_rows_shown`, `home_shelves`):
+    /// `[{ row, kind: "albums", sort, size } | { row, kind: "playlists", take }]`, `row` the `HomeRow`'s
+    /// name. The songs shelf reads the offline index and the pinned playlists are pinned on a phone,
+    /// neither of which a browser keeps.
+    pub fn home_rows(&self) -> String {
+        use nori_core::browse::{home_rows_shown, home_shelves, HomeShelf};
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let rows = home_rows_shown(prefs.home_rows.clone(), self.rules().account);
+        let shelves = home_shelves(rows.clone());
+        let out: Vec<Value> = rows
+            .iter()
+            .zip(shelves)
+            .filter_map(|(row, shelf)| match shelf {
+                HomeShelf::Albums { sort, size, .. } => Some(json!({ "row": format!("{row:?}"), "kind": "albums", "sort": sort.name(), "size": size })),
+                HomeShelf::Playlists { take } => Some(json!({ "row": format!("{row:?}"), "kind": "playlists", "take": take })),
+                HomeShelf::Songs { .. } | HomeShelf::Pinned => None,
+            })
+            .collect();
+        Value::from(out).to_string()
+    }
+
+    /// The Library page's sections a browser has, in the order kept (`browse::library_sections_shown`), by
+    /// name: those it shows as pills, and `Favourites` where it is one of its places.
+    pub fn library_sections(&self) -> String {
+        use nori_core::settings::LibrarySection::*;
+        let prefs = self.app.settings.current().unwrap_or_default();
+        let shown = nori_core::browse::library_sections_shown(prefs.library_sections, self.rules().sections);
+        let drawn: Vec<String> = shown.into_iter().filter(|s| matches!(s, Albums | Artists | Songs | Playlists | Genres | Favourites)).map(|s| format!("{s:?}")).collect();
+        Value::from(drawn).to_string()
+    }
+
+    /// What the head of a page's song list offers, in order (`menus::page_actions`), by name, for `kind`
+    /// (`Album`, `Artist`, `Playlist`) with `songs` songs. A browser keeps no downloads.
+    pub fn page_actions(&self, kind: String, songs: u32) -> Result<String, JsValue> {
+        use nori_core::menus::{page_actions, PageKind};
+        let kind = match kind.as_str() {
+            "Album" => PageKind::Album,
+            "Artist" => PageKind::Artist,
+            "Playlist" => PageKind::Playlist,
+            _ => return Err(error(format!("no page {kind}"))),
+        };
+        Ok(Value::from(page_actions(kind, songs, 0, false).iter().map(|a| format!("{a:?}")).collect::<Vec<_>>()).to_string())
     }
 
     /// The settings `names` (comma separated) as `{ name: value }`.
@@ -247,7 +366,7 @@ impl Nori {
                         v["named"] = json!(named);
                         "GoToArtist"
                     }
-                    a => return json!({ "action": format!("{a:?}"), "more": m.more }),
+                    a => return json!({ "action": format!("{a:?}"), "more": m.more, "enabled": m.enabled }),
                 };
                 v["action"] = json!(action);
                 v
