@@ -2367,8 +2367,14 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     // Coming on screen: straight to the song, in the frame being made - a side effect runs after this
     // composition and before its frame is drawn, where an effect would start a frame later.
     val wasLive = remember { booleanArrayOf(false) }
+    val eink = LocalEinkScreen.current
+    val einkShown = remember { mutableLongStateOf(0L) }
     androidx.compose.runtime.SideEffect {
-        if (live && !wasLive[0]) { pace.sync(vm.positionMs, length); publish() }
+        if (live && !wasLive[0]) {
+            pace.sync(vm.positionMs, length)
+            publish()
+            if (eink) einkShown.longValue = CoverLook.einkSeek(vm.positionMs, length)
+        }
         wasLive[0] = live
     }
     // Paused, the loop settles the bar and stops - nothing ticks over a paused song - so anything that
@@ -2377,17 +2383,16 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     // twice, as it is asked and as it lands, mid-glide: a loop stepped a moment ago steps on from that
     // step in its first frame (waiting a frame for a time to count from held the bar still for it).
     val stepped = remember { longArrayOf(0L) }
-    // An e-ink screen sets the bar and times where the song is on each of those, and steps them on
-    // every EINK_STEP_MS while the music plays: one redraw of the panel in that time, not a glide.
-    val eink = LocalEinkScreen.current
+    // An e-ink screen shows the song in whole blocks and whole minutes (`CoverLook.einkSeek`), set on
+    // each of those and stepped only when one of them changes: a few panel refreshes a song.
     LaunchedEffect(free, live, playing, state.current?.id, state.index, durationMs, watched, eink) {
         if (!free || !live) return@LaunchedEffect
         if (eink) {
             while (isActive) {
-                pace.sync(vm.positionMs, length)
-                publish()
+                val shown = CoverLook.einkSeek(vm.positionMs, length)
+                einkShown.longValue = shown
                 if (!playing) break
-                kotlinx.coroutines.delay(EINK_STEP_MS)
+                kotlinx.coroutines.delay(shown and 0xFFFF_FFFFL)
             }
             return@LaunchedEffect
         }
@@ -2458,6 +2463,17 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
                     val h = thickness.value.dp.toPx()
                     val y = (size.height - h) / 2f
                     val r = CornerRadius(h / 2f, h / 2f)
+                    val blocks = if (eink && !dragging.value && hold == null) (einkShown.longValue ushr 56).toInt() else 0
+                    if (blocks > 0) {
+                        val played = ((einkShown.longValue ushr 48) and 0xFF).toInt()
+                        val gap = EINK_BLOCK_GAP.toPx()
+                        val w = (size.width - gap * (blocks - 1)) / blocks
+                        for (i in 0 until blocks) drawRoundRect(if (i < played) filled else track, Offset(i * (w + gap), y), Size(w, h), r)
+                        // The playhead stands in the gap after the last block played.
+                        val x = if (played == 0) 0f else if (played == blocks) size.width else played * (w + gap) - gap / 2f
+                        drawCircle(look.color(CoverLook.ACCENT), h * 0.7f, Offset(x, size.height / 2f))
+                        return@drawBehind
+                    }
                     drawRoundRect(track, Offset(0f, y), Size(size.width, h), r)
                     drawRoundRect(filled, Offset(0f, y), Size(size.width * f, h), r)
                     // The playhead is the accent: a dot at rest, bigger under the finger.
@@ -2465,7 +2481,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
                 },
         )
         val mixing = vm.mixing.collectAsStateWithLifecycle()
-        SeekTimes(times, fadingFrom, fade, dragging, drag, held, durationMs, state.error, state.sleepAtEndOfTrack, state.sleepAt, mixing)
+        SeekTimes(times, fadingFrom, fade, dragging, drag, held, if (eink) einkShown else null, durationMs, state.error, state.sleepAtEndOfTrack, state.sleepAt, mixing)
     }
 }
 
@@ -2479,7 +2495,7 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
 private fun SeekTimes(
     times: androidx.compose.runtime.LongState, fadingFrom: androidx.compose.runtime.LongState, fade: androidx.compose.runtime.FloatState,
     dragging: androidx.compose.runtime.State<Boolean>, drag: androidx.compose.runtime.FloatState, held: androidx.compose.runtime.State<Long?>,
-    durationMs: Long, error: String?, sleepAtEndOfTrack: Boolean, sleepAt: Long, mixing: androidx.compose.runtime.State<Boolean>,
+    eink: androidx.compose.runtime.LongState?, durationMs: Long, error: String?, sleepAtEndOfTrack: Boolean, sleepAt: Long, mixing: androidx.compose.runtime.State<Boolean>,
 ) {
     val look = LocalLook.current
     val quiet = androidx.compose.ui.graphics.ColorProducer { look.color(CoverLook.ON_VARIANT) }
@@ -2496,8 +2512,12 @@ private fun SeekTimes(
     // The new times come in as the old ones go; with nothing fading this is 1 and the old layer draws nothing.
     val inAlpha = Modifier.graphicsLayer { alpha = if (gone() < 0) 1f else fade.floatValue }
     val outAlpha = Modifier.graphicsLayer { alpha = 1f - fade.floatValue }
+    // On e-ink, the whole minutes played and the song's length, unless a finger has the bar: read here, so
+    // they recompose once a minute rather than redrawing each second.
+    val still = eink != null && !dragging.value && held.value == null
     Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
-        Box {
+        if (still) LookText(say.minutesPlayed(((eink!!.longValue ushr 32) and 0xFFFF).toInt()), quiet, style = style, maxLines = 1)
+        else Box {
             LookTime({ gone().let { if (it < 0) "" else duration(it ushr 32) } }, duration(longest), quiet, style, end = false, modifier = outAlpha)
             LookTime({ duration(now() ushr 32) }, duration(longest), quiet, style, end = false, modifier = inAlpha)
         }
@@ -2524,7 +2544,8 @@ private fun SeekTimes(
             // An error or the sleep timer has the slot to itself.
             MixingLabel(mixing, free = centre.isEmpty(), quiet)
         }
-        Box {
+        if (still) LookTime({ if (durationMs > 0) duration(longest) else "" }, duration(longest), quiet, style, end = true)
+        else Box {
             LookTime({ gone().let { if (it < 0) "" else durationLeft(it and 0xFFFF_FFFFL) } }, durationLeft(longest), quiet, style, end = true, modifier = outAlpha)
             LookTime({ durationLeft(now() and 0xFFFF_FFFFL) }, durationLeft(longest), quiet, style, end = true, modifier = inAlpha)
         }
@@ -2991,5 +3012,5 @@ private fun UndoPill(undo: QueueUndo<Song>, plain: Boolean, modifier: Modifier, 
     }
 }
 
-/** How often an e-ink screen's seek bar and times move on while the music plays. */
-private const val EINK_STEP_MS = 30_000L
+/** The space between an e-ink seek bar's blocks. */
+private val EINK_BLOCK_GAP = 3.dp
