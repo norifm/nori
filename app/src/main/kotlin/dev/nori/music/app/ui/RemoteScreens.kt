@@ -52,7 +52,7 @@ import dev.nori.music.ffi.remote.Refusal
 import dev.nori.music.ffi.remote.Role
 
 /** A device's glyph. */
-private fun kindIcon(kind: DeviceKind): ImageVector = when (kind) {
+internal fun kindIcon(kind: DeviceKind): ImageVector = when (kind) {
     DeviceKind.PHONE -> Iconoir.SmartphoneDevice
     DeviceKind.DESKTOP -> Iconoir.Computer
     DeviceKind.TERMINAL -> Iconoir.Terminal

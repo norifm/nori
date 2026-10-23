@@ -62,9 +62,11 @@ pub fn kind(t: i32) -> OutputKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum OutputGlyph {
+    /// The phone's own speaker.
+    Phone,
     Headphones,
     Bluetooth,
-    /// The speaker and anything else.
+    /// Anything else (HDMI, a dock, a cast target).
     Cast,
 }
 
@@ -85,7 +87,8 @@ pub fn output_look(output: String) -> OutputLook {
     let glyph = match port {
         OutputPort::Usb | OutputPort::Wired => OutputGlyph::Headphones,
         OutputPort::Bluetooth => OutputGlyph::Bluetooth,
-        _ => OutputGlyph::Cast,
+        OutputPort::Speaker => OutputGlyph::Phone,
+        OutputPort::Other => OutputGlyph::Cast,
     };
     OutputLook { glyph, port, name: name.map(str::to_string) }
 }
@@ -240,7 +243,7 @@ mod tests {
         assert_eq!(l("USB: K3"), OutputGlyph::Headphones);
         assert_eq!(l("Wired headphones"), OutputGlyph::Headphones);
         assert_eq!(l("Bluetooth: buds"), OutputGlyph::Bluetooth);
-        assert_eq!(l(outputs::SPEAKER), OutputGlyph::Cast);
+        assert_eq!(l(outputs::SPEAKER), OutputGlyph::Phone);
         assert_eq!(l("HDMI"), OutputGlyph::Cast);
         let buds = output_look("Bluetooth: buds".into());
         assert_eq!((buds.port, buds.name.as_deref()), (OutputPort::Bluetooth, Some("buds")));

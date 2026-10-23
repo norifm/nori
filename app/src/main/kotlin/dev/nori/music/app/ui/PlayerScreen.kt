@@ -777,8 +777,9 @@ private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?
 } ?: PlayerTitleMeta(null, say.playerIdle(radio), "", "", null, null)
 
 /**
- * Where the sound is going, and one tap to change it. The speaker is filled and lit only while
- * [otherDevice] plays (the core's `Remote::active`); this phone's own outputs leave it an outline.
+ * Where the sound is going, and one tap to change it: the glyph is what plays - another device of
+ * [otherDevice]'s kind (the core's `Remote::active`), lit, or this phone's own output (its speaker,
+ * headphones, Bluetooth).
  *
  * The picker itself is Android's own: `Settings.Panel.ACTION_MEDIA_OUTPUT` is the documented way in
  * and lists Bluetooth, wired, USB and any Cast target the system knows about - far more than this app
@@ -788,7 +789,7 @@ private fun playerTitleMeta(song: dev.nori.music.ffi.model.Song?, radio: String?
  */
 @Composable
 internal fun OutputButton(
-    otherDevice: Boolean, size: androidx.compose.ui.unit.Dp,
+    otherDevice: dev.nori.music.ffi.remote.DeviceKind?, size: androidx.compose.ui.unit.Dp,
     idle: androidx.compose.ui.graphics.ColorProducer, lit: androidx.compose.ui.graphics.ColorProducer,
     named: Boolean = false,
 ) {
@@ -796,7 +797,12 @@ internal fun OutputButton(
     val output by settings.currentOutput.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val o = remember(output) { dev.nori.music.ffi.devices.outputLook(output) }
-    val icon = if (otherDevice) Iconoir.SoundHighSolid else Iconoir.SoundHigh
+    val icon = otherDevice?.let(::kindIcon) ?: when (o.glyph) {
+        dev.nori.music.ffi.devices.OutputGlyph.PHONE -> Iconoir.SmartphoneDevice
+        dev.nori.music.ffi.devices.OutputGlyph.HEADPHONES -> Iconoir.Headset
+        dev.nori.music.ffi.devices.OutputGlyph.BLUETOOTH -> Iconoir.BluetoothTag
+        dev.nori.music.ffi.devices.OutputGlyph.CAST -> Iconoir.Airplay
+    }
     val description = remember(o) { say.outputDescription(o.port, o.name) }
     // With remote control or jams on, the button opens nori's own devices first (RemoteScreens); this
     // phone's outputs are one row of it.
@@ -805,7 +811,7 @@ internal fun OutputButton(
     val openDevices = LocalDevices.current
     val tell = LocalMessages.current
     val open = { if (devices) openDevices() else openOutputPicker(context, output, tell) }
-    val color = if (otherDevice) lit else idle
+    val color = if (otherDevice != null) lit else idle
     // The device's name beside the glyph, both one target.
     if (named) Row(
         Modifier.clip(RoundedCornerShape(Radius.pill)).clickable(onClick = open).heightIn(min = 48.dp).padding(horizontal = 14.dp),
@@ -2217,7 +2223,7 @@ private fun OutputRow(vm: PlayerViewModel) {
         val jamOn = jam
         if (jamOn != null) JamButton(jamOn, 20.dp, idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ACCENT) })
         else if (!state.jamGuest) OutputButton(
-            state.playingOn != null, 20.dp,
+            state.playingOnKind, 20.dp,
             idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
             named = true,
         )
