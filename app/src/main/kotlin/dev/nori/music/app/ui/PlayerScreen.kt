@@ -1168,10 +1168,6 @@ private fun SleeveShade(strength: FloatReader) {
     )
 }
 
-/** How much of the cover in flight, from its bottom, goes soft. */
-private const val FLIGHT_EDGE = 0.3f
-private val softBottom = Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black)
-
 /** 0 up to [from], 1 from [to] on, and a smooth step in between. */
 private fun smooth(x: Float, from: Float, to: Float): Float {
     val t = ((x - from) / (to - from)).coerceIn(0f, 1f)
@@ -1214,21 +1210,13 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
         val w = constraints.maxWidth.toFloat()
         val h = w / SLEEVE
         val side = with(density) { h.toDp() }
-        // The sleeve's band stays where it is, blurred as it is, while the cover rises under it; it goes
-        // once the cover's bottom has come up past the title, over a quarter of the sleeve.
-        val band = FloatReader {
-            val t = sheet.progress.value.coerceIn(0f, 1f)
-            val from = sheet.miniCover.translate(-sheet.closed())
-            val k = (from.height + (h - from.height) * t) / h
-            val bottom = from.center.y + (h / 2f - from.center.y) * t + h * k / 2f
-            val gone = h * (1f - MELT)
-            smooth(bottom, gone - h * 0.25f, gone)
-        }
         // The sleeve's soft bottom is there before the record arrives and stays when it has gone: the same
         // rows of the sheet, rubbed out of whatever flies through them (see SoftSleeve). The cover never
         // leaves the sleeve's rows on the way - it grows from the thumbnail near the sheet's top edge into
-        // the sleeve that starts there - so the layer is the sleeve's size, not the screen's.
-        SoftSleeve(Modifier.fillMaxWidth().height(side), blur = band) {
+        // the sleeve that starts there - so the layer is the sleeve's size, not the screen's. The band's blur is
+        // there the whole way: whatever part of the record is behind the title and controls is blurred, and
+        // only what has risen above them is sharp, so its edge sharpens as it passes up through the band.
+        SoftSleeve(Modifier.fillMaxWidth().height(side)) {
             Box(
                 Modifier.requiredSize(side).align(Alignment.TopStart)
                     .graphicsLayer {
@@ -1263,18 +1251,6 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
                         translationY = mix(from.center.y, size.height / 2f) - size.height * k / 2f
                         shape = shapes.of(thumbRadius * (1f - t) / k)
                         clip = true
-                        compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
-                    }
-                    // The cover's own bottom goes soft while it is away from the sleeve, so rising or sinking it has
-                    // no hard edge to show; the sleeve's band takes over from there on arrival, where this is gone.
-                    .drawWithContent {
-                        drawContent()
-                        val soft = 1f - band.read()
-                        if (soft > 0f) drawRect(
-                            softBottom, topLeft = Offset(0f, size.height * (1f - FLIGHT_EDGE)),
-                            size = androidx.compose.ui.geometry.Size(size.width, size.height * FLIGHT_EDGE),
-                            alpha = soft, blendMode = BlendMode.DstOut,
-                        )
                     },
             ) {
                 // The sleeve's placeholder, then the bar's small picture of this song over it while the
