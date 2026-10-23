@@ -301,6 +301,16 @@ impl Store {
         self.counted()
     }
 
+    /// Bytes the finished downloads hold, counted from disk.
+    pub fn download_bytes(&self) -> u64 {
+        let Ok(dir) = fs::read_dir(self.dir.join(DOWNLOADS)) else { return 0 };
+        dir.flatten()
+            .filter(|e| e.file_name().to_str().is_some_and(|n| !n.ends_with(PART)))
+            .filter_map(|e| e.metadata().ok())
+            .map(|m| m.len())
+            .sum()
+    }
+
     fn entries(&self) -> Vec<(String, u64)> {
         let Ok(dir) = fs::read_dir(self.dir.join(STREAM)) else { return Vec::new() };
         dir.filter_map(|e| {
@@ -577,6 +587,16 @@ mod tests {
         drop(w);
         assert!(!s.writing("b:0"));
         assert!(fs::read_dir(s.dir.join(STREAM)).unwrap().count() == 1, "an entry let go leaves nothing behind");
+    }
+
+    #[test]
+    fn download_bytes_count_finished_downloads_only() {
+        let d = dir("store-downloads");
+        let s = Store::open(d.path(), 1 << 20).unwrap();
+        fs::write(s.download_path("a"), [0u8; 300]).unwrap();
+        fs::write(s.download_part("b", "0"), [0u8; 50]).unwrap();
+        put(&s, "c:0", 70);
+        assert_eq!(s.download_bytes(), 300);
     }
 
     #[test]
