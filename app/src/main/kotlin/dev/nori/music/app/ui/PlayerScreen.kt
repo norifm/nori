@@ -820,7 +820,7 @@ internal fun OutputButton(
         LookIcon(icon, description, Modifier.size(size), color)
         LookText(
             say.outputName(o.port, o.name), color, Modifier.weight(1f, fill = false),
-            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp),
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
     } else IconButton(open) {
@@ -2199,7 +2199,7 @@ private fun OutputRow(vm: PlayerViewModel) {
         val jamOn = jam
         if (jamOn != null) JamButton(jamOn, 20.dp, idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ACCENT) })
         else if (!state.jamGuest) OutputButton(
-            state.playingOnKind, 20.dp,
+            state.playingOnKind, 22.dp,
             idle = { look.color(CoverLook.ON_VARIANT) }, lit = { look.color(CoverLook.ON) },
             named = true,
         )

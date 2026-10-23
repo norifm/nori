@@ -539,7 +539,7 @@ fun GroupCard(modifier: Modifier = Modifier, content: @Composable androidx.compo
 private val GROUP_MARGIN = 16.dp
 /** How far a [GroupRow]'s content stands in from the card's sides, and the gap after its icon. */
 internal val GROUP_INSET = 14.dp
-private val GROUP_ICON = 24.dp
+private val GROUP_ICON = 20.dp
 
 /**
  * A row of a [GroupCard]: an optional [icon] in ink, a title and maybe a quiet line under it, a quiet [value],
