@@ -581,30 +581,15 @@ private data class RankDrag(val id: String, val from: List<String>, val to: Int,
     val shown: List<String> = from.toMutableList().apply { remove(id); add(to, id) }
 }
 
-/**
- * The usage parts' colors, in [SettingRow.Usage.parts] order: the season worn's accent, the other three
- * seasons' accents as this appearance wears them, then a share of the ink. Four hues and a grey that tell
- * the parts apart in any season.
- */
-@Composable
-private fun rememberUsageColors(): List<Color> {
-    val papers = LocalPapers.current
-    val ink = MaterialTheme.colorScheme.onSurfaceVariant
-    return remember(papers, ink) {
-        val dark = papers.darkTheme
-        val worn = (if (dark) papers.dark else papers.light).accent.toInt()
-        val others = dev.nori.music.ffi.look.Season.entries
-            .map { dev.nori.music.ffi.look.palette(it, 1u, 1u, false, dark, false).accent.toInt() }
-            .filter { it != worn }
-        (listOf(worn) + others).map(::Color) + ink
-    }
-}
+/** Where the downloads are in [SettingRow.Usage.parts]. */
+private const val DOWNLOADS_PART = 1
 
 /** What is stored on this device: the total, one bar split by kind, and a line per kind with its dot. */
 @Composable
 private fun UsageBar(row: SettingRow.Usage, divider: Boolean) {
     val total = row.parts.sumOf { it.bytes }.coerceAtLeast(1)
-    val colors = rememberUsageColors()
+    // The core's accents (`usage_accents`), then a share of the ink.
+    val colors = row.accents.map(::Color) + MaterialTheme.colorScheme.onSurfaceVariant
     Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(row.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
@@ -624,6 +609,13 @@ private fun UsageBar(row: SettingRow.Usage, divider: Boolean) {
                 Box(Modifier.size(8.dp).clip(androidx.compose.foundation.shape.CircleShape).background(colors[i % colors.size]))
                 Text(p.label, Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(p.size, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // The downloads, each profile's under them, in from the dot.
+            if (i == DOWNLOADS_PART) row.byProfile.forEach { d ->
+                Row(Modifier.padding(start = 16.dp, top = 1.dp, bottom = 1.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(d.label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Text(d.size, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }

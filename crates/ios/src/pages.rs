@@ -1583,7 +1583,8 @@ pub extern "C" fn nori_ios_facts() -> *mut c_char {
             "songs": index.songs, "albums": index.albums, "artists": index.artists,
             "downloaded": counts.done, "pending": counts.pending,
             "stream": s.store.as_ref().map_or(0, |st| st.cache_bytes()),
-            "downloadBytes": s.store.as_ref().map_or(0, |st| st.download_bytes()),
+            // This profile's: the store holds every profile's downloads.
+            "downloadBytes": s.store.as_ref().map_or(0, |st| st.download_bytes_of(&s.core.download_ids(true).unwrap_or_default())),
             "db": std::fs::metadata(&s.db).map(|m| m.len()).unwrap_or(0),
         }))
     })
