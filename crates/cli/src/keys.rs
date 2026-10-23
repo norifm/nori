@@ -83,7 +83,6 @@ pub enum Action {
 pub enum Scope {
     Global,
     List,
-    Grid,
     Edit,
     Lyrics,
     Eq,
@@ -92,13 +91,12 @@ pub enum Scope {
 
 impl Scope {
     /// Help overlay order.
-    pub const ALL: [Scope; 7] = [Scope::Global, Scope::List, Scope::Grid, Scope::Edit, Scope::Lyrics, Scope::Eq, Scope::Values];
+    pub const ALL: [Scope; 6] = [Scope::Global, Scope::List, Scope::Edit, Scope::Lyrics, Scope::Eq, Scope::Values];
 
     pub fn title(self) -> &'static str {
         match self {
             Scope::Global => "Everywhere",
             Scope::List => "Lists and pages",
-            Scope::Grid => "Albums, as cards",
             Scope::Edit => "The queue (and downloads)",
             Scope::Lyrics => "Lyrics",
             Scope::Eq => "Equalizer",
@@ -132,7 +130,7 @@ pub const BINDINGS: &[Binding] = &[
     b!(Global, "space", Action::TogglePlay, "Play or pause", [(Char(' '), N)]),
     b!(Global, "n / p", Action::Next, "Next song, previous (or the start of this one)", [(Char('n'), N)]),
     b!(Global, "", Action::Previous, "", [(Char('p'), N)]),
-    b!(Global, "← → / , .", Action::SeekBack, "Back or forward 5 seconds (in a grid ← → move: , . seek)", [(Left, N), (Char(','), N)]),
+    b!(Global, "← → / , .", Action::SeekBack, "Back or forward 5 seconds", [(Left, N), (Char(','), N)]),
     b!(Global, "", Action::SeekForward, "", [(Right, N), (Char('.'), N)]),
     b!(Global, "shift ← → / < >", Action::SeekBackLong, "Back or forward 30 seconds", [(Left, S), (Char('<'), N), (Char('<'), S)]),
     b!(Global, "", Action::SeekForwardLong, "", [(Right, S), (Char('>'), N), (Char('>'), S)]),
@@ -180,8 +178,8 @@ pub const BINDINGS: &[Binding] = &[
     b!(List, "D", Action::Download, "Download", [(Char('D'), S), (Char('D'), N)]),
     b!(List, "f", Action::Star, "Favorite or not", [(Char('f'), N)]),
     b!(List, "i", Action::Jam, "Start a jam with it: it plays, and friends with the link ask for songs", [(Char('i'), N)]),
-    b!(Grid, "← →", Action::Left, "Move along the row", [(Left, N)]),
-    b!(Grid, "", Action::Right, "", [(Right, N)]),
+    b!(List, "[ ]", Action::GroupBack, "The library's section, or the settings' group, before or after", [(Char('['), N)]),
+    b!(List, "", Action::GroupOn, "", [(Char(']'), N)]),
     b!(Edit, "d / delete", Action::Remove, "Take it out (of the queue, or off this computer); refuse a jam request (enter accepts)", [(Char('d'), N), (Delete, N)]),
     b!(Edit, "u", Action::Undo, "Put back the song just taken out of the queue", [(Char('u'), N)]),
     b!(Edit, "K / J", Action::MoveUp, "Move it up or down", [(Char('K'), S), (Char('K'), N)]),
@@ -197,8 +195,6 @@ pub const BINDINGS: &[Binding] = &[
     b!(Eq, "enter", Action::Open, "Switch, choose presets, add a band, back to flat", [(Enter, N)]),
     b!(Eq, "d / delete", Action::Remove, "Remove the band (parametric)", [(Char('d'), N), (Delete, N)]),
     b!(Values, "e", Action::Key, "Add or change a lyrics service's key", [(Char('e'), N)]),
-    b!(Values, "[ ]", Action::GroupBack, "The group before or after", [(Char('['), N)]),
-    b!(Values, "", Action::GroupOn, "", [(Char(']'), N)]),
     b!(Values, "← → / h l", Action::Decrease, "Change the value (seek with , and . here)", [(Left, N), (Char('h'), N)]),
     b!(Values, "", Action::Increase, "", [(Right, N), (Char('l'), N)]),
     b!(Values, "enter", Action::Open, "Switch, choose or open", [(Enter, N)]),
@@ -233,7 +229,6 @@ mod tests {
         assert_eq!(action(&right, &[Scope::Values, Scope::List, Scope::Global]), Some(Action::Increase));
         assert_eq!(action(&key(Char('h'), N), &[Scope::List, Scope::Global]), Some(Action::Back));
         assert_eq!(action(&key(Char('d'), N), &[Scope::Edit, Scope::List, Scope::Global]), Some(Action::Remove));
-        assert_eq!(action(&key(Left, N), &[Scope::Grid, Scope::List, Scope::Global]), Some(Action::Left));
         assert_eq!(action(&key(Char('G'), S), &[Scope::List, Scope::Global]), Some(Action::Bottom));
 
         // Each scope starts labelled.

@@ -128,7 +128,6 @@ struct Runner {
     picker: Option<Picker>,
     /// Pending cover requests; dropping a ticket cancels the fetch.
     tickets: Vec<nori_covers::loader::Ticket>,
-    thumb_tickets: Vec<nori_covers::loader::Ticket>,
     /// Id of the audible song last shown.
     heard: Option<String>,
     /// Rewrite the whole screen, pictures included, at the next draw.
@@ -192,7 +191,6 @@ pub fn run(o: Options) -> Result<(), String> {
     app.retheme();
     app.mouse = mouse;
     app.images = images;
-    app.card_covers = own::flag(own::CARD_COVERS, true);
     app.offline = o.offline;
     app.volume = own::number(own::VOLUME, 1.0);
     app.protocol = picker.as_ref().map_or("off", |p| protocol_name(p.protocol_type()));
@@ -200,7 +198,7 @@ pub fn run(o: Options) -> Result<(), String> {
     app.settings.own.device = own::text(own::DEVICE).unwrap_or_default();
     let art = picker.clone().map(Art::new);
     let mpris = o.mpris.then(|| nori_mpris::Mpris::start(&format!("nori.instance{}", std::process::id())).ok().map(Arc::new)).flatten();
-    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), thumb_tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
+    let mut r = Runner { http: Http::new(), tx, session: None, lyrics_viewed: false, mpris, art, picker, tickets: Vec::new(), heard: None, repaint: false, unseen_cover: false, playback: Playback::Here, queue: None, #[cfg(feature = "sign-in-window")] sign_in_window: None, o };
     match prefs.active_server().cloned() {
         Some(p) => r.open(&mut app, p),
         None => app.view = View::Login,
@@ -244,9 +242,9 @@ impl Runner {
                 self.heard = None;
                 // Fresh screens for the new server, keeping client-wide state.
                 let prefs = app.prefs.clone();
-                let keep = (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.data.clone(), app.colors, app.paint, app.reduced_motion);
+                let keep = (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server.clone(), app.settings.own.data.clone(), app.colors, app.paint, app.reduced_motion);
                 *app = App::new(prefs);
-                (app.mouse, app.images, app.card_covers, app.volume, app.protocol, app.offline, app.server, app.settings.own.data, app.colors, app.paint, app.reduced_motion) = keep;
+                (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own.data, app.colors, app.paint, app.reduced_motion) = keep;
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
                 if self.session.as_ref().is_some_and(|s| s.client.reminds_to_sign_in()) {
@@ -552,15 +550,7 @@ impl Runner {
                 app.settings.invalidate();
                 return;
             }
-            Cmd::CardCovers(on) => {
-                own::keep(own::CARD_COVERS, on.to_string());
-                app.card_covers = on;
-                app.settings.invalidate();
-                app.say(if on { "Covers on album cards" } else { "No covers on album cards" }, false);
-                return;
-            }
             Cmd::Images(on) => {
-                app.thumbs_asked.clear();
                 own::keep(own::IMAGES, on.to_string());
                 app.images = on;
                 app.settings.invalidate();
@@ -572,9 +562,8 @@ impl Runner {
                 if !on {
                     self.art = None;
                     self.tickets.clear();
-                    self.thumb_tickets.clear();
                 }
-                app.say(if on { "Covers on (from the next song or page; restart to fetch covers again)" } else { "Covers off" }, false);
+                app.say(if on { "Covers on (from the next song; restart to fetch covers again)" } else { "Covers off" }, false);
                 return;
             }
             Cmd::OfferSignIn => return self.offer_sign_in(app),
@@ -757,26 +746,15 @@ impl Runner {
                 s.search_server(q);
             }
             Cmd::Lyrics(id) => s.lyrics(id),
-            Cmd::Cover { art, colours } => {
-                if self.art.as_ref().is_some_and(|a| a.has(&art)) && !colours {
-                    return;
-                }
-                if let Some(t) = s.cover(art, COVER_PX, colours) {
+            Cmd::Cover(art) => {
+                if let Some(t) = s.cover(art, COVER_PX) {
                     self.tickets.push(t);
                     if self.tickets.len() > 4 {
                         drop(self.tickets.remove(0));
                     }
                 }
             }
-            Cmd::Thumb(art) => {
-                if let Some(t) = s.thumb(art, crate::art::THUMB_PX) {
-                    self.thumb_tickets.push(t);
-                    if self.thumb_tickets.len() > 150 {
-                        drop(self.thumb_tickets.remove(0));
-                    }
-                }
-            }
-            Cmd::Quit | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::CardCovers(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding => {}
+            Cmd::Quit | Cmd::Mouse(_) | Cmd::Images(_) | Cmd::Paint(_) | Cmd::Device(_) | Cmd::Login(_) | Cmd::SwitchServer(_) | Cmd::Setting(..) | Cmd::JoinJam(_) | Cmd::OfferSignIn | Cmd::SignInWindow | Cmd::SignIn(_) | Cmd::SignOut | Cmd::StopReminding => {}
         }
     }
 

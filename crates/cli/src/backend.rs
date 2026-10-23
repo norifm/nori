@@ -143,8 +143,6 @@ pub struct Downloads {
     pub finished: usize,
 }
 
-/// Key prefix of album card covers in [`crate::art::Art`]: `thumb:<cover id>`.
-pub const THUMB: &str = "thumb:";
 
 /// Logs `draft` in and keeps it as the active profile (blocking): the core checks it with its provider
 /// (a server is tried through its second address, then with legacy auth, which the profile then keeps).
@@ -160,7 +158,6 @@ pub mod own {
     pub use nori_host::desktop::own::{flag, keep, number, text};
     pub const MOUSE: &str = "tui.mouse";
     pub const IMAGES: &str = "tui.images";
-    pub const CARD_COVERS: &str = "tui.cardCovers";
     pub const PAINT: &str = "tui.paint";
     pub const VOLUME: &str = "tui.volume";
     /// Output device name opened at start; empty for the system default.
@@ -281,18 +278,9 @@ impl Session {
     }
 
     /// Requests cover `art` at `size` px, deriving colours on the loader thread when `colours`.
-    pub fn cover(&self, art: String, size: u32, colours: bool) -> Option<nori_covers::loader::Ticket> {
-        self.cover_as(art.clone(), art, size, colours)
-    }
-
-    /// Requests an album card cover, delivered under the key `thumb:<art>`.
-    pub fn thumb(&self, art: String, size: u32) -> Option<nori_covers::loader::Ticket> {
-        self.cover_as(art.clone(), format!("{THUMB}{art}"), size, false)
-    }
-
-    fn cover_as(&self, id: String, art: String, size: u32, colours: bool) -> Option<nori_covers::loader::Ticket> {
+    pub fn cover(&self, art: String, size: u32) -> Option<nori_covers::loader::Ticket> {
         let (tx, me) = (self.tx.clone(), self.id);
-        self.host.cover(id, size, colours, move |image, colours| {
+        self.host.cover(art.clone(), size, true, move |image, colours| {
             if let Ok(image) = image {
                 let _ = tx.send(Msg::From(me, Box::new(Msg::Cover { art, image, colours })));
             }

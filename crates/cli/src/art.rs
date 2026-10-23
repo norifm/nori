@@ -23,14 +23,8 @@ pub fn protocol_name(p: ProtocolType) -> &'static str {
 /// Decode size of large covers: sharp at a quarter of a big terminal, cheap to derive colours from.
 pub const COVER_PX: u32 = 600;
 
-/// Decode size of album card covers.
-pub const THUMB_PX: u32 = 160;
-
-/// Large covers kept: the playing one and the album page's.
+/// Covers kept: the playing one and the last few, for a skip back.
 const COVERS: usize = 3;
-
-/// Card covers kept: a few screens of cards.
-const THUMBS: usize = 120;
 
 /// Encoded covers by key, each with its decoded image for [`Art::resend`]. Oldest first.
 type Kept = Vec<(String, StatefulProtocol, Arc<Image>)>;
@@ -39,24 +33,21 @@ type Kept = Vec<(String, StatefulProtocol, Arc<Image>)>;
 pub struct Art {
     picker: Picker,
     covers: Kept,
-    /// Keys prefixed with [`crate::backend::THUMB`].
-    thumbs: Kept,
 }
 
 impl Art {
     pub fn new(picker: Picker) -> Art {
-        Art { picker, covers: Vec::new(), thumbs: Vec::new() }
+        Art { picker, covers: Vec::new() }
     }
 
     /// Adds a decoded cover under `key`, evicting the oldest past the cap.
     pub fn put(&mut self, key: String, image: &Arc<Image>) {
         let Some(protocol) = encode(&self.picker, image) else { return };
-        let (list, cap) = if key.starts_with(crate::backend::THUMB) { (&mut self.thumbs, THUMBS) } else { (&mut self.covers, COVERS) };
-        list.retain(|(k, _, _)| *k != key);
-        if list.len() >= cap {
-            list.remove(0);
+        self.covers.retain(|(k, _, _)| *k != key);
+        if self.covers.len() >= COVERS {
+            self.covers.remove(0);
         }
-        list.push((key, protocol, image.clone()));
+        self.covers.push((key, protocol, image.clone()));
     }
 
     /// Re-encodes every cover so the next draw transmits it in full. A protocol state sends its picture
@@ -65,7 +56,7 @@ impl Art {
         if self.picker.protocol_type() == ProtocolType::Halfblocks {
             return;
         }
-        for (_, protocol, image) in self.covers.iter_mut().chain(self.thumbs.iter_mut()) {
+        for (_, protocol, image) in &mut self.covers {
             if let Some(p) = encode(&self.picker, image) {
                 *protocol = p;
             }
@@ -73,11 +64,7 @@ impl Art {
     }
 
     pub fn get(&mut self, key: &str) -> Option<&mut StatefulProtocol> {
-        self.covers.iter_mut().chain(self.thumbs.iter_mut()).find(|(k, _, _)| k == key).map(|(_, p, _)| p)
-    }
-
-    pub fn has(&self, key: &str) -> bool {
-        self.covers.iter().chain(self.thumbs.iter()).any(|(k, _, _)| k == key)
+        self.covers.iter_mut().find(|(k, _, _)| k == key).map(|(_, p, _)| p)
     }
 }
 
@@ -241,11 +228,6 @@ impl Theme {
         }
     }
 
-    /// `c` blended toward the page by `strength`.
-    pub fn fade(&self, c: Color, strength: f32) -> Color {
-        blend(c, self.page, strength)
-    }
-
     /// A liked seal: the page's color on the accent (reversed where there are no colors).
     pub fn liked(&self) -> Style {
         if self.mono {
@@ -353,9 +335,9 @@ mod tests {
             picker.set_protocol_type(p);
             let mut art = Art::new(picker);
             art.put("u".into(), &image);
-            assert!(art.has("u"));
+            assert!(art.get("u").is_some());
             art.resend();
-            assert!(art.has("u"));
+            assert!(art.get("u").is_some());
             let mut buf = ratatui::buffer::Buffer::empty(ratatui::layout::Rect::new(0, 0, 10, 5));
             let widget = ratatui_image::StatefulImage::<StatefulProtocol>::default();
             ratatui::widgets::StatefulWidget::render(widget, buf.area, &mut buf, art.get("u").unwrap());

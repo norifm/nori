@@ -38,7 +38,6 @@ pub enum Switch {
     Stores(String, String),
     Mouse,
     Images,
-    CardCovers,
     /// The terminal's own background instead of the season's page.
     Transparent,
 }
@@ -161,7 +160,6 @@ pub struct SettingsView {
 pub struct Own {
     pub mouse: bool,
     pub images: bool,
-    pub card_covers: bool,
     /// The page is painted in the season's colors.
     pub paint: bool,
     pub protocol: String,
@@ -203,11 +201,6 @@ impl SettingsView {
             }
         }
         out
-    }
-
-    /// Whether rows are hidden above and below, as last drawn.
-    pub fn cut(&self) -> (bool, bool) {
-        self.row.cut
     }
 
     /// The selection and line count, for list navigation.
@@ -316,7 +309,6 @@ impl SettingsView {
                     Switch::Setting(_) | Switch::Stores(..) => Vec::new(),
                     Switch::Mouse => vec![Cmd::Mouse(up)],
                     Switch::Images => vec![Cmd::Images(up)],
-                    Switch::CardCovers => vec![Cmd::CardCovers(up)],
                     Switch::Transparent => vec![Cmd::Paint(!up)],
                 }
             }
@@ -417,7 +409,6 @@ fn own_page(o: &Own, f: &Facts) -> Vec<Section> {
     let rows = vec![
         toggle(Switch::Mouse, "Mouse", "Clicks, the wheel and dragging the bars. Off, the terminal selects text (m)", o.mouse, true),
         toggle(Switch::Images, "Covers", "Album art in the player and on album pages (I)", o.images, true),
-        toggle(Switch::CardCovers, "Covers on album cards", "Small pictures on Home and Albums; off keeps a slow link or terminal light", o.card_covers, o.images),
         Row::Choice { target: Target::Device, title: "Output device".into(), options: devices, shown, enabled: true },
         Row::Note { text: "The device is opened at start; --device overrides it for one run.".into() },
     ];
@@ -852,24 +843,24 @@ pub fn eq_rows(p: &StoredPrefs) -> Vec<EqRow> {
 impl EqRow {
     /// Title and value.
     pub fn words(&self, p: &StoredPrefs) -> (String, String) {
-        let on = |b: bool| (if b { "● on" } else { "○ off" }).to_string();
+        let on = |b: bool| (if b { "on" } else { "off" }).to_string();
         match *self {
             EqRow::Enabled => ("Equalizer".into(), on(p.eq_enabled)),
-            EqRow::Mode => ("Kind".into(), if p.eq_mode == EqMode::Graphic { "‹ graphic ›" } else { "‹ parametric ›" }.into()),
-            EqRow::Layout => ("Bands".into(), format!("‹ {} ›", p.eq_graphic.len())),
+            EqRow::Mode => ("Kind".into(), if p.eq_mode == EqMode::Graphic { "graphic" } else { "parametric" }.into()),
+            EqRow::Layout => ("Bands".into(), p.eq_graphic.len().to_string()),
             EqRow::Slider(i) => {
                 let label = nori_core::dsp::graphic_bands(p.eq_graphic.len() as u32).get(i).map_or(0.0, |b| b.label_hz);
                 (numbers::iso_band(label, POINT), format!("{} dB", numbers::signed_db(p.eq_graphic.get(i).copied().unwrap_or(0.0), POINT)))
             }
-            EqRow::Presets => ("Presets".into(), "choose ›".into()),
+            EqRow::Presets => ("Presets".into(), String::new()),
             EqRow::AutoPreamp => ("Automatic pre-amp".into(), on(p.eq_preamp_db.is_none())),
             EqRow::Preamp => ("Pre-amp".into(), text::preamp(p.eq_preamp_db.unwrap_or(0.0), false)),
             EqRow::Band(i) => {
                 let b = p.eq_bands.get(i).copied().unwrap_or(nori_core::settings::band_from(0, 0.0, 0.0, 1.0, 0));
                 (text::band(b.freq, nori_core::settings::band_mark(b.kind as i32, b.channel as i32)), format!("{} dB", numbers::signed_db(b.gain_db, POINT)))
             }
-            EqRow::AddBand => ("Add a band".into(), "[ Add ]".into()),
-            EqRow::Reset => ("Back to flat".into(), "[ Reset ]".into()),
+            EqRow::AddBand => ("Add a band".into(), String::new()),
+            EqRow::Reset => ("Back to flat".into(), String::new()),
             EqRow::Balance => ("Balance".into(), text::balance(p.balance)),
             EqRow::Mono => ("Mono".into(), on(p.mono)),
             EqRow::Limiter => ("Limiter".into(), on(p.limiter)),
@@ -914,12 +905,12 @@ impl EqRow {
     pub fn chip(&self, p: &StoredPrefs) -> String {
         let (title, value) = self.words(p);
         match self {
-            EqRow::Enabled => (if p.eq_enabled { "● Equalizer on" } else { "○ Equalizer off" }).into(),
-            EqRow::Presets => "Presets ▾".into(),
-            EqRow::AddBand => "+ Add a band".into(),
-            EqRow::Reset => "↺ Flat".into(),
-            EqRow::Mode => (if p.eq_mode == EqMode::Graphic { "Graphic ‹›" } else { "Parametric ‹›" }).into(),
-            EqRow::Layout => format!("{} bands ‹›", p.eq_graphic.len()),
+            EqRow::Enabled => (if p.eq_enabled { "Equalizer on" } else { "Equalizer off" }).into(),
+            EqRow::Presets => "Presets".into(),
+            EqRow::AddBand => "Add a band".into(),
+            EqRow::Reset => "Flat".into(),
+            EqRow::Mode => (if p.eq_mode == EqMode::Graphic { "Graphic" } else { "Parametric" }).into(),
+            EqRow::Layout => format!("{} bands", p.eq_graphic.len()),
             _ => format!("{} {}", title.trim(), value),
         }
     }

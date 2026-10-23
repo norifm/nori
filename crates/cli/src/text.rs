@@ -157,9 +157,9 @@ pub fn band(freq: f32, mark: BandMark) -> String {
         BandMark::None => "",
         BandMark::Left => " L",
         BandMark::Right => " R",
-        BandMark::LowShelf => " ↙",
-        BandMark::HighShelf => " ↗",
-        BandMark::NoGain => " ∿",
+        BandMark::LowShelf => " low shelf",
+        BandMark::HighShelf => " high shelf",
+        BandMark::NoGain => " filter",
     };
     format!("{}{mark}", numbers::hz(freq, POINT))
 }
@@ -274,9 +274,60 @@ pub fn search_fallback(reason: Option<&str>) -> String {
 
 // ---- other devices and jams ----
 
-/// The hint line under the player, and in the full player.
-pub const HINT: &str = "space play  s shuffle  r repeat  f favorite  / search  1-9 go  F player  ? help";
-pub const HINT_FULL: &str = "esc back  space play  tab panel  L lyrics  Q queue  C devices  ? help";
+/// The keys the bottom line shows, as (key, what it does), by what has them.
+pub mod hints {
+    type Hints = &'static [(&'static str, &'static str)];
+    pub const HOME: Hints = &[("enter", "open"), ("a", "add"), ("x", "play"), ("/", "search"), ("1-9", "go"), ("F", "player"), ("?", "keys")];
+    pub const LIBRARY: Hints = &[("enter", "open"), ("a", "add"), ("x", "play"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
+    pub const PAGE: Hints = &[("enter", "play"), ("x", "play all"), ("X", "shuffle"), ("a", "add"), ("f", "favorite"), ("esc", "back"), ("?", "keys")];
+    pub const RESULTS: Hints = &[("enter", "open"), ("a", "add"), ("/", "type"), ("esc", "back"), ("?", "keys")];
+    pub const TYPING: Hints = &[("enter", "results"), ("esc", "stop typing"), ("ctrl u", "clear")];
+    pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
+    pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
+    pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
+    pub const PLAYING: Hints = &[("space", "play"), ("n p", "next, previous"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
+    pub const QUEUE: Hints = &[("enter", "play"), ("d", "remove"), ("K J", "move"), ("s r", "shuffle, repeat"), ("tab", "panel"), ("esc", "back")];
+    pub const LYRICS: Hints = &[("enter", "play from the line"), ("[ ]", "timing"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
+    pub const DEVICES: Hints = &[("enter", "play there"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
+}
+
+pub const LISTEN_NOW: &str = "Listen now";
+pub const SHOW_ALL: &str = "Show all";
+pub const PLAY: &str = "Play";
+pub const SHUFFLE: &str = "Shuffle";
+pub const DOWNLOAD: &str = "Download";
+pub const UP_NEXT: &str = "Playing next";
+pub const BACK: &str = "Back";
+pub const VOLUME: &str = "Volume";
+pub const NOTHING_PLAYING: &str = "Nothing playing";
+/// Beside a provider's song: playing it makes the server fetch it.
+pub const REMOTE: &str = "remote";
+pub const OFFLINE: &str = "offline";
+pub const UNREACHABLE: &str = "unreachable";
+
+/// A switch's state.
+pub fn on_off(on: bool) -> &'static str {
+    if on { "On" } else { "Off" }
+}
+
+/// The repeat mode `mode` as the queue's head and the song playing say it.
+pub fn repeat_word(mode: u8) -> &'static str {
+    match mode {
+        nori_core::rules::REPEAT_ONE => "Repeat one",
+        _ => "Repeat",
+    }
+}
+
+/// The server did not answer: what the page shows instead.
+pub fn stored_only(e: &str) -> String {
+    format!("{e} · showing what is stored · R tries again")
+}
+
+/// Where this computer plays: its output's name, or the system's default.
+pub fn output_name(name: &str) -> String {
+    if name.is_empty() { THIS_COMPUTER.into() } else { name.into() }
+}
+
 pub const SIGNED_OUT_AGAIN: &str = "YouTube signed you out. Sign in again to see your library and likes.";
 pub const SIGN_IN_WHY: &str = "See your own Home, your library and your likes. Music plays without it too.";
 pub const SIGN_IN_KEYS: &str = "enter sign in with Google · p paste cookies · esc close";
@@ -287,7 +338,6 @@ pub const PASTE_COOKIES: &str = "Sign in to music.youtube.com in a private brows
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
 pub const RISK: &str = "Unofficial apps are against YouTube's terms, and YouTube may flag an account that uses one.";
 pub const THIS_COMPUTER: &str = "This computer";
-pub const PLAY_ON: &str = "Play on";
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";
 
 /// The player bar's line while another device plays: "Playing on Desk".
@@ -451,7 +501,7 @@ mod tests {
 
     #[test]
     fn words() {
-        assert_eq!(band(1000.0, BandMark::LowShelf), "1k ↙");
+        assert_eq!(band(1000.0, BandMark::LowShelf), "1k low shelf");
         assert_eq!((balance(0.0), balance(-0.3), balance(0.05)), ("center".into(), "L 30%".into(), "R 5%".into()));
         assert_eq!(nudge(-250), "-0.25 s");
         assert_eq!((songs_caption(1, 200), albums(2)), ("1 song · 3:20".into(), "2 albums".into()));
