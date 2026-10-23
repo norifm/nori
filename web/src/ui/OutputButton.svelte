@@ -4,8 +4,8 @@
 </script>
 
 <script lang="ts">
-  // Where the music plays: this browser, or another device of the account's, its glyph lit; a click opens
-  // the devices. `named`: the device's name beside the glyph, both one button (the player's output line).
+  // Where the music plays: this browser, or another device of the account's, its glyph lit; a click shows
+  // the devices in the player. `named`: the device's name beside the glyph, both one button (the player's output line).
   import { player } from "../state/player.svelte";
   import { ui } from "../state/ui.svelte";
   import { W } from "../words";
@@ -25,7 +25,7 @@
   data-pane="devices"
   onclick={(e) => {
     e.stopPropagation();
-    ui.devices = true;
+    ui.show("devices");
   }}><Icon name={there ? (kindGlyph[there] ?? "computer") : "computer"} />{#if named}<span class="clip">{name}</span>{/if}</button
 >
 

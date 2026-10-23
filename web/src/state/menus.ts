@@ -56,7 +56,7 @@ function item(a: MenuAction, s: Song): Item | null {
           await player.soundCard();
           await remote.act(() => ask("jam_start", JSON.stringify([s]), 0));
           await player.refresh();
-          ui.devices = true;
+          ui.show("devices");
         },
       };
     default:

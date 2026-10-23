@@ -19,11 +19,11 @@
       <Icon name="community" />
       <span class="name clip">{j.host ? W.jamOf(j.host) : W.jam}</span>
       {#if j.along || j.listening !== "Watching"}
-        <button class="pill small solid" id="jam-listen" onclick={() => void remote.listen(j.listening === "Watching")}>
+        <button class="pill small" id="jam-listen" onclick={() => void remote.listen(j.listening === "Watching")}>
           <Icon name="computer" />{j.listening === "Playing" ? W.jamPlayingHere : W.jamListenHere}
         </button>
       {/if}
-      <button class="round" aria-label={W.jamLeave} title={W.jamLeave} onclick={() => void remote.leave()}><Icon name="log-out" /></button>
+      <button class="glyph" aria-label={W.jamLeave} title={W.jamLeave} onclick={() => void remote.leave()}><Icon name="log-out" /></button>
     </div>
     <p class="sub">{W.jamListening(j.members.filter((m) => m.role !== "Host").length)}</p>
     {#if j.listening === "Watching" && j.along}<p class="sub">{W.jamWatching}</p>{/if}
@@ -49,8 +49,8 @@
           <span class="sub clip">{W.jamAskedBy(p.from)}</span>
           {#if p.provider}<span class="sub">{W.jamWillDownload}</span>{/if}
         </div>
-        <button class="round" aria-label={W.decline} title={W.decline} onclick={() => decide(p.request, false)}><Icon name="xmark" /></button>
-        <button class="round solid" aria-label={W.accept} title={W.accept} onclick={() => decide(p.request, true)}><Icon name="check" /></button>
+        <button class="glyph" aria-label={W.decline} title={W.decline} onclick={() => decide(p.request, false)}><Icon name="xmark" /></button>
+        <button class="glyph solid" aria-label={W.accept} title={W.accept} onclick={() => decide(p.request, true)}><Icon name="check" /></button>
       </div>
     {/each}
   </div>
@@ -94,7 +94,7 @@
     flex: none;
   }
   .art :global(.cover) {
-    border-radius: 7px;
+    border-radius: var(--r-cover);
   }
   .text {
     flex: 1;
@@ -102,7 +102,7 @@
     display: flex;
     flex-direction: column;
   }
-  .round.solid {
+  .glyph.solid {
     background: var(--ink);
     color: var(--page);
   }

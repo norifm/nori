@@ -104,7 +104,6 @@ for (const [theme, season] of [["LIGHT", "AUTUMN"], ["DARK", "AUTUMN"], ["LIGHT"
       await page.click("#full [data-pane=devices]");
       await wait(400);
       await shot(name("devices"));
-      await page.keyboard.press("Escape");
       await page.click("#full [aria-label=Close]");
       await page.click("#bar .art");
     } else {
@@ -127,7 +126,6 @@ for (const [theme, season] of [["LIGHT", "AUTUMN"], ["DARK", "AUTUMN"], ["LIGHT"
       await page.click("#full [data-pane=devices]");
       await wait(400);
       await shot(name("devices"));
-      await page.keyboard.press("Escape");
     }
     await page.click("#full [aria-label=Close]");
   }

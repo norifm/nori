@@ -22,31 +22,47 @@
   const pages: Record<string, () => Loaded> = {
     row: () => import("../pages/Row.svelte"),
     library: () => import("../pages/Library.svelte"),
+    albums: () => import("../pages/Albums.svelte"),
     album: () => import("../pages/Album.svelte"),
+    artists: () => import("../pages/Artists.svelte"),
     artist: () => import("../pages/Artist.svelte"),
+    playlists: () => import("../pages/Playlists.svelte"),
     playlist: () => import("../pages/Playlist.svelte"),
+    genres: () => import("../pages/Genres.svelte"),
     genre: () => import("../pages/Genre.svelte"),
+    songs: () => import("../pages/Songs.svelte"),
     favorites: () => import("../pages/Favorites.svelte"),
     search: () => import("../pages/Search.svelte"),
     settings: () => import("../pages/Settings.svelte"),
   };
   const nowPlaying = () => import("./NowPlaying.svelte");
   const lyricsInfo = () => import("./LyricsInfo.svelte");
-  const devices = () => import("./DevicesSheet.svelte");
   // Fetched while the browser is idle after the first page, so nothing waits for them later.
   void drawn.then(() => {
-    const all = () => [...Object.values(pages), nowPlaying, lyricsInfo, devices].forEach((f) => void f());
+    const all = () => [...Object.values(pages), nowPlaying, lyricsInfo].forEach((f) => void f());
     if ("requestIdleCallback" in window) requestIdleCallback(all, { timeout: 3000 });
     else setTimeout(all, 300);
   });
 
   const playing = $derived(!!player.song);
+  /** The page's props, by its address. */
+  const props = $derived.by(() => {
+    const a = route.arg;
+    switch (route.top) {
+      case "albums":
+        return { sort: a };
+      case "genre":
+        return { name: a };
+      default:
+        return { id: a };
+    }
+  });
 </script>
 
 <div class="shell tinted" style={ui.tint?.vars} style:--bar-h={ui.wide ? null : playing ? "132px" : "76px"}>
   <main id="main">
     {#if pages[route.top]}
-      {#await pages[route.top]() then m}<m.default />{/await}
+      {#await pages[route.top]() then m}<m.default {...props} />{/await}
     {:else}<Home />{/if}
   </main>
   {#if ui.wide}
@@ -61,7 +77,6 @@
 </div>
 {#if ui.full && playing}{#await nowPlaying() then m}<m.default />{/await}{/if}
 {#if ui.lyricsInfo}{#await lyricsInfo() then m}<m.default />{/await}{/if}
-{#if ui.devices}{#await devices() then m}<m.default />{/await}{/if}
 {#if ui.sheet}<Sheet />{/if}
 {#if ui.popover}<Popover />{/if}
 {#if ui.prompt}<Prompt />{/if}

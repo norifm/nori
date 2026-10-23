@@ -1,9 +1,8 @@
 <script lang="ts">
-  // An album's, artist's or playlist's page, as Android's HeroPage: the cover runs to the edges and melts
-  // into the page over its last rows, the page and the chrome wear the season's paper dyed with it (not in
-  // Midnight), the title rises into the melt with the artist under it, then Shuffle, the Play pill in the
-  // page's ink and the page's seal, then the list's head: what it holds and what can be done with it. On a
-  // wide screen the cover is the left half, going soft at its right edge, and the rest scrolls beside it.
+  // An album's, playlist's or artist's head: the cover, the title, who, what the list holds ("2026 · 4 songs ·
+  // 8:00 · MP3 128 kbps"), Play and Shuffle, and the page's own buttons (the seal, what the core offers for
+  // its songs, a menu). The page and the chrome wear the season's paper dyed with the cover while it is open
+  // (not in Midnight).
   import type { Snippet } from "svelte";
   import { coverLook } from "../state/coverLook";
   import { looks } from "../state/theme.svelte";
@@ -15,33 +14,15 @@
   let {
     cover,
     title,
-    big = false,
-    fallback = "music-note",
+    round = false,
+    fallback = "compact-disc",
     by,
+    label = "",
     onplay,
     actions,
-    label = "",
-    tools,
-    error,
-    ready = true,
-    children,
-  }: {
-    cover?: string;
-    title: string;
-    /** An artist's name, set larger. */
-    big?: boolean;
-    fallback?: string;
-    by?: Snippet;
-    onplay?: (shuffle: boolean) => void;
-    actions?: Snippet;
-    label?: string;
-    tools?: Snippet;
-    error?: string;
-    ready?: boolean;
-    children: Snippet;
-  } = $props();
+  }: { cover?: string; title: string; round?: boolean; fallback?: string; by?: Snippet; label?: string; onplay: (shuffle: boolean) => void; actions?: Snippet } = $props();
 
-  // The cover's colors, lent to the page and the chrome while this page is open; the season's until they come.
+  // The cover's colors, lent to the page and the chrome while it is open; the season's until they come.
   const me = {};
   $effect(() => {
     void looks.rev;
@@ -58,153 +39,96 @@
   });
 </script>
 
-<div class="hero-page" class:wide={ui.wide}>
-  <div class="sleeve">
-    <Cover src={cover} radius="0" {fallback} />
-    <div class="dissolve"></div>
-  </div>
-  <div class="side">
-    <div class="words" class:lone={!by}>
-      <h1 class:big>{title}</h1>
-      {#if by}<div class="by">{@render by()}</div>{/if}
+<div class="hero" class:circle={round}>
+  <div class="art"><Cover src={cover} {round} radius="var(--r-card)" {fallback} /></div>
+  <div class="text">
+    <h1>{title}</h1>
+    {#if by}<div class="by">{@render by()}</div>{/if}
+    {#if label}<div class="label">{label}</div>{/if}
+    <div class="hero-actions">
+      <button class="pill" onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
+      <button class="pill quiet" onclick={() => onplay(true)}><Icon name="shuffle" />{W.shuffle}</button>
+      <span class="grow"></span>
+      {@render actions?.()}
     </div>
-    {#if onplay}
-      <div class="buttons">
-        <button class="glyph" aria-label={W.shuffle} title={W.shuffle} disabled={!ready} onclick={() => onplay(true)}><Icon name="shuffle" /></button>
-        <button class="pill play" disabled={!ready} onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
-        {@render actions?.()}
-      </div>
-    {:else if actions}
-      <div class="buttons lone">{@render actions()}</div>
-    {/if}
-    {#if label || tools}
-      <div class="list-head"><span class="clip">{label}</span>{@render tools?.()}</div>
-    {/if}
-    {#if error}<p class="empty">{W.failed(error)}</p>
-    {:else if ready}{@render children()}{/if}
   </div>
 </div>
 
 <style>
-  .hero-page {
-    padding-bottom: calc(var(--bar-h) + var(--gap-section));
+  .hero {
+    display: flex;
+    align-items: flex-end;
+    gap: 32px;
+    margin-bottom: 28px;
   }
-  /* The cover a little taller than square, cropped at its sides, its last rows melting into the page. */
-  .sleeve {
-    position: relative;
-    height: calc(100vw + 44px);
-    max-height: 120vh;
-    overflow: hidden;
+  .art {
+    width: 240px;
+    flex: none;
   }
-  .sleeve :global(.cover) {
-    width: 100%;
-    height: 100%;
-    aspect-ratio: auto;
-  }
-  .dissolve {
-    position: absolute;
-    inset: 0;
-    background: var(--dissolve, linear-gradient(to bottom, transparent 60%, var(--page)));
-  }
-  .side {
-    padding: 0 var(--gutter);
-  }
-  /* The title rises 34 px into the melt, and the melt's extra 44; with no artist line it sits that much lower. */
-  .words {
-    position: relative;
-    margin-top: -78px;
+  .text {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    align-items: center;
-    text-align: center;
-  }
-  .words.lone {
-    margin-top: -50px;
+    gap: 4px;
   }
   h1 {
-    font-size: 27px;
-    line-height: 34px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  h1.big {
-    font-size: 32px;
-    line-height: 40px;
+    font-size: 34px;
+    line-height: 1.15;
   }
   .by {
-    margin-top: 3px;
-    font-size: 17px;
-    line-height: 22px;
+    font-size: 20px;
     font-weight: 500;
+    color: var(--ink2);
   }
   .by :global(a:hover) {
-    text-decoration: underline;
+    color: var(--ink);
   }
-  .buttons {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin: 12px calc(var(--gap-tight) - var(--gutter)) 0;
-  }
-  .buttons.lone {
-    justify-content: center;
-    margin-top: 2px;
-  }
-  .play {
-    flex: 1;
-  }
-  .buttons :global(.glyph:disabled),
-  .play:disabled {
-    opacity: 1;
-  }
-  .list-head {
-    position: relative;
-    display: flex;
-    align-items: center;
-    min-height: 48px;
-    margin: 6px calc(var(--gap-tight) - var(--gutter)) 10px 0;
+  .label {
     font-size: 13px;
     color: var(--ink2);
   }
-  .list-head > span {
+  .hero-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .hero-actions .pill {
+    min-width: 116px;
+  }
+  .grow {
     flex: 1;
   }
-  .list-head::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: calc(var(--gutter) - var(--gap-tight));
-    bottom: 0;
-    height: 1px;
-    background: var(--line);
-  }
-  /* Wide: the cover is the left half, as tall as the window, going soft over its right 30 %; the words,
-     the buttons and the list scroll beside it. */
-  .wide {
-    display: grid;
-    grid-template-columns: clamp(360px, 45vw, 50vw) minmax(0, 1fr);
-  }
-  .wide .sleeve {
-    position: sticky;
-    top: 0;
-    height: 100dvh;
-    max-height: none;
-    width: calc(100% + 28px);
-    -webkit-mask-image: linear-gradient(to right, #000 70%, transparent);
-    mask-image: linear-gradient(to right, #000 70%, transparent);
-  }
-  .wide .dissolve {
-    display: none;
-  }
-  .wide .side {
-    position: relative;
-    padding: var(--top-h) 32px 0 var(--gutter);
-  }
-  .wide .words,
-  .wide .words.lone {
-    margin-top: 12px;
+  @media (max-width: 719px) {
+    .hero {
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 18px;
+    }
+    .art {
+      width: min(260px, 70vw);
+    }
+    h1 {
+      font-size: 27px;
+    }
+    .by {
+      font-size: 17px;
+    }
+    .hero-actions {
+      align-self: stretch;
+      justify-content: center;
+      gap: 4px;
+    }
+    .hero-actions .pill {
+      flex: 1;
+      min-width: 0;
+      max-width: 170px;
+      padding: 0 12px;
+    }
+    .grow {
+      display: none;
+    }
   }
 </style>

@@ -70,10 +70,8 @@ const album = (name, artist) => albums.find((a) => a.name === name && (!artist |
 if (!only || only.includes("browse")) {
   const counts = {};
   const firstArtist = (await read({ kind: "artists" })).artists[0]?.id;
-  for (const [h, top, sel] of [["#/library", "library", ".chips .chip"], ["#/library/Albums", "library", ".grid .card"], ["#/library/Artists", "library", ".rows .nav-row"], ["#/library/Genres", "library", ".genres li"], ["#/library/Songs", "library", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".card"], ["#/settings", "settings", "[data-page]"], ["#/settings/Playing", "settings", "[data-setting]"]]) {
+  for (const [h, top, sel] of [["#/library", "library", ".sections a"], ["#/albums/alphabeticalByName", "albums", ".grid .card"], ["#/artists", "artists", ".grid .card"], ["#/genres", "genres", ".genres li"], ["#/songs", "songs", ".songs li"], [`#/artist/${firstArtist}`, "artist", ".grid .card"], ["#/settings", "settings", "[data-page]"], ["#/settings/Playing", "settings", "[data-setting]"]]) {
     await hash(h, top);
-    // The library's sections read themselves once drawn.
-    await page.waitForSelector(sel, { timeout: 30000 }).catch(() => {});
     counts[h] = await page.$$eval(sel, (e) => e.length);
     expect(counts[h] > 0 && !(await facts()).pageError, `${h} lists something`);
   }
@@ -146,10 +144,10 @@ if (!only || only.includes("play")) {
   expect(after.seconds - before.seconds > 9 && after.dry === before.dry, "ten seconds play without running dry");
 }
 
-/** Opens `name` (the lyrics or the queue in the player, the devices' sheet) from the player bar. */
+/** Opens pane `name` (lyrics, queue, devices, jam) beside the page, from the player bar. */
 async function pane(name, p = page) {
-  if (!(await p.$(`#${name}`))) await p.click(`#bar [data-pane=${name}]`);
-  await p.waitForSelector(`#${name}`);
+  if (!(await p.$(`#full #${name}`))) await p.click(`#bar [data-pane=${name}]`);
+  await p.waitForSelector(`#full #${name}`);
 }
 
 if (!only || only.includes("lyrics")) {
@@ -425,8 +423,7 @@ if (!only || only.includes("edit")) {
   };
   const playlistNamed = async (name) => (await read({ kind: "playlists" })).playlists.find((p) => p.name === name);
   const name = `Check ${Date.now() % 100000}`;
-  await hash("#/library/Playlists", "library");
-  await page.waitForSelector("#new-playlist");
+  await hash("#/playlists", "playlists");
   await page.click("#new-playlist");
   await named(name);
   await page.waitForFunction(async (n) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.name === n), { timeout: 30000, polling: 250 }, name);
@@ -443,12 +440,12 @@ if (!only || only.includes("edit")) {
   const songsOf = async () => (await read({ kind: "playlist", id: made.id })).songs.map((s) => s.title);
   const added = await songsOf();
   await hash(`#/playlist/${made.id}`, "playlist");
-  await page.click(".hero-page .buttons button[aria-label='More']");
+  await page.click(".hero-actions button[aria-label='More']");
   await menu("Rename");
   await named(`${name} renamed`);
   await page.waitForFunction(async (n) => JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.name === n), { timeout: 30000, polling: 250 }, `${name} renamed`);
   // The page is drawn again with the new name: its rows before that are gone.
-  await page.waitForFunction((n) => document.querySelector(".hero-page h1")?.textContent === n, { timeout: 30000, polling: 100 }, `${name} renamed`);
+  await page.waitForFunction((n) => document.querySelector(".hero h1")?.textContent === n, { timeout: 30000, polling: 100 }, `${name} renamed`);
   await page.waitForSelector(".songs li");
   await (await page.$$(".songs li button[aria-label='More']"))[0].click();
   await menu("Move down");
@@ -473,7 +470,7 @@ if (!only || only.includes("edit")) {
   await page.waitForFunction(async (t) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "starred" }))).songs.some((s) => s.title === t), { timeout: 30000, polling: 250 }, first.title);
   // The playlist deleted.
   await hash(`#/playlist/${made.id}`, "playlist");
-  await page.click(".hero-page .buttons button[aria-label='More']");
+  await page.click(".hero-actions button[aria-label='More']");
   await menu("Delete playlist");
   await page.waitForFunction(async (id) => !JSON.parse(await window.ask("read", JSON.stringify({ kind: "playlists" }))).playlists.some((p) => p.id === id), { timeout: 30000, polling: 250 }, made.id);
   report.edit = { added, reordered, removed, favorited, deleted: true };

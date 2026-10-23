@@ -1,11 +1,12 @@
 <script lang="ts">
-  // Previous, play or pause, and next: the transport's solid glyphs, bare, each pressed with a ripple. A
-  // jam guest's are what its role offers (the player decides). `big`: the full player's sizes.
+  // Shuffle, previous, play or pause, next and repeat (the host's cycle: off, all, one); a jam guest's
+  // shuffle and repeat are the host's. The transport's glyphs are solid, the ends lit in the accent while
+  // on; a press shows a ripple.
   import { player } from "../state/player.svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
 
-  let { big = false }: { big?: boolean } = $props();
+  let { big = false, ends = true }: { big?: boolean; ends?: boolean } = $props();
   const n = $derived(player.now);
   const playing = $derived(player.playing);
   /** A wait longer than 300 ms shows a spinner; before it the button shows what it will be. */
@@ -20,36 +21,46 @@
   });
 </script>
 
-<button class="glyph skip" class:big title={W.previous} aria-label={W.previous} onclick={() => void player.control("previous")}><Icon name="rewind-solid" /></button>
-<button class="glyph main" class:big title={playing ? W.pause : W.play} aria-label={playing ? W.pause : W.play} onclick={() => void player.control("toggle")}>
-  {#if waiting}<span class="spin"></span>{:else}{#key playing}<span class="turn"><Icon name={playing ? "pause-solid" : "play-solid"} /></span>{/key}{/if}
-</button>
-<button class="glyph skip" class:big title={W.next} aria-label={W.next} onclick={() => void player.control("next")}><Icon name="forward-solid" /></button>
+<div class="controls" class:big>
+  {#if ends && !n?.jam}
+    <button class="glyph quiet side" class:on={n?.shuffle} title={W.shuffle} aria-label={W.shuffle} aria-pressed={!!n?.shuffle} onclick={() => void player.control("shuffle", !n?.shuffle)}><Icon name="shuffle" /></button>
+  {/if}
+  <button class="glyph skip" title={W.previous} aria-label={W.previous} onclick={() => void player.control("previous")}><Icon name="rewind-solid" /></button>
+  <button class="glyph main" title={playing ? W.pause : W.play} aria-label={playing ? W.pause : W.play} onclick={() => void player.control("toggle")}>
+    {#if waiting}<span class="spin"></span>{:else}{#key playing}<span class="turn"><Icon name={playing ? "pause-solid" : "play-solid"} /></span>{/key}{/if}
+  </button>
+  <button class="glyph skip" title={W.next} aria-label={W.next} onclick={() => void player.control("next")}><Icon name="forward-solid" /></button>
+  {#if ends && !n?.jam}
+    <button class="glyph quiet side" class:on={!!n?.repeat} title={n?.repeat === 1 ? W.repeatOne : W.repeat} aria-label={W.repeat} aria-pressed={!!n?.repeat} onclick={() => void player.control("cycle_repeat")}><Icon name={n?.repeat === 1 ? "repeat-once" : "repeat"} /></button>
+  {/if}
+</div>
 
 <style>
+  .controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+  }
+  .glyph {
+    width: 40px;
+    height: 40px;
+  }
+  .side :global(.icon) {
+    width: 20px;
+    height: 20px;
+  }
   .skip :global(.icon) {
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
+  }
+  .main {
+    width: 46px;
+    height: 46px;
   }
   .main :global(.icon) {
-    width: 32px;
-    height: 32px;
-  }
-  .skip.big {
-    width: 56px;
-    height: 56px;
-  }
-  .skip.big :global(.icon) {
-    width: 38px;
-    height: 38px;
-  }
-  .main.big {
-    width: 68px;
-    height: 68px;
-  }
-  .main.big :global(.icon) {
-    width: 60px;
-    height: 60px;
+    width: 30px;
+    height: 30px;
   }
   .turn {
     display: grid;
@@ -70,13 +81,32 @@
     border-top-color: var(--ink);
     animation: spin 800ms linear infinite;
   }
-  .big .spin {
-    width: 26px;
-    height: 26px;
-  }
   @keyframes spin {
     to {
       transform: rotate(360deg);
     }
+  }
+  .big {
+    gap: 20px;
+  }
+  .big .glyph {
+    width: 52px;
+    height: 52px;
+  }
+  .big .side :global(.icon) {
+    width: 24px;
+    height: 24px;
+  }
+  .big .skip :global(.icon) {
+    width: 36px;
+    height: 36px;
+  }
+  .big .main {
+    width: 72px;
+    height: 72px;
+  }
+  .big .main :global(.icon) {
+    width: 56px;
+    height: 56px;
   }
 </style>

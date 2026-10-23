@@ -1,34 +1,49 @@
 <script lang="ts">
-  // The Library's albums: its places, the orders as chips (the core's `album_sorts`, the one left last
-  // lit and kept by the core), then the albums in that order.
-  import type { Snippet } from "svelte";
+  // Every album, in the order picked: the core's orders as chips (`album_sorts`; the one left last when the
+  // address names none, kept by the core), Shuffle (random albums, each whole), then the albums: a grid, or
+  // a shelf per artist in the Artist order.
   import { ask } from "../rpc";
+  import { player } from "../state/player.svelte";
+  import { go } from "../state/route.svelte";
   import { W } from "../words";
   import AlbumGrid from "../ui/AlbumGrid.svelte";
+  import Icon from "../ui/Icon.svelte";
+  import Page from "../ui/Page.svelte";
 
-  let { places }: { places: Snippet } = $props();
+  let { sort: named }: { sort: string } = $props();
   let sorts = $state<string[]>([]);
-  let sort = $state("");
-  void Promise.all([ask<string>("album_sorts"), ask<string>("album_sort")]).then(([all, kept]) => {
+  let kept = $state("");
+  void Promise.all([ask<string>("album_sorts"), ask<string>("album_sort")]).then(([all, k]) => {
     sorts = JSON.parse(all);
-    sort = kept;
+    kept = k;
   });
+  const sort = $derived(named || kept);
 
   function choose(s: string) {
-    sort = s;
     void ask("keep_album_sort", s);
+    go("albums", s);
   }
 </script>
 
-{#if sort}
-  <AlbumGrid {sort} top="library">
-    {#snippet head()}
-      {@render places()}
-      <div class="chips" role="radiogroup" aria-label={W.sortBy}>
-        {#each sorts as s (s)}
-          <button class="chip" class:on={s === sort} role="radio" aria-checked={s === sort} onclick={() => choose(s)}>{W.albumSorts[s] ?? s}</button>
-        {/each}
-      </div>
-    {/snippet}
-  </AlbumGrid>
-{/if}
+<Page title={W.albums} back>
+  {#snippet head()}<button class="pill quiet small" onclick={() => void player.shuffleLibrary(true)}><Icon name="shuffle" />{W.shuffle}</button>{/snippet}
+  {#if sort}
+    <AlbumGrid {sort} top="albums">
+      {#snippet head()}
+        <div class="chips" role="radiogroup" aria-label={W.sortBy}>
+          {#each sorts as s (s)}
+            <button class="chip" class:on={s === sort} role="radio" aria-checked={s === sort} onclick={() => choose(s)}>{W.albumSorts[s] ?? s}</button>
+          {/each}
+        </div>
+      {/snippet}
+    </AlbumGrid>
+  {/if}
+</Page>
+
+<style>
+  .chips {
+    flex-wrap: wrap;
+    margin: 0 0 18px;
+    padding: 0;
+  }
+</style>

@@ -73,8 +73,8 @@
   .artist {
     margin-bottom: 22px;
   }
-  .artist :global(.shelf) {
-    grid-auto-columns: 112px;
+  .artist :global(.row) {
+    grid-auto-columns: 148px;
   }
   .name {
     display: flex;

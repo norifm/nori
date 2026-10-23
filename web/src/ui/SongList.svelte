@@ -1,9 +1,9 @@
 <script lang="ts">
-  // Songs as rows: a click plays them from there, as the page's list (`kind`, `id`); each has its menu
-  // (`extra`: the page's own entries). `numbered` shows track numbers instead of covers (an album's);
-  // `rows` the positions shown (a disc's), with their second `lines`; `shown` only the first few, with
-  // Show all under them; `moved`, each row's handle drags it to another place (a playlist's); `one`, a
-  // click plays that song alone (a search's results).
+  // Songs as rows on one plate: a click plays them from there, as the page's list (`kind`, `id`); each has
+  // its menu (`extra`: the page's own entries). `numbered` shows track numbers instead of covers (an
+  // album's); `rows` the positions shown (a disc's); `shown` only the first few, with Show all under them;
+  // `moved`, each row's handle drags it to another place (a playlist's); `one`, a click plays that song
+  // alone (a search's results).
   import { player } from "../state/player.svelte";
   import { songMenu } from "../state/menus";
   import type { Item } from "../state/ui.svelte";
@@ -19,12 +19,11 @@
     id = "",
     numbered = false,
     rows,
-    lines,
     shown,
     moved,
     one = false,
     extra = () => [],
-  }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; rows?: number[]; lines?: string[]; shown?: number; moved?: (from: number, to: number) => unknown; one?: boolean; extra?: (s: Song, i: number) => Item[] } = $props();
+  }: { songs: Song[]; kind?: string; id?: string; numbered?: boolean; rows?: number[]; shown?: number; moved?: (from: number, to: number) => unknown; one?: boolean; extra?: (s: Song, i: number) => Item[] } = $props();
   const playingId = $derived(player.song?.id);
   let all = $state(false);
   const at = $derived(rows ?? songs.map((_, i) => i));
@@ -32,23 +31,21 @@
 </script>
 
 <ol class="songs" class:numbered use:sortable={{ moved: (from, to) => moved?.(from, to) }}>
-  {#each drawn as i, k (`${i}:${songs[i].id}`)}
+  {#each drawn as i (`${i}:${songs[i].id}`)}
     {@const s = songs[i]}
-    {@const line = lines ? lines[k] : (s.line ?? s.artist)}
     <li class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
       <button class="play" onclick={() => void (one ? player.play([s], 0, false, kind, id) : player.play(songs, i, false, kind, id))}>
         {#if numbered}
-          <span class="n">{#if s.id === playingId}<span class="bars" class:still={!player.playing}><i></i><i></i><i></i></span>{:else}{s.track || ""}{/if}</span>
+          <span class="n">{#if s.id === playingId}<span class="bars" class:still={!player.playing}><i></i><i></i><i></i></span>{:else}{s.track || i + 1}{/if}</span>
         {:else}
           <span class="art"><Cover src={s.cover} /></span>
         {/if}
-        <span class="words">
-          <span class="title clip">{s.title}</span>
-          {#if line}<span class="line clip">{line}</span>{/if}
-        </span>
+        <span class="title clip">{s.title}</span>
+        <span class="artist clip">{s.artist}</span>
+        {#if !numbered}<span class="album clip">{s.album}</span>{/if}
       </button>
-      <span class="mark">{#if s.starred}<Icon name="sealed" />{/if}</span>
-      <span class="len">{s.duration ? W.time(s.duration * 1000) : ""}</span>
+      {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="sealed" /></span>{/if}
+      <span class="len">{W.time(s.duration * 1000)}</span>
       <button class="more" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, extra(s, i))}><Icon name="more-horiz" /></button>
       {#if moved}<span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="menu" /></span>{/if}
     </li>
@@ -57,29 +54,37 @@
 {#if drawn.length < at.length}<button class="text-action all" onclick={() => (all = true)}>{W.showAll}</button>{/if}
 
 <style>
+  .all {
+    margin-top: 8px;
+  }
   .songs {
     list-style: none;
-    margin: 0 calc(-1 * var(--gutter));
+    margin: 0;
     padding: 0;
+    background: var(--surface);
+    border: var(--hairline) solid var(--hair);
+    border-radius: var(--r-tile);
+    overflow: hidden;
   }
   li {
     position: relative;
     display: flex;
     align-items: center;
-    padding-right: 4px;
+    gap: 8px;
+    padding-right: 8px;
   }
-  /* The hairline starts where the text does. */
+  /* The hairline starts where the title does. */
   li::after {
     content: "";
     position: absolute;
-    left: calc(var(--gutter) + 56px);
+    left: 74px;
     right: 0;
     bottom: 0;
     height: 1px;
     background: var(--line);
   }
   .numbered li::after {
-    left: calc(var(--gutter) + 40px);
+    left: 60px;
   }
   li:last-child::after {
     display: none;
@@ -92,35 +97,40 @@
     background: var(--surface);
     box-shadow: 0 0 0 var(--hairline) var(--hair);
   }
+  .handle {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    color: var(--ink2);
+    cursor: grab;
+    touch-action: none;
+  }
+  .handle :global(.icon) {
+    width: 20px;
+    height: 20px;
+  }
   .play {
     flex: 1;
     min-width: 0;
-    display: flex;
+    display: grid;
+    grid-template-columns: 44px 2fr 1.4fr 1.4fr;
     align-items: center;
-    padding: 9px 8px 9px var(--gutter);
+    column-gap: 14px;
+    padding: 9px 8px 9px 16px;
     text-align: left;
+  }
+  .numbered .play {
+    grid-template-columns: 30px 2fr 1.4fr;
+  }
+  .n {
+    color: var(--ink2);
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    justify-content: center;
   }
   .art {
     width: 44px;
-    flex: none;
-  }
-  .n {
-    width: 26px;
-    flex: none;
-    display: flex;
-    justify-content: center;
-    color: var(--ink2);
-    font-variant-numeric: tabular-nums;
-  }
-  .words {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    padding-left: 12px;
-  }
-  .numbered .words {
-    padding-left: 14px;
   }
   .title {
     font-size: 16px;
@@ -129,26 +139,23 @@
   .now .title {
     color: var(--accent);
   }
-  .line {
-    font-size: 13px;
-    line-height: 17px;
+  .artist,
+  .album {
     color: var(--ink2);
   }
-  .mark {
-    width: 15px;
-    flex: none;
+  .starred {
     color: var(--accent);
   }
-  .mark :global(.icon) {
+  .starred :global(.icon) {
     width: 15px;
     height: 15px;
   }
   .len {
-    min-width: 40px;
-    text-align: right;
-    font-size: 13px;
     color: var(--ink2);
+    font-size: 13px;
     font-variant-numeric: tabular-nums;
+    min-width: 44px;
+    text-align: right;
   }
   .more {
     display: grid;
@@ -166,21 +173,44 @@
   .more:hover {
     background: var(--hover);
   }
-  .handle {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 40px;
-    color: var(--ink2);
-    cursor: grab;
-    touch-action: none;
+  @media (hover: hover) {
+    .more {
+      opacity: 0;
+    }
+    li:hover .more,
+    .more:focus-visible {
+      opacity: 1;
+    }
   }
-  .handle :global(.icon) {
-    width: 20px;
-    height: 20px;
-  }
-  .all {
-    margin: 4px 0 0 -12px;
+  @media (max-width: 719px) {
+    .play {
+      grid-template-columns: 44px 1fr;
+      row-gap: 1px;
+      padding-left: 12px;
+    }
+    .numbered .play {
+      grid-template-columns: 30px 1fr;
+    }
+    .art,
+    .n {
+      grid-row: span 2;
+    }
+    .title,
+    .artist {
+      grid-column: 2;
+    }
+    .artist {
+      font-size: 13px;
+    }
+    .album {
+      display: none;
+    }
+    li::after {
+      left: 70px;
+    }
+    .numbered li::after {
+      left: 56px;
+    }
   }
   /* The song playing: three bars in the accent, moving while it plays. */
   .bars {

@@ -34,6 +34,10 @@ export const W = {
   albums: "Albums",
   songs: "Songs",
   favorites: "Favorites",
+  playlists: "Playlists",
+  favorite: "Favorite",
+  autoMix: "AutoMix",
+  empty: "Nothing here yet",
   /** Home's rows, by the core's `HomeRow`. */
   homeRows: {
     Pinned: "Favorite playlists",
@@ -144,8 +148,6 @@ export const W = {
   searchHint: "Songs, albums, artists",
   noResults: "Nothing found",
   noAlbums: "No albums yet",
-  noArtists: "No artists yet",
-  noSongs: "No songs yet",
   noPlaylists: "No playlists yet",
   noFavoriteSongs: "No favorite songs yet. Tap the seal on a song and it will be here.",
   loading: "Loading",
@@ -296,7 +298,6 @@ export const W = {
   playingOn: (device: string) => `Playing on ${device}`,
   thisBrowser: "This browser",
   devicePlaying: "Playing",
-  devicesLead: "Your other devices with nori, through your server's relay.",
   devicesNone: "No other device of yours is on.",
   devicesOff: "Remote control is off in Settings.",
   kinds: { phone: "phone", desktop: "computer", terminal: "terminal", guest: "guest" },

@@ -1,20 +1,17 @@
-<script lang="ts" module>
+<script lang="ts">
+  // A phone's tabs: the bottom row of the chrome, each an equal share of it, its glyph quiet until it is
+  // the current one, which takes the accent. Their names are for screen readers.
+  import { href, route } from "../state/route.svelte";
   import { W } from "../words";
+  import Icon from "./Icon.svelte";
 
   /** The tabs, in Android's order: their page, glyph and name. */
-  export const tabs: [string, string, string][] = [
+  const tabs: [string, string, string][] = [
     ["home", "home-simple", W.home],
     ["library", "album-list", W.library],
     ["settings", "settings", W.settings],
     ["search", "search", W.search],
   ];
-</script>
-
-<script lang="ts">
-  // A phone's tabs: the bottom row of the chrome, each an equal share of it, its glyph quiet until it is
-  // the current one, which takes the accent. Their names are for screen readers.
-  import { href, route } from "../state/route.svelte";
-  import Icon from "./Icon.svelte";
 </script>
 
 <nav class="tabs" id="nav">

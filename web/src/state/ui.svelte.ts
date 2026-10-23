@@ -1,9 +1,9 @@
 // What the shell shows over the pages: a line of news, a song's sheet, a menu dropped from a button, a
-// question, the devices and the full player.
+// question and the full player.
 
 export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean };
-/** What the full player shows in its cover's place. */
-export type Pane = "lyrics" | "queue";
+/** What the full player shows beside the cover (on a phone: in its place). */
+export type Pane = "lyrics" | "queue" | "devices";
 /** A sheet's head: what it is about (a song: its cover, title and line). */
 export type Head = { title: string; line?: string; cover?: string };
 
@@ -14,11 +14,9 @@ class Ui {
   /** A menu dropped from `at` (the button that opened it). */
   popover = $state.raw<{ at: DOMRect; items: Item[] } | null>(null);
   prompt = $state.raw<{ title: string; value: string; done: (v: string | null) => void } | null>(null);
-  /** The full player, and what it shows in its cover's place. */
+  /** The full player, and what it shows beside the cover (on a phone: in its place). */
   full = $state(false);
   pane = $state<Pane | null>(null);
-  /** The devices and the jam, as a sheet. */
-  devices = $state(false);
   /** The lyrics' source and timing, over the player. */
   lyricsInfo = $state(false);
   /** The colors a page about one cover lends the page and the chrome (`coverLook`'s), and who lent them. */
@@ -61,10 +59,10 @@ class Ui {
     });
   }
 
-  /** Opens the full player showing `pane`; again, it goes back to the cover. */
+  /** Opens the full player showing `pane`; on a phone, again, it goes back to the cover. */
   show(pane: Pane) {
-    this.pane = this.full && this.pane === pane ? null : pane;
     this.full = true;
+    this.pane = this.wide ? pane : this.pane === pane ? null : pane;
   }
 }
 

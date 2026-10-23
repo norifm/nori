@@ -2,18 +2,18 @@
   // Settings, as Android's: the root lists the pages the core lays out for a browser (`settings_pages`),
   // each with its glyph and what it holds, then the account and About; a page (`#/settings/<page>`) has its
   // sections as small-caps labels over grouped cards, each row drawn by its kind and worded here. A row says
-  // only what is not obvious from its name. Appearance draws the season as its four tiles.
+  // only what is not obvious from its name. Appearance is the look the top bar's menu has too.
   import { ask } from "../rpc";
   import { reading } from "../state/library.svelte";
   import { route, href } from "../state/route.svelte";
-  import { refreshTheme, worn } from "../state/theme.svelte";
+  import { refreshTheme } from "../state/theme.svelte";
   import { ui } from "../state/ui.svelte";
   import type { SettingRow, SettingsSection } from "../state/types";
   import { W } from "../words";
   import Icon from "../ui/Icon.svelte";
+  import Look from "../ui/Look.svelte";
   import Page from "../ui/Page.svelte";
 
-  const kanji: Record<string, string> = { SPRING: "kanji-spring", SUMMER: "kanji-summer", AUTUMN: "kanji-autumn", WINTER: "kanji-winter" };
   const glyphs: Record<string, string> = { Playing: "play", Sound: "control-slider", Look: "palette", Lyrics: "emoji-sing-right-note", Library: "album-list", Account: "server", About: "info-circle" };
   let rev = $state(0);
   const page = reading("settings", async () => {
@@ -25,6 +25,8 @@
     return { names, sections, profile };
   });
   const name = $derived(route.arg);
+  /** The page's sections the rows draw: Appearance is the look, drawn whole. */
+  const drawn = $derived(name === "Look" ? [] : (page.data?.sections ?? []));
 
   async function set(setting: string, value: string) {
     await ask("setting", setting, value);
@@ -39,11 +41,7 @@
   }
 
   const shownRows = (s: SettingsSection) => s.rows.filter((r) => r.shown);
-  const isSeason = (r: SettingRow) => r.item.kind === "setting" && r.item.name === "season";
   const label = (setting: string) => W.settingNames[setting] ?? setting;
-  /** The season worn: the calendar's while following. */
-  const wornSeason = (value: string) => (value === "FOLLOW" ? worn.season : value);
-  const named = (season: string) => W.seasons[season] ?? season;
 </script>
 
 {#if !name}
@@ -66,10 +64,9 @@
   </Page>
 {:else}
   <Page title={W.settingsPages[name]?.[0] ?? name} back ready={!!page.data} error={page.error}>
-    {#each page.data?.sections ?? [] as sec (sec.id)}
-      {@const seasons = shownRows(sec).filter(isSeason)}
-      {@const rest = shownRows(sec).filter((r) => !isSeason(r))}
-      {#each seasons as r (r)}{@render season(r)}{/each}
+    {#if name === "Look"}<Look />{/if}
+    {#each drawn as sec (sec.id)}
+      {@const rest = shownRows(sec)}
       {#if rest.length}
         <div class="group-label">{W.sections[sec.id] ?? sec.id}</div>
         <div class="group">
@@ -79,27 +76,6 @@
     {/each}
   </Page>
 {/if}
-
-{#snippet season(r: SettingRow)}
-  {@const it = r.item as Extract<SettingRow["item"], { kind: "setting" }>}
-  {@const following = it.value === "FOLLOW"}
-  <div class="group-label">{W.season}</div>
-  <div class="tiles" role="radiogroup" aria-label={W.season}>
-    {#each worn.tiles as t (t.season)}
-      {@const on = wornSeason(it.value) === t.season}
-      <button class="tile" class:on role="radio" aria-checked={on} aria-label={named(t.season)} data-season={t.season} onclick={() => !on || following ? void set("season", t.season) : undefined}>
-        <Icon name={kanji[t.season]} />
-        <span class="dots"><i class="paper" style:background={t.page}></i><i style:background={t.accent}></i><i style:background={t.on}></i></span>
-      </button>
-    {/each}
-  </div>
-  <div class="group follow">
-    <label class="group-row" data-setting="season">
-      <span class="words"><span>{W.seasonFollow}</span>{#if following}<span class="sub">{W.seasonNext(named(worn.next), worn.nextMonth, worn.nextDay)}</span>{/if}</span>
-      <input type="checkbox" class="switch" checked={following} onchange={(e) => void set("season", e.currentTarget.checked ? "FOLLOW" : worn.season)} />
-    </label>
-  </div>
-{/snippet}
 
 {#snippet row(r: SettingRow)}
   {#if r.item.kind === "note"}
@@ -193,47 +169,5 @@
   }
   .level .range {
     width: 100%;
-  }
-  /* The seasons: each its kanji over its paper, accent and "on" colors; the one worn raised on the surface. */
-  .tiles {
-    display: flex;
-    gap: 10px;
-    margin: 0 -4px;
-  }
-  .tile {
-    flex: 1;
-    height: 88px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    border-radius: var(--r-tile);
-    border: var(--hairline) solid transparent;
-    color: var(--ink2);
-  }
-  .tile.on {
-    background: var(--surface);
-    border-color: var(--hair);
-    color: var(--ink);
-  }
-  .tile :global(.icon) {
-    width: 30px;
-    height: 30px;
-  }
-  .dots {
-    display: flex;
-    gap: 5px;
-  }
-  .dots i {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .dots .paper {
-    box-shadow: inset 0 0 0 var(--hairline) var(--hair);
-  }
-  .follow {
-    margin-top: 10px;
   }
 </style>

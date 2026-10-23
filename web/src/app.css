@@ -85,8 +85,9 @@
   --r-tile: 18px;
   --r-sheet: 26px;
   --hairline: 0.5px;
-  /* The side margin every page shares, and the gaps: tight, row, section. */
-  --gutter: 20px;
+  /* The side margin every page shares (a phone's; a wide window keeps the web's wider one), and the gaps:
+     tight, row, section. */
+  --gutter: 40px;
   --gap-tight: 8px;
   --gap-row: 12px;
   --gap-section: 26px;
@@ -128,6 +129,7 @@
 
 @media (max-width: 719px) {
   :root {
+    --gutter: 20px;
     --top-h: calc(20px + env(safe-area-inset-top));
     --bar-h: 132px;
   }
@@ -202,16 +204,6 @@ h1 {
   height: 24px;
   flex: none;
   display: block;
-}
-
-/* A page's name, the size Apple sets it: big, on the gutter. */
-.large-title {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-tight);
-  padding: 8px 0 2px;
-  font-size: 31px;
-  line-height: 40px;
 }
 
 /* A section's heading on the gutter; as a link it opens the whole section, a quiet arrow at its end. */
@@ -325,89 +317,6 @@ button.group-row:hover:enabled {
 .group-row > .icon:last-child:not(:first-child) {
   color: var(--ink2);
   margin-left: -10px;
-}
-
-/* A list of rows on the page itself, running out past the gutters. */
-.rows {
-  list-style: none;
-  margin: 0 calc(-1 * var(--gutter));
-  padding: 0;
-}
-
-/* The row every list shares: something on the left (a picture, a glyph), a title and maybe a quiet line,
-   a value or an arrow on the right, and a hairline that starts where the text does. */
-.nav-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 48px;
-  padding: 11px var(--gutter);
-  text-align: left;
-  font-size: 16px;
-  line-height: 21px;
-}
-
-.nav-row::after {
-  content: "";
-  position: absolute;
-  left: var(--gutter);
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: var(--line);
-}
-
-.nav-row.pictured::after {
-  left: calc(var(--gutter) + 60px);
-}
-
-.nav-row.glyphed::after {
-  left: calc(var(--gutter) + 32px);
-}
-
-li:last-child > .nav-row::after {
-  display: none;
-}
-
-a.nav-row:hover,
-button.nav-row:hover {
-  background: var(--hover);
-}
-
-.nav-row .picture {
-  width: 48px;
-  flex: none;
-}
-
-.nav-row > .icon {
-  width: 20px;
-  height: 20px;
-}
-
-.nav-row .words {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.nav-row .words > * {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nav-row .value {
-  font-size: 15px;
-  color: var(--ink2);
-}
-
-.nav-row > .icon:last-child:not(:first-child) {
-  width: 19px;
-  height: 19px;
-  color: color-mix(in srgb, var(--ink2) 70%, transparent);
 }
 
 .sub {

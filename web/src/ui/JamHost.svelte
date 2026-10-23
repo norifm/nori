@@ -44,9 +44,9 @@
 <div class="jam" id="jam-host">
   {#if !player.up || !j}
     <!-- The player module runs the remote: it loads in the background, or now. -->
-    <button class="pill solid" onclick={act(playerUp)}><Icon name="community" />{W.jamStart}</button>
+    <button class="pill" onclick={act(playerUp)}><Icon name="community" />{W.jamStart}</button>
   {:else if j.hosting && inviting}
-    <button class="pill small" onclick={() => (inviting = false)}><Icon name="arrow-left" />{W.back}</button>
+    <button class="pill small quiet" onclick={() => (inviting = false)}><Icon name="arrow-left" />{W.back}</button>
     <h3>{W.jamInviteTitle}</h3>
     {#if qr}
       <svg class="qr" viewBox="-2 -2 {qr.size + 4} {qr.size + 4}" role="img" aria-label={W.jamInviteTitle}><rect x="-2" y="-2" width={qr.size + 4} height={qr.size + 4} fill="white" /><path d={path(qr)} fill="black" /></svg>
@@ -54,14 +54,14 @@
     <p class="sub">{W.jamInviteHint}</p>
     <div class="invite">
       <input class="field link" readonly value={j.link ?? ""} aria-label={W.jamLink} />
-      <button class="pill" onclick={() => void navigator.clipboard?.writeText(j.link ?? "").then(() => (copied = true))}>{copied ? W.copied : W.copyLink}</button>
+      <button class="pill quiet" onclick={() => void navigator.clipboard?.writeText(j.link ?? "").then(() => (copied = true))}>{copied ? W.copied : W.copyLink}</button>
     </div>
   {:else if j.hosting}
     <div class="line">
       <Icon name="community" /><span class="name">{W.jamYours}</span><span class="sub">{W.jamListening(guests.length)}</span>
-      <button class="round end" aria-label={W.jamEnd} title={W.jamEnd} onclick={act(() => ask("jam_close"))}><Icon name="log-out" /></button>
+      <button class="glyph end" aria-label={W.jamEnd} title={W.jamEnd} onclick={act(() => ask("jam_close"))}><Icon name="log-out" /></button>
     </div>
-    <button class="pill solid" id="jam-invite" onclick={() => (inviting = true)}><Icon name="user-plus" />{W.jamInvite}</button>
+    <button class="pill" id="jam-invite" onclick={() => (inviting = true)}><Icon name="user-plus" />{W.jamInvite}</button>
     <label class="row">
       <span>{W.jamAlong}</span>
       <input type="checkbox" class="switch" checked={j.along} onchange={(e) => void act(() => ask("jam_along", e.currentTarget.checked))()} />
@@ -75,8 +75,8 @@
       {#each guests as m (m.id)}
         <li>
           <Icon name="user" /><span class="clip who">{m.name}<span class="sub line2">{W.roles[m.role] ?? m.role}</span></span>
-          <button class="round" class:lit={m.role === "Admin"} aria-pressed={m.role === "Admin"} aria-label={m.role === "Admin" ? W.jamMakeGuest : W.jamMakeAdmin} title={m.role === "Admin" ? W.jamMakeGuest : W.jamMakeAdmin} onclick={act(() => ask("jam_promote", m.id, m.role !== "Admin"))}><Icon name="key" /></button>
-          <button class="round" aria-label={W.jamSendOut} title={W.jamSendOut} onclick={act(() => ask("jam_kick", m.id))}><Icon name="xmark" /></button>
+          <button class="glyph" class:lit={m.role === "Admin"} aria-pressed={m.role === "Admin"} aria-label={m.role === "Admin" ? W.jamMakeGuest : W.jamMakeAdmin} title={m.role === "Admin" ? W.jamMakeGuest : W.jamMakeAdmin} onclick={act(() => ask("jam_promote", m.id, m.role !== "Admin"))}><Icon name="key" /></button>
+          <button class="glyph" aria-label={W.jamSendOut} title={W.jamSendOut} onclick={act(() => ask("jam_kick", m.id))}><Icon name="xmark" /></button>
         </li>
       {:else}
         <li class="sub">{W.jamNoOne}</li>
@@ -86,12 +86,12 @@
     {#if j.start === "Unsupported"}
       <p class="sub">{W.jamUnavailable}</p>
     {:else if j.start !== "Unavailable"}
-      <button class="pill solid" id="jam-start" disabled={j.start === "Starting"} onclick={act(() => ask("jam_open"))}><Icon name="community" />{j.start === "Starting" ? W.jamStarting : W.jamStart}</button>
+      <button class="pill" id="jam-start" disabled={j.start === "Starting"} onclick={act(() => ask("jam_open"))}><Icon name="community" />{j.start === "Starting" ? W.jamStarting : W.jamStart}</button>
     {/if}
     <h4>{W.jamJoin}</h4>
     <input class="field" id="jam-link" bind:value={link} placeholder={W.jamPaste} aria-label={W.jamLink} />
     <input class="field" id="jam-name" bind:value={name} placeholder={W.jamName} aria-label={W.jamName} />
-    <button class="pill" id="jam-join" onclick={join}>{W.jamJoin}</button>
+    <button class="pill quiet" id="jam-join" onclick={join}>{W.jamJoin}</button>
   {/if}
   {#if said}<p class="sub">{said}</p>{/if}
 </div>
@@ -103,7 +103,7 @@
     gap: 10px;
     align-items: stretch;
     padding: 12px 4px 16px;
-    border-top: 1px solid var(--hair);
+    border-top: var(--hairline) solid var(--hair);
     margin-top: 8px;
   }
   .jam > .pill {

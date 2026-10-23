@@ -1,19 +1,30 @@
 <script lang="ts">
-  // The Library's songs: its places, then the server's songs in its own order (a browser keeps no index
-  // to sort them by), the first pages of them.
-  import type { Snippet } from "svelte";
+  // The library's songs, the first pages of them; Play plays them, Shuffle the core's random songs.
   import { read } from "../rpc";
   import { reading } from "../state/library.svelte";
+  import { player } from "../state/player.svelte";
   import type { Song } from "../state/types";
   import { W } from "../words";
   import Icon from "../ui/Icon.svelte";
+  import Page from "../ui/Page.svelte";
   import SongList from "../ui/SongList.svelte";
 
-  let { places }: { places: Snippet } = $props();
-  const page = reading("library", () => read<{ songs: Song[] }>({ kind: "songs", offset: 0, count: 300 }).then((p) => p.songs ?? []));
+  const page = reading("songs", () => read<{ songs: Song[] }>({ kind: "songs", offset: 0, count: 300 }).then((p) => p.songs ?? []));
 </script>
 
-{@render places()}
-{#if page.error}<p class="empty">{W.failed(page.error)}</p>
-{:else if page.data && !page.data.length}<p class="empty"><Icon name="music-note" />{W.noSongs}</p>
-{:else if page.data}<SongList songs={page.data} kind="Songs" />{/if}
+<Page title={W.songs} back ready={!!page.data} error={page.error}>
+  {#snippet head()}
+    <div class="actions">
+      <button class="pill small" onclick={() => void player.play(page.data ?? [], 0, false, "Songs", "")}><Icon name="play-solid" />{W.play}</button>
+      <button class="pill small quiet" onclick={() => void player.shuffleLibrary(false)}><Icon name="shuffle" />{W.shuffle}</button>
+    </div>
+  {/snippet}
+  <SongList songs={page.data ?? []} kind="Songs" />
+</Page>
+
+<style>
+  .actions {
+    display: flex;
+    gap: 8px;
+  }
+</style>

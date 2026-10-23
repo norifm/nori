@@ -1,6 +1,6 @@
 <script lang="ts">
-  // A page: its name (large on a tab's own page; beside a way back on a page opened from another), its
-  // controls beside the name, then what it shows; while its read is out, a quiet word; if it failed, why.
+  // A page: its big title (with a way back where it is not a top page, and its own controls beside),
+  // then what it shows; while its read is out, a quiet word; if it failed, why.
   import type { Snippet } from "svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
@@ -9,14 +9,12 @@
 </script>
 
 <div class="page">
-  {#if back}
-    <header class="back-title">
-      <button class="glyph" aria-label={W.back} title={W.back} onclick={() => history.back()}><Icon name="arrow-left" /></button>
-      <h1 class="clip">{title}</h1>
+  {#if back}<button class="glyph back" aria-label={W.back} title={W.back} onclick={() => history.back()}><Icon name="arrow-left" /></button>{/if}
+  {#if title}
+    <header class="page-head">
+      <h1>{title}</h1>
       {@render head?.()}
     </header>
-  {:else if title}
-    <header class="large-title"><h1 class="clip">{title}</h1>{@render head?.()}</header>
   {/if}
   {#if error}<p class="empty">{W.failed(error)}</p>
   {:else if !ready}<p class="loading">{W.loading}</p>
@@ -28,28 +26,38 @@
   .page {
     padding: var(--top-h) var(--gutter) calc(var(--bar-h) + var(--gap-section));
   }
-  .large-title h1 {
-    flex: 1;
-    font-size: 31px;
-    line-height: 40px;
+  .back {
+    margin: 0 0 2px -12px;
   }
-  .back-title {
-    display: flex;
-    align-items: center;
-    margin: 0 0 6px -16px;
-  }
-  .back-title .glyph :global(.icon) {
+  .back :global(.icon) {
     width: 22px;
     height: 22px;
   }
-  .back-title h1 {
-    flex: 1;
-    font-size: 24px;
-    line-height: 32px;
+  .page-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 6px 0 18px;
+    flex-wrap: wrap;
+  }
+  h1 {
+    font-size: 34px;
+    line-height: 42px;
   }
   @media (max-width: 719px) {
     .page {
       padding-bottom: calc(var(--bar-h) + var(--gap-section) + env(safe-area-inset-bottom));
     }
+    h1 {
+      font-size: 31px;
+      line-height: 40px;
+    }
+  }
+  .page :global(h2.section) {
+    font-size: 19px;
+    line-height: 24px;
+    letter-spacing: -0.2px;
+    margin: 30px 0 14px;
   }
 </style>

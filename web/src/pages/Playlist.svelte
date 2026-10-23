@@ -1,23 +1,24 @@
 <script lang="ts">
-  // A playlist: its hero (its note under the title, Rename and Delete in its menu), its list's head ("8 songs
-  // · 36:28", Add to queue), and its songs, each movable and removable.
+  // A playlist: its head ("8 songs · 36:28", what the core offers for its songs, its menu: rename, delete),
+  // and its songs, each movable and removable.
   import { ask, read } from "../rpc";
   import { library, reading } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
-  import { go, route } from "../state/route.svelte";
+  import { go } from "../state/route.svelte";
   import { ui, type Item } from "../state/ui.svelte";
   import type { Playlist, Song } from "../state/types";
   import { W } from "../words";
   import Hero from "../ui/Hero.svelte";
   import Icon from "../ui/Icon.svelte";
+  import Page from "../ui/Page.svelte";
   import PageTools from "../ui/PageTools.svelte";
   import SongList from "../ui/SongList.svelte";
 
+  let { id }: { id: string } = $props();
   const page = reading("playlist", async () => {
-    const d = await read<{ playlist: Playlist; songs: Song[]; seconds: number }>({ kind: "playlist", id: route.arg });
+    const d = await read<{ playlist: Playlist; songs: Song[]; seconds: number }>({ kind: "playlist", id });
     return { ...d, tools: JSON.parse(await ask<string>("page_actions", "Playlist", d.songs.length)) as string[] };
   });
-  const id = $derived(route.arg);
   const pl = $derived(page.data?.playlist);
   const songs = $derived(page.data?.songs ?? []);
 
@@ -45,29 +46,28 @@
         run: async () => {
           if (!confirm(W.deleteConfirm(pl!.name))) return;
           await library.change({ kind: "deletePlaylist", id });
-          go("library", "Playlists");
+          go("playlists");
         },
       },
     ]);
 </script>
 
-<Hero
-  cover={pl?.cover}
-  title={pl?.name ?? ""}
-  fallback="playlist"
-  ready={!!pl}
-  error={page.error}
-  label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""}
-  onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}
->
-  {#snippet by()}{#if pl?.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
-  {#snippet actions()}<button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>{/snippet}
-  {#snippet tools()}<PageTools tools={page.data?.tools ?? []} {songs} />{/snippet}
-  <SongList {songs} kind="Playlist" {id} extra={edits} {moved} />
-</Hero>
+<Page back ready={!!pl} error={page.error}>
+  {#if pl}
+    <Hero cover={pl.cover} title={pl.name} fallback="playlist" label={songs.length ? W.listCaption(songs.length, page.data?.seconds ?? 0) : ""} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
+      {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
+      {#snippet actions()}
+        <PageTools tools={page.data?.tools ?? []} {songs} />
+        <button class="glyph" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>
+      {/snippet}
+    </Hero>
+    <SongList {songs} kind="Playlist" {id} extra={edits} {moved} />
+  {/if}
+</Page>
 
 <style>
   .comment {
+    font-size: 15px;
     font-weight: 400;
   }
 </style>

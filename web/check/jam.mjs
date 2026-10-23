@@ -43,12 +43,10 @@ const json = async (page, call, ...args) => JSON.parse(await ask(page, call, ...
 const until = (page, f, arg, timeout = 30000) => page.waitForFunction(f, { timeout, polling: 250 }, arg);
 const heard = (page) => page.evaluate(async () => (await window.nori.heard?.())?.seconds ?? 0);
 
-/** Opens `name` (the queue in the player, the devices' sheet) from the player bar. */
+/** Opens pane `name` beside the page from the player bar. */
 async function pane(page, name) {
-  // The devices' sheet is modal: it goes before anything under it is pressed.
-  if (name !== "devices" && (await page.$("dialog[open] #devices"))) await page.keyboard.press("Escape");
-  if (!(await page.$(`#${name}`))) await page.click(`#bar [data-pane=${name}]`);
-  await page.waitForSelector(`#${name}`);
+  if (!(await page.$(`#full #${name}`))) await page.click(`#bar [data-pane=${name}]`);
+  await page.waitForSelector(`#full #${name}`);
 }
 
 const host = await open("host");

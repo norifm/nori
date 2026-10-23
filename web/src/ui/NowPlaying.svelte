@@ -1,39 +1,42 @@
 <script lang="ts">
-  // The full player, as Android's: the cover at the top, melting into the page dyed with it (the cover
-  // blurred lies behind the title and the controls); the title with the seal and the menu, the seek bar,
-  // then lyrics, previous, play, next and the queue, then where it plays. The lyrics or the queue take
-  // the cover's place, dissolving into it. On a wide screen the cover (or the lyrics or the queue) is the
-  // left half, going soft at its right edge, and the controls stand beside it. Opening, the cover grows
-  // from the bar's thumbnail.
-  import { fade } from "svelte/transition";
-  import { coverLook, type CoverLook } from "../state/coverLook";
-  import { songMenu } from "../state/menus";
+  // The full player: the cover, the song, the seek bar and controls; beside them on a wide screen (in
+  // the cover's place on a phone) the lyrics, the queue (with the jam over it) or other devices, in a panel
+  // with its tabs. It wears the season's paper dyed with the cover, the cover blurred behind it (not in
+  // Midnight).
   import { player } from "../state/player.svelte";
+  import { songMenu } from "../state/menus";
   import { href } from "../state/route.svelte";
   import { looks } from "../state/theme.svelte";
   import { ui, type Pane } from "../state/ui.svelte";
+  import { remote } from "../state/remote.svelte";
   import { W } from "../words";
   import Controls from "./Controls.svelte";
   import Cover from "./Cover.svelte";
-  import Icon from "./Icon.svelte";
-  import Lyrics from "./Lyrics.svelte";
-  import OutputButton from "./OutputButton.svelte";
-  import Queue from "./Queue.svelte";
   import Seal from "./Seal.svelte";
+  import Icon from "./Icon.svelte";
+  import OutputButton from "./OutputButton.svelte";
   import Seek from "./Seek.svelte";
+  import PaneView from "./PaneView.svelte";
   import Volume from "./Volume.svelte";
+  import { coverLook, type CoverLook } from "../state/coverLook";
 
   const s = $derived(player.song!);
   const n = $derived(player.now);
   // `s` is new on every refresh; the cover's address compares by value.
   const cover = $derived(s.cover);
+  /** On a wide screen something is always beside the cover: the lyrics unless another was picked. */
+  const pane = $derived<Pane | null>(ui.pane ?? (ui.wide ? "lyrics" : null));
+  const panes: [Pane, string, string][] = [
+    ["lyrics", "emoji-sing-right-note", W.lyrics],
+    ["devices", "computer", W.playOn],
+    ["queue", "playlist", W.queue],
+  ];
   const close = () => {
     ui.full = false;
     ui.pane = null;
   };
-  const choose = (p: Pane) => (ui.pane = ui.pane === p ? null : p);
 
-  // The cover's colors and wash; the page's own until they come (and in Midnight, which wears none).
+  // The cover's colors and wash; the page's own until they come.
   let look = $state<CoverLook | null>(null);
   $effect(() => {
     void looks.rev;
@@ -43,82 +46,68 @@
     else look = null;
     return () => (gone = true);
   });
-  /** The wash: the blurred cover, its last row carried on below it, so it runs on under the controls. */
   let washed = $state<HTMLCanvasElement>();
   $effect(() => {
     const w = look?.wash;
     if (!washed || !w) return;
-    const side = w.width;
-    washed.width = side;
-    washed.height = side * 2;
-    const g = washed.getContext("2d")!;
-    g.putImageData(w, 0, 0);
-    g.drawImage(washed, 0, side - 1, side, 1, 0, side, side, side);
-  });
-  /** The share of the sleeve that melts, from the top of its band: the core's (`melt`). */
-  const melt = $derived(look?.melt ?? 0.38);
-
-  // The cover grows out of the bar's thumbnail as the player opens (unless the Motion setting asks for less).
-  let sleeve = $state<HTMLElement>();
-  $effect(() => {
-    const el = sleeve;
-    const from = document.querySelector("#mini .art, #bar .art")?.getBoundingClientRect();
-    if (!el || !from || document.documentElement.classList.contains("still")) return;
-    const to = el.getBoundingClientRect();
-    if (!to.width) return;
-    const k = from.width / to.width;
-    el.animate(
-      [
-        { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${k})`, borderRadius: `${10 / k}px` },
-        { transform: "none", borderRadius: "0px" },
-      ],
-      { duration: 380, easing: "cubic-bezier(0.05, 0.7, 0.1, 1)" },
-    );
+    washed.width = w.width;
+    washed.height = w.height;
+    washed.getContext("2d")?.putImageData(w, 0, 0);
   });
 </script>
 
-<div class="full tinted" class:wide={ui.wide} class:paned={!!ui.pane} role="dialog" aria-modal="true" aria-label={s.title} id="full" style={look?.vars} style:--melt={melt}>
-  {#if look?.wash}<canvas class="wash" bind:this={washed} aria-hidden="true"></canvas><div class="floor"></div>{/if}
-  <section class="panel">
-    {#key ui.pane}
-      <div class="in" in:fade={{ duration: 360 }}>
-        {#if !ui.pane}
-          <div class="sleeve" bind:this={sleeve}><Cover src={s.cover} radius="0" /></div>
-        {:else}
-          {#if ui.pane === "lyrics"}<div class="head">
-            <span class="thumb"><Cover src={s.cover} /></span>
-            <span class="names"><span class="clip">{s.title}</span><span class="sub clip">{s.artist}</span></span>
-            {#if !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} size={22} />{/if}
-            <button class="glyph" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, [], true)}><Icon name="more-horiz" /></button>
-          </div>{/if}
-          <div class="pane" class:queue={ui.pane === "queue"}>{#if ui.pane === "lyrics"}<Lyrics />{:else}<Queue />{/if}</div>
-        {/if}
-      </div>
-    {/key}
-  </section>
-  <section class="controls">
-    {#if ui.pane !== "lyrics" || ui.wide}
-      <div class="title-row">
-        <div class="names">
-          <span class="title clip">{s.title}</span>
-          {#if s.artistId}<a class="artist clip" href={href("artist", s.artistId)} onclick={close}>{s.artist}</a>{:else}<span class="artist clip">{s.artist}</span>{/if}
-          {#if s.album}{#if s.albumId}<a class="album clip" href={href("album", s.albumId)} onclick={close}>{s.album}</a>{:else}<span class="album clip">{s.album}</span>{/if}{/if}
-        </div>
-        {#if !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} size={28} />{/if}
-        <button class="glyph title-button" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, [], true)}><Icon name="more-horiz" /></button>
-      </div>
-    {/if}
-    <Seek />
-    {#if player.held}<button class="held" onclick={() => player.unhold()}>{W.tapToPlay}</button>{/if}
-    <div class="transport">
-      <button class="glyph quiet" class:on={ui.pane === "lyrics"} aria-pressed={ui.pane === "lyrics"} aria-label={W.lyrics} title={W.lyrics} data-pane="lyrics" onclick={() => choose("lyrics")}><Icon name="emoji-sing-right-note" /></button>
-      <Controls big />
-      <button class="glyph quiet" class:on={ui.pane === "queue"} aria-pressed={ui.pane === "queue"} aria-label={W.queue} title={W.queue} data-pane="queue" onclick={() => choose("queue")}><Icon name="playlist" /></button>
-    </div>
-    {#if !n?.asks}<div class="output"><OutputButton named /></div>{/if}
-    {#if ui.wide}<div class="volume"><Volume /></div>{/if}
-  </section>
+<div class="full tinted" class:wide={ui.wide} class:paned={!!pane} role="dialog" aria-modal="true" aria-label={s.title} id="full" style={look?.vars}>
+  {#if look?.wash}<canvas class="wash" bind:this={washed} aria-hidden="true"></canvas>{/if}
   <button class="glyph close" aria-label={W.close} title={W.close} onclick={close}><Icon name="nav-arrow-down" /></button>
+  <section class="main">
+    {#if !pane || ui.wide}
+      <div class="art" class:held={!player.playing}><Cover src={s.cover} radius="var(--r-card)" /></div>
+    {:else}
+      <div class="small-head">
+        <div class="small-art"><Cover src={s.cover} /></div>
+        <div class="clip"><div class="clip title-s">{s.title}</div><div class="sub clip">{s.artist}</div></div>
+      </div>
+      <div class="pane-phone"><PaneView {pane} /></div>
+    {/if}
+    <div class="title-row">
+      <div class="names">
+        <span class="title clip">{s.title}</span>
+        {#if s.artistId}<a class="artist clip" href={href("artist", s.artistId)} onclick={close}>{s.artist}</a>{:else}<span class="artist clip">{s.artist}</span>{/if}
+      </div>
+      {#if !n?.asks}<Seal what="song" id={s.id} on={!!s.starred} size={26} />{/if}
+      <button class="glyph" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, [], true)}><Icon name="more-horiz" /></button>
+    </div>
+    <Seek />
+    <div class="badges">
+      {#if !n?.asks}<OutputButton named />{/if}
+      {#if n?.mixing}<span class="badge">{W.autoMix}</span>{/if}
+      {#if n?.jam}<span class="badge">{W.jam}</span>{/if}
+      {#if player.held}<button class="badge held" onclick={() => player.unhold()}>{W.tapToPlay}</button>{/if}
+    </div>
+    <Controls big />
+    {#if ui.wide}<div class="volume"><Volume /></div>{/if}
+    {#if !ui.wide}
+      <nav class="pane-tabs">
+        {#each panes as [p, icon, label] (p)}
+          {#if p !== "devices" || remote.devices.on}
+            <button class="glyph quiet" class:on={pane === p} aria-pressed={pane === p} aria-label={label} title={label} data-pane={p} onclick={() => (ui.pane = ui.pane === p && !ui.wide ? null : p)}><Icon name={icon} /></button>
+          {/if}
+        {/each}
+      </nav>
+    {/if}
+  </section>
+  {#if ui.wide && pane}
+    <section class="side">
+      <nav class="head" aria-label={W.more}>
+        {#each panes as [p, icon, label] (p)}
+          {#if p !== "devices" || remote.devices.on}
+            <button class="tab-btn" class:on={pane === p} aria-pressed={pane === p} data-pane={p} onclick={() => (ui.pane = p)}><Icon name={icon} /><span>{label}</span></button>
+          {/if}
+        {/each}
+      </nav>
+      <div class="body"><PaneView {pane} /></div>
+    </section>
+  {/if}
 </div>
 
 <style>
@@ -129,93 +118,84 @@
     background: var(--page);
     color: var(--ink);
     display: flex;
-    flex-direction: column;
+    justify-content: center;
+    padding: 56px var(--gutter) calc(16px + env(safe-area-inset-bottom));
     overflow: hidden;
-    padding-bottom: env(safe-area-inset-bottom);
+    animation: rise 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
-  /* The blurred cover, the size of the sharp one and under it, carried on downwards; it calms into the
-     page towards the bottom. */
+  @keyframes rise {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+  }
+  /* The cover blurred, behind everything; drawn small and stretched, as it is already soft. */
   .wash {
     position: absolute;
-    top: 0;
-    left: 50%;
-    translate: -50% 0;
-    width: var(--side);
-    height: calc(var(--side) * 2);
+    inset: 0;
+    width: 100%;
+    height: 100%;
     pointer-events: none;
   }
-  .floor {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: var(--side);
-    bottom: 0;
-    background: linear-gradient(transparent, color-mix(in srgb, var(--page) 22%, transparent) 45%, color-mix(in srgb, var(--page) 75%, transparent) 80%, var(--page));
-    pointer-events: none;
-  }
-  .full {
-    --side: min(100vw, calc(100dvh - 330px));
-  }
-  .panel {
+  .main,
+  .side {
     position: relative;
-    flex: 1;
-    min-height: 0;
+  }
+  .close {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    color: var(--ink2);
+    z-index: 1;
+  }
+  .close :global(.icon) {
+    width: 24px;
+    height: 24px;
+  }
+  .main {
+    width: 100%;
+    max-width: 420px;
     display: flex;
     flex-direction: column;
-  }
-  .in {
-    flex: 1;
+    gap: 14px;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
   }
-  /* The sharp cover, its last rows rubbed out over the blurred one. */
-  .sleeve {
-    width: var(--side);
-    margin: 0 auto;
-    transform-origin: 0 0;
-    overflow: hidden;
-    -webkit-mask-image: linear-gradient(#000 calc((1 - var(--melt)) * 100%), rgb(0 0 0 / 0.58) calc((1 - var(--melt) / 2) * 100%), transparent);
-    mask-image: linear-gradient(#000 calc((1 - var(--melt)) * 100%), rgb(0 0 0 / 0.58) calc((1 - var(--melt) / 2) * 100%), transparent);
+  .art {
+    width: 100%;
+    max-width: min(420px, 52vh);
+    margin: auto auto 8px;
+    transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
   }
-  .head {
+  .art.held {
+    transform: scale(0.86);
+  }
+  .small-head {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 56px 8px 8px var(--gutter);
   }
-  .thumb {
+  .small-art {
     width: 56px;
     flex: none;
   }
-  .head .names {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
+  .title-s {
     font-weight: 600;
   }
-  .pane {
+  .pane-phone {
     flex: 1;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
+    overflow-y: auto;
+    margin: 0 calc(-1 * var(--gutter));
     padding: 0 var(--gutter);
   }
-  .pane.queue {
-    padding: 56px 26px 0;
-  }
-  .controls {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    padding: 0 0 12px;
+  .paned:not(.wide) .title-row {
+    display: none;
   }
   .title-row {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 16px 0 26px;
+    gap: 2px;
+    margin-right: -8px;
   }
   .names {
     flex: 1;
@@ -224,127 +204,119 @@
     flex-direction: column;
   }
   .title {
-    font: 700 26px/34px var(--display);
+    font: 700 24px/1.25 var(--display);
     letter-spacing: -0.3px;
   }
   .artist {
-    font-size: 16px;
-    line-height: 22px;
+    font-size: 17px;
     font-weight: 500;
     color: color-mix(in srgb, var(--ink) 60%, transparent);
   }
-  .album {
-    font-size: 14px;
-    line-height: 19px;
-    color: color-mix(in srgb, var(--ink) 45%, transparent);
-  }
-  .controls :global(.seal),
-  .title-button {
-    width: 44px;
-    height: 44px;
+  .title-row :global(.seal) {
     color: var(--ink);
   }
-  .controls :global(.seal.on) {
+  .title-row :global(.seal.on) {
     color: var(--accent);
   }
-  .title-button :global(.icon) {
-    width: 28px;
-    height: 28px;
+  .title-row .glyph :global(.icon) {
+    width: 26px;
+    height: 26px;
   }
-  .controls > :global(.seek) {
-    padding: 10px 26px 0;
-  }
-  .held {
-    align-self: center;
-    margin-top: 4px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--accent);
-  }
-  .transport {
+  .badges {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 18px 0;
-  }
-  .transport > .glyph :global(.icon) {
-    width: 24px;
-    height: 24px;
-  }
-  .output {
-    display: flex;
+    gap: 10px;
     justify-content: center;
-    padding: 18px var(--gutter) 0;
+    align-items: center;
+    min-height: 32px;
+    margin: -6px 0 -4px;
   }
-  .output :global(.output.named) {
+  .badges :global(.output.named) {
+    height: 32px;
+    font-size: 14px;
+  }
+  .badges :global(.output .icon) {
+    width: 20px;
+    height: 20px;
+  }
+  .badge {
+    font-size: 12px;
+    font-weight: 600;
     color: var(--ink2);
   }
-  .output :global(.output.lit) {
-    color: var(--ink);
+  .badge.held {
+    color: var(--accent);
+  }
+  .pane-tabs {
+    display: flex;
+    justify-content: space-around;
+    margin-top: auto;
+    padding-top: 6px;
+  }
+  /* Wide: the cover and controls on the left, the pane on the right. */
+  .wide {
+    gap: 64px;
+    padding: 56px 48px 32px;
+  }
+  .wide .main {
+    justify-content: center;
+  }
+  .wide .art {
+    margin: 0 auto 8px;
+  }
+  .side {
+    flex: 1;
+    max-width: 620px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--veil);
+    border: var(--hairline) solid var(--hair);
+    border-radius: var(--r-sheet);
+    overflow: hidden;
   }
   .volume {
     display: flex;
     justify-content: center;
-    padding-top: 8px;
   }
   .volume :global(.vol) {
-    width: 220px;
+    width: 200px;
   }
-  .close {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    background: var(--glass);
-    -webkit-backdrop-filter: blur(12px);
-    backdrop-filter: blur(12px);
+  .head {
+    display: flex;
+    gap: 4px;
+    padding: 12px;
+    border-bottom: var(--hairline) solid var(--hair);
   }
-  .close :global(.icon) {
-    width: 22px;
-    height: 22px;
+  .tab-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: var(--hairline) solid transparent;
+    color: var(--ink2);
+    font-size: 14px;
+    font-weight: 500;
   }
-  /* Wide: the cover is the left half, as tall as the window, going soft over its right 30 %; the lyrics or
-     the queue take its place; the controls stand in the middle of the rest. */
-  .wide {
-    --side: min(100dvh, 50vw);
-    flex-direction: row;
+  .tab-btn :global(.icon) {
+    width: 20px;
+    height: 20px;
   }
-  .wide .wash {
-    top: 0;
-    left: 0;
-    translate: none;
-    width: 100%;
-    height: 100%;
+  .tab-btn.on {
+    color: var(--accent);
+    background: var(--surface);
+    border-color: var(--hair);
   }
-  .wide .floor {
-    top: 0;
-    background: color-mix(in srgb, var(--page) 35%, transparent);
-  }
-  .wide .panel {
-    flex: none;
-    width: var(--side);
-  }
-  .wide .sleeve {
-    width: calc(var(--side) + 28px);
-    height: 100dvh;
-    margin: 0;
-    -webkit-mask-image: linear-gradient(to right, #000 70%, transparent);
-    mask-image: linear-gradient(to right, #000 70%, transparent);
-  }
-  .wide .sleeve :global(.cover) {
-    height: 100%;
-    aspect-ratio: auto;
-  }
-  .wide .controls {
+  /* A column, so the lyrics scroll in themselves (keeping the sung line in view) under their soft edges. */
+  .body {
     flex: 1;
-    justify-content: center;
-    max-width: 520px;
-    margin: 0 auto;
-    padding: 0 12px;
-  }
-  .wide .head {
-    padding-top: 64px;
-  }
-  .wide .pane.queue {
-    padding-top: 64px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 14px 22px;
+    scrollbar-width: none;
   }
 </style>
