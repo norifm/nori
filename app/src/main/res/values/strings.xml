@@ -314,6 +314,7 @@
     <string name="settings_analyse">Analyze</string>
     <string name="settings_cache_size">Space for streamed music</string>
     <string name="settings_stored">Stored on this device</string>
+    <string name="settings_removed_profile">A removed profile</string>
     <plurals name="settings_stored_downloads">
         <item quantity="one">%1$d download</item>
         <item quantity="other">%1$d downloads</item>

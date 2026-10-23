@@ -198,6 +198,17 @@ pub fn southern(zone: &str) -> bool {
     SOUTH.iter().any(|s| zone.starts_with(s))
 }
 
+/// What tells a storage bar's parts apart: the accent worn (`season`'s, the calendar's on a date with none),
+/// then the other three seasons' accents in the seasons' order, all as a `dark` or pale appearance wears them.
+/// Four hues from the theme, whichever season it is.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn usage_accents(season: Option<Season>, month: u32, day: u32, southern: bool, dark: bool) -> Vec<u32> {
+    let worn = season.unwrap_or_else(|| season_now(month, day, southern).season);
+    std::iter::once(palette(season, month, day, southern, dark, false).accent)
+        .chain(SEASONS.iter().filter(|s| **s != worn).map(|s| s.palette(dark).accent))
+        .collect()
+}
+
 /// The accents of `season`'s palette (the calendar's on a date with none) for a pale page and a dark one,
 /// which [`accent_on`] picks from.
 pub fn accents(season: Option<Season>, month: u32, day: u32, southern: bool) -> (u32, u32) {
@@ -336,6 +347,18 @@ pub fn roles(p: Palette) -> Roles {
 mod tests {
     use super::*;
     use crate::color::{calculate_contrast, WHITE};
+
+    #[test]
+    fn storage_parts_wear_the_worn_accent_then_the_other_seasons() {
+        for dark in [false, true] {
+            let chosen = usage_accents(Some(Season::Summer), 1, 1, false, dark);
+            assert_eq!(chosen, [Season::Summer, Season::Spring, Season::Autumn, Season::Winter].map(|s| s.palette(dark).accent));
+            // Following the calendar: mid-October is autumn's.
+            let followed = usage_accents(None, 10, 19, false, dark);
+            assert_eq!(followed[0], palette(None, 10, 19, false, dark, false).accent);
+            assert_eq!(followed[1..], [Season::Spring, Season::Summer, Season::Winter].map(|s| s.palette(dark).accent));
+        }
+    }
 
     #[test]
     fn zones_south_of_the_equator() {

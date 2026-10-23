@@ -6,6 +6,14 @@ use crate::Core;
 
 pub use nori_transfers::transfers::*;
 
+/// One profile's finished downloads: the id its rows are kept under (`server_db`) and its songs, newest first.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct ProfileDownloads {
+    pub profile: String,
+    pub ids: Vec<String>,
+}
+
 #[cfg_attr(feature = "ffi", uniffi::export)]
 impl Core {
     /// Finished albums and unfiled songs, in newest-download order.
@@ -22,6 +30,21 @@ impl Core {
             rows.filter_map(|j| serde_json::from_str(&j.ok()?).ok()).collect()
         };
         Ok(crate::library::downloaded_album(songs))
+    }
+
+    /// Every profile's finished downloads on this device, from the one database they share.
+    pub fn downloads_by_profile(&self) -> crate::Result<Vec<ProfileDownloads>> {
+        let c = self.db.lock();
+        let mut st = c.prepare_cached("SELECT server, id FROM downloads WHERE done=1 ORDER BY server, ts DESC")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out: Vec<ProfileDownloads> = Vec::new();
+        for (profile, id) in rows.filter_map(|r| r.ok()) {
+            match out.last_mut() {
+                Some(p) if p.profile == profile => p.ids.push(id),
+                _ => out.push(ProfileDownloads { profile, ids: vec![id] }),
+            }
+        }
+        Ok(out)
     }
 
     /// Queues `songs` for download; see [`DownloadQueued`].
@@ -299,6 +322,25 @@ mod tests {
         assert_eq!(album.songs.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["one"]);
         assert_eq!(album.album.song_count, 1);
         assert!(c.downloaded_album("missing".into()).unwrap().is_none());
+    }
+
+    #[test]
+    fn downloads_are_listed_by_profile_across_the_shared_database() {
+        let dir = nori_testdir::TempDir::new("downloads-by-profile");
+        let path = dir.join("nori.db").to_string_lossy().into_owned();
+        let home = Core::new(path.clone(), "home".into(), Default::default()).unwrap();
+        let away = Core::new(path, "away".into(), Default::default()).unwrap();
+        home.download_queue(["h1", "h2", "pending"].map(song).to_vec()).unwrap();
+        home.download_settle(vec!["h1".into(), "h2".into()], vec![true, true]).unwrap();
+        away.download_queue(vec![song("a1")]).unwrap();
+        away.download_settle(vec!["a1".into()], vec![true]).unwrap();
+        let mut listed = home.downloads_by_profile().unwrap();
+        listed.iter_mut().for_each(|p| p.ids.sort());
+        assert_eq!(listed, [
+            ProfileDownloads { profile: "away".into(), ids: vec!["a1".into()] },
+            ProfileDownloads { profile: "home".into(), ids: vec!["h1".into(), "h2".into()] },
+        ]);
+        assert_eq!(away.downloads_by_profile().unwrap().len(), 2, "either profile sees both");
     }
 
     #[test]

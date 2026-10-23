@@ -90,7 +90,12 @@ pub struct Facts {
     pub stream_bytes: u64,
     pub cover_bytes: u64,
     pub lyrics_bytes: u64,
+    /// Every profile's downloads: they share the computer's download folder.
     pub download_bytes: u64,
+    pub all_download_songs: u32,
+    /// Each profile with downloads (the id its rows are kept under) and what they hold.
+    pub download_profiles: Vec<(String, u64)>,
+    /// This profile's finished downloads, which its actions work on.
     pub download_songs: u32,
     pub database_bytes: u64,
     pub folders: Vec<(String, String)>,
@@ -192,6 +197,16 @@ struct Row {
     keyed: bool,
     /// A usage row's parts, as fractions of the whole.
     shares: Vec<f32>,
+    /// A usage row's downloads by profile, worded.
+    breakdown: Vec<String>,
+}
+
+/// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
+fn profile_name(p: &StoredPrefs, profile: &str) -> String {
+    p.servers.iter().find(|sv| nori_core::settings::server_db_id(&sv.id) == profile).map_or_else(
+        || "A removed profile".into(),
+        |sv| Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| crate::words::provider(sv.kind).name.into()),
+    )
 }
 
 fn options(name: &str) -> Vec<String> {
@@ -447,7 +462,7 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
         }
         RowItem::Stored => {
             let bytes = |b: u64| numbers::bytes(b as i64, POINT);
-            let downloads = words::count(f.download_songs, "download", "downloads");
+            let downloads = words::count(f.all_download_songs, "download", "downloads");
             let parts = [("Streamed music", f.stream_bytes), (downloads.as_str(), f.download_bytes), ("Covers", f.cover_bytes), ("Lyrics", f.lyrics_bytes), ("Library index", f.database_bytes)];
             let total: u64 = parts.iter().map(|p| p.1).sum();
             Row {
@@ -456,6 +471,11 @@ fn row_of(r: SettingsRow, p: &StoredPrefs, s: &SettingsState, f: &Facts) -> Opti
                 detail: bytes(total),
                 options: parts.iter().map(|(name, b)| (format!("{name} · {}", bytes(*b)), String::new())).collect(),
                 shares: parts.iter().map(|p| p.1 as f32 / total.max(1) as f32).collect(),
+                breakdown: if f.download_profiles.len() > 1 {
+                    f.download_profiles.iter().map(|(profile, b)| format!("{} · {}", profile_name(p, profile), bytes(*b))).collect()
+                } else {
+                    Vec::new()
+                },
                 enabled: true,
                 ..Default::default()
             }
@@ -640,6 +660,7 @@ pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<Setti
                 max: r.max,
                 keyed: r.keyed,
                 shares: ModelRc::new(VecModel::from(r.shares)),
+                breakdown: ModelRc::new(VecModel::from(r.breakdown.into_iter().map(SharedString::from).collect::<Vec<_>>())),
                 first: i == 0 || !plated[i - 1],
                 last: i + 1 == n || !plated[i + 1],
             });
@@ -694,6 +715,26 @@ mod tests {
         assert_eq!(source(&p, "LRCLIB"), ("".into(), false));
         let keyed = StoredPrefs { paxsenix_key: "k".into(), ..p };
         assert_eq!(source(&keyed, "PAXSENIX_SPOTIFY"), ("Change key".into(), false));
+    }
+
+    #[test]
+    fn storage_lists_each_profiles_downloads() {
+        use nori_core::settings::SavedServer;
+        let facts = |profiles: Vec<(String, u64)>| Facts {
+            rules: nori_core::browse::profile_rules(false),
+            download_bytes: 3 << 20,
+            all_download_songs: 5,
+            download_profiles: profiles,
+            download_songs: 3,
+            ..Default::default()
+        };
+        let p = StoredPrefs { servers: vec![SavedServer { id: "a".into(), name: "Home".into(), ..Default::default() }], active_server_id: "a".into(), ..Default::default() };
+        let today = Today { month: 10, day: 19, southern: false };
+        let usage = |f: &Facts| (0..8).flat_map(|tab| groups(&p, f, tab, today)).flat_map(|(_, rows)| rows).find(|r| r.kind == USAGE).unwrap();
+        let both = usage(&facts(vec![("a".into(), 2 << 20), ("gone".into(), 1 << 20)]));
+        assert_eq!(both.options[1].0, "5 downloads · 3.0 MB");
+        assert_eq!(both.breakdown, ["Home · 2.0 MB", "A removed profile · 1.0 MB"]);
+        assert!(usage(&facts(vec![("a".into(), 3 << 20)])).breakdown.is_empty(), "one profile needs no split");
     }
 
     #[test]

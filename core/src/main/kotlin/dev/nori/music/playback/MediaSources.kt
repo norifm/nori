@@ -348,6 +348,10 @@ class MediaSources(context: Context, private val clientOf: () -> Client, private
     fun streamBytes(): Long = runCatching { streamCache.cacheSpace }.getOrDefault(0L)
     fun downloadBytes(): Long = runCatching { downloadCache.cacheSpace }.getOrDefault(0L)
 
+    /** What the downloads of songs [ids] hold in the download cache. */
+    fun downloadBytes(ids: Collection<String>): Long =
+        ids.sumOf { runCatching { downloadCache.getCachedBytes(downloadKey(it), 0, Long.MAX_VALUE) }.getOrDefault(0L) }
+
     /**
      * Forgets every streamed copy of [id], whatever quality it was fetched at. A finished download is
      * the permanent copy; the streamed one is the same bytes twice. Call off the main thread.

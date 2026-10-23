@@ -378,9 +378,9 @@ class GenresViewModel(app: Application) : NoriViewModel(app) {
 
 /** The Library page's own: what the downloads weigh, for its row of places. */
 class LibraryHomeViewModel(app: Application) : NoriViewModel(app) {
-    /** The downloaded songs' size, worded; null until weighed. */
+    /** This profile's downloaded songs' size, worded (the download cache holds every profile's); null until weighed. */
     val downloadsSize: StateFlow<String?> = nori.downloads.state
-        .map { dev.nori.music.text.Fmt.bytes(nori.sources.downloadBytes()) }
+        .map { dev.nori.music.text.Fmt.bytes(nori.sources.downloadBytes(it.doneIds)) }
         .flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), null)
 }

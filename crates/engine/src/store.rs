@@ -301,14 +301,10 @@ impl Store {
         self.counted()
     }
 
-    /// Bytes the finished downloads hold, counted from disk.
-    pub fn download_bytes(&self) -> u64 {
-        let Ok(dir) = fs::read_dir(self.dir.join(DOWNLOADS)) else { return 0 };
-        dir.flatten()
-            .filter(|e| e.file_name().to_str().is_some_and(|n| !n.ends_with(PART)))
-            .filter_map(|e| e.metadata().ok())
-            .map(|m| m.len())
-            .sum()
+    /// Bytes the finished downloads of songs `ids` hold, counted from disk. Every profile's downloads share
+    /// this folder, so a profile's own are its songs'.
+    pub fn download_bytes_of(&self, ids: &[String]) -> u64 {
+        ids.iter().filter_map(|id| fs::metadata(self.download_path(id)).ok()).map(|m| m.len()).sum()
     }
 
     fn entries(&self) -> Vec<(String, u64)> {
@@ -590,13 +586,14 @@ mod tests {
     }
 
     #[test]
-    fn download_bytes_count_finished_downloads_only() {
+    fn download_bytes_count_the_songs_finished_downloads() {
         let d = dir("store-downloads");
         let s = Store::open(d.path(), 1 << 20).unwrap();
         fs::write(s.download_path("a"), [0u8; 300]).unwrap();
+        fs::write(s.download_path("other"), [0u8; 20]).unwrap();
         fs::write(s.download_part("b", "0"), [0u8; 50]).unwrap();
         put(&s, "c:0", 70);
-        assert_eq!(s.download_bytes(), 300);
+        assert_eq!(s.download_bytes_of(&["a".into(), "b".into(), "c".into()]), 300);
     }
 
     #[test]

@@ -150,6 +150,8 @@ export struct SettingRow {
     keyed: bool,
     // A usage row's parts, as fractions of the whole, in `options`' order.
     shares: [float],
+    // A usage row's downloads, a line per profile, drawn under its downloads part.
+    breakdown: [string],
 }
 
 // A line with a quieter one under it: an AutoEQ curve, a saved sound profile.
@@ -307,6 +309,8 @@ export global Theme {
     // Each season's page and accent (spring to winter), for the season tiles.
     in property <[color]> season-pages;
     in property <[color]> season-accents;
+    // A storage bar's first parts (the core's `usage_accents`).
+    in property <[color]> usage-accents;
     // The sheet on the right (lyrics, the queue, the devices).
     out property <length> panel-w: 320px;
 }
@@ -3530,7 +3534,7 @@ component Plate inherits Rectangle {
 // The storage bar's colors, one per kind of thing stored: shades of the page's ink, as Android's, the biggest strongest.
 global UsageColors {
     public pure function of(i: int) -> color {
-        return Theme.text.with-alpha([0.92, 0.68, 0.5, 0.36, 0.26][min(i, 4)]);
+        return i < Theme.usage-accents.length ? Theme.usage-accents[i] : Theme.dim;
     }
 }
 
@@ -3832,19 +3836,32 @@ component SettingLine inherits VerticalLayout {
             }
             if root.item.kind == 15: VerticalLayout {
                 spacing: 2px;
-                for part[i] in root.item.options: HorizontalLayout {
-                    spacing: 8px;
-                    Rectangle {
-                        y: (parent.height - self.height) / 2;
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: UsageColors.of(i);
+                for part[i] in root.item.options: VerticalLayout {
+                    spacing: 2px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            y: (parent.height - self.height) / 2;
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: UsageColors.of(i);
+                        }
+                        Text {
+                            text: part;
+                            color: Theme.dim;
+                            font-size: 12px;
+                        }
                     }
-                    Text {
-                        text: part;
-                        color: Theme.dim;
-                        font-size: 12px;
+                    // The downloads, each profile's under them, in from the dot.
+                    if i == 1: VerticalLayout {
+                        padding-left: 16px;
+                        spacing: 2px;
+                        for line in root.item.breakdown: Text {
+                            text: line;
+                            color: Theme.dim;
+                            font-size: 12px;
+                        }
                     }
                 }
             }

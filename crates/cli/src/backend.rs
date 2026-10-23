@@ -448,6 +448,10 @@ fn unreachable(e: &NetError) -> String {
 fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Option<&nori_engine::Store>, db: &PathBuf, cover_bytes: u64, offline: bool) -> Facts {
     let index = core.index_size().unwrap_or_default();
     let downloads = core.downloads(true).unwrap_or_default();
+    // Every profile's: they share this computer's download folder.
+    let listed = core.downloads_by_profile().unwrap_or_default();
+    let all_download_songs = listed.iter().map(|p| p.ids.len() as u32).sum();
+    let download_profiles: Vec<(String, i64)> = listed.into_iter().map(|p| { let b = store.map_or(0, |s| s.download_bytes_of(&p.ids)) as i64; (p.profile, b) }).collect();
     let folders = match (!offline).then(|| block_on(client.read_now(Read::MusicFolders))) {
         Some(Ok(Page::Folders { v })) => v,
         _ => Vec::new(),
@@ -459,7 +463,9 @@ fn facts(core: &nori_core::Core, client: &nori_core::client::Client, store: Opti
             stream: store.map_or(0, |s| s.cache_bytes()) as i64,
             covers: cover_bytes as i64,
             lyrics: core.lyrics_cache_bytes(),
-            downloads: downloads.iter().map(|s| s.size as i64).sum(),
+            downloads: download_profiles.iter().map(|p| p.1).sum(),
+            all_download_songs,
+            download_profiles,
             download_songs: downloads.len() as u32,
             database: std::fs::metadata(db).map(|m| m.len() as i64).unwrap_or(0),
         },
