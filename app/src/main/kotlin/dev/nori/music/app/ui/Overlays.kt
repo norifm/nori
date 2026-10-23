@@ -274,6 +274,12 @@ fun <T : Any> NoriSheet(
     }
     val dismiss by rememberUpdatedState(onDismissRequest)
     val live by rememberUpdatedState(open)
+    // Gone once closed and down, however it got there: a scrim tap or back during the slide down above runs
+    // Material's own hide, which cancels that one before `held` is let go, and the sheet's window then stayed
+    // on top of the app, unseen, taking every touch and back.
+    LaunchedEffect(state) {
+        androidx.compose.runtime.snapshotFlow { !live && state.currentValue == SheetValue.Hidden && !state.isVisible }.collect { if (it) held = null }
+    }
     // In the app's own colours, its plate and its text alike, also when opened from a page dressed in a
     // cover's (the plate is Material's, and a cover's text on it may not read).
     val scheme = LocalAppScheme.current ?: MaterialTheme.colorScheme
@@ -282,6 +288,8 @@ fun <T : Any> NoriSheet(
         CompositionLocalProvider(LocalLook provides look) {
             ModalBottomSheet(
                 onDismissRequest = { if (live) dismiss() }, sheetState = state,
+                // A drag while it goes down could pull it back up with nothing to say it is still there.
+                sheetGesturesEnabled = open,
                 shape = SheetShape, containerColor = scheme.surfaceContainer, contentColor = scheme.onSurface,
                 tonalElevation = 0.dp, scrimColor = Color.Black.copy(alpha = SHEET_SCRIM),
                 dragHandle = { SheetHandle(state, scheme.outlineVariant) },
