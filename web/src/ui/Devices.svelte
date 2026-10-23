@@ -8,7 +8,7 @@
   import JamHost from "./JamHost.svelte";
 
   const d = $derived(remote.devices);
-  const kindIcon: Record<string, string> = { Phone: "phone", Desktop: "laptop", Terminal: "terminal", Guest: "artist" };
+  const kindIcon: Record<string, string> = { Phone: "smartphone-device", Desktop: "computer", Terminal: "terminal", Guest: "user" };
   $effect(() => void remote.read());
 </script>
 
@@ -18,11 +18,11 @@
   {:else}
     <p class="sub lead">{W.devicesLead}</p>
     <button class="device" class:on={!d.active} aria-pressed={!d.active} data-device="" onclick={() => void remote.pick("")}>
-      <Icon name="laptop" /><span class="name">{W.thisBrowser}</span>{#if !d.active}<Icon name="check" />{/if}
+      <Icon name="computer" /><span class="name">{W.thisBrowser}</span>{#if !d.active}<Icon name="check" />{/if}
     </button>
     {#each d.list as x (x.id)}
       <button class="device" class:on={d.active === x.id} aria-pressed={d.active === x.id} data-device={x.id} onclick={() => void remote.pick(x.id)}>
-        <Icon name={kindIcon[x.kind] ?? "devices"} /><span class="name clip">{x.name}</span>
+        <Icon name={kindIcon[x.kind] ?? "computer"} /><span class="name clip">{x.name}</span>
         {#if d.active === x.id}<Icon name="check" />{:else if x.playing}<span class="sub">{W.devicePlaying}</span>{/if}
       </button>
     {:else}

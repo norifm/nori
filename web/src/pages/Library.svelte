@@ -15,11 +15,11 @@
   const sections = $derived(
     [
       [W.playlists, href("playlists"), "playlist"],
-      [W.artists, href("artists"), "artist"],
-      [W.albums, href("albums", "alphabeticalByName"), "album"],
-      [W.songs, href("songs"), "note"],
-      [W.genres, href("genres"), "genre"],
-      [W.favorites, href("favorites"), "seal-line"],
+      [W.artists, href("artists"), "user"],
+      [W.albums, href("albums", "alphabeticalByName"), "compact-disc"],
+      [W.songs, href("songs"), "music-note"],
+      [W.genres, href("genres"), "view-grid"],
+      [W.favorites, href("favorites"), "seal"],
     ].filter(([, h]) => !remote.jam?.guest || !(h === href("playlists") || h === href("favorites"))),
   );
 </script>
@@ -27,7 +27,7 @@
 <Page title={W.library} ready={!!page.data} error={page.error}>
   <ul class="sections">
     {#each sections as [name, h, icon] (h)}
-      <li><a href={h}><Icon name={icon} /><span>{name}</span><Icon name="chevron" /></a></li>
+      <li><a href={h}><Icon name={icon} /><span>{name}</span><Icon name="nav-arrow-right" /></a></li>
     {/each}
   </ul>
   <h2 class="section">{W.recentlyAdded}</h2>

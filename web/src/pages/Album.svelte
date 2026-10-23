@@ -25,7 +25,7 @@
       {#snippet by()}{#if a.artistId}<a href={href("artist", a.artistId)}>{a.artist}</a>{:else}{a.artist}{/if}{/snippet}
       {#snippet actions()}
         <Seal what="album" id={a.id} on={!!a.starred} />
-        <button class="round" aria-label={W.more} title={W.more} onclick={() => void addToPlaylist(songs)}><Icon name="more" /></button>
+        <button class="round" aria-label={W.more} title={W.more} onclick={() => void addToPlaylist(songs)}><Icon name="more-horiz" /></button>
       {/snippet}
     </Hero>
     <SongList {songs} kind="Album" id={a.id} numbered />

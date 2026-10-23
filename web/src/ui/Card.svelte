@@ -2,7 +2,7 @@
   // An album's, artist's or playlist's card in a grid or shelf: its cover, title and a line under it.
   import Cover from "./Cover.svelte";
 
-  let { href, cover, title, sub = "", round = false, fallback = "album" }: { href: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string } = $props();
+  let { href, cover, title, sub = "", round = false, fallback = "compact-disc" }: { href: string; cover?: string; title: string; sub?: string; round?: boolean; fallback?: string } = $props();
 </script>
 
 <a class="card" class:circle={round} {href}>

@@ -15,7 +15,7 @@
 <Page title={W.songs} back ready={!!page.data} error={page.error}>
   {#snippet head()}
     <div class="actions">
-      <button class="pill solid" onclick={() => void player.play(page.data ?? [], 0, false, "Songs", "")}><Icon name="play" />{W.play}</button>
+      <button class="pill solid" onclick={() => void player.play(page.data ?? [], 0, false, "Songs", "")}><Icon name="play-solid" />{W.play}</button>
       <button class="pill" onclick={() => void player.play(page.data ?? [], 0, true, "Songs", "")}><Icon name="shuffle" />{W.shuffle}</button>
     </div>
   {/snippet}

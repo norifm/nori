@@ -23,7 +23,7 @@
     onclick={(e) => {
       e.stopPropagation();
       void player.control("toggle");
-    }}><Icon name={player.playing ? "pause" : "play"} /></button
+    }}><Icon name={player.playing ? "pause-solid" : "play-solid"} /></button
   >
   <button
     class="round"
@@ -31,7 +31,7 @@
     onclick={(e) => {
       e.stopPropagation();
       void player.control("next");
-    }}><Icon name="next" /></button
+    }}><Icon name="forward-solid" /></button
   >
   <div class="line"><Seek thin times={false} /></div>
 </div>

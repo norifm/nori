@@ -59,10 +59,10 @@
     <div class="results chrome" role="listbox">
       {#if none}<p class="sub empty">{W.noResults}</p>{/if}
       {#each (found.artists ?? []).slice(0, 2) as a (a.id)}
-        <a class="res" href={href("artist", a.id)} onclick={close}><span class="art"><Cover src={a.cover} round fallback="artist" /></span><span class="clip">{a.name}</span></a>
+        <a class="res" href={href("artist", a.id)} onclick={close}><span class="art"><Cover src={a.cover} round fallback="user" /></span><span class="clip">{a.name}</span></a>
       {/each}
       {#each (found.albums ?? []).slice(0, 3) as a (a.id)}
-        <a class="res" href={href("album", a.id)} onclick={close}><span class="art"><Cover src={a.cover} fallback="album" /></span><span class="clip">{a.name}<span class="sub">{a.artist}</span></span></a>
+        <a class="res" href={href("album", a.id)} onclick={close}><span class="art"><Cover src={a.cover} fallback="compact-disc" /></span><span class="clip">{a.name}<span class="sub">{a.artist}</span></span></a>
       {/each}
       {#each (found.songs ?? []).slice(0, 4) as s, i (s.id)}
         <button class="res" onclick={() => (close(), void player.play(found?.songs?.slice(i, i + 1) ?? [], 0))}><span class="art"><Cover src={s.cover} /></span><span class="clip">{s.title}<span class="sub">{s.artist}</span></span></button>

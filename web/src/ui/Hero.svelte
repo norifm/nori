@@ -10,7 +10,7 @@
     cover,
     title,
     round = false,
-    fallback = "album",
+    fallback = "compact-disc",
     by,
     facts = "",
     onplay,
@@ -25,7 +25,7 @@
     {#if by}<div class="by">{@render by()}</div>{/if}
     {#if facts}<div class="facts">{facts}</div>{/if}
     <div class="hero-actions">
-      <button class="pill solid" onclick={() => onplay(false)}><Icon name="play" />{W.play}</button>
+      <button class="pill solid" onclick={() => onplay(false)}><Icon name="play-solid" />{W.play}</button>
       <button class="pill" onclick={() => onplay(true)}><Icon name="shuffle" />{W.shuffle}</button>
       <span class="grow"></span>
       {@render actions?.()}

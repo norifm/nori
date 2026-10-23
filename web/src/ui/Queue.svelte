@@ -24,9 +24,9 @@
   });
   const move = (from: number, to: number) => player.control("move_song", from, to);
   const extra = (q: QueueSong, at: number) => [
-    ...(n?.reorderable && at > 0 ? [{ label: W.moveUp, icon: "up", run: () => move(q.index, rows[at - 1].index) }] : []),
-    ...(n?.reorderable && at < rows.length - 1 ? [{ label: W.moveDown, icon: "down", run: () => move(q.index, rows[at + 1].index) }] : []),
-    ...(at !== current ? [{ label: W.remove, icon: "close", danger: true, run: () => player.control("remove", q.index) }] : []),
+    ...(n?.reorderable && at > 0 ? [{ label: W.moveUp, icon: "nav-arrow-up", run: () => move(q.index, rows[at - 1].index) }] : []),
+    ...(n?.reorderable && at < rows.length - 1 ? [{ label: W.moveDown, icon: "nav-arrow-down", run: () => move(q.index, rows[at + 1].index) }] : []),
+    ...(at !== current ? [{ label: W.remove, icon: "xmark", danger: true, run: () => player.control("remove", q.index) }] : []),
   ];
 </script>
 
@@ -42,13 +42,13 @@
           <span class="title clip">{q.title ?? q.id ?? ""}</span>
           <span class="sub clip">{q.by ? W.jamAddedBy(q.by) : (q.artist ?? "")}</span>
         </span>
-        {#if at === current}<Icon name={player.playing ? "play" : "pause"} />{/if}
+        {#if at === current}<Icon name={player.playing ? "play-solid" : "pause-solid"} />{/if}
       </button>
       {#if n?.reorderable && at !== current}
-        <span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="drag" /></span>
+        <span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="menu" /></span>
       {/if}
       {#if q.id}
-        <button class="round more" aria-label={W.more} title={W.more} onclick={() => void songMenu(q as Song, extra(q, at))}><Icon name="more" /></button>
+        <button class="round more" aria-label={W.more} title={W.more} onclick={() => void songMenu(q as Song, extra(q, at))}><Icon name="more-horiz" /></button>
       {/if}
     </li>
   {:else}

@@ -33,14 +33,14 @@
 <header class="top" bind:this={bar}>
   <a class="brand" href={href("home")}>{W.appName}</a>
   <nav class="chrome tabs" id="nav" aria-label={W.library}>
-    <a class="tab" class:on={on("home")} href={href("home")} data-top="home"><Icon name="home" /><span>{W.home}</span></a>
+    <a class="tab" class:on={on("home")} href={href("home")} data-top="home"><Icon name="home-simple" /><span>{W.home}</span></a>
     <span class="sep"></span>
-    <a class="tab" class:on={on("albums", "album")} href={href("albums", "alphabeticalByName")}><Icon name="album" /><span>{W.albums}</span></a>
-    <a class="tab" class:on={on("artists", "artist")} href={href("artists")} data-top="library"><Icon name="artist" /><span>{W.artists}</span></a>
-    <a class="tab" class:on={on("songs")} href={href("songs")}><Icon name="note" /><span>{W.songs}</span></a>
+    <a class="tab" class:on={on("albums", "album")} href={href("albums", "alphabeticalByName")}><Icon name="compact-disc" /><span>{W.albums}</span></a>
+    <a class="tab" class:on={on("artists", "artist")} href={href("artists")} data-top="library"><Icon name="user" /><span>{W.artists}</span></a>
+    <a class="tab" class:on={on("songs")} href={href("songs")}><Icon name="music-note" /><span>{W.songs}</span></a>
     {#if !guest}
       <a class="tab" class:on={on("playlists", "playlist")} href={href("playlists")}><Icon name="playlist" /><span>{W.playlists}</span></a>
-      <a class="tab" class:on={on("favorites")} href={href("favorites")}><Icon name={on("favorites") ? "seal" : "seal-line"} /><span>{W.favorites}</span></a>
+      <a class="tab" class:on={on("favorites")} href={href("favorites")}><Icon name={on("favorites") ? "sealed" : "seal"} /><span>{W.favorites}</span></a>
     {/if}
   </nav>
   <div class="right">
@@ -54,9 +54,9 @@
         <button class="pill small" onclick={() => void signOut()}>{W.signOut}</button>
       </div>
       <Look />
-      <a class="item" href={href("genres")}><Icon name="genre" /><span>{W.genres}</span></a>
+      <a class="item" href={href("genres")}><Icon name="view-grid" /><span>{W.genres}</span></a>
       {#if remote.devices.on}
-        <button class="item" onclick={() => (ui.show("devices"), (pop = null))}><Icon name="devices" /><span>{W.playOn}</span></button>
+        <button class="item" onclick={() => (ui.show("devices"), (pop = null))}><Icon name="computer" /><span>{W.playOn}</span></button>
       {/if}
       <button class="item" onclick={() => (go("settings"), (pop = null))}><Icon name="settings" /><span>{W.settings}</span></button>
     </div>

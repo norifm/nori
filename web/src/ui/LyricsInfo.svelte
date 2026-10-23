@@ -22,8 +22,8 @@
     <div class="line"><span class="sub">{W.lyricsTiming}</span><span class="timing">{W.timing(shown.timing)}</span></div>
     {#if shown.lyrics.synced}
       <div class="stepper">
-        <button class="pill" aria-label={W.lyricsLater} onclick={() => nudge(-1)}><Icon name="minus" />{W.lyricsLater}</button>
-        <button class="pill" aria-label={W.lyricsSooner} onclick={() => nudge(1)}><Icon name="plus" />{W.lyricsSooner}</button>
+        <button class="pill" aria-label={W.lyricsLater} onclick={() => nudge(-1)}><Icon name="minus-circle" />{W.lyricsLater}</button>
+        <button class="pill" aria-label={W.lyricsSooner} onclick={() => nudge(1)}><Icon name="plus-circle" />{W.lyricsSooner}</button>
       </div>
       <button class="pill small reset" disabled={shown.timing.kind !== "Yours"} onclick={() => nudge(0)}>{W.lyricsReset}</button>
     {/if}

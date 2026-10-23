@@ -20,7 +20,7 @@
 
 <Page back ready={!!a} error={page.error}>
   {#if a}
-    <Hero cover={a.cover} title={a.name} round fallback="artist" facts={!albums.length && songs.length ? W.songCount(songs.length) : W.albumCount(albums.length)} onplay={(s) => void player.playArtist(id, s)}>
+    <Hero cover={a.cover} title={a.name} round fallback="user" facts={!albums.length && songs.length ? W.songCount(songs.length) : W.albumCount(albums.length)} onplay={(s) => void player.playArtist(id, s)}>
       {#snippet actions()}<Seal what="artist" id={a.id} on={!!a.starred} />{/snippet}
     </Hero>
     {#if songs.length}<h2 class="section">{W.songs}</h2><SongList {songs} kind="Artist" id={a.id} shown={page.data?.few} />{/if}

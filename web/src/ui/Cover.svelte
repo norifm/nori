@@ -2,7 +2,7 @@
   // A cover, lazily loaded; a plain square while there is none (round for an artist).
   import Icon from "./Icon.svelte";
 
-  let { src, round = false, fallback = "note" }: { src?: string; round?: boolean; fallback?: string } = $props();
+  let { src, round = false, fallback = "music-note" }: { src?: string; round?: boolean; fallback?: string } = $props();
 </script>
 
 <div class="cover" class:circle={round}>

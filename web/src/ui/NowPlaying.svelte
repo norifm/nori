@@ -24,9 +24,9 @@
   /** On a wide screen something is always beside the cover: the lyrics unless another was picked. */
   const pane = $derived<Pane | null>(ui.pane ?? (ui.wide ? "lyrics" : null));
   const panes: [Pane, string, string][] = [
-    ["lyrics", "lyrics", W.lyrics],
-    ["devices", "devices", W.playOn],
-    ["queue", "queue", W.queue],
+    ["lyrics", "emoji-sing-right-note", W.lyrics],
+    ["devices", "computer", W.playOn],
+    ["queue", "playlist", W.queue],
   ];
   const close = () => {
     ui.full = false;
@@ -54,7 +54,7 @@
 
 <div class="full" class:wide={ui.wide} class:paned={!!pane} role="dialog" aria-modal="true" aria-label={s.title} id="full" style={look?.vars}>
   {#if look?.wash}<canvas class="wash" bind:this={washed} aria-hidden="true"></canvas>{/if}
-  <button class="round close" aria-label={W.close} title={W.close} onclick={close}><Icon name="down-wide" /></button>
+  <button class="round close" aria-label={W.close} title={W.close} onclick={close}><Icon name="nav-arrow-down" /></button>
   <section class="main">
     {#if !pane || ui.wide}
       <div class="art" class:held={!player.playing}><Cover src={s.cover} /></div>
@@ -71,11 +71,11 @@
         {#if s.artistId}<a class="artist clip" href={href("artist", s.artistId)} onclick={close}>{s.artist}</a>{:else}<span class="artist clip">{s.artist}</span>{/if}
       </div>
       {#if !n?.jam}<Seal what="song" id={s.id} on={!!s.starred} />{/if}
-      <button class="round" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, [], true)}><Icon name="more" /></button>
+      <button class="round" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, [], true)}><Icon name="more-horiz" /></button>
     </div>
     <Seek />
     <div class="badges">
-      {#if n?.device}<span class="badge"><Icon name="devices" />{W.playingOn(n.device)}</span>{/if}
+      {#if n?.device}<span class="badge"><Icon name="computer" />{W.playingOn(n.device)}</span>{/if}
       {#if n?.mixing}<span class="badge">{W.autoMix}</span>{/if}
       {#if n?.jam}<span class="badge">{W.jam}</span>{/if}
       {#if player.held}<button class="badge" onclick={() => player.unhold()}>{W.tapToPlay}</button>{/if}

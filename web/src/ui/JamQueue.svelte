@@ -16,14 +16,14 @@
 {#if j?.guest}
   <div class="jam-head" id="jam">
     <div class="line">
-      <Icon name="jam" />
+      <Icon name="community" />
       <span class="name clip">{j.host ? W.jamOf(j.host) : W.jam}</span>
       {#if j.along || j.listening !== "Watching"}
         <button class="pill small solid" id="jam-listen" onclick={() => void remote.listen(j.listening === "Watching")}>
-          <Icon name="devices" />{j.listening === "Playing" ? W.jamPlayingHere : W.jamListenHere}
+          <Icon name="computer" />{j.listening === "Playing" ? W.jamPlayingHere : W.jamListenHere}
         </button>
       {/if}
-      <button class="round" aria-label={W.jamLeave} title={W.jamLeave} onclick={() => void remote.leave()}><Icon name="sign-out" /></button>
+      <button class="round" aria-label={W.jamLeave} title={W.jamLeave} onclick={() => void remote.leave()}><Icon name="log-out" /></button>
     </div>
     <p class="sub">{W.jamListening(j.members.filter((m) => m.role !== "Host").length)}</p>
     {#if j.listening === "Watching" && j.along}<p class="sub">{W.jamWatching}</p>{/if}
@@ -49,7 +49,7 @@
           <span class="sub clip">{W.jamAskedBy(p.from)}</span>
           {#if p.provider}<span class="sub">{W.jamWillDownload}</span>{/if}
         </div>
-        <button class="round" aria-label={W.decline} title={W.decline} onclick={() => decide(p.request, false)}><Icon name="close" /></button>
+        <button class="round" aria-label={W.decline} title={W.decline} onclick={() => decide(p.request, false)}><Icon name="xmark" /></button>
         <button class="round solid" aria-label={W.accept} title={W.accept} onclick={() => decide(p.request, true)}><Icon name="check" /></button>
       </div>
     {/each}

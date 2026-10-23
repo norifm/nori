@@ -1,6 +1,6 @@
 <script lang="ts">
   // A favorite on a song, album or artist (`what`), drawn as `on`: the seal. Not liked it is the outline,
-  // upright and quiet; liked it is filled with the accent, tilted, and stamped on when the click made it
+  // quiet; liked it is the stamped seal in the accent, stamped on when the click made it
   // so. A seal that changes by itself (another song) is drawn, not stamped.
   import { library } from "../state/library.svelte";
   import { player } from "../state/player.svelte";
@@ -27,7 +27,7 @@
     e.stopPropagation();
     stamp = !on;
     void library.change({ kind: "star", what, id, on: !on }).then(() => player.refresh());
-  }}><Icon name={on ? "seal" : "seal-line"} /></button
+  }}><Icon name={on ? "sealed" : "seal"} /></button
 >
 
 <style>
@@ -37,18 +37,12 @@
   .seal.on {
     color: var(--accent);
   }
-  .seal.on :global(.icon) {
-    transform: rotate(-4deg);
-  }
   .seal.stamp :global(.icon) {
     animation: stamp 420ms cubic-bezier(0.3, 1.6, 0.5, 1);
   }
   @keyframes stamp {
     from {
-      transform: rotate(-4deg) scale(1.5);
-    }
-    to {
-      transform: rotate(-4deg) scale(1);
+      transform: scale(1.5);
     }
   }
 </style>

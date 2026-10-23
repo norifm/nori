@@ -9,7 +9,7 @@
 </script>
 
 <div class="page">
-  {#if back}<button class="round back" aria-label={W.back} title={W.back} onclick={() => history.back()}><Icon name="back" /></button>{/if}
+  {#if back}<button class="round back" aria-label={W.back} title={W.back} onclick={() => history.back()}><Icon name="arrow-left" /></button>{/if}
   {#if title}
     <header class="page-head">
       <h1>{title}</h1>

@@ -33,25 +33,25 @@ function item(a: MenuAction, s: Song): Item | null {
     case "Favourite":
       return { label: a.on ? W.favorite : W.unfavorite, icon: a.on ? "seal-line" : "seal", run: () => library.change({ kind: "star", what: "song", id: s.id, on: !!a.on }).then(() => player.refresh()) };
     case "PlayNext":
-      return { label: W.playNext, icon: "next-up", run: () => player.enqueue([s], true) };
+      return { label: W.playNext, icon: "playlist-play", run: () => player.enqueue([s], true) };
     case "AddToQueue":
-      return { label: W.playLater, icon: "queue", run: () => player.enqueue([s], false) };
+      return { label: W.playLater, icon: "playlist", run: () => player.enqueue([s], false) };
     case "AddToPlaylist":
       return { label: W.addToPlaylist, icon: "playlist", run: () => addToPlaylist([s]) };
     case "GoToAlbum":
-      return { label: W.goToAlbum, icon: "album", run: () => ((ui.full = false), go("album", a.id!)) };
+      return { label: W.goToAlbum, icon: "compact-disc", run: () => ((ui.full = false), go("album", a.id!)) };
     case "GoToArtist":
-      return { label: W.goToArtist(a.name ?? "", !!a.named), icon: "artist", run: () => ((ui.full = false), go("artist", a.id!)) };
+      return { label: W.goToArtist(a.name ?? "", !!a.named), icon: "user", run: () => ((ui.full = false), go("artist", a.id!)) };
     case "Lyrics":
-      return { label: W.lyricsInfo, icon: "lyrics", run: () => (ui.lyricsInfo = true) };
+      return { label: W.lyricsInfo, icon: "emoji-sing-right-note", run: () => (ui.lyricsInfo = true) };
     case "StartRadio":
-      return { label: W.startRadio, icon: "radio", run: () => player.mix(s, true) };
+      return { label: W.startRadio, icon: "antenna-signal", run: () => player.mix(s, true) };
     case "InstantMix":
       return { label: W.instantMix, icon: "shuffle", run: () => player.mix(s, false) };
     case "StartJam":
       return {
         label: W.startJam,
-        icon: "jam",
+        icon: "community",
         run: async () => {
           await player.soundCard();
           await remote.act(() => ask("jam_start", JSON.stringify([s]), 0));

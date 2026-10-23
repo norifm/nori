@@ -24,13 +24,13 @@
   {#if ends && !n?.jam}
     <button class="round side" class:on={n?.shuffle} title={W.shuffle} aria-label={W.shuffle} aria-pressed={!!n?.shuffle} onclick={() => void player.control("shuffle", !n?.shuffle)}><Icon name="shuffle" /></button>
   {/if}
-  <button class="round skip" title={W.previous} aria-label={W.previous} onclick={() => void player.control("previous")}><Icon name="previous" /></button>
+  <button class="round skip" title={W.previous} aria-label={W.previous} onclick={() => void player.control("previous")}><Icon name="rewind-solid" /></button>
   <button class="round main" title={playing ? W.pause : W.play} aria-label={playing ? W.pause : W.play} onclick={() => void player.control("toggle")}>
-    {#if waiting}<span class="spin"></span>{:else}{#key playing}<span class="glyph"><Icon name={playing ? "pause" : "play"} /></span>{/key}{/if}
+    {#if waiting}<span class="spin"></span>{:else}{#key playing}<span class="glyph"><Icon name={playing ? "pause-solid" : "play-solid"} /></span>{/key}{/if}
   </button>
-  <button class="round skip" title={W.next} aria-label={W.next} onclick={() => void player.control("next")}><Icon name="next" /></button>
+  <button class="round skip" title={W.next} aria-label={W.next} onclick={() => void player.control("next")}><Icon name="forward-solid" /></button>
   {#if ends && !n?.jam}
-    <button class="round side" class:on={!!n?.repeat} title={n?.repeat === 1 ? W.repeatOne : W.repeat} aria-label={W.repeat} aria-pressed={!!n?.repeat} onclick={() => void player.control("cycle_repeat")}><Icon name={n?.repeat === 1 ? "repeat-one" : "repeat"} /></button>
+    <button class="round side" class:on={!!n?.repeat} title={n?.repeat === 1 ? W.repeatOne : W.repeat} aria-label={W.repeat} aria-pressed={!!n?.repeat} onclick={() => void player.control("cycle_repeat")}><Icon name={n?.repeat === 1 ? "repeat-once" : "repeat"} /></button>
   {/if}
 </div>
 

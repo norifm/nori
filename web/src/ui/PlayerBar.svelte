@@ -17,9 +17,9 @@
   const s = $derived(player.song);
   const n = $derived(player.now);
   const panes = $derived<[Pane, string, string][]>([
-    ["devices", n?.device ? "devices" : "speaker", W.playOn],
-    ["lyrics", "lyrics", W.lyrics],
-    ["queue", "queue", W.queue],
+    ["devices", "computer", W.playOn],
+    ["lyrics", "emoji-sing-right-note", W.lyrics],
+    ["queue", "playlist", W.queue],
   ]);
 </script>
 

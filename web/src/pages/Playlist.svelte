@@ -23,9 +23,9 @@
     return library.change({ kind: "reorderPlaylist", id, songIds: order });
   };
   const edits = (_: Song, i: number): Item[] => [
-    ...(i > 0 ? [{ label: W.moveUp, icon: "up", run: () => moved(i, i - 1) }] : []),
-    ...(i < songs.length - 1 ? [{ label: W.moveDown, icon: "down", run: () => moved(i, i + 1) }] : []),
-    { label: W.removeFromPlaylist, icon: "close", danger: true, run: () => library.change({ kind: "removeFromPlaylist", id, index: i }) },
+    ...(i > 0 ? [{ label: W.moveUp, icon: "nav-arrow-up", run: () => moved(i, i - 1) }] : []),
+    ...(i < songs.length - 1 ? [{ label: W.moveDown, icon: "nav-arrow-down", run: () => moved(i, i + 1) }] : []),
+    { label: W.removeFromPlaylist, icon: "xmark", danger: true, run: () => library.change({ kind: "removeFromPlaylist", id, index: i }) },
   ];
   const more = () =>
     ui.menu(pl!.name, [
@@ -52,7 +52,7 @@
   {#if pl}
     <Hero cover={pl.cover} title={pl.name} fallback="playlist" facts={`${W.songCount(songs.length)} · ${W.minutes(page.data?.seconds ?? 0)}`} onplay={(s) => void player.play(songs, 0, s, "Playlist", id)}>
       {#snippet by()}{#if pl.comment}<span class="comment">{pl.comment}</span>{/if}{/snippet}
-      {#snippet actions()}<button class="round" aria-label={W.more} title={W.more} onclick={more}><Icon name="more" /></button>{/snippet}
+      {#snippet actions()}<button class="round" aria-label={W.more} title={W.more} onclick={more}><Icon name="more-horiz" /></button>{/snippet}
     </Hero>
     <SongList {songs} kind="Playlist" {id} extra={edits} {moved} />
   {/if}

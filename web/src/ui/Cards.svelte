@@ -10,11 +10,11 @@
 </script>
 
 {#if albums.length === 0 && artists.length === 0}
-  <p class="empty"><Icon name="note" />{W.empty}</p>
+  <p class="empty"><Icon name="music-note" />{W.empty}</p>
 {:else}
   <div class={row ? "row" : "grid"}>
     {#each artists as a (a.id)}
-      <Card href={href("artist", a.id)} cover={a.cover} title={a.name} round fallback="artist" />
+      <Card href={href("artist", a.id)} cover={a.cover} title={a.name} round fallback="user" />
     {/each}
     {#each albums as a (a.id)}
       <Card href={href("album", a.id)} cover={a.cover} title={a.name} sub={sub ? sub(a) : a.artist} />

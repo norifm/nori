@@ -23,7 +23,7 @@
     <li class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
       <button class="play" onclick={() => void player.play(songs, i, false, kind, id)}>
         {#if numbered}
-          <span class="n">{#if s.id === playingId}<Icon name={player.playing ? "play" : "pause"} />{:else}{s.track || i + 1}{/if}</span>
+          <span class="n">{#if s.id === playingId}<Icon name={player.playing ? "play-solid" : "pause-solid"} />{:else}{s.track || i + 1}{/if}</span>
         {:else}
           <span class="art"><Cover src={s.cover} /></span>
         {/if}
@@ -31,10 +31,10 @@
         <span class="artist clip">{s.artist}</span>
         {#if !numbered}<span class="album clip">{s.album}</span>{/if}
       </button>
-      {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="seal" /></span>{/if}
+      {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="sealed" /></span>{/if}
       <span class="len">{W.time(s.duration * 1000)}</span>
-      <button class="round more" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, extra(s, i))}><Icon name="more" /></button>
-      {#if moved}<span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="drag" /></span>{/if}
+      <button class="round more" aria-label={W.more} title={W.more} onclick={() => void songMenu(s, extra(s, i))}><Icon name="more-horiz" /></button>
+      {#if moved}<span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="menu" /></span>{/if}
     </li>
   {/each}
 </ol>

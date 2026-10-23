@@ -5,8 +5,8 @@
   import Icon from "./Icon.svelte";
 
   const tabs: [string, string, string][] = [
-    ["home", "home", W.home],
-    ["library", "library", W.library],
+    ["home", "home-simple", W.home],
+    ["library", "album-list", W.library],
     ["search", "search", W.search],
     ["settings", "settings", W.settings],
   ];
