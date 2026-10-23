@@ -54,6 +54,8 @@ pub enum Action {
     ShuffleAll,
     /// The next order of the list.
     Sort,
+    /// The menu of what is selected, or of the song playing in the full player.
+    Menu,
     /// Starts a jam around the selected item.
     Jam,
     /// Joins someone's jam with its invite link.
@@ -162,7 +164,8 @@ pub const BINDINGS: &[Binding] = &[
     b!(Global, "t", Action::Radio, "Radio from the playing song, where the server has it", [(Char('t'), N)]),
     b!(Global, "R", Action::Refresh, "Ask the server again", [(Char('R'), S), (Char('R'), N)]),
     b!(Global, "E", Action::Curve, "AutoEQ for the headphones just connected: apply it, or undo it", [(Char('E'), S), (Char('E'), N)]),
-    b!(Global, "m", Action::Mouse, "Mouse on or off (off: the terminal selects text)", [(Char('m'), N)]),
+    b!(Global, "m", Action::Menu, "The menu of what is selected, or of the song playing in the player", [(Char('m'), N)]),
+    b!(Global, "M", Action::Mouse, "Mouse on or off (off: the terminal selects text)", [(Char('M'), S), (Char('M'), N)]),
     b!(Global, "I", Action::Images, "Covers on or off", [(Char('I'), S), (Char('I'), N)]),
     b!(Global, "?", Action::Help, "This help", [(Char('?'), N), (Char('?'), S), (F(1), N)]),
     b!(Global, "q / ctrl c", Action::Quit, "Quit", [(Char('q'), N), (Char('c'), C)]),

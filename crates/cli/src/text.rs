@@ -293,18 +293,18 @@ pub fn search_fallback(reason: Option<&str>) -> String {
 /// The keys the bottom line shows, as (key, what it does), by what has them.
 pub mod hints {
     type Hints = &'static [(&'static str, &'static str)];
-    pub const HOME: Hints = &[("enter", "open"), ("a", "add"), ("x", "play"), ("/", "search"), ("1-9", "go"), ("F", "player"), ("?", "keys")];
-    pub const LIBRARY: Hints = &[("enter", "open"), ("a", "add"), ("x", "play"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
-    pub const SORTED: Hints = &[("enter", "open"), ("a", "add"), ("S", "sort"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
+    pub const HOME: Hints = &[("enter", "open"), ("m", "menu"), ("x", "play"), ("/", "search"), ("1-9", "go"), ("F", "player"), ("?", "keys")];
+    pub const LIBRARY: Hints = &[("enter", "open"), ("m", "menu"), ("x", "play"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
+    pub const SORTED: Hints = &[("enter", "open"), ("m", "menu"), ("S", "sort"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
     pub const OFFER: Hints = &[("enter", "resume"), ("d", "close"), ("/", "search"), ("1-9", "go"), ("?", "keys")];
-    pub const HISTORY: Hints = &[("enter", "play"), ("a", "add"), ("esc", "back"), ("?", "keys")];
-    pub const PAGE: Hints = &[("enter", "play"), ("x", "play all"), ("X", "shuffle"), ("a", "add"), ("f", "favorite"), ("esc", "back"), ("?", "keys")];
-    pub const RESULTS: Hints = &[("enter", "open"), ("a", "add"), ("/", "type"), ("esc", "back"), ("?", "keys")];
+    pub const HISTORY: Hints = &[("enter", "play"), ("m", "menu"), ("esc", "back"), ("?", "keys")];
+    pub const PAGE: Hints = &[("enter", "play"), ("m", "menu"), ("x", "play all"), ("X", "shuffle"), ("f", "favorite"), ("esc", "back"), ("?", "keys")];
+    pub const RESULTS: Hints = &[("enter", "open"), ("m", "menu"), ("/", "type"), ("esc", "back"), ("?", "keys")];
     pub const TYPING: Hints = &[("enter", "results"), ("esc", "stop typing"), ("ctrl u", "clear")];
     pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
     pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
     pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
-    pub const PLAYING: Hints = &[("space", "play"), ("n p", "next, previous"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
+    pub const PLAYING: Hints = &[("space", "play"), ("n p", "next, previous"), ("m", "menu"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
     pub const QUEUE: Hints = &[("enter", "play"), ("d", "remove"), ("K J", "move"), ("s r", "shuffle, repeat"), ("tab", "panel"), ("esc", "back")];
     pub const LYRICS: Hints = &[("enter", "play from the line"), ("[ ]", "timing"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
     pub const DEVICES: Hints = &[("enter", "play there"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
@@ -326,6 +326,55 @@ pub const UNREACHABLE: &str = "unreachable";
 pub const SORT_BY: &str = "Sort by";
 pub const FOR_YOU: &str = "For you";
 pub const SAVE_AS_PLAYLIST: &str = "Save as playlist";
+pub const NEW_PLAYLIST: &str = "New playlist";
+pub const ADD_TO_PLAYLIST: &str = "Add to playlist";
+pub const MORE: &str = "More";
+
+/// Songs added to a playlist: "Added to Road trip".
+pub fn added_to(name: &str) -> String {
+    format!("Added to {name}")
+}
+
+/// A line of the song menu, as the phone words it.
+pub fn song_action(a: &nori_core::menus::SongAction) -> String {
+    use nori_core::menus::SongAction;
+    match a {
+        SongAction::Favourite { on: true } => "Add to favorites".into(),
+        SongAction::Favourite { on: false } => "Remove from favorites".into(),
+        SongAction::PlayNext => "Play next".into(),
+        SongAction::AddToQueue => "Add to queue".into(),
+        SongAction::AddToPlaylist => "Add to playlist…".into(),
+        SongAction::RemoveDownload => "Remove download".into(),
+        SongAction::StopDownload => "Stop download".into(),
+        SongAction::Download => "Download".into(),
+        SongAction::GoToAlbum { .. } => "Go to album".into(),
+        SongAction::GoToArtist { name, named: true, .. } => format!("Go to {name}"),
+        SongAction::GoToArtist { .. } => "Go to artist".into(),
+        SongAction::AddToLibrary => "Add to library".into(),
+        SongAction::Lyrics => "Lyrics".into(),
+        SongAction::SleepTimer => "Sleep timer…".into(),
+        SongAction::StartRadio => "Start radio from this song".into(),
+        SongAction::InstantMix => "Instant mix".into(),
+        SongAction::ExcludeFromMixes => "Exclude from mixes".into(),
+        SongAction::Share => "Share link".into(),
+        SongAction::Details => "Details".into(),
+        SongAction::StartJam => JAM_START.into(),
+    }
+}
+
+/// A line of a menu that is not the song's own.
+pub fn menu_act(a: &crate::menu::MenuAct, missing: usize) -> String {
+    use crate::menu::MenuAct;
+    match a {
+        MenuAct::Song(s) => song_action(s),
+        MenuAct::Play | MenuAct::PlayPage => PLAY.into(),
+        MenuAct::PlayNext => "Play next".into(),
+        MenuAct::AddToQueue => "Add to queue".into(),
+        MenuAct::ShufflePage => SHUFFLE.into(),
+        MenuAct::SaveMix => SAVE_AS_PLAYLIST.into(),
+        MenuAct::Page(p) => page_action(*p, missing),
+    }
+}
 
 /// A playlist made: "Created nori discover".
 pub fn created(name: &str) -> String {

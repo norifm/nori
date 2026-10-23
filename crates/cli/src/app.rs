@@ -118,6 +118,11 @@ pub enum Cmd {
     /// The next repeat mode after the one shown.
     CycleRepeat,
     Download(Vec<Song>),
+    /// Keeps the song out of the mixes.
+    ExcludeFromMixes(String),
+    /// Adds songs to the playlist `id`, or makes one called `name` of them.
+    AddToPlaylist { id: String, songs: Vec<String> },
+    NewPlaylist { name: String, songs: Vec<String> },
     /// Reads which of these songs are downloaded.
     ReadDownloads(Vec<String>),
     /// Draws the mix again.
@@ -832,6 +837,10 @@ pub enum Overlay {
     Picker { title: String, options: Vec<(String, String)>, sel: Sel, target: Target },
     /// A text field for setting `name`.
     Input { title: String, text: String, secret: bool, name: String },
+    /// What the selection's menu offers, the song's less used actions `folded` under More until it opens.
+    Menu { title: String, item: Box<Item>, lines: Vec<crate::menu::MenuLine>, folded: Vec<crate::menu::MenuLine>, sel: Sel },
+    /// A new playlist's name, for `songs`.
+    NewPlaylist { text: String, songs: Vec<String> },
     /// The jam's invite: its link and QR code.
     Invite { link: String },
     JamSettings,
@@ -848,6 +857,8 @@ pub enum Target {
     Setting(String),
     Device,
     Preset,
+    /// The playlist these songs go to (empty: a new one).
+    Playlist(Vec<String>),
 }
 
 impl Target {
@@ -857,6 +868,7 @@ impl Target {
             Target::Setting(name) => Some(Cmd::Setting(name, value)),
             Target::Device => Some(Cmd::Device(value)),
             Target::Preset => value.parse().ok().map(|i| Cmd::Sound(SoundToolCmd::Preset(i))),
+            Target::Playlist(songs) => Some(Cmd::AddToPlaylist { id: value, songs }),
         }
     }
 }
@@ -898,6 +910,7 @@ pub enum ListRef {
     Devices,
     Profiles,
     Picker,
+    Menu,
     Help,
 }
 
@@ -1836,7 +1849,7 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
-        if let Some(Overlay::Input { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, busy: false, .. }) = &mut self.overlay {
+        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, busy: false, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
             self.login.fields[self.login.focus].push_str(&text);
@@ -1967,8 +1980,14 @@ impl App {
                 KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => {
                     if let Some((_, value)) = options.get(sel.at) {
                         let (target, value) = (target.clone(), value.clone());
-                        self.overlay = None;
-                        self.cmds.extend(target.cmd(value));
+                        self.overlay = match target {
+                            // A new playlist asks for its name.
+                            Target::Playlist(songs) if value.is_empty() => Some(Overlay::NewPlaylist { text: String::new(), songs }),
+                            target => {
+                                self.cmds.extend(target.cmd(value));
+                                None
+                            }
+                        };
                     }
                 }
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') => self.overlay = None,
@@ -2041,6 +2060,47 @@ impl App {
                     text.pop();
                 }
                 KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => text.clear(),
+                KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
+                _ => {}
+            },
+            Overlay::Menu { lines, folded, sel, item, .. } => match k.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    sel.by(1, lines.len());
+                    if matches!(lines.get(sel.at), Some(crate::menu::MenuLine::Heading(_))) {
+                        sel.by(1, lines.len());
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    sel.by(-1, lines.len());
+                    if matches!(lines.get(sel.at), Some(crate::menu::MenuLine::Heading(_))) {
+                        sel.by(-1, lines.len());
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char('l') => match lines.get(sel.at).cloned() {
+                    // More opens in its place.
+                    Some(crate::menu::MenuLine::More) => {
+                        let rest = std::mem::take(folded);
+                        lines.splice(sel.at..=sel.at, rest);
+                    }
+                    Some(crate::menu::MenuLine::Act(act)) => {
+                        let item = (**item).clone();
+                        self.menu_act(act, item);
+                    }
+                    _ => {}
+                },
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Char('m') => self.overlay = None,
+                _ => {}
+            },
+            Overlay::NewPlaylist { text, songs } => match k.code {
+                KeyCode::Enter if !text.trim().is_empty() => {
+                    let (name, songs) = (text.trim().to_string(), std::mem::take(songs));
+                    self.overlay = None;
+                    self.cmds.push(Cmd::NewPlaylist { name, songs });
+                }
+                KeyCode::Esc => self.overlay = None,
+                KeyCode::Backspace => {
+                    text.pop();
+                }
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
@@ -2203,7 +2263,11 @@ impl App {
             },
             Action::Remove if self.home_line() == Some(HomeLine::Offer) => self.take_offer(false),
             Action::Remove => self.dirty = false,
-            Action::Jam => self.jam_with_selected(),
+            Action::Jam => {
+                let item = if self.focus == Focus::Main { self.selected() } else { None };
+                self.jam_with(item);
+            }
+            Action::Menu => self.open_menu(),
             Action::Undo if self.queue_in_focus() => match self.taken.take() {
                 Some(id) => self.cmds.push(Cmd::Restore(id)),
                 None => self.say("Nothing to put back", false),
@@ -2686,6 +2750,17 @@ impl App {
         }
     }
 
+    /// Plays the page, or shuffled.
+    pub(crate) fn play_page(&mut self, shuffle: bool) {
+        self.focus = Focus::Main;
+        self.play_all(shuffle);
+    }
+
+    /// Flips a song's seal.
+    pub(crate) fn star_song(&mut self, s: Song) {
+        self.star(Starrable::Song, s.id, s.starred);
+    }
+
     fn play_all(&mut self, shuffle: bool) {
         if self.focus == Focus::Main && self.page().is_some() {
             match self.page() {
@@ -2755,12 +2830,18 @@ impl App {
             return Vec::new();
         }
         let songs = page.songs().unwrap_or_default();
-        let missing = songs.iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).count();
+        let missing = self.page_missing();
         nori_core::menus::page_actions(kind, songs.len() as u32, missing as u32, self.rules.downloads)
     }
 
+    /// How many of the page's songs are not downloaded.
+    pub fn page_missing(&self) -> usize {
+        let songs = self.page().and_then(Page::songs).unwrap_or_default();
+        songs.iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).count()
+    }
+
     /// Does one of the page's actions.
-    fn page_act(&mut self, a: PageAction) {
+    pub(crate) fn page_act(&mut self, a: PageAction) {
         let Some(page) = self.page() else { return };
         let songs = page.songs().map(<[Song]>::to_vec).unwrap_or_default();
         let fetch = match page {
@@ -2792,7 +2873,7 @@ impl App {
     }
 
     /// Keeps the mix shown as a playlist on the account, named by the core (`saved_mix_name`).
-    fn save_mix(&mut self) {
+    pub(crate) fn save_mix(&mut self) {
         if let Some(Page::Mix { detail: Load::Ready(m), .. }) = self.page() {
             let (title, songs) = (crate::text::mix_name(m.name).to_string(), m.songs.clone());
             self.cmds.push(Cmd::SaveMix { title, songs });
@@ -2946,10 +3027,8 @@ impl App {
         }
     }
 
-    /// Starts a jam around the selected song, album, artist or playlist, which plays (a jam alone where
-    /// nothing on the page is selected).
-    fn jam_with_selected(&mut self) {
-        let item = if self.focus == Focus::Main { self.selected() } else { None };
+    /// Starts a jam around a song, album, artist, playlist or mix, which plays (a jam alone with none).
+    pub(crate) fn jam_with(&mut self, item: Option<Item>) {
         let play = match item {
             Some(Item::Song(songs, i)) => Some(Cmd::Play { songs, start: i, shuffle: false, from: self.origin_here() }),
             Some(Item::Album(a)) => Some(Cmd::PlayFetch(Fetch::Album(a.id), false)),
@@ -3134,6 +3213,11 @@ impl App {
                     sel.by(d * 3, options.len());
                 }
             }
+            ListRef::Menu => {
+                if let Some(Overlay::Menu { sel, lines, .. }) = &mut self.overlay {
+                    sel.by(d, lines.len());
+                }
+            }
             ListRef::Profiles => {}
             _ => {
                 self.focus = l.focus();
@@ -3171,7 +3255,7 @@ impl App {
             }
             Hit::Button(b) => self.button(b),
             Hit::List(l) => {
-                if !matches!(l, ListRef::Help | ListRef::Picker | ListRef::Profiles) && !self.full {
+                if !matches!(l, ListRef::Help | ListRef::Picker | ListRef::Menu | ListRef::Profiles) && !self.full {
                     self.focus = l.focus();
                 } else {
                     self.dirty = false;
@@ -3241,6 +3325,13 @@ impl App {
             ListRef::Picker => {
                 if let Some(Overlay::Picker { sel, options, .. }) = &mut self.overlay {
                     sel.to(i, options.len());
+                }
+                self.overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                return;
+            }
+            ListRef::Menu => {
+                if let Some(Overlay::Menu { sel, lines, .. }) = &mut self.overlay {
+                    sel.to(i, lines.len());
                 }
                 self.overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 return;

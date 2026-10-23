@@ -774,7 +774,7 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let account = app.rules.account;
     let stars = app.rules.stars;
     let actions = app.page_actions();
-    let missing = app.page().and_then(|p| p.songs()).map_or(0, |v| v.iter().filter(|s| app.downloaded.get(&s.id) != Some(&nori_core::menus::SongDownload::Done)).count());
+    let missing = app.page_missing();
     let App { pages, hits, marks, rules, devices, .. } = app;
     let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
@@ -1740,6 +1740,7 @@ fn qr_lines(code: &nori_core::remote::QrCode) -> Vec<Line<'static>> {
 }
 
 fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    let missing = app.page_missing();
     let App { overlay, hits, devices, .. } = app;
     let Some(o) = overlay else { return };
     match o {
@@ -1852,6 +1853,28 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 lines.push(Line::from(Span::styled(l, style)));
             }
             put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) });
+        }
+        Overlay::Menu { title, lines, sel, .. } => {
+            use crate::menu::MenuLine;
+            let words: Vec<(String, Style)> = lines
+                .iter()
+                .map(|l| match l {
+                    MenuLine::Heading(h) => (h.clone(), bold().fg(t.ink)),
+                    MenuLine::More => (format!(" {}", crate::text::MORE), t.dim()),
+                    MenuLine::Act(a) => (format!(" {}", crate::text::menu_act(a, missing)), Style::default().fg(t.ink)),
+                })
+                .collect();
+            let w = words.iter().map(|(s, _)| s.width()).max().unwrap_or(10).max(title.width() + 2) as u16 + 6;
+            let r = centred(area, w, (words.len() as u16 + 2).min(area.height.saturating_sub(2)));
+            let inner = popup(f, r, Span::styled(format!(" {} ", fit(title, w.saturating_sub(4) as usize)), bold().fg(t.ink)), t);
+            hits.push((r, Hit::List(ListRef::Menu)));
+            let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner };
+            list(f, inner, sel, words.len(), ListRef::Menu, hits, t, true, &|i, w| Line::from(Span::styled(fit(&words[i].0, w).into_owned(), words[i].1)));
+        }
+        Overlay::NewPlaylist { text: typed, .. } => {
+            let r = centred(area, 60, 3);
+            let inner = popup(f, r, Span::styled(format!(" {} · enter makes it, esc drops ", crate::text::NEW_PLAYLIST), bold().fg(t.ink)), t);
+            put(f, Paragraph::new(format!(" {typed}▏")), inner);
         }
         Overlay::Input { title, text: typed, secret, .. } => {
             let r = centred(area, 60, 3);

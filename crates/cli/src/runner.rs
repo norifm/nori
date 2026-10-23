@@ -690,6 +690,19 @@ impl Runner {
                 let states = s.download_states(&ids.iter().map(String::as_str).collect::<Vec<_>>());
                 app.knows_downloads(ids, states);
             }
+            Cmd::ExcludeFromMixes(id) => {
+                if let Err(e) = s.core.mix_excluded_set(id, true) {
+                    app.say(e.to_string(), true);
+                }
+            }
+            Cmd::AddToPlaylist { id, songs } => {
+                let name = app.library.playlists.ready().and_then(|v| v.iter().find(|p| p.id == id)).map(|p| p.name.clone()).unwrap_or_default();
+                self.playlist_write(s, nori_core::client::Write::AddToPlaylist { id, song_ids: songs }, crate::text::added_to(&name));
+            }
+            Cmd::NewPlaylist { name, songs } => {
+                let said = crate::text::created(&name);
+                self.playlist_write(s, nori_core::client::Write::CreatePlaylist { name, song_ids: songs }, said);
+            }
             Cmd::RedrawMix(mix) => {
                 let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
                 nori_host::spawn("nori-mix", move || {
@@ -828,6 +841,25 @@ impl Runner {
         }
     }
 
+}
+
+impl Runner {
+    /// Changes a playlist on the server, then says `said` and has the playlists read again.
+    fn playlist_write(&self, s: &Session, w: nori_core::client::Write, said: String) {
+        let (client, tx, id) = (s.client.clone(), self.tx.clone(), s.id);
+        nori_host::spawn("nori-playlist", move || {
+            let send = |m: Msg| {
+                let _ = tx.send(Msg::From(id, Box::new(m)));
+            };
+            match block_on(client.write(w)) {
+                Ok(()) => {
+                    send(Msg::Note { text: said, error: false });
+                    send(Msg::Reload(crate::backend::Req::Playlists));
+                }
+                Err(e) => send(Msg::Note { text: crate::text::net_error(&e), error: true }),
+            }
+        });
+    }
 }
 
 /// After a sound edit: applies its effect (None: nothing changed), then may take the low-latency

@@ -542,7 +542,7 @@ fn mouse() {
     // Mouse off ignores clicks.
     let mut a = app();
     draw(&mut a, 160, 30);
-    key(&mut a, KeyCode::Char('m'));
+    key(&mut a, KeyCode::Char('M'));
     assert_eq!(a.cmds.last(), Some(&Cmd::Mouse(false)));
     let r = hit_rect(&a, Hit::Tab(View::Settings));
     click(&mut a, r.x + 1, r.y);
@@ -1871,4 +1871,79 @@ fn page_heads_offer_what_the_core_says() {
     assert!(lines[at + 1].starts_with("Long Player") && lines[at + 2].starts_with("Singles") && lines[at + 3].starts_with("Short One"), "{s}");
     assert!(s.contains("2 releases") && s.contains("Download everything   Add to queue"), "{s}");
     assert!(matches!(a.selected(), Some(Item::Album(al)) if al.id == "a1"));
+}
+
+/// m opens the menu of what is selected: a song's lines as the core lists them, the less used under More,
+/// then on a page the page's own; an album's Play, Play next and Add to queue. Enter does the line.
+#[test]
+fn the_menu_lists_what_the_core_offers() {
+    use crate::menu::{MenuAct, MenuLine};
+    use nori_core::menus::SongAction;
+    let mut a = app();
+    a.rules = nori_core::browse::profile_rules(false);
+    a.open_album("al-1".into());
+    let songs = vec![Song { album_id: Some("al-1".into()), artist_id: Some("ar-1".into()), ..song("1", "One", 200) }, song("2", "Two", 200)];
+    a.handle(Msg::Data(Req::Album("al-1".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(album("al-1", "Record"), songs.clone(), vec![]))))));
+    key(&mut a, KeyCode::Char('m'));
+    let Some(Overlay::Menu { lines, folded, .. }) = &a.overlay else { panic!("no menu") };
+    let core: Vec<MenuLine> = nori_core::menus::song_menu(songs[0].clone(), false, nori_core::menus::SongDownload::None, false, false, true, true, true, a.rules.radio, None)
+        .into_iter()
+        .filter(|i| !i.more && !matches!(i.action, SongAction::Details | SongAction::Share | SongAction::AddToLibrary))
+        .map(|i| MenuLine::Act(MenuAct::Song(i.action)))
+        .collect();
+    assert_eq!(lines[..core.len()], core[..], "the core's lines, in its order");
+    assert_eq!(lines[core.len()], MenuLine::More);
+    assert!(folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::InstantMix))) && !folded.contains(&MenuLine::Act(MenuAct::Song(SongAction::Details))), "{folded:?}");
+    assert_eq!(lines[core.len() + 1], MenuLine::Heading("Record".into()), "then the page's");
+    let s = draw(&mut a, 120, 40);
+    dump("menu", &s);
+    assert!(s.contains("Add to favorites") && s.contains("Go to album") && s.contains("More") && !s.contains("Instant mix") && !s.contains("Remove downloads") && s.contains("Download"), "{s}");
+    // More unfolds in its place; a line does its thing and closes the menu.
+    let more = core.len();
+    if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {
+        sel.at = more;
+    }
+    key(&mut a, KeyCode::Enter);
+    assert!(draw(&mut a, 120, 40).contains("Instant mix"));
+    a.cmds.clear();
+    key(&mut a, KeyCode::Enter);
+    assert!(a.overlay.is_none());
+    assert!(matches!(a.cmds.last(), Some(Cmd::PlayFetch(crate::backend::Fetch::Radio(id) | crate::backend::Fetch::InstantMix(id), false)) if id == "1"), "{:?}", a.cmds);
+    // Add to playlist: the playlists, a new one first, which asks for its name.
+    playlists(&mut a, &["Road trip"]);
+    key(&mut a, KeyCode::Char('m'));
+    let at = match &a.overlay {
+        Some(Overlay::Menu { lines, .. }) => lines.iter().position(|l| *l == MenuLine::Act(MenuAct::Song(SongAction::AddToPlaylist))).unwrap(),
+        _ => panic!(),
+    };
+    if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {
+        sel.at = at;
+    }
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(&a.overlay, Some(Overlay::Picker { options, .. }) if options.iter().map(|o| o.0.as_str()).collect::<Vec<_>>() == ["New playlist", "Road trip"]));
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::AddToPlaylist { id: "pl-0".into(), songs: vec!["1".into()] }));
+    key(&mut a, KeyCode::Char('m'));
+    if let Some(Overlay::Menu { sel, .. }) = &mut a.overlay {
+        sel.at = at;
+    }
+    key(&mut a, KeyCode::Enter);
+    key(&mut a, KeyCode::Enter);
+    chars(&mut a, "Mine");
+    key(&mut a, KeyCode::Enter);
+    assert_eq!(a.cmds.last(), Some(&Cmd::NewPlaylist { name: "Mine".into(), songs: vec!["1".into()] }));
+
+    // An album's menu, from a list.
+    let mut a = app();
+    a.go(View::Albums);
+    a.handle(Msg::Data(albums_req(), Ok(Data::Albums(vec![album("al-9", "Nine")]))));
+    key(&mut a, KeyCode::Char('m'));
+    assert!(matches!(&a.overlay, Some(Overlay::Menu { lines, .. }) if *lines == [MenuLine::Act(MenuAct::Play), MenuLine::Act(MenuAct::PlayNext), MenuLine::Act(MenuAct::AddToQueue)]));
+    key(&mut a, KeyCode::Down);
+    key(&mut a, KeyCode::Enter);
+    assert!(matches!(a.cmds.last(), Some(Cmd::EnqueueFetch(crate::backend::Fetch::Album(id), true)) if id == "al-9"));
+    // M switches the mouse.
+    key(&mut a, KeyCode::Char('M'));
+    assert_eq!(a.cmds.last(), Some(&Cmd::Mouse(false)));
 }
