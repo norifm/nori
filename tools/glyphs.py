@@ -493,6 +493,8 @@ def main(icons: Path):
             body = f'    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"{mirror}>\n    {ps}'
         path.write_text(f'<?xml version="1.0" encoding="utf-8"?>\n{head}\n<vector xmlns:android="http://schemas.android.com/apk/res/android"\n{body}\n</vector>\n')
     write_web(shapes)
+    write_slint(shapes)
+    write_swift(shapes)
 
 
 def web_part(p):
@@ -559,8 +561,6 @@ def write_web(shapes):
         f"drawn from Shippori Mincho (OFL-1.1); do not edit by hand. -->\n"
         f'  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">\n    {sprite}\n  </svg>\n  {end}{tail}'
     )
-
-    write_slint(shapes)
 
 
 SLINT = ROOT / "crates/desktop-ui/ui/icons.slint"
@@ -725,8 +725,6 @@ export struct Glyph {
 // nori's icons: Iconoir's line glyphs, its solid ones for the transport, and the seal.
 export global Icons {
 """
-
-    write_swift(shapes)
 
 
 KOTLIN_HEAD = '''package dev.nori.music.app.ui
