@@ -2269,17 +2269,18 @@ component PlayerControls inherits Rectangle {
             width: root.side-w;
             alignment: end;
             spacing: 2px;
-            // The device glyphs are drawn to the seal's height and line, so the two stand level.
+            // The device glyphs are drawn to the seal's height and line, and both at the size of the icons beside
+            // them, so every line in the row is as thick.
             if root.devices-on: OutputLine {
                 y: (parent.height - self.height) / 2;
                 height: 34px;
-                icon: 22px;
+                icon: 20px;
                 idle: root.inspector == 3 ? Theme.accent : Theme.text.with-alpha(0.75);
                 clicked => { root.set-inspector(root.inspector == 3 ? 0 : 3); }
             }
             if root.has-song && !root.guest: Seal {
                 y: (parent.height - self.height) / 2;
-                size: 22px;
+                size: 20px;
                 width: 34px;
                 height: 34px;
                 muted: Theme.text.with-alpha(0.75);
