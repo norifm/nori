@@ -249,6 +249,8 @@ fn downloads_and_measuring_over_core() {
 #[derive(Clone, Copy)]
 enum Answer {
     BreaksAt(u64),
+    /// Sends the song from its start, whatever was asked, and breaks there.
+    FromStartBreaksAt(u64),
     Refused,
 }
 
@@ -278,6 +280,7 @@ impl ByteSource for Flaky {
         match self.plan.lock().pop_front() {
             Some(Answer::Refused) => Err("the network is gone".into()),
             Some(Answer::BreaksAt(at)) => Ok(Body { start: from, len: Some(LEN as u64), reader: Box::new(Breaks(c, at)) }),
+            Some(Answer::FromStartBreaksAt(at)) => Ok(Body { start: 0, len: Some(LEN as u64), reader: Box::new(Breaks(Cursor::new(bytes_of(url)), at)) }),
             None => Ok(Body { start: from, len: Some(LEN as u64), reader: Box::new(c) }),
         }
     }
@@ -361,6 +364,14 @@ fn downloads_take_up_rightly(core: &Arc<Core>, client: &Arc<Client>, store: &Arc
     d.wait();
     assert_eq!(download_phase("n-1".into()), Some(DownloadPhase::Failed));
     assert_eq!(net.requests.lock().len(), 3);
+    // So do connections that start over and break before what is on disk already.
+    queue("s-1");
+    net.answer(&[Answer::FromStartBreaksAt(fifth); 16]);
+    d.start(1);
+    d.wait();
+    assert_eq!(download_phase("s-1".into()), Some(DownloadPhase::Failed));
+    let asked = net.requests.lock().iter().filter(|(u, _)| u.contains("id=s-1&")).count();
+    assert_eq!(asked, 4, "one that brought bytes, three that did not");
 }
 
 /// Unmeasured downloads are read back from disk once saved, one at a time, and their lyrics looked up,
