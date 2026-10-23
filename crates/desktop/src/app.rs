@@ -19,7 +19,6 @@ use nori_engine::{Event, State};
 use nori_host::remote::Elsewhere;
 use nori_http::Http;
 use nori_look::cover::CoverColours;
-use skia_safe::Typeface;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer, TimerMode, VecModel};
 
 use crate::compositor::{Compositor, Focus};
@@ -375,7 +374,7 @@ pub struct App {
     http: Arc<Http>,
     session: Option<Session>,
     art: Rc<RefCell<Art>>,
-    lyric_face: Option<Typeface>,
+    lyric_faces: Option<crate::sung::Faces>,
     /// Id and record of the song being heard.
     heard: Option<String>,
     song: Option<Song>,
@@ -606,7 +605,7 @@ pub fn start(ui: &AppWindow, data: PathBuf, compositor: Compositor) -> Rc<RefCel
             http: Http::new(),
             session: None,
             art,
-            lyric_face: crate::sung::bold_face(),
+            lyric_faces: crate::sung::Faces::inter(),
             heard: None,
             song: None,
             queue: None,
@@ -2099,7 +2098,7 @@ impl App {
 
     /// Shows `pick` as the song playing's lyrics.
     fn show_lyrics(&mut self, pick: nori_core::race::LyricsPick) {
-        let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_face.clone());
+        let l = crate::lyrics::SongLyrics::new(pick, self.position_now(), self.lyric_faces.clone());
         let ui = self.ui();
         ui.set_lyrics_lines(l.lines());
         ui.set_lyrics_lane(l.lane());

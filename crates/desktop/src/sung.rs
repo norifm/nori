@@ -32,19 +32,32 @@ pub struct Laid {
 /// Inter, which app.slint bundles and draws every text in: the pieces are measured in the face they are drawn in.
 const INTER: &[u8] = include_bytes!("../../../app/src/main/res/font/inter.ttf");
 
-/// The window's typeface, Inter, read from the same file the window draws with.
-pub fn bold_face() -> Option<Typeface> {
-    FontMgr::new().new_from_data(skia_safe::Data::new_copy(INTER), None)
+/// Inter, read from the same file the window draws with, at the two weights lines are drawn in. Made once:
+/// each variation is a new typeface, and Skia keeps a font face and glyph cache for every typeface.
+#[derive(Clone)]
+pub struct Faces {
+    bold: Typeface,
+    regular: Typeface,
 }
 
-/// `face` at `size` and `weight`, at the optical size Slint draws it in: the variable font's default
-/// (Inter's text cut, wider than its display cut).
-fn font(face: &Typeface, size: f32, weight: f32) -> Font {
-    let face = face.clone();
+impl Faces {
+    pub fn inter() -> Option<Faces> {
+        let face = FontMgr::new().new_from_data(skia_safe::Data::new_copy(INTER), None)?;
+        Some(Faces { bold: weighted(&face, 700.0), regular: weighted(&face, 400.0) })
+    }
+
+    /// Backing vocals alone on their line are drawn lighter.
+    fn font(&self, line: &LyricLine, size: f32) -> Font {
+        Font::from_typeface(if line.background { &self.regular } else { &self.bold }.clone(), size)
+    }
+}
+
+/// `face` at `weight`, at the optical size Slint draws it in: the variable font's default (Inter's text
+/// cut, wider than its display cut).
+fn weighted(face: &Typeface, weight: f32) -> Typeface {
     let coords = [Coordinate { axis: FourByteTag::from_chars('w', 'g', 'h', 't'), value: weight }];
     let args = FontArguments::new().set_variation_design_position(VariationPosition { coordinates: &coords });
-    let face = if face.variation_design_parameters().is_some_and(|a| !a.is_empty()) { face.clone_with_arguments(&args).unwrap_or(face) } else { face };
-    Font::from_typeface(face, size)
+    if face.variation_design_parameters().is_some_and(|a| !a.is_empty()) { face.clone_with_arguments(&args).unwrap_or_else(|| face.clone()) } else { face.clone() }
 }
 
 fn units(s: &str) -> u32 {
@@ -65,10 +78,9 @@ fn byte_at(s: &str, u: u32) -> usize {
 
 /// Lays out line `index` at `size` px within `width`, wrapping at spaces like the text does; the second
 /// voice's rows end at the right edge, as its text is aligned.
-pub fn lay(face: &Typeface, index: usize, line: &LyricLine, size: f32, width: f32) -> Laid {
+pub fn lay(faces: &Faces, index: usize, line: &LyricLine, size: f32, width: f32) -> Laid {
     let key = (index, size.to_bits(), width.to_bits());
-    // Backing vocals alone on their line are drawn lighter.
-    let font = font(face, size, if line.background { 400.0 } else { 700.0 });
+    let font = faces.font(line, size);
     let (spacing, _) = font.metrics();
     let measure = |s: &str| font.measure_str(s, None).0;
     let text = &line.text;
@@ -259,35 +271,45 @@ mod tests {
         LyricLine { start_ms: 0, end_ms: 3000, text: "I wonder why".into(), words: vec![w(0, 500, 0, 1), w(500, 900, 2, 5), w(900, 1400, 5, 8), w(1400, 3000, 9, 12)], ..Default::default() }
     }
 
-    fn face() -> Typeface {
-        bold_face().expect("a font")
+    fn faces() -> Faces {
+        Faces::inter().expect("a font")
     }
 
     #[test]
     fn words_are_measured_in_the_face_the_window_draws() {
-        assert_eq!(face().family_name(), "Inter Variable");
+        assert_eq!(faces().font(&line(), 20.0).typeface().family_name(), "Inter Variable");
+    }
+
+    #[test]
+    fn lines_are_measured_in_one_typeface_per_weight() {
+        let faces = faces();
+        let id = |line: &LyricLine| faces.font(line, 20.0).typeface().unique_id();
+        let backing = LyricLine { background: true, ..line() };
+        assert_eq!(id(&line()), id(&line()));
+        assert_eq!(id(&backing), id(&backing));
+        assert_ne!(id(&line()), id(&backing));
     }
 
     #[test]
     fn line_breaks() {
-        let l = lay(&face(), 0, &line(), 20.0, 1000.0);
+        let l = lay(&faces(), 0, &line(), 20.0, 1000.0);
         let texts: Vec<&str> = l.pieces.iter().map(|p| p.text.as_str()).collect();
         assert_eq!(texts, ["I", " ", "won", "der", " ", "why"]);
         assert_eq!(l.pieces.iter().map(|p| p.row).max(), Some(0));
         assert!(l.pieces.windows(2).all(|w| w[1].x > w[0].x));
 
         // Narrow line wraps at spaces.
-        let l = lay(&face(), 0, &line(), 20.0, 40.0);
+        let l = lay(&faces(), 0, &line(), 20.0, 40.0);
         assert!(l.pieces.iter().map(|p| p.row).max().unwrap_or(0) > 0);
         assert!(l.pieces.iter().filter(|p| p.x == 0.0).all(|p| !p.text.starts_with(' ')));
     }
 
     #[test]
     fn the_second_voice_ends_its_rows_at_the_right_edge() {
-        let font = font(&face(), 20.0, 700.0);
         let line = LyricLine { voice: 1, ..line() };
+        let font = faces().font(&line, 20.0);
         for width in [1000.0, 60.0] {
-            let l = lay(&face(), 0, &line, 20.0, width);
+            let l = lay(&faces(), 0, &line, 20.0, width);
             for row in 0..=l.pieces.iter().map(|p| p.row).max().unwrap() {
                 let end = l.pieces.iter().filter(|p| p.row == row).map(|p| p.x + font.measure_str(p.text.trim_end(), None).0).fold(0.0, f32::max);
                 assert!((end - width).abs() < 0.01, "row {row} at width {width} ends at {end}");
@@ -300,9 +322,9 @@ mod tests {
     #[test]
     fn rows_break_where_the_pieces_wrap() {
         let line = line();
-        let wide = lay(&face(), 0, &line, 20.0, 1000.0);
+        let wide = lay(&faces(), 0, &line, 20.0, 1000.0);
         assert_eq!(wide.rows(&line.text), "I wonder why");
-        let narrow = lay(&face(), 0, &line, 20.0, 40.0);
+        let narrow = lay(&faces(), 0, &line, 20.0, 40.0);
         let rows = narrow.rows(&line.text);
         let starts: Vec<u32> = narrow.pieces.iter().filter(|p| p.x == 0.0).map(|p| p.start).collect();
         let mut at = 0;
@@ -315,7 +337,7 @@ mod tests {
     #[test]
     fn frames_share_the_piece_text() {
         let line = line();
-        let l = lay(&face(), 0, &line, 20.0, 1000.0);
+        let l = lay(&faces(), 0, &line, 20.0, 1000.0);
         let (a, b) = (frame(&l, &line, 1.0, 100, 1.0, 0.3, 4.0), frame(&l, &line, 6.0, 900, 1.0, 0.3, 4.0));
         assert!(a.iter().zip(&b).all(|(x, y)| x.text.as_ptr() == y.text.as_ptr()), "a frame reuses the laid-out text");
     }
@@ -332,7 +354,7 @@ mod tests {
 
         // Fill is lit behind and dim ahead.
         let line = line();
-        let l = lay(&face(), 0, &line, 20.0, 1000.0);
+        let l = lay(&faces(), 0, &line, 20.0, 1000.0);
         let f = frame(&l, &line, 6.0, 1000, 1.0, 0.3, 4.0);
         assert_eq!(f.first().map(|p| p.a0), Some(1.0));
         assert_eq!(f.last().map(|p| p.a1), Some(0.3));
