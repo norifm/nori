@@ -1969,7 +1969,7 @@ global Glyphs {
     }
     // This computer's output by the core's `output_look`: 0 its own speakers, 1 headphones, 2 Bluetooth, 3 another.
     public pure function port(glyph: int) -> Glyph {
-        return glyph == 1 ? Icons.headset : glyph == 2 ? Icons.bluetooth-tag : glyph == 3 ? Icons.airplay : Icons.computer;
+        return glyph == 1 ? Icons.headset : glyph == 2 ? Icons.bluetooth : glyph == 3 ? Icons.airplay : Icons.computer;
     }
 }
 
