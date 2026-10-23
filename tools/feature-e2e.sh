@@ -736,24 +736,24 @@ if want sheets; then section "a sheet over the sideways player, the shade pulled
   # asks for what the app asked for, the bar comes back over the sideways player, and goes and comes as
   # the shade takes the focus and gives it back, moving the sheet with the insets.
   status_bar_away() { adb shell dumpsys window | grep -m1 'InsetsSource.*type=statusBars' | grep -q 'visible=false'; }
-  sheets_up() { [ "$(ui | grep -o 'text="Play on"' | wc -l | tr -d ' ')" = "$1" ]; }
-  sheet_at() { ui | grep -o 'text="Play on"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"'; }
+  sheets_up() { [ "$(ui | grep -o 'text="Playing on"' | wc -l | tr -d ' ')" = "$1" ]; }
+  sheet_at() { ui | grep -o 'text="Playing on"[^>]*bounds="[^"]*"' | grep -o 'bounds="[^"]*"'; }
   "$app" set hideStatusBar SIDEWAYS >/dev/null; "$app" set remoteControl true >/dev/null
   "$app" play "$PLAIN" >/dev/null; sounds 20
   "$app" open player >/dev/null
   adb shell settings put system accelerometer_rotation 0; adb shell settings put system user_rotation 1
   check "the sideways player puts the status bar away" wait_until 10 status_bar_away
   "$app" open devices >/dev/null
-  check "Play on comes up" wait_until 10 on_screen 'text="Play on"'
+  check "Playing on comes up" wait_until 10 on_screen 'text="Playing on"'
   before=$(sheet_at)
   check "and leaves the status bar away" status_bar_away
   adb shell cmd statusbar expand-settings; wait_until 5 sheets_up 0
   adb shell cmd statusbar collapse
-  check "Play on is there once after the shade" wait_until 10 sheets_up 1
+  check "Playing on is there once after the shade" wait_until 10 sheets_up 1
   check "the status bar stays away after the shade" status_bar_away
   check "the sheet has not moved" test "$(sheet_at)" = "$before"
   adb shell input keyevent KEYCODE_BACK
-  check "back closes the sheet" wait_until 10 off_screen 'text="Play on"'
+  check "back closes the sheet" wait_until 10 off_screen 'text="Playing on"'
   adb shell settings put system user_rotation 0; adb shell settings put system accelerometer_rotation 1
   "$app" set remoteControl false >/dev/null
 fi
