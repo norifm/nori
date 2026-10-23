@@ -24,7 +24,8 @@ impl Client {
         marked.marks(m.marks);
         let sent = self.write(Write::Star { kind, id: id.clone(), on }).await;
         if sent.is_err() {
-            marked.marks(self.core.stars.lock().restore(kind, id.clone(), on, m.previous));
+            let restored = self.core.stars.lock().restore(kind, id.clone(), on, m.previous);
+            marked.marks(restored);
         }
         let remote = self.core.remote.lock().upgrade();
         if let Some(remote) = remote {
@@ -220,12 +221,12 @@ pub(crate) mod tests {
     use crate::client::tests::{block, client};
     use crate::client::NetProfile;
 
-    #[derive(Default)]
-    struct Marks(parking_lot::Mutex<Vec<Option<bool>>>);
+    /// Each mark shown, and whether the stars were free to read then.
+    struct Marks(parking_lot::Mutex<Vec<(Option<bool>, bool)>>, Arc<crate::Core>);
 
     impl StarsShown for Marks {
         fn marks(&self, m: crate::stars::StarMarks) {
-            self.0.lock().push(m.songs.get("lib-refused").copied());
+            self.0.lock().push((m.songs.get("lib-refused").copied(), self.1.stars.try_lock().is_some()));
         }
     }
 
@@ -291,11 +292,11 @@ pub(crate) mod tests {
     fn refused_star_restores_mark() {
         let (c, fake) = client(NetProfile { url: "h".into(), ..Default::default() });
         fake.answer(crate::client::tests::OK);
-        let seen = Arc::new(Marks::default());
+        let seen = Arc::new(Marks(Default::default(), c.core.clone()));
         assert!(block(c.star(Starrable::Song, "lib-refused".into(), true, seen.clone())).is_ok());
         fake.answer(r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"no"}}}"#);
         assert!(block(c.star(Starrable::Song, "lib-refused".into(), false, seen.clone())).is_err());
-        assert_eq!(*seen.0.lock(), [Some(true), Some(false), Some(true)]);
+        assert_eq!(*seen.0.lock(), [(Some(true), true), (Some(false), true), (Some(true), true)]);
         assert_eq!(c.core.stars.lock().songs.get("lib-refused"), Some(&true));
     }
 
