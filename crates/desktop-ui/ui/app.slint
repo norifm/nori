@@ -751,8 +751,8 @@ component PlayPause inherits Rectangle {
         stroke: root.ink;
         stroke-width: 2.4px;
         stroke-line-cap: round;
-        transform-rotation: root.spinning ? 360deg : 0deg;
-        animate transform-rotation { duration: Motion.reduced ? 0ms : 900ms; iteration-count: -1; easing: linear; }
+        // From the tick: an animated binding would only run on a change, and this one is made already spinning.
+        transform-rotation: Motion.reduced ? 0deg : 360deg * mod(animation-tick() / 900ms, 1);
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -1010,9 +1010,8 @@ component MenuLine inherits Rectangle {
     in property <string> text;
     in property <bool> divider: true;
     in property <bool> enabled: true;
-    // A chevron at its end, turned over while what it unfolds is open.
-    in property <bool> folds;
-    in property <bool> unfolded;
+    // A chevron at its end: it opens more lines.
+    in property <bool> opens;
     callback clicked;
     height: MenuShape.row;
     opacity: root.enabled ? 1 : 0.38;
@@ -1037,14 +1036,12 @@ component MenuLine inherits Rectangle {
             vertical-alignment: center;
             overflow: elide;
         }
-        if root.folds: Icon {
+        if root.opens: Icon {
             y: (parent.height - self.height) / 2;
-            glyph: Icons.nav-arrow-down;
+            glyph: Icons.nav-arrow-right;
             colour: Theme.dim;
             width: 18px;
             height: 18px;
-            transform-rotation: root.unfolded ? 180deg : 0deg;
-            animate transform-rotation { duration: Motion.reduced ? 0ms : 220ms; }
         }
     }
     if root.divider: Rectangle {
@@ -1597,7 +1594,8 @@ global SongIcons {
 }
 
 // A song's menu, as Android's sheet: the song at its head, then its lines (the core's `song_menu`) grouped on
-// one card, those reached for less folded under More.
+// one card, those reached for less behind More, which shows them in the card's place under Back. The two
+// share one cell, as tall as the longer, so the menu, placed for its height as it opens, never moves.
 component SongMenuBody inherits Popover {
     in property <image> picture;
     in property <string> title;
@@ -1607,8 +1605,7 @@ component SongMenuBody inherits Popover {
     in property <bool> playable;
     callback play;
     callback chosen(SongGo);
-    callback folded;
-    property <bool> unfolded;
+    property <bool> more-shown;
     VerticalLayout {
         padding: MenuShape.inset;
         MenuHead {
@@ -1616,31 +1613,53 @@ component SongMenuBody inherits Popover {
             title: root.title;
             line: root.line;
         }
-        MenuGroup {
-            if root.playable: MenuLine {
-                icon: Icons.play;
-                text: "Play";
-                divider: root.lines.length > 0;
-                clicked => { root.play(); }
-            }
-            for m[i] in root.lines: VerticalLayout {
-                if m.more && (i == 0 || !root.lines[i - 1].more): MenuLine {
-                    icon: Icons.more-horiz;
-                    text: "More";
-                    folds: true;
-                    unfolded: root.unfolded;
-                    divider: root.unfolded;
-                    clicked => {
-                        root.unfolded = !root.unfolded;
-                        root.folded();
+        GridLayout {
+            MenuGroup {
+                row: 0;
+                col: 0;
+                alignment: start;
+                visible: !root.more-shown;
+                if root.playable: MenuLine {
+                    icon: Icons.play;
+                    text: "Play";
+                    divider: root.lines.length > 0;
+                    clicked => { root.play(); }
+                }
+                for m[i] in root.lines: VerticalLayout {
+                    if !m.more: MenuLine {
+                        icon: SongIcons.song-icon(m);
+                        text: m.title;
+                        enabled: m.enabled;
+                        divider: i < root.lines.length - 1;
+                        clicked => { root.chosen(m); }
+                    }
+                    if m.more && (i == 0 || !root.lines[i - 1].more): MenuLine {
+                        icon: Icons.more-horiz;
+                        text: "More";
+                        divider: false;
+                        opens: true;
+                        clicked => { root.more-shown = true; }
                     }
                 }
-                if !m.more || root.unfolded: MenuLine {
-                    icon: SongIcons.song-icon(m);
-                    text: m.title;
-                    enabled: m.enabled;
-                    divider: i < root.lines.length - 1;
-                    clicked => { root.chosen(m); }
+            }
+            MenuGroup {
+                row: 0;
+                col: 0;
+                alignment: start;
+                visible: root.more-shown;
+                MenuLine {
+                    icon: Icons.nav-arrow-left;
+                    text: "Back";
+                    clicked => { root.more-shown = false; }
+                }
+                for m[i] in root.lines: VerticalLayout {
+                    if m.more: MenuLine {
+                        icon: SongIcons.song-icon(m);
+                        text: m.title;
+                        enabled: m.enabled;
+                        divider: i < root.lines.length - 1;
+                        clicked => { root.chosen(m); }
+                    }
                 }
             }
         }
@@ -3481,7 +3500,6 @@ component SeasonTiles inherits VerticalLayout {
     in property <int> chosen;
     in property <length> tile-height: 72px;
     callback picked(int);
-    property <[string]> marks: ["春", "夏", "秋", "冬"];
     HorizontalLayout {
         spacing: 10px;
         for o[i] in root.options: VerticalLayout {
@@ -3492,11 +3510,11 @@ component SeasonTiles inherits VerticalLayout {
                 background: Theme.season-pages[i];
                 border-width: i == root.chosen ? 2px : 1px;
                 border-color: i == root.chosen ? Theme.season-accents[i] : Theme.hairline;
-                Text {
-                    text: root.marks[i];
-                    color: Theme.season-accents[i];
-                    font-size: 32px;
-                    font-weight: 700;
+                Icon {
+                    glyph: Icons.seasons[i];
+                    colour: Theme.season-accents[i];
+                    width: 32px;
+                    height: 32px;
                 }
                 TouchArea {
                     mouse-cursor: pointer;
@@ -4718,6 +4736,8 @@ component TopContent inherits Rectangle {
 
 
 export component AppWindow inherits Window {
+    // The window's corner holds macOS's traffic lights.
+    in property <bool> traffic-lights;
     init => {
         Chrome.window-width = self.width;
         Chrome.window-height = self.height;
@@ -5836,6 +5856,9 @@ export component AppWindow inherits Window {
                             spacing: 8px;
                             if root.artist-chosen != "": HorizontalLayout {
                                 spacing: 8px;
+                                // Clear of the page's find field, which floats over this row: 226 px wide, 32 px from
+                                // the window's edge, and 12 px apart, less this pane's own 30 px.
+                                padding-right: 226px + 32px + 12px - 30px;
                                 Text {
                                     text: root.page-title;
                                     color: Theme.text;
@@ -6447,6 +6470,12 @@ export component AppWindow inherits Window {
                                     lyric-flick.content-y = -max(0, self.y - lyric-flick.height / 3);
                                 }
                             }
+                            // Laid out after init when the panel opens, and again when a resize wraps the lines.
+                            changed y => {
+                                if self.lit {
+                                    lyric-flick.content-y = -max(0, self.y - lyric-flick.height / 3);
+                                }
+                            }
                             // With word times the lit line is drawn by its pieces over this text, which keeps its place;
                             // a line sung fades from white as the others do.
                             text: root.lyrics-side-rows.length > i ? root.lyrics-side-rows[i] : line;
@@ -6726,9 +6755,9 @@ export component AppWindow inherits Window {
                 drag => { root.drag-window(); }
                 zoom => { root.zoom-window(); }
             }
-            // Back to the window: a disc level with the traffic lights.
+            // Back to the window: a disc level with the traffic lights, or in the corner without them.
             Rectangle {
-                x: 84px;
+                x: root.traffic-lights ? 84px : 8px;
                 y: 8px;
                 width: 36px;
                 height: 36px;
@@ -7034,6 +7063,14 @@ export component AppWindow inherits Window {
                         }
                         init => {
                             self.level = self.lit ? 1 : 0;
+                            if self.aimed {
+                                full-lyrics.content-y = -(self.y - (root.height * 0.36 - 48px));
+                                root.full-lyric-h = self.height;
+                                root.full-lyric-at = self.y;
+                            }
+                        }
+                        // Laid out after init when the lyrics open, and again when a resize wraps the lines.
+                        changed y => {
                             if self.aimed {
                                 full-lyrics.content-y = -(self.y - (root.height * 0.36 - 48px));
                                 root.full-lyric-h = self.height;

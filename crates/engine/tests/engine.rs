@@ -249,6 +249,9 @@ struct Extra {
     hold_ms: Option<usize>,
     /// The songs' file type (default WAV).
     hint: Option<&'static str>,
+    /// The device pulls this many frames a period and plays each pull this many µs later, as a cpal
+    /// stream does.
+    periods: Option<(usize, u64)>,
 }
 
 /// Files each song is cut into with [`Extra::on_disk`].
@@ -303,6 +306,10 @@ struct Card {
     deep: usize,
     hold: usize,
     held: std::collections::VecDeque<i16>,
+    /// Pulls as a cpal stream does ([`Extra::periods`]), saying in `said` when each pull is heard.
+    periods: Option<(usize, u64)>,
+    said: Arc<nori_engine::Heard>,
+    now_us: u64,
 }
 
 /// Frames the card pulls at a time.
@@ -317,6 +324,17 @@ impl common::Device for Card {
 
     fn tick(&mut self, now_ns: i64) -> bool {
         let rate = self.feed.as_ref().map_or(RATE, |f| f.format().rate);
+        self.now_us = (now_ns / 1000) as u64;
+        if let Some((frames, delay_us)) = self.periods {
+            self.due_ns = now_ns + (frames as i64 * 1_000_000_000) / rate as i64;
+            let Some(feed) = self.feed.as_mut().filter(|_| self.playing) else { return false };
+            let waits = feed.engine_waits();
+            self.block.resize(frames * feed.format().channels, 0);
+            let got = feed.pull_i16(&mut self.block);
+            self.said.pulled(self.now_us + delay_us, got, rate);
+            self.heard.lock().extend_from_slice(&self.block[..got * feed.format().channels]);
+            return waits && !feed.engine_waits();
+        }
         self.due_ns = now_ns + (BLOCK as i64 * 1_000_000_000) / rate as i64;
         let Some(feed) = self.feed.as_mut() else { return false };
         if self.die.swap(false, Ordering::AcqRel) {
@@ -409,6 +427,7 @@ impl AudioOutput for Recorder {
 
     fn start(&mut self, feed: Feed) -> Result<(), String> {
         let mut c = self.card.lock();
+        c.said.follow(feed.pulled());
         c.feed = Some(feed);
         c.started = false;
         Ok(())
@@ -424,11 +443,18 @@ impl AudioOutput for Recorder {
 
     fn latency_us(&self) -> u64 {
         let c = self.card.lock();
+        if c.periods.is_some() {
+            return c.said.left_us(c.now_us);
+        }
         (c.held.len() / 2) as u64 * 1_000_000 / RATE as u64
     }
 
     fn holding(&self) -> bool {
-        !self.card.lock().held.is_empty()
+        let c = self.card.lock();
+        if c.periods.is_some() {
+            return c.said.left_us(c.now_us) > 0;
+        }
+        !c.held.is_empty()
     }
 
     fn takes_float(&mut self) -> bool {
@@ -490,7 +516,7 @@ impl Rig {
 
     /// Songs as (id, file, length ms).
     fn build(files: Vec<(String, Vec<u8>, i64)>, app: impl App + Send + 'static, settings: Settings, extra: Extra) -> Rig {
-        let Extra { float, skip, server, store, on_disk, idle_release_ms, pace, memory_mb, watch: watching, hold_ms, hint } = extra;
+        let Extra { float, skip, server, store, on_disk, idle_release_ms, pace, memory_mb, watch: watching, hold_ms, hint, periods } = extra;
         for (id, f, _) in &files {
             server.files.lock().push((id.clone(), Arc::new(f.clone())));
         }
@@ -525,6 +551,9 @@ impl Rig {
             deep: hold_ms.unwrap_or(0) * RATE as usize / 1000,
             hold: hold_ms.unwrap_or(0) * RATE as usize / 1000,
             held: Default::default(),
+            periods,
+            said: Arc::default(),
+            now_us: 0,
         }));
         let out = Recorder { card: card.clone(), opened: Arc::default(), shut: Arc::default(), watch: Arc::default(), flushes: Arc::default(), shallow: Arc::default() };
         let (opened, shut, watch, flushes, shallow) = (out.opened.clone(), out.shut.clone(), out.watch.clone(), out.flushes.clone(), out.shallow.clone());
@@ -3654,4 +3683,26 @@ fn a_queue_returned_after_release_is_heard() {
         assert!(heard[before..].iter().any(|&v| v.abs() > 1000), "fade {fade_ms}: the returned queue must be audible");
         assert_eq!(rig.engine.status().index, Some(1));
     }
+}
+
+/// A device that says when each pull is heard, as a cpal stream does, paused while the place moves: the
+/// music from the new place is said to play once it is heard, and the place runs on from there.
+#[test]
+fn seek_while_paused_plays_on_from_there() {
+    let a = music(20.0, 86);
+    let extra = Extra { periods: Some((RATE as usize / 10, 150_000)), ..Extra::default() };
+    let rig = Rig::build(files(&[("a", &a)]), sim::App::new(), Settings::default(), extra);
+    rig.engine.play_at(0, 0);
+    rig.run(2_000);
+    rig.engine.pause();
+    rig.run(1_000);
+    rig.engine.seek(9_000);
+    rig.run(500);
+    rig.engine.play();
+    let at = rig.now_ms();
+    assert!(rig.wait_for(5, |r| {
+        let s = r.engine.status();
+        !s.buffering && s.position_ms > 9_000
+    }));
+    assert!(rig.now_ms() - at < 1_000, "playing from 9 s said after {} ms", rig.now_ms() - at);
 }
