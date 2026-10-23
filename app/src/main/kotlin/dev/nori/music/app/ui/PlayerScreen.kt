@@ -1042,7 +1042,9 @@ private fun PanelFlight(
         // is in the header above it), so the layer stops there rather than at the screen's foot.
         SoftSleeve(
             Modifier.fillMaxWidth().height(with(density) { sleeveBottom.toDp() }),
-            sleeve = { sleeveBottom to sleeveHeight }, blur = dressed,
+            // The band ends on the layer's own last row: the sleeve's bottom is fractional and the layer a whole
+            // number of rows, and a band ending mid-row left part of that row as a line under the time labels.
+            sleeve = { size.height to sleeveHeight }, blur = dressed,
         ) {
             Box(
                 Modifier.requiredSize(side).align(Alignment.TopStart)
@@ -1097,7 +1099,7 @@ internal fun SoftSleeve(
     content: @Composable androidx.compose.foundation.layout.BoxScope.(blurred: Boolean) -> Unit,
 ) {
     val soft = android.os.Build.VERSION.SDK_INT >= 31
-    val blurPx = with(androidx.compose.ui.platform.LocalDensity.current) { 22.dp.toPx() }
+    val blurPx = with(androidx.compose.ui.platform.LocalDensity.current) { BAND_BLUR.toPx() }
     // A white, cream or black page has a wash in its own tint only (nori_look's wash), and the blurred band
     // has to arrive at the same thing: blurred as it is, A Beautiful Lie's red lettering spread across its
     // white bottom as a pink haze over a grey page. So on such a page the band keeps its light and dark
@@ -1113,6 +1115,11 @@ internal fun SoftSleeve(
     // With the cover at the end (a car's driver on the left) the sleeve is turned round whole, soft edge and
     // blur with it, and the picture turned back inside it: the soft edge faces the controls, never the picture.
     val mirror = across && LocalCoverAtEnd.current
+    // Upright over the whole sleeve, the blurred copy can show only from its mask's top down: it is laid out,
+    // and blurred, over those rows alone (and the blur's reach above them), about half the sleeve, rather than
+    // over the whole of it on every frame. The rows it leaves out are the ones it shows nothing in.
+    val cropped = !across && sleeve === SLEEVE_ALL
+    val cut = remember { IntArray(1) }
     Box(
         modifier
             .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen; if (mirror) scaleX = -1f }
@@ -1121,6 +1128,12 @@ internal fun SoftSleeve(
         Unturned(mirror) { content(false) }
         if (soft && band != null) Box(
             Modifier.fillMaxSize()
+                .then(if (!cropped) Modifier else Modifier.layout { measurable, constraints ->
+                    val full = constraints.maxHeight
+                    cut[0] = (full * stage.softFrom - BAND_REACH * blurPx).toInt().coerceIn(0, full)
+                    val placeable = measurable.measure(constraints.copy(minHeight = full - cut[0], maxHeight = full - cut[0]))
+                    layout(constraints.maxWidth, full) { placeable.place(0, cut[0]) }
+                })
                 // At nought the layer is skipped whole, blur and all.
                 .graphicsLayer {
                     compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
@@ -1130,7 +1143,8 @@ internal fun SoftSleeve(
                     // Where the blurred copy shows: nowhere above the band's upper reach, all of it by the
                     // time the rub-out is under way. Eased, so its own start is no line. One brush per
                     // size and place, not one per frame.
-                    val (bottom, height) = edge()
+                    // Cropped, this box starts `cut` rows down the sleeve.
+                    val (bottom, height) = if (cropped) (size.height + cut[0]).let { (it - cut[0]) to it.toFloat() } else edge()
                     val top = bottom - height
                     val mask = if (across) alphaGradient(stage.acrossSoft, Color.Black, top + height * (1f - stage.acrossMelt), top + height, true)
                     else alphaGradient(stage.soft, Color.Black, top + height * stage.softFrom, top + height * stage.softTo, false)
@@ -1140,10 +1154,21 @@ internal fun SoftSleeve(
                     }
                 },
         ) {
-            Box(Modifier.fillMaxSize().graphicsLayer { renderEffect = band.of(look) }) { Unturned(mirror) { content(true) } }
+            Box(Modifier.fillMaxSize().graphicsLayer { renderEffect = band.of(look) }) {
+                // The whole sleeve's picture, moved up by the rows the box leaves out.
+                Box(if (!cropped) Modifier.fillMaxSize() else Modifier.layout { measurable, constraints ->
+                    val full = constraints.maxHeight + cut[0]
+                    val placeable = measurable.measure(constraints.copy(minHeight = full, maxHeight = full))
+                    layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(0, -cut[0]) }
+                }) { Unturned(mirror) { content(true) } }
+            }
         }
     }
 }
+
+/** The sleeve band's blur, and how many of it reach above the band (past that a blur adds next to nothing). */
+private val BAND_BLUR = 22.dp
+private const val BAND_REACH = 3f
 
 /** [content] turned back the right way round inside something turned round ([turned]), or as it is. */
 @Composable
@@ -1220,7 +1245,16 @@ private fun FlyingCover(sheet: PlayerSheet, rowUrl: String?, art: SleeveArt, mea
         // the sleeve that starts there - so the layer is the sleeve's size, not the screen's. The band's blur is
         // there the whole way: whatever part of the record is behind the title and controls is blurred, and
         // only what has risen above them is sharp, so its edge sharpens as it passes up through the band.
-        SoftSleeve(Modifier.fillMaxWidth().height(side)) {
+        // The blurred copy shows only in the band; until the square's bottom (and the blur's reach below it) gets
+        // there, there is nothing of it to see, and it is not drawn. Where the square's bottom is: see the layer below.
+        val reach = with(density) { BAND_BLUR.toPx() } * BAND_REACH
+        val blurred = FloatReader {
+            val t = sheet.progress.value.coerceIn(0f, 1f)
+            val from = sheet.miniCover.translate(-sheet.closed())
+            fun mix(a: Float, b: Float) = a + (b - a) * t
+            if (mix(from.center.y, h / 2f) + mix(from.height, h) / 2f + reach >= h * stage.softFrom) 1f else 0f
+        }
+        SoftSleeve(Modifier.fillMaxWidth().height(side), blur = blurred) {
             Box(
                 Modifier.requiredSize(side).align(Alignment.TopStart)
                     .graphicsLayer {
@@ -2361,7 +2395,10 @@ private fun SeekBar(vm: PlayerViewModel, playing: Boolean, durationMs: Long, see
     /** The bar's length on screen, in pixels, for how often it needs drawing. */
     val barWidth = remember { mutableFloatStateOf(1000f) }
     val free = !dragging.value && held.value == null
-    var resumed by remember { mutableStateOf(false) }
+    // As the screen is now, not false until the effect below runs: a bar made while the player is up (a
+    // panel changing builds the controls again) is live on its first frame, not drawn once at 0:00.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var resumed by remember { mutableStateOf(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) }
     LifecycleResumeEffect(Unit) { resumed = true; onPauseOrDispose { resumed = false } }
     val live = resumed && LocalPlayerShown.current
     // Coming on screen: straight to the song, in the frame being made - a side effect runs after this
