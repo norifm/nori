@@ -69,7 +69,7 @@ enum Glyph {
     }
 
     /// The seasons' kanji, 春 夏 秋 冬, spring first.
-    static let seasons = [Iconoir.spring, Iconoir.summer, Iconoir.autumn, Iconoir.winter].map { draw($0, 30) }
+    static let seasons = [Iconoir.spring, Iconoir.summer, Iconoir.autumn, Iconoir.winter].map { draw($0, 32) }
 
     /// The cloud on a provider's item (not in the library yet), `side` points, in the secondary ink: a text
     /// attachment takes no tint.

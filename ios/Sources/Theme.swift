@@ -33,8 +33,8 @@ enum Theme {
     /// iOS 12 has no scheme of its own: System is Night here, the iPod's default (the owner's choice).
     private static let systemDark: Int32 = 1
 
-    /// The core's look for `season` in the mode now, on today's date and time zone.
-    private static func wear(_ season: String) -> NoriLook {
+    /// The core's look for `season` in `mode`, on today's date and time zone.
+    private static func wear(_ season: String, _ mode: String = Theme.mode) -> NoriLook {
         var out = NoriLook()
         let zone = TimeZone.current
         nori_ios_look(season, mode, systemDark, Int64(Date().timeIntervalSince1970), Int32(zone.secondsFromGMT() / 60), zone.identifier, &out)
@@ -48,8 +48,9 @@ enum Theme {
 
     private(set) static var look = wear(season)
 
-    /// The palette each season's tile shows in the mode now, spring first.
-    static func tiles() -> [NoriPalette] { seasons.map { wear($0).worn } }
+    /// The palette each season's tile shows, spring first: its day or night one, as the app is (Night's in
+    /// Midnight: on black every tile would be the same).
+    static func tiles() -> [NoriPalette] { seasons.map { wear($0, dark ? "DARK" : "LIGHT").worn } }
 
     /// The season now and the next one with its start, for the settings page.
     static func calendar() -> NoriSeasonNow {
