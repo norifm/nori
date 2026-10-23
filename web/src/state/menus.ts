@@ -70,9 +70,10 @@ function item(a: MenuAction, s: Song): Item | null {
   }
 }
 
-/** Song `s`'s menu, opening `at`: what one opens it for, then the rest under More; `extra` the page's own
- * entries; `inPlayer` when opened from the player. */
-export async function songMenu(s: Song, at: Anchor, extra: Item[] = [], inPlayer = false) {
+/** Song `s`'s menu, opening `at`: what one opens it for, then the rest under More. Opened on a row it
+ * starts with Play (`play`, what clicking the row does); `extra` the page's own entries; `inPlayer` when
+ * opened from the player. */
+export async function songMenu(s: Song, at: Anchor, { play, extra = [], inPlayer = false }: { play?: () => unknown; extra?: Item[]; inPlayer?: boolean } = {}) {
   const lyrics = inPlayer && !!player.shown && player.shown.song === s.id;
   const actions = JSON.parse(await ask<string>("menu", JSON.stringify(s), inPlayer, lyrics)) as MenuAction[];
   const of = (more: boolean) =>
@@ -80,5 +81,6 @@ export async function songMenu(s: Song, at: Anchor, extra: Item[] = [], inPlayer
       const i = !!a.more === more ? item(a, s) : null;
       return i ? [{ ...i, disabled: !a.enabled }] : [];
     });
-  ui.menu({ title: s.title, line: s.line || s.artist, cover: s.cover ?? "" }, [...of(false), ...extra], of(true), at);
+  const first: Item[] = play ? [{ label: W.play, icon: "play", run: play }] : [];
+  ui.menu({ title: s.title, line: s.line || s.artist, cover: s.cover ?? "" }, [...first, ...of(false), ...extra], of(true), at);
 }

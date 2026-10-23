@@ -28,14 +28,16 @@
   let all = $state(false);
   const at = $derived(rows ?? songs.map((_, i) => i));
   const drawn = $derived(all || shown === undefined ? at : at.slice(0, shown));
+  /** What a click on row `i` does, and its menu's Play. */
+  const play = (i: number) => (one ? player.play([songs[i]], 0, false, kind, id) : player.play(songs, i, false, kind, id));
 </script>
 
 <ol class="songs" class:numbered use:sortable={{ moved: (from, to) => moved?.(from, to) }}>
   {#each drawn as i (`${i}:${songs[i].id}`)}
     {@const s = songs[i]}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <li oncontextmenu={(e) => (e.preventDefault(), void songMenu(s, pointer(e), extra(s, i)))} class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
-      <button class="play" onclick={() => void (one ? player.play([s], 0, false, kind, id) : player.play(songs, i, false, kind, id))}>
+    <li oncontextmenu={(e) => (e.preventDefault(), void songMenu(s, pointer(e), { play: () => play(i), extra: extra(s, i) }))} class:now={s.id === playingId} data-row={moved ? "" : undefined} data-at={i}>
+      <button class="play" onclick={() => void play(i)}>
         {#if numbered}
           <span class="n">{#if s.id === playingId}<span class="bars" class:still={!player.playing}><i></i><i></i><i></i></span>{:else}{s.track || i + 1}{/if}</span>
         {:else}
@@ -47,7 +49,7 @@
       </button>
       {#if s.starred}<span class="starred" aria-label={W.favorite}><Icon name="sealed" /></span>{/if}
       <span class="len">{W.time(s.duration * 1000)}</span>
-      <button class="more" aria-label={W.more} title={W.more} onclick={(e) => void songMenu(s, beside(e), extra(s, i))}><Icon name="more-horiz" /></button>
+      <button class="more" aria-label={W.more} title={W.more} onclick={(e) => void songMenu(s, beside(e), { play: () => play(i), extra: extra(s, i) })}><Icon name="more-horiz" /></button>
       {#if moved}<span class="handle" data-handle aria-label={W.reorder} title={W.reorder}><Icon name="menu" /></span>{/if}
     </li>
   {/each}
