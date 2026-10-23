@@ -153,7 +153,7 @@ fun SongMenu(
             }
             val main = items.indices.filter { !items[it].more }
             val folded = items.indices.filter { items[it].more }
-            GroupCard(Modifier.padding(top = 8.dp)) {
+            SheetRows(head = true) {
                 main.forEachIndexed { k, n -> line(items[n], labels[n], divider = k < main.lastIndex || folded.isNotEmpty()) }
                 // A jam guest's menu has nothing under "More".
                 if (folded.isNotEmpty()) {
@@ -194,12 +194,24 @@ fun CardMenu(card: CardItem?, actions: ActionsViewModel, onDismiss: () -> Unit) 
                     if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 }
             }
-            GroupCard(Modifier.padding(top = 8.dp)) {
+            SheetRows(head = true) {
                 if (!LocalRules.current.asks) Item(say.play, Iconoir.Play) { actions.play(card); onDismiss() }
                 Item(say.menuPlayNext, Iconoir.PlaylistPlay) { actions.queue(card, next = true); onDismiss() }
                 Item(say.addToQueue, Iconoir.Playlist, divider = false) { actions.queue(card, next = false); onDismiss() }
             }
         }
+    }
+}
+
+/**
+ * A sheet's lines, on the sheet itself rather than on a card inside it: one surface, the lines parted by
+ * hairlines, their glyphs level with the page's gutter. Under a [head] (the song or record), a hairline first.
+ */
+@Composable
+private fun SheetRows(head: Boolean = false, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    Column(Modifier.padding(horizontal = Space.gutter - GROUP_INSET)) {
+        if (head) Hairline(startIndent = GROUP_INSET)
+        content()
     }
 }
 
@@ -259,7 +271,7 @@ private fun SleepChoices(player: dev.nori.music.app.vm.PlayerViewModel, onDone: 
         // The choices are the core's (`menus::sleep_choices`); "Off" is all zeros.
         val choices = remember(running) { dev.nori.music.ffi.library.sleepChoices(running) }
         val words = remember(choices) { choices.map(say::sleepChoice) }
-        GroupCard {
+        SheetRows {
             choices.forEachIndexed { n, c -> Item(words[n], divider = n < choices.lastIndex) { player.sleep(c.minutes.toInt(), c.endOfTrack, c.songs.toInt()); onDone() } }
         }
     }
