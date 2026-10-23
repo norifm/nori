@@ -309,8 +309,7 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             val c = runCatching { future.get() }.getOrNull()
             if (connecting !== future) {
                 // Disconnected meanwhile: what was asked of it is done, and it is let go.
-                c?.let { pending.forEach { action -> action(it) }; it.release() }
-                pending.clear()
+                c?.let { runPending(it); it.release() } ?: pending.clear()
                 return@addListener
             }
             connecting = null
@@ -323,9 +322,18 @@ class PlayerConnection(private val context: Context, private val nori: Nori) {
             PlaybackService.onQueueSet = { main.post { controller?.let { publish(it, queueChanged = true) } } }
             PlaybackService.onLanded = { followSeek() }
             publish(c, queueChanged = true)
-            pending.forEach { it(c) }
-            pending.clear()
+            runPending(c)
         }, MoreExecutors.directExecutor())
+    }
+
+    /**
+     * Runs what was asked before `c` connected. Taken out first: an action run on a controller already
+     * let go that asks again waits for the next one.
+     */
+    private fun runPending(c: MediaController) {
+        val asked = pending.toList()
+        pending.clear()
+        asked.forEach { it(c) }
     }
 
     fun disconnect() {
