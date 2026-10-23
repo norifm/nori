@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2-dev libasound2-plugins libfontconfig1-dev libfreetype6-dev \
     libegl1-mesa-dev libgl1-mesa-dev libwayland-dev libxkbcommon-dev libx11-dev \
     libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev \
-    dpkg-dev flatpak librsvg2-bin imagemagick pulseaudio dbus-user-session \
+    dpkg-dev flatpak librsvg2-bin imagemagick dbus-user-session \
     && rm -rf /var/lib/apt/lists/*
 # On arm64, x86_64's compiler and libraries: the x86_64 packages are compiled here, natively, and only
 # packaged under emulation.
