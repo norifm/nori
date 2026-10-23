@@ -885,9 +885,11 @@ component Bar inherits Rectangle {
         border-radius: self.height / 2;
         background: root.track;
         clip: true;
+        // Rounded as Android's: a plain rectangle is drawn without anti-aliasing, so its end would step whole pixels.
         Rectangle {
             x: 0;
             width: parent.width * root.shown;
+            border-radius: parent.border-radius;
             background: root.fill;
         }
     }
