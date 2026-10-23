@@ -86,9 +86,9 @@ pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
 pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
     use nori_core::browse::AlbumSort;
     match sort {
-        AlbumSort::ByName => "A–Z",
+        AlbumSort::ByName => "Title",
         AlbumSort::ByArtist => "Artist",
-        AlbumSort::ArtistRows => "Artist rows",
+        AlbumSort::ArtistRows => "Artist",
         AlbumSort::Newest => "Added",
         AlbumSort::Recent => "Played",
         AlbumSort::Frequent => "Most played",

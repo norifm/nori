@@ -18,8 +18,8 @@ pub struct Look {
     on: u32,
     on_on: u32,
     danger: u32,
-    /// Each season's page and accent, for the season tiles.
-    seasons: [(u32, u32); 4],
+    /// Each season's page, accent and on colors, for the season tiles.
+    seasons: [(u32, u32, u32); 4],
 }
 
 /// Material's baseline error, light and dark: the palette has none of its own.
@@ -56,7 +56,7 @@ pub fn plain(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Look {
     // A tile wears its season's dark palette rather than black: on black every tile would be the same.
     let seasons = [Season::Spring, Season::Summer, Season::Autumn, Season::Winter].map(|s| {
         let p = theme::palette(Some(s), 1, 1, false, dark, false);
-        (p.page, p.accent)
+        (p.page, p.accent, p.on)
     });
     Look { table: dress::plain(&scheme), on: p.on, on_on: r.on_secondary, danger: if dark { DANGER_DARK } else { DANGER_LIGHT }, seasons }
 }
@@ -136,9 +136,10 @@ impl Look {
         theme.set_danger(c(self.danger));
         theme.set_edge(c(t[dress::EDGE]));
         theme.set_dark(nori_look::color::luminance(t[dress::BACKGROUND]) < 0.5);
-        let colors = |pick: fn(&(u32, u32)) -> u32| slint::ModelRc::new(slint::VecModel::from(self.seasons.iter().map(|s| c(pick(s))).collect::<Vec<_>>()));
+        let colors = |pick: fn(&(u32, u32, u32)) -> u32| slint::ModelRc::new(slint::VecModel::from(self.seasons.iter().map(|s| c(pick(s))).collect::<Vec<_>>()));
         theme.set_season_pages(colors(|s| s.0));
         theme.set_season_accents(colors(|s| s.1));
+        theme.set_season_ons(colors(|s| s.2));
     }
 }
 

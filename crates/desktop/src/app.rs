@@ -2766,8 +2766,7 @@ impl App {
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         let view = ui.get_view();
         if view == SETTINGS {
-            let tabs = crate::settings::tabs(&self.facts.rules.settings);
-            ui.set_settings_tabs(ModelRc::new(VecModel::from(tabs.iter().map(|p| SharedString::from(crate::settings::tab_name(*p))).collect::<Vec<_>>())));
+            ui.set_settings_tabs(crate::settings::tab_rows(&self.facts.rules.settings));
             ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab(), today));
         }
         if view == EQUALIZER {
@@ -3742,14 +3741,14 @@ mod tests {
         pass(1000);
         use slint::platform::{PointerEventButton::Left, WindowEvent::*};
         // The first service's handle; the rows below it stand 56 px apart.
-        let at = |y: f32| slint::LogicalPosition::new(978.0, y);
-        ui.window().dispatch_event(PointerMoved { position: at(591.0) });
-        ui.window().dispatch_event(PointerPressed { position: at(591.0), button: Left });
-        for y in (591..=721).step_by(10) {
+        let at = |y: f32| slint::LogicalPosition::new(1068.0, y);
+        ui.window().dispatch_event(PointerMoved { position: at(511.0) });
+        ui.window().dispatch_event(PointerPressed { position: at(511.0), button: Left });
+        for y in (511..=641).step_by(10) {
             ui.window().dispatch_event(PointerMoved { position: at(y as f32) });
             pass(16);
         }
-        ui.window().dispatch_event(PointerReleased { position: at(721.0), button: Left });
+        ui.window().dispatch_event(PointerReleased { position: at(641.0), button: Left });
         pass(16);
         assert_eq!(*moved.borrow(), [("LYRICS_PLUS".to_string(), 2)]);
     }
