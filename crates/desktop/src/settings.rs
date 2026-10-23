@@ -207,23 +207,22 @@ fn minus(v: &str) -> String {
     v.replace('-', "−")
 }
 
-/// The desktop's tabs in its order: the pages the profile in use opens (the core's `pages`).
+/// The desktop's categories: the pages the profile in use opens, in the core's order (`pages`). The
+/// version, About's on Android, stands at the foot of Appearance.
 pub fn tabs(parts: &[nori_core::settings_pages::SettingsPart]) -> Vec<SettingsPage> {
-    use SettingsPage::*;
-    let offered = settings_pages::pages(SettingsClient::Desktop, parts);
-    [Look, Playing, Sound, Lyrics, Library, Data, Servers].into_iter().filter(|p| offered.contains(p)).collect()
+    settings_pages::pages(SettingsClient::Desktop, parts).into_iter().filter(|p| *p != SettingsPage::About).collect()
 }
 
-/// A tab's name.
+/// A category's name, as Android's settings list them.
 pub fn tab_name(page: SettingsPage) -> &'static str {
     match page {
-        SettingsPage::Look => "General",
+        SettingsPage::Servers => "Servers",
         SettingsPage::Playing => "Playback",
         SettingsPage::Sound => "Sound",
+        SettingsPage::Look => "Appearance",
         SettingsPage::Lyrics | SettingsPage::LyricsSources => "Lyrics",
         SettingsPage::Library => "Library",
-        SettingsPage::Data => "Storage",
-        SettingsPage::Servers => "Accounts",
+        SettingsPage::Data => "Downloads and storage",
         SettingsPage::About => "About",
     }
 }
@@ -237,7 +236,7 @@ fn section_title(id: SectionId) -> &'static str {
     use SectionId::*;
     match id {
         Accounts => "Accounts",
-        MusicFolders => "Music folders",
+        MusicFolders => "This server",
         ThisServer => "This server",
         Between => "Between songs",
         Controls => "Controls",
@@ -246,14 +245,14 @@ fn section_title(id: SectionId) -> &'static str {
         Effects => "Effects",
         Volume => "Volume",
         Output => "Output",
-        Theme => "Look",
-        Home => "Home",
+        Theme => "Theme",
+        Home => "Layout",
         Screen => "Screen",
         Motion => "Motion",
         Display => "Display",
         Sources => "Sources",
         AskedOrder => "In the order they're asked",
-        Lists => "Lists",
+        Lists => "Songs in lists",
         Search => "Search",
         History => "Listening history",
         Online => "Online",
@@ -563,14 +562,26 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
             if r.kind != SEASONS {
                 return vec![r];
             }
-            // The four seasons' tiles, following the calendar as a switch under them, then the appearance: the
-            // theme has no row on the desktop's page of the core, and it stands for it.
+            // The four seasons' tiles and following the calendar as a switch under them, then the appearance:
+            // the theme has no row on the desktop's page of the core, and it stands for it.
             let s = seasons(p, today);
             let tiles = Row { options: SEASON_NAMES.map(|n| (n.to_string(), n.to_string())).to_vec(), ..r };
-            let follow = Row { kind: TOGGLE, name: s.switch, title: "Follow the seasons".into(), detail: s.detail, on: s.following, enabled: true, ..Default::default() };
-            let appearance = Row { kind: APPEARANCE_ROW, name: APPEARANCE.into(), options: ["Follow system", "Day", "Night", "Midnight"].map(|o| (o.to_string(), o.to_string())).to_vec(), enabled: true, ..Default::default() };
+            let follow = Row { kind: TOGGLE, name: s.switch, title: "Follow the calendar".into(), detail: s.detail, on: s.following, enabled: true, ..Default::default() };
+            let appearance = Row { kind: APPEARANCE_ROW, name: APPEARANCE.into(), title: "Appearance".into(), options: ["System", "Day", "Night", "Midnight"].map(|o| (o.to_string(), o.to_string())).to_vec(), enabled: true, ..Default::default() };
             vec![tiles, follow, appearance]
         }).collect();
+        // The season stands under a heading of its own, as on Android, above the rest of the theme.
+        let (season, rows): (Vec<Row>, Vec<Row>) = match rows.iter().position(|r| r.kind == SEASONS) {
+            Some(at) => {
+                let mut rows = rows;
+                let rest = rows.split_off(at + 2);
+                (rows, rest)
+            }
+            None => (Vec::new(), rows),
+        };
+        if !season.is_empty() {
+            groups.push(("Season", season));
+        }
         let title = section_title(sec.id);
         // Sections that share a title are one group here.
         match groups.last_mut() {
@@ -596,10 +607,10 @@ fn groups(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> Vec<(&'static s
 pub fn rows(p: &StoredPrefs, f: &Facts, tab: i32, today: Today) -> ModelRc<SettingRow> {
     let mut out = Vec::new();
     for (title, rows) in groups(p, f, tab, today) {
-        out.push(SettingRow { kind: HEADING, title: title.into(), ..Default::default() });
+        out.push(SettingRow { kind: HEADING, title: title.to_uppercase().into(), ..Default::default() });
         // Rows on a plate share it; the plate's corners round where a row without one (a note, the tiles,
         // the appearance) or the group's end meets it.
-        let plated: Vec<bool> = rows.iter().map(|r| !matches!(r.kind, NOTE | SEASONS | APPEARANCE_ROW)).collect();
+        let plated: Vec<bool> = rows.iter().map(|r| !matches!(r.kind, NOTE | SEASONS)).collect();
         let n = rows.len();
         for (i, r) in rows.into_iter().enumerate() {
             let v = match Target::of(&r.name) {
@@ -690,7 +701,7 @@ mod tests {
         use nori_core::settings::{SavedServer, ServerKind};
         let rules = |kind| nori_core::providers::rules_of(SavedServer { kind, ..Default::default() }, false).settings;
         let names = |kind| tabs(&rules(kind)).into_iter().map(tab_name).collect::<Vec<_>>();
-        assert_eq!(names(ServerKind::Subsonic), ["General", "Playback", "Sound", "Lyrics", "Library", "Storage", "Accounts"]);
+        assert_eq!(names(ServerKind::Subsonic), ["Servers", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage"]);
         assert!(!names(ServerKind::YouTubeMusic).contains(&"Library"), "no library settings to show");
     }
 
@@ -705,12 +716,14 @@ mod tests {
     const OCTOBER: Today = Today { month: 10, day: 19, southern: false };
 
     #[test]
-    fn the_look_page_has_season_tiles_then_the_appearance() {
+    fn the_look_page_has_season_tiles_then_the_theme() {
         use slint::Model;
-        let rows = rows(&StoredPrefs::default(), &Facts::default(), 0, OCTOBER);
+        let facts = Facts::default();
+        let look = tabs(&facts.rules.settings).iter().position(|p| *p == SettingsPage::Look).map_or(0, |i| i as i32);
+        let rows = rows(&StoredPrefs::default(), &facts, look, OCTOBER);
         let kinds: Vec<_> = rows.iter().map(|r| r.kind).collect();
         let at = kinds.iter().position(|k| *k == SEASONS).expect("a season row");
-        assert_eq!(kinds[at + 1..at + 3], [TOGGLE, APPEARANCE_ROW]);
+        assert_eq!(kinds[at - 1..at + 4], [HEADING, SEASONS, TOGGLE, HEADING, APPEARANCE_ROW], "the season under its heading, then the theme's");
         let tiles = rows.row_data(at).unwrap();
         assert_eq!((tiles.options.row_count(), tiles.chosen), (4, 2), "the four seasons, autumn worn while following");
         let follow = rows.row_data(at + 1).unwrap();
