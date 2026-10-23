@@ -317,7 +317,7 @@ class PageController: UITableViewController {
         guard Core.shared.rules.account, !item.external else { return [] }
         if kind == "album" || kind == "artist" {
             let on = Core.shared.isFavorite(item)
-            let seal = GlyphButton(on ? Glyph.sealed : Glyph.seal, Say.favorite)
+            let seal = GlyphButton(on ? Glyph.sealedPage : Glyph.sealPage, Say.favorite)
             seal.look = look
             seal.lit = on
             seal.addAction { [weak self] in

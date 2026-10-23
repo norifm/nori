@@ -27,7 +27,7 @@ final class HeroHeader: UIView {
         let kind = head["k"] as? String ?? ""
         let width = UIScreen.main.bounds.width
         playButton = PillButton(Say.play, Glyph.playPill, look: look)
-        shuffleButton = GlyphButton(Glyph.shuffle, Say.shuffle)
+        shuffleButton = GlyphButton(Glyph.shufflePage, Say.shuffle)
         shuffleButton.look = look
         let covers = head["covers"] as? [String] ?? []
         let cover = head["c"] as? String ?? ""

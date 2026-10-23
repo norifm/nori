@@ -26,9 +26,14 @@ enum Glyph {
     static let jam = draw(Iconoir.community, 22)
     /// A queue row's handle: hold and drag it to move the song.
     static let grip = draw(Iconoir.menu, 22)
-    /// A favorite and not one: the seal, on the player and the pages.
+    /// A favorite and not one: the seal in the player's title row, the size of its more.
     static let sealed = draw(Iconoir.seal, 28)
     static let seal = draw(Iconoir.sealOutline, 28)
+    /// A page's button row (Shuffle, the seal, Save as playlist), at the list head's glyph size, so their
+    /// lines match.
+    static let shufflePage = draw(Iconoir.shuffle, 24)
+    static let sealedPage = draw(Iconoir.seal, 24)
+    static let sealPage = draw(Iconoir.sealOutline, 24)
     /// The mini player's seal.
     static let sealedSmall = draw(Iconoir.seal, 22)
     static let sealSmall = draw(Iconoir.sealOutline, 22)
