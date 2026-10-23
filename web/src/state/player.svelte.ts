@@ -243,10 +243,8 @@ class Player {
         e.preventDefault();
         void this.control("toggle");
       }
-      if (e.key === "Escape") {
-        if (ui.lyricsInfo) ui.lyricsInfo = false;
-        else if (ui.full) ui.full = false;
-      }
+      // A dialog over the player (a sheet, the lyrics' source) closes itself on Escape, and only it.
+      if (e.key === "Escape" && !t.closest?.("dialog") && ui.full) ui.full = false;
     });
   }
 }

@@ -77,8 +77,6 @@
   });
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && !ui.sheet && !ui.devices && close()} />
-
 <div class="full tinted" class:wide={ui.wide} class:paned={!!ui.pane} role="dialog" aria-modal="true" aria-label={s.title} id="full" style={look?.vars} style:--melt={melt}>
   {#if look?.wash}<canvas class="wash" bind:this={washed} aria-hidden="true"></canvas><div class="floor"></div>{/if}
   <section class="panel">
