@@ -1601,3 +1601,61 @@ fn a_guests_queue_shows_the_jam() {
     click(&mut a, line.x + 3, line.y);
     assert_eq!((a.full, a.panel), (true, Panel::Queue));
 }
+
+/// The main screens with a library in them, at a terminal's usual size and a wide one: each shows what it
+/// is about. `NORI_TUI_DUMP` keeps them for a look.
+#[test]
+fn the_main_screens() {
+    let albums: Vec<Album> = ["Blue Train", "Kind of Blue", "Mingus Ah Um", "Time Out", "Moanin'", "Saxophone Colossus", "Somethin' Else", "Speak No Evil", "Maiden Voyage", "Head Hunters", "The Black Saint", "Out to Lunch"]
+        .iter()
+        .enumerate()
+        .map(|(i, n)| Album { artist: ["John Coltrane", "Miles Davis", "Charles Mingus"][i % 3].into(), year: 1957 + i as u32, song_count: 6 + i as u32, ..album(&format!("al-{i}"), n) })
+        .collect();
+    let tracks: Vec<Song> = ["Blue Train", "Moment's Notice", "Locomotion", "I'm Old Fashioned", "Lazy Bird"]
+        .iter()
+        .enumerate()
+        .map(|(i, t)| Song { track: i as u32 + 1, album: "Blue Train".into(), artist: "John Coltrane".into(), suffix: "flac".into(), bit_depth: 16, sampling_rate: 44_100, starred: i == 1, ..song(&format!("t{i}"), t, 300 + 37 * i as u32) })
+        .collect();
+    let screens = |a: &mut App, w: u16, h: u16| {
+        let mut out = Vec::new();
+        a.go(View::Home);
+        a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Recently played".into(), albums[..6].iter().cloned().map(Item::Album).collect()))));
+        a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(1, "Recently added".into(), albums[6..].iter().cloned().map(Item::Album).collect()))));
+        out.push(("home", draw(a, w, h)));
+        a.go(View::Albums);
+        a.handle(Msg::Data(Req::Albums { offset: 0 }, Ok(Data::Albums(albums.clone()))));
+        out.push(("library", draw(a, w, h)));
+        a.open_album("al-0".into());
+        a.handle(Msg::Data(Req::Album("al-0".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(albums[0].clone(), tracks.clone(), vec![]))))));
+        out.push(("album", draw(a, w, h)));
+        a.do_action(crate::keys::Action::Panel(Panel::Queue));
+        out.push(("player", draw(a, w, h)));
+        a.go(View::Settings);
+        out.push(("settings", draw(a, w, h)));
+        a.go(View::Search);
+        chars(a, "blue");
+        let found = nori_core::SearchResult { songs: tracks[..2].to_vec(), albums: albums[..2].to_vec(), artists: vec![nori_core::Artist { id: "ar-1".into(), name: "John Coltrane".into(), album_count: Some(12), ..Default::default() }], playlists: vec![] };
+        a.search.view = Some(nori_core::search::SearchView { query: "blue".into(), shown: Some(found), from_server: true, ..Default::default() });
+        out.push(("search", draw(a, w, h)));
+        out
+    };
+    for (w, h) in [(80, 24), (160, 48)] {
+        let mut a = app();
+        a.heard(Some(tracks[1].clone()));
+        a.queue = Some(nori_core::playlist::PlaylistView { songs: tracks.clone(), len: 5, list_rev: 1, order: (0..5).collect(), queued: vec![], index: 1, shuffle: false, repeat: 0, bridging: false, rev: 1 });
+        a.now = crate::app::Now { state: State::Playing, position_ms: 95_000, at: Instant::now(), speed: 1.0, mixing: false, buffering: false };
+        for (name, s) in screens(&mut a, w, h) {
+            let want = match name {
+                "home" => "Kind of Blue",
+                "library" => "Mingus Ah Um",
+                "album" => "Locomotion",
+                "player" => "Locomotion",
+                "settings" => "Playback",
+                _ => "John Coltrane",
+            };
+            assert!(s.contains(want), "{name} at {w}x{h}:\n{s}");
+            assert!(s.contains("Moment's Notice"), "{name} at {w}x{h} shows the song playing:\n{s}");
+            dump(&format!("{name}-{w}x{h}"), &s);
+        }
+    }
+}
