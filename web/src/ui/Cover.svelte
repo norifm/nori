@@ -1,11 +1,13 @@
 <script lang="ts">
-  // A cover, lazily loaded; a plain square while there is none (round for an artist).
+  // A cover, lazily loaded, on a soft two-tone plate in the page's ink that shows while it loads; with no
+  // cover the plate keeps a note (an artist's, its figure). Round for an artist; `radius` a card's or a
+  // cover's corner (0 for a sleeve that runs to the edges).
   import Icon from "./Icon.svelte";
 
-  let { src, round = false, fallback = "note" }: { src?: string; round?: boolean; fallback?: string } = $props();
+  let { src, round = false, radius = "var(--r-cover)", fallback = "music-note" }: { src?: string; round?: boolean; radius?: string; fallback?: string } = $props();
 </script>
 
-<div class="cover" class:circle={round}>
+<div class="cover" style:border-radius={round ? "50%" : radius}>
   {#if src}<img {src} alt="" loading="lazy" decoding="async" />{:else}<Icon name={fallback} />{/if}
 </div>
 
@@ -14,16 +16,11 @@
     position: relative;
     aspect-ratio: 1;
     width: 100%;
-    border-radius: 12px;
     overflow: hidden;
-    background: var(--fill);
+    background: var(--plate);
     display: grid;
     place-items: center;
-    color: var(--outline);
-    box-shadow: inset 0 0 0 0.5px var(--hair);
-  }
-  .circle {
-    border-radius: 50%;
+    color: color-mix(in srgb, var(--ink) 22%, transparent);
   }
   img {
     position: absolute;
@@ -33,7 +30,7 @@
     object-fit: cover;
   }
   .cover :global(.icon) {
-    width: 36%;
-    height: 36%;
+    width: 34%;
+    height: 34%;
   }
 </style>

@@ -1,15 +1,32 @@
-// Now Playing in its cover's colors, as Android's player: the page decodes a small copy of the cover and
-// the core picks the colors and the wash (`cover_look`). Worked out when the cover changes.
+// A cover's page, as Android's album, artist and playlist pages and its player wear one: the page decodes a
+// small copy of the cover, the core works out its colors on the season's paper and the wash (`cover_look`).
+// Midnight wears no cover colors: then there is none.
 import { ask } from "../rpc";
+import { today } from "./theme.svelte";
 
 const SIDE = 64;
 
-/** The CSS custom properties to wear, and the cover blurred to lie behind them (null on none). */
-export type CoverLook = { vars: string; wash: ImageData | null };
+/** The CSS custom properties to wear (the page's roles, the artwork's dissolve), the cover blurred to lie
+ * behind them, and where the player's sleeve starts to fade. */
+export type CoverLook = { vars: string; wash: ImageData | null; melt: number };
 
-type Colors = { page: string; surface: string; ink: string; ink2: string; outline: string; hair: string; accent: string; onAccent: string; washSide: number };
+type Colors = {
+  page: string;
+  surface: string;
+  ink: string;
+  ink2: string;
+  outline: string;
+  hair: string;
+  accent: string;
+  onAccent: string;
+  heroEdge: string;
+  heroMid: string;
+  heroStops: number[];
+  melt: number;
+  washSide: number;
+};
 
-/** The look for the cover at `src`, or null when it cannot be read (the page's own colors stay). */
+/** The look for the cover at `src`, or null when it cannot be read or the appearance wears none. */
 export async function coverLook(src: string): Promise<CoverLook | null> {
   try {
     const answer = await fetch(src);
@@ -20,10 +37,13 @@ export async function coverLook(src: string): Promise<CoverLook | null> {
     g.drawImage(bitmap, 0, 0);
     bitmap.close();
     const rgba = new Uint8Array(g.getImageData(0, 0, SIDE, SIDE).data.buffer);
-    const [json, wash] = await ask<[string, Uint8ClampedArray | null]>("cover_look", rgba, SIDE, SIDE);
+    const [json, wash] = await ask<[string | null, Uint8ClampedArray | null]>("cover_look", rgba, SIDE, SIDE, ...today());
+    if (!json) return null;
     const c = JSON.parse(json) as Colors;
-    const vars = `--page:${c.page};--surface:${c.surface};--ink:${c.ink};--ink2:${c.ink2};--outline:${c.outline};--hair:${c.hair};--accent:${c.accent};--on-accent:${c.onAccent}`;
-    return { vars, wash: wash && c.washSide ? new ImageData(new Uint8ClampedArray(wash), c.washSide, c.washSide) : null };
+    const [a, b, m] = c.heroStops.map((s) => `${(s * 100).toFixed(1)}%`);
+    const dissolve = `linear-gradient(to bottom, transparent ${a}, ${c.heroEdge} ${b}, ${c.heroMid} ${m}, ${c.page})`;
+    const vars = `--page:${c.page};--surface:${c.surface};--ink:${c.ink};--ink2:${c.ink2};--outline:${c.outline};--hair:${c.hair};--accent:${c.accent};--on-accent:${c.onAccent};--dissolve:${dissolve}`;
+    return { vars, wash: wash && c.washSide ? new ImageData(new Uint8ClampedArray(wash), c.washSide, c.washSide) : null, melt: c.melt };
   } catch {
     return null;
   }

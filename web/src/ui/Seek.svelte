@@ -14,7 +14,7 @@
   import { W } from "../words";
 
   /** `inline`: the times at the ends of the bar, in a row. */
-  let { times = true, thin = false, inline = false }: { times?: boolean; thin?: boolean; inline?: boolean } = $props();
+  let { times = true, inline = false }: { times?: boolean; inline?: boolean } = $props();
 
   let run = $state<HTMLDivElement>();
   let dragging = $state(false);
@@ -72,33 +72,31 @@
   });
 </script>
 
-<div class="seek" class:thin class:inline>
+<div class="seek" class:inline>
   {#if times && inline}<span class="time">{W.time(shownMs)}</span>{/if}
   <div class="bar">
     <div class="track"><div class="run" bind:this={run}></div></div>
-    {#if !thin}
-      <input
-        type="range"
-        min="0"
-        max={Math.max(1, length)}
-        step="1000"
-        value={shownMs}
-        aria-label={W.seek}
-        oninput={(e) => {
-          dragging = true;
-          dragMs = Number(e.currentTarget.value);
-        }}
-        onchange={(e) => {
-          const ms = Number(e.currentTarget.value);
-          at = ms;
-          dragging = false;
-          void player.seek(ms);
-        }}
-      />
-    {/if}
+    <input
+      type="range"
+      min="0"
+      max={Math.max(1, length)}
+      step="1000"
+      value={shownMs}
+      aria-label={W.seek}
+      oninput={(e) => {
+        dragging = true;
+        dragMs = Number(e.currentTarget.value);
+      }}
+      onchange={(e) => {
+        const ms = Number(e.currentTarget.value);
+        at = ms;
+        dragging = false;
+        void player.seek(ms);
+      }}
+    />
   </div>
   {#if times && inline}<span class="time">-{W.time(length - shownMs)}</span>{/if}
-  {#if times && !inline && !thin}
+  {#if times && !inline}
     <div class="times"><span>{W.time(shownMs)}</span><span>-{W.time(length - shownMs)}</span></div>
   {/if}
 </div>
@@ -120,22 +118,36 @@
     flex: 1;
     min-width: 0;
   }
+  /* Clipped at its start only, so the playhead stands out over its edges. */
   .track {
     height: 4px;
     border-radius: 2px;
-    background: var(--hair);
-    overflow: hidden;
+    background: color-mix(in srgb, var(--ink) 22%, transparent);
+    clip-path: inset(-8px -8px -8px 0);
   }
   .run {
+    position: relative;
     height: 100%;
     background: var(--ink);
     border-radius: 2px;
     transform: translateX(-100%);
     will-change: transform;
   }
-  .thin .track {
-    height: 2px;
-    border-radius: 0;
+  /* The playhead: a dot in the accent. */
+  .run::after {
+    content: "";
+    position: absolute;
+    right: -5px;
+    top: -3px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    transition: transform 120ms;
+  }
+  .bar:hover .run::after,
+  .bar:active .run::after {
+    transform: scale(1.4);
   }
   input {
     position: absolute;
@@ -150,7 +162,7 @@
   }
   .time,
   .times {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--ink2);
     font-variant-numeric: tabular-nums;

@@ -175,8 +175,15 @@ fn page(core: &Core, p: Page) -> Value {
     match p {
         Page::Albums { v } => json!({ "albums": albums(core, &v) }),
         Page::Artists { v } => json!({ "artists": artists(core, &v) }),
-        Page::AlbumPage { v } => json!({ "album": album(core, &v.album), "songs": songs(core, &v.songs), "seconds": v.seconds }),
-        Page::ArtistPage { v } => json!({ "artist": artist(core, &v.artist), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs), "few": few(&v.songs) }),
+        Page::AlbumPage { v } => json!({
+            "album": album(core, &v.album), "songs": songs(core, &v.songs), "seconds": v.seconds,
+            "discs": v.discs.iter().map(|d| json!({ "disc": d.disc, "headed": d.headed, "title": d.title, "songs": d.songs, "lines": d.lines })).collect::<Value>(),
+            "quality": v.songs.first().and_then(|s| nori_core::numbers::quality(&s.suffix, s.bit_depth, s.sampling_rate, s.bit_rate)),
+        }),
+        Page::ArtistPage { v } => json!({
+            "artist": artist(core, &v.artist), "albums": albums(core, &v.albums), "songs": songs(core, &v.songs), "few": few(&v.songs),
+            "groups": v.groups.iter().map(|g| json!({ "kind": format!("{:?}", g.kind), "tag": g.tag, "albums": g.albums })).collect::<Value>(),
+        }),
         Page::Songs { v } => json!({ "songs": songs(core, &v) }),
         Page::Playlists { v } => json!({ "playlists": v.iter().map(|p| playlist(core, p)).collect::<Value>() }),
         Page::PlaylistPage { v } => json!({ "playlist": playlist(core, &v.playlist), "songs": songs(core, &v.songs), "seconds": v.seconds }),
