@@ -1616,46 +1616,58 @@ fn the_main_screens() {
         .enumerate()
         .map(|(i, t)| Song { track: i as u32 + 1, album: "Blue Train".into(), artist: "John Coltrane".into(), suffix: "flac".into(), bit_depth: 16, sampling_rate: 44_100, starred: i == 1, ..song(&format!("t{i}"), t, 300 + 37 * i as u32) })
         .collect();
-    let screens = |a: &mut App, w: u16, h: u16| {
+    let screens = |a: &mut App, w: u16, h: u16, mode: &str| {
+        // Kept as drawn: the dump's colors are the last frame's.
+        let shot = |a: &mut App, name: &'static str| {
+            let s = draw(a, w, h);
+            dump(&format!("{name}-{w}x{h}-{mode}"), &s);
+            (name, s)
+        };
         let mut out = Vec::new();
         a.go(View::Home);
         a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(0, "Recently played".into(), albums[..6].iter().cloned().map(Item::Album).collect()))));
         a.handle(Msg::Data(Req::Home, Ok(Data::HomeRow(1, "Recently added".into(), albums[6..].iter().cloned().map(Item::Album).collect()))));
-        out.push(("home", draw(a, w, h)));
+        out.push(shot(a, "home"));
         a.go(View::Albums);
         a.handle(Msg::Data(Req::Albums { offset: 0 }, Ok(Data::Albums(albums.clone()))));
-        out.push(("library", draw(a, w, h)));
+        out.push(shot(a, "library"));
         a.open_album("al-0".into());
         a.handle(Msg::Data(Req::Album("al-0".into()), Ok(Data::Album(Box::new(nori_core::AlbumDetail::new(albums[0].clone(), tracks.clone(), vec![]))))));
-        out.push(("album", draw(a, w, h)));
+        out.push(shot(a, "album"));
         a.do_action(crate::keys::Action::Panel(Panel::Queue));
-        out.push(("player", draw(a, w, h)));
+        out.push(shot(a, "player"));
         a.go(View::Settings);
-        out.push(("settings", draw(a, w, h)));
+        out.push(shot(a, "settings"));
+        // The look's group: its season and appearance.
+        let look = GROUPS.iter().position(|g| g.id == crate::settings_view::Gid::Core(nori_core::settings_pages::SettingsPage::Look)).expect("the look");
+        a.settings.jump(look);
+        out.push(shot(a, "appearance"));
         a.go(View::Search);
         chars(a, "blue");
         let found = nori_core::SearchResult { songs: tracks[..2].to_vec(), albums: albums[..2].to_vec(), artists: vec![nori_core::Artist { id: "ar-1".into(), name: "John Coltrane".into(), album_count: Some(12), ..Default::default() }], playlists: vec![] };
         a.search.view = Some(nori_core::search::SearchView { query: "blue".into(), shown: Some(found), from_server: true, ..Default::default() });
-        out.push(("search", draw(a, w, h)));
+        out.push(shot(a, "search"));
         out
     };
-    for (w, h) in [(80, 24), (160, 48)] {
-        let mut a = app();
+    let modes = [("dark", nori_core::settings::ThemeMode::Dark), ("light", nori_core::settings::ThemeMode::Light)];
+    for ((w, h), (mode, theme)) in [(80, 24), (160, 48)].into_iter().flat_map(|size| modes.map(|m| (size, m))) {
+        let mut a = App::new(StoredPrefs { theme, season: nori_core::settings::ThemeSeason::Autumn, ..StoredPrefs::default() });
+        a.server = "music.example".into();
         a.heard(Some(tracks[1].clone()));
         a.queue = Some(nori_core::playlist::PlaylistView { songs: tracks.clone(), len: 5, list_rev: 1, order: (0..5).collect(), queued: vec![], index: 1, shuffle: false, repeat: 0, bridging: false, rev: 1 });
         a.now = crate::app::Now { state: State::Playing, position_ms: 95_000, at: Instant::now(), speed: 1.0, mixing: false, buffering: false };
-        for (name, s) in screens(&mut a, w, h) {
+        for (name, s) in screens(&mut a, w, h, mode) {
             let want = match name {
                 "home" => "Kind of Blue",
                 "library" => "Mingus Ah Um",
                 "album" => "Locomotion",
                 "player" => "Locomotion",
                 "settings" => "Playback",
+                "appearance" => "Season",
                 _ => "John Coltrane",
             };
             assert!(s.contains(want), "{name} at {w}x{h}:\n{s}");
             assert!(s.contains("Moment's Notice"), "{name} at {w}x{h} shows the song playing:\n{s}");
-            dump(&format!("{name}-{w}x{h}"), &s);
         }
     }
 }
