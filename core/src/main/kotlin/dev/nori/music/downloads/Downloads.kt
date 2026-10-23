@@ -584,6 +584,10 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
                 return
             }
             val n = workingNotification(p, on, now)
+            // The time left counts down between the marks too, a second at a time, while there is one, as the
+            // download's own notification does.
+            main.removeCallbacks(summariseAgain)
+            if (p.etaS > 0) main.postDelayed(summariseAgain, 1000)
             if (shown?.id == on && n === shown.notification) return
             if (shown?.id == DOWNLOAD_RESULT_NOTIFICATION && on != DOWNLOAD_RESULT_NOTIFICATION) nm.cancel(DOWNLOAD_RESULT_NOTIFICATION)
             runCatching { nm.notify(on, n) }
@@ -627,8 +631,9 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
 
     /**
      * The notification while saved songs are processing: what most of them wait for as the title ("Finding lyrics
-     * for 3 songs…", "Analysing 2 songs…", "Detecting beats for 5 songs…"), the rest and the time left below. The
-     * same one is handed back while its words are; [working] from now on, shown under [id] at [now].
+     * for 3 songs…", "Analysing 2 songs…", "Detecting beats for 5 songs…"), the rest and the time left below, and a
+     * bar of the work done (the core's). The same one is handed back while its words and bar are; [working] from
+     * now on, shown under [id] at [now].
      */
     private fun workingNotification(p: dev.nori.music.ffi.transfers.Processing, id: Int, now: Long): Notification {
         val res = context.resources
@@ -641,13 +646,13 @@ class Downloads(private val context: Context, private val coreOf: () -> Core, pr
         if (p.lyrics > 0 && p.analysing > 0) text.part { it.append(res.getQuantityString(R.plurals.processing_analysing, p.analysing, p.analysing)) }
         if ((p.lyrics > 0 || p.analysing > 0) && p.beats > 0) text.part { it.append(res.getQuantityString(R.plurals.processing_beats, p.beats, p.beats)) }
         text.part { appendEta(res, it, p.etaS) }
-        val words = title + "\n" + text
+        val words = title + "\n" + text + "\n" + p.permille
         working?.let { if (words == it.words) { working = Working(id, now, words, it.notification); return it.notification } }
         return NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
             .setContentText(text.ifEmpty { null })
-            .setProgress(0, 0, true)
+            .setProgress(1000, p.permille, false)
             .setContentIntent(openDownloads(context))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
