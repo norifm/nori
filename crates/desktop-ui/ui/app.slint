@@ -5231,24 +5231,6 @@ export component AppWindow inherits Window {
 
         if root.view != 7: Rectangle {
             visible: full-screen.opacity < 1;
-            // A page that wears its cover's colour: the colour and the wash behind it.
-            if root.view == 6: Rectangle {
-                width: parent.width;
-                background: Theme.ground;
-                Image {
-                    y: 0;
-                    width: 100%;
-                    height: 440px;
-                    visible: root.covers-tint;
-                    source: root.page-wash;
-                    image-fit: fill;
-                }
-                Rectangle {
-                    y: 0;
-                    height: 440px;
-                    background: @linear-gradient(180deg, Theme.ground.with-alpha(0.15) 0%, Theme.ground.with-alpha(0.55) 55%, Theme.ground 100%);
-                }
-            }
             // The page; it runs up under the top pill and under the player pill, and gives the panel its room.
             Rectangle {
                 x: 0;
@@ -5916,6 +5898,21 @@ export component AppWindow inherits Window {
                 if root.view == 6: Fade {
                     push: true;
                     Rectangle {
+                        // The cover's own wash across the top, running out into the page's dyed paper, as Android's
+                        // page lets its cover melt into it. Inside the page, which is opaque while it slides in.
+                        Image {
+                            y: 0;
+                            width: 100%;
+                            height: 440px;
+                            visible: root.covers-tint;
+                            source: root.page-wash;
+                            image-fit: fill;
+                        }
+                        Rectangle {
+                            y: 0;
+                            height: 440px;
+                            background: @linear-gradient(180deg, Theme.ground.with-alpha(0.15) 0%, Theme.ground.with-alpha(0.55) 55%, Theme.ground 100%);
+                        }
                         // An artist: the picture across the page's whole width, drifting up slower than the page
                         // as it scrolls, and dissolving into the page's colour.
                         if root.page-kind == 1: Rectangle {

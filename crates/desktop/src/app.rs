@@ -296,13 +296,13 @@ pub(crate) fn mosaic(images: &[Image]) -> Option<Image> {
     Some(i_slint_renderer_skia::image_from_skia(surface.image_snapshot()))
 }
 
-/// The cover's blurred wash (square ARGB) as an image, dyed as its page is.
-fn wash(c: &CoverColours, dye: &nori_look::theme::Dye) -> Image {
+/// The cover's blurred wash (square ARGB) as an image, dyed as its page is where `dye` says.
+fn wash(c: &CoverColours, dye: Option<&nori_look::theme::Dye>) -> Image {
     let Some(w) = &c.wash else { return Image::default() };
     let side = (w.len() as f64).sqrt() as u32;
     let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(side, side);
     for (px, argb) in buf.make_mut_slice().iter_mut().zip(w) {
-        let [a, r, g, b] = dye.wash(*argb).to_be_bytes();
+        let [a, r, g, b] = dye.map_or(*argb, |d| d.wash(*argb)).to_be_bytes();
         *px = Rgba8Pixel { r, g, b, a };
     }
     Image::from_rgba8(buf)
@@ -1258,9 +1258,11 @@ impl App {
         self.open_page(ask);
     }
 
-    /// The page's cover (an album's or artist's), whose colors the page wears, or none.
+    /// The page's cover, whose colors the page wears, or none. Its header is the cover's own wash, undyed, as
+    /// Android's page shows the cover itself and lets it melt into the dyed page; none where pages wear no cover.
     fn page_colours(&mut self, c: Option<&CoverColours>) {
-        self.ui().set_page_wash(c.and_then(|c| self.dyed_wash(c)).unwrap_or_default());
+        let tinted = crate::session::app().settings.prefs(|p| p.theme.covers_tint_pages());
+        self.ui().set_page_wash(c.filter(|_| tinted).map(|c| wash(c, None)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
     }
@@ -1294,7 +1296,7 @@ impl App {
     /// A cover's wash on the season's paper, as its page is dyed; none where pages wear no cover.
     fn dyed_wash(&self, c: &CoverColours) -> Option<Image> {
         let prefs = crate::session::app().settings.current().unwrap_or_default();
-        crate::look::dye(&prefs, self.compositor.system_dark(), crate::look::Today::now(), c).map(|d| wash(c, &d))
+        crate::look::dye(&prefs, self.compositor.system_dark(), crate::look::Today::now(), c).map(|d| wash(c, Some(&d)))
     }
 
     /// The look of the page the app is on: the season's, or a cover's.
