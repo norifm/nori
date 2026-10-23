@@ -884,6 +884,8 @@ fn wire(ui: &AppWindow, h: &AppHandle) {
     on!(ui.on_zoom_window, h, |a| a.compositor.zoom_window());
     on!(ui.on_page_moved, h, |a| a.place_player());
     on!(ui.on_player_changed, h, |a| {
+        // Another view or the full player: no menu of the last one stays open over it.
+        a.compositor.close_menus();
         a.repaint();
         position_shown(&a.ui(), a.player.as_ref(), a.position_now() as i32);
         a.lyrics_seen();
@@ -3828,6 +3830,35 @@ mod tests {
 
     /// The player's menu opens above the pill with the lines it is given, and a line reaches the app by
     /// its kind.
+    #[test]
+    fn a_right_press_on_the_full_players_cover_opens_the_songs_menu() {
+        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+            i_slint_backend_testing::TestingBackendOptions { mock_time: true, renderer_name: Some("skia-software".into()), ..Default::default() },
+        ))).unwrap();
+        let ui = window();
+        ui.window().set_size(slint::PhysicalSize::new(1280, 820));
+        ui.set_has_song(true);
+        ui.set_now_title("Song".into());
+        ui.set_full_player(true);
+        ui.set_full_panel(0);
+        let asked = Rc::new(std::cell::Cell::new(0));
+        let seen = asked.clone();
+        ui.on_player_menu(move || { seen.set(seen.get() + 1); ModelRc::default() });
+        ui.show().unwrap();
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_secs(1));
+        slint::platform::update_timers_and_animations();
+        ui.window().take_snapshot().unwrap();
+        // Down the middle of the window, where the cover stands with nothing beside it.
+        use slint::platform::PointerEventButton::{Left, Right};
+        let at = slint::LogicalPosition::new(640.0, 300.0);
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Left });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: Left });
+        assert_eq!(asked.get(), 0, "a click on the cover opens no menu");
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerPressed { position: at, button: Right });
+        ui.window().dispatch_event(slint::platform::WindowEvent::PointerReleased { position: at, button: Right });
+        assert_eq!(asked.get(), 1);
+    }
+
     #[test]
     fn the_players_menu_acts() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(

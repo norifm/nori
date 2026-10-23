@@ -376,9 +376,21 @@ export global Go {
 }
 
 // An artist's or album's name that opens its page: a pointer and an underline under it while hovered.
+// A right press over what it covers, and where in the window it was.
+component RightPress inherits TouchArea {
+    callback menu(length, length);
+    pointer-event(e) => {
+        if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+            root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+    }
+}
+
 component Link inherits Text {
     in property <string> artist;
     in property <string> album;
+    // A right press, where in the window it was.
+    callback menu(length, length);
     property <length> size: root.font-size > 0 ? root.font-size : 13px;
     lt := TouchArea {
         enabled: root.artist != "" || root.album != "";
@@ -388,6 +400,11 @@ component Link inherits Text {
                 Go.artist(root.artist);
             } else {
                 Go.album(root.album);
+            }
+        }
+        pointer-event(e) => {
+            if e.button == PointerEventButton.right && e.kind == PointerEventKind.down {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
             }
         }
     }
@@ -5112,7 +5129,26 @@ export component AppWindow inherits Window {
     property <[SongGo]> player-lines;
     public function show-player-menu() {
         root.player-lines = root.player-menu();
+        root.pop-at = false;
         player-pop.show();
+    }
+    // The song playing's menu, and its album's, opened by a right press at `x`, `y` in the window.
+    property <bool> pop-at;
+    property <length> pop-x;
+    property <length> pop-y;
+    function song-menu-at(x: length, y: length) {
+        if root.has-song {
+            root.player-lines = root.player-menu();
+            root.pop-at = true;
+            root.pop-x = x + Chrome.menu-flip(x, MenuShape.width);
+            root.pop-y = y;
+            player-pop.show();
+        }
+    }
+    function album-menu-at(x: length, y: length) {
+        root.pop-x = x + Chrome.menu-flip(x, MenuShape.width);
+        root.pop-y = y;
+        album-pop.show();
     }
     // The sleep timer's choices, "Off" first while one runs, and one chosen.
     in property <[string]> sleep-choices;
@@ -6662,8 +6698,8 @@ export component AppWindow inherits Window {
 
         // The player pill's menus, which open above it: the song playing's, and the sleep timer's.
         player-pop := PopupWindow {
-            x: Chrome.player-x + Chrome.player-w - 12px - self.width;
-            y: root.height - Chrome.bottom-room - self.height;
+            x: root.pop-at ? root.pop-x : Chrome.player-x + Chrome.player-w - 12px - self.width;
+            y: root.pop-at ? root.pop-y - Chrome.menu-lift(root.pop-y, self.height) : root.height - Chrome.bottom-room - self.height;
             width: MenuShape.width;
             close-policy: close-on-click-outside;
             SongMenuBody {
@@ -6683,6 +6719,16 @@ export component AppWindow inherits Window {
                     player-pop.close();
                 }
             }
+        }
+        album-pop := CollectionMenu {
+            x: root.pop-x;
+            y: root.pop-y - Chrome.menu-lift(root.pop-y, self.height);
+            picture: root.art(root.now-art, 0, root.covers-rev);
+            title: root.now-album;
+            line: root.now-artist;
+            play => { root.play-album(root.now-album-id); }
+            queue(next) => { root.queue-card(0, root.now-album-id, next); }
+            jam => { root.jam-play(0, root.now-album-id); }
         }
         sleep-pop := PopupWindow {
             x: Chrome.player-x + Chrome.player-w - 12px - self.width;
@@ -6897,6 +6943,9 @@ export component AppWindow inherits Window {
                     source: root.art(root.now-art, 1, root.covers-rev);
                     transform-scale: root.playing ? 1 : 0.9;
                     animate transform-scale { duration: Motion.reduced ? 0ms : 500ms; easing: cubic-bezier(0.3, 1.35, 0.6, 1); }
+                    RightPress {
+                        menu(x, y) => { root.song-menu-at(x, y); }
+                    }
                 }
                 Rectangle {
                     height: 26px;
@@ -6914,6 +6963,9 @@ export component AppWindow inherits Window {
                                 font-size: 16px;
                                 font-weight: 600;
                                 overflow: elide;
+                                RightPress {
+                                    menu(x, y) => { root.song-menu-at(x, y); }
+                                }
                             }
                         }
                         HorizontalLayout {
@@ -6937,6 +6989,7 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                                 text: root.now-album;
                                 album: root.now-album-id;
+                                menu(x, y) => { root.album-menu-at(x, y); }
                                 color: Theme.text;
                                 font-size: 14px;
                                 overflow: elide;

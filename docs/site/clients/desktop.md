@@ -43,7 +43,8 @@ where it is; tabs at its top switch between them. In the full player the same ta
 cover. Lyrics are set as on Android: backing vocals smaller under their line, and in a duet the second voice
 on the right. The queue shows the songs already played, dimmed above the one playing, then what plays next. A song's
 menu opens at the pointer on a right click, or beside the player's ⋯, and shows the song at its head, then its
-lines, the ones used less under More. With nothing typed, the search page lists your recent searches.
+lines, the ones used less under More. In the full player a right click on the cover or title opens the song's
+menu, and on the album its album's. A click anywhere outside a menu, the two outlines included, closes it. With nothing typed, the search page lists your recent searches.
 
 ## Look
 
