@@ -581,15 +581,30 @@ private data class RankDrag(val id: String, val from: List<String>, val to: Int,
     val shown: List<String> = from.toMutableList().apply { remove(id); add(to, id) }
 }
 
-/** How much of the ink each usage part takes, in [SettingRow.Usage.parts] order: the biggest reads strongest, the last still clears the track. */
-private val USAGE_INK = listOf(0.92f, 0.68f, 0.5f, 0.36f, 0.26f)
+/**
+ * The usage parts' colors, in [SettingRow.Usage.parts] order: the season worn's accent, the other three
+ * seasons' accents as this appearance wears them, then a share of the ink. Four hues and a grey that tell
+ * the parts apart in any season.
+ */
+@Composable
+private fun rememberUsageColors(): List<Color> {
+    val papers = LocalPapers.current
+    val ink = MaterialTheme.colorScheme.onSurfaceVariant
+    return remember(papers, ink) {
+        val dark = papers.darkTheme
+        val worn = (if (dark) papers.dark else papers.light).accent.toInt()
+        val others = dev.nori.music.ffi.look.Season.entries
+            .map { dev.nori.music.ffi.look.palette(it, 1u, 1u, false, dark, false).accent.toInt() }
+            .filter { it != worn }
+        (listOf(worn) + others).map(::Color) + ink
+    }
+}
 
 /** What is stored on this device: the total, one bar split by kind, and a line per kind with its dot. */
 @Composable
 private fun UsageBar(row: SettingRow.Usage, divider: Boolean) {
     val total = row.parts.sumOf { it.bytes }.coerceAtLeast(1)
-    val scheme = MaterialTheme.colorScheme
-    val colors = USAGE_INK.map { androidx.compose.ui.graphics.lerp(scheme.surfaceContainer, scheme.onSurface, it) }
+    val colors = rememberUsageColors()
     Column(Modifier.fillMaxWidth().spotlight(row.key).padding(horizontal = GROUP_INSET, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(row.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
