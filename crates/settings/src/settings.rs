@@ -220,7 +220,14 @@ pub fn season_follow_value(follow: bool, month: u32, day: u32, southern: bool) -
 /// system's scheme, followed while the theme is System.
 pub fn theme_palette(p: &StoredPrefs, system_dark: bool, month: u32, day: u32, southern: bool) -> (nori_look::theme::Palette, bool) {
     let dark = p.theme.is_dark(system_dark);
-    (nori_look::theme::palette(season_of(p.season), month, day, southern, dark, p.theme == ThemeMode::Midnight), dark)
+    (season_palette(p.season, p.theme, dark, month, day, southern), dark)
+}
+
+/// The palette the `season` and `theme` settings wear on a date in the light or the `dark` appearance:
+/// Midnight's dark one is on black. A cover's page is dyed between the light and the dark one.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn season_palette(season: ThemeSeason, theme: ThemeMode, dark: bool, month: u32, day: u32, southern: bool) -> nori_look::theme::Palette {
+    nori_look::theme::palette(season_of(season), month, day, southern, dark, theme == ThemeMode::Midnight)
 }
 
 /// A condition that hides a system bar (status or gesture); the bar is hidden while any chosen one holds.
@@ -2516,6 +2523,21 @@ mod tests {
         let midnight = StoredPrefs { theme: ThemeMode::Midnight, ..fixed };
         assert_eq!(wear(&midnight, false), (palette(Some(Season::Winter), 7, 10, false, true, true), true), "Midnight is dark on black");
         assert!(!wear(&StoredPrefs { theme: ThemeMode::Light, ..p }, true).1);
+    }
+
+    #[test]
+    fn a_cover_is_dyed_between_the_seasons_light_and_dark_paper() {
+        use nori_look::theme::{palette, Season};
+        // (theme, dark) -> the paper; 10 July is Summer's. Midnight's dark paper is black, its light one the season's.
+        for (theme, dark, want) in [
+            (ThemeMode::Light, false, palette(Some(Season::Summer), 7, 10, false, false, false)),
+            (ThemeMode::Light, true, palette(Some(Season::Summer), 7, 10, false, true, false)),
+            (ThemeMode::Midnight, false, palette(Some(Season::Summer), 7, 10, false, false, false)),
+            (ThemeMode::Midnight, true, palette(Some(Season::Summer), 7, 10, false, true, true)),
+        ] {
+            assert_eq!(season_palette(ThemeSeason::Follow, theme, dark, 7, 10, false), want, "{theme:?} dark {dark}");
+        }
+        assert_eq!(season_palette(ThemeSeason::Winter, ThemeMode::Midnight, true, 7, 10, false).page, 0xFF00_0000);
     }
 
     #[test]
