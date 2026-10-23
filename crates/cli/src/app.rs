@@ -2305,6 +2305,12 @@ impl App {
         self.now = n;
     }
 
+    /// The session closed: nothing plays any more, and signing in is what is left.
+    pub fn session_ended(&mut self) {
+        (self.now, self.lyrics_wake) = (Now::default(), None);
+        self.go(View::Login);
+    }
+
     pub fn set_volume(&mut self, v: f32) {
         self.volume = (v * 20.0).round().clamp(0.0, 20.0) / 20.0;
         self.cmds.push(Cmd::Volume(self.volume));

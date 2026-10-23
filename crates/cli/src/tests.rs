@@ -1150,6 +1150,10 @@ fn idle() {
     a.dirty = false;
     a.handle(Msg::Focus(true));
     assert!(a.dirty && a.next_wake(now).is_some(), "back in sight: drawn at once, the clock running again");
+    // The session ends with the lyrics due full screen: nothing plays, so nothing is left to wake for.
+    (a.full, a.panel, a.lyrics_wake) = (true, Panel::Lyrics, Some(now - Duration::from_secs(1)));
+    a.session_ended();
+    assert_eq!((a.next_wake(now), a.view), (None, View::Login));
 
     // Pause freezes clock.
     let mut a = app();

@@ -255,7 +255,7 @@ impl Runner {
                 self.follow(app);
             }
             Err(e) => {
-                app.view = View::Login;
+                app.session_ended();
                 app.login.error = Some(e);
             }
         }
@@ -387,7 +387,7 @@ impl Runner {
                             s.close();
                         }
                         prefs_changed(app);
-                        app.view = View::Login;
+                        app.session_ended();
                     }
                 }
                 return app.say(said.clone(), false);
