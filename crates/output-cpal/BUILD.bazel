@@ -3,7 +3,7 @@ load("//tools/bazel:workspace.bzl", "workspace_crate")
 
 workspace_crate({'name': 'nori-output-cpal',
  'edition': '2021',
- 'version': '0.7.0-beta.8',
+ 'version': '0.7.0',
  'targets': [{'name': 'nori_output_cpal', 'kind': 'lib', 'root': 'src/lib.rs', 'test': True}],
  'features': {'tests': [], 'desktop': [], 'desktop-tests': []},
  'local': [{'package': 'nori-engine',
