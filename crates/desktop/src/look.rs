@@ -20,6 +20,8 @@ pub struct Look {
     danger: u32,
     /// Each season's page and accent, for the season tiles.
     seasons: [(u32, u32); 4],
+    /// A storage bar's first parts' colors (the core's `usage_accents`).
+    usage: Vec<u32>,
 }
 
 /// Material's baseline error, light and dark: the palette has none of its own.
@@ -58,7 +60,8 @@ pub fn plain(prefs: &StoredPrefs, system_dark: bool, today: Today) -> Look {
         let p = theme::palette(Some(s), 1, 1, false, dark, false);
         (p.page, p.accent)
     });
-    Look { table: dress::plain(&scheme), on: p.on, on_on: r.on_secondary, danger: if dark { DANGER_DARK } else { DANGER_LIGHT }, seasons }
+    let usage = theme::usage_accents(season_of(prefs.season), today.month, today.day, today.southern, dark);
+    Look { table: dress::plain(&scheme), on: p.on, on_on: r.on_secondary, danger: if dark { DANGER_DARK } else { DANGER_LIGHT }, seasons, usage }
 }
 
 /// The season's light and dark palettes as the app wears them, and whether it is dark: the paper a cover's
@@ -138,6 +141,7 @@ impl Look {
         let colors = |pick: fn(&(u32, u32)) -> u32| slint::ModelRc::new(slint::VecModel::from(self.seasons.iter().map(|s| c(pick(s))).collect::<Vec<_>>()));
         theme.set_season_pages(colors(|s| s.0));
         theme.set_season_accents(colors(|s| s.1));
+        theme.set_usage_accents(slint::ModelRc::new(slint::VecModel::from(self.usage.iter().map(|&u| c(u)).collect::<Vec<_>>())));
     }
 }
 

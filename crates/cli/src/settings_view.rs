@@ -115,13 +115,26 @@ pub struct Page {
     pub sections: Vec<Section>,
 }
 
+/// The profile whose rows are kept under `profile` (`server_db`), as the server list names it.
+fn profile_name(p: &StoredPrefs, profile: &str) -> String {
+    p.servers.iter().find(|sv| nori_core::settings::server_db_id(&sv.id) == profile).map_or_else(
+        || "a removed profile".into(),
+        |sv| Some(nori_core::settings::label(&sv.name, &sv.url)).filter(|l| !l.is_empty()).unwrap_or_else(|| text::provider(sv.kind).name.into()),
+    )
+}
+
 /// Local storage use in bytes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Storage {
     pub stream: i64,
     pub covers: i64,
     pub lyrics: i64,
+    /// Every profile's downloads: they share this computer's download folder.
     pub downloads: i64,
+    pub all_download_songs: u32,
+    /// Each profile with downloads (the id its rows are kept under) and what they hold.
+    pub download_profiles: Vec<(String, i64)>,
+    /// This profile's finished downloads, which its actions work on.
     pub download_songs: u32,
     pub database: i64,
 }
@@ -719,12 +732,18 @@ fn row_of(r: settings_pages::SettingsRow, p: &StoredPrefs, s: &SettingsState, f:
             let total = st.stream + st.downloads + st.covers + st.lyrics + st.database;
             let parts = [
                 format!("Streamed music {}", numbers::bytes(st.stream, POINT)),
-                format!("{} {}", counted(st.download_songs, "download", "downloads"), numbers::bytes(st.downloads, POINT)),
+                format!("{} {}", counted(st.all_download_songs, "download", "downloads"), numbers::bytes(st.downloads, POINT)),
                 format!("Covers {}", numbers::bytes(st.covers, POINT)),
                 format!("Lyrics {}", numbers::bytes(st.lyrics, POINT)),
                 format!("Library index {}", numbers::bytes(st.database, POINT)),
             ];
-            info(&format!("Stored on this device  {}", numbers::bytes(total, POINT)), parts.join(" · "))
+            let mut detail = parts.join(" · ");
+            // The downloads by profile, when more than one has any.
+            if st.download_profiles.len() > 1 {
+                let each: Vec<String> = st.download_profiles.iter().map(|(profile, b)| format!("{} {}", profile_name(p, profile), numbers::bytes(*b, POINT))).collect();
+                detail.push_str(&format!(" (downloads: {})", each.join(", ")));
+            }
+            info(&format!("Stored on this device  {}", numbers::bytes(total, POINT)), detail)
         }
         RowItem::Unsent { waiting, dropped } => {
             let parts = [(waiting, "waiting for the server"), (dropped, "the server would not take")];
@@ -1102,6 +1121,28 @@ mod tests {
     fn every_row(prefs: &StoredPrefs) -> Vec<(&'static str, Row)> {
         let facts = Facts { folders: vec![MusicFolder { id: "1".into(), name: "A".into() }, MusicFolder { id: "2".into(), name: "B".into() }], ..Facts::default() };
         every_row_with(prefs, &facts)
+    }
+
+    #[test]
+    fn storage_counts_every_profiles_downloads_and_names_each() {
+        let server = |id: &str, name: &str| nori_core::settings::SavedServer { id: id.into(), name: name.into(), ..Default::default() };
+        let prefs = StoredPrefs { servers: vec![server("a", "Home"), server("b", "Away")], active_server_id: "a".into(), ..StoredPrefs::default() };
+        let storage = Storage {
+            downloads: 3_000_000,
+            all_download_songs: 5,
+            download_profiles: vec![("a".into(), 2_000_000), ("b".into(), 1_000_000)],
+            download_songs: 3,
+            ..Storage::default()
+        };
+        let stored = |storage: Storage| {
+            let facts = Facts { storage, ..Facts::default() };
+            every_row_with(&prefs, &facts).into_iter().map(|(_, r)| row_words(&r)).find(|(t, _)| t.starts_with("Stored on this device")).unwrap().1
+        };
+        let both = stored(storage.clone());
+        assert!(both.contains("5 downloads"), "{both}");
+        assert!(both.contains("Home 1.9 MB") && both.contains("Away 977 KB"), "{both}");
+        let one = stored(Storage { download_profiles: vec![("a".into(), 3_000_000)], ..storage });
+        assert!(!one.contains("Home"), "one profile needs no split: {one}");
     }
 
     fn every_row_with(prefs: &StoredPrefs, facts: &Facts) -> Vec<(&'static str, Row)> {
