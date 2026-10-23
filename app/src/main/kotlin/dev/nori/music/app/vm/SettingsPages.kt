@@ -343,6 +343,7 @@ class SettingsSearch(private val res: Resources, p: StoredPrefs, s: SettingsStat
 
 /** One group's page for these settings, facts and the core's state; null for a group there is not, or one the profile does not open ([parts]). */
 fun settingsPage(res: Resources, id: String, p: StoredPrefs, f: SettingsFacts, s: SettingsState, parts: List<SettingsPart>): SettingsPage? {
+    if (id == "licences") return SettingsPage(res.getString(R.string.settings_page_licences), emptyList())
     val (_, page, words) = GROUPS.firstOrNull { it.first == id } ?: return null
     if (page !in dev.nori.music.ffi.settings.settingsPages(SettingsClient.PHONE, parts)) return null
     val b = PageBuilder(res, p, f, s)
