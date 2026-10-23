@@ -213,37 +213,18 @@ pub fn tabs(parts: &[nori_core::settings_pages::SettingsPart]) -> Vec<SettingsPa
     settings_pages::pages(SettingsClient::Desktop, parts).into_iter().filter(|p| *p != SettingsPage::About).collect()
 }
 
-/// A category's name and the line under it, as Android's settings list them.
-pub fn tab_words(page: SettingsPage) -> (&'static str, &'static str) {
+/// A category's name, as Android's settings list them.
+pub fn tab_name(page: SettingsPage) -> &'static str {
     match page {
-        SettingsPage::Servers => ("Servers", "Accounts and music folder"),
-        SettingsPage::Playing => ("Playback", "Crossfade, AutoMix, queue"),
-        SettingsPage::Sound => ("Sound", "Equalizer, volume, output"),
-        SettingsPage::Look => ("Appearance", "Theme, colors, size"),
-        SettingsPage::Lyrics | SettingsPage::LyricsSources => ("Lyrics", "Display and sources"),
-        SettingsPage::Library => ("Library", "Lists, search, history"),
-        SettingsPage::Data => ("Downloads and storage", "Quality, downloads, space"),
-        SettingsPage::About => ("About", "Version, updates, licenses"),
+        SettingsPage::Servers => "Servers",
+        SettingsPage::Playing => "Playback",
+        SettingsPage::Sound => "Sound",
+        SettingsPage::Look => "Appearance",
+        SettingsPage::Lyrics | SettingsPage::LyricsSources => "Lyrics",
+        SettingsPage::Library => "Library",
+        SettingsPage::Data => "Downloads and storage",
+        SettingsPage::About => "About",
     }
-}
-
-/// The categories as the settings page lists them: each with its words and its glyph (app.slint's `SettingsTab`).
-pub fn tab_rows(parts: &[nori_core::settings_pages::SettingsPart]) -> ModelRc<crate::SettingsTab> {
-    let rows = tabs(parts).into_iter().map(|p| {
-        let (name, line) = tab_words(p);
-        let glyph = match p {
-            SettingsPage::Servers => 0,
-            SettingsPage::Playing => 1,
-            SettingsPage::Sound => 2,
-            SettingsPage::Look => 3,
-            SettingsPage::Lyrics | SettingsPage::LyricsSources => 4,
-            SettingsPage::Library => 5,
-            SettingsPage::Data => 6,
-            SettingsPage::About => 7,
-        };
-        crate::SettingsTab { name: name.into(), line: line.into(), glyph }
-    });
-    ModelRc::new(VecModel::from(rows.collect::<Vec<_>>()))
 }
 
 /// The settings page tab `tab` shows; the first where there is no such tab.
@@ -719,7 +700,7 @@ mod tests {
     fn tabs_are_the_pages_the_profile_opens() {
         use nori_core::settings::{SavedServer, ServerKind};
         let rules = |kind| nori_core::providers::rules_of(SavedServer { kind, ..Default::default() }, false).settings;
-        let names = |kind| tabs(&rules(kind)).into_iter().map(|p| tab_words(p).0).collect::<Vec<_>>();
+        let names = |kind| tabs(&rules(kind)).into_iter().map(tab_name).collect::<Vec<_>>();
         assert_eq!(names(ServerKind::Subsonic), ["Servers", "Playback", "Sound", "Appearance", "Lyrics", "Library", "Downloads and storage"]);
         assert!(!names(ServerKind::YouTubeMusic).contains(&"Library"), "no library settings to show");
     }

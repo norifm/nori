@@ -1260,6 +1260,7 @@ impl App {
 
     /// The page's cover (an album's or artist's), whose colors the page wears, or none.
     fn page_colours(&mut self, c: Option<&CoverColours>) {
+        self.ui().set_page_wash(c.and_then(|c| self.dyed_wash(c)).unwrap_or_default());
         self.page_cover = c.cloned();
         self.repaint();
     }
@@ -2839,7 +2840,7 @@ impl App {
         ui.set_appearance_pick(crate::settings::appearance_pick(&prefs));
         let view = ui.get_view();
         if view == SETTINGS {
-            ui.set_settings_tabs(crate::settings::tab_rows(&self.facts.rules.settings));
+            ui.set_settings_tabs(ModelRc::new(VecModel::from(crate::settings::tabs(&self.facts.rules.settings).into_iter().map(|p| SharedString::from(crate::settings::tab_name(p))).collect::<Vec<_>>())));
             ui.set_settings(crate::settings::rows(&prefs, &self.facts, ui.get_settings_tab(), today));
         }
         if view == EQUALIZER {
@@ -3642,7 +3643,7 @@ mod tests {
             slint::platform::update_timers_and_animations();
             let shot = ui.window().take_snapshot().unwrap();
             // The first row, under the page's head.
-            let (w, rows) = (shot.width() as usize, 250..285);
+            let (w, rows) = (shot.width() as usize, 455..495);
             rows.flat_map(|y| shot.as_slice()[y * w..(y + 1) * w].to_vec()).collect::<Vec<_>>()
         };
         let song = SongRow { title: "Glass Harbour".into(), time: "3:21".into(), index: 0, ..Default::default() };
@@ -3688,8 +3689,9 @@ mod tests {
         use slint::platform::PointerEventButton::{Left, Right};
         // The menu opens where the row is pressed: the song at its head, then Play, the song's own lines and
         // More, which unfolds the rest in place.
-        let row = (900.0, 268.0);
-        let entry = |n: f32| row.1 + 8.0 + 60.0 + 8.0 + n * 44.0 + 22.0;
+        let row = (400.0, 470.0);
+        // Placed for its tallest (all its lines and More, 306 px), it rises 52 px to clear the player pill.
+        let entry = |n: f32| row.1 - 52.0 + 8.0 + 60.0 + 8.0 + n * 44.0 + 22.0;
         press(row.0, row.1, Right);
         press(row.0 + 40.0, entry(2.0), Left);
         press(row.0, row.1, Right);
@@ -3814,14 +3816,14 @@ mod tests {
         pass(1000);
         use slint::platform::{PointerEventButton::Left, WindowEvent::*};
         // The first service's handle; the rows below it stand 56 px apart.
-        let at = |y: f32| slint::LogicalPosition::new(1068.0, y);
-        ui.window().dispatch_event(PointerMoved { position: at(511.0) });
-        ui.window().dispatch_event(PointerPressed { position: at(511.0), button: Left });
-        for y in (511..=641).step_by(10) {
+        let at = |y: f32| slint::LogicalPosition::new(978.0, y);
+        ui.window().dispatch_event(PointerMoved { position: at(532.0) });
+        ui.window().dispatch_event(PointerPressed { position: at(532.0), button: Left });
+        for y in (532..=662).step_by(10) {
             ui.window().dispatch_event(PointerMoved { position: at(y as f32) });
             pass(16);
         }
-        ui.window().dispatch_event(PointerReleased { position: at(641.0), button: Left });
+        ui.window().dispatch_event(PointerReleased { position: at(662.0), button: Left });
         pass(16);
         assert_eq!(*moved.borrow(), [("LYRICS_PLUS".to_string(), 2)]);
     }

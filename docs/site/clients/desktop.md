@@ -28,20 +28,18 @@ the cross turns it down, and either way that queue is not offered again. Every r
 opens the whole row. Albums lists its orders as chips under its title (Favorites, Title, Artist, Year, Added,
 Most played, Random); Artist shows a shelf per artist.
 
-An album, artist, playlist or mix page lays out as Android's does on a wide screen: the cover fills the left
-of the window and goes soft into the page, and on the right are the name, Shuffle, Play (Pause while that
-page's queue plays) and the seal, then a line with the songs' count, length and format and the glyphs to
-download them, add them to the queue or, on a mix, draw it again. A mix has Save as playlist beside Play: the
-playlist is called "nori <mix name>".
+An album, playlist or mix page shows its cover beside its name (a mix its covers two by two), an artist's
+page the picture across the window under the name. Under them are Shuffle, Play (Pause while that page's queue
+plays) and the seal, then a line with the songs' count, length and format and the glyphs to download them, add
+them to the queue or, on a mix, draw it again. A mix has Save as playlist beside Play: the playlist is called
+"nori <mix name>".
 
 A favorite is a seal: an outline until you like a song, then filled and slightly tilted. Lyrics, the queue and
 your devices open in a sheet that floats on the right between the two outlines, over the page, which stays
-where it is; tabs at its top switch between them. The full player is laid out as Android's: the title with the
-seal and the menu, the seek bar, then lyrics, previous, play, next and the queue, then the volume and the
-output (the device and its name). The queue shows the songs already played, dimmed above the one playing,
-then what plays next, with shuffle and repeat at its head. A song's menu (a right click on its row, or the
-player's ⋯) shows the song at its head and its lines grouped on one card, the ones used less under More. With
-nothing typed, the search page lists your recent searches.
+where it is; tabs at its top switch between them. In the full player the same tabs head the panel beside the
+cover. The queue shows the songs already played, dimmed above the one playing, then what plays next. A song's
+menu (a right click on its row, or the player's ⋯) shows the song at its head and its lines grouped on one
+card, the ones used less under More. With nothing typed, the search page lists your recent searches.
 
 ## Look
 
@@ -53,9 +51,8 @@ playing, a lit shuffle or repeat, a liked seal. Album, artist, playlist and mix 
 season's paper dyed with their cover, except in Midnight; the side sheet wears the page's own. The icons are
 Iconoir's, drawn as lines. With Motion set to Reduced in nori's settings, nothing slides, stamps or fades.
 
-Settings lists its categories on the left as Android does (Servers, Playback, Sound, Appearance, Lyrics,
-Library, Downloads and storage), each with its icon and a line, and shows the one chosen beside them in
-grouped cards under small capitals.
+Settings has Android's categories, in its order (Servers, Playback, Sound, Appearance, Lyrics, Library,
+Downloads and storage), and shows the one chosen in grouped cards under small capitals.
 
 ## YouTube Music
 
