@@ -162,7 +162,7 @@ impl Nori {
     /// settings: `{ season (the calendar's now), next, nextMonth, nextDay (the season after and its first day),
     /// dark, page, surface, ink, ink2, hair, outline, accent, on, onAccent, still, tiles }`, the colors each a
     /// `#rrggbb`; `still` when the Motion setting asks for less than full motion; `tiles` the four seasons'
-    /// `{ season, page, accent, on }` in the appearance worn (Night's, not black, in Midnight).
+    /// `{ season, page, accent }` in the appearance worn (Night's, not black, in Midnight).
     /// `system_dark`: the browser's color scheme, followed while the appearance is System.
     pub fn theme(&self, month: u32, day: u32, zone: String, system_dark: bool) -> String {
         use nori_look::theme::{roles, season_now, southern, SEASONS};
@@ -176,7 +176,7 @@ impl Nori {
             .iter()
             .map(|&s| {
                 let p = s.palette(dark);
-                json!({ "season": name(s), "page": hex(p.page), "accent": hex(p.accent), "on": hex(p.on) })
+                json!({ "season": name(s), "page": hex(p.page), "accent": hex(p.accent) })
             })
             .collect();
         json!({

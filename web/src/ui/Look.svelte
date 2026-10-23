@@ -1,7 +1,8 @@
 <script lang="ts">
-  // The look, as Android's Appearance has it: the four season tiles (each its kanji over its paper, accent
-  // and "on" colors, the one worn raised; picking one stops following the calendar), Follow the calendar,
-  // then System, Day, Night or Midnight. The core keeps the settings and hands out the colors.
+  // The look, as Android's Appearance has it: the four season tiles (each its season's paper with its kanji in
+  // its accent and its name under it, the one worn ringed in that accent; picking one stops following the
+  // calendar), Follow the calendar, then System, Day, Night or Midnight. The core keeps the settings and hands
+  // out the colors.
   import { ask } from "../rpc";
   import { refreshTheme, worn } from "../state/theme.svelte";
   import { W } from "../words";
@@ -34,9 +35,9 @@
   <div class="tiles" role="radiogroup" aria-label={W.season}>
     {#each worn.tiles as t (t.season)}
       {@const on = shown === t.season}
-      <button class="tile" class:on role="radio" aria-checked={on} aria-label={named(t.season)} data-season={t.season} onclick={() => (!on || following) && void set("season", t.season)}>
-        <Icon name={kanji[t.season]} />
-        <span class="dots"><i class="paper" style:background={t.page}></i><i style:background={t.accent}></i><i style:background={t.on}></i></span>
+      <button class="tile" class:on role="radio" aria-checked={on} data-season={t.season} style:--tile-accent={t.accent} onclick={() => (!on || following) && void set("season", t.season)}>
+        <span class="paper" style:background={t.page}><Icon name={kanji[t.season]} /></span>
+        <span class="name">{named(t.season)}</span>
       </button>
     {/each}
   </div>
@@ -67,36 +68,39 @@
   }
   .tile {
     flex: 1;
-    height: 88px;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
-    gap: 8px;
-    border-radius: var(--r-tile);
-    border: var(--hairline) solid transparent;
+    gap: 6px;
     color: var(--ink2);
   }
-  .tile.on {
-    background: var(--surface);
-    border-color: var(--hair);
-    color: var(--ink);
+  .paper {
+    align-self: stretch;
+    height: 72px;
+    display: grid;
+    place-items: center;
+    border-radius: var(--r-tile);
+    box-shadow: inset 0 0 0 var(--hairline) var(--hair);
+    color: var(--tile-accent);
+  }
+  .tile.on .paper {
+    box-shadow: inset 0 0 0 2px var(--tile-accent);
   }
   .tile :global(.icon) {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
   }
-  .dots {
-    display: flex;
-    gap: 5px;
+  .name {
+    max-width: 100%;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .dots i {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .dots .paper {
-    box-shadow: inset 0 0 0 var(--hairline) var(--hair);
+  .tile.on .name {
+    color: var(--ink);
   }
   .chips-row {
     flex-direction: column;
@@ -110,12 +114,8 @@
     flex-wrap: wrap;
     gap: 8px;
   }
-  /* In the top bar's menu the tiles stand on the menu's own paper: the worn one is raised on the page, and
-     what is round inside the menu is round by its inner corner. */
-  :global(.popover) .tile.on {
-    background: var(--page);
-  }
-  :global(.popover) .tile,
+  /* In the top bar's menu what is round is round by the menu's inner corner. */
+  :global(.popover) .paper,
   :global(.popover) .group {
     border-radius: var(--inner);
   }
