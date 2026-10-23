@@ -1,14 +1,15 @@
 <script lang="ts">
   // A page: its big title (with a way back where it is not a top page, and its own controls beside),
-  // then what it shows; while its read is out, a quiet word; if it failed, why.
+  // then what it shows; while its read is out, a quiet word; if it failed, why. `narrow`: one column
+  // centered under a centered title on a wide window, as the desktop's settings.
   import type { Snippet } from "svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
 
-  let { title = "", back = false, error, ready = true, head, children }: { title?: string; back?: boolean; error?: string; ready?: boolean; head?: Snippet; children: Snippet } = $props();
+  let { title = "", back = false, narrow = false, error, ready = true, head, children }: { title?: string; back?: boolean; narrow?: boolean; error?: string; ready?: boolean; head?: Snippet; children: Snippet } = $props();
 </script>
 
-<div class="page">
+<div class="page" class:narrow>
   {#if back}<button class="glyph back" aria-label={W.back} title={W.back} onclick={() => history.back()}><Icon name="arrow-left" /></button>{/if}
   {#if title}
     <header class="page-head">
@@ -44,6 +45,18 @@
   h1 {
     font-size: 34px;
     line-height: 42px;
+  }
+  @media (min-width: 720px) {
+    .narrow {
+      max-width: calc(720px + 2 * var(--gutter));
+      margin: 0 auto;
+    }
+    .narrow .page-head {
+      justify-content: center;
+    }
+    .narrow h1 {
+      text-align: center;
+    }
   }
   @media (max-width: 719px) {
     .page {

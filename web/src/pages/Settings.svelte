@@ -45,8 +45,7 @@
 </script>
 
 {#if !name}
-  <Page title={W.settings} ready={!!page.data} error={page.error}>
-    <div class="column">
+  <Page title={W.settings} narrow ready={!!page.data} error={page.error}>
     <div class="group root">
       {#each page.data?.names ?? [] as n (n)}
         <a class="group-row" href={href("settings", n)} data-page={n}><Icon name={glyphs[n] ?? "settings"} /><span class="words"><span>{W.settingsPages[n]?.[0] ?? n}</span><span class="sub">{W.settingsPages[n]?.[1] ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
@@ -54,21 +53,17 @@
       <a class="group-row" href={href("settings", "Account")}><Icon name="server" /><span class="words"><span>{W.account}</span><span class="sub">{page.data?.profile?.user ?? ""}</span></span><Icon name="nav-arrow-right" /></a>
     </div>
     <p class="about">{W.aboutLead}</p>
-    </div>
   </Page>
 {:else if name === "Account"}
-  <Page title={W.account} back ready={!!page.data} error={page.error}>
-    <div class="column">
+  <Page title={W.account} back narrow ready={!!page.data} error={page.error}>
     <div class="group-label">{W.thisServer}</div>
     <div class="group">
       <div class="group-row"><Icon name="server" /><span class="words"><span>{page.data?.profile?.user ?? ""}</span><span class="sub">{page.data?.profile?.url ?? ""}</span></span></div>
       <button class="group-row" onclick={() => void signOut()}><Icon name="log-out" /><span class="words">{W.signOut}</span></button>
     </div>
-    </div>
   </Page>
 {:else}
-  <Page title={W.settingsPages[name]?.[0] ?? name} back ready={!!page.data} error={page.error}>
-    <div class="column">
+  <Page title={W.settingsPages[name]?.[0] ?? name} back narrow ready={!!page.data} error={page.error}>
     {#if name === "Look"}<Look />{/if}
     {#each drawn as sec (sec.id)}
       {@const rest = shownRows(sec)}
@@ -79,7 +74,6 @@
         </div>
       {/if}
     {/each}
-    </div>
   </Page>
 {/if}
 
@@ -134,10 +128,6 @@
 {/snippet}
 
 <style>
-  /* Settings keep to a column a wide window can read across. */
-  .column {
-    max-width: 760px;
-  }
   .root {
     margin: 10px -4px 0;
   }
