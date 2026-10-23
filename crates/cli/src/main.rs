@@ -7,6 +7,7 @@ mod backend;
 mod chrome;
 mod keys;
 mod lyrics;
+mod menu;
 mod runner;
 mod script;
 mod settings_view;

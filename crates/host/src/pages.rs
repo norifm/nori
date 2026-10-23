@@ -1,7 +1,7 @@
 //! The library's pages as the clients read them, each on a thread of its own: the stored copy first,
 //! then the server's when it differs. Home's shelves come in the core's order (`browse::home_shelves`).
 
-use nori_core::browse::{home_pinned, home_rows_shown, home_shelves, AlbumSort, HomeShelf};
+use nori_core::browse::{home_pinned, home_row_page, home_rows_shown, home_shelves, AlbumSort, HomeShelf};
 use nori_core::cache_policy::{Page, Read};
 use nori_core::client::Client;
 use nori_core::mixes::board::{MixLookup, MixSheet, MixTile};
@@ -27,6 +27,8 @@ pub enum PageAsk {
     Artist(String),
     Playlist(String),
     Mix(String),
+    /// A Home row in full ("see all"): its page from `offset` (`browse::home_row_page`).
+    HomeRow { row: HomeRow, offset: u32 },
 }
 
 /// What a page read brings.
@@ -119,6 +121,24 @@ impl Handle {
                 Ok(p) => Ok(PageGot::Songs { songs: p.songs, exhausted: p.exhausted }),
                 Err(e) => Err(PageFailed::Net(e)),
             }),
+            PageAsk::HomeRow { row, offset } => match home_row_page(row, offset) {
+                // Nothing past `offset`: the row is all here.
+                None => each(Err(PageFailed::Nothing)),
+                Some(HomeShelf::Albums { sort, size, follows_stars }) => {
+                    // A favourites row's first page is the shelf's own read, with this session's marks.
+                    let read = if follows_stars && offset == 0 { Read::FavouriteAlbums { size: size as i32 } } else { Read::AlbumList { kind: sort, size: size as i32, offset: offset as i32, genre: None } };
+                    pages(read, &|p| if let Page::Albums { v } = p { Some(PageGot::Albums(v)) } else { None });
+                }
+                Some(HomeShelf::Songs { sort, descending, limit }) => each(match self.core.browse_songs(sort, descending, false, 0, 0, offset, limit) {
+                    Ok(songs) => Ok(PageGot::Songs { exhausted: (songs.len() as u32) < limit, songs }),
+                    Err(e) => Err(PageFailed::Stored(e)),
+                }),
+                Some(HomeShelf::Playlists { take }) => pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(PageGot::Playlists(v.into_iter().take(take as usize).collect())) } else { None }),
+                Some(HomeShelf::Pinned) => {
+                    let pins = self.core.session.settings.prefs(|p| p.pinned_playlists.clone());
+                    pages(Read::PlaylistList, &|p| if let Page::Playlists { v } = p { Some(PageGot::Playlists(home_pinned(v, pins.clone()))) } else { None });
+                }
+            },
             PageAsk::Mix(id) => each(match block_on(self.client.mix_songs(id.clone())) {
                 Ok(_) => match self.core.mix_page(id) {
                     MixLookup::Ready { sheet } => Ok(PageGot::Mix(Box::new(sheet))),

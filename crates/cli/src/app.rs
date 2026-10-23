@@ -5,7 +5,12 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use nori_core::browse::{LibrarySection, ProfileRules};
+use nori_core::browse::{AlbumSort, HistoryAfter, LibrarySection, ProfileRules};
+use nori_core::library::QueueOffer;
+use nori_core::menus::{DownloadAct, PageAction, PageKind, SongDownload};
+use nori_core::mixes::board::{MixSheet, MixTile};
+use nori_core::model::HistoryEntry;
+use nori_core::settings::HomeRow;
 use nori_core::client::Starrable;
 use nori_core::playlist::PlaylistView;
 use nori_core::remote::wire::Pending;
@@ -39,6 +44,7 @@ pub enum View {
     Playlists,
     Favorites,
     Downloads,
+    History,
     Equalizer,
     Settings,
     /// Full-window login form.
@@ -49,21 +55,6 @@ pub enum View {
 pub const GO: [View; 9] = [View::Home, View::Albums, View::Artists, View::Songs, View::Playlists, View::Favorites, View::Downloads, View::Equalizer, View::Settings];
 
 impl View {
-    pub fn icon(self) -> &'static str {
-        match self {
-            View::Search => "⌕",
-            View::Home | View::Login => "⌂",
-            View::Albums => "◫",
-            View::Artists => "◉",
-            View::Songs => "♪",
-            View::Playlists => "≡",
-            View::Favorites => "好",
-            View::Downloads => "↓",
-            View::Equalizer => "≋",
-            View::Settings => "✱",
-        }
-    }
-
     pub fn name(self) -> &'static str {
         match self {
             View::Search => "Search",
@@ -73,6 +64,7 @@ impl View {
             View::Songs => "Songs",
             View::Playlists => "Playlists",
             View::Favorites => "Favorites",
+            View::History => "History",
             View::Downloads => "Downloads",
             View::Equalizer => "Equalizer",
             View::Settings => "Settings",
@@ -126,6 +118,26 @@ pub enum Cmd {
     /// The next repeat mode after the one shown.
     CycleRepeat,
     Download(Vec<Song>),
+    /// Keeps the song out of the mixes.
+    ExcludeFromMixes(String),
+    /// Adds songs to the playlist `id`, or makes one called `name` of them.
+    AddToPlaylist { id: String, songs: Vec<String> },
+    NewPlaylist { name: String, songs: Vec<String> },
+    /// Reads which of these songs are downloaded.
+    ReadDownloads(Vec<String>),
+    /// Draws the mix again.
+    RedrawMix(String),
+    /// Keeps a mix as a playlist, its name made from `title` by the core.
+    SaveMix { title: String, songs: Vec<Song> },
+    /// Asks for the queue another device left, for a player `playing` or not and showing the song `shown`.
+    LookForOffer { playing: bool, shown: Option<String> },
+    /// Plays the queue offered where it was left, and does not offer it again.
+    TakeOffer(QueueOffer),
+    DismissOffer(QueueOffer),
+    /// Keeps an order of a list for the next time.
+    Keep(nori_core::browse::ListPref),
+    /// Plays the library shuffled: random albums whole, or every song.
+    ShuffleLibrary { albums: bool },
     DownloadFetch(Fetch),
     DownloadRemove(String),
     Star(Starrable, String, bool),
@@ -147,11 +159,8 @@ pub enum Cmd {
     SearchTyped(String),
     SearchServer(String),
     Lyrics(String),
-    /// A large cover by id; `colours` also derives the theme from it.
-    Cover { art: String, colours: bool },
-    /// An album card cover by id.
-    Thumb(String),
-    CardCovers(bool),
+    /// The playing song cover by id, and the colors the player wears from it.
+    Cover(String),
     Login(SavedServer),
     SwitchServer(String),
     /// Moves the music to this device, or here (None).
@@ -189,7 +198,7 @@ impl Cmd {
             Cmd::Enqueue(songs, next) => format!("enqueue {} songs next={next}", songs.len()),
             Cmd::Download(songs) => format!("download {} songs", songs.len()),
             Cmd::Login(p) => format!("log in to {}", p.url),
-            Cmd::Cover { art, colours } => format!("cover {art} colours={colours}"),
+            Cmd::Cover(art) => format!("cover {art}"),
             Cmd::Lyrics(id) => format!("lyrics {id}"),
             Cmd::Toggle => "toggle".into(),
             Cmd::Next => "next".into(),
@@ -255,8 +264,6 @@ impl SoundToolCmd {
 pub struct Sel {
     pub at: usize,
     pub top: usize,
-    /// Rows hidden above and below as last drawn, which the chrome's edges fade.
-    pub cut: (bool, bool),
 }
 
 impl Sel {
@@ -284,7 +291,6 @@ impl Sel {
             self.top = self.at + 1 - height;
         }
         self.top = self.top.min(len.saturating_sub(height.min(len)));
-        self.cut = (self.top > 0, self.top + height < len);
     }
 }
 
@@ -313,47 +319,69 @@ pub enum Page {
     DownloadedAlbum { id: String, detail: Load<Box<AlbumDetail>>, sel: Sel },
     Artist { id: String, detail: Load<Box<ArtistDetail>>, sel: Sel },
     Playlist { id: String, detail: Load<Box<PlaylistDetail>>, sel: Sel },
+    /// One of the core's mixes, or the favorites.
+    Mix { id: String, detail: Load<Box<MixSheet>>, sel: Sel },
+    /// All of a Home shelf's entries: a library row's read a page at a time (`more` while there may be more),
+    /// a feed's or For you's as Home has them.
+    Row { title: String, items: Vec<Item>, row: Option<HomeRow>, more: bool, sel: Sel },
 }
 
 impl Page {
-    pub fn req(&self) -> Req {
-        match self {
+    /// What the page reads; None for one made of what is already here.
+    pub fn req(&self) -> Option<Req> {
+        Some(match self {
             Page::Album { id, .. } => Req::Album(id.clone()),
             Page::DownloadedAlbum { id, .. } => Req::DownloadedAlbum(id.clone()),
             Page::Artist { id, .. } => Req::Artist(id.clone()),
             Page::Playlist { id, .. } => Req::Playlist(id.clone()),
-        }
-    }
-
-    fn sel_ref(&self) -> &Sel {
-        match self {
-            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } => sel,
-        }
+            Page::Mix { id, .. } => Req::Mix(id.clone()),
+            Page::Row { row, .. } => Req::Row { row: (*row)?, offset: 0 },
+        })
     }
 
     fn sel(&mut self) -> &mut Sel {
         match self {
-            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } => sel,
+            Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Artist { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } | Page::Row { sel, .. } => sel,
         }
     }
 
     fn len(&self) -> usize {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
-            Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { d.albums.len() }),
+            Page::Artist { detail, .. } => detail.ready().map_or(0, |d| if d.albums.is_empty() { d.songs.len() } else { artist_lines(d).len() }),
             Page::Playlist { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
+            Page::Mix { detail, .. } => detail.ready().map_or(0, |d| d.songs.len()),
+            Page::Row { items, .. } => items.len(),
         }
     }
 
-    /// The page's songs: an album's, a playlist's, and an artist's that lists no albums (a YouTube Music
-    /// profile's videos); an artist with albums shows their cards.
+    /// The page's songs: an album's, a playlist's, a mix's, and an artist's that lists no albums (a YouTube
+    /// Music profile's videos); an artist with albums lists those.
     pub fn songs(&self) -> Option<&[Song]> {
         match self {
             Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Playlist { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
+            Page::Mix { detail, .. } => detail.ready().map(|d| d.songs.as_slice()),
             Page::Artist { detail, .. } => detail.ready().filter(|d| d.albums.is_empty()).map(|d| d.songs.as_slice()),
+            Page::Row { .. } => None,
         }
     }
+}
+
+/// A line of an artist's page that lists albums: a shelf's name (index into its release groups), or an
+/// album under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtistLine {
+    Shelf(usize),
+    Album(usize),
+}
+
+/// An artist's albums under their shelves (`pages::release_groups`); none for an artist listing songs.
+pub fn artist_lines(d: &ArtistDetail) -> Vec<ArtistLine> {
+    if d.albums.is_empty() {
+        return Vec::new();
+    }
+    d.groups.iter().enumerate().flat_map(|(k, g)| std::iter::once(ArtistLine::Shelf(k)).chain(g.albums.iter().map(|i| ArtistLine::Album(*i as usize)))).collect()
 }
 
 /// The selected thing that item actions (open, enqueue, star...) apply to.
@@ -364,76 +392,215 @@ pub enum Item {
     DownloadedAlbum(Album),
     Artist(Artist),
     Playlist(Playlist),
+    Mix(MixTile),
 }
 
-/// The home page: shelves of cards, each scrolled independently.
+/// One of Home's shelves: its title, its entries, and the library's row it is (none for a source's own).
+#[derive(Debug, Clone)]
+pub struct Shelf {
+    pub title: String,
+    pub items: Vec<Item>,
+    pub row: Option<HomeRow>,
+}
+
+/// The home page: the queue another device left, For you, then its shelves, each a heading and its first
+/// entries.
 #[derive(Default)]
 pub struct Home {
-    /// Indexed like the session's `home_album_rows`; None until loaded.
-    pub rows: Vec<Option<(String, Vec<Item>)>>,
+    /// Indexed like the session's Home rows, or a source's feed; None until loaded.
+    pub rows: Vec<Option<Shelf>>,
+    /// For you: the favorites, then the mixes.
+    pub mixes: Vec<MixTile>,
+    /// The queue left on the server, offered to carry on here (`Client::queue_offer`).
+    pub offer: Option<QueueOffer>,
     pub error: Option<String>,
     pub asked: bool,
-    /// Selected shelf, indexed like `rows`.
-    pub shelf: usize,
-    /// Per shelf: the selected album and the first visible one.
-    pub pos: Vec<usize>,
-    pub left: Vec<usize>,
-    /// First visible shelf.
-    pub top: usize,
-    /// Shelves hidden below, as last drawn.
-    pub below: bool,
+    /// Selection over [`Home::lines`].
+    pub sel: Sel,
+}
+
+/// How many of a shelf's entries Home lists; its heading opens all of them.
+pub const HOME_ENTRIES: usize = 5;
+
+/// Which of Home's shelves: For you, or a row by index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShelfAt {
+    ForYou,
+    Row(usize),
+}
+
+/// A line of Home: the queue offered, a shelf's heading, one of its entries, or the gap before the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HomeLine {
+    Offer,
+    Shelf(ShelfAt),
+    Entry(ShelfAt, usize),
+    Gap,
 }
 
 impl Home {
-    /// Non-empty shelves: index, title, albums.
-    pub fn shelves(&self) -> Vec<(usize, &str, &[Item])> {
-        self.rows.iter().enumerate().filter_map(|(i, r)| r.as_ref().filter(|(_, v)| !v.is_empty()).map(|(t, v)| (i, t.as_str(), v.as_slice()))).collect()
-    }
-
-    /// The selected card.
-    pub fn item(&self) -> Option<&Item> {
-        let (_, v) = self.rows.get(self.shelf)?.as_ref()?;
-        v.get(*self.pos.get(self.shelf)?)
-    }
-
-    /// Moves the selection to the nearest non-empty shelf in direction `down`.
-    fn settle(&mut self, down: bool) {
-        let full: Vec<usize> = self.shelves().iter().map(|s| s.0).collect();
-        if full.is_empty() || full.contains(&self.shelf) {
-            return;
+    /// A shelf's title and entries; For you's are the mixes.
+    pub fn shelf(&self, at: ShelfAt) -> Option<(String, Vec<Item>)> {
+        match at {
+            ShelfAt::ForYou => Some((crate::text::FOR_YOU.to_string(), self.mixes.iter().cloned().map(Item::Mix).collect())),
+            ShelfAt::Row(i) => self.rows.get(i)?.as_ref().map(|s| (s.title.clone(), s.items.clone())),
         }
-        self.shelf = if down { full.iter().find(|&&s| s > self.shelf).or(full.last()) } else { full.iter().rev().find(|&&s| s < self.shelf).or(full.first()) }.copied().unwrap_or(0);
     }
 
-    fn step_shelf(&mut self, d: isize) {
-        let full: Vec<usize> = self.shelves().iter().map(|s| s.0).collect();
-        let Some(at) = full.iter().position(|&s| s == self.shelf) else { return self.settle(d > 0) };
-        self.shelf = full[(at as isize + d).clamp(0, full.len() as isize - 1) as usize];
+    /// How many entries a shelf has.
+    pub fn count(&self, at: ShelfAt) -> usize {
+        match at {
+            ShelfAt::ForYou => self.mixes.len(),
+            ShelfAt::Row(i) => self.rows.get(i).and_then(|r| r.as_ref()).map_or(0, |s| s.items.len()),
+        }
     }
 
-    fn step_along(&mut self, d: isize) {
-        let len = self.rows.get(self.shelf).and_then(|r| r.as_ref()).map_or(0, |r| r.1.len());
-        if let Some(p) = self.pos.get_mut(self.shelf) {
-            *p = (*p as isize + d).clamp(0, len.saturating_sub(1) as isize) as usize;
+    pub fn lines(&self) -> Vec<HomeLine> {
+        let mut out = Vec::new();
+        if self.offer.is_some() {
+            out.push(HomeLine::Offer);
+        }
+        let shelves = std::iter::once(ShelfAt::ForYou).chain((0..self.rows.len()).map(ShelfAt::Row));
+        for at in shelves.filter(|at| self.count(*at) > 0) {
+            if !out.is_empty() {
+                out.push(HomeLine::Gap);
+            }
+            out.push(HomeLine::Shelf(at));
+            out.extend((0..self.count(at).min(HOME_ENTRIES)).map(|n| HomeLine::Entry(at, n)));
+        }
+        out
+    }
+
+    /// The selected line.
+    pub fn line(&self) -> Option<HomeLine> {
+        self.lines().get(self.sel.at).copied()
+    }
+
+    /// The entry selected.
+    pub fn item(&self) -> Option<Item> {
+        match self.line()? {
+            HomeLine::Entry(ShelfAt::ForYou, n) => self.mixes.get(n).cloned().map(Item::Mix),
+            HomeLine::Entry(ShelfAt::Row(i), n) => self.rows.get(i)?.as_ref()?.items.get(n).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Moves the selection off a gap in direction `down`.
+    fn settle(&mut self, down: bool) {
+        let lines = self.lines();
+        if lines.get(self.sel.at) == Some(&HomeLine::Gap) {
+            self.sel.at = if down && self.sel.at + 1 < lines.len() { self.sel.at + 1 } else { self.sel.at.saturating_sub(1) };
+        }
+    }
+
+    /// The offered song, playing here or the player showing it, takes the offer away (`offer_stands`).
+    fn offer_still(&mut self, here: Option<String>, playing: bool) {
+        let gone = self.offer.as_ref().is_some_and(|o| !o.songs.get(o.index as usize).is_some_and(|s| nori_core::library::offer_stands(&s.id, here.clone(), playing)));
+        if gone {
+            self.offer = None;
         }
     }
 }
 
-#[derive(Default)]
 pub struct Library {
     pub albums: Load<Vec<Album>>,
     pub albums_more: bool,
     pub albums_sel: Sel,
+    /// The albums' order, and in Artist order where each artist's shelf starts (`browse::artist_rows`).
+    pub album_sort: AlbumSort,
+    pub album_shelves: Vec<u32>,
     pub artists: Load<Vec<Artist>>,
     pub artists_sel: Sel,
     pub playlists: Load<Vec<Playlist>>,
     pub songs: Load<Vec<Song>>,
     pub songs_more: bool,
     pub songs_sel: Sel,
+    /// The songs' order, one of `browse::song_sorts`, and whether only the favorites are listed.
+    pub song_sort: SongOrder,
     pub playlists_sel: Sel,
     /// The starred songs.
     pub favorites: Load<Vec<Song>>,
     pub favorites_sel: Sel,
+    /// What this device played, newest first, and where the next page starts.
+    pub history: Load<Vec<HistoryEntry>>,
+    pub history_next: Option<HistoryAfter>,
+    pub history_sel: Sel,
+    /// What the downloads weigh, once weighed.
+    pub downloads_bytes: Option<i64>,
+}
+
+impl Default for Library {
+    fn default() -> Self {
+        Library {
+            albums: Load::Idle,
+            albums_more: false,
+            albums_sel: Sel::default(),
+            album_sort: nori_core::browse::album_sort_saved(Default::default()),
+            album_shelves: Vec::new(),
+            artists: Load::Idle,
+            artists_sel: Sel::default(),
+            playlists: Load::Idle,
+            songs: Load::Idle,
+            songs_more: false,
+            songs_sel: Sel::default(),
+            song_sort: SongOrder::default(),
+            playlists_sel: Sel::default(),
+            favorites: Load::Idle,
+            favorites_sel: Sel::default(),
+            history: Load::Idle,
+            history_next: None,
+            history_sel: Sel::default(),
+            downloads_bytes: None,
+        }
+    }
+}
+
+/// The songs list's order: the favorites only, or every song by one of the core's sorts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SongOrder {
+    Favorites,
+    Sorted(String),
+}
+
+impl Default for SongOrder {
+    fn default() -> Self {
+        SongOrder::Sorted(nori_core::browse::song_sort_saved(Default::default()))
+    }
+}
+
+impl SongOrder {
+    /// The orders offered, in the phone's order: the favorites first, then the core's sorts.
+    pub fn all() -> Vec<SongOrder> {
+        std::iter::once(SongOrder::Favorites).chain(nori_core::browse::song_sorts().into_iter().map(|s| SongOrder::Sorted(s.name))).collect()
+    }
+
+    /// The core's sort name and whether only favorites: the favorites by title.
+    pub fn read(&self) -> (String, bool) {
+        match self {
+            SongOrder::Favorites => (nori_core::browse::song_sort_saved(Default::default()), true),
+            SongOrder::Sorted(name) => (name.clone(), false),
+        }
+    }
+}
+
+/// A place the library keeps, listed at the top of each of its sections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    Favorites,
+    Downloads,
+    History,
+    /// The shown list shuffled: random albums, or every song.
+    Shuffle,
+}
+
+/// A line of a library section: a place, the gap after them, an artist's shelf in Artist order (by the
+/// index of its first album), or an entry of the section by index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibLine {
+    Place(Place),
+    Gap,
+    Shelf(usize),
+    Entry(usize),
 }
 
 #[derive(Default)]
@@ -670,6 +837,10 @@ pub enum Overlay {
     Picker { title: String, options: Vec<(String, String)>, sel: Sel, target: Target },
     /// A text field for setting `name`.
     Input { title: String, text: String, secret: bool, name: String },
+    /// What the selection's menu offers, the song's less used actions `folded` under More until it opens.
+    Menu { title: String, item: Box<Item>, lines: Vec<crate::menu::MenuLine>, folded: Vec<crate::menu::MenuLine>, sel: Sel },
+    /// A new playlist's name, for `songs`.
+    NewPlaylist { text: String, songs: Vec<String> },
     /// The jam's invite: its link and QR code.
     Invite { link: String },
     JamSettings,
@@ -686,6 +857,8 @@ pub enum Target {
     Setting(String),
     Device,
     Preset,
+    /// The playlist these songs go to (empty: a new one).
+    Playlist(Vec<String>),
 }
 
 impl Target {
@@ -695,6 +868,7 @@ impl Target {
             Target::Setting(name) => Some(Cmd::Setting(name, value)),
             Target::Device => Some(Cmd::Device(value)),
             Target::Preset => value.parse().ok().map(|i| Cmd::Sound(SoundToolCmd::Preset(i))),
+            Target::Playlist(songs) => Some(Cmd::AddToPlaylist { id: value, songs }),
         }
     }
 }
@@ -719,13 +893,13 @@ pub enum Hit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListRef {
-    /// Home shelf, indexed like `Home::rows`.
-    Shelf(usize),
+    Home,
     Albums,
     Artists,
     Songs,
     Playlists,
     Favorites,
+    History,
     Search,
     Page,
     Downloads,
@@ -736,6 +910,7 @@ pub enum ListRef {
     Devices,
     Profiles,
     Picker,
+    Menu,
     Help,
 }
 
@@ -748,9 +923,9 @@ impl ListRef {
         }
     }
 
-    /// Whether a single click opens (cards).
+    /// Whether a single click opens: lists of things with pages, not of songs.
     fn opens_on_click(self) -> bool {
-        matches!(self, ListRef::Shelf(_) | ListRef::Albums | ListRef::Artists | ListRef::Playlists)
+        matches!(self, ListRef::Albums | ListRef::Artists | ListRef::Playlists)
     }
 }
 
@@ -767,19 +942,22 @@ pub enum Button {
     ShuffleAll,
     /// Star the page's album or artist.
     Star,
-    /// Download the page's album, artist or playlist.
-    Download,
+    /// One of the page's actions (`menus::page_actions`).
+    Page(PageAction),
+    /// The mix shown, kept as a playlist.
+    SaveMix,
     /// Star the playing song.
     StarSong,
-    Back,
     Help,
     Connect,
+    /// Plays the queue offered on Home, or turns it down.
+    Resume,
+    Dismiss,
 }
 
-/// Layout facts from the last frame: grid columns, the full player's panel width.
+/// Layout facts from the last frame: the full player's panel width, and whether a clock shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shown {
-    pub cols: usize,
     /// The panel's width inside its margins.
     pub panel_w: u16,
     /// A seek clock is on screen, so playback needs a redraw each second.
@@ -788,7 +966,7 @@ pub struct Shown {
 
 impl Default for Shown {
     fn default() -> Self {
-        Shown { cols: 4, panel_w: 37, clock: true }
+        Shown { panel_w: 37, clock: true }
     }
 }
 
@@ -837,6 +1015,8 @@ pub struct App {
     pub now: Now,
     /// The audible song (during a mix, the louder one).
     pub song: Option<Song>,
+    /// Songs' download states as last read, by id.
+    pub downloaded: HashMap<String, SongDownload>,
     /// This session's star marks, drawn over the records' flags.
     pub marks: StarMarks,
     pub devices: Devices,
@@ -851,6 +1031,8 @@ pub struct App {
     pub colours: Option<Box<CoverColours>>,
     /// The season's colors, for the chrome and the pages.
     pub look: Theme,
+    /// The interface is dark, as the appearance setting and the terminal have it.
+    pub dark: bool,
     /// The full player's colors: the cover's when it wears them, else the season's.
     pub theme: Theme,
     /// Paint the page in the season's colors.
@@ -865,13 +1047,13 @@ pub struct App {
     pub volume: f32,
     pub mouse: bool,
     pub images: bool,
-    /// Covers on album cards (when covers are on).
-    pub card_covers: bool,
-    /// Card covers already requested.
-    pub thumbs_asked: std::collections::HashSet<String>,
+    /// The library's section last open, which its tab opens.
+    pub section: View,
     /// Image protocol name, for the settings page.
     pub protocol: &'static str,
     pub server: String,
+    /// The output this computer plays through, as the engine last named it; empty for the default.
+    pub output: String,
     pub offline: bool,
     pub unreachable: Option<String>,
     pub note: Option<(String, bool, Instant)>,
@@ -903,7 +1085,7 @@ impl App {
             volume: 1.0,
             mouse: true,
             images: true,
-            card_covers: true,
+            section: View::Albums,
             protocol: "none",
             dirty: true,
             in_sight: true,
@@ -934,10 +1116,10 @@ impl App {
     pub fn retheme(&mut self) {
         let day = crate::art::Day::now();
         let dark = crate::art::terminal_dark(std::env::var("COLORFGBG").ok().as_deref());
+        self.dark = self.prefs.theme.is_dark(dark);
         self.look = Theme::season(&self.prefs, day, dark, self.paint, self.colors);
-        let accents = nori_look::theme::accents(nori_core::settings::season_of(self.prefs.season), day.month, day.day, day.southern);
         self.theme = match &self.colours {
-            Some(c) if self.prefs.theme.covers_tint_pages() && self.images => Theme::from_cover(c, accents, &self.look),
+            Some(c) if self.prefs.theme.covers_tint_pages() && self.images => Theme::dyed(c.edge, &self.prefs, day, self.dark, self.paint, self.colors),
             _ => self.look,
         };
     }
@@ -954,49 +1136,113 @@ impl App {
 
     // ---- going places ----
 
-    /// Whether the page's list has rows hidden above and below, as last drawn: the edges the chrome fades.
-    pub fn page_cut(&self) -> (bool, bool) {
-        if let Some(p) = self.pages.last() {
-            return p.sel_ref().cut;
+    /// The library's sections kept in the order chosen, of those the profile has and this client lists.
+    pub fn sections(&self) -> Vec<View> {
+        let shown = nori_core::browse::library_sections_shown(self.prefs.library_sections.clone(), self.rules.sections.clone());
+        shown
+            .into_iter()
+            .filter_map(|s| match s {
+                LibrarySection::Albums => Some(View::Albums),
+                LibrarySection::Artists => Some(View::Artists),
+                LibrarySection::Songs => Some(View::Songs),
+                LibrarySection::Playlists => Some(View::Playlists),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The places at the top of the library's section `view`, as the phone's library has them: the
+    /// favorites where they are kept, downloads and history where the profile keeps them, and shuffling the
+    /// list where it can be (an account's albums or songs).
+    pub fn places(&self, view: View) -> Vec<Place> {
+        let kept = nori_core::browse::library_sections_shown(self.prefs.library_sections.clone(), self.rules.sections.clone());
+        let mut out = Vec::new();
+        if kept.contains(&LibrarySection::Favourites) {
+            out.push(Place::Favorites);
         }
+        for (s, place) in [(LibrarySection::Downloads, Place::Downloads), (LibrarySection::History, Place::History)] {
+            if self.rules.sections.contains(&s) {
+                out.push(place);
+            }
+        }
+        if self.rules.account && matches!(view, View::Albums | View::Songs) {
+            out.push(Place::Shuffle);
+        }
+        out
+    }
+
+    /// The lines of the library's section open: its places, then its entries; in Artist order the
+    /// albums under a line for each artist.
+    pub fn library_lines(&self) -> Vec<LibLine> {
         let l = &self.library;
-        match self.view {
-            View::Home => (self.home.top > 0, self.home.below),
-            View::Albums => l.albums_sel.cut,
-            View::Artists => l.artists_sel.cut,
-            View::Songs => l.songs_sel.cut,
-            View::Playlists => l.playlists_sel.cut,
-            View::Favorites => l.favorites_sel.cut,
-            View::Search => self.search.sel.cut,
-            View::Downloads => self.downloads_sel.cut,
-            View::Settings => self.settings.cut(),
-            View::Equalizer | View::Login => (false, false),
+        let entries = match self.view {
+            View::Albums => l.albums.ready().map_or(0, Vec::len),
+            View::Artists => l.artists.ready().map_or(0, Vec::len),
+            View::Songs => l.songs.ready().map_or(0, Vec::len),
+            View::Playlists => l.playlists.ready().map_or(0, Vec::len),
+            _ => 0,
+        };
+        let mut out: Vec<LibLine> = self.places(self.view).into_iter().map(LibLine::Place).collect();
+        if !out.is_empty() && entries > 0 {
+            out.push(LibLine::Gap);
+        }
+        if self.view == View::Albums && l.album_sort == AlbumSort::ArtistRows {
+            let starts: Vec<usize> = l.album_shelves.iter().map(|s| *s as usize).filter(|s| *s < entries).collect();
+            for (k, &start) in starts.iter().enumerate() {
+                let end = starts.get(k + 1).copied().unwrap_or(entries);
+                out.push(LibLine::Shelf(start));
+                out.extend((start..end).map(LibLine::Entry));
+            }
+        } else {
+            out.extend((0..entries).map(LibLine::Entry));
+        }
+        out
+    }
+
+    /// Selects the first entry of the library's section `view` once its first page came, past its places,
+    /// unless the selection is already further on.
+    fn onto_entries(&mut self, view: View) {
+        let first = self.places(view).len() + 1;
+        let l = &mut self.library;
+        let (sel, has) = match view {
+            View::Albums => (&mut l.albums_sel, l.albums.ready().is_some_and(|v| !v.is_empty())),
+            View::Artists => (&mut l.artists_sel, l.artists.ready().is_some_and(|v| !v.is_empty())),
+            View::Songs => (&mut l.songs_sel, l.songs.ready().is_some_and(|v| !v.is_empty())),
+            View::Playlists => (&mut l.playlists_sel, l.playlists.ready().is_some_and(|v| !v.is_empty())),
+            _ => return,
+        };
+        if has && first > 1 && sel.at < first {
+            sel.at = first;
         }
     }
 
-    /// The top outline's tabs the profile has, in order.
-    pub fn tabs(&self) -> Vec<View> {
-        let has = |section| self.rules.sections.contains(&section);
-        [
-            (View::Home, true),
-            (View::Albums, has(LibrarySection::Albums)),
-            (View::Artists, has(LibrarySection::Artists)),
-            (View::Songs, has(LibrarySection::Songs)),
-            (View::Playlists, has(LibrarySection::Playlists)),
-            (View::Favorites, self.rules.stars),
-        ]
-        .into_iter()
-        .filter_map(|(v, shown)| shown.then_some(v))
-        .collect()
+    /// The library section's selection and its line.
+    fn library_line(&self) -> Option<LibLine> {
+        let l = &self.library;
+        let sel = match self.view {
+            View::Albums => l.albums_sel,
+            View::Artists => l.artists_sel,
+            View::Songs => l.songs_sel,
+            View::Playlists => l.playlists_sel,
+            _ => return None,
+        };
+        self.library_lines().get(sel.at).copied()
     }
 
     /// Whether the profile has `view`.
     pub fn reaches(&self, view: View) -> bool {
         match view {
             View::Downloads => self.rules.sections.contains(&LibrarySection::Downloads),
-            View::Equalizer | View::Settings => true,
-            v => self.tabs().contains(&v),
+            View::History => self.rules.sections.contains(&LibrarySection::History),
+            View::Favorites => self.rules.stars,
+            View::Home | View::Search | View::Equalizer | View::Settings | View::Login => true,
+            v => self.sections().contains(&v),
         }
+    }
+
+    /// The library's tab: the section last open, or the first the profile has.
+    pub fn library(&self) -> View {
+        if self.reaches(self.section) { self.section } else { self.sections().first().copied().unwrap_or(View::Favorites) }
     }
 
     /// A jam guest's: its picks are asked of the host, and the player shows the jam, which it controls by
@@ -1017,23 +1263,38 @@ impl App {
             self.touched = false;
         }
         self.view = view;
+        if crate::chrome::tab_name(view) == crate::chrome::tab_name(View::Albums) {
+            self.section = view;
+        }
         self.pages.clear();
         self.full = false;
         self.focus = Focus::Main;
         self.tune();
         self.dirty = true;
+        // What the downloads weigh, beside their place.
+        if self.sections().contains(&view) && self.places(view).contains(&Place::Downloads) {
+            self.cmds.push(Cmd::Load(Req::DownloadsSize));
+        }
         let l = &mut self.library;
         match view {
-            View::Home if !self.home.asked => {
-                self.home.asked = true;
-                self.home.rows = Vec::new();
-                self.home.pos = Vec::new();
-                self.home.left = Vec::new();
-                self.cmds.push(Cmd::Load(Req::Home));
+            View::Home => {
+                if !self.home.asked {
+                    self.home.asked = true;
+                    (self.home.rows, self.home.mixes) = (Vec::new(), Vec::new());
+                    self.home.sel = Sel::default();
+                    self.cmds.push(Cmd::Load(Req::Home));
+                }
+                // Each time Home comes into sight, the queue another device left; a jam guest's is the host's.
+                if self.rules.account {
+                    let (playing, shown) = (self.now.state == State::Playing, self.song.as_ref().map(|s| s.id.clone()));
+                    self.cmds.push(Cmd::LookForOffer { playing, shown });
+                }
             }
             View::Albums if matches!(l.albums, Load::Idle) => {
                 l.albums = Load::Loading;
-                self.cmds.push(Cmd::Load(Req::Albums { offset: 0 }));
+                // The order it was left in (`album_sort_saved`).
+                l.album_sort = nori_core::browse::album_sort_saved(self.prefs.list_prefs.clone());
+                self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, offset: 0 }));
             }
             View::Artists if matches!(l.artists, Load::Idle) => {
                 l.artists = Load::Loading;
@@ -1041,7 +1302,15 @@ impl App {
             }
             View::Songs if matches!(l.songs, Load::Idle) => {
                 l.songs = Load::Loading;
-                self.cmds.push(Cmd::Load(Req::Songs { offset: 0 }));
+                if l.song_sort != SongOrder::Favorites {
+                    l.song_sort = SongOrder::Sorted(nori_core::browse::song_sort_saved(self.prefs.list_prefs.clone()));
+                }
+                let (sort, starred) = l.song_sort.read();
+                self.cmds.push(Cmd::Load(Req::Songs { sort, starred, offset: 0 }));
+            }
+            View::History if matches!(l.history, Load::Idle) => {
+                l.history = Load::Loading;
+                self.cmds.push(Cmd::Load(Req::History(None)));
             }
             View::Playlists if matches!(l.playlists, Load::Idle) => {
                 l.playlists = Load::Loading;
@@ -1061,8 +1330,8 @@ impl App {
         }
     }
 
-    fn open_page(&mut self, page: Page) {
-        self.cmds.push(Cmd::Load(page.req()));
+    pub(crate) fn open_page(&mut self, page: Page) {
+        self.cmds.extend(page.req().map(Cmd::Load));
         self.pages.push(page);
         self.focus = Focus::Main;
         self.full = false;
@@ -1209,6 +1478,26 @@ impl App {
                 }
             }
             Msg::Note { text, error } => self.say(text, error),
+            // A page or list on screen, read again.
+            Msg::Reload(req) => {
+                let playlists = req == Req::Playlists;
+                if playlists && self.library.playlists.ready().is_some() {
+                    self.cmds.push(Cmd::Load(Req::Playlists));
+                }
+                // Home's playlist rows are read with Home.
+                let rows = |s: &Option<Shelf>| s.as_ref().is_some_and(|s| matches!(s.row, Some(HomeRow::Playlists | HomeRow::Pinned)));
+                if playlists && self.home.rows.iter().any(rows) {
+                    self.cmds.push(Cmd::Load(Req::Home));
+                }
+                if self.pages.iter().any(|p| p.req().as_ref() == Some(&req)) {
+                    self.cmds.push(Cmd::Load(req));
+                }
+            }
+            Msg::Offer(offer) => {
+                self.home.offer = offer;
+                let (here, playing) = (self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
+                self.home.offer_still(here, playing);
+            }
             Msg::LoggedIn(r) => {
                 self.login.busy = false;
                 if let Err(e) = r {
@@ -1258,6 +1547,9 @@ impl App {
                 if s == State::Playing {
                     self.lyrics_wake = Some(Instant::now());
                 }
+                // Music started: Home lets the offer go.
+                let here = self.song.as_ref().map(|s| s.id.clone());
+                self.home.offer_still(here, s == State::Playing);
             }
             Event::Song { .. } | Event::Looped { .. } => {}
             Event::Error { id, message } => {
@@ -1266,7 +1558,10 @@ impl App {
             }
             Event::Buffering(on) => self.now.buffering = on,
             Event::Stopped { .. } => self.say("Playback stopped: too many songs in a row would not play", true),
-            Event::Output { name } => self.say(format!("Playing on {name}"), false),
+            Event::Output { name } => {
+                self.say(format!("Playing on {name}"), false);
+                self.output = name;
+            }
             Event::Title(t) => self.say(format!("On air: {t}"), false),
             Event::Bridge { .. } => self.say("The network is gone", true),
             Event::Waiting(true) => self.say("The server could not be reached: trying again", true),
@@ -1281,6 +1576,8 @@ impl App {
     pub fn heard(&mut self, song: Option<Song>) {
         let changed = self.song.as_ref().map(|s| &s.id) != song.as_ref().map(|s| &s.id);
         self.song = song;
+        // The player came to show the song offered.
+        self.home.offer_still(self.song.as_ref().map(|s| s.id.clone()), self.now.state == State::Playing);
         if !changed {
             return;
         }
@@ -1292,7 +1589,7 @@ impl App {
         }
         self.cover_art = art.clone();
         if let Some(art) = art {
-            self.cmds.push(Cmd::Cover { art, colours: true });
+            self.cmds.push(Cmd::Cover(art));
         }
         if self.lyrics_shown() {
             self.want_lyrics();
@@ -1304,38 +1601,54 @@ impl App {
 
     fn data(&mut self, req: Req, r: Result<Data, String>) {
         match (req, r) {
-            (Req::Home, Ok(Data::HomeRow(i, title, items))) => {
+            (Req::Home, Ok(Data::HomeRow(i, row, title, items))) => {
                 // A feed has as many shelves as the service sends.
                 if i >= self.home.rows.len() {
                     self.home.rows.resize(i + 1, None);
-                    self.home.pos.resize(i + 1, 0);
-                    self.home.left.resize(i + 1, 0);
                 }
                 if let Some(slot) = self.home.rows.get_mut(i) {
-                    *slot = Some((title, items));
+                    *slot = Some(Shelf { title, items, row });
                 }
                 self.home.error = None;
                 self.home.settle(true);
             }
+            (Req::Home, Ok(Data::Mixes(tiles))) => {
+                self.home.mixes = tiles;
+                self.home.settle(true);
+            }
             (Req::Home, Err(e)) => self.home.error = Some(e),
-            (Req::Albums { offset }, Ok(Data::Albums(v))) => {
-                self.library.albums_more = nori_core::browse::next_album_page(nori_core::browse::AlbumSort::ByName, offset, ALBUM_PAGE, v.len() as u32).is_some();
-                match &mut self.library.albums {
+            // An order left since is not shown.
+            (Req::Albums { sort, .. }, _) if sort != self.library.album_sort => self.dirty = false,
+            (Req::Albums { sort, offset }, Ok(Data::Albums(v))) => {
+                let l = &mut self.library;
+                l.albums_more = nori_core::browse::next_album_page(sort, offset, ALBUM_PAGE, v.len() as u32).is_some();
+                match &mut l.albums {
                     Load::Ready(have) if offset > 0 => {
                         have.truncate(offset as usize);
                         have.extend(v);
                     }
                     slot => *slot = Load::Ready(v),
                 }
+                if sort == AlbumSort::ArtistRows {
+                    l.album_shelves = nori_core::browse::artist_rows(l.albums.ready().cloned().unwrap_or_default());
+                }
+                self.onto_entries(View::Albums);
             }
             (Req::Albums { .. }, Err(e)) => self.library.albums = Load::Failed(e),
-            (Req::Artists, Ok(Data::Artists(v))) => self.library.artists = Load::Ready(v),
+            (Req::Artists, Ok(Data::Artists(v))) => {
+                self.library.artists = Load::Ready(v);
+                self.onto_entries(View::Artists);
+            }
             (Req::Artists, Err(e)) => self.library.artists = Load::Failed(e),
-            (Req::Playlists, Ok(Data::Playlists(v))) => self.library.playlists = Load::Ready(v),
+            (Req::Playlists, Ok(Data::Playlists(v))) => {
+                self.library.playlists = Load::Ready(v);
+                self.onto_entries(View::Playlists);
+            }
             (Req::Playlists, Err(e)) => self.library.playlists = Load::Failed(e),
             (Req::Favorites, Ok(Data::Favorites(v))) => self.library.favorites = Load::Ready(v),
             (Req::Favorites, Err(e)) => self.library.favorites = Load::Failed(e),
-            (Req::Songs { offset }, Ok(Data::Songs(v, exhausted))) => {
+            (Req::Songs { ref sort, starred, .. }, _) if (sort.clone(), starred) != self.library.song_sort.read() => self.dirty = false,
+            (Req::Songs { offset, .. }, Ok(Data::Songs(v, exhausted))) => {
                 self.library.songs_more = !exhausted;
                 match &mut self.library.songs {
                     Load::Ready(have) if offset > 0 => {
@@ -1344,8 +1657,21 @@ impl App {
                     }
                     slot => *slot = Load::Ready(v),
                 }
+                self.onto_entries(View::Songs);
             }
             (Req::Songs { .. }, Err(e)) => self.library.songs = Load::Failed(e),
+            (Req::History(after), Ok(Data::History(page))) => {
+                let l = &mut self.library;
+                l.history_next = page.next;
+                let songs = page.entries;
+                match &mut l.history {
+                    Load::Ready(have) if after.is_some() => have.extend(songs),
+                    slot => *slot = Load::Ready(songs),
+                }
+            }
+            (Req::History(_), Err(e)) => self.library.history = Load::Failed(e),
+            (Req::DownloadsSize, Ok(Data::DownloadsSize(bytes))) => self.library.downloads_bytes = Some(bytes),
+            (Req::DownloadsSize, Err(_)) => self.dirty = false,
             (Req::Downloads, Ok(Data::Downloads(d))) => {
                 self.downloads_at = d.refresh_at();
                 self.downloads = Load::Ready(d);
@@ -1361,20 +1687,48 @@ impl App {
             (Req::Downloads | Req::DownloadProgress, Err(e)) => self.downloads = Load::Failed(e),
             (Req::Facts, Ok(Data::Facts(f))) => self.settings.set_facts(*f),
             (Req::Facts, Err(_)) => {}
+            (Req::Row { row, offset }, r) => {
+                let Some(Page::Row { items, more, .. }) = self.pages.iter_mut().rev().find(|p| matches!(p, Page::Row { row: Some(at), .. } if *at == row)) else { return self.dirty = false };
+                match r {
+                    Ok(Data::Row(v, done)) => {
+                        if offset == 0 {
+                            *items = v;
+                        } else {
+                            items.truncate(offset as usize);
+                            items.extend(v);
+                        }
+                        *more = !done;
+                    }
+                    _ => *more = false,
+                }
+            }
             (req, r) => {
                 for page in self.pages.iter_mut().rev() {
-                    if page.req() != req {
+                    if page.req().as_ref() != Some(&req) {
                         continue;
                     }
+                    // What of its songs is downloaded, for its head's download entry.
+                    if let Ok(Data::Album(d)) = &r {
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                    }
+                    if let Ok(Data::Playlist(d)) = &r {
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                    }
+                    if let Ok(Data::Mix(d)) = &r {
+                        self.cmds.push(Cmd::ReadDownloads(d.songs.iter().map(|s| s.id.clone()).collect()));
+                    }
                     match (page, r) {
-                        (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Ok(Data::Album(d))) => {
-                            if let Some(art) = d.album.cover_art.clone() {
-                                self.cmds.push(Cmd::Cover { art, colours: false });
+                        (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Ok(Data::Album(d))) => *detail = Load::Ready(d),
+                        (Page::Artist { detail, sel, .. }, Ok(Data::Artist(d))) => {
+                            // The first album, under its shelf's name.
+                            if sel.at == 0 && !d.albums.is_empty() {
+                                sel.at = 1;
                             }
                             *detail = Load::Ready(d);
                         }
-                        (Page::Artist { detail, .. }, Ok(Data::Artist(d))) => *detail = Load::Ready(d),
                         (Page::Playlist { detail, .. }, Ok(Data::Playlist(d))) => *detail = Load::Ready(d),
+                        (Page::Mix { detail, .. }, Ok(Data::Mix(d))) => *detail = Load::Ready(d),
+                        (Page::Mix { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Album { detail, .. } | Page::DownloadedAlbum { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Artist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
                         (Page::Playlist { detail, .. }, Err(e)) => *detail = Load::Failed(e),
@@ -1448,15 +1802,6 @@ impl App {
         self.full && self.panel == Panel::Lyrics
     }
 
-    /// Whether the focused page is a card grid.
-    fn grid_focused(&self) -> bool {
-        self.focus == Focus::Main
-            && match self.page() {
-                Some(p) => matches!(p, Page::Artist { .. }),
-                None => matches!(self.view, View::Home | View::Albums),
-            }
-    }
-
     fn scopes(&self) -> &'static [Scope] {
         if self.lyrics_focused() {
             return &[Scope::Lyrics, Scope::List, Scope::Global];
@@ -1464,10 +1809,9 @@ impl App {
         match self.focus {
             Focus::Panel if self.panel == Panel::Queue => &[Scope::Edit, Scope::List, Scope::Global],
             Focus::Panel => &[Scope::List, Scope::Global],
-            Focus::Main if self.grid_focused() => &[Scope::Grid, Scope::List, Scope::Global],
             Focus::Main if self.page().is_some() => &[Scope::List, Scope::Global],
             Focus::Main => match self.view {
-                View::Downloads => &[Scope::Edit, Scope::List, Scope::Global],
+                View::Downloads | View::Home => &[Scope::Edit, Scope::List, Scope::Global],
                 View::Equalizer => &[Scope::Eq, Scope::List, Scope::Global],
                 View::Settings => &[Scope::Values, Scope::List, Scope::Global],
                 _ => &[Scope::List, Scope::Global],
@@ -1505,7 +1849,7 @@ impl App {
 
     fn paste(&mut self, text: &str) {
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
-        if let Some(Overlay::Input { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, busy: false, .. }) = &mut self.overlay {
+        if let Some(Overlay::Input { text: t, .. } | Overlay::NewPlaylist { text: t, .. } | Overlay::Join { text: t, .. } | Overlay::Account { text: t, pasting: true, busy: false, .. }) = &mut self.overlay {
             t.push_str(&text);
         } else if self.view == View::Login {
             self.login.fields[self.login.focus].push_str(&text);
@@ -1636,8 +1980,14 @@ impl App {
                 KeyCode::Enter | KeyCode::Char('l') | KeyCode::Char(' ') => {
                     if let Some((_, value)) = options.get(sel.at) {
                         let (target, value) = (target.clone(), value.clone());
-                        self.overlay = None;
-                        self.cmds.extend(target.cmd(value));
+                        self.overlay = match target {
+                            // A new playlist asks for its name.
+                            Target::Playlist(songs) if value.is_empty() => Some(Overlay::NewPlaylist { text: String::new(), songs }),
+                            target => {
+                                self.cmds.extend(target.cmd(value));
+                                None
+                            }
+                        };
                     }
                 }
                 KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') => self.overlay = None,
@@ -1710,6 +2060,47 @@ impl App {
                     text.pop();
                 }
                 KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => text.clear(),
+                KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
+                _ => {}
+            },
+            Overlay::Menu { lines, folded, sel, item, .. } => match k.code {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    sel.by(1, lines.len());
+                    if matches!(lines.get(sel.at), Some(crate::menu::MenuLine::Heading(_))) {
+                        sel.by(1, lines.len());
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    sel.by(-1, lines.len());
+                    if matches!(lines.get(sel.at), Some(crate::menu::MenuLine::Heading(_))) {
+                        sel.by(-1, lines.len());
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char('l') => match lines.get(sel.at).cloned() {
+                    // More opens in its place.
+                    Some(crate::menu::MenuLine::More) => {
+                        let rest = std::mem::take(folded);
+                        lines.splice(sel.at..=sel.at, rest);
+                    }
+                    Some(crate::menu::MenuLine::Act(act)) => {
+                        let item = (**item).clone();
+                        self.menu_act(act, item);
+                    }
+                    _ => {}
+                },
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('h') | KeyCode::Char('m') => self.overlay = None,
+                _ => {}
+            },
+            Overlay::NewPlaylist { text, songs } => match k.code {
+                KeyCode::Enter if !text.trim().is_empty() => {
+                    let (name, songs) = (text.trim().to_string(), std::mem::take(songs));
+                    self.overlay = None;
+                    self.cmds.push(Cmd::NewPlaylist { name, songs });
+                }
+                KeyCode::Esc => self.overlay = None,
+                KeyCode::Backspace => {
+                    text.pop();
+                }
                 KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => text.push(c),
                 _ => {}
             },
@@ -1796,6 +2187,7 @@ impl App {
             }
             Action::Panel(p) => self.set_panel(p),
             Action::Full => self.toggle_full(),
+            Action::Sort => self.sort_next(),
             Action::Radio => {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.radio) {
                     self.cmds.push(Cmd::PlayFetch(Fetch::Radio(s.id.clone()), false));
@@ -1816,12 +2208,22 @@ impl App {
                     self.say(if ms == 0 { "Lyrics on their own timing".to_string() } else { format!("Lyrics {}", crate::text::nudge(ms)) }, false);
                 }
             }
-            Action::GroupBack | Action::GroupOn if self.view == View::Settings => {
+            Action::GroupBack | Action::GroupOn if self.view == View::Settings && self.page().is_none() => {
                 let g = self.settings.group_at() as isize + if a == Action::GroupOn { 1 } else { -1 };
                 let last = crate::settings_view::GROUPS.len() as isize - 1;
                 self.settings.jump(g.clamp(0, last) as usize);
             }
-            Action::GroupBack | Action::GroupOn => self.dirty = false,
+            Action::GroupBack | Action::GroupOn => {
+                // The library's section before or after, from one of them.
+                let sections = self.sections();
+                match sections.iter().position(|v| *v == self.view).filter(|_| self.page().is_none() && !self.full) {
+                    Some(at) => {
+                        let to = if a == Action::GroupOn { (at + 1).min(sections.len() - 1) } else { at.saturating_sub(1) };
+                        self.go(sections[to]);
+                    }
+                    None => self.dirty = false,
+                }
+            }
             Action::Key => match self.settings.key().filter(|_| self.view == View::Settings) {
                 Some(o) => self.overlay = Some(o),
                 None => self.dirty = false,
@@ -1859,8 +2261,13 @@ impl App {
                 },
                 None => self.dirty = false,
             },
+            Action::Remove if self.home_line() == Some(HomeLine::Offer) => self.take_offer(false),
             Action::Remove => self.dirty = false,
-            Action::Jam => self.jam_with_selected(),
+            Action::Jam => {
+                let item = if self.focus == Focus::Main { self.selected() } else { None };
+                self.jam_with(item);
+            }
+            Action::Menu => self.open_menu(),
             Action::Undo if self.queue_in_focus() => match self.taken.take() {
                 Some(id) => self.cmds.push(Cmd::Restore(id)),
                 None => self.say("Nothing to put back", false),
@@ -1932,7 +2339,7 @@ impl App {
             return self.want_lyrics();
         }
         if let Some(p) = self.page() {
-            self.cmds.push(Cmd::Load(p.req()));
+            self.cmds.extend(p.req().map(Cmd::Load));
             return;
         }
         let l = &mut self.library;
@@ -1943,6 +2350,7 @@ impl App {
             View::Songs => l.songs = Load::Idle,
             View::Playlists => l.playlists = Load::Idle,
             View::Favorites => l.favorites = Load::Idle,
+            View::History => l.history = Load::Idle,
             View::Settings => self.settings.facts_asked = false,
             _ => {}
         }
@@ -1971,15 +2379,16 @@ impl App {
             let len = p.len();
             return Some((p.sel(), len));
         }
+        let lines = self.library_lines().len();
         let l = &self.library;
-        let lens = (l.albums.ready().map_or(0, Vec::len), l.artists.ready().map_or(0, Vec::len), l.songs.ready().map_or(0, Vec::len));
-        let (playlists, favorites) = (l.playlists.ready().map_or(0, Vec::len), l.favorites.ready().map_or(0, Vec::len));
+        let (favorites, history) = (l.favorites.ready().map_or(0, Vec::len), l.history.ready().map_or(0, Vec::len));
         Some(match self.view {
-            View::Albums => (&mut self.library.albums_sel, lens.0),
-            View::Artists => (&mut self.library.artists_sel, lens.1),
-            View::Songs => (&mut self.library.songs_sel, lens.2),
-            View::Playlists => (&mut self.library.playlists_sel, playlists),
+            View::Albums => (&mut self.library.albums_sel, lines),
+            View::Artists => (&mut self.library.artists_sel, lines),
+            View::Songs => (&mut self.library.songs_sel, lines),
+            View::Playlists => (&mut self.library.playlists_sel, lines),
             View::Favorites => (&mut self.library.favorites_sel, favorites),
+            View::History => (&mut self.library.history_sel, history),
             View::Search => {
                 let len = self.search.rows().len();
                 (&mut self.search.sel, len)
@@ -1993,7 +2402,11 @@ impl App {
                 self.settings.pages(&self.prefs);
                 return Some(self.settings.list());
             }
-            View::Home | View::Login => return None,
+            View::Home => {
+                let len = self.home.lines().len();
+                (&mut self.home.sel, len)
+            }
+            View::Login => return None,
         })
     }
 
@@ -2001,25 +2414,23 @@ impl App {
         if self.lyrics_focused() {
             return self.lyrics_action(a);
         }
-        if self.focus == Focus::Main && self.page().is_none() && self.view == View::Home {
-            return self.home_action(a);
-        }
-        let grid = self.grid_focused();
-        let cols = if grid { self.shown.cols.max(1) as isize } else { 1 };
         let Some((sel, len)) = self.list() else { return };
         let page = 10;
         match a {
-            Action::Up => sel.by(-cols, len),
-            Action::Down => sel.by(cols, len),
-            Action::Left => sel.by(-1, len),
-            Action::Right => sel.by(1, len),
+            Action::Up | Action::Left => sel.by(-1, len),
+            Action::Down | Action::Right => sel.by(1, len),
             Action::Top => sel.to(0, len),
             Action::Bottom => sel.to(len.saturating_sub(1), len),
-            Action::PageUp => sel.by(-page * cols, len),
-            Action::PageDown => sel.by(page * cols, len),
+            Action::PageUp => sel.by(-page, len),
+            Action::PageDown => sel.by(page, len),
             _ => return self.act_on_selected(a),
         }
-        let down = !matches!(a, Action::Up | Action::PageUp | Action::Top | Action::Left);
+        self.settle(!matches!(a, Action::Up | Action::Left | Action::PageUp | Action::Top));
+        self.more();
+    }
+
+    /// Moves the focused list's selection off a line that is not a row, in direction `down`.
+    fn settle(&mut self, down: bool) {
         if self.focus == Focus::Panel && self.panel == Panel::Devices {
             self.devices.settle(down);
         }
@@ -2027,28 +2438,33 @@ impl App {
             match self.view {
                 View::Settings => self.settings.skip_titles(down),
                 View::Search => self.search.settle(down),
+                View::Home => self.home.settle(down),
+                View::Albums | View::Artists | View::Songs | View::Playlists if self.library_line() == Some(LibLine::Gap) => {
+                    let len = self.library_lines().len();
+                    if let Some((sel, _)) = self.list() {
+                        sel.by(if down { 1 } else { -1 }, len);
+                    }
+                }
                 _ => {}
             }
-        }
-        self.more();
-    }
-
-    fn home_action(&mut self, a: Action) {
-        let h = &mut self.home;
-        match a {
-            Action::Up => h.step_shelf(-1),
-            Action::Down => h.step_shelf(1),
-            Action::PageUp | Action::Top => h.step_shelf(-99),
-            Action::PageDown | Action::Bottom => h.step_shelf(99),
-            Action::Left => h.step_along(-1),
-            Action::Right => h.step_along(1),
-            _ => self.act_on_selected(a),
         }
     }
 
     /// Requests the next page when the selection nears the end of a paged list.
     fn more(&mut self) {
-        if self.focus != Focus::Main || self.page().is_some() {
+        if self.focus != Focus::Main {
+            return;
+        }
+        // A Home row in full, a page at a time.
+        if let Some(Page::Row { items, row: Some(row), more: more @ true, sel, .. }) = self.pages.last_mut() {
+            if sel.at + 30 >= items.len() {
+                *more = false;
+                let (row, offset) = (*row, items.len() as u32);
+                self.cmds.push(Cmd::Load(Req::Row { row, offset }));
+            }
+            return;
+        }
+        if self.page().is_some() {
             return;
         }
         let l = &mut self.library;
@@ -2057,14 +2473,23 @@ impl App {
                 let len = l.albums.ready().map_or(0, Vec::len);
                 if l.albums_sel.at + 50 >= len && l.albums_more {
                     l.albums_more = false;
-                    self.cmds.push(Cmd::Load(Req::Albums { offset: len as u32 }));
+                    self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, offset: len as u32 }));
                 }
             }
             View::Songs => {
                 let len = l.songs.ready().map_or(0, Vec::len);
                 if l.songs_sel.at + 50 >= len && l.songs_more {
                     l.songs_more = false;
-                    self.cmds.push(Cmd::Load(Req::Songs { offset: len as u32 }));
+                    let (sort, starred) = l.song_sort.read();
+                    self.cmds.push(Cmd::Load(Req::Songs { sort, starred, offset: len as u32 }));
+                }
+            }
+            View::History => {
+                let len = l.history.ready().map_or(0, Vec::len);
+                if l.history_sel.at + 30 >= len {
+                    if let Some(after) = l.history_next.take() {
+                        self.cmds.push(Cmd::Load(Req::History(Some(after))));
+                    }
                 }
             }
             _ => {}
@@ -2083,19 +2508,35 @@ impl App {
         }
         if let Some(p) = self.page() {
             return match p {
-                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
+                Page::Album { sel, .. } | Page::DownloadedAlbum { sel, .. } | Page::Playlist { sel, .. } | Page::Mix { sel, .. } => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
                 Page::Artist { sel, .. } if p.songs().is_some() => p.songs().filter(|s| sel.at < s.len()).map(|s| Item::Song(s.to_vec(), sel.at)),
-                Page::Artist { detail, sel, .. } => detail.ready().and_then(|d| d.albums.get(sel.at).cloned()).map(Item::Album),
+                Page::Artist { detail, sel, .. } => match artist_lines(detail.ready()?).get(sel.at)? {
+                    ArtistLine::Album(i) => detail.ready()?.albums.get(*i).cloned().map(Item::Album),
+                    ArtistLine::Shelf(_) => None,
+                },
+                Page::Row { items, sel, .. } => items.get(sel.at).cloned(),
             };
         }
         let l = &self.library;
+        // An artist's shelf stands for the artist, as its line opens their page.
+        let shelf = |start: usize| {
+            let a = l.albums.ready()?.get(start)?;
+            Some(Item::Artist(Artist { id: a.artist_id.clone()?, name: a.artist.clone(), ..Default::default() }))
+        };
         match self.view {
-            View::Home => self.home.item().cloned(),
-            View::Albums => l.albums.ready()?.get(l.albums_sel.at).cloned().map(Item::Album),
-            View::Artists => l.artists.ready()?.get(l.artists_sel.at).cloned().map(Item::Artist),
-            View::Songs => l.songs.ready().filter(|s| l.songs_sel.at < s.len()).map(|s| Item::Song(s.clone(), l.songs_sel.at)),
-            View::Playlists => l.playlists.ready()?.get(l.playlists_sel.at).cloned().map(Item::Playlist),
+            View::Home => self.home.item(),
+            View::Albums | View::Artists | View::Songs | View::Playlists => match self.library_line()? {
+                LibLine::Shelf(start) => shelf(start),
+                LibLine::Entry(i) => match self.view {
+                    View::Albums => l.albums.ready()?.get(i).cloned().map(Item::Album),
+                    View::Artists => l.artists.ready()?.get(i).cloned().map(Item::Artist),
+                    View::Songs => l.songs.ready().filter(|s| i < s.len()).map(|s| Item::Song(s.clone(), i)),
+                    _ => l.playlists.ready()?.get(i).cloned().map(Item::Playlist),
+                },
+                LibLine::Place(_) | LibLine::Gap => None,
+            },
             View::Favorites => l.favorites.ready().filter(|s| l.favorites_sel.at < s.len()).map(|s| Item::Song(s.clone(), l.favorites_sel.at)),
+            View::History => l.history.ready().filter(|h| l.history_sel.at < h.len()).map(|h| Item::Song(h.iter().map(|e| e.song.clone()).collect(), l.history_sel.at)),
             View::Search => match self.search.rows().get(self.search.sel.at)? {
                 // Search songs play alone: the list is no page's queue and may hold provider songs.
                 SearchRow::Song(s) => Some(Item::Song(vec![(*s).clone()], 0)),
@@ -2160,6 +2601,19 @@ impl App {
         if matches!(a, Action::PlayAll | Action::ShuffleAll) {
             return self.play_all(a == Action::ShuffleAll);
         }
+        match (a, self.home_line()) {
+            (Action::Open, Some(HomeLine::Shelf(at))) => return self.open_shelf(at),
+            (Action::Open, Some(HomeLine::Offer)) => return self.take_offer(true),
+            _ => {}
+        }
+        if let (Action::Open, Some(LibLine::Place(place))) = (a, self.library_line().filter(|_| self.focus == Focus::Main && self.page().is_none())) {
+            return match place {
+                Place::Favorites => self.go(View::Favorites),
+                Place::Downloads => self.go(View::Downloads),
+                Place::History => self.go(View::History),
+                Place::Shuffle => self.cmds.push(Cmd::ShuffleLibrary { albums: self.view == View::Albums }),
+            };
+        }
         let Some(item) = self.selected() else { return };
         match (a, item) {
             (Action::Open, Item::Song(songs, i)) => self.tap(songs, i),
@@ -2167,6 +2621,7 @@ impl App {
             (Action::Open, Item::DownloadedAlbum(a)) => self.open_page(Page::DownloadedAlbum { id: a.id, detail: Load::Loading, sel: Sel::default() }),
             (Action::Open, Item::Artist(ar)) => self.open_artist(ar.id),
             (Action::Open, Item::Playlist(p)) => self.open_playlist(p.id),
+            (Action::Open, Item::Mix(m)) => self.open_page(Page::Mix { id: m.id, detail: Load::Loading, sel: Sel::default() }),
             (Action::Enqueue | Action::PlayNext, item) => {
                 let next = a == Action::PlayNext;
                 match item {
@@ -2175,6 +2630,7 @@ impl App {
                     Item::DownloadedAlbum(a) => self.cmds.push(Cmd::EnqueueFetch(Fetch::DownloadedAlbum(a.id), next)),
                     Item::Artist(ar) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Artist(ar.id), next)),
                     Item::Playlist(p) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Playlist(p.id), next)),
+                    Item::Mix(m) => self.cmds.push(Cmd::EnqueueFetch(Fetch::Mix(m.id), next)),
                 }
             }
             // Hearts are where songs carry them, downloads the account's.
@@ -2187,6 +2643,7 @@ impl App {
                 Item::DownloadedAlbum(_) => {},
                 Item::Artist(ar) => self.cmds.push(Cmd::DownloadFetch(Fetch::Artist(ar.id))),
                 Item::Playlist(p) => self.cmds.push(Cmd::DownloadFetch(Fetch::Playlist(p.id))),
+                Item::Mix(m) => self.cmds.push(Cmd::DownloadFetch(Fetch::Mix(m.id))),
             },
             (Action::Star, item) => {
                 let (kind, id, listed) = match item {
@@ -2194,12 +2651,67 @@ impl App {
                     Item::Album(al) => (Starrable::Album, al.id, al.starred),
                     Item::DownloadedAlbum(a) => (Starrable::Album, a.id, a.starred),
                     Item::Artist(ar) => (Starrable::Artist, ar.id, ar.starred),
-                    Item::Playlist(_) => return,
+                    Item::Playlist(_) | Item::Mix(_) => return,
                 };
                 self.star(kind, id, listed);
             }
             _ => self.dirty = false,
         }
+    }
+
+    /// The open section's next order, kept for the next time: the albums' (`browse::album_sorts`), or the
+    /// songs' (the favorites, then `browse::song_sorts`).
+    fn sort_next(&mut self) {
+        if self.page().is_some() || self.full {
+            return self.dirty = false;
+        }
+        let l = &mut self.library;
+        match self.view {
+            View::Albums => {
+                let all = nori_core::browse::album_sorts();
+                let at = all.iter().position(|s| *s == l.album_sort).map_or(0, |i| (i + 1) % all.len());
+                l.album_sort = all[at];
+                (l.albums, l.album_shelves, l.albums_sel) = (Load::Loading, Vec::new(), Sel::default());
+                self.cmds.push(Cmd::Keep(nori_core::browse::album_sort_kept(l.album_sort)));
+                self.cmds.push(Cmd::Load(Req::Albums { sort: l.album_sort, offset: 0 }));
+            }
+            View::Songs => {
+                let all = SongOrder::all();
+                let at = all.iter().position(|s| *s == l.song_sort).map_or(0, |i| (i + 1) % all.len());
+                l.song_sort = all[at].clone();
+                (l.songs, l.songs_sel) = (Load::Loading, Sel::default());
+                if let SongOrder::Sorted(name) = &l.song_sort {
+                    self.cmds.push(Cmd::Keep(nori_core::browse::song_sort_kept(name.clone())));
+                }
+                let (sort, starred) = l.song_sort.read();
+                self.cmds.push(Cmd::Load(Req::Songs { sort, starred, offset: 0 }));
+            }
+            _ => self.dirty = false,
+        }
+    }
+
+    /// Plays the queue offered where it was left (`take`), or turns it down; either way it is not offered
+    /// again (`queue_offer_done`).
+    fn take_offer(&mut self, take: bool) {
+        if let Some(offer) = self.home.offer.take() {
+            self.cmds.push(if take { Cmd::TakeOffer(offer) } else { Cmd::DismissOffer(offer) });
+            self.home.settle(true);
+        }
+    }
+
+    /// Home's line selected, while Home has the keys.
+    fn home_line(&self) -> Option<HomeLine> {
+        (self.focus == Focus::Main && self.page().is_none() && self.view == View::Home).then(|| self.home.line()).flatten()
+    }
+
+    /// All of Home's shelf `i`, as a page.
+    fn open_shelf(&mut self, at: ShelfAt) {
+        let Some((title, items)) = self.home.shelf(at) else { return };
+        let row = match at {
+            ShelfAt::Row(i) => self.home.rows.get(i).and_then(|r| r.as_ref()).and_then(|s| s.row),
+            ShelfAt::ForYou => None,
+        };
+        self.open_page(Page::Row { title, items, row, more: false, sel: Sel::default() });
     }
 
     /// A song picked from a list, per the `tap_action` setting (not offered here; default PlayList).
@@ -2226,6 +2738,8 @@ impl App {
                 Page::DownloadedAlbum { id, .. } => PageOrigin::new(OriginKind::Downloads, id.as_str()),
                 Page::Artist { id, .. } => PageOrigin::new(OriginKind::Artist, id.as_str()),
                 Page::Playlist { id, .. } => PageOrigin::new(OriginKind::Playlist, id.as_str()),
+                Page::Mix { id, .. } => PageOrigin::new(OriginKind::Mix, id.as_str()),
+                Page::Row { .. } => return None,
             });
         }
         match self.view {
@@ -2234,6 +2748,17 @@ impl App {
             View::Downloads => Some(PageOrigin::new(OriginKind::Downloads, "")),
             _ => None,
         }
+    }
+
+    /// Plays the page, or shuffled.
+    pub(crate) fn play_page(&mut self, shuffle: bool) {
+        self.focus = Focus::Main;
+        self.play_all(shuffle);
+    }
+
+    /// Flips a song's seal.
+    pub(crate) fn star_song(&mut self, s: Song) {
+        self.star(Starrable::Song, s.id, s.starred);
     }
 
     fn play_all(&mut self, shuffle: bool) {
@@ -2255,6 +2780,7 @@ impl App {
             Some(Item::DownloadedAlbum(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), shuffle)),
             Some(Item::Artist(a)) => self.cmds.push(Cmd::PlayFetch(Fetch::Artist(a.id), shuffle)),
             Some(Item::Playlist(p)) => self.cmds.push(Cmd::PlayFetch(Fetch::Playlist(p.id), shuffle)),
+            Some(Item::Mix(m)) => self.cmds.push(Cmd::PlayFetch(Fetch::Mix(m.id), shuffle)),
             Some(Item::Song(songs, _)) => {
                 let from = self.origin_here();
                 self.cmds.push(Cmd::Play { songs, start: 0, shuffle, from })
@@ -2287,6 +2813,76 @@ impl App {
             Some(on) => *on,
             None => self.marks.starred(kind, id, listed),
         }
+    }
+
+    /// What the page's head offers, in the core's order (`menus::page_actions`); none for a page of a Home
+    /// row, and none but downloads' removal for a downloaded album.
+    pub fn page_actions(&self) -> Vec<PageAction> {
+        let Some(page) = self.page() else { return Vec::new() };
+        let kind = match page {
+            Page::Album { .. } | Page::DownloadedAlbum { .. } => PageKind::Album,
+            Page::Artist { .. } => PageKind::Artist,
+            Page::Playlist { .. } => PageKind::Playlist,
+            Page::Mix { detail, .. } => PageKind::Mix { refreshable: detail.ready().is_some_and(|m| m.refreshable) },
+            Page::Row { .. } => return Vec::new(),
+        };
+        if matches!(page, Page::Artist { detail: Load::Loading | Load::Idle | Load::Failed(_), .. }) {
+            return Vec::new();
+        }
+        let songs = page.songs().unwrap_or_default();
+        let missing = self.page_missing();
+        nori_core::menus::page_actions(kind, songs.len() as u32, missing as u32, self.rules.downloads)
+    }
+
+    /// How many of the page's songs are not downloaded.
+    pub fn page_missing(&self) -> usize {
+        let songs = self.page().and_then(Page::songs).unwrap_or_default();
+        songs.iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).count()
+    }
+
+    /// Does one of the page's actions.
+    pub(crate) fn page_act(&mut self, a: PageAction) {
+        let Some(page) = self.page() else { return };
+        let songs = page.songs().map(<[Song]>::to_vec).unwrap_or_default();
+        let fetch = match page {
+            Page::Album { id, .. } => Some(Fetch::Album(id.clone())),
+            Page::DownloadedAlbum { id, .. } => Some(Fetch::DownloadedAlbum(id.clone())),
+            Page::Artist { id, .. } => Some(Fetch::Artist(id.clone())),
+            Page::Playlist { id, .. } => Some(Fetch::Playlist(id.clone())),
+            Page::Mix { id, .. } => Some(Fetch::Mix(id.clone())),
+            Page::Row { .. } => None,
+        };
+        match a {
+            PageAction::Download { act: DownloadAct::Remove } => {
+                self.cmds.extend(songs.iter().map(|s| Cmd::DownloadRemove(s.id.clone())));
+            }
+            PageAction::Download { act: DownloadAct::Missing } => {
+                let missing: Vec<Song> = songs.into_iter().filter(|s| self.downloaded.get(&s.id) != Some(&SongDownload::Done)).collect();
+                self.cmds.push(Cmd::Download(missing));
+            }
+            PageAction::Download { act: DownloadAct::All } | PageAction::DownloadEverything => self.cmds.extend(fetch.map(Cmd::DownloadFetch)),
+            PageAction::AddToQueue => self.cmds.extend(fetch.map(|f| Cmd::EnqueueFetch(f, false))),
+            PageAction::Refresh => {
+                if let Some(Page::Mix { id, .. }) = self.page() {
+                    self.cmds.push(Cmd::RedrawMix(id.clone()));
+                }
+            }
+            // The terminal has no smart playlists to edit.
+            PageAction::Edit => self.dirty = false,
+        }
+    }
+
+    /// Keeps the mix shown as a playlist on the account, named by the core (`saved_mix_name`).
+    pub(crate) fn save_mix(&mut self) {
+        if let Some(Page::Mix { detail: Load::Ready(m), .. }) = self.page() {
+            let (title, songs) = (crate::text::mix_name(m.name).to_string(), m.songs.clone());
+            self.cmds.push(Cmd::SaveMix { title, songs });
+        }
+    }
+
+    /// Takes the download state of songs, as their page and menu show it.
+    pub fn knows_downloads(&mut self, ids: Vec<String>, states: Vec<SongDownload>) {
+        self.downloaded.extend(ids.into_iter().zip(states));
     }
 
     /// Flips the star on the page's album or artist.
@@ -2431,16 +3027,15 @@ impl App {
         }
     }
 
-    /// Starts a jam around the selected song, album, artist or playlist, which plays (a jam alone where
-    /// nothing on the page is selected).
-    fn jam_with_selected(&mut self) {
-        let item = if self.focus == Focus::Main { self.selected() } else { None };
+    /// Starts a jam around a song, album, artist, playlist or mix, which plays (a jam alone with none).
+    pub(crate) fn jam_with(&mut self, item: Option<Item>) {
         let play = match item {
             Some(Item::Song(songs, i)) => Some(Cmd::Play { songs, start: i, shuffle: false, from: self.origin_here() }),
             Some(Item::Album(a)) => Some(Cmd::PlayFetch(Fetch::Album(a.id), false)),
             Some(Item::DownloadedAlbum(a)) => Some(Cmd::PlayFetch(Fetch::DownloadedAlbum(a.id), false)),
             Some(Item::Artist(a)) => Some(Cmd::PlayFetch(Fetch::Artist(a.id), false)),
             Some(Item::Playlist(p)) => Some(Cmd::PlayFetch(Fetch::Playlist(p.id), false)),
+            Some(Item::Mix(m)) => Some(Cmd::PlayFetch(Fetch::Mix(m.id), false)),
             None => None,
         };
         if self.devices.jam.is_none() && self.devices.jams {
@@ -2492,10 +3087,6 @@ impl App {
         match switch {
             Switch::Mouse => self.do_action(Action::Mouse),
             Switch::Images => self.do_action(Action::Images),
-            Switch::CardCovers => {
-                self.card_covers = !self.card_covers;
-                self.cmds.push(Cmd::CardCovers(self.card_covers));
-            }
             Switch::Transparent => self.cmds.push(Cmd::Paint(!self.paint)),
             Switch::Setting(_) | Switch::Stores(..) => {}
         }
@@ -2622,25 +3213,18 @@ impl App {
                     sel.by(d * 3, options.len());
                 }
             }
-            ListRef::Profiles => {}
-            ListRef::Shelf(s) => {
-                self.focus = Focus::Main;
-                self.home.shelf = s;
-                self.home.step_along(d);
+            ListRef::Menu => {
+                if let Some(Overlay::Menu { sel, lines, .. }) = &mut self.overlay {
+                    sel.by(d, lines.len());
+                }
             }
+            ListRef::Profiles => {}
             _ => {
                 self.focus = l.focus();
-                let grid = self.grid_focused();
-                let step = if grid { self.shown.cols.max(1) as isize } else { 3 };
                 if let Some((sel, len)) = self.list() {
-                    sel.by(d * step, len);
+                    sel.by(d * 3, len);
                 }
-                if self.view == View::Settings && l == ListRef::Settings {
-                    self.settings.skip_titles(d > 0);
-                }
-                if self.view == View::Search && l == ListRef::Search {
-                    self.search.settle(d > 0);
-                }
+                self.settle(d > 0);
                 self.more();
             }
         }
@@ -2671,7 +3255,7 @@ impl App {
             }
             Hit::Button(b) => self.button(b),
             Hit::List(l) => {
-                if !matches!(l, ListRef::Help | ListRef::Picker | ListRef::Profiles) && !self.full {
+                if !matches!(l, ListRef::Help | ListRef::Picker | ListRef::Menu | ListRef::Profiles) && !self.full {
                     self.focus = l.focus();
                 } else {
                     self.dirty = false;
@@ -2721,29 +3305,18 @@ impl App {
             Button::PlayAll => self.play_all(false),
             Button::ShuffleAll => self.play_all(true),
             Button::Star => self.star_page(),
-            Button::Download => {
-                let what = match self.page() {
-                    Some(Page::DownloadedAlbum { .. }) => return,
-                    Some(Page::Album { id, .. }) => Fetch::Album(id.clone()),
-                    Some(Page::Artist { id, .. }) => Fetch::Artist(id.clone()),
-                    Some(Page::Playlist { id, .. }) => Fetch::Playlist(id.clone()),
-                    None => return,
-                };
-                self.cmds.push(Cmd::DownloadFetch(what));
-                self.say("Downloading…", false);
-            }
+            Button::Page(a) => self.page_act(a),
+            Button::SaveMix => self.save_mix(),
             Button::StarSong => {
                 if let Some(s) = self.song.as_ref().filter(|_| self.rules.stars) {
                     let (id, listed) = (s.id.clone(), s.starred);
                     self.star(Starrable::Song, id, listed);
                 }
             }
-            Button::Back => {
-                self.focus = Focus::Main;
-                self.back();
-            }
             Button::Help => self.do_action(Action::Help),
             Button::Connect => self.connect(),
+            Button::Resume => self.take_offer(true),
+            Button::Dismiss => self.take_offer(false),
         }
     }
 
@@ -2752,6 +3325,13 @@ impl App {
             ListRef::Picker => {
                 if let Some(Overlay::Picker { sel, options, .. }) = &mut self.overlay {
                     sel.to(i, options.len());
+                }
+                self.overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                return;
+            }
+            ListRef::Menu => {
+                if let Some(Overlay::Menu { sel, lines, .. }) = &mut self.overlay {
+                    sel.to(i, lines.len());
                 }
                 self.overlay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 return;
@@ -2772,24 +3352,16 @@ impl App {
                 return;
             }
             ListRef::Help => return,
-            ListRef::Shelf(s) => {
-                self.focus = Focus::Main;
-                self.home.shelf = s;
-                if let Some(p) = self.home.pos.get_mut(s) {
-                    *p = i;
-                }
-                return self.act_on_selected(Action::Open);
-            }
             _ => {}
         }
         self.focus = l.focus();
         if let Some((sel, len)) = self.list() {
             sel.to(i, len);
         }
-        // Cards and switches act on one click; songs on a second.
-        let artist_cards = l == ListRef::Page && matches!(self.page(), Some(p @ Page::Artist { .. }) if p.songs().is_none());
+        // What has a page of its own and switches act on one click; songs on a second.
+        let page = matches!(l, ListRef::Page | ListRef::Home) && !matches!(self.selected(), Some(Item::Song(..)));
         let settings_now = l == ListRef::Settings && self.settings.clicks_open();
-        if again || l.opens_on_click() || artist_cards || settings_now {
+        if again || l.opens_on_click() || page || settings_now {
             self.act_on_selected(Action::Open);
         }
     }

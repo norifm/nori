@@ -45,6 +45,10 @@ pub enum Msg {
     Search(SearchView),
     /// A status bar message.
     Note { text: String, error: bool },
+    /// Read again what `Req` reads, where it is on screen.
+    Reload(Req),
+    /// The queue another device left on the server, to offer here.
+    Offer(Option<nori_core::library::QueueOffer>),
     /// The login form's result: the profile to keep, or the error.
     LoggedIn(Result<SavedServer, String>),
     /// Result of the reachability check made when a session opens.
@@ -82,6 +86,8 @@ impl Msg {
             Msg::Lyrics { song, .. } => format!("lyrics for {song}"),
             Msg::Search(v) => format!("search results for {:?}", v.query),
             Msg::Note { text, error } => format!("note {text:?} error={error}"),
+            Msg::Offer(o) => format!("queue offered: {}", o.is_some()),
+            Msg::Reload(r) => format!("read {r:?} again"),
             Msg::LoggedIn(r) => format!("logged in: {}", r.is_ok()),
             Msg::Reachable(r) => format!("reachable: {}", r.is_ok()),
             Msg::Volume(v) => format!("volume {v}"),
@@ -97,17 +103,25 @@ impl Msg {
 }
 
 /// A screen's data request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Req {
     Home,
-    Albums { offset: u32 },
+    Albums { sort: nori_core::browse::AlbumSort, offset: u32 },
     Artists,
     Playlists,
-    Songs { offset: u32 },
+    /// The songs in a `browse::song_sorts` order, `starred` only the favorites.
+    Songs { sort: String, starred: bool, offset: u32 },
+    /// This device's listening history from where a page left off.
+    History(Option<nori_core::browse::HistoryAfter>),
+    /// What the downloads weigh.
+    DownloadsSize,
     Album(String),
     DownloadedAlbum(String),
     Artist(String),
     Playlist(String),
+    Mix(String),
+    /// A Home row in full, a page from `offset`.
+    Row { row: nori_core::settings::HomeRow, offset: u32 },
     Favorites,
     Downloads,
     /// The downloads screen's queue sections only, for the refresh while downloads run.
@@ -116,12 +130,20 @@ pub enum Req {
 }
 
 pub enum Data {
-    /// Home shelf: index (into the session's `home_album_rows`, or the service's feed), title, cards.
-    HomeRow(usize, String, Vec<crate::app::Item>),
+    /// Home shelf: index (into the session's Home rows, or the service's feed), the library's row it is,
+    /// title, entries.
+    HomeRow(usize, Option<nori_core::settings::HomeRow>, String, Vec<crate::app::Item>),
+    /// For you's tiles.
+    Mixes(Vec<nori_core::mixes::board::MixTile>),
+    /// A page of a Home row in full, and whether it was the last.
+    Row(Vec<crate::app::Item>, bool),
+    Mix(Box<nori_core::mixes::board::MixSheet>),
     Albums(Vec<nori_core::Album>),
     Artists(Vec<nori_core::Artist>),
     Playlists(Vec<nori_core::Playlist>),
     Songs(Vec<Song>, bool),
+    History(nori_core::browse::HistoryPage),
+    DownloadsSize(i64),
     /// The starred songs.
     Favorites(Vec<Song>),
     Album(Box<AlbumDetail>),
@@ -143,8 +165,6 @@ pub struct Downloads {
     pub finished: usize,
 }
 
-/// Key prefix of album card covers in [`crate::art::Art`]: `thumb:<cover id>`.
-pub const THUMB: &str = "thumb:";
 
 /// Logs `draft` in and keeps it as the active profile (blocking): the core checks it with its provider
 /// (a server is tried through its second address, then with legacy auth, which the profile then keeps).
@@ -160,7 +180,6 @@ pub mod own {
     pub use nori_host::desktop::own::{flag, keep, number, text};
     pub const MOUSE: &str = "tui.mouse";
     pub const IMAGES: &str = "tui.images";
-    pub const CARD_COVERS: &str = "tui.cardCovers";
     pub const PAINT: &str = "tui.paint";
     pub const VOLUME: &str = "tui.volume";
     /// Output device name opened at start; empty for the system default.
@@ -224,24 +243,42 @@ impl Session {
             let _ = tx.send(Msg::From(id, Box::new(Msg::Data(asked.clone(), r))));
         };
         let ask = match req.clone() {
-            Req::Albums { offset } => Some(PageAsk::Albums { sort: nori_core::browse::AlbumSort::ByName, offset }),
+            Req::Albums { sort, offset } => Some(PageAsk::Albums { sort, offset }),
             Req::Artists => Some(PageAsk::Artists),
             Req::Playlists => Some(PageAsk::Playlists),
-            Req::Songs { offset } => Some(PageAsk::Songs { offset }),
             Req::Album(id) => Some(PageAsk::Album(id)),
             Req::DownloadedAlbum(id) => Some(PageAsk::DownloadedAlbum(id)),
             Req::Artist(id) => Some(PageAsk::Artist(id)),
             Req::Playlist(id) => Some(PageAsk::Playlist(id)),
+            Req::Mix(id) => Some(PageAsk::Mix(id)),
             Req::Favorites => Some(PageAsk::Favorites),
-            Req::Home | Req::Downloads | Req::DownloadProgress | Req::Facts => None,
+            Req::Row { .. } | Req::Home | Req::Songs { .. } | Req::History(_) | Req::DownloadsSize | Req::Downloads | Req::DownloadProgress | Req::Facts => None,
         };
         if let Some(ask) = ask {
             return self.host.read_page(ask, move |r| send(r.map(data_of).map_err(|e| page_failed(&e))));
         }
         match req {
+            Req::Row { row, offset } => {
+                use crate::app::Item;
+                // A page shorter than asked for is the last; whole lists come as one.
+                let size = match nori_core::browse::home_row_page(row, offset) {
+                    Some(nori_core::browse::HomeShelf::Albums { size, .. }) => size as usize,
+                    Some(nori_core::browse::HomeShelf::Songs { limit, .. }) => limit as usize,
+                    _ => usize::MAX,
+                };
+                self.host.read_page(PageAsk::HomeRow { row, offset }, move |r| {
+                    send(match r {
+                        Ok(PageGot::Albums(v)) => Ok(Data::Row(v.iter().cloned().map(Item::Album).collect(), v.len() < size)),
+                        Ok(PageGot::Playlists(v)) => Ok(Data::Row(v.into_iter().map(Item::Playlist).collect(), true)),
+                        Ok(PageGot::Songs { songs, exhausted }) => Ok(Data::Row((0..songs.len()).map(|n| Item::Song(songs.clone(), n)).collect(), exhausted)),
+                        Ok(_) | Err(PageFailed::Nothing) => Ok(Data::Row(Vec::new(), true)),
+                        Err(e) => Err(page_failed(&e)),
+                    })
+                });
+            }
             Req::Home => {
-                let rows = self.host.home_album_rows();
-                self.host.read_home(rows.clone(), false, move |r| match r {
+                let rows = self.host.home_rows();
+                self.host.read_home(rows.clone(), true, move |r| match r {
                     // A source's own Home: its feed, each shelf's songs first (a song plays the shelf's songs
                     // from it), then its albums, playlists and artists, as the desktop's.
                     Ok(HomePart::Feed(feed)) => {
@@ -250,13 +287,19 @@ impl Session {
                             use crate::app::Item;
                             let songs = (0..f.songs.len()).map(|n| Item::Song(f.songs.clone(), n));
                             let rest = f.albums.into_iter().map(Item::Album).chain(f.playlists.into_iter().map(Item::Playlist)).chain(f.artists.into_iter().map(Item::Artist));
-                            send(Ok(Data::HomeRow(i, f.title, songs.chain(rest).collect())));
+                            send(Ok(Data::HomeRow(i, None, f.title, songs.chain(rest).collect())));
                         }
                     }
-                    Ok(HomePart::Shelf { at, items: ShelfItems::Albums(albums) }) => {
-                        send(Ok(Data::HomeRow(at, crate::text::home_row(rows[at]).into(), albums.into_iter().map(crate::app::Item::Album).collect())))
+                    Ok(HomePart::Shelf { at, items }) => {
+                        use crate::app::Item;
+                        let items = match items {
+                            ShelfItems::Albums(v) => v.into_iter().map(Item::Album).collect(),
+                            ShelfItems::Playlists(v) => v.into_iter().map(Item::Playlist).collect(),
+                            ShelfItems::Songs(v) => (0..v.len()).map(|n| Item::Song(v.clone(), n)).collect(),
+                        };
+                        send(Ok(Data::HomeRow(at, Some(rows[at]), crate::text::home_row(rows[at]).into(), items)))
                     }
-                    Ok(_) => {}
+                    Ok(HomePart::Mixes(tiles)) => send(Ok(Data::Mixes(tiles))),
                     Err(e) => send(Err(unreachable(&e))),
                 });
             }
@@ -266,6 +309,19 @@ impl Session {
                     let stored = core.downloaded_library();
                     send(stored.and_then(|stored| core.download_sections().map(|s| Data::Downloads(Box::new(Downloads { finished: s.finished.len(), active: s.active, queued: s.queued, failed: s.failed, stored })))).map_err(|e| e.to_string()));
                 });
+            }
+            // The index's songs in the order asked for (the server's own for a profile that keeps none).
+            Req::Songs { sort, starred, offset } => {
+                let client = self.client.clone();
+                nori_host::spawn("nori-read", move || send(block_on(client.songs_listed(sort, starred, 0, 0, offset)).map(|p| Data::Songs(p.songs, p.exhausted)).map_err(|e| unreachable(&e))));
+            }
+            Req::History(after) => {
+                let core = self.core.clone();
+                nori_host::spawn("nori-read", move || send(core.history_page(after).map(Data::History).map_err(|e| e.to_string())));
+            }
+            Req::DownloadsSize => {
+                let core = self.core.clone();
+                nori_host::spawn("nori-read", move || send(core.downloads(true).map(|v| Data::DownloadsSize(v.iter().map(|s| s.size as i64).sum())).map_err(|e| e.to_string())));
             }
             Req::DownloadProgress => {
                 let core = self.core.clone();
@@ -281,18 +337,9 @@ impl Session {
     }
 
     /// Requests cover `art` at `size` px, deriving colours on the loader thread when `colours`.
-    pub fn cover(&self, art: String, size: u32, colours: bool) -> Option<nori_covers::loader::Ticket> {
-        self.cover_as(art.clone(), art, size, colours)
-    }
-
-    /// Requests an album card cover, delivered under the key `thumb:<art>`.
-    pub fn thumb(&self, art: String, size: u32) -> Option<nori_covers::loader::Ticket> {
-        self.cover_as(art.clone(), format!("{THUMB}{art}"), size, false)
-    }
-
-    fn cover_as(&self, id: String, art: String, size: u32, colours: bool) -> Option<nori_covers::loader::Ticket> {
+    pub fn cover(&self, art: String, size: u32) -> Option<nori_covers::loader::Ticket> {
         let (tx, me) = (self.tx.clone(), self.id);
-        self.host.cover(id, size, colours, move |image, colours| {
+        self.host.cover(art.clone(), size, true, move |image, colours| {
             if let Ok(image) = image {
                 let _ = tx.send(Msg::From(me, Box::new(Msg::Cover { art, image, colours })));
             }
@@ -372,8 +419,7 @@ fn data_of(got: PageGot) -> Data {
         PageGot::Album(d) => Data::Album(d),
         PageGot::Artist(d) => Data::Artist(d),
         PageGot::Playlist(d) => Data::Playlist(d),
-        // No screen of the terminal's reads a mix as a page.
-        PageGot::Mix(m) => Data::Songs(m.songs, true),
+        PageGot::Mix(m) => Data::Mix(m),
     }
 }
 

@@ -73,12 +73,12 @@ pub fn home_row(row: nori_core::settings::HomeRow) -> &'static str {
     match row {
         HomeRow::Recent => "Recently played",
         HomeRow::Newest => "Recently added",
-        HomeRow::Frequent => "Most played",
-        HomeRow::Starred => "Favorites",
-        HomeRow::Random => "Something random",
+        HomeRow::Frequent => "Most played albums",
+        HomeRow::Starred => "Favorite albums",
+        HomeRow::Random => "Random",
         HomeRow::Playlists => "Playlists",
-        HomeRow::Pinned => "Pinned",
-        HomeRow::TopSongs => "Top songs",
+        HomeRow::Pinned => "Favorite playlists",
+        HomeRow::TopSongs => "Most played songs",
     }
 }
 
@@ -128,6 +128,22 @@ pub fn album_caption(d: &AlbumDetail) -> String {
     parts.join(" · ")
 }
 
+/// An artist page's caption: "14 releases · 162 songs", or its songs where it lists no albums.
+pub fn artist_caption(d: &nori_core::ArtistDetail) -> String {
+    let songs: u32 = d.albums.iter().map(|a| a.song_count).sum();
+    let mut parts = Vec::with_capacity(2);
+    if !d.albums.is_empty() {
+        parts.push(count(d.albums.len() as u64, "release", "releases"));
+    }
+    if songs > 0 {
+        parts.push(count(songs as u64, "song", "songs"));
+    }
+    if parts.is_empty() && !d.songs.is_empty() {
+        parts.push(count(d.songs.len() as u64, "song", "songs"));
+    }
+    parts.join(" · ")
+}
+
 /// A playlist page's caption: "12 songs · 48:10".
 pub fn playlist_caption(d: &PlaylistDetail) -> String {
     songs_caption(d.songs.len() as u32, d.seconds)
@@ -157,9 +173,9 @@ pub fn band(freq: f32, mark: BandMark) -> String {
         BandMark::None => "",
         BandMark::Left => " L",
         BandMark::Right => " R",
-        BandMark::LowShelf => " ↙",
-        BandMark::HighShelf => " ↗",
-        BandMark::NoGain => " ∿",
+        BandMark::LowShelf => " low shelf",
+        BandMark::HighShelf => " high shelf",
+        BandMark::NoGain => " filter",
     };
     format!("{}{mark}", numbers::hz(freq, POINT))
 }
@@ -274,9 +290,233 @@ pub fn search_fallback(reason: Option<&str>) -> String {
 
 // ---- other devices and jams ----
 
-/// The hint line under the player, and in the full player.
-pub const HINT: &str = "space play  s shuffle  r repeat  f favorite  / search  1-9 go  F player  ? help";
-pub const HINT_FULL: &str = "esc back  space play  tab panel  L lyrics  Q queue  C devices  ? help";
+/// The keys the bottom line shows, as (key, what it does), by what has them.
+pub mod hints {
+    type Hints = &'static [(&'static str, &'static str)];
+    pub const HOME: Hints = &[("enter", "open"), ("m", "menu"), ("x", "play"), ("/", "search"), ("1-9", "go"), ("F", "player"), ("?", "keys")];
+    pub const LIBRARY: Hints = &[("enter", "open"), ("m", "menu"), ("x", "play"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
+    pub const SORTED: Hints = &[("enter", "open"), ("m", "menu"), ("S", "sort"), ("[ ]", "section"), ("/", "search"), ("F", "player"), ("?", "keys")];
+    pub const OFFER: Hints = &[("enter", "resume"), ("d", "close"), ("/", "search"), ("1-9", "go"), ("?", "keys")];
+    pub const HISTORY: Hints = &[("enter", "play"), ("m", "menu"), ("esc", "back"), ("?", "keys")];
+    pub const PAGE: Hints = &[("enter", "play"), ("m", "menu"), ("x", "play all"), ("X", "shuffle"), ("f", "favorite"), ("esc", "back"), ("?", "keys")];
+    pub const RESULTS: Hints = &[("enter", "open"), ("m", "menu"), ("/", "type"), ("esc", "back"), ("?", "keys")];
+    pub const TYPING: Hints = &[("enter", "results"), ("esc", "stop typing"), ("ctrl u", "clear")];
+    pub const SETTINGS: Hints = &[("enter", "switch"), ("← →", "change"), ("[ ]", "group"), ("?", "keys")];
+    pub const EQUALIZER: Hints = &[("← →", "choose"), ("↑ ↓", "change"), ("enter", "switch"), ("d", "remove a band"), ("?", "keys")];
+    pub const DOWNLOADS: Hints = &[("enter", "play"), ("d", "remove"), ("esc", "back"), ("?", "keys")];
+    pub const PLAYING: Hints = &[("space", "play"), ("n p", "next, previous"), ("m", "menu"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
+    pub const QUEUE: Hints = &[("enter", "play"), ("d", "remove"), ("K J", "move"), ("s r", "shuffle, repeat"), ("tab", "panel"), ("esc", "back")];
+    pub const LYRICS: Hints = &[("enter", "play from the line"), ("[ ]", "timing"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
+    pub const DEVICES: Hints = &[("enter", "play there"), ("tab", "panel"), ("esc", "back"), ("?", "keys")];
+}
+
+pub const LISTEN_NOW: &str = "Listen now";
+pub const SHOW_ALL: &str = "Show all";
+pub const PLAY: &str = "Play";
+pub const SHUFFLE: &str = "Shuffle";
+pub const UP_NEXT: &str = "Playing next";
+pub const BACK: &str = "Back";
+pub const VOLUME: &str = "Volume";
+pub const NOTHING_PLAYING: &str = "Nothing playing";
+/// Beside a provider's song: playing it makes the server fetch it.
+pub const REMOTE: &str = "remote";
+pub const OFFLINE: &str = "offline";
+pub const UNREACHABLE: &str = "unreachable";
+
+pub const SORT_BY: &str = "Sort by";
+pub const FOR_YOU: &str = "For you";
+pub const SAVE_AS_PLAYLIST: &str = "Save as playlist";
+pub const NEW_PLAYLIST: &str = "New playlist";
+pub const ADD_TO_PLAYLIST: &str = "Add to playlist";
+pub const MORE: &str = "More";
+
+/// Songs added to a playlist: "Added to Road trip".
+pub fn added_to(name: &str) -> String {
+    format!("Added to {name}")
+}
+
+/// A line of the song menu, as the phone words it.
+pub fn song_action(a: &nori_core::menus::SongAction) -> String {
+    use nori_core::menus::SongAction;
+    match a {
+        SongAction::Favourite { on: true } => "Add to favorites".into(),
+        SongAction::Favourite { on: false } => "Remove from favorites".into(),
+        SongAction::PlayNext => "Play next".into(),
+        SongAction::AddToQueue => "Add to queue".into(),
+        SongAction::AddToPlaylist => "Add to playlist…".into(),
+        SongAction::RemoveDownload => "Remove download".into(),
+        SongAction::StopDownload => "Stop download".into(),
+        SongAction::Download => "Download".into(),
+        SongAction::GoToAlbum { .. } => "Go to album".into(),
+        SongAction::GoToArtist { name, named: true, .. } => format!("Go to {name}"),
+        SongAction::GoToArtist { .. } => "Go to artist".into(),
+        SongAction::AddToLibrary => "Add to library".into(),
+        SongAction::Lyrics => "Lyrics".into(),
+        SongAction::SleepTimer => "Sleep timer…".into(),
+        SongAction::StartRadio => "Start radio from this song".into(),
+        SongAction::InstantMix => "Instant mix".into(),
+        SongAction::ExcludeFromMixes => "Exclude from mixes".into(),
+        SongAction::Share => "Share link".into(),
+        SongAction::Details => "Details".into(),
+        SongAction::StartJam => JAM_START.into(),
+    }
+}
+
+/// A line of a menu that is not the song's own.
+pub fn menu_act(a: &crate::menu::MenuAct, missing: usize) -> String {
+    use crate::menu::MenuAct;
+    match a {
+        MenuAct::Song(s) => song_action(s),
+        MenuAct::Play | MenuAct::PlayPage => PLAY.into(),
+        MenuAct::PlayNext => "Play next".into(),
+        MenuAct::AddToQueue => "Add to queue".into(),
+        MenuAct::ShufflePage => SHUFFLE.into(),
+        MenuAct::SaveMix => SAVE_AS_PLAYLIST.into(),
+        MenuAct::Page(p) => page_action(*p, missing),
+    }
+}
+
+/// A playlist made: "Created nori discover".
+pub fn created(name: &str) -> String {
+    format!("Created {name}")
+}
+
+/// One of a page's head's actions, as the phone words it.
+pub fn page_action(a: nori_core::menus::PageAction, missing: usize) -> String {
+    use nori_core::menus::{DownloadAct, PageAction};
+    match a {
+        PageAction::Download { act: DownloadAct::All } => "Download".into(),
+        PageAction::Download { act: DownloadAct::Missing } => format!("Download the other {missing}"),
+        PageAction::Download { act: DownloadAct::Remove } => "Remove downloads".into(),
+        PageAction::DownloadEverything => "Download everything".into(),
+        PageAction::AddToQueue => "Add to queue".into(),
+        PageAction::Refresh => "New mix".into(),
+        PageAction::Edit => "Edit".into(),
+    }
+}
+
+/// An artist's shelf of releases by kind.
+pub fn release_shelf(g: &nori_core::pages::ReleaseGroup) -> String {
+    use nori_core::pages::ReleaseKind;
+    match g.kind {
+        ReleaseKind::Album => "Albums".into(),
+        ReleaseKind::Ep => "EPs".into(),
+        ReleaseKind::Single => "Singles".into(),
+        ReleaseKind::Live => "Live".into(),
+        ReleaseKind::Compilation => "Compilations".into(),
+        ReleaseKind::Soundtrack => "Soundtracks".into(),
+        ReleaseKind::Remix => "Remixes".into(),
+        ReleaseKind::Other => "Others".into(),
+        ReleaseKind::Tagged if g.tag.ends_with('s') => g.tag.clone(),
+        ReleaseKind::Tagged => format!("{}s", g.tag),
+    }
+}
+pub const CONTINUE: &str = "Continue";
+pub const RESUME: &str = "Resume";
+pub const CLOSE: &str = "Close";
+
+/// Where the offered queue stands: "Artist · 3 of 12".
+pub fn offer_place(artist: &str, at: u32, of: usize) -> String {
+    format!("{artist} · {at} of {of}")
+}
+
+/// A For you mix's name, as its line and its page say it.
+pub fn mix_name(n: nori_core::mixes::board::MixName) -> &'static str {
+    use nori_core::mixes::board::MixName as M;
+    match n {
+        M::Favourites => "Favorites",
+        M::QuickPicks => "Quick picks",
+        M::Discover => "Discover",
+        M::DiscoverWeekly => "Discover Weekly",
+        M::ListenAgain => "Listen again",
+        M::Top => "Your top songs",
+    }
+}
+
+/// Under a mix's name: what it is made from.
+pub fn mix_line(favourites: bool) -> &'static str {
+    if favourites { "Your favorites" } else { "Made for you" }
+}
+
+/// One of the albums' orders (`browse::album_sorts`).
+pub fn album_sort(sort: nori_core::browse::AlbumSort) -> &'static str {
+    use nori_core::browse::AlbumSort;
+    match sort {
+        AlbumSort::Starred => "Favorites",
+        AlbumSort::ByName => "Title",
+        AlbumSort::ByArtist | AlbumSort::ArtistRows => "Artist",
+        AlbumSort::ByYear => "Year",
+        AlbumSort::Newest => "Added",
+        AlbumSort::Recent => "Played",
+        AlbumSort::Frequent => "Most played",
+        AlbumSort::Random => "Random",
+        AlbumSort::ByGenre => "Genres",
+    }
+}
+
+/// One of the songs' orders: the favorites, or one of `browse::song_sorts` by its name.
+pub fn song_order(order: &crate::app::SongOrder) -> &'static str {
+    match order {
+        crate::app::SongOrder::Favorites => "Favorites",
+        crate::app::SongOrder::Sorted(name) => match name.as_str() {
+            "ARTIST" => "Artist",
+            "ALBUM" => "Album",
+            "YEAR" => "Year",
+            "ADDED" => "Added",
+            "PLAYS" => "Most played",
+            "LONGEST" => "Longest",
+            _ => "Title",
+        },
+    }
+}
+
+/// A place at the top of the library's sections.
+pub fn place(p: crate::app::Place) -> &'static str {
+    use crate::app::Place;
+    match p {
+        Place::Favorites => "Favorites",
+        Place::Downloads => "Downloads",
+        Place::History => "History",
+        Place::Shuffle => "Shuffle",
+    }
+}
+
+/// A switch's state.
+pub fn on_off(on: bool) -> &'static str {
+    if on { "On" } else { "Off" }
+}
+
+/// The repeat mode `mode` as the queue's head and the song playing say it.
+pub fn repeat_word(mode: u8) -> &'static str {
+    match mode {
+        nori_core::rules::REPEAT_ONE => "Repeat one",
+        _ => "Repeat",
+    }
+}
+
+/// The server did not answer: what the page shows instead.
+pub fn stored_only(e: &str) -> String {
+    format!("{e} · showing what is stored · R tries again")
+}
+
+/// Where this computer plays, as the phone names an output (`outputs::output_look`): the device's own name,
+/// or what it is; this computer while the system's default is unnamed.
+pub fn output_name(output: &str) -> String {
+    use nori_core::profiles::OutputPort;
+    if output.is_empty() {
+        return THIS_COMPUTER.into();
+    }
+    let look = nori_core::outputs::output_look(output.to_string());
+    let name = look.name.filter(|n| !n.is_empty());
+    match look.port {
+        OutputPort::Speaker => "Phone speaker".into(),
+        OutputPort::Wired => "Wired headphones".into(),
+        OutputPort::Usb => name.unwrap_or_else(|| "DAC".into()),
+        OutputPort::Bluetooth => name.unwrap_or_else(|| "device".into()),
+        OutputPort::Other => name.unwrap_or_else(|| "Other output".into()),
+    }
+}
+
 pub const SIGNED_OUT_AGAIN: &str = "YouTube signed you out. Sign in again to see your library and likes.";
 pub const SIGN_IN_WHY: &str = "See your own Home, your library and your likes. Music plays without it too.";
 pub const SIGN_IN_KEYS: &str = "enter sign in with Google · p paste cookies · esc close";
@@ -287,7 +527,6 @@ pub const PASTE_COOKIES: &str = "Sign in to music.youtube.com in a private brows
 pub const SIGN_IN_WINDOW_FAILED: &str = "The sign-in window couldn't open here. Paste cookies from a browser instead.";
 pub const RISK: &str = "Unofficial apps are against YouTube's terms, and YouTube may flag an account that uses one.";
 pub const THIS_COMPUTER: &str = "This computer";
-pub const PLAY_ON: &str = "Play on";
 pub const REMOTE_OFF: &str = "Remote control and jams are off: switch them on in Settings, under Other devices";
 
 /// The player bar's line while another device plays: "Playing on Desk".
@@ -451,7 +690,7 @@ mod tests {
 
     #[test]
     fn words() {
-        assert_eq!(band(1000.0, BandMark::LowShelf), "1k ↙");
+        assert_eq!(band(1000.0, BandMark::LowShelf), "1k low shelf");
         assert_eq!((balance(0.0), balance(-0.3), balance(0.05)), ("center".into(), "L 30%".into(), "R 5%".into()));
         assert_eq!(nudge(-250), "-0.25 s");
         assert_eq!((songs_caption(1, 200), albums(2)), ("1 song · 3:20".into(), "2 albums".into()));
@@ -483,6 +722,10 @@ mod tests {
         // Lyrics credit says untimed.
         assert_eq!(lyrics_credit(LyricsOrigin::Lrclib, true), "LRCLIB");
         assert_eq!(lyrics_credit(LyricsOrigin::Lrclib, false), "LRCLIB · not timed");
+
+        // The output by what it is, or its own name (`output_look`).
+        let outputs = ["", "USB: K3", "USB: ", "Wired headphones", "Bluetooth: Buds", "MacBook Pro Speakers"].map(output_name);
+        assert_eq!(outputs, ["This computer", "K3", "DAC", "Wired headphones", "Buds", "MacBook Pro Speakers"]);
     }
 
 }

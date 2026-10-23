@@ -1,7 +1,6 @@
-//! Drawing: the page under two outlines, the tabs along the top and the player along the bottom, and the
-//! full player with its panel. The page is painted in the season's colors; where it scrolls under an outline
-//! its nearest two rows fade into the page instead of blurring. Every clickable area is recorded in
-//! `App::hits` as it is drawn. Lists and grids draw only visible rows.
+//! Drawing: a line of tabs, the page, two lines of the song playing and a line of keys; the full player
+//! takes the window with its song and a panel. The page is painted in the season's colors. Every clickable
+//! area is recorded in `App::hits` as it is drawn. Lists draw only visible rows.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -20,15 +19,13 @@ use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, Button, DeviceRow, Focus, Hit, Item, ListRef, Load, Overlay, Page, Panel, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
+use nori_core::browse::AlbumSort;
+
+use crate::app::{App, Button, DeviceRow, Focus, HomeLine, Hit, Item, LibLine, ListRef, Load, Overlay, Page, Panel, Place, QueueRow, SearchRow, Sel, View, LOGIN_FIELDS, PANELS};
 use crate::art::{Art, Theme};
 use crate::keys::{Scope, BINDINGS};
 use crate::settings_view::{self, EqRow, Line as SLine, SettingsView};
 use crate::text::clock;
-
-/// Album card minimum width and height without covers.
-const CARD_W: u16 = 22;
-const CARD_H: u16 = 4;
 
 /// `s` cut to `w` columns, with an ellipsis if cut.
 pub fn fit(s: &str, w: usize) -> Cow<'_, str> {
@@ -100,6 +97,16 @@ fn bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
 }
 
+/// A row `n` rows into `r`.
+fn row_of(r: Rect, n: u16) -> Rect {
+    Rect { y: r.y + n, height: 1, ..r }
+}
+
+/// `r` without its first `n` rows.
+fn below(r: Rect, n: u16) -> Rect {
+    Rect { y: r.y + n.min(r.height), height: r.height.saturating_sub(n), ..r }
+}
+
 /// A scrolling list with the selection kept in view and a scrollbar when it overflows.
 #[allow(clippy::too_many_arguments)]
 fn list<'a>(f: &mut Frame, area: Rect, sel: &mut Sel, len: usize, lref: ListRef, hits: &mut Vec<(Rect, Hit)>, t: &Theme, focused: bool, row: &dyn Fn(usize, usize) -> Line<'a>) {
@@ -130,87 +137,6 @@ fn list<'a>(f: &mut Frame, area: Rect, sel: &mut Sel, len: usize, lref: ListRef,
     }
 }
 
-/// Card cover state for a frame: the covers, whether cards show them, and missing ones to request after.
-pub struct Pics<'a> {
-    art: Option<&'a mut Art>,
-    on: bool,
-    want: Vec<String>,
-}
-
-impl Pics<'_> {
-    /// Card minimum width and height.
-    fn card(&self) -> (u16, u16) {
-        if self.on {
-            (CARD_W + 8, CARD_H + 2)
-        } else {
-            (CARD_W, CARD_H)
-        }
-    }
-}
-
-/// A grid of cards (cover with text beside it, or a box without covers), selection kept in view;
-/// `sel.top` is the first visible row. Returns the number of columns.
-#[allow(clippy::too_many_arguments)]
-fn cards(f: &mut Frame, area: Rect, sel: &mut Sel, len: usize, lref: ListRef, hits: &mut Vec<(Rect, Hit)>, t: &Theme, focused: bool, pics: &mut Pics, card: &dyn Fn(usize) -> (String, String, Option<String>)) -> usize {
-    hits.push((area, Hit::List(lref)));
-    let (min_w, card_h) = pics.card();
-    let cols = ((area.width + 1) / (min_w + 1)).max(1) as usize;
-    let w = ((area.width + 1) / cols as u16).saturating_sub(1).max(1);
-    let rows = (area.height / card_h).max(1) as usize;
-    sel.at = sel.at.min(len.saturating_sub(1));
-    let row_at = sel.at / cols;
-    if row_at < sel.top {
-        sel.top = row_at;
-    } else if row_at >= sel.top + rows {
-        sel.top = row_at + 1 - rows;
-    }
-    sel.cut = (sel.top > 0, (sel.top + rows) * cols < len);
-    for r in 0..rows {
-        for c in 0..cols {
-            let i = (sel.top + r) * cols + c;
-            if i >= len {
-                return cols;
-            }
-            let rect = Rect { x: area.x + c as u16 * (w + 1), y: area.y + r as u16 * card_h, width: w, height: card_h.min(area.height) };
-            let (title, sub, art) = card(i);
-            one_card(f, rect, &title, &sub, art.as_deref(), pics, t, i == sel.at, focused);
-            hits.push((rect.intersection(area), Hit::Row(lref, i)));
-        }
-    }
-    cols
-}
-
-#[allow(clippy::too_many_arguments)]
-fn one_card(f: &mut Frame, r: Rect, title: &str, sub: &str, art: Option<&str>, pics: &mut Pics, t: &Theme, chosen: bool, focused: bool) {
-    // The chosen card is raised: the surface under the cover and the words.
-    let ground = if chosen { t.select(focused).remove_modifier(Modifier::BOLD) } else { Style::default() };
-    put(f, Block::default().style(ground), r);
-    if pics.on {
-        let h = r.height.saturating_sub(1).min(CARD_H + 1);
-        let cr = Rect { width: (h * 2).min(r.width), height: h, ..r };
-        let key = art.map(|a| format!("{}{a}", crate::backend::THUMB));
-        if let (Some(a), Some(k)) = (art, &key) {
-            if !pics.art.as_ref().is_some_and(|x| x.has(k)) {
-                pics.want.push(a.to_string());
-            }
-        }
-        cover(f, cr, pics.art.as_deref_mut(), key.as_deref(), t);
-        let words = Rect { x: cr.x + cr.width + 1, y: r.y + h.saturating_sub(3) / 2, width: r.width.saturating_sub(cr.width + 1), height: 3.min(h) };
-        let w = words.width as usize;
-        let (who, when) = sub.split_once(" · ").unwrap_or((sub, ""));
-        let lines = vec![Line::from(Span::styled(fit(title, w).into_owned(), bold().fg(t.ink))), Line::from(Span::styled(fit(who, w).into_owned(), t.dim())), Line::from(Span::styled(fit(when, w).into_owned(), t.dim()))];
-        put(f, Paragraph::new(lines), words);
-        return;
-    }
-    let border = if chosen { Style::default().fg(t.ink) } else { Style::default().fg(t.hair) };
-    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(border);
-    let inner = block.inner(r);
-    put(f, block, r);
-    let w = inner.width.saturating_sub(1) as usize;
-    let lines = vec![Line::from(Span::styled(format!(" {}", fit(title, w)), bold().fg(t.ink))), Line::from(Span::styled(format!(" {}", fit(sub, w)), t.dim()))];
-    put(f, Paragraph::new(lines), inner);
-}
-
 fn centred(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width);
     let h = h.min(area.height);
@@ -226,14 +152,17 @@ fn popup(f: &mut Frame, r: Rect, title: Span, t: &Theme) -> Rect {
     inner
 }
 
-/// A bold page title with a right-aligned caption; returns the area below plus a blank line.
+/// A bold page title with a quiet line under it (none when empty); returns the area below plus a blank line.
 fn heading(f: &mut Frame, area: Rect, title: &str, caption: &str, t: &Theme) -> Rect {
     if area.height < 3 {
         return area;
     }
-    let line = spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(caption.to_string(), t.dim()), area.width as usize);
-    put(f, Paragraph::new(line), Rect { height: 1, ..area });
-    Rect { y: area.y + 2, height: area.height - 2, ..area }
+    text(f, area, title, bold().fg(t.ink));
+    if caption.is_empty() {
+        return below(area, 2);
+    }
+    text(f, row_of(area, 1), caption, t.dim());
+    below(area, 3)
 }
 
 // ---- songs as a table ----
@@ -257,7 +186,7 @@ fn columns(w: usize, album: bool) -> [usize; 5] {
 }
 
 fn table_head(f: &mut Frame, area: Rect, t: &Theme, album: bool) -> Rect {
-    if area.height < 4 {
+    if area.height < 3 {
         return area;
     }
     let c = columns(area.width as usize, album);
@@ -271,13 +200,12 @@ fn table_head(f: &mut Frame, area: Rect, t: &Theme, album: bool) -> Rect {
         s.push_str(&pad("Album", c[3]));
     }
     s.push_str(&format!("{:>w$}", "Time ", w = c[4]));
-    put(f, Paragraph::new(Span::styled(s, t.dim().add_modifier(Modifier::BOLD))), Rect { height: 1, ..area });
-    put(f, Paragraph::new(Span::styled("─".repeat(area.width as usize), Style::default().fg(t.hair))), Rect { y: area.y + 1, height: 1, ..area });
-    Rect { y: area.y + 2, height: area.height - 2, ..area }
+    put(f, Paragraph::new(Span::styled(s, t.dim())), row_of(area, 0));
+    below(area, 1)
 }
 
 /// What a song row marks after its title: that a jam guest asked for the song, else its seal where the
-/// profile has favorites, as the session's star marks show it.
+/// profile has favorites, as the session's star marks show it, else that it is a provider's.
 struct Marks<'a> {
     stars: &'a StarMarks,
     hearts: bool,
@@ -289,13 +217,15 @@ impl<'a> Marks<'a> {
         Marks { stars, hearts: rules.stars, asked: devices.asked() }
     }
 
-    fn mark(&self, s: &Song) -> String {
+    fn mark(&self, s: &Song) -> (&'static str, bool) {
         if self.asked.contains(s.id.as_str()) {
-            format!(" {}", crate::text::ASKED)
+            (crate::text::ASKED, false)
         } else if self.hearts && self.stars.starred(Starrable::Song, &s.id, s.starred) {
-            format!(" {SEAL}")
+            (SEAL, true)
+        } else if s.is_provider() {
+            (crate::text::REMOTE, false)
         } else {
-            String::new()
+            ("", false)
         }
     }
 }
@@ -313,14 +243,10 @@ fn song_line(s: &Song, marks: &Marks, number: usize, w: usize, t: &Theme, playin
     } else {
         Span::styled(pad(&format!("{number:>3}"), c[0]), t.dim())
     };
-    let mut title = s.title.clone();
-    if s.is_provider() {
-        title.push_str(" ☁");
-    }
-    let mark = marks.mark(s);
+    let (mark, sealed) = marks.mark(s);
     let title_style = if playing { t.current() } else { Style::default().fg(t.ink) };
     let tw = c[1].saturating_sub(mark.width() + 2);
-    let mut spans = vec![num, Span::styled(pad(&title, tw), title_style), Span::styled(pad(&mark, mark.width() + 2), if mark.trim() == SEAL { Style::default().fg(t.accent) } else { t.dim() })];
+    let mut spans = vec![num, Span::styled(pad(&s.title, tw), title_style), Span::styled(pad(mark, mark.width() + 2), if sealed { Style::default().fg(t.accent) } else { t.dim() })];
     if c[2] > 0 {
         spans.push(Span::styled(pad(&s.artist, c[2].saturating_sub(2)), t.dim()));
         spans.push(Span::raw("  "));
@@ -333,11 +259,24 @@ fn song_line(s: &Song, marks: &Marks, number: usize, w: usize, t: &Theme, playin
     Line::from(spans)
 }
 
-// ---- the frame ----
+/// An album, artist, playlist or song as one row: its name, then what it is by, and its year or count at
+/// the end.
+fn item_line(item: &Item, w: usize, t: &Theme, starred: bool, playing: bool) -> Line<'static> {
+    let (name, by, end) = match item {
+        Item::Album(a) | Item::DownloadedAlbum(a) => (a.name.as_str(), a.artist.clone(), if a.year > 0 { a.year.to_string() } else { String::new() }),
+        Item::Song(songs, at) => (songs[*at].title.as_str(), songs[*at].artist.clone(), clock(songs[*at].duration as i64 * 1000)),
+        Item::Playlist(p) => (p.name.as_str(), p.owner.clone().unwrap_or_default(), crate::text::playlist_line(p)),
+        Item::Mix(m) => (crate::text::mix_name(m.name), crate::text::mix_line(m.favourites).to_string(), String::new()),
+        Item::Artist(a) => (a.name.as_str(), String::new(), a.album_count.map(crate::text::albums).unwrap_or_default()),
+    };
+    let name_w = (w * 11 / 20).max(12);
+    let seal = if starred { format!(" {SEAL}") } else { String::new() };
+    let name_style = if playing { t.current() } else { Style::default().fg(t.ink) };
+    let left = vec![Span::styled(pad(&format!("{}{seal}", fit(name, name_w.saturating_sub(seal.width() + 2))), name_w), name_style), Span::styled(by, t.dim())];
+    spread(left, Span::styled(format!("{end} "), t.dim()), w)
+}
 
-/// The two rows nearest an outline where scrolled content fades: a third, then two thirds of the way to the
-/// page.
-const FADE: [f32; 2] = [0.66, 0.33];
+// ---- the frame ----
 
 #[allow(clippy::needless_option_as_deref)]
 pub fn draw(f: &mut Frame, app: &mut App, mut art: Option<&mut Art>) {
@@ -357,232 +296,155 @@ pub fn draw(f: &mut Frame, app: &mut App, mut art: Option<&mut Art>) {
         let body = Rect { height: area.height.saturating_sub(rows.foot.height), ..area };
         full_player(f, body, app, art.as_deref_mut());
     } else {
-        main(f, rows.page, app, &t, art.as_deref_mut());
-        fade_edges(f, rows.page, app, &t);
-        toast(f, rows.page, app);
-        top_outline(f, rows.top, app, &t);
-        if rows.bar.height > 0 {
-            player_bar(f, rows.bar, app, &t, art.as_deref_mut());
-        }
+        tab_line(f, rows.head, app, &t);
+        page_view(f, rows.page, app, &t);
+        now_playing(f, rows.now, app, &t);
     }
-    footer(f, rows.foot, app, &t);
+    foot(f, rows.foot, app, &t);
     overlay(f, area, app, &t);
     crate::art::finish(f.buffer_mut(), app.colors);
 }
 
-/// Fades the rows next to an outline where the page scrolls under it: toward the page color, or dimmed
-/// where the page is the terminal's own.
-fn fade_edges(f: &mut Frame, page: Rect, app: &App, t: &Theme) {
-    let (above, below) = app.page_cut();
-    let bottom = page.y + page.height;
-    if above {
-        fade_row(f.buffer_mut(), Rect { y: page.y, height: 1, ..page }, t, FADE[0]);
-        fade_row(f.buffer_mut(), Rect { y: page.y + 1, height: 1, ..page }, t, FADE[1]);
-    }
-    if below && page.height >= 2 {
-        fade_row(f.buffer_mut(), Rect { y: bottom - 1, height: 1, ..page }, t, FADE[0]);
-        fade_row(f.buffer_mut(), Rect { y: bottom - 2, height: 1, ..page }, t, FADE[1]);
-    }
-}
-
-/// Blends the colors of the cells in a one-row `r` toward the page by `strength`.
-pub fn fade_row(buf: &mut ratatui::buffer::Buffer, r: Rect, t: &Theme, strength: f32) {
-    let r = r.intersection(buf.area);
-    if r.is_empty() {
-        return;
-    }
-    for x in r.left()..r.right() {
-        let cell = &mut buf[(x, r.y)];
-        if t.painted {
-            cell.fg = t.fade(cell.fg, strength);
-            cell.bg = t.fade(cell.bg, strength);
-        } else if strength > 0.5 {
-            cell.modifier.insert(Modifier::DIM);
-        }
-    }
-}
-
-/// The status note, bottom right of the page.
-fn toast(f: &mut Frame, area: Rect, app: &App) {
-    let Some((msg, error, _)) = &app.note else { return };
-    let t = app.look;
-    let w = (msg.width() as u16 + 4).min(area.width);
-    if w < 8 || area.height < 4 {
-        return;
-    }
-    let r = Rect { x: area.x + area.width.saturating_sub(w + 1), y: area.y + area.height - 3, width: w, height: 3 };
-    let colour = if *error { Style::default().fg(Color::LightRed) } else { Style::default().fg(t.ink) };
-    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(t.line)).style(t.raised());
-    let inner = block.inner(r);
-    put(f, Clear, r);
-    put(f, block, r);
-    text(f, Rect { x: inner.x + 1, width: inner.width.saturating_sub(1), ..inner }, msg, colour);
-}
-
-/// A rounded outline in the chrome's line color with the page inside it.
-fn outline(f: &mut Frame, r: Rect, t: &Theme) {
-    put(f, Clear, r);
-    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(t.line)).style(t.ground());
-    put(f, block, r);
-}
-
-// ---- the top outline ----
-
-/// The tabs, then search and settings, each in its own outline. The open tab is accent, bold and underlined.
-fn top_outline(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+/// The tabs, the one open in the accent; on the right the server, and how it answers when it does not.
+fn tab_line(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     if area.height == 0 {
         return;
     }
-    let tabs = app.tabs();
-    let top = crate::chrome::top(area, &tabs);
-    let boxed = area.height >= 3;
-    if boxed {
-        outline(f, top.tabs, t);
+    let open = crate::chrome::tab_name(app.view);
+    let tabs = crate::chrome::tabs(area);
+    let used = tabs.last().map_or(area.x, |(_, r)| r.x + r.width);
+    for (view, r) in tabs {
+        let name = crate::chrome::tab_name(view);
+        put(f, Paragraph::new(Span::styled(name, if name == open { t.current() } else { t.dim() })), r);
+        // The library's tab opens the section last open.
+        let to = if view == View::Albums { app.library() } else { view };
+        app.hits.push((r, Hit::Tab(to)));
     }
-    for (view, r) in &top.items {
-        let style = if *view == app.view {
-            t.current().add_modifier(Modifier::UNDERLINED)
-        } else {
-            t.dim()
-        };
-        put(f, Paragraph::new(Span::styled(crate::chrome::tab_label(*view, top.names), style)), *r);
-        app.hits.push((*r, Hit::Tab(*view)));
-    }
-    if let (Some(x), true) = (top.rule, boxed) {
-        put(f, Paragraph::new(Span::styled("│", Style::default().fg(t.hair))), Rect { x, y: area.y + 1, width: 1, height: 1 });
-    }
-    if let Some(r) = top.search {
-        let editing = app.view == View::Search && app.search.editing;
-        if boxed {
-            outline(f, r, t);
-            if editing {
-                put(f, Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(t.current()), r);
-            }
-        }
-        let inner = Rect { x: r.x + 2, y: area.y + boxed as u16, width: r.width.saturating_sub(4), height: 1 };
-        let shown = if top.search_small {
-            Span::styled("⌕", t.dim())
-        } else if app.search.text.is_empty() && !editing {
-            Span::styled("⌕ Search", t.dim())
-        } else {
-            let cursor = if editing { "▏" } else { "" };
-            let typed = format!("{}{cursor}", app.search.text);
-            let room = inner.width.saturating_sub(2) as usize;
-            // The end of what is typed, where the cursor is.
-            let tail: String = typed.chars().rev().take(room).collect::<Vec<_>>().into_iter().rev().collect();
-            Span::styled(format!("⌕ {tail}"), Style::default().fg(t.ink))
-        };
-        put(f, Paragraph::new(shown), inner);
-        app.hits.push((r, Hit::SearchField));
-    }
-    if let Some(r) = top.settings {
-        if boxed {
-            outline(f, r, t);
-        }
-        let open = app.view == View::Settings;
-        let style = if open { t.current() } else { t.dim() };
-        put(f, Paragraph::new(Span::styled("✱", style)).alignment(Alignment::Center), Rect { x: r.x + 1, y: area.y + boxed as u16, width: r.width.saturating_sub(2), height: 1 });
-        app.hits.push((r, Hit::Tab(View::Settings)));
-    }
-}
-
-// ---- the hint line ----
-
-/// The keys under the player, and on the right the destinations the tabs have no room for and the
-/// server's state.
-fn footer(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    if area.height == 0 {
-        return;
-    }
-    let m = crate::chrome::margin(area.width);
-    let quiet = Style::default().fg(t.lit(0.32));
-    let (dot, colour, word) = if app.offline {
-        ("●", Color::Yellow, "offline · ")
+    let (state, colour) = if app.offline {
+        (crate::text::OFFLINE, Some(Color::Yellow))
     } else if app.unreachable.is_some() {
-        ("●", Color::LightRed, "unreachable · ")
+        (crate::text::UNREACHABLE, Some(Color::LightRed))
     } else {
-        ("●", Color::Green, "")
+        ("", None)
     };
-    let server = fit(&format!("{word}{}", app.server), 24).into_owned();
-    let mut items = vec![(format!("{dot} {server}"), None), ("≋ Equalizer".to_string(), Some(View::Equalizer)), ("↓ Downloads".to_string(), Some(View::Downloads))];
-    items.retain(|(_, link)| link.is_none_or(|v| app.reaches(v)));
-    let mut x = area.x + area.width.saturating_sub(m);
-    let mut right = Vec::new();
-    for (label, link) in items {
-        let w = label.width() as u16;
-        // The hint keeps 20 columns.
-        if x < area.x + m + 20 + w + 2 {
-            break;
-        }
-        x -= w;
-        right.push((Rect { x, y: area.y, width: w, height: 1 }, label, link));
-        x -= 2;
+    let server = fit(&app.server, 24).into_owned();
+    let w = (server.width() + if state.is_empty() { 0 } else { state.width() + 2 }) as u16;
+    if used + 4 + w > area.x + area.width {
+        return;
     }
-    let hint = if app.full { crate::text::HINT_FULL } else { crate::text::HINT };
-    let room = x.saturating_sub(area.x + m + 1) as usize;
-    let hint_r = Rect { x: area.x + m, y: area.y, width: room as u16, height: 1 };
-    text(f, hint_r, hint, quiet);
-    // A click on the hint shows every key.
-    app.hits.push((hint_r, Hit::Button(Button::Help)));
-    for (r, label, link) in right {
-        match link {
-            Some(view) => {
-                let style = if app.view == view { t.current() } else { t.dim() };
-                put(f, Paragraph::new(Span::styled(label, style)), r);
-                app.hits.push((r, Hit::Tab(view)));
-            }
-            None => {
-                let (d, rest) = label.split_at(dot.len());
-                put(f, Paragraph::new(Line::from(vec![Span::styled(d.to_string(), Style::default().fg(if t.mono { Color::Reset } else { colour })), Span::styled(rest.to_string(), t.dim())])), r);
-            }
+    let mut spans = Vec::new();
+    if let Some(c) = colour.filter(|_| !t.mono) {
+        spans.push(Span::styled(format!("{state}  "), Style::default().fg(c)));
+    } else if !state.is_empty() {
+        spans.push(Span::styled(format!("{state}  "), bold()));
+    }
+    spans.push(Span::styled(server, t.dim()));
+    put(f, Paragraph::new(Line::from(spans)), Rect { x: area.x + area.width - w - 1, width: w, ..area });
+}
+
+/// The keys of what has them, or the last note while it shows. A click shows every key.
+fn foot(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    if area.height == 0 {
+        return;
+    }
+    let r = Rect { x: area.x + 1, width: area.width.saturating_sub(2), ..area };
+    app.hits.push((r, Hit::Button(Button::Help)));
+    if let Some((msg, error, _)) = &app.note {
+        let style = if *error { Style::default().fg(Color::LightRed) } else { Style::default().fg(t.ink) };
+        return text(f, r, msg, style);
+    }
+    let mut spans = Vec::new();
+    for (k, word) in hints(app) {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
         }
+        spans.push(Span::styled(*k, Style::default().fg(t.ink)));
+        spans.push(Span::styled(format!(" {word}"), t.dim()));
+    }
+    let line = Line::from(spans);
+    let line = if line.width() > r.width as usize { spread(line.spans, Span::raw(""), r.width as usize) } else { line };
+    put(f, Paragraph::new(line), r);
+}
+
+/// The keys the line along the bottom shows for what has them.
+fn hints(app: &App) -> &'static [(&'static str, &'static str)] {
+    use crate::text::hints as h;
+    if app.view == View::Search && app.search.editing && !app.full {
+        return h::TYPING;
+    }
+    if app.full {
+        return match app.panel {
+            Panel::Queue => h::QUEUE,
+            Panel::Lyrics => h::LYRICS,
+            Panel::Devices => h::DEVICES,
+            Panel::Playing => h::PLAYING,
+        };
+    }
+    if app.page().is_some() {
+        return h::PAGE;
+    }
+    match app.view {
+        View::Home if app.home.line() == Some(crate::app::HomeLine::Offer) => h::OFFER,
+        View::Home => h::HOME,
+        View::Settings => h::SETTINGS,
+        View::Equalizer => h::EQUALIZER,
+        View::Downloads => h::DOWNLOADS,
+        View::Search => h::RESULTS,
+        View::Albums | View::Songs => h::SORTED,
+        View::History => h::HISTORY,
+        _ => h::LIBRARY,
     }
 }
 
 // ---- the page ----
 
-fn main(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<&mut Art>) {
-    let on = app.images && app.card_covers && art.is_some();
-    let mut pics = Pics { art, on, want: Vec::new() };
-    page_view(f, area, app, t, &mut pics);
-    // Request missing card covers once each.
-    for id in pics.want {
-        if app.thumbs_asked.len() > 2000 {
-            app.thumbs_asked.clear();
-        }
-        if app.thumbs_asked.insert(id.clone()) {
-            app.cmds.push(crate::app::Cmd::Thumb(id));
-        }
-    }
-}
-
-fn page_view(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, pics: &mut Pics) {
+fn page_view(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     if area.width < 4 || area.height < 2 {
         return;
     }
-    let mut area = area;
+    let mut area = Rect { x: area.x + 1, width: area.width - 2, ..area };
     if let Some(e) = &app.unreachable {
-        text(f, Rect { x: area.x + 2, width: area.width.saturating_sub(4), ..area }, &format!("⚠ {e} · showing what is stored · R tries again"), Style::default().fg(Color::LightRed));
-        area = Rect { y: area.y + 1, height: area.height - 1, ..area };
+        text(f, area, &crate::text::stored_only(e), Style::default().fg(Color::LightRed));
+        area = below(area, 1);
     }
-    let inner = Rect { x: area.x + 2, y: area.y + 1, width: area.width.saturating_sub(4), height: area.height.saturating_sub(1) };
+    let inner = below(area, 1);
     let focused = app.focus == Focus::Main;
     if !app.pages.is_empty() {
-        return page(f, inner, app, t, focused, pics);
+        return page(f, inner, app, t, focused);
     }
     match app.view {
-        View::Home => home(f, inner, app, t, focused, pics),
+        View::Home => home(f, inner, app, t, focused),
         View::Search => search(f, inner, app, t, focused),
-        View::Albums => albums(f, inner, app, t, focused, pics),
-        View::Artists => artists(f, inner, app, t, focused),
-        View::Songs => songs(f, inner, app, t, focused),
-        View::Playlists => playlists(f, inner, app, t, focused),
+        View::Albums | View::Artists | View::Songs | View::Playlists => {
+            let body = sections(f, inner, app, t);
+            library_section(f, body, app, t, focused);
+        }
+        View::History => history(f, inner, app, t, focused),
         View::Favorites => favorites(f, inner, app, t, focused),
         View::Downloads => downloads(f, inner, app, t, focused),
         View::Equalizer => equalizer(f, inner, app, t, focused),
         View::Settings => settings(f, inner, app, t, focused),
         View::Login => {}
     }
+}
+
+/// The library's sections along the top of each, the open one bold and underlined; returns the area under
+/// them and a blank line.
+fn sections(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) -> Rect {
+    let mut x = area.x;
+    for v in app.sections() {
+        let name = v.name();
+        let w = name.width() as u16;
+        if x + w > area.x + area.width {
+            break;
+        }
+        let style = if v == app.view { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() };
+        let r = Rect { x, width: w, ..row_of(area, 0) };
+        put(f, Paragraph::new(Span::styled(name, style)), r);
+        app.hits.push((r, Hit::Tab(v)));
+        x += w + 3;
+    }
+    below(area, 2)
 }
 
 fn failed(f: &mut Frame, area: Rect, t: &Theme, e: &str) {
@@ -592,147 +454,186 @@ fn failed(f: &mut Frame, area: Rect, t: &Theme, e: &str) {
         Line::from(""),
         Line::from(Span::styled("R tries again", t.dim())),
     ];
-    put(f, Paragraph::new(text).alignment(Alignment::Center).wrap(ratatui::widgets::Wrap { trim: true }), centred(area, area.width.min(70), 6));
+    put(f, Paragraph::new(text).wrap(ratatui::widgets::Wrap { trim: true }), Rect { height: area.height.min(6), ..area });
 }
 
 fn loading(f: &mut Frame, area: Rect, t: &Theme) {
-    put(f, Paragraph::new(Span::styled("Loading…", t.dim())).alignment(Alignment::Center), centred(area, 20, 1));
+    text(f, area, "Loading…", t.dim());
 }
 
 fn empty(f: &mut Frame, area: Rect, t: &Theme, text: &str) {
-    put(f, Paragraph::new(Span::styled(text.to_string(), t.dim())).alignment(Alignment::Center).wrap(ratatui::widgets::Wrap { trim: true }), centred(area, area.width, 2));
+    put(f, Paragraph::new(Span::styled(text.to_string(), t.dim())).wrap(ratatui::widgets::Wrap { trim: true }), Rect { height: area.height.min(2), ..area });
 }
 
-fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics: &mut Pics) {
-    let area = heading(f, area, "Listen now", "", t);
-    let shelves: Vec<(usize, String, usize)> = app.home.shelves().iter().map(|(i, title, v)| (*i, title.to_string(), v.len())).collect();
-    if shelves.is_empty() {
+fn home(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
+    let area = heading(f, area, crate::text::LISTEN_NOW, "", t);
+    let lines = app.home.lines();
+    if lines.is_empty() {
         match &app.home.error {
             Some(e) => failed(f, area, t, e),
             None => loading(f, area, t),
         }
         return;
     }
-    // Each shelf: title line, a row of cards, a blank line.
-    let (min_w, card_h) = pics.card();
-    let shelf_h = card_h + 2;
-    let fits = (area.height / shelf_h).max(1) as usize;
-    let at = shelves.iter().position(|s| s.0 == app.home.shelf).unwrap_or(0);
-    let h = &mut app.home;
-    if at < h.top {
-        h.top = at;
-    } else if at >= h.top + fits {
-        h.top = at + 1 - fits;
-    }
-    h.top = h.top.min(shelves.len().saturating_sub(1));
-    h.below = h.top + fits < shelves.len();
-    let cols = ((area.width + 1) / (min_w + 1)).max(1) as usize;
-    let w = ((area.width + 1) / cols as u16).saturating_sub(1).max(1);
-    for (k, (i, title, len)) in shelves.iter().enumerate().skip(app.home.top).take(fits) {
-        let y = area.y + (k - app.home.top) as u16 * shelf_h;
-        if y + 1 >= area.y + area.height {
-            break;
+    let playing = app.song.as_ref().map(|s| s.id.clone());
+    let App { home, hits, marks, rules, .. } = app;
+    let h = &*home;
+    let row = |i: usize, w: usize| match lines[i] {
+        HomeLine::Offer => offer_line(h.offer.as_ref(), w, t),
+        HomeLine::Shelf(at) => {
+            let (title, _) = h.shelf(at).unwrap_or_default();
+            let more = if h.count(at) > crate::app::HOME_ENTRIES { crate::text::SHOW_ALL } else { "" };
+            spread(vec![Span::styled(title, bold().fg(t.ink))], Span::styled(format!("{more} "), t.dim()), w)
         }
-        let chosen_shelf = *i == app.home.shelf;
-        let pos = app.home.pos.get(*i).copied().unwrap_or(0).min(len.saturating_sub(1));
-        let left = &mut app.home.left[*i];
-        if pos < *left {
-            *left = pos;
-        } else if pos >= *left + cols {
-            *left = pos + 1 - cols;
+        HomeLine::Entry(at, n) => {
+            let Some(item) = h.shelf(at).and_then(|(_, v)| v.into_iter().nth(n)) else { return Line::from("") };
+            let mut line = item_line(&item, w.saturating_sub(2), t, starred(&item, marks, rules.stars), is_playing(&item, playing.as_deref()));
+            line.spans.insert(0, Span::raw("  "));
+            line
         }
-        let left = *left;
-        let more = if *len > cols { format!("{} of {len}  ‹ ›", pos + 1) } else { String::new() };
-        put(f, Paragraph::new(spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(more, t.dim()), area.width as usize)), Rect { y, height: 1, ..area });
-        let row = Rect { y: y + 1, height: card_h.min((area.y + area.height).saturating_sub(y + 1)), ..area };
-        app.hits.push((row, Hit::List(ListRef::Shelf(*i))));
-        let Some(Some((_, items))) = app.home.rows.get(*i) else { continue };
-        for c in 0..cols {
-            let n = left + c;
-            let Some(item) = items.get(n) else { break };
-            let r = Rect { x: area.x + c as u16 * (w + 1), width: w, ..row };
-            let (name, sub, art) = match item {
-                Item::Album(a) | Item::DownloadedAlbum(a) => (&a.name, if a.year > 0 { format!("{} · {}", a.artist, a.year) } else { a.artist.clone() }, &a.cover_art),
-                Item::Song(songs, at) => (&songs[*at].title, songs[*at].artist.clone(), &songs[*at].cover_art),
-                Item::Playlist(p) => (&p.name, crate::text::playlist_line(p), &p.cover_art),
-                Item::Artist(a) => (&a.name, a.album_count.map(crate::text::albums).unwrap_or_default(), &a.cover_art),
-            };
-            one_card(f, r, name, &sub, art.as_deref(), pics, t, chosen_shelf && n == pos, focused);
-            app.hits.push((r, Hit::Row(ListRef::Shelf(*i), n)));
-        }
+        HomeLine::Gap => Line::from(""),
+    };
+    let mut sel = home.sel;
+    list(f, area, &mut sel, lines.len(), ListRef::Home, hits, t, focused, &row);
+    home.sel = sel;
+    // The offer's own words act on it too.
+    if let Some(r) = app.hits.iter().find(|(_, h)| *h == Hit::Row(ListRef::Home, 0)).map(|(r, _)| *r).filter(|_| app.home.offer.is_some() && sel.top == 0) {
+        let words = [(Span::styled(crate::text::RESUME, bold().fg(t.ink)), Button::Resume), (Span::styled(crate::text::CLOSE, t.dim()), Button::Dismiss)];
+        let w: u16 = words.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>() - 3;
+        let at = Rect { x: r.x + r.width.saturating_sub(w + 2), width: w, ..r };
+        buttons(f, &mut app.hits, at, &words);
     }
 }
 
-fn albums(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics: &mut Pics) {
-    let l = &mut app.library;
-    let caption = l.albums.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "album", "albums") + if l.albums_more { "+" } else { "" });
-    let body = heading(f, area, "Albums", &caption, t);
-    match &l.albums {
-        Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing here yet"),
-        Load::Ready(v) => {
-            let len = v.len();
-            let cols = cards(f, body, &mut l.albums_sel, len, ListRef::Albums, &mut app.hits, t, focused, pics, &|i| {
-                let a = &v[i];
-                (a.name.clone(), if a.year > 0 { format!("{} · {}", a.artist, a.year) } else { a.artist.clone() }, a.cover_art.clone())
-            });
-            app.shown.cols = cols;
+/// The queue another device left, offered to carry on here: what it is called, the song, and where it
+/// stands; its Resume and Close are drawn over its end.
+fn offer_line(offer: Option<&nori_core::library::QueueOffer>, w: usize, t: &Theme) -> Line<'static> {
+    let Some(o) = offer else { return Line::from("") };
+    let Some(song) = o.songs.get(o.index as usize) else { return Line::from("") };
+    let place = crate::text::offer_place(&song.artist, o.index + 1, o.songs.len());
+    let left = vec![Span::styled(format!("{}  ", crate::text::CONTINUE), t.dim()), Span::styled(song.title.clone(), bold().fg(t.ink)), Span::styled(format!("  {place}"), t.dim())];
+    let room = crate::text::RESUME.width() + crate::text::CLOSE.width() + 6;
+    spread(left, Span::raw(" ".repeat(room)), w)
+}
+
+/// Whether `item` shows its seal: an album or artist starred, as this session marked it.
+fn starred(item: &Item, marks: &StarMarks, stars: bool) -> bool {
+    stars
+        && match item {
+            Item::Album(a) | Item::DownloadedAlbum(a) => marks.starred(Starrable::Album, &a.id, a.starred),
+            Item::Artist(a) => marks.starred(Starrable::Artist, &a.id, a.starred),
+            Item::Song(songs, at) => marks.starred(Starrable::Song, &songs[*at].id, songs[*at].starred),
+            Item::Playlist(_) | Item::Mix(_) => false,
         }
-        Load::Failed(e) => failed(f, body, t, e),
-        _ => loading(f, body, t),
+}
+
+fn is_playing(item: &Item, playing: Option<&str>) -> bool {
+    matches!(item, Item::Song(songs, at) if Some(songs[*at].id.as_str()) == playing)
+}
+
+/// How far a list has loaded: its length once read, or why it was not.
+fn state<T>(load: &Load<Vec<T>>) -> Result<Option<usize>, String> {
+    match load {
+        Load::Ready(v) => Ok(Some(v.len())),
+        Load::Failed(e) => Err(e.clone()),
+        _ => Ok(None),
     }
 }
 
-fn artists(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let hearts = app.rules.stars;
-    let App { library: l, marks, hits, .. } = app;
-    let caption = l.artists.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "artist", "artists"));
-    let body = heading(f, area, "Artists", &caption, t);
-    match &l.artists {
-        Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing here yet"),
-        Load::Ready(v) => {
-            let row = |i: usize, w: usize| {
-                let a = &v[i];
-                let seal = if hearts && marks.starred(Starrable::Artist, &a.id, a.starred) { format!(" {SEAL}") } else { String::new() };
-                spread(vec![Span::styled("  ◉  ", t.dim()), Span::styled(a.name.as_str(), bold()), Span::styled(seal, Style::default().fg(t.accent))], Span::styled(a.album_count.map(crate::text::albums).unwrap_or_default() + " ", t.dim()), w)
-            };
-            list(f, body, &mut l.artists_sel, v.len(), ListRef::Artists, hits, t, focused, &row);
-        }
-        Load::Failed(e) => failed(f, body, t, e),
-        _ => loading(f, body, t),
+/// A library section: how many it holds and its order on one line, then its places, then its entries;
+/// in Artist order the albums under a line for each artist.
+fn library_section(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
+    let view = app.view;
+    let lines = app.library_lines();
+    let playing = app.song.as_ref().map(|s| s.id.clone());
+    let App { library: l, hits, marks, rules, devices, .. } = app;
+    let stars = rules.stars;
+    let seals = &*marks;
+    let marks = Marks::of(marks, rules, devices);
+    let (loaded, more, one, many) = match view {
+        View::Albums => (state(&l.albums), l.albums_more, "album", "albums"),
+        View::Artists => (state(&l.artists), false, "artist", "artists"),
+        View::Songs => (state(&l.songs), l.songs_more, "song", "songs"),
+        _ => (state(&l.playlists), false, "playlist", "playlists"),
+    };
+    let order = match view {
+        View::Albums => Some(crate::text::album_sort(l.album_sort)),
+        View::Songs => Some(crate::text::song_order(&l.song_sort)),
+        _ => None,
+    };
+    let caption = match &loaded {
+        Ok(Some(n)) => crate::text::count(*n as u64, one, many) + if more { "+" } else { "" },
+        _ => String::new(),
+    };
+    let sort = order.map_or_else(String::new, |o| format!("{}  {o} ", crate::text::SORT_BY));
+    put(f, Paragraph::new(spread(vec![Span::styled(caption, t.dim())], Span::styled(sort, t.dim()), area.width as usize)), row_of(area, 0));
+    let body = below(area, 1);
+    match loaded {
+        Err(e) => return failed(f, body, t, &e),
+        Ok(None) => return loading(f, body, t),
+        Ok(Some(_)) if lines.is_empty() => return empty(f, body, t, "Nothing here yet"),
+        Ok(Some(_)) => {}
     }
+    let size = l.downloads_bytes.map(|b| nori_core::numbers::bytes(b, nori_core::numbers::POINT));
+    let albums = l.albums.ready().map_or(&[][..], Vec::as_slice);
+    let row = |i: usize, w: usize| match lines[i] {
+        LibLine::Place(p) => {
+            let end = if p == Place::Downloads { size.clone().unwrap_or_default() } else { String::new() };
+            spread(vec![Span::styled(crate::text::place(p), Style::default().fg(t.ink))], Span::styled(format!("{end} "), t.dim()), w)
+        }
+        LibLine::Gap => Line::from(""),
+        LibLine::Shelf(start) => {
+            let a = &albums[start];
+            let n = albums[start..].iter().take_while(|x| x.artist_id == a.artist_id && x.artist == a.artist).count();
+            spread(vec![Span::styled(a.artist.clone(), bold().fg(t.ink))], Span::styled(format!("{} ", crate::text::albums(n as u32)), t.dim()), w)
+        }
+        LibLine::Entry(k) => match view {
+            View::Songs => {
+                let v = l.songs.ready().map_or(&[][..], Vec::as_slice);
+                song_line(&v[k], &marks, k + 1, w, t, playing.as_deref() == Some(v[k].id.as_str()), true)
+            }
+            View::Albums if l.album_sort == AlbumSort::ArtistRows => {
+                // Under its artist: the album and its year.
+                let a = &albums[k];
+                let seal = if starred(&Item::Album(a.clone()), seals, stars) { format!(" {SEAL}") } else { String::new() };
+                spread(vec![Span::raw("  "), Span::styled(format!("{}{seal}", a.name), Style::default().fg(t.ink))], Span::styled(if a.year > 0 { format!("{} ", a.year) } else { String::new() }, t.dim()), w)
+            }
+            _ => {
+                let item = match view {
+                    View::Albums => Item::Album(albums[k].clone()),
+                    View::Artists => Item::Artist(l.artists.ready().map(|v| v[k].clone()).unwrap_or_default()),
+                    _ => Item::Playlist(l.playlists.ready().map(|v| v[k].clone()).unwrap_or_default()),
+                };
+                item_line(&item, w, t, starred(&item, seals, stars), false)
+            }
+        },
+    };
+    let (mut sel, lref) = match view {
+        View::Albums => (l.albums_sel, ListRef::Albums),
+        View::Artists => (l.artists_sel, ListRef::Artists),
+        View::Songs => (l.songs_sel, ListRef::Songs),
+        _ => (l.playlists_sel, ListRef::Playlists),
+    };
+    list(f, body, &mut sel, lines.len(), lref, hits, t, focused, &row);
+    *match view {
+        View::Albums => &mut l.albums_sel,
+        View::Artists => &mut l.artists_sel,
+        View::Songs => &mut l.songs_sel,
+        _ => &mut l.playlists_sel,
+    } = sel;
 }
 
-fn songs(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
+/// What this device played, newest first.
+fn history(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let App { library: l, hits, marks, rules, devices, .. } = app;
     let marks = Marks::of(marks, rules, devices);
-    let caption = l.songs.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "song", "songs") + if l.songs_more { "+" } else { "" });
-    let body = heading(f, area, "Songs", &caption, t);
-    match &l.songs {
-        Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing here yet"),
+    let body = heading(f, area, View::History.name(), "", t);
+    match &l.history {
+        Load::Ready(v) if v.is_empty() => empty(f, body, t, "Nothing played yet"),
         Load::Ready(v) => {
-            let body = table_head(f, body, t, true);
-            let row = |i: usize, w: usize| song_line(&v[i], &marks, i + 1, w, t, playing.as_deref() == Some(v[i].id.as_str()), true);
-            list(f, body, &mut l.songs_sel, v.len(), ListRef::Songs, hits, t, focused, &row);
-        }
-        Load::Failed(e) => failed(f, body, t, e),
-        _ => loading(f, body, t),
-    }
-}
-
-fn playlists(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let App { library: l, hits, .. } = app;
-    let caption = l.playlists.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "playlist", "playlists"));
-    let body = heading(f, area, "Playlists", &caption, t);
-    match &l.playlists {
-        Load::Ready(v) if v.is_empty() => empty(f, body, t, "No playlists yet"),
-        Load::Ready(v) => {
-            let row = |i: usize, w: usize| {
-                let p = &v[i];
-                let owner = p.owner.clone().filter(|o| !o.is_empty()).map(|o| format!("{o} · ")).unwrap_or_default();
-                spread(vec![Span::styled("  ≡  ", t.dim()), Span::styled(p.name.as_str(), bold())], Span::styled(format!("{owner}{} ", crate::text::count(p.song_count as u64, "song", "songs")), t.dim()), w)
-            };
-            list(f, body, &mut l.playlists_sel, v.len(), ListRef::Playlists, hits, t, focused, &row);
+            let row = |i: usize, w: usize| song_line(&v[i].song, &marks, 0, w, t, playing.as_deref() == Some(v[i].song.id.as_str()), true);
+            list(f, body, &mut l.history_sel, v.len(), ListRef::History, hits, t, focused, &row);
         }
         Load::Failed(e) => failed(f, body, t, e),
         _ => loading(f, body, t),
@@ -744,7 +645,7 @@ fn favorites(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     let App { library: l, hits, marks, rules, devices, .. } = app;
     let marks = Marks::of(marks, rules, devices);
     let caption = l.favorites.ready().map_or(String::new(), |v| crate::text::count(v.len() as u64, "song", "songs"));
-    let body = heading(f, area, "Favorites", &caption, t);
+    let body = heading(f, area, View::Favorites.name(), &caption, t);
     match &l.favorites {
         Load::Ready(v) if v.is_empty() => empty(f, body, t, "No favorites yet · f marks one"),
         Load::Ready(v) => {
@@ -757,13 +658,22 @@ fn favorites(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     }
 }
 
+/// The search: what is typed after a slash, where it was found, then the results under their kinds.
 fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     if area.height < 3 {
         return;
     }
     let s = &app.search;
-    text(f, Rect { height: 1, ..area }, "Search", bold().fg(t.ink));
-    let note = Rect { y: area.y + 1, height: 1, ..area };
+    let editing = s.editing;
+    let cursor = if editing { "▏" } else { "" };
+    let room = area.width.saturating_sub(3) as usize;
+    // The end of what is typed, where the cursor is.
+    let typed = format!("{}{cursor}", s.text);
+    let tail: String = typed.chars().rev().take(room).collect::<Vec<_>>().into_iter().rev().collect();
+    let prompt = Line::from(vec![Span::styled("/ ", if editing { t.current() } else { t.dim() }), Span::styled(tail, bold().fg(t.ink))]);
+    let field = row_of(area, 0);
+    put(f, Paragraph::new(prompt), field);
+    app.hits.push((field, Hit::SearchField));
     let view = s.view.as_ref();
     let (words, style) = match view {
         Some(v) if v.error.is_some() => (crate::text::search_fallback(v.error.as_ref().and_then(|e| e.reason.as_deref())), Style::default().fg(Color::LightRed)),
@@ -772,10 +682,12 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         Some(v) if !v.query.is_empty() => ((if v.from_server { "From the server" } else { "From the offline index · the server is asked when you pause" }).to_string(), t.dim()),
         _ => ("Songs, albums and artists, from the library".to_string(), t.dim()),
     };
-    text(f, note, &words, style);
-    let body = Rect { y: area.y + 3, height: area.height.saturating_sub(3), ..area };
+    text(f, row_of(area, 1), &words, style);
+    let body = below(area, 3);
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let App { search: s, hits, marks, rules, devices, .. } = app;
+    let stars = rules.stars;
+    let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
     let lit = focused && !s.editing;
     let mut sel = s.sel;
@@ -784,50 +696,41 @@ fn search(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
         return;
     }
     let len = rows.len();
-    let row = |i: usize, w: usize| match &rows[i] {
-        SearchRow::Title(title, n) => spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(format!("{n} "), t.dim()), w),
-        SearchRow::Song(song) => song_line(song, &marks, 0, w, t, playing.as_deref() == Some(song.id.as_str()), true),
-        SearchRow::Album(a) => {
-            let year = if a.year > 0 { format!("{} ", a.year) } else { String::new() };
-            spread(vec![Span::styled("  ◫  ", t.dim()), Span::styled(a.name.clone(), Style::default().fg(t.ink)), Span::styled(format!("  {}", a.artist), t.dim())], Span::styled(year, t.dim()), w)
+    let row = |i: usize, w: usize| {
+        let entry = |item: Item| {
+            let mut line = item_line(&item, w.saturating_sub(2), t, starred(&item, seals, stars), false);
+            line.spans.insert(0, Span::raw("  "));
+            line
+        };
+        match &rows[i] {
+            SearchRow::Title(title, n) => spread(vec![Span::styled(title.to_string(), bold().fg(t.ink))], Span::styled(format!("{n} "), t.dim()), w),
+            SearchRow::Song(song) => song_line(song, &marks, 0, w, t, playing.as_deref() == Some(song.id.as_str()), true),
+            SearchRow::Album(a) => entry(Item::Album((*a).clone())),
+            SearchRow::Artist(a) => entry(Item::Artist((*a).clone())),
+            SearchRow::Playlist(p) => entry(Item::Playlist((*p).clone())),
         }
-        SearchRow::Artist(a) => spread(vec![Span::styled("  ◉  ", t.dim()), Span::styled(a.name.clone(), Style::default().fg(t.ink))], Span::styled(a.album_count.map(crate::text::albums).unwrap_or_default() + " ", t.dim()), w),
-        SearchRow::Playlist(p) => spread(vec![Span::styled("  ≡  ", t.dim()), Span::styled(p.name.clone(), Style::default().fg(t.ink))], Span::styled(crate::text::playlist_line(p) + " ", t.dim()), w),
     };
     list(f, body, &mut sel, len, ListRef::Search, hits, t, lit, &row);
     drop(rows);
     s.sel = sel;
 }
 
-/// A cover in `area`, or a placeholder box if it is not loaded.
-fn cover(f: &mut Frame, area: Rect, art: Option<&mut Art>, key: Option<&str>, t: &Theme) {
+/// A cover in `area`, or nothing while it is not loaded.
+fn cover(f: &mut Frame, area: Rect, art: Option<&mut Art>, key: Option<&str>) {
     let area = area.intersection(f.area());
     if area.width < 2 || area.height < 1 {
         return;
     }
-    let protocol: Option<&mut StatefulProtocol> = match (art, key) {
-        (Some(a), Some(k)) => a.get(k),
-        _ => None,
-    };
-    match protocol {
-        Some(p) => {
-            let resize = Resize::Scale(Some(image::imageops::FilterType::Triangle));
-            let encode = ratatui_image::ResizeEncodeRender::needs_resize(p, &resize, area);
-            f.render_stateful_widget(StatefulImage::<StatefulProtocol>::default().resize(resize), area, p);
-            forced_width(f, area);
-            // Encoded for this area now: this frame transmits it.
-            if let Some(rect) = encode {
-                match p.last_encoding_result() {
-                    Some(Err(e)) => eprintln!("nori: cover {} would not encode for {}x{} cells: {e}", key.unwrap_or_default(), rect.width, rect.height),
-                    _ => crate::term::debug!("cover {} encoded for {}x{} cells at {},{}: sent with this frame", key.unwrap_or_default(), rect.width, rect.height, area.x, area.y),
-                }
-            }
-        }
-        None => {
-            let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(t.dim());
-            let inner = block.inner(area);
-            put(f, block, area);
-            put(f, Paragraph::new(Span::styled("♫", t.dim())).alignment(Alignment::Center), centred(inner, 1, 1));
+    let Some(p) = art.zip(key).and_then(|(a, k)| a.get(k)) else { return };
+    let resize = Resize::Scale(Some(image::imageops::FilterType::Triangle));
+    let encode = ratatui_image::ResizeEncodeRender::needs_resize(p, &resize, area);
+    f.render_stateful_widget(StatefulImage::<StatefulProtocol>::default().resize(resize), area, p);
+    forced_width(f, area);
+    // Encoded for this area now: this frame transmits it.
+    if let Some(rect) = encode {
+        match p.last_encoding_result() {
+            Some(Err(e)) => eprintln!("nori: cover {} would not encode for {}x{} cells: {e}", key.unwrap_or_default(), rect.width, rect.height),
+            _ => crate::term::debug!("cover {} encoded for {}x{} cells at {},{}: sent with this frame", key.unwrap_or_default(), rect.width, rect.height, area.x, area.y),
         }
     }
 }
@@ -848,95 +751,81 @@ fn forced_width(f: &mut Frame, area: Rect) {
     }
 }
 
-/// A square cover `rows` tall (twice as wide in cells) at the top left of `area`.
-fn cover_box(area: Rect, rows: u16) -> Rect {
-    let h = rows.min(area.height).min(area.width / 2);
-    Rect { x: area.x, y: area.y, width: h * 2, height: h }
-}
-
-/// A page button, bold when strong; advances `x`.
-#[allow(clippy::too_many_arguments)]
-fn pill(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, x: &mut u16, y: u16, end: u16, label: &str, strong: bool, b: Button, t: &Theme) {
-    let s = format!(" {label} ");
-    let w = s.width() as u16;
-    if *x + w > end {
-        return;
+/// Words that act, from `x` on row `r`, two columns apart; each one clicked is its button.
+fn buttons(f: &mut Frame, hits: &mut Vec<(Rect, Hit)>, r: Rect, words: &[(Span<'static>, Button)]) {
+    let mut x = r.x;
+    for (word, b) in words {
+        let w = word.width() as u16;
+        if x + w > r.x + r.width {
+            return;
+        }
+        let at = Rect { x, width: w, ..r };
+        put(f, Paragraph::new(word.clone()), at);
+        hits.push((at, Hit::Button(*b)));
+        x += w + 3;
     }
-    let style = if strong { bold().fg(t.ink) } else { Style::default().fg(t.ink) };
-    let r = Rect { x: *x, y, width: w, height: 1 };
-    put(f, Paragraph::new(Span::styled(s, style)), r);
-    hits.push((r, Hit::Button(b)));
-    *x += w + 2;
 }
 
-fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics: &mut Pics) {
-    let images = app.images;
+/// An album's, artist's, playlist's or mix's page: its name with the seal; who made it, with Play and
+/// Shuffle (and a mix's Save as playlist); the list's head, what it holds and what the core offers to do with
+/// it (`menus::page_actions`); then its songs, or an artist's albums under their shelves.
+fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let playing = app.song.as_ref().map(|s| s.id.clone());
     let account = app.rules.account;
-    let downloads = app.rules.downloads;
-    let App { pages, hits, shown, marks, rules, devices, .. } = app;
+    let stars = app.rules.stars;
+    let actions = app.page_actions();
+    let missing = app.page_missing();
+    let App { pages, hits, marks, rules, devices, .. } = app;
+    let seals = &*marks;
     let marks = Marks::of(marks, rules, devices);
     let Some(p) = pages.last_mut() else { return };
     // star: None when the page cannot be starred.
-    let (kind, title, sub, caption, art_key, star): (&str, String, String, String, Option<String>, Option<bool>) = match p {
-        Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => ("ALBUM", d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), d.album.cover_art.clone(), Some(marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
-        Page::Artist { detail: Load::Ready(d), .. } => ("ARTIST", d.artist.name.clone(), if d.albums.is_empty() && !d.songs.is_empty() { crate::text::count(d.songs.len() as u64, "song", "songs") } else { d.artist.album_count.map(crate::text::albums).unwrap_or_default() }, String::new(), None, Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
-        Page::Playlist { detail: Load::Ready(d), .. } => ("PLAYLIST", d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), None, None),
+    let (title, by, caption, star): (String, String, String, Option<bool>) = match p {
+        Page::Album { detail: Load::Ready(d), .. } | Page::DownloadedAlbum { detail: Load::Ready(d), .. } => (d.album.name.clone(), d.album.artist.clone(), crate::text::album_caption(d), Some(marks.stars.starred(Starrable::Album, &d.album.id, d.album.starred))),
+        Page::Artist { detail: Load::Ready(d), .. } => (d.artist.name.clone(), String::new(), crate::text::artist_caption(d), Some(marks.stars.starred(Starrable::Artist, &d.artist.id, d.artist.starred))),
+        Page::Playlist { detail: Load::Ready(d), .. } => (d.playlist.name.clone(), d.playlist.owner.clone().unwrap_or_default(), crate::text::playlist_caption(d), None),
+        Page::Row { title, items, .. } => (title.clone(), String::new(), crate::text::count(items.len() as u64, "entry", "entries"), None),
+        Page::Mix { detail: Load::Ready(m), .. } => (crate::text::mix_name(m.name).to_string(), String::new(), crate::text::songs_caption(m.songs.len() as u32, m.seconds), None),
+        Page::Mix { detail: Load::Failed(e), .. } => return failed(f, area, t, e),
         Page::Album { detail: Load::Failed(e), .. } | Page::DownloadedAlbum { detail: Load::Failed(e), .. } | Page::Artist { detail: Load::Failed(e), .. } | Page::Playlist { detail: Load::Failed(e), .. } => {
             return failed(f, area, t, e);
         }
         _ => return loading(f, area, t),
     };
-    let with_cover = images && matches!(p, Page::Album { .. } | Page::DownloadedAlbum { .. }) && area.height >= 16;
-    let head_h = if with_cover { 8 } else { 6 }.min(area.height);
-    let head = Rect { height: head_h, ..area };
-    let mut words = head;
-    if with_cover {
-        let c = cover_box(head, head_h);
-        cover(f, c, pics.art.as_deref_mut(), art_key.as_deref(), t);
-        words = Rect { x: c.x + c.width + 3, width: head.width.saturating_sub(c.width + 3), ..head };
+    if area.height < 5 {
+        return;
     }
-    let w = words.width as usize;
-    let mut lines = vec![Line::from(Span::styled(kind, t.dim().add_modifier(Modifier::BOLD))), Line::from(Span::styled(fit(&title, w).into_owned(), bold().fg(t.ink)))];
-    if !sub.is_empty() {
-        lines.push(Line::from(Span::styled(fit(&sub, w).into_owned(), bold().fg(t.ink))));
+    // The title, and the seal at its end where the account can star the page's.
+    let sealed = star.filter(|_| account && stars);
+    let seal_w = if sealed.is_some() { 3 } else { 0 };
+    text(f, Rect { width: area.width.saturating_sub(seal_w), ..row_of(area, 0) }, &title, bold().fg(t.ink));
+    if let Some(on) = sealed {
+        let r = Rect { x: area.x + (title.width() as u16 + 1).min(area.width.saturating_sub(2)), width: 2, ..row_of(area, 0) };
+        put(f, Paragraph::new(seal(on, false, t)), r);
+        hits.push((r, Hit::Button(Button::Star)));
     }
-    lines.push(Line::from(Span::styled(fit(&caption, w).into_owned(), t.dim())));
-    let top = if with_cover { words.y + words.height.saturating_sub(6) } else { words.y };
-    put(f, Paragraph::new(lines), Rect { y: top, height: 4.min(words.height), ..words });
-    let y = top + 5;
-    if y < area.y + area.height {
-        let mut x = words.x;
-        let end = words.x + words.width;
-        pill(f, hits, &mut x, y, end, "▶ Play", true, Button::PlayAll, t);
-        pill(f, hits, &mut x, y, end, "⤮ Shuffle", false, Button::ShuffleAll, t);
-        // Hearts and downloads are the account's.
-        if let Some(on) = star.filter(|_| account) {
-            let label = " Favorite";
-            let w = 2 + label.width() as u16;
-            if x + w <= end {
-                let r = Rect { x, y, width: w, height: 1 };
-                put(f, Paragraph::new(Line::from(vec![seal(on, false, t), Span::styled(label, Style::default().fg(t.ink))])), r);
-                hits.push((r, Hit::Button(Button::Star)));
-                x += w + 2;
-            }
-        }
-        if downloads && !matches!(p, Page::DownloadedAlbum { .. }) {
-            pill(f, hits, &mut x, y, end, "↓ Download", false, Button::Download, t);
-        }
-        let back = "‹ Back";
-        if x + back.width() as u16 <= end {
-            let r = Rect { x, y, width: back.width() as u16, height: 1 };
-            put(f, Paragraph::new(Span::styled(back, t.dim())), r);
-            hits.push((r, Hit::Button(Button::Back)));
-        }
+    // Words that act, right-aligned on `r` beside `left`.
+    let mut line = |r: Rect, left: &str, words: Vec<(Span<'static>, Button)>| {
+        let w: u16 = words.iter().map(|(w, _)| w.width() as u16 + 3).sum::<u16>().saturating_sub(3);
+        text(f, Rect { width: r.width.saturating_sub(w + 2), ..r }, left, t.dim());
+        buttons(f, hits, Rect { x: r.x + r.width.saturating_sub(w + 1), width: w, ..r }, &words);
+    };
+    let mut plays: Vec<(Span<'static>, Button)> = Vec::new();
+    if !matches!(p, Page::Row { .. }) {
+        plays.push((Span::styled(crate::text::PLAY, bold().fg(t.ink)), Button::PlayAll));
+        plays.push((Span::styled(crate::text::SHUFFLE, Style::default().fg(t.ink)), Button::ShuffleAll));
     }
-    let body = Rect { y: area.y + head_h + 1, height: area.height.saturating_sub(head_h + 1), ..area };
+    if matches!(p, Page::Mix { detail: Load::Ready(m), .. } if account && !m.songs.is_empty()) {
+        plays.push((Span::styled(crate::text::SAVE_AS_PLAYLIST, Style::default().fg(t.ink)), Button::SaveMix));
+    }
+    line(row_of(area, 1), &by, plays);
+    let head: Vec<(Span<'static>, Button)> = actions.iter().map(|a| (Span::styled(crate::text::page_action(*a, missing), t.dim()), Button::Page(*a))).collect();
+    line(row_of(area, 2), &caption, head);
+    let body = below(area, 4);
     match p {
         Page::Album { detail: Load::Ready(d), sel, .. } | Page::DownloadedAlbum { detail: Load::Ready(d), sel, .. } => {
             let multi = d.discs.len() > 1;
             let songs = &d.songs;
-            let body = table_head(f, body, t, false);
             list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| {
                 let n = if multi { songs[i].disc_number as usize * 100 + songs[i].track as usize } else { songs[i].track as usize };
                 song_line(&songs[i], &marks, if n > 0 { n } else { i + 1 }, w, t, playing.as_deref() == Some(songs[i].id.as_str()), false)
@@ -944,29 +833,36 @@ fn page(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool, pics
         }
         Page::Playlist { detail: Load::Ready(d), sel, .. } => {
             let songs = &d.songs;
-            let body = table_head(f, body, t, true);
             list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
         }
         Page::Artist { detail: Load::Ready(d), sel, .. } if d.albums.is_empty() && !d.songs.is_empty() => {
             let songs = &d.songs;
-            let body = heading(f, body, "Songs", "", t);
-            let body = table_head(f, body, t, true);
             list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
         }
         Page::Artist { detail: Load::Ready(d), sel, .. } => {
-            let albums = &d.albums;
-            let body = heading(f, body, "Albums", "", t);
-            shown.cols = cards(f, body, sel, albums.len(), ListRef::Page, hits, t, focused, pics, &|i| {
-                let a = &albums[i];
-                (a.name.clone(), if a.year > 0 { format!("{} · {}", a.artist, a.year) } else { a.artist.clone() }, a.cover_art.clone())
+            let lines = crate::app::artist_lines(d);
+            list(f, body, sel, lines.len(), ListRef::Page, hits, t, focused, &|i, w| match lines[i] {
+                crate::app::ArtistLine::Shelf(k) => spread(vec![Span::styled(crate::text::release_shelf(&d.groups[k]), bold().fg(t.ink))], Span::styled(format!("{} ", d.groups[k].albums.len()), t.dim()), w),
+                crate::app::ArtistLine::Album(k) => {
+                    let a = &d.albums[k];
+                    let seal = if starred(&Item::Album(a.clone()), seals, stars) { format!(" {SEAL}") } else { String::new() };
+                    spread(vec![Span::raw("  "), Span::styled(format!("{}{seal}", a.name), Style::default().fg(t.ink))], Span::styled(if a.year > 0 { format!("{} ", a.year) } else { String::new() }, t.dim()), w)
+                }
             });
+        }
+        Page::Mix { detail: Load::Ready(m), sel, .. } => {
+            let songs = &m.songs;
+            list(f, body, sel, songs.len(), ListRef::Page, hits, t, focused, &|i, w| song_line(&songs[i], &marks, i + 1, w, t, playing.as_deref() == Some(songs[i].id.as_str()), true));
+        }
+        Page::Row { items, sel, .. } => {
+            list(f, body, sel, items.len(), ListRef::Page, hits, t, focused, &|i, w| item_line(&items[i], w, t, starred(&items[i], seals, stars), is_playing(&items[i], playing.as_deref())));
         }
         _ => {}
     }
 }
 
 fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
-    let body = heading(f, area, "Downloads", "D on a song, an album or a playlist downloads it", t);
+    let body = heading(f, area, View::Downloads.name(), "D on a song, an album or a playlist downloads it", t);
     match &app.downloads {
         Load::Failed(e) => return failed(f, body, t, &e.clone()),
         Load::Ready(_) => {}
@@ -977,17 +873,22 @@ fn downloads(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     if rows.is_empty() {
         return empty(f, body, t, "Nothing downloaded yet");
     }
-    list(f, body, downloads_sel, rows.len(), ListRef::Downloads, hits, t, focused, &|i, _| match &rows[i] {
+    list(f, body, downloads_sel, rows.len(), ListRef::Downloads, hits, t, focused, &|i, w| match &rows[i] {
         crate::app::DownloadRow::Header(title) => Line::from(Span::styled(title.clone(), bold().fg(t.ink))),
-        crate::app::DownloadRow::Album(a) => Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(a.name.as_str()), Span::styled(format!("  {} · {} songs", a.artist, a.song_count), t.dim())]),
+        crate::app::DownloadRow::Album(a) => {
+            let mut line = item_line(&Item::DownloadedAlbum((*a).clone()), w.saturating_sub(2), t, false, false);
+            line.spans.insert(0, Span::raw("  "));
+            line
+        }
         crate::app::DownloadRow::Song(list, i) => {
-            let s = &list[*i];
-            Line::from(vec![Span::styled("  ↓  ", t.dim()), Span::raw(s.title.as_str()), Span::styled(format!("  {}", s.artist), t.dim())])
+            let mut line = item_line(&Item::Song(list.to_vec(), *i), w.saturating_sub(2), t, false, false);
+            line.spans.insert(0, Span::raw("  "));
+            line
         }
     });
 }
 
-/// The equalizer: toolbar chips, band faders, then the rest of the chain as chips. ← → walk them in
+/// The equalizer: its switches and choices, band faders, then the rest of the chain. ← → walk them in
 /// that order; ↑ ↓ change the selected one.
 fn equalizer(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let p = app.prefs.clone();
@@ -997,7 +898,7 @@ fn equalizer(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
         None if p.eq_enabled => "On · heard at once while this is open",
         None => "Off · switch it on to hear the bands",
     };
-    let area = heading(f, area, "Equalizer", head, t);
+    let area = heading(f, area, View::Equalizer.name(), head, t);
     if area.height < 6 || area.width < 20 {
         return;
     }
@@ -1007,21 +908,18 @@ fn equalizer(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool)
     let top: Vec<usize> = (0..rows.len()).filter(|&i| rows[i].above_bands()).collect();
     let bands: Vec<usize> = (0..rows.len()).filter(|&i| rows[i].band(&p).is_some()).collect();
     let under: Vec<usize> = (0..rows.len()).filter(|&i| !rows[i].above_bands() && rows[i].band(&p).is_none()).collect();
-    let boxed = area.height >= 26;
     let chip = |i: usize| rows[i].chip(&p);
-    let top_h = chips(f, area, &top, &chip, chosen, focused, boxed, &mut app.hits, t, &|i| lit(&rows[i], &p));
-    let hint = "← → choose · ↑ ↓ change · enter switch · d remove a band";
-    let under_h = chips_height(area.width, &under, &chip, boxed);
+    let top_h = chips(f, area, &top, &chip, chosen, focused, &mut app.hits, t, &|i| lit(&rows[i], &p));
+    let under_h = chips_height(area.width, &under, &chip);
     let bottom = area.y + area.height;
-    let under_area = Rect { y: bottom.saturating_sub(under_h + 1), height: under_h, ..area };
-    text(f, Rect { y: bottom - 1, height: 1, ..area }, hint, t.dim());
-    chips(f, under_area, &under, &chip, chosen, focused, boxed, &mut app.hits, t, &|i| lit(&rows[i], &p));
+    let under_area = Rect { y: bottom.saturating_sub(under_h), height: under_h, ..area };
+    chips(f, under_area, &under, &chip, chosen, focused, &mut app.hits, t, &|i| lit(&rows[i], &p));
     let mid = Rect { y: area.y + top_h + 1, height: under_area.y.saturating_sub(area.y + top_h + 2), ..area };
     let on_ = p.eq_enabled && bypass.is_none();
     sliders(f, mid, &rows, &bands, &p, chosen, on_, app, t);
 }
 
-/// Whether a chip's switch is on.
+/// Whether a switch is on.
 fn lit(row: &EqRow, p: &nori_core::settings::StoredPrefs) -> bool {
     match row {
         EqRow::Enabled => p.eq_enabled,
@@ -1032,58 +930,48 @@ fn lit(row: &EqRow, p: &nori_core::settings::StoredPrefs) -> bool {
     }
 }
 
-/// Rows the wrapped chips take in `w` columns.
-fn chips_height(w: u16, which: &[usize], label: &dyn Fn(usize) -> String, boxed: bool) -> u16 {
+/// Rows the wrapped controls take in `w` columns.
+fn chips_height(w: u16, which: &[usize], label: &dyn Fn(usize) -> String) -> u16 {
+    if which.is_empty() {
+        return 0;
+    }
     let (mut x, mut lines) = (0u16, 1u16);
     for &i in which {
-        let cw = label(i).width() as u16 + if boxed { 4 } else { 2 };
+        let cw = label(i).width() as u16 + 2;
         if x > 0 && x + cw > w {
             lines += 1;
             x = 0;
         }
         x += cw + 1;
     }
-    if which.is_empty() {
-        return 0;
-    }
-    lines * if boxed { 3 } else { 1 }
+    lines
 }
 
-/// Wrapped chips; the selected one raised, switches that are on in the `on` color. Returns the rows used.
+/// Controls as words, wrapped; the selected one raised, switches that are on in the `on` color. Returns the
+/// rows used.
 #[allow(clippy::too_many_arguments)]
-fn chips(f: &mut Frame, area: Rect, which: &[usize], label: &dyn Fn(usize) -> String, chosen: usize, focused: bool, boxed: bool, hits: &mut Vec<(Rect, Hit)>, t: &Theme, on_: &dyn Fn(usize) -> bool) -> u16 {
-    let line_h = if boxed { 3 } else { 1 };
+fn chips(f: &mut Frame, area: Rect, which: &[usize], label: &dyn Fn(usize) -> String, chosen: usize, focused: bool, hits: &mut Vec<(Rect, Hit)>, t: &Theme, on_: &dyn Fn(usize) -> bool) -> u16 {
     let (mut x, mut y) = (area.x, area.y);
     for &i in which {
         let text = label(i);
-        let cw = text.width() as u16 + if boxed { 4 } else { 2 };
+        let cw = text.width() as u16 + 2;
         if x > area.x && x + cw > area.x + area.width {
             x = area.x;
-            y += line_h;
+            y += 1;
         }
-        if y + line_h > area.y + area.height.max(line_h) {
+        if y >= area.y + area.height.max(1) {
             break;
         }
-        let r = Rect { x, y, width: cw.min(area.width), height: line_h };
-        let is = i == chosen;
-        // A switch that is on takes the `on` color; the chosen chip is raised.
+        let r = Rect { x, y, width: cw.min(area.width), height: 1 };
         let mut style = Style::default().fg(if on_(i) { t.on } else { t.ink });
-        if is {
+        if i == chosen {
             style = style.patch(t.select(focused));
         }
-        if boxed {
-            let border = if is { Style::default().fg(t.ink) } else { Style::default().fg(t.hair) };
-            let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(border);
-            let inner = block.inner(r);
-            put(f, block, r);
-            put(f, Paragraph::new(Span::styled(format!(" {text} "), style)), inner);
-        } else {
-            put(f, Paragraph::new(Span::styled(format!(" {text} "), style)), r);
-        }
+        put(f, Paragraph::new(Span::styled(format!(" {text} "), style)), r);
         hits.push((r, Hit::Row(ListRef::Eq, i)));
         x += cw + 1;
     }
-    (y + line_h).saturating_sub(area.y)
+    (y + 1).saturating_sub(area.y)
 }
 
 /// Band faders: a track filled from 0 dB to the knob, frequency and gain below.
@@ -1140,8 +1028,8 @@ fn sliders(f: &mut Frame, area: Rect, rows: &[EqRow], bands: &[usize], p: &nori_
 fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) {
     let prefs = app.prefs.clone();
     let own = &app.settings.own;
-    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, card_covers: app.card_covers, paint: app.paint, protocol: app.protocol.to_string(), data: own.data.clone(), device: own.device.clone() };
-    let body = heading(f, area, "Settings", "enter switches or opens · ← → change · [ ] groups", t);
+    app.settings.own = settings_view::Own { mouse: app.mouse, images: app.images, paint: app.paint, protocol: app.protocol.to_string(), data: own.data.clone(), device: own.device.clone(), dark: app.dark };
+    let body = heading(f, area, View::Settings.name(), "", t);
     let App { settings: v, hits, .. } = app;
     let pages = v.pages(&prefs).to_vec();
     let lines = SettingsView::lines(&pages);
@@ -1149,7 +1037,7 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
     if v.row.at == 0 && len > 0 {
         v.skip_titles(true);
     }
-    // Group index on the left when wide enough.
+    // The groups down the left when wide enough.
     let body = if body.width >= 96 {
         let at = v.group_at();
         for (g, group) in settings_view::GROUPS.iter().enumerate() {
@@ -1157,9 +1045,8 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
             if r.y >= body.y + body.height {
                 break;
             }
-            let style = if g == at { t.current() } else { t.dim() };
-            let mark = if g == at { "▌ " } else { "  " };
-            put(f, Paragraph::new(Line::from(vec![Span::styled(mark, style), Span::styled(group.title, style)])), r);
+            let style = if g == at { bold().fg(t.ink) } else { t.dim() };
+            put(f, Paragraph::new(Span::styled(group.title, style)), r);
             hits.push((r, Hit::Group(g)));
         }
         Rect { x: body.x + 20, width: (body.width - 20).min(110), ..body }
@@ -1172,13 +1059,32 @@ fn settings(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, focused: bool) 
 /// One settings page line.
 fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
     let row = match line {
-        SLine::Group(title) => return Line::from(vec![Span::styled(format!("{title}  "), t.current()), Span::styled("─".repeat(w.saturating_sub(title.width() + 3)), t.dim())]),
-        SLine::Title(title) => return Line::from(Span::styled(format!("  {title}"), bold().fg(t.ink))),
+        SLine::Group(title, summary) => return Line::from(vec![Span::styled(title.to_string(), bold().fg(t.ink)), Span::styled(format!("   {summary}"), t.dim())]),
+        SLine::Title(title) => return Line::from(Span::styled(format!("  {}", title.to_uppercase()), t.dim())),
         SLine::Row(r) => *r,
     };
     let (title, detail) = settings_view::row_words(row);
     let live = settings_view::row_enabled(row);
     let text_style = if live { Style::default().fg(t.ink) } else { t.dim() };
+    // A season: its kanji and name, the one worn in ink, and its page, accent and on as dots.
+    if let settings_view::Row::Season { colors, worn, .. } = row {
+        let name = if *worn { bold().fg(t.ink) } else { t.dim() };
+        let mut spans = vec![Span::styled(format!("    {}", pad(&title, 14)), name)];
+        for c in colors {
+            spans.push(Span::styled(" ●", Style::default().fg(crate::art::argb(*c))));
+        }
+        return Line::from(spans);
+    }
+    // A few options, all on view: the chosen one in ink, underlined.
+    if let settings_view::Row::Choice { options, shown, chips: true, .. } = row {
+        let mut spans = vec![Span::styled(format!("    {}", pad(&title, 24)), text_style)];
+        for (label, _) in options {
+            let style = if label == shown && live { bold().fg(t.ink).add_modifier(Modifier::UNDERLINED) } else { t.dim() };
+            spans.push(Span::styled(label.clone(), style));
+            spans.push(Span::raw("  "));
+        }
+        return Line::from(spans);
+    }
     if let Some((share, centred)) = settings_view::slider_share(row) {
         let bar_w = (w / 3).clamp(8, 30);
         let at = (share * (bar_w - 1) as f32).round() as usize;
@@ -1201,7 +1107,7 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
         return Line::from(Span::styled(fit(&format!("    {detail}"), w).into_owned(), t.dim().add_modifier(Modifier::ITALIC)));
     }
     let value = match row {
-        settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } => (if *on { "━━●" } else { "○──" }).to_string(),
+        settings_view::Row::Toggle { on, .. } | settings_view::Row::Ranked { on, .. } => crate::text::on_off(*on).to_string(),
         _ => settings_view::row_value(row),
     };
     let mut left = vec![Span::styled(format!("    {title}"), text_style)];
@@ -1216,9 +1122,8 @@ fn setting_line(line: &SLine<'_>, w: usize, t: &Theme) -> Line<'static> {
 /// Where the music plays: this computer first, then the account's other devices with what each plays,
 /// the one playing ticked; then the jam.
 fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
-    text(f, area, crate::text::PLAY_ON, bold().fg(t.ink));
     let rows = app.devices.rows();
-    let body = Rect { y: area.y + 2, height: area.height.saturating_sub(2).min(rows.len() as u16), ..area };
+    let body = Rect { height: area.height.min(rows.len() as u16), ..area };
     let App { devices, hits, .. } = app;
     let d = &*devices;
     let active = d.active.as_ref().map(|(id, _)| id.as_str());
@@ -1237,11 +1142,11 @@ fn devices(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
             let x = &d.list[k];
             Line::from(Span::styled(fit(&format!("  {}", crate::text::device_line(x)), w).into_owned(), if x.refused.is_some() { Style::default().fg(Color::LightRed) } else { t.dim() }))
         }
-        DeviceRow::Jam if d.jam.is_some() => spread(vec![Span::styled("◉ ", t.current()), name(&crate::text::jam_strip(listeners), true)], Span::styled(crate::text::JAM_INVITE, t.dim()), w),
-        DeviceRow::Jam => Line::from(vec![Span::styled("◉ ", t.dim()), Span::styled(crate::text::JAM_START, Style::default().fg(t.ink))]),
-        DeviceRow::Join => Line::from(vec![Span::styled("+ ", t.dim()), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.ink))]),
-        DeviceRow::Pair => Line::from(crate::text::PAIR_DEVICES),
-        DeviceRow::ResetPairing => Line::from(crate::text::FORGET_DEVICES),
+        DeviceRow::Jam if d.jam.is_some() => spread(vec![Span::raw("  "), name(&crate::text::jam_strip(listeners), true)], Span::styled(crate::text::JAM_INVITE, t.dim()), w),
+        DeviceRow::Jam => Line::from(vec![Span::raw("  "), Span::styled(crate::text::JAM_START, Style::default().fg(t.ink))]),
+        DeviceRow::Join => Line::from(vec![Span::raw("  "), Span::styled(crate::text::JAM_JOIN, Style::default().fg(t.ink))]),
+        DeviceRow::Pair => Line::from(format!("  {}", crate::text::PAIR_DEVICES)),
+        DeviceRow::ResetPairing => Line::from(format!("  {}", crate::text::FORGET_DEVICES)),
     });
     devices.sel = sel;
     let mut y = body.y + body.height + 1;
@@ -1268,21 +1173,21 @@ fn mix_lines(app: &App, w: usize, t: &Theme) -> Vec<Line<'static>> {
             Some(from) => format!("Mixing in from “{from}”"),
             None => "Mixing into the next".to_string(),
         };
-        lines.push(Line::from(vec![Span::styled("◇ ", t.dim()), Span::styled(fit(&heard, w.saturating_sub(2)).into_owned(), Style::default().fg(t.ink))]));
+        lines.push(Line::from(Span::styled(fit(&heard, w).into_owned(), Style::default().fg(t.ink))));
         if let Some(n) = &app.mixed_in {
             lines.push(Line::from(Span::styled(fit(&format!("  {}", how_mixed(n)), w).into_owned(), t.dim())));
         }
     }
     if let Some(n) = &app.transition {
         let next = crate::backend::app().song(&n.incoming_id).map(|s| s.title).unwrap_or_default();
-        lines.push(Line::from(vec![Span::styled("⇢ ", t.dim()), Span::styled(fit(&format!("Next: “{next}”"), w.saturating_sub(2)).into_owned(), Style::default().fg(t.ink))]));
+        lines.push(Line::from(Span::styled(fit(&format!("Next: “{next}”"), w).into_owned(), Style::default().fg(t.ink))));
         lines.push(Line::from(Span::styled(fit(&format!("  {}", how_mixed(n)), w).into_owned(), t.dim())));
         if !n.reason.is_empty() {
             lines.push(Line::from(Span::styled(fit(&format!("  {}", n.reason), w).into_owned(), t.dim())));
         }
     } else if app.prefs.auto_mix || app.prefs.crossfade_sec > 0 {
         let what = if app.prefs.auto_mix { "AutoMix" } else { "Crossfade" };
-        lines.push(Line::from(Span::styled(fit(&format!("⇢ {what} on · planned as this plays"), w).into_owned(), t.dim())));
+        lines.push(Line::from(Span::styled(fit(&format!("{what} on · planned as this plays"), w).into_owned(), t.dim())));
     }
     lines
 }
@@ -1308,49 +1213,52 @@ fn words_kind(kind: nori_core::automix::planner::TransitionKind) -> &'static str
     }
 }
 
+/// The queue: its head with how much is left and shuffle and repeat, then the jam's rows and the songs.
 fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
     let rows = app.queue_rows();
     if rows.is_empty() {
         let lines = vec![Line::from(Span::styled("The queue is empty", bold())), Line::from(Span::styled("enter plays, a adds to the queue", t.dim()))];
-        put(f, Paragraph::new(lines).alignment(Alignment::Center), centred(area, area.width, 2));
+        put(f, Paragraph::new(lines), Rect { height: area.height.min(2), ..area });
         return;
     }
     if let Some(q) = &app.queue {
         let secs: u64 = q.songs.iter().map(|s| s.duration as u64).sum();
-        let mut modes = String::new();
-        if q.shuffle {
-            modes.push_str(" · shuffle");
+        let head = row_of(area, 0);
+        let left = vec![Span::styled(crate::text::UP_NEXT, bold().fg(t.ink)), Span::styled(format!("  {}", crate::text::songs_caption(q.len, secs)), t.dim())];
+        put(f, Paragraph::new(Line::from(left)), head);
+        // Shuffle and repeat are the queue's, the host's in a jam.
+        if !app.guest() {
+            let (shuffle, repeat) = (q.shuffle, q.repeat);
+            let lit = |on: bool| if on { t.current() } else { t.dim() };
+            let words = [
+                (Span::styled(crate::text::SHUFFLE, lit(shuffle)), Button::Shuffle),
+                (Span::styled(crate::text::repeat_word(repeat), lit(repeat != nori_core::rules::REPEAT_OFF)), Button::Repeat),
+            ];
+            let w: u16 = words.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>() - 3;
+            buttons(f, &mut app.hits, Rect { x: head.x + head.width.saturating_sub(w + 1), width: w, ..head }, &words);
         }
-        match q.repeat {
-            nori_core::rules::REPEAT_ONE => modes.push_str(" · repeat one"),
-            nori_core::rules::REPEAT_ALL => modes.push_str(" · repeat all"),
-            _ => {}
-        }
-        text(f, Rect { height: 1, ..area }, &format!("{}{modes}", crate::text::songs_caption(q.len, secs)), t.dim());
     }
-    let body = Rect { y: area.y + 2, height: area.height.saturating_sub(2), ..area };
+    let body = below(area, 2);
     let listeners: Vec<String> = app.devices.listeners().iter().map(|m| crate::text::jam_member(&m.name, m.role)).collect();
     let note = app.downloads_note();
     let along = app.along_note();
     let chosen = app.queue_sel.at;
     let App { queue, queue_sel, hits, devices, .. } = app;
     let current = queue.as_ref().map_or(-1, |q| q.index);
-    let by_hand: HashSet<u32> = queue.as_ref().map_or_else(HashSet::new, |q| q.queued.iter().copied().collect());
     let asks = devices.asks();
     let hosting = devices.jam.as_ref().is_some_and(|j| j.hosting);
     let strip = devices.jam_strip().unwrap_or_default();
     let here = devices.listening() != nori_core::remote::Listening::Watching;
     let playing_here = devices.listening() == nori_core::remote::Listening::Playing;
-    let accent = t.dim();
     let cur = t.current();
     list(f, body, queue_sel, rows.len(), ListRef::Queue, hits, t, focused, &|row, w| match rows[row] {
-        QueueRow::Jam => spread(vec![Span::styled("◉ ", cur), Span::styled(strip.clone(), cur)], Span::styled(if hosting { crate::text::JAM_INVITE } else { "" }, t.dim()), w),
+        QueueRow::Jam => spread(vec![Span::styled(strip.clone(), cur)], Span::styled(if hosting { crate::text::JAM_INVITE } else { "" }, t.dim()), w),
         QueueRow::Listeners => Line::from(Span::styled(fit(&format!("  {}", listeners.join(", ")), w).into_owned(), Style::default().fg(t.ink))),
         QueueRow::Listen => {
             // Asked for, it is lit whether or not the host lets it play (the note under it says why not).
             let words = if playing_here { crate::text::PLAYING_HERE } else { crate::text::LISTEN_HERE };
             let (keys, style) = if here { (crate::text::STOP_KEYS, cur) } else { (crate::text::LISTEN_KEYS, Style::default().fg(t.ink)) };
-            spread(vec![Span::styled("  ♪ ", accent), Span::styled(words, style)], Span::styled(if row == chosen { keys } else { "" }, t.dim()), w)
+            spread(vec![Span::raw("  "), Span::styled(words, style)], Span::styled(if row == chosen { keys } else { "" }, t.dim()), w)
         }
         QueueRow::AlongNote(n) => Line::from(Span::styled(format!("{:>w$}{}", "", along[n], w = crate::app::QUEUE_NOTE_INDENT), t.dim())),
         QueueRow::Asking => Line::from(Span::styled(format!("  {}", crate::text::YOU_ASKED), t.dim().add_modifier(Modifier::BOLD))),
@@ -1359,22 +1267,19 @@ fn queue(f: &mut Frame, area: Rect, app: &mut App, focused: bool, t: &Theme) {
             let p = asks[k];
             let keys = if hosting && rows.get(chosen).and_then(|r| r.ask()) == Some(k) { crate::text::JAM_DECIDE } else { "" };
             let who = if hosting { crate::text::jam_asked(&p.from_name) } else { crate::text::jam_waiting(devices.host()) };
-            let asked = vec![Span::styled("  ? ", accent), Span::styled(p.song.title.clone(), Style::default().fg(t.ink)), Span::styled(who, t.dim())];
+            let asked = vec![Span::raw("  "), Span::styled(p.song.title.clone(), Style::default().fg(t.ink)), Span::styled(who, t.dim())];
             spread(asked, Span::styled(keys, t.dim()), w)
         }
-        QueueRow::Downloads(_, n) => {
-            let mark = if n == 0 { "☁ " } else { "  " };
-            Line::from(Span::styled(format!("{:>w$}{}", mark, note[n], w = crate::app::QUEUE_NOTE_INDENT), t.dim()))
-        }
-        QueueRow::End => Line::from(vec![Span::styled("  ✕ ", t.dim()), Span::styled(if hosting { crate::text::JAM_END } else { crate::text::JAM_LEAVE }, t.dim())]),
+        QueueRow::Downloads(_, n) => Line::from(Span::styled(format!("{:>w$}{}", "", note[n], w = crate::app::QUEUE_NOTE_INDENT), t.dim())),
+        QueueRow::End => Line::from(Span::styled(format!("  {}", if hosting { crate::text::JAM_END } else { crate::text::JAM_LEAVE }), t.dim())),
         QueueRow::Song(i) => {
             let Some(s) = queue.as_ref().and_then(|q| q.songs.get(i)) else { return Line::from("") };
             let playing = i as i32 == current;
-            let mark = if playing { "▶ " } else if by_hand.contains(&(i as u32)) { "+ " } else { "  " };
+            let mark = if playing { "▶ " } else { "  " };
             let title_style = if playing { t.current() } else { Style::default().fg(t.ink) };
             // Who asked for it before the artist, which is cut first.
             let by = devices.added.get(&s.id).map(|by| Span::styled(format!(" · {by}"), t.dim()));
-            let spans = [Span::styled(mark, if playing { cur } else { accent }), Span::styled(s.title.clone(), title_style)].into_iter().chain(by).chain([Span::styled(format!("  {}", s.artist), t.dim())]);
+            let spans = [Span::styled(mark, cur), Span::styled(s.title.clone(), title_style)].into_iter().chain(by).chain([Span::styled(format!("  {}", s.artist), t.dim())]);
             spread(spans.collect(), Span::styled(clock(s.duration as i64 * 1000), t.dim()), w)
         }
     });
@@ -1481,7 +1386,7 @@ fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 1 => vec![Span::styled(part, Style::default().fg(t.lit(strength * 0.7)).add_modifier(Modifier::ITALIC))],
                 _ => vec![Span::styled(part, Style::default().fg(t.lit(strength * 0.8)))],
             };
-            let mut row = Line::from(spans).alignment(Alignment::Center);
+            let mut row = Line::from(spans);
             if app.lyrics_sel == Some(n) {
                 row = row.style(Style::default().add_modifier(Modifier::UNDERLINED));
             }
@@ -1501,27 +1406,21 @@ fn lyrics(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
 
 // ---- the full player ----
 
-/// The full-window player: the cover, the title with its seal, the seek bar, the transport and the volume on
-/// the left, the lyrics, queue or devices in an outline beside it. A narrow window gives the panel the room
-/// under the song.
+/// The full-window player: the panels' names along the top, then the cover, the title with its seal, the
+/// seek bar, the transport and where the music plays on the left, and the open panel beside it. A narrow
+/// window gives the panel the room under the song; Playing is the song alone.
 fn full_player(f: &mut Frame, area: Rect, app: &mut App, art: Option<&mut Art>) {
     let t = app.theme;
     put(f, Block::default().style(t.ground()), area);
     if area.width < 10 || area.height < 4 {
         return;
     }
-    // Closing is the top edge's.
-    put(f, Paragraph::new(Span::styled("⌄", t.dim())).alignment(Alignment::Center), Rect { height: 1, ..area });
-    app.hits.push((Rect { height: 2.min(area.height), ..area }, Hit::Button(Button::Full)));
-    let m = crate::chrome::margin(area.width) + 2;
-    let inner = Rect { x: area.x + m, y: area.y + 1, width: area.width.saturating_sub(2 * m), height: area.height.saturating_sub(2) };
+    let inner = Rect { x: area.x + 1, width: area.width - 2, ..area };
+    panel_tabs(f, app, &t, row_of(inner, 0));
+    let inner = below(inner, 2);
     if app.panel == Panel::Playing {
-        // The song alone, as wide as its cover, under the panels' names.
-        let tabs = panel_tabs(app);
-        let tabs_w = tabs.iter().map(|t| t.1.width() as u16).sum::<u16>() + 4 * tabs.len().saturating_sub(1) as u16;
-        draw_panel_tabs(f, app, &t, tabs, inner.x + inner.width.saturating_sub(tabs_w) / 2, inner.y, inner.x + inner.width);
-        let w = (inner.height.saturating_sub(2 + SONG_BELOW).min(22) * 2).max(40).min(inner.width);
-        let column = Rect { x: inner.x + (inner.width - w) / 2, y: inner.y + 2, width: w, height: inner.height.saturating_sub(2) };
+        let w = (inner.height.saturating_sub(SONG_BELOW).min(22) * 2).max(40).min(inner.width);
+        let column = Rect { x: inner.x + (inner.width - w) / 2, width: w, ..inner };
         song_column(f, column, app, &t, art);
         return;
     }
@@ -1529,38 +1428,40 @@ fn full_player(f: &mut Frame, area: Rect, app: &mut App, art: Option<&mut Art>) 
     let left_w = if wide { (inner.width * 2 / 5).clamp(32, 46) } else { inner.width };
     let left = Rect { width: left_w, ..inner };
     let used = song_column(f, left, app, &t, art);
-    let panel = if wide {
-        Rect { x: left.x + left.width + 4, width: inner.width.saturating_sub(left.width + 4), ..inner }
-    } else {
-        Rect { y: inner.y + used + 1, height: inner.height.saturating_sub(used + 1), ..inner }
-    };
-    if panel.height >= 5 && panel.width >= 20 {
-        side_panel(f, panel, app, &t);
+    let panel = if wide { Rect { x: left.x + left.width + 4, width: inner.width.saturating_sub(left.width + 4), ..inner } } else { below(inner, used + 1) };
+    if panel.height >= 3 && panel.width >= 20 {
+        app.shown.panel_w = panel.width;
+        let focused = app.focus == Focus::Panel;
+        match app.panel {
+            Panel::Lyrics => lyrics(f, panel, app, &t),
+            Panel::Queue => queue(f, panel, app, focused, &t),
+            Panel::Devices => devices(f, panel, app, focused, &t),
+            Panel::Playing => {}
+        }
     }
 }
 
-/// Rows under the full player's cover: title, artist, a blank, seek, a blank, transport, a blank, volume.
-const SONG_BELOW: u16 = 8;
+/// Rows under the full player's cover: title, artist, quality, a blank, seek, a blank, transport, where it
+/// plays, volume.
+const SONG_BELOW: u16 = 9;
 
 /// The song in the full player's left column: returns the rows it took.
 fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<&mut Art>) -> u16 {
     let Some(song) = app.song.clone() else {
-        text(f, Rect { y: area.y + 1, height: 1, ..area }, "Nothing playing · esc goes back", t.dim());
-        return 2;
+        text(f, area, "Nothing playing · esc goes back", t.dim());
+        return 1;
     };
     let cover_rows = if app.images && art.is_some() { area.height.saturating_sub(SONG_BELOW).min(area.width / 2).min(22) } else { 0 };
     let mut y = area.y;
     if cover_rows >= 6 {
-        let c = Rect { x: area.x, y, width: cover_rows * 2, height: cover_rows };
-        cover(f, c, art, song.cover_art.as_deref(), t);
+        cover(f, Rect { x: area.x, y, width: cover_rows * 2, height: cover_rows }, art, song.cover_art.as_deref());
         y += cover_rows + 1;
     }
     let w = area.width;
     let row = |y: u16| Rect { y, height: 1, ..area };
     // The title with the seal at the right end.
     let sealed = app.rules.stars;
-    let title_w = w.saturating_sub(if sealed { 4 } else { 0 });
-    text(f, Rect { width: title_w, ..row(y) }, &song.title, bold().fg(t.ink));
+    text(f, Rect { width: w.saturating_sub(if sealed { 4 } else { 0 }), ..row(y) }, &song.title, bold().fg(t.ink));
     if sealed {
         let liked = app.starred(Starrable::Song, &song.id, song.starred);
         let r = Rect { x: area.x + w - 2, width: 2, ..row(y) };
@@ -1570,7 +1471,7 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
     }
     y += 1;
     let by = [song.artist.as_str(), song.album.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ");
-    text(f, row(y), &by, Style::default().fg(t.accent).add_modifier(Modifier::BOLD));
+    text(f, row(y), &by, Style::default().fg(t.ink));
     y += 1;
     if let Some(q) = crate::text::quality(&song) {
         text(f, row(y), &q, t.dim());
@@ -1583,18 +1484,16 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
     seek_line(f, app, t, [Rect { x, width: time, ..row(y) }, Rect { x: x + time + 1, width: track_w, ..row(y) }, Rect { x: x + time + 2 + track_w, width: time, ..row(y) }]);
     y += 2;
     let buttons = offered_buttons(app);
-    let step = (w.saturating_sub(2) / buttons.len().max(1) as u16).clamp(4, 8);
+    let step = 6;
     let span = step * buttons.len().saturating_sub(1) as u16 + 1;
-    let x0 = area.x + w.saturating_sub(span) / 2;
+    let x0 = area.x + (time + 1 + track_w.min(w) / 2).saturating_sub(span / 2);
     for (i, b) in buttons.iter().enumerate() {
         transport_button(f, app, t, *b, Rect { x: x0 + i as u16 * step, width: 1, ..row(y) });
     }
     y += 2;
-    text(f, Rect { width: 2, ..row(y) }, speaker(app.volume), t.dim());
-    let vol = Rect { x: area.x + 3, width: 16.min(w.saturating_sub(3)), ..row(y) };
-    track_bar(f, vol, app.volume, t);
-    app.volume_rect = vol;
-    app.hits.push((vol, Hit::Volume));
+    output_line(f, row(y), app, t);
+    y += 1;
+    volume_line(f, Rect { width: 16.min(w), ..row(y) }, app, t);
     y += 2;
     // The mix being heard or planned, where there is room.
     let lines = mix_lines(app, w as usize, t);
@@ -1607,72 +1506,53 @@ fn song_column(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<
     y - area.y
 }
 
-/// The panel beside the song: its tabs on the raised surface, a hairline, then the lyrics, the queue or
-/// the devices.
-fn side_panel(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
-    let block = Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(t.line)).style(t.raised());
-    put(f, block, area);
-    // Inside, the raised surface is the page, and a selected row one step above it.
-    let mut p = *t;
-    p.page = t.surface;
-    if t.painted {
-        p.surface = crate::art::blend(t.surface, t.ink, 0.06);
-    }
-    let inner = Rect { x: area.x + 3, y: area.y + 1, width: area.width.saturating_sub(6), height: area.height.saturating_sub(2) };
-    app.shown.panel_w = inner.width;
-    let tabs = panel_tabs(app);
-    draw_panel_tabs(f, app, t, tabs, inner.x, inner.y, inner.x + inner.width);
-    put(f, Paragraph::new(Span::styled("─".repeat(area.width.saturating_sub(2) as usize), Style::default().fg(t.hair))), Rect { x: area.x + 1, y: inner.y + 1, width: area.width.saturating_sub(2), height: 1 });
-    let body = Rect { y: inner.y + 3, height: inner.height.saturating_sub(3), ..inner };
-    let focused = app.focus == Focus::Panel;
-    match app.panel {
-        Panel::Lyrics => lyrics(f, body, app, &p),
-        Panel::Queue => queue(f, body, app, focused, &p),
-        Panel::Devices => devices(f, body, app, focused, &p),
-        Panel::Playing => {}
-    }
-}
-
-/// The full player's panels with their names: the devices only while other devices can play.
-fn panel_tabs(app: &App) -> Vec<(Panel, String)> {
-    PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.on).map(|(p, name)| (*p, format!("{} {name}", panel_icon(*p)))).collect()
-}
-
-/// `tabs` from `x` on row `y`, up to `end`; the open one underlined in the accent.
-fn draw_panel_tabs(f: &mut Frame, app: &mut App, t: &Theme, tabs: Vec<(Panel, String)>, mut x: u16, y: u16, end: u16) {
-    for (which, label) in tabs {
-        let w = label.width() as u16;
-        if x + w > end {
+/// The full player's panels by name, the open one in the accent: the devices only while other devices can
+/// play; on the right, the way back.
+fn panel_tabs(f: &mut Frame, app: &mut App, t: &Theme, r: Rect) {
+    let mut x = r.x;
+    for (which, name) in PANELS.iter().filter(|(p, _)| *p != Panel::Devices || app.devices.on) {
+        let w = name.width() as u16;
+        if x + w > r.x + r.width {
             break;
         }
-        let style = if which == app.panel { t.current().add_modifier(Modifier::UNDERLINED) } else { t.dim() };
-        let r = Rect { x, y, width: w, height: 1 };
-        put(f, Paragraph::new(Span::styled(label, style)), r);
-        app.hits.push((Rect { x: x.saturating_sub(1), width: w + 2, ..r }, Hit::Button(Button::Panel(which))));
-        x += w + 4;
+        let at = Rect { x, width: w, ..r };
+        put(f, Paragraph::new(Span::styled(*name, if *which == app.panel { t.current() } else { t.dim() })), at);
+        app.hits.push((at, Hit::Button(Button::Panel(*which))));
+        x += w + 2;
+    }
+    let back = crate::text::BACK;
+    let w = back.width() as u16;
+    if x + w + 2 <= r.x + r.width {
+        let at = Rect { x: r.x + r.width - w, width: w, ..r };
+        put(f, Paragraph::new(Span::styled(back, t.dim())), at);
+        app.hits.push((at, Hit::Button(Button::Full)));
     }
 }
 
-fn panel_icon(p: Panel) -> &'static str {
-    match p {
-        Panel::Playing => "♫",
-        Panel::Queue => "≡",
-        Panel::Lyrics => "❝",
-        Panel::Devices => "⇄",
+/// Where the music plays: another device by name, lit, or this computer's output.
+fn output_line(f: &mut Frame, r: Rect, app: &mut App, t: &Theme) {
+    let (name, lit) = match &app.devices.active {
+        Some((_, name)) => (crate::text::playing_on(name), true),
+        None => (crate::text::output_name(&app.output), false),
+    };
+    text(f, r, &name, if lit { t.current() } else { t.dim() });
+    if app.devices.on {
+        app.hits.push((Rect { width: (name.width() as u16).min(r.width), ..r }, Hit::Button(Button::Panel(Panel::Devices))));
     }
 }
 
-/// The volume's speaker: struck through when muted, its waves by how loud.
-fn speaker(volume: f32) -> &'static str {
-    match volume {
-        v if v <= 0.0 => "🔇",
-        v if v < 0.34 => "🔈",
-        v if v < 0.67 => "🔉",
-        _ => "🔊",
-    }
+/// The volume: its word and a bar the mouse sets.
+fn volume_line(f: &mut Frame, r: Rect, app: &mut App, t: &Theme) {
+    let word = crate::text::VOLUME;
+    let w = word.width() as u16 + 1;
+    text(f, Rect { width: w, ..r }, word, t.dim());
+    let track = Rect { x: r.x + w, width: r.width.saturating_sub(w), ..r };
+    track_bar(f, track, app.volume, t);
+    app.volume_rect = track;
+    app.hits.push((track, Hit::Volume));
 }
 
-// ---- the player bar ----
+// ---- the song playing ----
 
 /// The seal: not liked the symbol in quiet ink, liked the symbol on the accent (`flash`: the one frame of
 /// the stamp, inverted). Two cells wide.
@@ -1682,115 +1562,94 @@ pub fn seal(liked: bool, flash: bool, t: &Theme) -> Span<'static> {
     Span::styled("好", style)
 }
 
-/// The player: the song on the left, shuffle, previous, play, next and repeat with the seek bar under them in
-/// the middle, and on the right the seal, the playing, queue, lyrics, devices and full screen buttons, and
-/// the volume.
-fn player_bar(f: &mut Frame, area: Rect, app: &mut App, t: &Theme, art: Option<&mut Art>) {
-    let m = crate::chrome::margin(area.width);
-    let frame = Rect { x: area.x + m, width: area.width.saturating_sub(2 * m), ..area };
-    if frame.width < 12 {
+/// The song playing, along the bottom on the raised paper: play or pause, the song, shuffle and repeat
+/// while on and the seal; under them its clock, where it plays and the volume. A click on the song opens
+/// the full player.
+fn now_playing(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    if area.height == 0 || area.width < 8 {
         return;
     }
-    outline(f, frame, t);
-    // On the top edge: where the music plays while it is another device, and the jam hosted.
-    let mut said: Vec<String> = Vec::new();
-    if let Some((_, name)) = &app.devices.active {
-        said.push(format!("⇄ {}", crate::text::playing_on(name)));
+    put(f, Block::default().style(t.raised()), area);
+    let bar = crate::chrome::now(area);
+    // A jam guest's play is its own listening, with or without a song yet.
+    if (app.song.is_some() || app.devices.controls.is_some()) && offered_buttons(app).contains(&Button::Toggle) {
+        transport_button(f, app, t, Button::Toggle, bar.toggle);
     }
+    let song = app.song.clone();
+    // Right-aligned on the song's line: what is on, then the seal.
+    let mut marks: Vec<(Span<'static>, Button)> = Vec::new();
     if let Some(strip) = app.devices.jam_strip() {
-        said.push(format!("◉ {strip}"));
+        marks.push((Span::styled(strip, t.current()), Button::Panel(if app.guest() { Panel::Queue } else { Panel::Devices })));
     }
-    if !said.is_empty() {
-        let line = format!(" {} ", said.join(" · "));
-        let r = Rect { x: frame.x + 3, y: frame.y, width: (line.width() as u16).min(frame.width.saturating_sub(6)), height: 1 };
-        put(f, Clear, r);
-        text(f, r, &line, t.current());
-        // A guest's jam is in the queue panel.
-        app.hits.push((r, Hit::Button(Button::Panel(if app.guest() { Panel::Queue } else { Panel::Devices }))));
+    if app.queue_shuffled() {
+        marks.push((Span::styled(crate::text::SHUFFLE, t.current()), Button::Shuffle));
     }
-    let buttons = offered_buttons(app);
-    let covers = app.images && art.is_some();
-    let bar = crate::chrome::bar(frame, &buttons, covers, app.devices.on);
-    let flash = app.flash.map(|(b, _)| b);
-    // The song, and a click on it opens the full player.
-    if let Some(c) = bar.cover {
-        let key = app.song.as_ref().and_then(|s| s.cover_art.clone());
-        cover(f, c, art, key.as_deref(), t);
+    if app.repeat() != nori_core::rules::REPEAT_OFF {
+        marks.push((Span::styled(crate::text::repeat_word(app.repeat()), t.current()), Button::Repeat));
     }
-    let open = Rect { x: bar.cover.map_or(bar.song[0].x, |c| c.x), width: bar.song[0].x + bar.song[0].width - bar.cover.map_or(bar.song[0].x, |c| c.x), ..bar.song[0] };
-    match &app.song {
+    if let Some(s) = song.as_ref().filter(|_| app.rules.stars) {
+        let liked = app.starred(Starrable::Song, &s.id, s.starred);
+        marks.push((seal(liked, liked && app.flash.is_some_and(|(b, _)| b == Button::StarSong), t), Button::StarSong));
+    }
+    let w: u16 = marks.iter().map(|(s, _)| s.width() as u16 + 3).sum::<u16>().saturating_sub(3);
+    let at = Rect { x: bar.marks.x + bar.marks.width.saturating_sub(w), width: w.min(bar.marks.width), ..bar.marks };
+    buttons(f, &mut app.hits, at, &marks);
+    // The song takes what the marks leave.
+    let song_r = Rect { width: at.x.saturating_sub(bar.song.x + 2), ..bar.song };
+    match &song {
         Some(s) => {
-            let artist = if s.album.is_empty() { s.artist.clone() } else { format!("{} · {}", s.artist, s.album) };
-            if bar.song[1].width > 0 {
-                text(f, bar.song[0], &s.title, bold().fg(t.ink));
-                text(f, bar.song[1], &artist, t.dim());
-            } else {
-                let line = Line::from(vec![Span::styled(s.title.clone(), bold().fg(t.ink)), Span::styled(format!("  {}", s.artist), t.dim())]);
-                put(f, Paragraph::new(line), bar.song[0]);
-            }
-            app.hits.push((Rect { height: bar.song[1].y.max(bar.song[0].y) + 1 - bar.song[0].y, ..open }, Hit::Button(Button::Full)));
+            let by = [s.artist.as_str(), s.album.as_str()].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · ");
+            let line = Line::from(vec![Span::styled(s.title.clone(), bold().fg(t.ink)), Span::styled(format!("  {by}"), t.dim())]);
+            put(f, Paragraph::new(spread(line.spans, Span::raw(""), song_r.width as usize)), song_r);
+            app.hits.push((song_r, Hit::Button(Button::Full)));
         }
-        None => text(f, bar.song[0], "Nothing playing", t.dim()),
+        // Where it plays while another device holds the music.
+        None => {
+            let said = app.devices.active.as_ref().map_or_else(|| crate::text::NOTHING_PLAYING.to_string(), |(_, name)| crate::text::playing_on(name));
+            text(f, song_r, &said, t.dim());
+        }
     }
-    for (b, r) in &bar.buttons {
-        transport_button(f, app, t, *b, *r);
+    if song.is_none() {
+        return;
     }
     if let Some(clock) = bar.clock {
         seek_line(f, app, t, clock);
     }
-    if let (Some(r), true) = (bar.seal, app.rules.stars) {
-        if let Some(s) = &app.song {
-            let liked = app.starred(Starrable::Song, &s.id, s.starred);
-            put(f, Paragraph::new(seal(liked, liked && flash == Some(Button::StarSong), t)), Rect { x: r.x + 1, width: 2, ..r });
-            app.hits.push((r, Hit::Button(Button::StarSong)));
-        }
+    if let Some(r) = bar.output {
+        output_line(f, r, app, t);
     }
-    for (b, r) in &bar.views {
-        let (glyph, on) = match b {
-            Button::Panel(p) => (panel_icon(*p), *p == Panel::Devices && app.devices.active.is_some()),
-            _ => ("⤢", false),
-        };
-        put(f, Paragraph::new(Span::styled(glyph, if on { t.current() } else { t.dim() })), *r);
-        app.hits.push((Rect { x: r.x.saturating_sub(1), width: 3, ..*r }, Hit::Button(*b)));
-    }
-    if let Some([icon, track]) = bar.volume {
-        text(f, icon, speaker(app.volume), t.dim());
-        track_bar(f, track, app.volume, t);
-        app.volume_rect = track;
-        app.hits.push((track, Hit::Volume));
+    if let Some(r) = bar.volume {
+        volume_line(f, r, app, t);
     }
 }
 
-/// The transport buttons the player offers, in order. A jam guest's are those its role offers: shuffle and
-/// repeat are the host's.
+/// The transport buttons the player offers, in order. A jam guest's are those its role offers.
 fn offered_buttons(app: &App) -> Vec<Button> {
     let offered = |b: Button| match b {
         Button::Toggle => app.offers(|c| c.play_pause),
-        Button::Previous | Button::Next => app.offers(|c| c.skip),
-        _ => !app.guest(),
+        _ => app.offers(|c| c.skip),
     };
-    [Button::Shuffle, Button::Previous, Button::Toggle, Button::Next, Button::Repeat].into_iter().filter(|b| offered(*b)).collect()
+    [Button::Previous, Button::Toggle, Button::Next].into_iter().filter(|b| offered(*b)).collect()
 }
 
-/// A transport glyph at `r`: bare, shuffle and repeat lit in the accent while on, reversed for a moment after
-/// a press.
+/// A transport glyph at `r`: bare, reversed for a moment after a press.
 fn transport_button(f: &mut Frame, app: &mut App, t: &Theme, b: Button, r: Rect) {
-    let lit = |on: bool| if on { t.current() } else { t.dim() };
     let playing = app.devices.controls.map_or(app.now.state == State::Playing, |c| c.playing);
-    let (glyph, style) = match b {
-        Button::Shuffle => ("⤮", lit(app.queue_shuffled())),
-        Button::Previous => ("⏮", Style::default().fg(t.ink)),
-        Button::Toggle => (if app.now.buffering { "⋯" } else if playing { "⏸" } else { "▶" }, Style::default().fg(t.ink)),
-        Button::Next => ("⏭", Style::default().fg(t.ink)),
-        _ => (if app.repeat() == nori_core::rules::REPEAT_ONE { "↻¹" } else { "↻" }, lit(app.repeat() != nori_core::rules::REPEAT_OFF)),
+    let glyph = match b {
+        Button::Previous => "⏮",
+        Button::Toggle if app.now.buffering => "⋯",
+        Button::Toggle if playing => "⏸",
+        Button::Toggle => "▶",
+        _ => "⏭",
     };
+    let style = Style::default().fg(t.ink).add_modifier(Modifier::BOLD);
     let style = if app.flash.is_some_and(|(p, _)| p == b) { style.add_modifier(Modifier::REVERSED) } else { style };
     let r = Rect { width: glyph.width() as u16, height: 1, ..r };
     put(f, Paragraph::new(Span::styled(glyph, style)), r);
     app.hits.push((Rect { x: r.x.saturating_sub(1), width: r.width + 2, ..r }, Hit::Button(b)));
 }
 
-/// The elapsed time, the seek bar and the time left in `[a, track, b]`; the bar takes the seek clicks.
+/// The elapsed time, the seek bar and the length in `[a, track, b]`; the bar takes the seek clicks.
 fn seek_line(f: &mut Frame, app: &mut App, t: &Theme, [a, track, b]: [Rect; 3]) {
     let len = app.song.as_ref().map_or(0, |s| s.duration as i64 * 1000);
     let pos = match app.drag {
@@ -1798,7 +1657,7 @@ fn seek_line(f: &mut Frame, app: &mut App, t: &Theme, [a, track, b]: [Rect; 3]) 
         _ => app.now.position(Instant::now()).clamp(0, len.max(0)),
     };
     app.shown.clock = true;
-    text(f, a, &clock(pos), t.dim());
+    text(f, a, &format!("{:>5}", clock(pos)), t.dim());
     text(f, b, &clock(len), t.dim());
     track_bar(f, track, if len > 0 { pos as f32 / len as f32 } else { 0.0 }, t);
     app.seek_rect = track;
@@ -1820,7 +1679,7 @@ fn login(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
     let servers = app.prefs.servers.len() as u16;
     let h = 17 + if servers > 0 { servers + 2 } else { 0 };
     let r = centred(area, 64, h);
-    let inner = popup(f, r, Span::styled(" ♫ nori · connect to a server ", bold().fg(t.ink)), t);
+    let inner = popup(f, r, Span::styled(" nori · connect to a server ", bold().fg(t.ink)), t);
     let l = &app.login;
     let bottom = inner.y + inner.height;
     let mut y = inner.y + 1;
@@ -1881,6 +1740,7 @@ fn qr_lines(code: &nori_core::remote::QrCode) -> Vec<Line<'static>> {
 }
 
 fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
+    let missing = app.page_missing();
     let App { overlay, hits, devices, .. } = app;
     let Some(o) = overlay else { return };
     match o {
@@ -1896,7 +1756,7 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 }
                 lines.push(Line::from(""));
             }
-            lines.push(Line::from(Span::styled("The mouse: click the tabs, cards, rows and buttons; click or drag the seek bar and the volume; the wheel scrolls.", t.dim())));
+            lines.push(Line::from(Span::styled("The mouse: click the tabs, rows and words; click or drag the seek bar and the volume; the wheel scrolls.", t.dim())));
             *scroll = (*scroll).min(lines.len().saturating_sub(inner.height as usize));
             put(f, Paragraph::new(lines).scroll((*scroll as u16, 0)), inner);
             hits.push((r, Hit::List(ListRef::Help)));
@@ -1993,6 +1853,28 @@ fn overlay(f: &mut Frame, area: Rect, app: &mut App, t: &Theme) {
                 lines.push(Line::from(Span::styled(l, style)));
             }
             put(f, Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), Rect { x: inner.x + 1, y: inner.y + 1, width: inner.width.saturating_sub(2), height: inner.height.saturating_sub(1) });
+        }
+        Overlay::Menu { title, lines, sel, .. } => {
+            use crate::menu::MenuLine;
+            let words: Vec<(String, Style)> = lines
+                .iter()
+                .map(|l| match l {
+                    MenuLine::Heading(h) => (h.clone(), bold().fg(t.ink)),
+                    MenuLine::More => (format!(" {}", crate::text::MORE), t.dim()),
+                    MenuLine::Act(a) => (format!(" {}", crate::text::menu_act(a, missing)), Style::default().fg(t.ink)),
+                })
+                .collect();
+            let w = words.iter().map(|(s, _)| s.width()).max().unwrap_or(10).max(title.width() + 2) as u16 + 6;
+            let r = centred(area, w, (words.len() as u16 + 2).min(area.height.saturating_sub(2)));
+            let inner = popup(f, r, Span::styled(format!(" {} ", fit(title, w.saturating_sub(4) as usize)), bold().fg(t.ink)), t);
+            hits.push((r, Hit::List(ListRef::Menu)));
+            let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner };
+            list(f, inner, sel, words.len(), ListRef::Menu, hits, t, true, &|i, w| Line::from(Span::styled(fit(&words[i].0, w).into_owned(), words[i].1)));
+        }
+        Overlay::NewPlaylist { text: typed, .. } => {
+            let r = centred(area, 60, 3);
+            let inner = popup(f, r, Span::styled(format!(" {} · enter makes it, esc drops ", crate::text::NEW_PLAYLIST), bold().fg(t.ink)), t);
+            put(f, Paragraph::new(format!(" {typed}▏")), inner);
         }
         Overlay::Input { title, text: typed, secret, .. } => {
             let r = centred(area, 60, 3);
