@@ -75,8 +75,11 @@ class ResizableEvictor(
         trimLocked(cache)
     }
 
-    /** Throws out whole resources until the cache fits. Runs wherever the caller is. */
-    fun trim(cache: Cache) = synchronized(this) { trimLocked(cache) }
+    /**
+     * Throws out whole resources until the cache fits. Runs wherever the caller is. Takes the cache's
+     * lock before this one, as the cache does when it calls back: the other order deadlocks.
+     */
+    fun trim(cache: Cache) = synchronized(cache) { synchronized(this) { trimLocked(cache) } }
 
     private fun trimLocked(cache: Cache) {
         if (cache.cacheSpace <= maxBytes) return
