@@ -3706,3 +3706,23 @@ fn seek_while_paused_plays_on_from_there() {
     }));
     assert!(rig.now_ms() - at < 1_000, "playing from 9 s said after {} ms", rig.now_ms() - at);
 }
+
+/// A song that holds no audio fails as unplayable, alone on repeat: playback gives up rather than
+/// looping it without end.
+#[test]
+fn a_song_without_audio_on_repeat_fails() {
+    for repeat in [nori_player::playlist::REPEAT_ONE, nori_player::playlist::REPEAT_ALL] {
+        let rig = Rig::new(&[("e", &[])], prefs_off(), Settings::default());
+        rig.engine.set_repeat(repeat);
+        rig.queue.lock().set(vec!["e".into()], Some(0), false, 0);
+        rig.engine.queue_changed();
+        rig.engine.play_at(0, 0);
+        assert!(rig.wait_for(10, |r| r.events.lock().iter().any(|e| matches!(e, Event::Error { id, .. } if id == "e"))), "repeat {repeat}: {:?}", rig.events.lock());
+        rig.run(30_000);
+        let events = rig.events.lock();
+        assert!(events.iter().any(|e| matches!(e, Event::Stopped { .. })), "gives up: repeat {repeat}: {events:?}");
+        assert!(!events.iter().any(|e| matches!(e, Event::Looped { .. })), "repeat {repeat}: {events:?}");
+        drop(events);
+        rig.engine.stop();
+    }
+}

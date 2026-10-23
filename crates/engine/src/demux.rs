@@ -1498,8 +1498,8 @@ impl Reading for Demuxed {
     fn error(&self) -> Option<(PlaybackError, String)> {
         match &self.state {
             State::Failed(kind, why) => Some((*kind, why.clone())),
-            // Ended early because the bytes stopped.
-            State::Open(s) if s.ended => self.loader_failure(),
+            // Ended early because the bytes stopped, or read through without a frame.
+            State::Open(s) if s.ended => self.loader_failure().or_else(|| (s.frame == Some(0)).then(|| (PlaybackError::Other, "the song holds no audio".into()))),
             _ => None,
         }
     }
