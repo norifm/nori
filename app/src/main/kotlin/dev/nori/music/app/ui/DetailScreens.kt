@@ -113,7 +113,7 @@ internal fun PageActionGlyphs(
         PageAction.AddToQueue -> GlyphButton(Iconoir.Playlist, say.addToQueue, quiet = true) {
             if (artistId != null) actions.queueArtist(artistId) else actions.enqueue(songs)
         }
-        PageAction.Refresh -> own(a)?.let { GlyphButton(Iconoir.Refresh, say.newMix, onClick = it) }
+        PageAction.Refresh -> own(a)?.let { GlyphButton(Iconoir.Refresh, say.newMix, quiet = true, onClick = it) }
         PageAction.Edit -> own(a)?.let { GlyphButton(Iconoir.EditPencil, say.edit, onClick = it) }
     }
 }
