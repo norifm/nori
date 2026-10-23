@@ -3,8 +3,13 @@ package dev.nori.music.app.ui
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
+import androidx.compose.foundation.gestures.verticalDrag
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -197,17 +202,32 @@ internal fun Modifier.dragsSheet(sheet: PlayerSheet, enabled: Boolean = true, on
     val sign = if (across && sheet.edge == SheetEdge.LEFT) -1f else 1f
     return pointerInput(sheet, across, sign) {
         val tracker = VelocityTracker()
-        var moved = 0f
-        val start = { _: Offset -> tracker.resetTracking(); moved = 0f; sheet.dragStart() }
-        val end = { sheet.release(sign * tracker.calculateVelocity().let { if (across) it.x else it.y }) }
-        val cancel = { sheet.release(0f) }
-        val step = { change: androidx.compose.ui.input.pointer.PointerInputChange, d: Float ->
-            moved += d
-            tracker.addPosition(change.uptimeMillis, if (across) Offset(moved, 0f) else Offset(0f, moved))
-            sheet.dragBy(sign * d)
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            // Only a drag the sheet can go: from open, towards putting it away; from put away, towards opening.
+            // A drag the other way stays a tap on whatever is under the finger, so a button pressed with a
+            // finger that slips up still presses.
+            val at = sheet.progress.value
+            fun goes(d: Float) = (at < 1f || sign * d > 0f) && (at > 0f || sign * d < 0f)
+            var slop = 0f
+            val claim = { change: androidx.compose.ui.input.pointer.PointerInputChange, over: Float -> if (goes(over)) { slop = over; change.consume() } }
+            val first = (if (across) awaitHorizontalTouchSlopOrCancellation(down.id, claim) else awaitVerticalTouchSlopOrCancellation(down.id, claim))
+                ?: return@awaitEachGesture
+            tracker.resetTracking()
+            var moved = 0f
+            sheet.dragStart()
+            fun move(change: androidx.compose.ui.input.pointer.PointerInputChange, d: Float) {
+                moved += d
+                tracker.addPosition(change.uptimeMillis, if (across) Offset(moved, 0f) else Offset(0f, moved))
+                sheet.dragBy(sign * d)
+                change.consume()
+            }
+            val step = { change: androidx.compose.ui.input.pointer.PointerInputChange -> move(change, change.positionChange().let { if (across) it.x else it.y }) }
+            // Past the slop, only what went beyond it moves the sheet, as the stock drag detectors do.
+            move(first, slop)
+            val ended = if (across) horizontalDrag(first.id, step) else verticalDrag(first.id, step)
+            if (ended) sheet.release(sign * tracker.calculateVelocity().let { if (across) it.x else it.y }) else sheet.release(0f)
         }
-        if (across) detectHorizontalDragGestures(start, end, cancel, step)
-        else detectVerticalDragGestures(start, end, cancel, step)
     }
 }
 
