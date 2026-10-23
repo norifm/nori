@@ -199,9 +199,9 @@ final class SettingsGroupPage: CardsPage {
     }
 }
 
-/// Appearance: the four modes, then the season tiles, each its kanji over its paper, accent and "on", the
-/// one worn raised; following the calendar under them. The core owns the settings and the colors; a
-/// change builds the interface again in them.
+/// Appearance: the four modes, then the season tiles, each its season's paper with its kanji in its accent
+/// and its name under it, the one worn ringed in that accent; following the calendar under them. The core
+/// owns the settings and the colors; a change builds the interface again in them.
 final class AppearancePage: CardsPage {
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -259,42 +259,44 @@ final class AppearancePage: CardsPage {
     }
 }
 
-/// A season's tile: its kanji over three dots (its paper, accent and "on"); the one worn raised on the
-/// surface with a hairline edge. Its name is for VoiceOver.
+/// A season's tile: its paper with its kanji in its accent, and its name under it; the one worn ringed in
+/// its accent, the others edged with a hairline.
 final class SeasonTile: UIControl {
     private let picked: () -> Void
 
     init(_ season: Int, _ p: NoriPalette, chosen: Bool, picked: @escaping () -> Void) {
         self.picked = picked
         super.init(frame: .zero)
-        layer.cornerRadius = Radius.tile
-        backgroundColor = chosen ? Theme.row : .clear
-        layer.borderWidth = chosen ? hairlineWidth : 0
-        layer.borderColor = Theme.hairline.cgColor
+        let accent = UIColor(argb: p.accent)
+        let paper = UIView()
+        paper.backgroundColor = UIColor(argb: p.page)
+        paper.layer.cornerRadius = Radius.tile
+        paper.layer.borderWidth = chosen ? 2 : hairlineWidth
+        paper.layer.borderColor = (chosen ? accent : Theme.hairline).cgColor
         let kanji = UIImageView(image: Glyph.seasons[season])
-        kanji.tintColor = chosen ? Theme.label : Theme.secondary
-        let dots = UIStackView(arrangedSubviews: [p.page, p.accent, p.on].enumerated().map { i, c in
-            let d = UIView()
-            d.backgroundColor = UIColor(argb: c)
-            d.layer.cornerRadius = 4
-            d.layer.borderWidth = i == 0 ? hairlineWidth : 0
-            d.layer.borderColor = Theme.hairline.cgColor
-            d.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([d.widthAnchor.constraint(equalToConstant: 8), d.heightAnchor.constraint(equalToConstant: 8)])
-            return d
-        })
-        dots.spacing = 5
-        let column = UIStackView(arrangedSubviews: [kanji, dots])
+        kanji.tintColor = accent
+        kanji.translatesAutoresizingMaskIntoConstraints = false
+        paper.addSubview(kanji)
+        let name = UILabel()
+        name.text = Say.seasons[season].0
+        name.font = Fonts.font(12, .medium, .caption1)
+        name.textColor = chosen ? Theme.label : Theme.secondary
+        let column = UIStackView(arrangedSubviews: [paper, name])
         column.axis = .vertical
         column.alignment = .center
-        column.spacing = 8
+        column.spacing = 6
         column.isUserInteractionEnabled = false
         column.translatesAutoresizingMaskIntoConstraints = false
         addSubview(column)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 88),
-            column.centerXAnchor.constraint(equalTo: centerXAnchor),
-            column.centerYAnchor.constraint(equalTo: centerYAnchor),
+            column.topAnchor.constraint(equalTo: topAnchor),
+            column.bottomAnchor.constraint(equalTo: bottomAnchor),
+            column.leadingAnchor.constraint(equalTo: leadingAnchor),
+            column.trailingAnchor.constraint(equalTo: trailingAnchor),
+            paper.widthAnchor.constraint(equalTo: column.widthAnchor),
+            paper.heightAnchor.constraint(equalToConstant: 72),
+            kanji.centerXAnchor.constraint(equalTo: paper.centerXAnchor),
+            kanji.centerYAnchor.constraint(equalTo: paper.centerYAnchor),
         ])
         addTarget(self, action: #selector(tap), for: .touchUpInside)
         isAccessibilityElement = true
