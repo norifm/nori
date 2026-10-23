@@ -450,9 +450,22 @@ pub fn stored_only(e: &str) -> String {
     format!("{e} · showing what is stored · R tries again")
 }
 
-/// Where this computer plays: its output's name, or the system's default.
-pub fn output_name(name: &str) -> String {
-    if name.is_empty() { THIS_COMPUTER.into() } else { name.into() }
+/// Where this computer plays, as the phone names an output (`outputs::output_look`): the device's own name,
+/// or what it is; this computer while the system's default is unnamed.
+pub fn output_name(output: &str) -> String {
+    use nori_core::profiles::OutputPort;
+    if output.is_empty() {
+        return THIS_COMPUTER.into();
+    }
+    let look = nori_core::outputs::output_look(output.to_string());
+    let name = look.name.filter(|n| !n.is_empty());
+    match look.port {
+        OutputPort::Speaker => "Phone speaker".into(),
+        OutputPort::Wired => "Wired headphones".into(),
+        OutputPort::Usb => name.unwrap_or_else(|| "DAC".into()),
+        OutputPort::Bluetooth => name.unwrap_or_else(|| "device".into()),
+        OutputPort::Other => name.unwrap_or_else(|| "Other output".into()),
+    }
 }
 
 pub const SIGNED_OUT_AGAIN: &str = "YouTube signed you out. Sign in again to see your library and likes.";
@@ -660,6 +673,10 @@ mod tests {
         // Lyrics credit says untimed.
         assert_eq!(lyrics_credit(LyricsOrigin::Lrclib, true), "LRCLIB");
         assert_eq!(lyrics_credit(LyricsOrigin::Lrclib, false), "LRCLIB · not timed");
+
+        // The output by what it is, or its own name (`output_look`).
+        let outputs = ["", "USB: K3", "USB: ", "Wired headphones", "Bluetooth: Buds", "MacBook Pro Speakers"].map(output_name);
+        assert_eq!(outputs, ["This computer", "K3", "DAC", "Wired headphones", "Buds", "MacBook Pro Speakers"]);
     }
 
 }

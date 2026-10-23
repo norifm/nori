@@ -247,6 +247,7 @@ impl Runner {
                 (app.mouse, app.images, app.volume, app.protocol, app.offline, app.server, app.settings.own.data, app.colors, app.paint, app.reduced_motion) = keep;
                 app.retheme();
                 app.rules = self.session.as_ref().map(|s| s.rules()).unwrap_or_default();
+                app.output = self.o.device.clone().or_else(|| own::text(own::DEVICE)).unwrap_or_default();
                 if self.session.as_ref().is_some_and(|s| s.client.reminds_to_sign_in()) {
                     self.offer_sign_in(app);
                 }
