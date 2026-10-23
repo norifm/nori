@@ -390,11 +390,13 @@ struct Countdown {
     /// Seconds, negative unknown.
     secs: f64,
     at: i64,
+    /// The estimate last given to [`Countdown::holding`], negative none.
+    estimate: f64,
 }
 
 impl Default for Countdown {
     fn default() -> Self {
-        Countdown { secs: -1.0, at: 0 }
+        Countdown { secs: -1.0, at: 0, estimate: -1.0 }
     }
 }
 
@@ -413,6 +415,22 @@ impl Countdown {
         }
         (self.secs, self.at) = (secs, now);
         secs.ceil() as i64
+    }
+
+    /// As [`Countdown::next`], with a step running: the count goes no lower than `floor`, the time left with
+    /// that step done, and holds there while the step runs long. Counting on past it would only jump back up
+    /// when the step ended and the next estimate came.
+    fn holding(&mut self, fresh: f64, floor: Option<f64>, now: i64) -> i64 {
+        let expected = (self.secs - (now - self.at) as f64 / 1000.0).max(0.0);
+        let grew = fresh > self.estimate + 0.5;
+        self.estimate = fresh;
+        // Behind the estimate but not given more to do: down with the clock, as far as the floor.
+        if let Some(floor) = floor.filter(|_| self.secs >= 0.0 && fresh > expected && !grew) {
+            let secs = expected.max(floor);
+            (self.secs, self.at) = (secs, now);
+            return secs.ceil() as i64;
+        }
+        self.next(fresh, now)
     }
 }
 
@@ -496,6 +514,8 @@ pub struct Processing {
     pub analysing: i32,
     pub beats: i32,
     pub eta_s: i64,
+    /// The work finished of this run's work so far, 0..1000: the notification's bar.
+    pub permille: i32,
 }
 
 /// Which finished-batch notification title applies.
@@ -574,6 +594,10 @@ pub struct Tracker {
     saved: i64,
     from_disk: i64,
     countdown: Countdown,
+    /// The notification's time left while bytes arrive: the download's own, the work after it has its own notification.
+    download_countdown: Countdown,
+    /// Steps of work finished since the last time none was waiting: how far the processing notification's bar is.
+    processed: i32,
     /// The platform's last `now` and when it was given, to extrapolate the platform clock.
     clock: Option<(i64, Instant)>,
     /// Actual vs estimated size of finished songs, to scale remaining estimates.
@@ -775,6 +799,7 @@ impl Tracker {
         }
         (self.speed_bps, self.eta_s) = (0, -1);
         self.countdown = Countdown::default();
+        self.download_countdown = Countdown::default();
         DRAINED
     }
 
@@ -791,9 +816,12 @@ impl Tracker {
     /// counts down the remaining processing (speed 0, -1 when nothing is left).
     fn speed_eta_at(&mut self, now: i64) -> (i64, i64) {
         if self.batch.open.is_empty() {
-            let fresh = time_left(Some(0.0), &self.after(0, 0, false));
+            let after = self.after(0, 0, false);
+            let fresh = time_left(Some(0.0), &after);
+            // The longest step running could be about to end: the count may go that far below the estimate.
+            let running = self.lanes.iter().filter_map(|l| l.step.as_ref().map(|(_, w, _)| after.per[*w as usize])).fold(None, |m: Option<f64>, p| Some(m.map_or(p, |m| m.max(p))));
             self.speed_bps = 0;
-            self.eta_s = self.countdown.next(fresh, now);
+            self.eta_s = self.countdown.holding(fresh, running.map(|p| (fresh - p).max(0.0)), now);
         }
         (self.speed_bps, self.eta_s)
     }
@@ -849,6 +877,7 @@ impl Tracker {
             *lane = Lane { step: None, since: now };
         }
         let Some(&(phase, at)) = self.marks.get(id).filter(|m| m.0.waits(work)) else { return false };
+        self.processed += 1;
         // A lyrics lookup ended without a step took 0 ms; an unneeded analysis or model run is not timed.
         if let Some(ms) = timed.or((work == Work::Lyrics).then_some(0)) {
             let pace = &mut self.paces[work as usize];
@@ -935,12 +964,15 @@ impl Tracker {
     /// The pending processing at the platform's `now`; None when there is none.
     pub fn processing_at(&mut self, now: i64) -> Option<Processing> {
         let [lyrics, analysing, beats] = self.processing();
-        if lyrics + analysing + beats == 0 {
+        let waiting = lyrics + analysing + beats;
+        if waiting == 0 {
+            self.processed = 0;
             return None;
         }
         self.saw(now);
         let (_, eta_s) = self.speed_eta_at(now);
-        Some(Processing { lyrics, analysing, beats, eta_s })
+        let permille = (self.processed as i64 * 1000 / (self.processed + waiting) as i64) as i32;
+        Some(Processing { lyrics, analysing, beats, eta_s, permille })
     }
 
     /// The marks changed since the last call, with their phase now.
@@ -1114,6 +1146,8 @@ impl Tracker {
             (rate > 0.0 && self.rate.settled()).then(|| remaining / rate)
         };
         self.eta_s = self.countdown.next(if waiting { -1.0 } else { time_left(download_s, &after) }, now);
+        // The notification says how long the bytes take; the lyrics and analysis after them have their own.
+        let download_eta = self.download_countdown.next(if waiting { -1.0 } else { download_s.unwrap_or(-1.0) }, now);
         let current = current.and_then(|i| self.info.get(&self.slots[i].id)).map_or("", |i| i.title.as_str());
         let kind = match (waiting, total) {
             (true, _) => NoticeKind::Waiting,
@@ -1123,7 +1157,7 @@ impl Tracker {
         };
         let label = if total != 1 { self.batch.label().unwrap_or("") } else { "" };
         let n = &mut self.notice;
-        let facts = (kind, position, total, permille, self.speed_bps, self.eta_s);
+        let facts = (kind, position, total, permille, self.speed_bps, download_eta);
         if (n.kind, n.position, n.total, n.permille, n.speed_bps, n.eta_s) == facts && n.current == current && n.label == label {
             return NoticeChange::Same;
         }
@@ -1664,15 +1698,20 @@ mod tests {
         let p = t.processing_at(1_000).unwrap();
         assert_eq!((p.lyrics, p.analysing, p.beats), (0, 1, 2));
         assert!(p.eta_s > 0);
+        assert_eq!(p.permille, 0, "nothing done yet");
         let moved = t.marks_changed();
         let b = moved.ids.iter().position(|i| i == "b").unwrap();
         assert!(moved.ids.contains(&"a".to_string()) && moved.phases[b] == Some(DownloadPhase::DetectingBeats));
-        for id in ["a", "b"] {
-            t.work_done(id, Work::Analysis);
-            t.work_done(id, Work::Beats);
-        }
+        t.work_done("a", Work::Analysis);
+        assert_eq!(t.processing_at(1_500).unwrap().permille, 333, "one of three steps done");
+        t.work_done("a", Work::Beats);
+        t.work_done("b", Work::Analysis);
+        t.work_done("b", Work::Beats);
         assert_eq!(t.marks["b"].0, Phase::Done);
         assert!(t.processing_at(2_000).is_none());
+        // The next run's bar starts empty.
+        t.plan("c", Needs { analysis: true, beats: false }, None);
+        assert_eq!(t.processing_at(3_000).unwrap().permille, 0);
     }
 
     #[test]
@@ -1836,6 +1875,22 @@ mod tests {
     }
 
     #[test]
+    fn a_slow_step_holds_the_count_rather_than_jumping_back() {
+        let mut c = Countdown::default();
+        // Five seconds of work said, three of them the step running; it runs long and the estimate stays.
+        let said: Vec<i64> = (0..8).map(|s| c.holding(5.0, Some(2.0), s * 1_000)).collect();
+        assert_eq!(said, [5, 4, 3, 2, 2, 2, 2, 2], "down to the rest of the work, then held: not 5 4 3 5 4 3");
+        // The step ends and the rest is learned to take longer: up, once, then down with time.
+        assert_eq!(c.holding(15.0, Some(10.0), 8_000), 15);
+        assert_eq!(c.holding(15.0, Some(10.0), 9_000), 14);
+        // With nothing running it counts as it always has.
+        let (mut free, mut plain) = (Countdown::default(), Countdown::default());
+        for s in 0..6 {
+            assert_eq!(free.holding(5.0, None, s * 1_000), plain.next(5.0, s * 1_000));
+        }
+    }
+
+    #[test]
     fn speed_and_eta() {
         // Two concurrent songs: the batch speed sums them and the time left follows.
         {
@@ -1853,6 +1908,8 @@ mod tests {
             assert!((290_000..=310_000).contains(&speed), "200 kB/s and 100 kB/s together: {speed}");
             // 600 kB and 800 kB still to come at 300 kB/s, then two lyrics lookups of about 3 s.
             assert!((10..=11).contains(&eta), "{eta} s left");
+            // The notification counts the bytes alone: 1.4 MB at 300 kB/s.
+            assert!((4..=5).contains(&t.notice_facts().eta_s), "{} s left in the notification", t.notice_facts().eta_s);
         }
 
         // Six 2 MB songs, two at a time at 200 kB/s each: speed stays ~400 kB/s and the time left counts
