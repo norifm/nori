@@ -1,6 +1,6 @@
 <script lang="ts">
-  // A page: its big title (with a way back where it is not a top page, and its own controls beside),
-  // then what it shows; while its read is out, a quiet word; if it failed, why.
+  // A page: its name (large on a tab's own page; beside a way back on a page opened from another), its
+  // controls beside the name, then what it shows; while its read is out, a quiet word; if it failed, why.
   import type { Snippet } from "svelte";
   import { W } from "../words";
   import Icon from "./Icon.svelte";
@@ -9,12 +9,14 @@
 </script>
 
 <div class="page">
-  {#if back}<button class="round back" aria-label={W.back} title={W.back} onclick={() => history.back()}><Icon name="arrow-left" /></button>{/if}
-  {#if title}
-    <header class="page-head">
-      <h1>{title}</h1>
+  {#if back}
+    <header class="back-title">
+      <button class="glyph" aria-label={W.back} title={W.back} onclick={() => history.back()}><Icon name="arrow-left" /></button>
+      <h1 class="clip">{title}</h1>
       {@render head?.()}
     </header>
+  {:else if title}
+    <header class="large-title"><h1 class="clip">{title}</h1>{@render head?.()}</header>
   {/if}
   {#if error}<p class="empty">{W.failed(error)}</p>
   {:else if !ready}<p class="loading">{W.loading}</p>
@@ -22,40 +24,32 @@
 </div>
 
 <style>
-  /* The page scrolls under the pills; this keeps its content clear of both at rest. */
+  /* The page scrolls under the chrome; this keeps its content clear of it at rest. */
   .page {
-    padding: var(--top-h) var(--page-pad) calc(var(--bar-h) + 24px);
+    padding: var(--top-h) var(--gutter) calc(var(--bar-h) + var(--gap-section));
   }
-  .back {
-    margin: 0 0 6px -8px;
-    color: var(--ink2);
+  .large-title h1 {
+    flex: 1;
+    font-size: 31px;
+    line-height: 40px;
   }
-  .back :global(.icon) {
-    width: 26px;
-    height: 26px;
-  }
-  .page-head {
+  .back-title {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin: 6px 0 18px;
-    flex-wrap: wrap;
+    margin: 0 0 6px -16px;
   }
-  h1 {
-    font-size: 34px;
-    font-weight: 700;
-    letter-spacing: -0.3px;
+  .back-title .glyph :global(.icon) {
+    width: 22px;
+    height: 22px;
+  }
+  .back-title h1 {
+    flex: 1;
+    font-size: 24px;
+    line-height: 32px;
   }
   @media (max-width: 719px) {
     .page {
-      padding-bottom: calc(var(--bar-h) + 24px + env(safe-area-inset-bottom));
+      padding-bottom: calc(var(--bar-h) + var(--gap-section) + env(safe-area-inset-bottom));
     }
-  }
-  .page :global(h2.section) {
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -0.2px;
-    margin: 30px 0 14px;
   }
 </style>

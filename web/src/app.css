@@ -1,6 +1,7 @@
-/* nori for the web: the app's season themes (colors from the core, see state/theme.ts), Inter and Literata,
-   the outlined top and player pills over a page that fades out before them. The components keep their own
-   styles; this is the ground they share. */
+/* nori for the web in Nori Seasons, as the Android app wears it (app/.../ui/Design.kt is the reference):
+   the core's season palette (state/theme.ts) in five roles and fixed shares of ink, Inter and Literata,
+   no shadows, hairlines and steps of paper between surfaces. The components keep their own styles; this
+   is the ground they share. */
 
 @font-face {
   font-family: "Inter";
@@ -16,7 +17,7 @@
   font-display: swap;
 }
 
-/* Registered so a new season, or light to dark, cross-fades every color made from these in one go. */
+/* Registered so a new season, or Day to Night, cross-fades every color made from these in one go. */
 @property --page {
   syntax: "<color>";
   inherits: true;
@@ -75,34 +76,40 @@
   --on: LinkText;
   --on-accent: Canvas;
   color-scheme: light dark;
-  /* Made from the palette. */
-  --glass: color-mix(in srgb, var(--page) 55%, transparent);
-  --chrome: color-mix(in srgb, var(--ink) 21%, transparent);
-  --hover: color-mix(in srgb, var(--ink) 5%, transparent);
-  --chosen: color-mix(in srgb, var(--ink) 9%, transparent);
-  --fill: color-mix(in srgb, var(--ink) 8%, transparent);
   --scrim: rgb(0 0 0 / 0.4);
-  --shadow: 0 12px 40px rgb(0 0 0 / 0.22);
-  /* The names the components were written with. */
-  --text: var(--ink);
-  --dim: var(--ink2);
-  --faint: var(--outline);
-  --raised: var(--surface);
-  --panel: var(--surface);
-  --cover-ground: var(--fill);
   --font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --display: Literata, Georgia, "Iowan Old Style", serif;
-  --panel-w: 320px;
-  --gutter: 16px;
-  --page-pad: 40px;
-  /* What the pills cover: the page starts under the top pill and ends above the player. */
+  /* Corners: cover, card, tile (grouped rows, popovers), sheet; pills are fully round. */
+  --r-cover: 8px;
+  --r-card: 12px;
+  --r-tile: 18px;
+  --r-sheet: 26px;
+  --hairline: 0.5px;
+  /* The side margin every page shares, and the gaps: tight, row, section. */
+  --gutter: 20px;
+  --gap-tight: 8px;
+  --gap-row: 12px;
+  --gap-section: 26px;
+  /* Cards: a shelf's print, the narrowest a grid's card is, and the gap between them. */
+  --print: 128px;
+  --grid-min: 170px;
+  --grid-gap: 12px;
+  /* What the chrome covers: the page starts under the top bar and ends above the player. */
   --top-h: 84px;
   --bar-h: 112px;
-  /* The fades: clear to here under the pill, then a ramp to the page's own; the same at the foot. */
-  --fade-top-a: 20px;
-  --fade-top-b: 76px;
-  --fade-bottom-a: 52px;
-  --fade-bottom-b: 130px;
+}
+
+/* Fixed shares of ink over the page, and the chrome (the page blurred inside an outline of ink); made
+   again where a cover's colors are worn (`.tinted`), as a custom property is worked out where it is set. */
+:root,
+.tinted {
+  --line: color-mix(in srgb, var(--ink) 10%, transparent);
+  --hover: color-mix(in srgb, var(--ink) 5%, transparent);
+  --veil: color-mix(in srgb, var(--ink) 6%, transparent);
+  --plate: linear-gradient(135deg, color-mix(in srgb, var(--ink) 13%, var(--page)), color-mix(in srgb, var(--ink) 6%, var(--page)));
+  --switch-off: color-mix(in srgb, var(--ink) 16%, var(--page));
+  --glass: color-mix(in srgb, var(--page) 55%, transparent);
+  --chrome: color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
 :root.themed,
@@ -121,13 +128,8 @@
 
 @media (max-width: 719px) {
   :root {
-    --page-pad: var(--gutter);
-    --top-h: calc(8px + env(safe-area-inset-top));
-    --bar-h: 156px;
-    --fade-top-a: 0px;
-    --fade-top-b: 0px;
-    --fade-bottom-a: 40px;
-    --fade-bottom-b: 150px;
+    --top-h: calc(20px + env(safe-area-inset-top));
+    --bar-h: 132px;
   }
 }
 
@@ -140,7 +142,7 @@ body {
   margin: 0;
   background: var(--page);
   color: var(--ink);
-  font: 15px/1.35 var(--font);
+  font: 15px/20px var(--font);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
@@ -171,7 +173,7 @@ button {
 
 button:disabled {
   cursor: default;
-  opacity: 0.4;
+  opacity: 0.38;
 }
 
 :focus-visible {
@@ -185,52 +187,213 @@ h2,
 h3,
 h4 {
   margin: 0;
-  letter-spacing: -0.015em;
+  font-weight: 600;
 }
 
-/* Page titles are Literata; the rest of a page's headings are Inter. */
+/* What a page is called: Literata, the only place it is used. */
 h1 {
   font-family: var(--display);
+  font-weight: 700;
   letter-spacing: -0.3px;
 }
 
 .icon {
-  width: 1.25em;
-  height: 1.25em;
-  fill: currentColor;
+  width: 24px;
+  height: 24px;
   flex: none;
   display: block;
 }
 
-/* A filled or quiet capsule button (Play, Shuffle, Sign In). */
+/* A page's name, the size Apple sets it: big, on the gutter. */
+.large-title {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-tight);
+  padding: 8px 0 2px;
+  font-size: 31px;
+  line-height: 40px;
+}
+
+/* A section's heading on the gutter; as a link it opens the whole section, a quiet arrow at its end. */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: var(--gap-section) 0 var(--gap-row);
+  font-size: 19px;
+  line-height: 24px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+
+.section-title > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.section-title .icon {
+  width: 20px;
+  height: 20px;
+  color: var(--ink2);
+}
+
+/* The small capitals over a grouped card: "PLAYBACK". */
+.group-label {
+  margin: 22px 12px 8px;
+  font-size: 11.5px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink2);
+}
+
+/* Rows grouped on one raised plate: the surface, a hairline edge, the tile's corners. */
+.group {
+  background: var(--surface);
+  border: var(--hairline) solid var(--hair);
+  border-radius: var(--r-tile);
+  overflow: hidden;
+  color: var(--ink);
+}
+
+/* A row of a group: an icon in ink, a title and a quiet line under it, a quiet value, then a switch or an
+   arrow. Its hairline starts where its text does; the last row has none. */
+.group-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 52px;
+  padding: 8px 14px;
+  text-align: left;
+  font-size: 16px;
+  line-height: 21px;
+}
+
+.group-row::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.group-row:has(> .icon:first-child)::after {
+  left: 48px;
+}
+
+.group-row:last-child::after {
+  display: none;
+}
+
+a.group-row:hover,
+button.group-row:hover:enabled {
+  background: var(--hover);
+}
+
+.group-row > .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.group-row .words {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.group-row .words > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-row .value {
+  font-size: 13.5px;
+  color: var(--ink2);
+  white-space: nowrap;
+}
+
+.group-row > .icon:last-child:not(:first-child) {
+  color: var(--ink2);
+  margin-left: -10px;
+}
+
+.sub {
+  color: var(--ink2);
+  font-size: 13px;
+  line-height: 17px;
+}
+
+/* A choice: the one chosen raised on the surface with a hairline edge and in ink, the others quiet words. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: var(--hairline) solid transparent;
+  color: var(--ink2);
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex: none;
+}
+
+.chip.on {
+  background: var(--surface);
+  border-color: var(--hair);
+  color: var(--ink);
+}
+
+/* A row of chips that runs out past the gutters and scrolls sideways. */
+.chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 10px var(--gutter);
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+/* The button a page is built around (Play): a full pill in the page's ink with the page as its words;
+   `.quiet` sits on a veil of the ink. */
 .pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 0 18px;
+  gap: 7px;
+  min-height: 46px;
+  padding: 0 16px;
   border-radius: 999px;
-  background: var(--fill);
-  color: var(--ink);
+  background: var(--ink);
+  color: var(--page);
+  font-size: 15px;
   font-weight: 600;
-  font-size: 14px;
   white-space: nowrap;
 }
 
-.pill.solid {
-  background: var(--ink);
-  color: var(--page);
+.pill.quiet {
+  background: var(--veil);
+  color: var(--ink);
 }
 
 .pill.small {
-  min-height: 28px;
-  padding: 0 12px;
-  font-size: 13px;
-}
-
-.pill:hover:not(:disabled) {
-  filter: brightness(1.06);
+  min-height: 34px;
+  padding: 0 14px;
+  font-size: 14px;
 }
 
 .pill .icon {
@@ -238,19 +401,33 @@ h1 {
   height: 18px;
 }
 
-/* A round icon button: no ground; a round ripple in the ink grows from half size while it is pressed. */
-.round {
+/* A word in ink that does something (a dialog's buttons). */
+.text-action {
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.text-action:hover:enabled {
+  background: var(--hover);
+}
+
+/* A bare glyph that does something: a 48 px target, the glyph in ink, the accent while it is lit;
+   pressed, a round ripple in the ink grows from half size. */
+.glyph {
   position: relative;
   display: inline-grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 48px;
+  height: 48px;
   border-radius: 50%;
   color: var(--ink);
   flex: none;
 }
 
-.round::before {
+.glyph::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -263,74 +440,97 @@ h1 {
     transform 380ms ease-out;
 }
 
-.round:active:not(:disabled)::before {
-  opacity: 0.16;
+.glyph:active:not(:disabled)::before {
+  opacity: 0.12;
   transform: scale(1);
   transition-duration: 90ms;
 }
 
-.round:hover:not(:disabled) {
-  color: var(--ink);
+.glyph.quiet {
+  color: var(--ink2);
 }
 
-.round.on {
+.glyph.on {
   color: var(--accent);
 }
 
-.round .icon {
+.glyph .icon {
   position: relative;
-  width: 24px;
-  height: 24px;
 }
 
+/* A search or text field: a capsule on the surface with a hairline edge, in the accent while focused. */
 .field {
   width: 100%;
-  height: 40px;
-  padding: 0 14px;
-  border-radius: 14px;
-  border: 1px solid var(--outline);
-  background: transparent;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: var(--hairline) solid var(--hair);
+  background: var(--surface);
   outline: none;
+  font-size: 16px;
 }
 
-.field:focus {
-  border-color: var(--accent);
+.field:focus,
+.field:focus-within {
+  border: 1px solid var(--accent);
 }
 
-select.field {
-  appearance: none;
-  padding-right: 28px;
-  background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%), linear-gradient(135deg, var(--dim) 50%, transparent 50%);
-  background-position: calc(100% - 15px) 16px, calc(100% - 10px) 16px;
-  background-size: 5px 5px;
-  background-repeat: no-repeat;
+.field::placeholder {
+  color: var(--ink2);
 }
 
-.sub {
-  color: var(--dim);
-  font-size: 13px;
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  color: var(--ink2);
 }
 
+.search-field .icon {
+  width: 19px;
+  height: 19px;
+}
+
+.search-field input {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.search-field input::placeholder {
+  color: var(--ink2);
+}
+
+.search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* Quiet words for an empty list, under its glyph in a soft disc. */
 .empty {
-  color: var(--dim);
-  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--gutter);
+  color: var(--ink2);
+  font-weight: 500;
   text-align: center;
 }
 
-/* The glyph of what is missing, in a soft disc over the words. */
 .empty .icon {
-  display: block;
   box-sizing: content-box;
   width: 28px;
   height: 28px;
   padding: 18px;
-  margin: 16px auto 14px;
+  margin: 24px 0 14px;
   border-radius: 50%;
-  background: var(--raised);
+  background: var(--veil);
 }
 
 .loading {
-  color: var(--faint);
+  color: var(--ink2);
   padding: 40px;
   text-align: center;
 }
@@ -340,18 +540,18 @@ select.field {
   font-size: 13px;
 }
 
-/* The switch: a checkbox drawn as iOS draws one. */
+/* The switch: iOS's, its track filling with the season's "on" color. */
 .switch {
   appearance: none;
-  width: 42px;
-  height: 26px;
-  border-radius: 13px;
-  background: var(--outline);
+  width: 51px;
+  height: 31px;
+  border-radius: 16px;
+  background: var(--switch-off);
   position: relative;
   cursor: pointer;
   flex: none;
   margin: 0;
-  transition: background 0.2s;
+  transition: background 180ms;
 }
 
 .switch::after {
@@ -359,11 +559,12 @@ select.field {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 22px;
-  height: 22px;
+  width: 27px;
+  height: 27px;
   border-radius: 50%;
-  background: var(--page);
-  transition: transform 0.2s;
+  background: #fff;
+  box-shadow: 0 1px 1px rgb(0 0 0 / 0.16);
+  transition: transform 180ms;
 }
 
 .switch:checked {
@@ -371,7 +572,11 @@ select.field {
 }
 
 .switch:checked::after {
-  transform: translateX(16px);
+  transform: translateX(20px);
+}
+
+.switch:disabled {
+  opacity: 0.4;
 }
 
 .clip {
@@ -387,7 +592,7 @@ select.field {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--fill);
+  background: var(--veil);
   border-radius: 5px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -397,7 +602,7 @@ select.field {
    is thicker, not absent. */
 .chrome {
   background: var(--glass);
-  border: 1px solid var(--chrome);
+  border: var(--hairline) solid var(--chrome);
   -webkit-backdrop-filter: blur(24px);
   backdrop-filter: blur(24px);
 }
@@ -408,13 +613,41 @@ select.field {
   }
 }
 
-/* The page scrolls under both pills and fades into the page before each. */
-.fade {
-  -webkit-mask-image: linear-gradient(to bottom, transparent var(--fade-top-a), #000 var(--fade-top-b), #000 calc(100% - var(--fade-bottom-b)), transparent calc(100% - var(--fade-bottom-a)));
-  mask-image: linear-gradient(to bottom, transparent var(--fade-top-a), #000 var(--fade-top-b), #000 calc(100% - var(--fade-bottom-b)), transparent calc(100% - var(--fade-bottom-a)));
+/* A menu dropped from what opened it, and a sheet or dialog: opaque paper on the surface, a hairline
+   edge, no shadow. */
+.popover {
+  background: var(--surface);
+  border: var(--hairline) solid var(--hair);
+  border-radius: var(--r-tile);
+  color: var(--ink);
+  padding: 4px 0;
+  min-width: 160px;
+  max-width: 280px;
 }
 
-/* The Motion setting asks for less (theme.ts sets the class). */
+.popover-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: 16px;
+  text-align: left;
+}
+
+.popover-item:hover:enabled {
+  background: var(--hover);
+}
+
+.popover-item .icon {
+  width: 18px;
+  height: 18px;
+  color: var(--ink2);
+  margin-left: auto;
+}
+
+/* nori's Motion setting asks for less (theme.ts sets the class). */
 html.still *,
 html.still *::before,
 html.still *::after {
@@ -423,35 +656,29 @@ html.still *::after {
   scroll-behavior: auto !important;
 }
 
-/* A slider drawn as the seek bar is: a thin track filled with the ink up to --v. */
+/* A slider drawn as Android's: a 4 px track in a veil of ink, filled with the ink up to --v, a white knob. */
 input[type="range"].range {
   appearance: none;
   -webkit-appearance: none;
-  height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(to right, var(--ink) var(--v, 0%), var(--hair) var(--v, 0%));
+  height: 28px;
+  background: linear-gradient(to right, var(--ink) var(--v, 0%), color-mix(in srgb, var(--ink) 16%, transparent) var(--v, 0%)) center / 100% 4px no-repeat;
   cursor: pointer;
   margin: 0;
 }
 
 input[type="range"].range::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 10px;
-  height: 10px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  background: var(--ink);
-  opacity: 0;
-}
-
-input[type="range"].range:hover::-webkit-slider-thumb,
-input[type="range"].range:focus-visible::-webkit-slider-thumb {
-  opacity: 1;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
 }
 
 input[type="range"].range::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
+  width: 20px;
+  height: 20px;
   border: 0;
   border-radius: 50%;
-  background: var(--ink);
+  background: #fff;
 }

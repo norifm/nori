@@ -1,18 +1,28 @@
-// What the shell shows over the pages: a line of news, an action sheet, a question and the full player.
+// What the shell shows over the pages: a line of news, a song's sheet, a menu dropped from a button, a
+// question, the devices and the full player.
 
-export type Item = { label: string; icon?: string; run: () => unknown; danger?: boolean; disabled?: boolean };
-/** What the full player shows beside the cover (on a phone: in its place). */
-export type Pane = "lyrics" | "queue" | "devices";
+export type Item = { label: string; icon?: string; run: () => unknown; disabled?: boolean; chosen?: boolean };
+/** What the full player shows in its cover's place. */
+export type Pane = "lyrics" | "queue";
+/** A sheet's head: what it is about (a song: its cover, title and line). */
+export type Head = { title: string; line?: string; cover?: string };
 
 class Ui {
   toast = $state("");
-  sheet = $state.raw<{ title: string; items: Item[] } | null>(null);
+  /** A sheet of grouped rows (a song's menu); `more` folded under More. */
+  sheet = $state.raw<{ head: Head; items: Item[]; more: Item[] } | null>(null);
+  /** A menu dropped from `at` (the button that opened it). */
+  popover = $state.raw<{ at: DOMRect; items: Item[] } | null>(null);
   prompt = $state.raw<{ title: string; value: string; done: (v: string | null) => void } | null>(null);
-  /** The full player, and what it shows beside the cover (on a phone: in its place). */
+  /** The full player, and what it shows in its cover's place. */
   full = $state(false);
   pane = $state<Pane | null>(null);
+  /** The devices and the jam, as a sheet. */
+  devices = $state(false);
   /** The lyrics' source and timing, over the player. */
   lyricsInfo = $state(false);
+  /** The colors a page about one cover lends the page and the chrome (`coverLook`'s), and who lent them. */
+  tint = $state.raw<{ by: object; vars: string } | null>(null);
   /** The browser is wide enough for the top bar and the player bar (below it: the phone's layout). */
   wide = $state(matchMedia("(min-width: 720px)").matches);
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -28,8 +38,13 @@ class Ui {
     if (text) this.toastTimer = setTimeout(() => (this.toast = ""), 4000);
   }
 
-  menu(title: string, items: Item[]) {
-    this.sheet = { title, items };
+  menu(head: Head, items: Item[], more: Item[] = []) {
+    this.sheet = { head, items, more };
+  }
+
+  /** A menu of `items` dropped from the button `e` came from. */
+  drop(e: MouseEvent, items: Item[]) {
+    this.popover = { at: (e.currentTarget as HTMLElement).getBoundingClientRect(), items };
   }
 
   /** Asks for a line of text (a playlist's name); null when cancelled. */
@@ -46,10 +61,10 @@ class Ui {
     });
   }
 
-  /** Opens the full player showing `pane`; on a phone, again, it goes back to the cover. */
+  /** Opens the full player showing `pane`; again, it goes back to the cover. */
   show(pane: Pane) {
+    this.pane = this.full && this.pane === pane ? null : pane;
     this.full = true;
-    this.pane = this.wide ? pane : this.pane === pane ? null : pane;
   }
 }
 

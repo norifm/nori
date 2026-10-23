@@ -1,7 +1,8 @@
-// The page shown, by its address (`#/album/<id>`): read from the hash whenever it changes.
+// The page shown, by its address (`#/album/<id>`, `#/artist/<id>/<shelf>`): read from the hash whenever it
+// changes.
 
-/** Pages under the Library tab on a phone. */
-const LIBRARY = ["library", "albums", "album", "artists", "artist", "playlists", "playlist", "genres", "genre", "songs", "favorites"];
+/** The pages under the Library tab. */
+const LIBRARY = ["library", "album", "artist", "playlist", "genre", "favorites"];
 
 /** `a` unescaped; as typed when it holds a malformed escape. */
 function decoded(a: string): string {
@@ -15,16 +16,19 @@ function decoded(a: string): string {
 class Route {
   top = $state("home");
   arg = $state("");
+  /** A third part of the address: an artist's shelf. */
+  more = $state("");
   /** Bumped by every visit, the same address again too: a page reads itself again. */
   visit = $state(0);
 
-  /** The tab the page sits under on a phone. */
-  tab = $derived(LIBRARY.includes(this.top) ? "library" : this.top);
+  /** The tab the page sits under. */
+  tab = $derived(LIBRARY.includes(this.top) ? "library" : this.top === "row" ? "home" : this.top);
 
   read() {
-    const [, top = "", a = ""] = location.hash.replace(/^#\/?/, "/").split("/");
+    const [, top = "", a = "", b = ""] = location.hash.replace(/^#\/?/, "/").split("/");
     this.top = top || "home";
     this.arg = decoded(a);
+    this.more = decoded(b);
     this.visit++;
   }
 }
@@ -38,10 +42,11 @@ addEventListener("hashchange", () => {
 });
 
 /** The address of a page. */
-export const href = (top: string, arg = "") => (arg ? `#/${top}/${encodeURIComponent(arg)}` : `#/${top}`);
+export const href = (top: string, arg = "", more = "") =>
+  `#/${top}${arg ? `/${encodeURIComponent(arg)}` : ""}${more ? `/${encodeURIComponent(more)}` : ""}`;
 
-export function go(top: string, arg = "") {
-  location.hash = href(top, arg);
+export function go(top: string, arg = "", more = "") {
+  location.hash = href(top, arg, more);
 }
 
 /** Searches for `q`: on the search page the address follows the field, without a step back for each key. */
