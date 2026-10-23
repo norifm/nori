@@ -1151,6 +1151,22 @@ mod tests {
                         assert_eq!(&pixels[(y * 72 + x) * 4..(y * 72 + x + 1) * 4], &expected);
                     }
                 }
+                ui.set_colour(slint::Color::from_rgb_u8(86, 52, 18));
+                layer
+                    .renderer
+                    .render_to_surface(texture.surface.as_mut().unwrap(), context, true)
+                    .unwrap();
+                assert!(texture.surface.as_mut().unwrap().read_pixels(
+                    &info,
+                    &mut pixels,
+                    72 * 4,
+                    (0, 0)
+                ));
+                assert_eq!(
+                    &pixels[(32 * 72 + 32) * 4..(32 * 72 + 33) * 4],
+                    &[86, 52, 18, 255],
+                    "a repaint outside the previous repaint's region must reach the layer"
+                );
             })
             .unwrap();
         ui.set_accent(slint::Color::from_argb_u8(0, 0, 0, 0));

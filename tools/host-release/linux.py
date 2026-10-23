@@ -5,7 +5,6 @@ import hashlib
 import os
 import platform
 import shutil
-import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -46,36 +45,11 @@ def package(binaries, output, version):
         licenses = app / "usr/share/licenses/nori"
         licenses.mkdir(parents=True)
         shutil.copy2(ROOT / "LICENSE", licenses / "LICENSE")
-        deploy = work / "linuxdeploy.AppImage"
-        run("curl", "-fL", f"https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-{arch}.AppImage", "-o", deploy)
-        deploy.chmod(0o755)
+        # No libraries are bundled: the sign-in window's WebKitGTK and the GTK and GLib under it must be the
+        # system's, and any older copy of a library they share (libmount, libsystemd) breaks them on newer systems.
+        (app / "AppRun").symlink_to("usr/bin/nori-desktop")
+        (app / ".DirIcon").symlink_to("nori.png")
         env = dict(os.environ, APPIMAGE_EXTRACT_AND_RUN="1", ARCH=arch)
-        libdir = Path("/usr/lib") / {"x86_64": "x86_64-linux-gnu", "aarch64": "aarch64-linux-gnu"}[arch]
-        libraries = ("libasound.so.2", "libxkbcommon.so.0", "libwayland-client.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1")
-        args = [arg for library in libraries for arg in ("--library", libdir / library)]
-        plugins = (libdir / "alsa-lib/libasound_module_pcm_pulse.so", libdir / "alsa-lib/libasound_module_ctl_pulse.so")
-        args += [arg for plugin in plugins for arg in ("--library", plugin)]
-        # The sign-in window's web view and the GTK under it are the system's: a WebKitGTK copied in would not
-        # find its own helper processes, and GTK's must match the desktop's theme and input modules.
-        shared = ("libwebkit2gtk-4.1.so*", "libjavascriptcoregtk-4.1.so*", "libsoup-3.0.so*", "libgtk-3.so*", "libgdk-3.so*",
-                  "libgdk_pixbuf-2.0.so*", "libpango*.so*", "libcairo*.so*", "libatk*.so*", "libharfbuzz*.so*",
-                  "libglib-2.0.so*", "libgobject-2.0.so*", "libgio-2.0.so*", "libgmodule-2.0.so*")
-        args += [arg for library in shared for arg in ("--exclude-library", library)]
-        run(appimage_executable(deploy, work), "--appdir", app, "--executable", app / "usr/bin/nori-desktop", "--desktop-file", desktop, "--icon-file", icon, *args, env=env)
-        (app / "usr/share/alsa").mkdir(parents=True)
-        (app / "usr/share/alsa/nori.conf").write_text("pcm.!default { type pulse }\nctl.!default { type pulse }\n")
-        plugin_dir = app / "usr/lib/alsa-lib"
-        plugin_dir.mkdir()
-        for plugin in plugins:
-            shutil.copy2(plugin, plugin_dir / plugin.name)
-        launcher = app / "AppRun"
-        launcher.unlink()
-        launcher.write_text('#!/bin/sh\nroot="$(dirname "$(readlink -f "$0")")"\n'
-                            'export LD_LIBRARY_PATH="$root/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
-                            'export ALSA_CONFIG_PATH="$root/usr/share/alsa/nori.conf"\n'
-                            'export ALSA_PLUGIN_DIR="$root/usr/lib/alsa-lib"\n'
-                            'exec "$root/usr/bin/nori-desktop" "$@"\n')
-        launcher.chmod(0o755)
         tool = work / "appimagetool.AppImage"
         run("curl", "-fL", f"https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-{arch}.AppImage", "-o", tool)
         tool.chmod(0o755)
@@ -83,8 +57,6 @@ def package(binaries, output, version):
         run(appimage_executable(tool, work), app, image, env=env)
         result = subprocess.run([str(appimage_executable(image, work)), "--appimage-extract-and-run", "--help"], capture_output=True, text=True)
         assert "usage: nori-desktop" in result.stdout + result.stderr, result.stderr
-        audio_env = dict(os.environ, LD_LIBRARY_PATH=str(app / "usr/lib"), ALSA_CONFIG_PATH=str(app / "usr/share/alsa/nori.conf"), ALSA_PLUGIN_DIR=str(app / "usr/lib/alsa-lib"))
-        run(sys.executable, "-c", "import ctypes; lib = ctypes.CDLL('libasound.so.2'); lib.snd_strerror.restype = ctypes.c_char_p; pcm = ctypes.c_void_p(); result = lib.snd_pcm_open(ctypes.byref(pcm), b'default', 0, 0); assert result == 0, lib.snd_strerror(result); lib.snd_pcm_close(pcm)", env=audio_env)
 
         run("flatpak", "remote-add", "--user", "--if-not-exists", "flathub", "https://dl.flathub.org/repo/flathub.flatpakrepo")
         run("flatpak", "install", "--user", "--noninteractive", "flathub", f"org.gnome.Platform//{RUNTIME}", f"org.gnome.Sdk//{RUNTIME}")
